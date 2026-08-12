@@ -34,3 +34,10 @@ class AgentConfigTest(UnitTestCase):
 		self.assertTrue(AgentConfig.from_settings({"enabled": 1}).enabled)
 		self.assertTrue(AgentConfig.from_settings({"enabled": "1"}).enabled)
 		self.assertFalse(AgentConfig.from_settings({"enabled": 0}).enabled)
+		self.assertFalse(AgentConfig.from_settings({"enabled": "0"}).enabled)
+
+	def test_malformed_numeric_values_fall_back_to_defaults(self):
+		cfg = AgentConfig.from_settings({"timeout": "abc"})
+		self.assertEqual(cfg.timeout, DEFAULT_SETTINGS["timeout"])
+		cfg = AgentConfig.from_settings({"max_tokens": "not_a_number"})
+		self.assertEqual(cfg.max_tokens, DEFAULT_SETTINGS["max_tokens"])

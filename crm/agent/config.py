@@ -37,12 +37,19 @@ class AgentConfig:
 	def from_settings(cls, settings: dict) -> AgentConfig:
 		supplied = {k: v for k, v in (settings or {}).items() if v not in (None, "")}
 		merged = {**DEFAULT_SETTINGS, **supplied}
+
+		def to_int(value, default):
+			try:
+				return int(value)
+			except (ValueError, TypeError):
+				return default
+
 		return cls(
 			enabled=bool(int(merged["enabled"] or 0)),
 			base_url=str(merged["base_url"]).rstrip("/"),
 			model=str(merged["model"]),
-			timeout=int(merged["timeout"]),
-			max_tokens=int(merged["max_tokens"]),
+			timeout=to_int(merged["timeout"], DEFAULT_SETTINGS["timeout"]),
+			max_tokens=to_int(merged["max_tokens"], DEFAULT_SETTINGS["max_tokens"]),
 		)
 
 
