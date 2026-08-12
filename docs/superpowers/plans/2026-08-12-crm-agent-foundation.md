@@ -13,8 +13,14 @@
 - **No new dependencies.** `pydantic` 2.13.4 is a hard dependency of frappe and `requests>=2.28.0` is already declared in `pyproject.toml`. This repo's convention forbids re-declaring frappe's own dependencies — see the `beautifulsoup4` comment in `pyproject.toml`.
 - **Formatting is enforced by ruff:** `indent-style = "tab"`, `quote-style = "double"`, `line-length = 110`, `target-version = "py310"`. All Python in this plan is tab-indented. Run `pre-commit run --files <changed files>` before every commit; if hooks rewrite a file, `git add` it and re-commit rather than passing `--no-verify`.
 - **Test base classes:** `from frappe.tests import UnitTestCase` for pure/network-free tests, `IntegrationTestCase` for anything touching the database. This matches `crm/domain_enrichment/tests/`.
-- **Test command:** `bench --site <your-site> run-tests --app crm --module <dotted.module.path>`. CI uses the site name `test_site` (see `.github/workflows/server-tests.yml`).
-- **Tests cannot run in the devcontainer** — `frappe-bench/` is not provisioned there. Run them on a bench with a real site.
+- **Test command (verified working in this devcontainer):**
+
+  ```bash
+  cd /workspace/frappe-bench && PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module <dotted.module.path>
+  ```
+
+  `PYTHONPATH=/workspace` is **required**: the bench's `apps/crm` is a separate checkout on `develop`, so without it the runner tests that copy instead of this working tree. Confirmed by `import crm` resolving to `/workspace/crm/__init__.py` under that variable, and by `crm.domain_enrichment.tests.test_extractors` running 58 tests green. CI uses the site name `test_site` (see `.github/workflows/server-tests.yml`); locally the site is `dev.localhost`, which already has `allow_tests` enabled.
+- **Doctype changes need a migrate first:** `cd /workspace/frappe-bench && bench --site dev.localhost migrate`.
 - **Every file starts with** the two-line copyright header used across this app:
   `# Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors` / `# For license information, please see license.txt`
 - **Permissions:** use `frappe.get_list` (permission-checked), never `frappe.get_all` (which ignores permissions), and never `ignore_permissions=True`.
@@ -109,7 +115,7 @@ class AgentSettingsTest(IntegrationTestCase):
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_settings`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_settings`
 Expected: FAIL — `DoesNotExistError: DocType CRM Agent Settings not found`
 
 (Note: `frappe.get_single` does not exist in this frappe version — `frappe.get_cached_doc("<Single DocType>")` is the supported idiom, as frappe itself uses for `System Settings`.)
@@ -223,7 +229,7 @@ class CRMAgentSettings(Document):
 
 - [ ] **Step 6: Migrate and run the test to verify it passes**
 
-Run: `bench --site <your-site> migrate && bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_settings`
+Run: `cd /workspace/frappe-bench && bench --site dev.localhost migrate && PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_settings`
 Expected: PASS
 
 - [ ] **Step 7: Commit**
@@ -291,7 +297,7 @@ class AgentConfigTest(UnitTestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_config`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_config`
 Expected: FAIL — `ModuleNotFoundError: No module named 'crm.agent.config'`
 
 - [ ] **Step 3: Write the implementation**
@@ -355,7 +361,7 @@ def get_config() -> AgentConfig:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_config`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_config`
 Expected: PASS (4 tests)
 
 - [ ] **Step 5: Commit**
@@ -437,7 +443,7 @@ class ThreadSummarySchemaTest(UnitTestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_schemas`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_schemas`
 Expected: FAIL — `ModuleNotFoundError: No module named 'crm.agent.errors'`
 
 - [ ] **Step 3: Write the implementation**
@@ -526,7 +532,7 @@ def _summarise_errors(exc: ValidationError) -> str:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_schemas`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_schemas`
 Expected: PASS (6 tests)
 
 - [ ] **Step 5: Commit**
@@ -656,7 +662,7 @@ class ClientTransportFailureTest(UnitTestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_client`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_client`
 Expected: FAIL — `ModuleNotFoundError: No module named 'crm.agent.client'`
 
 - [ ] **Step 3: Write the implementation**
@@ -743,7 +749,7 @@ def _post(cfg: AgentConfig, body: dict) -> str:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_client`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_client`
 Expected: PASS (6 tests)
 
 - [ ] **Step 5: Commit**
@@ -851,7 +857,7 @@ class ThreadMessagesTest(UnitTestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_context`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_context`
 Expected: FAIL — `ModuleNotFoundError: No module named 'crm.agent.context'`
 
 - [ ] **Step 3: Write the implementation**
@@ -926,7 +932,7 @@ def _neutralise(content: str) -> str:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_context`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_context`
 Expected: PASS (8 tests)
 
 - [ ] **Step 5: Commit**
@@ -1024,7 +1030,7 @@ class PermissionInvariantTest(UnitTestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_tools`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_tools`
 Expected: FAIL — `ModuleNotFoundError: No module named 'crm.agent.tools'`
 
 - [ ] **Step 3: Write the implementation**
@@ -1095,7 +1101,7 @@ def _assert_supported(doctype: str) -> None:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_tools`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_tools`
 Expected: PASS (3 tests)
 
 - [ ] **Step 5: Commit**
@@ -1199,7 +1205,7 @@ from frappe.tests import IntegrationTestCase
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_api`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_api`
 Expected: FAIL — `ModuleNotFoundError: No module named 'crm.agent.api'`
 
 - [ ] **Step 3: Write the implementation**
@@ -1254,7 +1260,7 @@ def summarise_thread(reference_doctype: str, reference_name: str) -> dict:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_api`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_api`
 Expected: PASS (4 tests)
 
 - [ ] **Step 5: Commit**
@@ -1325,7 +1331,7 @@ class AgentRoleTest(IntegrationTestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_install`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_install`
 Expected: FAIL — `ModuleNotFoundError: No module named 'crm.agent.install'`
 
 - [ ] **Step 3: Write the implementation**
@@ -1403,7 +1409,7 @@ Keep any other existing entries in that list — add the new line, do not replac
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `bench --site <your-site> migrate && bench --site <your-site> run-tests --app crm --module crm.agent.tests.test_install`
+Run: `cd /workspace/frappe-bench && bench --site dev.localhost migrate && PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.test_install`
 Expected: PASS (3 tests)
 
 - [ ] **Step 6: Write the module doc**
@@ -1440,7 +1446,7 @@ Plans and architecture rationale: `docs/superpowers/plans/`.
 
 - [ ] **Step 7: Run the whole agent suite**
 
-Run: `bench --site <your-site> run-tests --app crm --module crm.agent.tests`
+Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests`
 Expected: PASS — every test in the module, with no network access and no model running. (Don't record a test count here or in any doc; this repo deliberately stopped hardcoding those.)
 
 - [ ] **Step 8: Commit**
@@ -1460,7 +1466,7 @@ Automated tests never contact a model. Once the tasks are done, prove the real p
 - [ ] Serve a model: `vllm serve LiquidAI/LFM2.5-2.6B --enable-prefix-caching --max-model-len 8192` (or `ollama serve` with an equivalent tag).
 - [ ] In **CRM Agent Settings**: set `base_url`, set `model` to match what the server reports at `GET /v1/models`, tick `enabled`.
 - [ ] Pick a Deal with a few Communications, then run:
-      `bench --site <your-site> execute crm.agent.api.summarise_thread --kwargs "{'reference_doctype': 'CRM Deal', 'reference_name': 'CRM-DEAL-0001'}"`
+      `cd /workspace/frappe-bench && bench --site dev.localhost execute crm.agent.api.summarise_thread --kwargs "{'reference_doctype': 'CRM Deal', 'reference_name': 'CRM-DEAL-0001'}"`
 - [ ] Confirm `status == "ok"` and that `summary.sentiment` is one of the three allowed values.
 - [ ] Stop the model server and run it again. Confirm `{"status": "unavailable"}` and no traceback.
 - [ ] Untick `enabled` and run it again. Confirm `{"status": "disabled"}`.
