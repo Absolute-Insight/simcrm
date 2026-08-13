@@ -41,3 +41,11 @@ class AgentConfigTest(UnitTestCase):
 		self.assertEqual(cfg.timeout, DEFAULT_SETTINGS["timeout"])
 		cfg = AgentConfig.from_settings({"max_tokens": "not_a_number"})
 		self.assertEqual(cfg.max_tokens, DEFAULT_SETTINGS["max_tokens"])
+
+	def test_a_malformed_enabled_value_degrades_to_off(self):
+		"""The whole module's contract is to degrade, never to raise. A bare ``int()``
+		here threw a ``ValueError`` out of ``get_config()`` -- and the safe reading of an
+		uninterpretable flag is off."""
+		self.assertFalse(AgentConfig.from_settings({"enabled": "yes"}).enabled)
+		self.assertFalse(AgentConfig.from_settings({"enabled": "true"}).enabled)
+		self.assertFalse(AgentConfig.from_settings({"enabled": []}).enabled)

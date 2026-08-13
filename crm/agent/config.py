@@ -45,7 +45,10 @@ class AgentConfig:
 				return default
 
 		return cls(
-			enabled=bool(int(merged["enabled"] or 0)),
+			# Also via to_int: this module's contract is to degrade, never to raise, and a
+			# bare int() on a hand-edited or fixture-supplied value ("yes") threw a
+			# ValueError straight out of get_config().
+			enabled=bool(to_int(merged["enabled"], DEFAULT_SETTINGS["enabled"])),
 			base_url=str(merged["base_url"]).rstrip("/"),
 			model=str(merged["model"]),
 			timeout=to_int(merged["timeout"], DEFAULT_SETTINGS["timeout"]),
