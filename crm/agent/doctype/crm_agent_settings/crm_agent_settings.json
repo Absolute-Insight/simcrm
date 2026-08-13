@@ -1,0 +1,83 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-08-12 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "endpoint_section",
+  "base_url",
+  "model",
+  "column_break_endpoint",
+  "timeout",
+  "max_tokens"
+ ],
+ "fields": [
+  {
+   "default": "0",
+   "description": "When off, no agent feature contacts a model.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "endpoint_section",
+   "fieldtype": "Section Break",
+   "label": "Inference Endpoint"
+  },
+  {
+   "default": "http://localhost:8000/v1",
+   "description": "OpenAI-compatible base URL, including the version prefix.",
+   "fieldname": "base_url",
+   "fieldtype": "Data",
+   "label": "Base URL"
+  },
+  {
+   "default": "lfm2.5-2.6b",
+   "fieldname": "model",
+   "fieldtype": "Data",
+   "label": "Model"
+  },
+  {
+   "fieldname": "column_break_endpoint",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "30",
+   "description": "Seconds before a request is abandoned.",
+   "fieldname": "timeout",
+   "fieldtype": "Int",
+   "label": "Timeout"
+  },
+  {
+   "default": "1024",
+   "fieldname": "max_tokens",
+   "fieldtype": "Int",
+   "label": "Max Tokens"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-08-12 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Agent",
+ "name": "CRM Agent Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
