@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import frappe
 from frappe import _
+from frappe.utils import strip_html_tags
 
 SUPPORTED_DOCTYPES = ("CRM Deal", "CRM Lead")
 
 # Always present as standard fields.
-BASE_RECORD_FIELDS = ("name", "modified")
+BASE_RECORD_FIELDS = ("name",)
 # Requested only when the doctype actually declares them -- Lead and Deal differ.
 OPTIONAL_RECORD_FIELDS = ("organization", "status")
 THREAD_FIELDS = ("name", "creation", "sender", "content")
@@ -74,7 +75,9 @@ def read_thread(doctype: str, name: str, limit: int = DEFAULT_THREAD_LIMIT) -> l
 		order_by="creation desc",
 		limit=_clamp_limit(limit),
 	)
-	return [dict(row) for row in rows]
+	# Email bodies arrive as HTML. Markup is tokens the model pays for and reasons over
+	# for nothing, and it is the caller's job to hand the pure prompt builder plain rows.
+	return [{**row, "content": strip_html_tags(row.get("content") or "")} for row in rows]
 
 
 def _clamp_limit(limit) -> int:
