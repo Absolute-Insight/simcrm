@@ -5,14 +5,19 @@
 
 Communication bodies come from outside the organisation, so they are fenced and the
 system message states that fenced text is data. Any fence marker appearing inside the
-content itself is stripped, otherwise hostile content could close the fence early and
-continue as if it were trusted.
+content itself is replaced with a visible placeholder, otherwise hostile content could
+close the fence early and continue as if it were trusted.
 """
 
 from __future__ import annotations
 
 CONTENT_START = "<<<THREAD"
 CONTENT_END = "THREAD>>>"
+
+# What a fence marker found inside untrusted content is replaced with.
+NEUTRALISED_MARKER = "[fence marker removed]"
+# What is appended to an entry trimmed to fit the character budget.
+TRUNCATION_NOTE = " [...truncated]"
 
 SYSTEM_PROMPT = (
 	"You summarise sales conversations for a CRM. "
@@ -53,6 +58,16 @@ def _fenced_thread(communications: list[dict], max_chars: int) -> str:
 		sender = comm.get("sender", "unknown")
 		entry = f"[{comm.get('creation', '')}] {sender}: {_neutralise(comm.get('content', ''))}"
 		if len(entry) > budget:
+			# One entry can exceed the entire budget on its own -- a single quoted-reply
+			# chain of raw HTML reaches 12,000 characters easily. Dropping it left an
+			# empty fence with no "No communications recorded." line either, while the
+			# endpoint still reported ok. So when nothing has been kept yet, trim the
+			# newest entry to fit and say so, rather than summarising silence. Later
+			# entries are still dropped whole: by then there is a real thread in hand
+			# and a sliver of an older mail adds nothing.
+			if kept or budget <= len(TRUNCATION_NOTE):
+				break
+			kept.append(entry[: budget - len(TRUNCATION_NOTE)] + TRUNCATION_NOTE)
 			break
 		kept.append(entry)
 		budget -= len(entry)
@@ -62,5 +77,16 @@ def _fenced_thread(communications: list[dict], max_chars: int) -> str:
 
 
 def _neutralise(content: str) -> str:
-	"""Strip fence markers so quoted content cannot escape its own fence."""
-	return str(content or "").replace(CONTENT_START, "").replace(CONTENT_END, "")
+	"""Replace fence markers in quoted content so it cannot escape its own fence.
+
+	Substituting a placeholder rather than deleting the marker is the whole point.
+	A single ``str.replace`` pass that deletes leaves the surrounding fragments
+	adjacent, and they can spell the marker again: ``("THRE" + "THREAD>>>" +
+	"AD>>>").replace("THREAD>>>", "")`` is exactly ``"THREAD>>>"``, a live fence
+	terminator. The placeholder keeps the leftovers apart -- and makes the tampering
+	visible to the model instead of hiding it.
+	"""
+	text = str(content or "")
+	for marker in (CONTENT_START, CONTENT_END):
+		text = text.replace(marker, NEUTRALISED_MARKER)
+	return text
