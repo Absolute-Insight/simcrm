@@ -1446,8 +1446,16 @@ Plans and architecture rationale: `docs/superpowers/plans/`.
 
 - [ ] **Step 7: Run the whole agent suite**
 
-Run: `PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests`
-Expected: PASS — every test in the module, with no network access and no model running. (Don't record a test count here or in any doc; this repo deliberately stopped hardcoding those.)
+`--module` takes one dotted module and does not accept a package, so run the modules in a loop:
+
+```bash
+cd /workspace/frappe-bench
+for m in test_settings test_config test_schemas test_client test_context test_tools test_api test_install; do
+  PYTHONPATH=/workspace bench --site dev.localhost run-tests --app crm --module crm.agent.tests.$m
+done
+```
+
+Expected: every module OK, with no network access and no model running. (Don't record a test count here or in any doc; this repo deliberately stopped hardcoding those.)
 
 - [ ] **Step 8: Commit**
 
