@@ -79,6 +79,52 @@ app) works and is what CI runs (`.github/actions/run-server-tests`).
 separate checkout, so without it the runner tests that copy rather than the working
 tree. No test contacts a model or the network.
 
+## Verifying against a real model
+
+Nothing in the suite talks to a model. `tests/test_client_over_http.py` proves the wire
+against a stub OpenAI-shaped server on loopback — URL, headers, guided-decoding body,
+retry, and every failure mode — but a stub is not a model. These steps are the part that
+needs a GPU, and they are the exit gate for the foundation.
+
+```bash
+# 1. Serve the smallest test model. ~5.4 GB in BF16, fits the free VRAM alongside a desktop.
+vllm serve LiquidAI/LFM2.5-2.6B --enable-prefix-caching --max-model-len 8192
+#    Ollama is the shorter path if vllm is not installed:  ollama serve && ollama run lfm2.5:2.6b
+
+# 2. Point the CRM at it. Name must match what GET /v1/models reports.
+cd /workspace/frappe-bench
+bench --site dev.localhost set-value "CRM Agent Settings" "CRM Agent Settings" base_url "http://127.0.0.1:8000/v1"
+bench --site dev.localhost set-value "CRM Agent Settings" "CRM Agent Settings" model "LiquidAI/LFM2.5-2.6B"
+bench --site dev.localhost set-value "CRM Agent Settings" "CRM Agent Settings" enabled 1
+
+# 3. Summarise a real Deal that has Communications on it.
+bench --site dev.localhost execute crm.agent.api.summarise_thread \
+  --kwargs "{'reference_doctype': 'CRM Deal', 'reference_name': 'CRM-DEAL-0001'}"
+```
+
+Expected: `{"status": "ok", "summary": {...}}` with `sentiment` one of the three allowed
+values. Then prove the two degraded states, which matter more than the happy path:
+
+```bash
+# Stop the model server, run step 3 again -> {"status": "unavailable"}, no traceback.
+bench --site dev.localhost set-value "CRM Agent Settings" "CRM Agent Settings" enabled 0
+# Run step 3 again -> {"status": "disabled"}, and the client is never called.
+```
+
+**The exit gate is the swap.** Repeat step 2's two field changes for each model below and
+re-run step 3. Change nothing else — no prompt, no parser, no code. If any model needs a
+change above the endpoint, the seam is in the wrong place.
+
+| Model | Note |
+|---|---|
+| `LiquidAI/LFM2.5-2.6B` | Pythonic tool dialect; confirm guided decoding returns a parsed object |
+| `openbmb/MiniCPM5-1B` | Apache 2.0, ~2.2 GB, the cheapest leg |
+| `ibm-granite/granite-4.0-h-tiny` | Mamba-2 hybrid MoE, the closest small rehearsal of production |
+| `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` | W4A16 on Ampere; needs `--tool-call-parser qwen3_coder` |
+
+Record tokens/sec and time-to-first-token for each, measured with the bench running. That
+number, not a datasheet, decides whether an always-on loop is viable on this card.
+
 ## What is not here yet
 
 MCP transport, write-tier tools, the enrichment fallback extractor, and the assistant
