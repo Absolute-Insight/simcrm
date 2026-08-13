@@ -21,11 +21,12 @@ export default defineConfig(async ({ mode }) => {
         },
         manifest: {
           display: 'standalone',
-          name: 'Frappe CRM',
-          short_name: 'Frappe CRM',
+          name: 'Vectora',
+          short_name: 'Vectora',
           start_url: '/crm',
-          description:
-            'Modern & 100% Open-source CRM tool to supercharge your sales operations',
+          description: 'Vectora — proactive, open-source CRM',
+          theme_color: '#5B5FE8',
+          background_color: '#ffffff',
           icons: [
             {
               src: '/assets/crm/manifest/manifest-icon-192.maskable.png',
