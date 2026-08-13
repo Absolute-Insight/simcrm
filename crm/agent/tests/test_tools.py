@@ -31,6 +31,10 @@ ALLOWED_FRAPPE_CALLS = frozenset(
 		"get_meta",
 		"throw",
 		"DoesNotExistError",
+		# The translation helper, imported as ``from frappe import _``. Reads no data.
+		"_",
+		# Strips HTML from third-party email bodies before they are fenced.
+		"utils.strip_html_tags",
 	}
 )
 
@@ -47,21 +51,50 @@ def _dotted_name(node: ast.expr) -> str | None:
 	return ".".join(reversed(parts))
 
 
+def _frappe_aliases(tree: ast.Module) -> dict[str, str]:
+	"""Local name -> original frappe name, for every ``from frappe import x [as y]``.
+
+	Without this the allowlist has a hole it cannot even see: ``from frappe import
+	get_all`` followed by a bare ``get_all(...)`` produces a call whose func is an
+	``ast.Name``, so it never starts with ``frappe.`` and is not recorded at all --
+	not flagged as unexpected, simply absent. And ``get_all`` needs no
+	``ignore_permissions`` kwarg to skip permission checks; that is its default.
+	"""
+	aliases: dict[str, str] = {}
+	for node in ast.walk(tree):
+		if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "frappe":
+			prefix = (node.module or "")[len("frappe") :].lstrip(".")
+			for alias in node.names:
+				original = f"{prefix}.{alias.name}" if prefix else alias.name
+				aliases[alias.asname or alias.name] = original
+	return aliases
+
+
 def _frappe_calls(source: str) -> set[str]:
-	"""Every ``frappe...(...)`` call in ``source``, as the part after ``frappe.``.
+	"""Every call into frappe in ``source``, named as the part after ``frappe.``.
 
 	The whole attribute chain is walked, so ``frappe.db.sql`` reports as ``db.sql``
 	rather than being skipped: an earlier version tested ``node.func.value`` for
 	``ast.Name``, which is an ``ast.Attribute`` for exactly the nested bypasses
-	(``frappe.db.get_all``, ``frappe.db.sql``) the check exists to catch.
+	(``frappe.db.get_all``, ``frappe.db.sql``) the check exists to catch. Names
+	imported directly out of frappe are resolved back to their frappe name, so a
+	bare or aliased import cannot slip past the allowlist either.
 	"""
+	tree = ast.parse(source)
+	aliases = _frappe_aliases(tree)
 	names = set()
-	for node in ast.walk(ast.parse(source)):
+	for node in ast.walk(tree):
 		if not isinstance(node, ast.Call):
 			continue
 		dotted = _dotted_name(node.func)
-		if dotted and dotted.startswith("frappe."):
+		if dotted is None:
+			continue
+		if dotted.startswith("frappe."):
 			names.add(dotted[len("frappe.") :])
+			continue
+		head, *rest = dotted.split(".")
+		if head in aliases:
+			names.add(".".join([aliases[head], *rest]))
 	return names
 
 
@@ -204,3 +237,29 @@ class PermissionInvariantTest(UnitTestCase):
 		plain check would have walked straight past."""
 		source = 'import frappe\nfrappe.get_all("X", **{"ignore_permissions": True})\n'
 		self.assertIn("ignore_permissions", _call_keywords(source))
+
+	def test_a_bare_import_cannot_slip_past_the_allowlist(self):
+		"""The hole this guard had until now. ``from frappe import get_all`` then a bare
+		``get_all(...)`` produced a call whose func is an ``ast.Name``, so it never
+		started with ``frappe.`` and was not recorded at all -- absent rather than
+		unexpected, which an allowlist reads as clean."""
+		source = 'from frappe import get_all\nget_all("Communication")\n'
+		self.assertEqual(_frappe_calls(source), {"get_all"})
+
+	def test_an_aliased_import_cannot_slip_past_either(self):
+		source = 'from frappe import get_all as fetch\nfetch("Communication")\n'
+		self.assertEqual(_frappe_calls(source), {"get_all"})
+
+	def test_an_imported_submodule_is_resolved_back_to_its_frappe_name(self):
+		source = "from frappe import db\ndb.sql('select 1')\n"
+		self.assertEqual(_frappe_calls(source), {"db.sql"})
+
+	def test_a_deep_import_keeps_its_full_path(self):
+		source = "from frappe.utils import strip_html_tags\nstrip_html_tags('<p>x</p>')\n"
+		self.assertEqual(_frappe_calls(source), {"utils.strip_html_tags"})
+
+	def test_a_bare_get_all_would_actually_fail_the_allowlist_check(self):
+		"""End to end: the previous two tests prove the call is *seen*. This proves being
+		seen is enough to fail the gate, which is the property that matters."""
+		source = 'from frappe import get_list\nfrom frappe import get_doc\nget_doc("X")\n'
+		self.assertEqual(_frappe_calls(source) - ALLOWED_FRAPPE_CALLS, {"get_doc"})
