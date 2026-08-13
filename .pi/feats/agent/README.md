@@ -20,9 +20,18 @@ Import direction is one-way: `errors` ← `config`/`schemas`/`context` ← `clie
 
 ## Rules
 
-- Reads go through `frappe.get_list`, never `frappe.get_all`, never
-  `ignore_permissions`. `tests/test_tools.py` enforces this by parsing the module's
-  own AST, so the invariant cannot erode quietly.
+- Reads go through `frappe.get_list`, never `ignore_permissions`.
+  `tests/test_tools.py` enforces this by parsing the module's own AST against an
+  **allowlist** of the `frappe.*` calls `tools.py` may make, so the invariant cannot
+  erode quietly.
+  One documented exception: `read_thread` fetches a record's `Communication` rows with
+  `frappe.get_all`, gated on a permission-checked read of the parent record first and
+  hard-scoped to that parent. frappe's own `permission_query_condition` for
+  `Communication` keeps only rows belonging to the reading user's email accounts, so
+  `get_list` returned an empty thread for every ordinary CRM user while the endpoint
+  still reported `ok`. Authority for a child read comes from its parent — the same
+  shape frappe's `get_docinfo` timeline uses. Adding a second exception means adding
+  to the allowlist, in review.
 - The model is configuration: base URL plus model name. No prompt or parser may be
   model-specific — swapping models must not require a code change.
 - Communication bodies are untrusted. They are fenced, the system prompt states that

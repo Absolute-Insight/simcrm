@@ -23,7 +23,7 @@
 - **Doctype changes need a migrate first:** `cd /workspace/frappe-bench && bench --site dev.localhost migrate`.
 - **Every file starts with** the two-line copyright header used across this app:
   `# Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors` / `# For license information, please see license.txt`
-- **Permissions:** use `frappe.get_list` (permission-checked), never `frappe.get_all` (which ignores permissions), and never `ignore_permissions=True`.
+- **Permissions:** use `frappe.get_list` (permission-checked), never `frappe.get_all` (which ignores permissions), and never `ignore_permissions=True`. **One documented exception, added during the pre-merge fix wave:** a *child* read may use `frappe.get_all` when it is gated on a `read_list`-checked read of its parent record first and hard-scoped to that one parent. `tools.read_thread` is the only such call. It exists because frappe registers a `permission_query_condition` for `Communication` that keeps only rows belonging to the *reading user's own* email accounts (and excludes all email for a user with none), so a `get_list` read handed every ordinary CRM user an empty thread while the endpoint still reported `ok`. `tests/test_tools.py` pins the exception with an allowlist of the `frappe.*` calls the module may make, so a second one cannot appear quietly.
 - **Feature flag:** `CRM Agent Settings.enabled` defaults to `0`. With the flag off, no code path in this plan may contact a model or change behaviour anywhere else in the app.
 - **Commits:** conventional prefixes (`feat:`, `test:`, `docs:`), one per task. Branch off `develop` — hooks block committing directly to it.
 
