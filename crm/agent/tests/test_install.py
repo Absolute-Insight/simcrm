@@ -1,14 +1,19 @@
 # Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-"""The agent role must exist, be read-only, and survive being created twice."""
+"""The agent role must exist, survive being created twice, and grant nothing yet.
+
+There are no DocPerm assertions on purpose: ``ensure_agent_role`` deliberately creates
+no permission rows, because ``add_permission`` would freeze standard perms on shared
+core doctypes (see the module docstring in ``crm/agent/install.py``).
+"""
 
 from __future__ import annotations
 
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from crm.agent.install import AGENT_ROLE, READABLE_DOCTYPES, ensure_agent_role
+from crm.agent.install import AGENT_ROLE, ensure_agent_role
 
 
 class AgentRoleTest(IntegrationTestCase):
@@ -21,19 +26,8 @@ class AgentRoleTest(IntegrationTestCase):
 		ensure_agent_role()
 		self.assertEqual(frappe.db.count("Role", {"name": AGENT_ROLE}), 1)
 
-	def test_role_grants_read_only(self):
+	def test_no_permissions_are_frozen_for_the_role(self):
+		"""A ``Custom DocPerm`` row here means the perm loop is back, and with it the
+		irreversible snapshot of standard perms on ``Contact`` and ``Communication``."""
 		ensure_agent_role()
-		for doctype in READABLE_DOCTYPES:
-			if not frappe.db.exists("DocType", doctype):
-				continue
-			perm = frappe.db.get_value(
-				"Custom DocPerm",
-				{"parent": doctype, "role": AGENT_ROLE},
-				["read", "write", "create", "delete"],
-				as_dict=True,
-			)
-			self.assertIsNotNone(perm, f"no permission row for {doctype}")
-			self.assertEqual(int(perm.read), 1)
-			self.assertEqual(int(perm.write), 0)
-			self.assertEqual(int(perm.create), 0)
-			self.assertEqual(int(perm.delete), 0)
+		self.assertEqual(frappe.db.count("Custom DocPerm", {"role": AGENT_ROLE}), 0)
