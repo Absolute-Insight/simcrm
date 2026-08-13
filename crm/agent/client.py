@@ -66,9 +66,23 @@ def _request_body(cfg: AgentConfig, schema: dict, messages: list[dict]) -> dict:
 	}
 
 
+def _headers(cfg: AgentConfig) -> dict:
+	"""Bearer auth only when a key is configured.
+
+	An endpoint served with ``--api-key`` answers 401 without this, which would surface as
+	an unexplained ``AgentUnavailable`` and no setting to fix it with.
+	"""
+	return {"Authorization": f"Bearer {cfg.api_key}"} if cfg.api_key else {}
+
+
 def _post(cfg: AgentConfig, body: dict) -> str:
 	try:
-		response = requests.post(f"{cfg.base_url}/chat/completions", json=body, timeout=cfg.timeout)
+		response = requests.post(
+			f"{cfg.base_url}/chat/completions",
+			json=body,
+			timeout=cfg.timeout,
+			headers=_headers(cfg),
+		)
 		response.raise_for_status()
 		return response.json()["choices"][0]["message"]["content"]
 	except (requests.RequestException, KeyError, IndexError, TypeError, ValueError) as exc:

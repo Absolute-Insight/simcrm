@@ -9,6 +9,7 @@
   "endpoint_section",
   "base_url",
   "model",
+  "api_key",
   "column_break_endpoint",
   "timeout",
   "max_tokens"
@@ -40,6 +41,12 @@
    "label": "Model"
   },
   {
+   "description": "Only needed if the inference server was started with an API key. Left blank, no Authorization header is sent.",
+   "fieldname": "api_key",
+   "fieldtype": "Password",
+   "label": "API Key"
+  },
+  {
    "fieldname": "column_break_endpoint",
    "fieldtype": "Column Break"
   },
@@ -60,7 +67,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-12 00:00:00.000000",
+ "modified": "2026-08-13 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Agent",
  "name": "CRM Agent Settings",
