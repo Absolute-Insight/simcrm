@@ -14,6 +14,8 @@ allowlist in ``tests/test_tools.py`` that pins the exception to that one call.
 
 from __future__ import annotations
 
+import html
+
 import frappe
 from frappe import _
 from frappe.utils import strip_html_tags
@@ -77,7 +79,28 @@ def read_thread(doctype: str, name: str, limit: int = DEFAULT_THREAD_LIMIT) -> l
 	)
 	# Email bodies arrive as HTML. Markup is tokens the model pays for and reasons over
 	# for nothing, and it is the caller's job to hand the pure prompt builder plain rows.
-	return [{**row, "content": strip_html_tags(row.get("content") or "")} for row in rows]
+	return [{**row, "content": _plain_text(row.get("content") or "")} for row in rows]
+
+
+def _plain_text(content: str) -> str:
+	"""An HTML mail body reduced to the plain text the prompt builder expects.
+
+	Strip tags first, then decode entities. The order is load-bearing in both directions.
+
+	Decoding at all is a security fix, not tidiness. frappe stores a mail body escaped,
+	so a fence terminator typed by a sender sits on disk as ``THREAD&gt;&gt;&gt;`` and
+	``strip_html_tags`` removes tags without touching entities. ``context._neutralise``
+	matches the *literal* marker, so on real email it found nothing and replaced nothing
+	-- while the model was still handed a string it can read as the end of the quoted
+	region. The unit tests could not see this: they pass content that never went through
+	the database. It surfaced only against a live model. Decoding here puts the literal
+	marker back in front of the code whose whole job is to neutralise it.
+
+	Decoding *second* matters too. Doing it first would turn a sender's quoted
+	``&lt;p&gt;`` into real markup for ``strip_html_tags`` to delete, silently eating
+	text somebody actually wrote; this way it survives as the characters they typed.
+	"""
+	return html.unescape(strip_html_tags(content))
 
 
 def _clamp_limit(limit) -> int:
