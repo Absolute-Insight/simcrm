@@ -24,6 +24,24 @@ class ThreadSummarySchemaTest(UnitTestCase):
 		self.assertIn("summary", schema["required"])
 		self.assertFalse(schema["additionalProperties"])
 
+	def test_every_property_is_required_for_strict_mode(self):
+		"""Strict ``response_format: json_schema`` implementations reject a schema whose
+		``required`` is not the full property set, and pydantic omits fields that have
+		defaults -- here ``next_steps`` and ``sentiment``. Without this the guided-decoding
+		request is refused by the server rather than producing a bad summary, which is a
+		failure the client reports as AgentUnavailable with no obvious cause."""
+		schema = json_schema(ThreadSummary)
+		self.assertEqual(set(schema["required"]), set(schema["properties"]))
+		self.assertIn("next_steps", schema["required"])
+		self.assertIn("sentiment", schema["required"])
+
+	def test_defaults_still_apply_when_the_model_omits_a_field(self):
+		"""Requiring the keys in the wire schema must not make the validator stricter --
+		a reply that omits them still parses, so an older served schema keeps working."""
+		result = parse_into(ThreadSummary, '{"summary": "x"}')
+		self.assertEqual(result.next_steps, [])
+		self.assertEqual(result.sentiment, "neutral")
+
 	def test_valid_payload_parses(self):
 		result = parse_into(ThreadSummary, VALID)
 		self.assertEqual(result.sentiment, "neutral")

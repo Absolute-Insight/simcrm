@@ -31,8 +31,19 @@ class ThreadSummary(BaseModel):
 
 
 def json_schema(model: type[BaseModel]) -> dict:
-	"""The schema to send as ``response_format``. Derived, never hand-written."""
-	return model.model_json_schema()
+	"""The schema to send as ``response_format``. Derived, never hand-written.
+
+	Every property is marked required before the schema goes out. Strict-mode
+	implementations of ``response_format: json_schema`` reject a schema whose
+	``required`` list is not the full property set, and pydantic omits any field that
+	has a default -- here ``next_steps`` and ``sentiment``. The model is then obliged to
+	emit all three keys, which is what we wanted anyway: a field quietly absent from the
+	reply is indistinguishable from a field the model had nothing to say about.
+	"""
+	schema = model.model_json_schema()
+	if "properties" in schema:
+		schema["required"] = list(schema["properties"])
+	return schema
 
 
 def parse_into(model: type[BaseModel], raw: str) -> BaseModel:
