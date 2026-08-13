@@ -18,6 +18,10 @@ CONTENT_END = "THREAD>>>"
 NEUTRALISED_MARKER = "[fence marker removed]"
 # What is appended to an entry trimmed to fit the character budget.
 TRUNCATION_NOTE = " [...truncated]"
+# Emitted when the budget is too small to carry even a trimmed entry. Never leave the
+# fence empty: an empty fence reads to the model as "there was no conversation", and the
+# endpoint would report a confident summary of silence.
+OMITTED_NOTE = "Thread omitted: the character budget was too small to include any of it."
 
 SYSTEM_PROMPT = (
 	"You summarise sales conversations for a CRM. "
@@ -33,11 +37,15 @@ def build_thread_messages(
 	deal: dict, communications: list[dict], max_chars: int = DEFAULT_MAX_CHARS
 ) -> list[dict]:
 	"""System + user messages summarising ``deal``'s thread, newest exchanges first."""
+	# Neutralised even though these are internal fields: an organisation name is
+	# ultimately typed by someone, and the rule "anything out of the database is
+	# neutralised unless it is a constant" is cheaper to hold than a per-field argument
+	# about which columns a stranger can reach.
 	header = "\n".join(
 		[
-			f"Deal: {deal.get('name', '')}",
-			f"Organization: {deal.get('organization', '') or 'unknown'}",
-			f"Status: {deal.get('status', '') or 'unknown'}",
+			f"Deal: {_neutralise(deal.get('name', ''))}",
+			f"Organization: {_neutralise(deal.get('organization', '')) or 'unknown'}",
+			f"Status: {_neutralise(deal.get('status', '')) or 'unknown'}",
 		]
 	)
 	body = _fenced_thread(communications, max_chars)
@@ -71,6 +79,12 @@ def _fenced_thread(communications: list[dict], max_chars: int) -> str:
 			break
 		kept.append(entry)
 		budget -= len(entry)
+
+	if not kept:
+		# Reachable when ``max_chars`` is smaller than the truncation note itself, and a
+		# backstop for any future path that keeps nothing: say so rather than emitting an
+		# empty fence.
+		return f"{CONTENT_START}\n{OMITTED_NOTE}\n{CONTENT_END}"
 
 	kept.reverse()
 	return f"{CONTENT_START}\n" + "\n".join(kept) + f"\n{CONTENT_END}"
