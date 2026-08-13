@@ -46,6 +46,20 @@ Import direction is one-way: `errors` ← `config`/`schemas`/`context` ← `clie
 - The role grants no DocPerms yet, on purpose: `add_permission` would snapshot standard
   perms into `Custom DocPerm` on shared core doctypes, irreversibly. See the docstring in
   `install.py`.
+- Import direction is enforced, not just documented: `tests/test_layering.py` parses each
+  module and fails on a dependency the layering map does not allow, and on any `frappe`
+  import reaching the two pure modules (`errors`, `context`).
+- Email bodies are stripped of HTML in `tools.read_thread`, not in `context.py` — the
+  prompt builder takes plain rows and imports nothing, which is what keeps it testable
+  with no site.
+- `api_key` is optional. Set it only if the inference server was started with one; blank
+  means no `Authorization` header is sent.
+
+## Editing the Settings doctype
+
+Bump `modified` in `crm_agent_settings.json` whenever you change its fields. Frappe
+compares that timestamp when deciding whether to re-import the definition, so a field
+added without bumping it may be silently skipped on `bench migrate`.
 
 ## Running the tests
 
