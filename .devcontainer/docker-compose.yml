@@ -40,6 +40,18 @@ services:
     ports:
       - 8000-8005:8000-8005
       - 9000-9005:9000-9005
+    # Expose the host GPU to the container. The NVIDIA Container Toolkit injects
+    # the host driver libraries and nvidia-smi at runtime -- do NOT install an
+    # NVIDIA driver inside the container, and never inside WSL itself.
+    #   `utility` -> nvidia-smi,  `compute` -> CUDA.
+    # Decisive host-side check:  docker run --rm --gpus all ubuntu nvidia-smi
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, utility, compute]
 
 volumes:
   mariadb-data:
