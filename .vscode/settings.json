@@ -1,6 +1,8 @@
 {
-    "python.defaultInterpreterPath": "frappe-bench/env/bin/python",
+    "python.defaultInterpreterPath": "${workspaceFolder}/frappe-bench/env/bin/python",
     "debug.node.autoAttach": "disabled",
+    "vitest.configSearchPatternExclude": "{**/node_modules/**,**/vendor/**,**/.*/**,**/*.d.ts,frappe-ui/**,frappe-bench/**}",
+    "vitest.rootConfig": "frontend/vitest.config.js",
     "sqltools.connections": [
         {
             "mysqlOptions": {
