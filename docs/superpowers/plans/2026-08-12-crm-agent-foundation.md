@@ -1281,9 +1281,31 @@ git commit -m "feat: add thread summary endpoint with disabled and degraded stat
 - Modify: `crm/hooks.py` (the `after_migrate` list, around line 313)
 - Test: `crm/agent/tests/test_install.py`
 
+> ### ⚠️ Superseded — read this before executing Task 8
+>
+> **The permission loop below was removed after the final review, and must not be
+> reintroduced.** `frappe.permissions.add_permission` calls `setup_custom_perms`, which
+> copies a doctype's standard `DocPerm` rows into `Custom DocPerm` the first time it runs
+> for that doctype (frappe/permissions.py:698-710). From then on `get_valid_perms`
+> (permissions.py:518-530) stops extending that doctype with standard perms, so every
+> later permission change shipped by frappe or by CRM is silently discarded for it.
+> Two of the six doctypes in the original list — `Contact` and `Communication` — are
+> frappe core, shared with every app on the bench, and reversing it needs a manual
+> `reset_perms`. It ran unconditionally from `after_migrate`, for a feature that is off
+> by default with a role assigned to nobody, which also breached this plan's own Global
+> Constraint that nothing else in the app changes while the flag is off.
+>
+> **What shipped instead:** `ensure_agent_role()` creates the `Role` and nothing more,
+> wired into both `after_install` and `after_migrate`. DocPerms are deferred to the plan
+> that introduces the actual agent user — nothing needs them until then, because reads run
+> as the calling user. `crm/agent/install.py` and `crm/agent/tests/test_install.py` as
+> committed are the source of truth; the code blocks in this task are the superseded
+> original. A test now asserts the role holds zero `Custom DocPerm` rows, so the loop
+> cannot come back unnoticed.
+
 **Interfaces:**
-- Consumes: nothing. `READABLE_DOCTYPES` is deliberately its own list, wider than `tools.SUPPORTED_DOCTYPES` — the role covers what the agent may ever read, the tools expose what it can read *today*.
-- Produces: `AGENT_ROLE = "CRM Agent"`; `READABLE_DOCTYPES: tuple[str, ...]`; `ensure_agent_role() -> None`, idempotent.
+- Consumes: nothing.
+- Produces: `AGENT_ROLE = "CRM Agent"`; `ensure_agent_role() -> None`, idempotent, granting no permissions.
 
 - [ ] **Step 1: Write the failing test**
 
