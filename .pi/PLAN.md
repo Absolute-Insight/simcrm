@@ -110,9 +110,15 @@ One pass across all modules producing a checklist of divergences, then fix them:
 
 ### Checklist
 
-- [ ] Obtain logo/wordmark + brand palette from user (placeholder until then)
-- [ ] 7A: all surfaces in the table above renamed; grep for `Frappe CRM` returns only
-      historical docs
+- [x] Obtain logo/wordmark + brand palette from user — master at
+      `frontend/public/vectora-logo.png`; palette: sky `#21ABFB` → indigo `#5B5FE8` →
+      magenta `#DF5FEB` (sampled from the logo)
+- [x] 7A: all surfaces renamed (2026-08-13, branch `vectora-rebrand`) — remaining
+      `Frappe CRM` strings are deliberate: workspace `"name"` (data layer), the
+      ERPNext-side setting label, generated `locale/*.po` (regenerate needs a bench),
+      and `crm/public/frontend/` build output (regenerates on next build). Extra
+      surfaces found and done: desk logo (`crm/public/images/logo.{svg,png}`,
+      `desk.png`, `app_icon_title`), PWA `theme_color` → `#5B5FE8`
 - [ ] 7B: token file + dark mode parity
 - [ ] 7B: shell → lists → details → overlays → states, in that order
 - [ ] 7C: divergence checklist written, then burned down
