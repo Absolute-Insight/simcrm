@@ -6,13 +6,26 @@
     fill="none"
     xmlns="http://www.w3.org/2000/svg"
   >
+    <defs>
+      <linearGradient
+        id="vectora-v-gradient"
+        x1="44"
+        y1="60"
+        x2="256"
+        y2="80"
+        gradientUnits="userSpaceOnUse"
+      >
+        <stop offset="0" stop-color="#21ABFB" />
+        <stop offset="0.55" stop-color="#5B5FE8" />
+        <stop offset="1" stop-color="#DF5FEB" />
+      </linearGradient>
+    </defs>
     <path
-      d="M214.286 0H85.7143C38.3756 0 0 38.3756 0 85.7143V214.286C0 261.624 38.3756 300 85.7143 300H214.286C261.624 300 300 261.624 300 214.286V85.7143C300 38.3756 261.624 0 214.286 0Z"
-      fill="#EF0BF5"
-    />
-    <path
-      d="M64.2141 90.301V111.862H214.339V140.214L160.187 193.146V208.993L139.705 208.885V193.146L85.6605 140.214H64.2141V149.269L118.259 202.202V230.23L181.634 230.769V202.202L235.786 149.269V90.301H64.2141Z"
-      fill="white"
+      d="M72 56L150 236L228 56"
+      stroke="url(#vectora-v-gradient)"
+      stroke-width="52"
+      stroke-linecap="round"
+      stroke-linejoin="round"
     />
   </svg>
 </template>
