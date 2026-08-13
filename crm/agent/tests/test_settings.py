@@ -5,6 +5,15 @@
 
 Defaults are asserted against the DocType meta rather than a loaded document: an
 unsaved Single has no row, so reading attributes off it proves nothing.
+
+There is deliberately no test that loads the Single and asserts ``enabled`` is off.
+That reads live, admin-mutable state, so it fails the moment somebody legitimately
+turns the feature on -- and it cannot tell that apart from a fresh install shipping it
+on, which is the only thing worth catching. It passed on CI only because CI never
+enables anything. The property it was reaching for is asserted where it is actually
+decidable: the declared default below, and ``test_config`` on the code path that reads
+it (``from_settings({})`` yields ``enabled=False``, so a missing or empty row fails
+closed).
 """
 
 from __future__ import annotations
@@ -18,10 +27,6 @@ from crm.agent.config import DEFAULT_SETTINGS
 class AgentSettingsTest(IntegrationTestCase):
 	def test_is_a_single_doctype(self):
 		self.assertTrue(frappe.get_meta("CRM Agent Settings").issingle)
-
-	def test_ships_disabled(self):
-		settings = frappe.get_cached_doc("CRM Agent Settings")
-		self.assertFalse(int(settings.enabled or 0))
 
 	def test_field_defaults_are_declared(self):
 		meta = frappe.get_meta("CRM Agent Settings")
