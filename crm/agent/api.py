@@ -5,12 +5,14 @@
 
 Returns a status rather than raising when the model is off or unreachable: an
 unavailable endpoint should look like a feature that is not there, not like a bug.
-Mirrors the shape of ``crm.domain_enrichment.api``.
+Mirrors the shape of ``crm.domain_enrichment.api``, including its rule that every entry
+point which triggers an outbound fetch is rate-limited per user.
 """
 
 from __future__ import annotations
 
 import frappe
+from frappe.rate_limiter import rate_limit
 
 from crm.agent import client, tools
 from crm.agent.config import get_config
@@ -18,8 +20,15 @@ from crm.agent.context import build_thread_messages
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
 from crm.agent.schemas import ThreadSummary
 
+# Per-user, per-minute cap, matching ``domain_enrichment.api.ENRICH_RATE_LIMIT``.
+# One call holds a worker for up to ``timeout`` x ``client.MAX_ATTEMPTS`` -- 60 seconds
+# at the shipped defaults -- so without a cap a single authenticated user can occupy
+# the whole worker pool from a loop. 10/min is far above any real human burst.
+SUMMARISE_RATE_LIMIT = 10
+
 
 @frappe.whitelist()
+@rate_limit(limit=SUMMARISE_RATE_LIMIT, seconds=60)
 def summarise_thread(reference_doctype: str, reference_name: str) -> dict:
 	"""Summarise a record's communication thread.
 

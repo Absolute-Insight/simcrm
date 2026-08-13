@@ -62,3 +62,14 @@ class HappyPathTest(IntegrationTestCase):
 		"""``frappe.whitelist()`` registers the function object in ``frappe.whitelisted`` --
 		it does not set an attribute on it, so membership is what to assert."""
 		self.assertIn(api_mod.summarise_thread, frappe.whitelisted)
+
+
+class RateLimitTest(IntegrationTestCase):
+	def test_the_endpoint_is_rate_limited(self):
+		"""One call can hold a worker for ``timeout`` x ``MAX_ATTEMPTS`` -- 60s at the
+		shipped defaults -- so the cap is what stands between one authenticated user and
+		the worker pool. Mirrors ``domain_enrichment``'s check: ``rate_limit`` wraps with
+		``functools.wraps``, so ``__wrapped__`` is the evidence the decorator is on."""
+		self.assertTrue(hasattr(api_mod.summarise_thread, "__wrapped__"))
+		self.assertIsNot(api_mod.summarise_thread, api_mod.summarise_thread.__wrapped__)
+		self.assertGreater(api_mod.SUMMARISE_RATE_LIMIT, 0)
