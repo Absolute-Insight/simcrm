@@ -142,7 +142,10 @@ allowlist test pattern as `tools.py`.
       (accept/dismiss only flip status; record creation stays behind formDialog)
 - [x] `predict.py` heuristic scores + factor attribution + 9 unit tests
 - [ ] `actions.py` write-tier proposals + AST allowlist test (pattern from `tools.py`)
-- [ ] Suggestion inbox UI + per-record suggestions + accept→`formDialog()` confirm flow
+- [x] Suggestion inbox UI (shell panel + count badge) + accept→`formDialog()` confirm
+      flow, verified end-to-end on the dev bench (2026-08-14). Still open: per-record
+      suggestions section on detail pages; realtime badge via `$socket` (polls on
+      open/action for now)
 - [ ] Automation rule doctype + runner + tests (agent disabled path proven)
 - [ ] Injection eval set extended to cover every new model-touching path (n/a so far —
       this slice is deterministic; becomes real with `actions.py`/model ranking)
