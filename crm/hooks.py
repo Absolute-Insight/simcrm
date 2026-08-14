@@ -236,6 +236,7 @@ scheduler_events = {
 	"daily": [
 		"crm.api.event.trigger_daily_event_notifications",
 		"crm.rep_planning.match_actuals",
+		"crm.fcrm.doctype.crm_report_digest.crm_report_digest.send_due_digests",
 		"crm.fcrm.doctype.crm_invitation.crm_invitation.expire_invitations",
 		"crm.fcrm.doctype.crm_view_settings.crm_view_settings.clear_old_versions",
 		"crm.telemetry.capture_feature_state",
