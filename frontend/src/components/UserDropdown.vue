@@ -21,7 +21,7 @@
           "
         >
           <div class="text-base-medium leading-none text-ink-gray-9 truncate">
-            {{ __(brand.name || 'CRM') }}
+            {{ __(brand.name || 'Vectora') }}
           </div>
           <div class="mt-1 text-sm leading-none text-ink-gray-7 truncate">
             {{ user.full_name }}

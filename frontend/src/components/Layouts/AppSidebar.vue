@@ -158,6 +158,7 @@
       v-model="showHelpModal"
       v-model:articles="articles"
       :logo="CRMLogo"
+      :title="__('Vectora')"
       :afterSkip="(step) => capture('onboarding_step_skipped_' + step)"
       :afterSkipAll="() => capture('onboarding_steps_skipped')"
       :afterReset="(step) => capture('onboarding_step_reset_' + step)"
