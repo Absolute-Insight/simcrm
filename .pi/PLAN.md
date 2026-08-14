@@ -147,7 +147,10 @@ allowlist test pattern as `tools.py`.
       badge via `$socket` (polls on open/action for now)
 - [x] Per-record "Needs attention" section on Deal/Lead side panels: health score
       badge + plain-language factors + inline accept/dismiss (2026-08-14)
-- [ ] Automation rule doctype + runner + tests (agent disabled path proven)
+- [x] Automation rule doctype + runner + tests (2026-08-14) — Created / Status Changed
+      triggers, safe_eval conditions validated at save, Create Task / Create Suggestion
+      actions, per-rule failure isolation; model-free (agent-disabled path is the only
+      path). No admin UI yet — rules are authored via desk
 - [ ] Injection eval set extended to cover every new model-touching path (n/a so far —
       this slice is deterministic; becomes real with `actions.py`/model ranking)
 - [ ] Rate limits on every endpoint that can trigger a model call (none added yet —
