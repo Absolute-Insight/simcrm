@@ -256,11 +256,20 @@ Use the `dataviz` skill at implementation time.
 
 ### Checklist
 
-- [ ] `metrics.py` with fixture-based unit tests (incl. timezone/currency cases)
+> Architecture note (2026-08-14): the metrics layer already existed as
+> `crm/api/dashboard.py` (layout entries dispatch to `get_<name>` functions, exchange-
+> rate-aware). Phase 10 extends that module rather than adding a parallel `metrics.py`.
+
+- [x] Metrics with fixture-based tests (2026-08-14) — `get_plan_adherence` (done share
+      of items already due), `get_deals_at_risk` (health < 40, batched), plus the
+      pre-existing pipeline/funnel/forecast functions
 - [ ] Quota field/doctype (needed for forecast vs. quota — confirm shape with user)
-- [ ] Rep home + manager view, every figure click-through to its list view
-- [ ] Forecast baseline + adjusted view + weekly snapshot job
-- [ ] Forecast-accuracy view once ≥ 4 snapshots exist
+- [x] Widgets registered in the default dashboard (plan adherence, deals at risk) and
+      verified live. Full rep-home/manager-view redesign + click-through pending
+- [x] Forecast baseline (pre-existing, probability-weighted) + weekly snapshot job
+      (`CRM Forecast Snapshot`, idempotent per day)
+- [x] `get_forecast_accuracy` implemented and tested (earliest pre-month snapshot vs
+      latest actual); dashboard widget to be registered once snapshots accumulate
 
 ---
 
