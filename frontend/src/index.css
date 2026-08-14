@@ -7,6 +7,62 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Vectora signature — the position rail. One gradient, one meaning: "you are
+   here". It marks the active sidebar item and the selected tab, and appears
+   nowhere else except the logo mark itself. */
+[data-slot='sidebar-item'] {
+  position: relative;
+}
+[data-slot='sidebar-item'][data-state='active']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 16px;
+  width: 2.5px;
+  transform: translateY(-50%);
+  border-radius: 9999px;
+  background: linear-gradient(180deg, #21abfb, #5b5fe8 55%, #df5feb);
+}
+
+/* Selected-tab underline: same rail, horizontal. The selector reaches the
+   fill div inside frappe-ui's TabsIndicator (the only absolute rounded-full
+   child of a tablist). */
+[role='tablist'] > .absolute.rounded-full > div {
+  background: var(--brand-gradient);
+}
+
+/* Type system: display sizes (2xl and up — record titles, panel and modal
+   headings) are set in the display face; body sizes stay on Inter. Matching
+   the size utilities keeps every current and future heading coherent without
+   per-component classes. */
+[class*='text-2xl-'],
+[class*='text-3xl-'],
+.font-display {
+  font-family: theme(fontFamily.display);
+  letter-spacing: -0.02em;
+}
+
+/* The page-header title cluster (breadcrumbs and the view switcher) belongs
+   to the same display scale. Scoped to header so body-level text-lg-medium
+   stays on Inter. */
+header .text-lg-medium {
+  font-family: theme(fontFamily.display);
+  letter-spacing: -0.02em;
+}
+
+/* Slim, token-colored scrollbars everywhere. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-gray-4) transparent;
+}
+
+/* Tab strips scroll on overflow but a permanent track under the tab row reads
+   as noise — the gradient indicator already signals position. */
+[role='tablist'] {
+  scrollbar-width: none;
+}
+
 @layer components {
   .prose-f {
     @apply break-all

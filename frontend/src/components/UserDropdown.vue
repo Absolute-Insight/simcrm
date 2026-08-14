@@ -20,7 +20,9 @@
               : 'ml-2 w-auto opacity-100'
           "
         >
-          <div class="text-base-medium leading-none text-ink-gray-9 truncate">
+          <div
+            class="font-display text-base font-semibold tracking-tight leading-none text-ink-gray-9 truncate"
+          >
             {{ __(brand.name || 'Vectora') }}
           </div>
           <div class="mt-1 text-sm leading-none text-ink-gray-7 truncate">
