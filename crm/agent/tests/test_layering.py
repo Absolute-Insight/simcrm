@@ -30,9 +30,11 @@ ALLOWED_SIBLING_IMPORTS = {
 	"tools": set(),
 	"api": {"client", "config", "context", "errors", "schemas", "tools"},
 	"install": set(),
-	# The deterministic tier: signals must work with the agent disabled, so it
-	# may never import client (or anything that knows a model exists).
+	# The deterministic tier: signals and predict must work with the agent
+	# disabled, so neither may import client (or anything that knows a model
+	# exists). predict reuses signals' activity query.
 	"signals": set(),
+	"predict": {"signals"},
 }
 
 
