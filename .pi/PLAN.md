@@ -201,12 +201,15 @@ calls" and the 30 planned call items can never disagree.
 
 ### Checklist
 
-- [ ] Doctypes + fulfilment-matching logic with unit tests (matching is pure logic —
-      extract and test)
+- [x] Doctypes + fulfilment-matching logic with unit tests (2026-08-14) — one plan per
+      (user, Monday week); pure `match_items` (kind + reference + week window, one
+      actual per item, closest date wins); decisions taken: week-only granularity,
+      managers read any plan / edit only their own
 - [ ] Planner page (rep view, manager roster view)
-- [ ] "Propose my week" flow through the Phase 8 confirm gate
-- [ ] Actuals matcher job + manual override UI
-- [ ] Plan-vs-actual computed fields exposed for Phase 10
+- [x] "Propose my week" flow through the Phase 8 confirm gate — `propose_week` drafts
+      from open suggestions and writes nothing; saving the reviewed plan accepts them
+- [x] Actuals matcher job (daily) — manual override UI pending with the planner page
+- [x] Plan-vs-actual computed rollup exposed via `get_plan` for Phase 10
 
 ---
 
