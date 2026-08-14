@@ -39,8 +39,8 @@ Two tracks. The **product track** delivers the new direction; the **platform tra
 
 | Order | Phase | Track | Scope | Status |
 |---|---|---|---|---|
-| **1** | [Phase 7 — Vectora rebrand & design language](#phase-7--vectora-rebrand--design-language) | Product | Brand + UI overhaul + coherence audit | 🔜 Next |
-| **2** | [Phase 8 — Proactive agent workflows](#phase-8--proactive-agent-workflows) | Product | Signals, predictions, suggestions, automation | After 7A (7B/7C can overlap) |
+| ~~1~~ | ~~Phase 7 — Vectora rebrand & design language~~ | Product | Brand + UI + coherence | ✅ Done — [see ARCHIVE](./ARCHIVE.md#phase-7--vectora-rebrand--design-language) |
+| **2** | [Phase 8 — Proactive agent workflows](#phase-8--proactive-agent-workflows) | Product | Signals, predictions, suggestions, automation | 🔜 Next |
 | **3** | [Phase 9 — Rep planning](#phase-9--rep-planning) | Product | Auto + manual plans linked to actuals | After 8 |
 | **4** | [Phase 10 — Dashboards, analytics & forecasts](#phase-10--dashboards-analytics--forecasts) | Product | Metrics layer, role-aware dashboards, forecasting | After 9 |
 | **5** | [Phase 11 — Reporting](#phase-11--reporting) | Product | Saved reports, exports, scheduled digests | After 10 |
@@ -49,81 +49,8 @@ Two tracks. The **product track** delivers the new direction; the **platform tra
 | 8 | [Phase 6 — More Capabilities (selected)](#phase-6--more-capabilities-selected) | Platform | Feature expansion | After 4 |
 | 9 | [Phase 5 — Scripting DX Rethink](#phase-5--scripting-dx-rethink) | Platform | Syntax/API redesign | Last |
 
-**Conflict note (7B × 3B)**: Phase 7B restyles surfaces that Phase 3B restructures
-(`FieldLayout`, `Field`, `Grid`). Do not run both against those files simultaneously —
-either land 3B first, or keep 7B's form-surface polish to design tokens only until 3B
-merges.
-
----
-
-## Phase 7 — Vectora Rebrand & Design Language
-
-> **First. Everything that ships after this lands as Vectora.**
-
-### 7A — Rebrand (small, mechanical)
-
-Display-layer rename only (see scope guard above).
-
-**Known branding surfaces** (verified by grep):
-
-| Surface | Change |
-|---|---|
-| `crm/hooks.py` | `app_title = "Vectora"` (`app_name = "crm"` stays) |
-| `frontend/index.html` | `<title>`, meta description |
-| `frontend/public/favicon.png` | New favicon; add logo assets alongside |
-| `frontend/src/components/Layouts/AppSidebar.vue` | Wordmark/logo |
-| `frontend/src/components/Modals/AboutModal.vue` | Name, links, version copy |
-| `frontend/src/pages/NotPermitted.vue`, `PersonaForm.vue` | Copy |
-| `frontend/src/components/Settings/ERPNextSettings.vue` | Copy |
-| PWA manifest / mobile icons (locate at implementation) | Name + icons |
-| Email/notification templates in `crm/` (grep at implementation) | Sender name, footer copy |
-
-**Blocked on user input**: final logo/wordmark assets and brand palette. Until supplied,
-implement with a placeholder wordmark and a token-based palette that can be swapped in
-one file.
-
-### 7B — Design language (the premium pass)
-
-Use the `frontend-design` skill at implementation time. This is a *designed* pass, not a
-reskin: define the system first, then apply it surface by surface.
-
-1. **Tokens** — typography scale, spacing, radius, elevation/shadow, motion durations,
-   and a semantic color palette (light + dark) in `tailwind.config.js` + CSS variables.
-   frappe-ui components inherit via CSS vars where possible; wrap where not.
-2. **App shell** — sidebar, top bar, navigation states, notification surface.
-3. **List surfaces** — list views, kanban, group-by headers, selection & bulk-action bar.
-4. **Detail surfaces** — Lead/Deal/Contact/Organization pages, side panel, activity
-   timeline (highest-traffic screen; the timeline is where "premium" is won or lost).
-5. **Overlays** — modals (incl. `FieldLayoutDialog`), dropdowns, toasts, tooltips.
-6. **States** — designed empty states (with a next action, not just an illustration),
-   loading skeletons, error states.
-
-### 7C — Coherence audit
-
-One pass across all modules producing a checklist of divergences, then fix them:
-
-- Same filter/sort/column controls on every list view
-- Same quick-action set and placement on every detail page
-- Same keyboard shortcuts everywhere (and a discoverable shortcut sheet)
-- Same empty/loading/error treatment everywhere
-- Same terminology (one word per concept — no "rep/agent/user" drift in UI copy)
-
-### Checklist
-
-- [x] Obtain logo/wordmark + brand palette from user — master at
-      `frontend/public/vectora-logo.png`; palette: sky `#21ABFB` → indigo `#5B5FE8` →
-      magenta `#DF5FEB` (sampled from the logo)
-- [x] 7A: all surfaces renamed (2026-08-13, branch `vectora-rebrand`) — remaining
-      `Frappe CRM` strings are deliberate: workspace `"name"` (data layer), the
-      ERPNext-side setting label, generated `locale/*.po` (regenerate needs a bench),
-      and `crm/public/frontend/` build output (regenerates on next build). Extra
-      surfaces found and done: desk logo (`crm/public/images/logo.{svg,png}`,
-      `desk.png`, `app_icon_title`), PWA `theme_color` → `#5B5FE8`
-- [ ] 7B: token file + dark mode parity
-- [ ] 7B: shell → lists → details → overlays → states, in that order
-- [ ] 7C: divergence checklist written, then burned down
-- [ ] Visual regression: screenshot pass over Leads/Deals/Contact/Organization +
-      modals, light and dark
+**Note (3B)**: Phase 7B shipped as a token/CSS layer and did not restructure
+`FieldLayout`/`Field`/`Grid`, so Phase 3B proceeds without conflict.
 
 ---
 

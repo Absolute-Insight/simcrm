@@ -168,3 +168,47 @@ Three patterns were considered:
 
 > Current stable API: [SPEC.md — formDialog API](./SPEC.md#formdialog-api)  
 > Full guide with examples: [feats/form-scripting/form-dialog.md](./feats/form-scripting/form-dialog.md)
+
+---
+
+## Phase 7 — Vectora Rebrand & Design Language
+
+> Completed 2026-08-14, branch `vectora-rebrand`. Verified live against the dev bench
+> (light + dark; list/kanban/detail/modal/empty surfaces, screenshot pass).
+
+### What shipped
+
+- **7A — Rebrand (display layer only)**: `app_title`, `__title__`, PWA manifest
+  (name + `theme_color #5B5FE8`), all UI copy, invitation email, Twilio resource name,
+  ERPNext custom-field labels, desk workspace label/title, desk logo
+  (`crm/public/images/logo.{svg,png}`, `desk.png`), favicon, maskable PWA icons,
+  34 apple splash screens, `CRMLogo.vue` → gradient V (all five consumers inherit).
+  Deliberately kept: `app_name = "crm"`, `CRM *` doctype names, workspace `"name"`,
+  `useOnboarding('frappecrm')` key, the ERPNext-side setting label, generated
+  `locale/*.po` (regenerate on a bench), `crm/public/frontend/` build output.
+- **7B — Design system**: cool graphite neutrals (hue ≈243) at stock-matched lightness
+  overriding frappe-ui's gray-family semantic CSS vars in both themes; brand indigo
+  reserved for focus/selection/active; **the position rail** (2.5px gradient) on the
+  active sidebar item + selected-tab underline as the single signature; Space Grotesk
+  display face wired to the `text-2xl-*`/`text-3xl-*` scale and header title cluster;
+  tabular numerals globally; slim token scrollbars; actionable empty-state copy.
+- **7C — Coherence audit**: swept all modules light+dark; fixed 6 hardcoded `bg-white`
+  in Settings (broke dark mode) → `bg-surface-elevation-2`; empty-state copy fixed
+  once in `ListViews/EmptyState.vue`.
+
+### Load-bearing decisions
+
+- `frontend/src/styles/vectora-theme.css` is **generated** — rerun
+  `python3 frontend/scripts/generate_vectora_theme.py` after any frappe-ui token sync.
+- The theme file loads after frappe-ui's stylesheet and `:root` ties
+  `[data-theme="dark"]` on specificity → every token touched must be emitted for
+  **both** modes; the generator backfills stock values for asymmetric tokens
+  (`surface-sidebar` is gray-50 light / `neutral/transparent` dark — missing that
+  painted the dark sidebar light).
+- Design record: `docs/superpowers/plans/2026-08-14-vectora-design-pass-7b.md`;
+  task plan: `docs/superpowers/plans/2026-08-13-vectora-rebrand-7a.md`.
+
+### Deferred to backlog
+
+- Discoverable keyboard-shortcut sheet (feature work, not styling)
+- Skeleton-loading redesign (frappe-ui defaults inherit the new tokens)
