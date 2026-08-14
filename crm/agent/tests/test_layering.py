@@ -30,6 +30,9 @@ ALLOWED_SIBLING_IMPORTS = {
 	"tools": set(),
 	"api": {"client", "config", "context", "errors", "schemas", "tools"},
 	"install": set(),
+	# The deterministic tier: signals must work with the agent disabled, so it
+	# may never import client (or anything that knows a model exists).
+	"signals": set(),
 }
 
 
