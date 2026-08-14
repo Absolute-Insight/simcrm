@@ -157,13 +157,18 @@ def _latest_activity(deal_names: list[str]) -> dict[str, datetime]:
 	for doctype, ref_field, when_field in sources:
 		table = frappe.qb.DocType(doctype)
 		ref = table[ref_field]
-		rows = (
+		query = (
 			frappe.qb.from_(table)
 			.select(ref.as_("ref"), Max(table[when_field]).as_("last"))
 			.where(table.reference_doctype == "CRM Deal")
 			.where(ref.isin(deal_names))
 			.groupby(ref)
-		).run(as_dict=True)
+		)
+		if doctype == "Comment":
+			# only human comments count as activity — assignment/share/system
+			# comments would reset the idle clock on every automation
+			query = query.where(table.comment_type == "Comment")
+		rows = query.run(as_dict=True)
 		for row in rows:
 			if row["last"] and (row["ref"] not in latest or row["last"] > latest[row["ref"]]):
 				latest[row["ref"]] = row["last"]

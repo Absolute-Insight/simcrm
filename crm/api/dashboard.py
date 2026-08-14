@@ -1202,3 +1202,144 @@ def get_deal_status_change_counts(
 
 	result = query.run(as_dict=True)
 	return result or []
+
+
+def get_plan_adherence(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+	"""
+	Plan adherence: share of planned activities in the period that were done.
+
+	Computed from CRM Rep Plan items whose planned date falls in the range and
+	has passed — records, never self-reports. Items still in the future are not
+	counted against anyone.
+	"""
+	today = frappe.utils.nowdate()
+	cutoff = min(str(to_date), today)
+
+	PlanItem = DocType("CRM Rep Plan Item")
+	Plan = DocType("CRM Rep Plan")
+
+	cond = (PlanItem.planned_date >= from_date) & (PlanItem.planned_date <= cutoff)
+	query = (
+		frappe.qb.from_(PlanItem)
+		.join(Plan)
+		.on(PlanItem.parent == Plan.name)
+		.where(cond)
+		.select(
+			Count(PlanItem.name).as_("total"),
+			Count(Case().when(PlanItem.status == "Done", PlanItem.name).else_(None)).as_("done"),
+		)
+	)
+	if user:
+		query = query.where(Plan.user == user)
+
+	result = query.run(as_dict=True)[0]
+	total, done = result.total or 0, result.done or 0
+	adherence = round(done / total * 100) if total else 0
+
+	return {
+		"title": _("Plan adherence"),
+		"tooltip": _("Planned activities completed, out of those already due"),
+		"value": adherence,
+		"suffix": "%",
+		"delta": 0,
+	}
+
+
+def get_deals_at_risk(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+	"""
+	Open deals whose health score is below 40 — scored by the same explainable
+	heuristic the deal pages show (idle time, missing next task, overdue close
+	date), batched so the whole pipeline is scored in four queries.
+	"""
+	from crm.agent.predict import score_deal
+	from crm.agent.signals import _deals_with_open_tasks, _latest_activity
+
+	statuses = frappe.get_all("CRM Deal Status", filters={"type": ("in", ("Open", "Ongoing"))}, pluck="name")
+	if not statuses:
+		return {"title": _("Deals at risk"), "value": 0}
+
+	filters = {"status": ("in", statuses)}
+	if user:
+		filters["deal_owner"] = user
+	deals = frappe.get_all("CRM Deal", filters=filters, fields=["name", "creation", "closed_date"])
+	names = [d.name for d in deals]
+	activity = _latest_activity(names)
+	with_tasks = _deals_with_open_tasks(names)
+	now = frappe.utils.now_datetime()
+
+	at_risk = 0
+	for deal in deals:
+		last = activity.get(deal.name) or deal.creation
+		days_to_close = (deal.closed_date - now.date()).days if deal.closed_date else None
+		verdict = score_deal(
+			{
+				"idle_days": max(0, (now - last).days),
+				"days_to_close": days_to_close,
+				"has_open_task": deal.name in with_tasks,
+			}
+		)
+		if verdict["score"] < 40:
+			at_risk += 1
+
+	return {
+		"title": _("Deals at risk"),
+		"tooltip": _("Open deals with a health score below 40"),
+		"value": at_risk,
+		"delta": 0,
+	}
+
+
+def take_forecast_snapshot():
+	"""
+	Weekly scheduler entry: persist today's probability-weighted forecast per
+	month, so forecast accuracy is measurable against what actually closed.
+	One row per (snapshot day, month); a rerun on the same day updates in place.
+	"""
+	today = frappe.utils.nowdate()
+	rows = get_forecasted_revenue(frappe.utils.add_months(today, -1), frappe.utils.add_months(today, 6))[
+		"data"
+	]
+	for row in rows:
+		# get_forecasted_revenue emits "YYYY-MM-01" months and "" placeholders
+		month = (row.get("month") or "")[:7]
+		if not month:
+			continue
+		existing = frappe.db.exists("CRM Forecast Snapshot", {"snapshot_date": today, "month": month})
+		values = {
+			"forecasted": row.get("forecasted") or 0,
+			"actual_at_snapshot": row.get("actual") or 0,
+		}
+		if existing:
+			frappe.db.set_value("CRM Forecast Snapshot", existing, values)
+		else:
+			frappe.get_doc(
+				{
+					"doctype": "CRM Forecast Snapshot",
+					"snapshot_date": today,
+					"month": month,
+					**values,
+				}
+			).insert(ignore_permissions=True)
+	return len(rows)
+
+
+def get_forecast_accuracy(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+	"""
+	Forecast vs what actually happened, per month: the earliest snapshot taken
+	before the month began against the latest known actual. Fills as weekly
+	snapshots accumulate.
+	"""
+	snapshots = frappe.get_all(
+		"CRM Forecast Snapshot",
+		fields=["snapshot_date", "month", "forecasted", "actual_at_snapshot"],
+		order_by="month asc, snapshot_date asc",
+	)
+	by_month: dict[str, dict] = {}
+	for snap in snapshots:
+		month_start = f"{snap.month}-01"
+		entry = by_month.setdefault(snap.month, {"month": snap.month, "forecasted": None, "actual": 0})
+		if entry["forecasted"] is None and str(snap.snapshot_date) < month_start:
+			entry["forecasted"] = snap.forecasted
+		entry["actual"] = snap.actual_at_snapshot
+
+	return [e for e in by_month.values() if e["forecasted"] is not None]

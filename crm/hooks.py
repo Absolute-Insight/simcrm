@@ -240,7 +240,10 @@ scheduler_events = {
 		"crm.fcrm.doctype.crm_view_settings.crm_view_settings.clear_old_versions",
 		"crm.telemetry.capture_feature_state",
 	],
-	"weekly": ["crm.api.event.trigger_weekly_event_notifications"],
+	"weekly": [
+		"crm.api.event.trigger_weekly_event_notifications",
+		"crm.api.dashboard.take_forecast_snapshot",
+	],
 	"daily_long": ["crm.lead_syncing.background_sync.sync_leads_from_sources_daily"],
 	"hourly_long": ["crm.lead_syncing.background_sync.sync_leads_from_sources_hourly"],
 	"monthly_long": ["crm.lead_syncing.background_sync.sync_leads_from_sources_monthly"],
