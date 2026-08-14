@@ -202,6 +202,7 @@
 import BrushCleaningIcon from '~icons/lucide/brush-cleaning'
 import LucideLayoutDashboard from '~icons/lucide/layout-dashboard'
 import LucideCalendarCheck from '~icons/lucide/calendar-check'
+import LucideFileBarChart from '~icons/lucide/file-bar-chart'
 import CRMLogo from '@/components/Icons/CRMLogo.vue'
 import InviteIcon from '@/components/Icons/InviteIcon.vue'
 import ConvertIcon from '@/components/Icons/ConvertIcon.vue'
@@ -294,6 +295,12 @@ const links = [
     label: 'Planner',
     icon: LucideCalendarCheck,
     to: 'Planner',
+    condition: () => !props.mobile,
+  },
+  {
+    label: 'Reports',
+    icon: LucideFileBarChart,
+    to: 'Reports',
     condition: () => !props.mobile,
   },
   {

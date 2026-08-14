@@ -42,6 +42,11 @@ const routes = [
     component: () => import('@/pages/Planner.vue'),
   },
   {
+    path: '/reports',
+    name: 'Reports',
+    component: () => import('@/pages/Reports.vue'),
+  },
+  {
     alias: '/leads',
     path: '/leads/view/:viewType?',
     name: 'Leads',
