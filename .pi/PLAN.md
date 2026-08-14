@@ -294,10 +294,13 @@ No new aggregation code — reports parameterize `metrics.py`.
 
 ### Checklist
 
-- [ ] `CRM Report` doctype + runner over `metrics.py`
-- [ ] Viewer page + print styles + CSV export
-- [ ] Scheduled digest job + email template (Vectora-branded, Phase 7 assets)
-- [ ] Four built-in reports listed above
+- [x] Report registry over the metrics layer (2026-08-14) — `crm/api/reports.py`;
+      a `CRM Report` builder doctype stays deferred until these four prove the layer
+- [x] Viewer page + print styles + CSV export (`/crm/reports`)
+- [x] Scheduled digests — `CRM Report Digest` doctype (report, recipients, daily/weekly)
+      + daily scheduler job rendering branded HTML tables from the same rows
+- [x] Four built-in reports: pipeline by stage, funnel conversion, plan adherence by
+      rep, forecast vs actual
 
 ---
 
