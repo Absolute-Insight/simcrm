@@ -205,7 +205,10 @@ calls" and the 30 planned call items can never disagree.
       (user, Monday week); pure `match_items` (kind + reference + week window, one
       actual per item, closest date wins); decisions taken: week-only granularity,
       managers read any plan / edit only their own
-- [ ] Planner page (rep view, manager roster view)
+- [x] Planner page (2026-08-14) — week grid, add/remove items, propose-my-week
+      review-then-save flow, planned/done/missed rollup, manager read-only view of any
+      rep. Deferred: drag-reschedule and manual fulfilment override (item dates change
+      via remove+add for now)
 - [x] "Propose my week" flow through the Phase 8 confirm gate — `propose_week` drafts
       from open suggestions and writes nothing; saving the reviewed plan accepts them
 - [x] Actuals matcher job (daily) — manual override UI pending with the planner page
