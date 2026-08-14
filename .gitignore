@@ -15,6 +15,8 @@ frontend/coverage
 e2e/.auth
 test-results
 playwright-report
+.playwright-mcp
+/*.png
 package-lock.json
 
 .vscode
