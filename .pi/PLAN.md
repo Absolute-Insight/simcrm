@@ -133,14 +133,24 @@ allowlist test pattern as `tools.py`.
 
 ### Checklist
 
-- [ ] `CRM Suggestion` doctype + dedupe + expiry
-- [ ] `signals.py` with first three signals + scheduler wiring + unit tests per signal
-- [ ] `predict.py` heuristic scores + factor attribution + unit tests on fixture data
+- [x] `CRM Suggestion` doctype + dedupe + expiry (2026-08-14; dismissed/accepted
+      = 14-day cooldown, open blocks, expired never blocks — see
+      `docs/superpowers/plans/2026-08-14-proactive-suggestions-phase8.md`)
+- [x] `signals.py` — idle_deal / no_next_step / lead_sla, batched queries, hourly
+      scheduler, 19 tests; smoke on seeded site: 88 created, second run 0 (idempotent)
+- [x] `crm/api/suggestions.py` — get/accept/dismiss, ownership-checked, 6 tests
+      (accept/dismiss only flip status; record creation stays behind formDialog)
+- [x] `predict.py` heuristic scores + factor attribution + 9 unit tests
 - [ ] `actions.py` write-tier proposals + AST allowlist test (pattern from `tools.py`)
 - [ ] Suggestion inbox UI + per-record suggestions + accept→`formDialog()` confirm flow
 - [ ] Automation rule doctype + runner + tests (agent disabled path proven)
-- [ ] Injection eval set extended to cover every new model-touching path
-- [ ] Rate limits on every endpoint that can trigger a model call
+- [ ] Injection eval set extended to cover every new model-touching path (n/a so far —
+      this slice is deterministic; becomes real with `actions.py`/model ranking)
+- [ ] Rate limits on every endpoint that can trigger a model call (none added yet —
+      the new endpoints are DB-only)
+
+> Known-dirty dev site: `crm.tests.test_dashboard` (8 pre-existing failures) asserts
+> pristine-site counts and every suite run leaks ~35 fixture leads; unrelated to Phase 8.
 
 ---
 
