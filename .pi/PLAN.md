@@ -141,7 +141,11 @@ allowlist test pattern as `tools.py`.
 - [x] `crm/api/suggestions.py` — get/accept/dismiss, ownership-checked, 6 tests
       (accept/dismiss only flip status; record creation stays behind formDialog)
 - [x] `predict.py` heuristic scores + factor attribution + 9 unit tests
-- [ ] `actions.py` write-tier proposals + AST allowlist test (pattern from `tools.py`)
+- [x] `actions.py` write-tier proposals + AST no-frappe test (2026-08-14) —
+      `propose_reply` drafts a reply; `api.draft_reply` reads via `tools`, returns a dict,
+      never sends. Live gate re-run: granite confirmed the injected discount 3/3, held the
+      control 3/3 — recorded in `feats/agent/README.md`. The compose-window human is the
+      write gate
 - [x] Suggestion inbox UI (shell panel + count badge) + accept→`formDialog()` confirm
       flow, verified end-to-end on the dev bench (2026-08-14). Still open: realtime
       badge via `$socket` (polls on open/action for now)
@@ -151,10 +155,13 @@ allowlist test pattern as `tools.py`.
       triggers, safe_eval conditions validated at save, Create Task / Create Suggestion
       actions, per-rule failure isolation; model-free (agent-disabled path is the only
       path). No admin UI yet — rules are authored via desk
-- [ ] Injection eval set extended to cover every new model-touching path (n/a so far —
-      this slice is deterministic; becomes real with `actions.py`/model ranking)
-- [ ] Rate limits on every endpoint that can trigger a model call (none added yet —
-      the new endpoints are DB-only)
+- [x] Injection gate run against the first model-touching write path (`draft_reply`);
+      the hostile thread is documented as a standing eval in `feats/agent/README.md`.
+      A codified eval *suite* (assert-on-refusal-rate across models) is still worth
+      building when a second write capability lands
+- [x] Rate limits on every endpoint that can trigger a model call — `draft_reply` carries
+      the same per-user `@rate_limit` as `summarise_thread`; the deterministic endpoints
+      are DB-only and need none
 
 > Known-dirty dev site: `crm.tests.test_dashboard` (8 pre-existing failures) asserts
 > pristine-site counts and every suite run leaks ~35 fixture leads; unrelated to Phase 8.
