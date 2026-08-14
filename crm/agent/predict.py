@@ -97,7 +97,7 @@ def get_deal_health(name: str) -> dict:
 	idle_days = max(0, (now - last).days)
 
 	days_in_stage = None
-	if deal.status_change_log:
+	if deal.status_change_log and deal.status_change_log[-1].to_date:
 		days_in_stage = max(0, (now - deal.status_change_log[-1].to_date).days)
 
 	days_to_close = None

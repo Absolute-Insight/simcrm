@@ -11,9 +11,10 @@ attribution invariant rather than blessing specific magic numbers.
 
 from __future__ import annotations
 
-from frappe.tests import UnitTestCase
+import frappe
+from frappe.tests import IntegrationTestCase, UnitTestCase
 
-from crm.agent.predict import score_deal
+from crm.agent.predict import get_deal_health, score_deal
 
 HEALTHY = {
 	"idle_days": 1,
@@ -74,3 +75,25 @@ class ScoreDealTest(UnitTestCase):
 		for factor in out["factors"]:
 			self.assertTrue(factor["label"])
 			self.assertGreater(factor["weight"], 0)
+
+
+class GetDealHealthTest(IntegrationTestCase):
+	"""Feature extraction against real documents.
+
+	Regression: a status_change_log row can carry a null to_date (seen on real
+	site data) — extraction must treat it as unknown, not crash.
+	"""
+
+	def test_health_of_a_real_deal_is_scored_without_error(self):
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Predict Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		deal = frappe.get_doc({"doctype": "CRM Deal", "organization": org}).insert()
+		if deal.status_change_log:
+			deal.status_change_log[-1].to_date = None
+			deal.save()
+		out = get_deal_health(deal.name)
+		self.assertIn("score", out)
+		self.assertIsInstance(out["factors"], list)
