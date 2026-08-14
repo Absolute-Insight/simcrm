@@ -48,6 +48,31 @@
             </template>
           </SidebarItem>
 
+          <SidebarItem
+            v-if="!mobile"
+            id="suggestions-btn"
+            :label="__('Suggestions')"
+            @click="toggleSuggestionsPanel"
+          >
+            <template #prefix>
+              <span class="relative grid size-4 place-items-center">
+                <LucideSparkles class="size-4 text-ink-gray-7" />
+                <span
+                  v-if="isCollapsed && openSuggestionsCount"
+                  class="absolute -right-1 -top-1 size-1.5 rounded-full bg-surface-gray-9 ring-1 ring-[var(--surface-gray-1)]"
+                />
+              </span>
+            </template>
+            <template #suffix>
+              <Badge
+                v-if="openSuggestionsCount"
+                class="mr-2"
+                :label="openSuggestionsCount"
+                variant="subtle"
+              />
+            </template>
+          </SidebarItem>
+
           <CollapsibleSection
             v-for="section in allViews"
             :key="section.name"
@@ -149,6 +174,7 @@
       </div>
     </Sidebar>
     <Notifications v-if="!mobile" />
+    <Suggestions v-if="!mobile" />
   </div>
 
   <template v-if="!mobile">
@@ -198,6 +224,9 @@ import CollapseSidebar from '@/components/Icons/CollapseSidebar.vue'
 import NotificationsIcon from '@/components/Icons/NotificationsIcon.vue'
 import HelpIcon from '@/components/Icons/HelpIcon.vue'
 import Notifications from '@/components/Notifications.vue'
+import Suggestions from '@/components/Suggestions.vue'
+import LucideSparkles from '~icons/lucide/sparkles'
+import { suggestionsStore, openSuggestionsCount } from '@/stores/suggestions'
 import Settings from '@/components/Settings/Settings.vue'
 import { viewsStore } from '@/stores/views'
 import {
@@ -239,6 +268,7 @@ const route = useRoute()
 
 const { getPinnedViews, getPublicViews } = viewsStore()
 const { toggle: toggleNotificationPanel } = notificationsStore()
+const { toggle: toggleSuggestionsPanel } = suggestionsStore()
 const { capture } = useTelemetry()
 const { clearDemoData, isDemoDataCreated } = useDemoData()
 const { send } = useBroadcast()

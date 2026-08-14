@@ -70,6 +70,15 @@ def get_suggestions(reference_doctype: str | None = None, reference_docname: str
 
 
 @frappe.whitelist()
+def get_open_count():
+	"""Open-suggestion count for the badge — same scoping as get_suggestions."""
+	filters = {"status": "Open"}
+	if not _is_manager():
+		filters["user"] = frappe.session.user
+	return frappe.db.count("CRM Suggestion", filters)
+
+
+@frappe.whitelist()
 def accept(name: str):
 	doc = _get_for_update(name)
 	if doc.status != "Open":

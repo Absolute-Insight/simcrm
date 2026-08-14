@@ -8,7 +8,7 @@ from __future__ import annotations
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from crm.api.suggestions import accept, dismiss, get_suggestions
+from crm.api.suggestions import accept, dismiss, get_open_count, get_suggestions
 
 OWNER = "suggestion-owner@crmtest.test"
 INTRUDER = "suggestion-intruder@crmtest.test"
@@ -92,6 +92,12 @@ class SuggestionApiTest(IntegrationTestCase):
 		doc = frappe.db.get_value("CRM Suggestion", name, ["status", "dismiss_reason"], as_dict=True)
 		self.assertEqual(doc.status, "Dismissed")
 		self.assertEqual(doc.dismiss_reason, "already spoke to them")
+
+	def test_the_open_count_is_scoped_like_the_list(self):
+		make_suggestion(OWNER, self.deal)
+		make_suggestion(INTRUDER, self.deal, title="Someone else's")
+		frappe.set_user(OWNER)
+		self.assertEqual(get_open_count(), 1)
 
 	def test_a_non_open_suggestion_cannot_be_accepted_again(self):
 		name = make_suggestion(OWNER, self.deal)
