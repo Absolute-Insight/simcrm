@@ -30,6 +30,17 @@ export default {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        // Display face for the wordmark, panel headings and dashboard numerals.
+        // Body text stays on frappe-ui's Inter.
+        display: [
+          'Space Grotesk Variable',
+          'InterVar',
+          'ui-sans-serif',
+          'system-ui',
+          'sans-serif',
+        ],
+      },
       colors: {
         // Vectora brand palette — sampled from the logo mark.
         // `brand` is the indigo primary; sky/magenta are the gradient endpoints

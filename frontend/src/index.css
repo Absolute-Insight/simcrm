@@ -1,4 +1,11 @@
 @import 'frappe-ui/style.css';
+@import '@fontsource-variable/space-grotesk';
+@import './styles/vectora-theme.css';
+
+/* Data app: digits align in tables, currency and timestamps everywhere. */
+body {
+  font-variant-numeric: tabular-nums;
+}
 
 @layer components {
   .prose-f {

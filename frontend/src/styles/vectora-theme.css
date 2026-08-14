@@ -1,0 +1,199 @@
+/* Vectora theme — generated, do not hand-edit values.
+ *
+ * Regenerate with the script noted in docs/superpowers/plans/2026-08-13-vectora-rebrand-7a.md
+ * follow-up (Phase 7B): it reads frappe-ui/tailwind/generated/colors.json and re-emits
+ * every gray-family semantic token against Vectora's indigo-tinted neutral ramps,
+ * so this file survives frappe-ui token syncs by construction.
+ *
+ * Design system: cool graphite neutrals (hue ~243), brand indigo reserved for
+ * focus/selection/active states, gradient reserved for the mark and the
+ * position rail. Lightness matches stock frappe-ui ramps, so every contrast
+ * relationship (and WCAG pairing) in frappe-ui components is preserved.
+ */
+
+:root {
+  /* Vectora brand */
+  --brand-sky: #21abfb;
+  --brand-indigo: #5b5fe8;
+  --brand-magenta: #df5feb;
+  --brand-gradient: linear-gradient(
+    135deg,
+    #21abfb 0%,
+    #5b5fe8 55%,
+    #df5feb 100%
+  );
+  --gray-50: #f7f7fb;
+  --gray-100: #f2f2f8;
+  --gray-200: #ebebf3;
+  --gray-300: #dfdfeb;
+  --gray-400: #c4c4d6;
+  --gray-500: #9695ab;
+  --gray-600: #7a7990;
+  --gray-700: #504f65;
+  --gray-800: #373647;
+  --gray-900: #16161f;
+  --gray-950: #0e0e14;
+  --gray-alpha-50: #0e0e1f08;
+  --gray-alpha-100: #0e0e1f0b;
+  --gray-alpha-200: #0e0e1f12;
+  --gray-alpha-300: #0e0e1f1d;
+  --gray-alpha-400: #0e0e1f38;
+  --gray-alpha-500: #0e0e1f66;
+  --gray-alpha-600: #0e0e1f83;
+  --gray-alpha-700: #0e0e1fad;
+  --gray-alpha-800: #0e0e1fc7;
+  --gray-alpha-900: #0e0e1fe8;
+  --gray-alpha-950: #0e0e1ff0;
+  --surface-gray-1: #f7f7fb;
+  --surface-gray-2: #f2f2f8;
+  --surface-gray-3: #ebebf3;
+  --surface-gray-4: #dfdfeb;
+  --surface-gray-5: #c4c4d6;
+  --surface-gray-6: #9695ab;
+  --surface-gray-7: #7a7990;
+  --surface-gray-8: #504f65;
+  --surface-gray-9: #373647;
+  --surface-gray-10: #16161f;
+  --surface-sidebar: #f7f7fb;
+  --surface-alpha-gray-1: #0e0e1f08;
+  --surface-alpha-gray-2: #0e0e1f0b;
+  --surface-alpha-gray-3: #0e0e1f12;
+  --surface-alpha-gray-4: #0e0e1f1d;
+  --surface-alpha-gray-5: #0e0e1f38;
+  --surface-alpha-gray-6: #0e0e1f66;
+  --surface-alpha-gray-7: #0e0e1f83;
+  --surface-alpha-gray-8: #0e0e1fad;
+  --surface-alpha-gray-9: #0e0e1fc7;
+  --surface-alpha-gray-10: #0e0e1fe8;
+  --surface-alpha-sidebar: #f7f7fb;
+  --ink-gray-1: #ebebf3;
+  --ink-gray-2: #dfdfeb;
+  --ink-gray-3: #c4c4d6;
+  --ink-gray-4: #9695ab;
+  --ink-gray-5: #7a7990;
+  --ink-gray-6: #504f65;
+  --ink-gray-7: #373647;
+  --ink-gray-8: #16161f;
+  --ink-gray-9: #0e0e14;
+  --ink-alert-button-default: #16161f;
+  --ink-alert-button-info: #16161f;
+  --ink-alert-button-success: #16161f;
+  --ink-alert-button-warning: #16161f;
+  --ink-alert-button-error: #16161f;
+  --outline-gray-1: #ebebf3;
+  --outline-gray-2: #dfdfeb;
+  --outline-gray-3: #c4c4d6;
+  --outline-gray-4: #9695ab;
+  --outline-gray-5: #7a7990;
+  --outline-gray-6: #504f65;
+  --outline-gray-7: #373647;
+  --outline-gray-8: #16161f;
+  --outline-gray-9: #0e0e14;
+  --outline-elevation-1: #ebebf3;
+  --outline-elevation-2: #ebebf3;
+  --outline-alpha-gray-1: #0e0e1f12;
+  --outline-alpha-gray-2: #0e0e1f1d;
+  --outline-alpha-gray-3: #0e0e1f38;
+  --outline-alpha-gray-4: #0e0e1f66;
+  --outline-alpha-gray-5: #0e0e1f83;
+  --outline-alpha-gray-6: #0e0e1fad;
+  --outline-alpha-gray-7: #0e0e1fc7;
+  --outline-alpha-gray-8: #0e0e1fe8;
+  --outline-alpha-gray-9: #0e0e1ff0;
+  --outline-alpha-elevation-1: #0e0e1f12;
+  --outline-alpha-elevation-2: #0e0e1f12;
+  --focus-outline-default: 2px solid #a5a8f2e5;
+}
+
+[data-theme='dark'] {
+  --dark-gray-50: #f7f7fb;
+  --dark-gray-100: #d8d8e1;
+  --dark-gray-200: #aeaebc;
+  --dark-gray-300: #9898a8;
+  --dark-gray-400: #79798a;
+  --dark-gray-450: #565666;
+  --dark-gray-500: #414150;
+  --dark-gray-600: #373745;
+  --dark-gray-700: #282834;
+  --dark-gray-800: #23232e;
+  --dark-gray-900: #1e1e28;
+  --dark-gray-950: #15151d;
+  --dark-gray-alpha-50: #ececf8f7;
+  --dark-gray-alpha-100: #ececf8d4;
+  --dark-gray-alpha-200: #ececf8a8;
+  --dark-gray-alpha-300: #ececf88f;
+  --dark-gray-alpha-400: #ececf86c;
+  --dark-gray-alpha-450: #ececf846;
+  --dark-gray-alpha-500: #ececf82f;
+  --dark-gray-alpha-600: #ececf824;
+  --dark-gray-alpha-700: #ececf814;
+  --dark-gray-alpha-800: #ececf80e;
+  --dark-gray-alpha-900: #ececf809;
+  --dark-gray-alpha-950: #0e0e1f0a;
+  --surface-base: #15151d;
+  --surface-gray-1: #1e1e28;
+  --surface-gray-2: #282834;
+  --surface-gray-3: #373745;
+  --surface-gray-4: #414150;
+  --surface-gray-5: #565666;
+  --surface-gray-6: #79798a;
+  --surface-gray-7: #9898a8;
+  --surface-gray-8: #aeaebc;
+  --surface-gray-9: #d8d8e1;
+  --surface-gray-10: #f7f7fb;
+  --surface-elevation-1: #1e1e28;
+  --surface-elevation-2: #23232e;
+  --surface-elevation-3: #373745;
+  --surface-alert-button-default: #414150;
+  --surface-alpha-base: #0e0e1f0a;
+  --surface-alpha-gray-1: #ececf80e;
+  --surface-alpha-gray-2: #ececf814;
+  --surface-alpha-gray-3: #ececf824;
+  --surface-alpha-gray-4: #ececf82f;
+  --surface-alpha-gray-5: #ececf846;
+  --surface-alpha-gray-6: #ececf86c;
+  --surface-alpha-gray-7: #ececf88f;
+  --surface-alpha-gray-8: #ececf8a8;
+  --surface-alpha-gray-9: #ececf8d4;
+  --surface-alpha-gray-10: #ececf8f7;
+  --surface-alpha-sidebar: #0e0e1f0a;
+  --surface-alpha-elevation-1: #ececf809;
+  --surface-alpha-elevation-2: #ececf80e;
+  --surface-alpha-elevation-3: #ececf824;
+  --ink-base: #15151d;
+  --ink-gray-1: #23232e;
+  --ink-gray-2: #373745;
+  --ink-gray-3: #414150;
+  --ink-gray-4: #79798a;
+  --ink-gray-5: #79798a;
+  --ink-gray-6: #9898a8;
+  --ink-gray-7: #aeaebc;
+  --ink-gray-8: #d8d8e1;
+  --ink-gray-9: #f7f7fb;
+  --ink-alert-button-default: #f7f7fb;
+  --outline-base: #15151d;
+  --outline-gray-1: #23232e;
+  --outline-gray-2: #373745;
+  --outline-gray-3: #414150;
+  --outline-gray-4: #565666;
+  --outline-gray-5: #79798a;
+  --outline-gray-6: #9898a8;
+  --outline-gray-7: #ebebf3;
+  --outline-gray-8: #f2f2f8;
+  --outline-gray-9: #f7f7fb;
+  --outline-elevation-1: #282834;
+  --outline-elevation-2: #373745;
+  --outline-alpha-base: #0e0e1f0a;
+  --outline-alpha-gray-1: #ececf80e;
+  --outline-alpha-gray-2: #ececf824;
+  --outline-alpha-gray-3: #ececf82f;
+  --outline-alpha-gray-4: #ececf846;
+  --outline-alpha-gray-5: #ececf86c;
+  --outline-alpha-gray-6: #ececf88f;
+  --outline-alpha-gray-7: #ececf8a8;
+  --outline-alpha-gray-8: #ececf8d4;
+  --outline-alpha-gray-9: #ececf8f7;
+  --outline-alpha-elevation-1: #ececf814;
+  --outline-alpha-elevation-2: #ececf824;
+  --focus-outline-default: 3px solid #3c3cafcc;
+}
