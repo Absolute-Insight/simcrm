@@ -184,9 +184,15 @@ doc_events = {
 		"on_update": ["crm.api.whatsapp.on_update"],
 	},
 	"CRM Deal": {
+		"after_insert": ["crm.automation.run_automations"],
 		"on_update": [
-			"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.create_customer_in_erpnext"
+			"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.create_customer_in_erpnext",
+			"crm.automation.run_automations",
 		],
+	},
+	"CRM Lead": {
+		"after_insert": ["crm.automation.run_automations"],
+		"on_update": ["crm.automation.run_automations"],
 	},
 	"Sales Order": {
 		"before_validate": [

@@ -1,0 +1,175 @@
+{
+ "actions": [],
+ "autoname": "field:title",
+ "creation": "2026-08-14 09:00:00.000000",
+ "default_view": "List",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "enabled",
+  "document_type",
+  "trigger",
+  "column_break_main",
+  "to_status",
+  "condition",
+  "section_break_action",
+  "action",
+  "title_template",
+  "description_template",
+  "column_break_action",
+  "task_priority",
+  "due_in_days",
+  "assign_to_owner"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "document_type",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Document Type",
+   "options": "DocType",
+   "reqd": 1
+  },
+  {
+   "fieldname": "trigger",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Trigger",
+   "options": "Created\nStatus Changed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.trigger == 'Status Changed'",
+   "description": "Only fire when the record enters this status. Leave empty to fire on any status change.",
+   "fieldname": "to_status",
+   "fieldtype": "Data",
+   "label": "To Status"
+  },
+  {
+   "description": "Optional Python expression evaluated with the document as `doc`, e.g. doc.annual_revenue > 10000. The rule fires only when it is true.",
+   "fieldname": "condition",
+   "fieldtype": "Code",
+   "label": "Condition",
+   "options": "Python"
+  },
+  {
+   "fieldname": "section_break_action",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Action",
+   "options": "Create Task\nCreate Suggestion",
+   "reqd": 1
+  },
+  {
+   "description": "Jinja template rendered with the document as `doc`, e.g. Follow up with {{ doc.organization }}.",
+   "fieldname": "title_template",
+   "fieldtype": "Data",
+   "label": "Title Template",
+   "reqd": 1
+  },
+  {
+   "fieldname": "description_template",
+   "fieldtype": "Small Text",
+   "label": "Description Template"
+  },
+  {
+   "fieldname": "column_break_action",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Medium",
+   "depends_on": "eval:doc.action == 'Create Task'",
+   "fieldname": "task_priority",
+   "fieldtype": "Select",
+   "label": "Task Priority",
+   "options": "Low\nMedium\nHigh"
+  },
+  {
+   "depends_on": "eval:doc.action == 'Create Task'",
+   "description": "Due date offset from when the rule fires. 0 means due immediately.",
+   "fieldname": "due_in_days",
+   "fieldtype": "Int",
+   "label": "Due In Days"
+  },
+  {
+   "default": "1",
+   "fieldname": "assign_to_owner",
+   "fieldtype": "Check",
+   "label": "Assign To Record Owner"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-14 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FCRM",
+ "name": "CRM Automation Rule",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales User",
+   "share": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
