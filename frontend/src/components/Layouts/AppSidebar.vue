@@ -201,6 +201,7 @@
 <script setup>
 import BrushCleaningIcon from '~icons/lucide/brush-cleaning'
 import LucideLayoutDashboard from '~icons/lucide/layout-dashboard'
+import LucideCalendarCheck from '~icons/lucide/calendar-check'
 import CRMLogo from '@/components/Icons/CRMLogo.vue'
 import InviteIcon from '@/components/Icons/InviteIcon.vue'
 import ConvertIcon from '@/components/Icons/ConvertIcon.vue'
@@ -287,6 +288,12 @@ const links = [
     label: 'Dashboard',
     icon: LucideLayoutDashboard,
     to: 'Dashboard',
+    condition: () => !props.mobile,
+  },
+  {
+    label: 'Planner',
+    icon: LucideCalendarCheck,
+    to: 'Planner',
     condition: () => !props.mobile,
   },
   {
