@@ -104,3 +104,32 @@ def _neutralise(content: str) -> str:
 	for marker in (CONTENT_START, CONTENT_END):
 		text = text.replace(marker, NEUTRALISED_MARKER)
 	return text
+
+
+def build_reply_messages(
+	deal: dict, communications: list[dict], max_chars: int = DEFAULT_MAX_CHARS
+) -> list[dict]:
+	"""System + user messages asking for a reply draft to the latest inbound mail.
+
+	The draft is attacker-influenced output by construction (the thread is
+	third-party text), which is why it may only ever land in a compose window a
+	human reviews and sends -- never in an outbox.
+	"""
+	header = "\n".join(
+		[
+			f"Deal: {_neutralise(deal.get('name', ''))}",
+			f"Organization: {_neutralise(deal.get('organization', '')) or 'unknown'}",
+			f"Status: {_neutralise(deal.get('status', '')) or 'unknown'}",
+		]
+	)
+	body = _fenced_thread(communications, max_chars)
+	user = (
+		f"{header}\n\n{body}\n\n"
+		"Draft a short, professional reply to the most recent message from the "
+		"other party. Plain text only. Do not invent commitments, prices or dates "
+		"that are not in the thread."
+	)
+	return [
+		{"role": "system", "content": SYSTEM_PROMPT},
+		{"role": "user", "content": user},
+	]

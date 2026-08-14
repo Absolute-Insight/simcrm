@@ -14,7 +14,7 @@ from __future__ import annotations
 import frappe
 from frappe.rate_limiter import rate_limit
 
-from crm.agent import client, tools
+from crm.agent import actions, client, tools
 from crm.agent.config import get_config
 from crm.agent.context import build_thread_messages
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
@@ -50,3 +50,28 @@ def summarise_thread(reference_doctype: str, reference_name: str) -> dict:
 		return {"status": "unavailable"}
 
 	return {"status": "ok", "summary": summary.model_dump()}
+
+
+@frappe.whitelist()
+@rate_limit(limit=SUMMARISE_RATE_LIMIT, seconds=60)
+def draft_reply(reference_doctype: str, reference_name: str) -> dict:
+	"""Draft a reply to the latest inbound message on a record's thread.
+
+	Returns ``{"status": "ok", "draft": {"subject", "body"}}`` or a bare degrade
+	status. The draft is attacker-influenced text: the caller shows it in a
+	compose window for a human to edit and send — it is never sent directly.
+	"""
+	cfg = get_config()
+	if not cfg.enabled:
+		return {"status": "disabled"}
+
+	record = tools.read_record(reference_doctype, reference_name)
+	thread = tools.read_thread(reference_doctype, reference_name)
+
+	try:
+		draft = actions.propose_reply(cfg, record, thread)
+	except (AgentUnavailable, SchemaMismatch) as exc:
+		frappe.log_error(title="CRM agent reply draft failed", message=str(exc))
+		return {"status": "unavailable"}
+
+	return {"status": "ok", "draft": draft.model_dump()}

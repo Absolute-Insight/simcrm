@@ -30,6 +30,15 @@ class ThreadSummary(BaseModel):
 	sentiment: Literal["positive", "neutral", "negative"] = "neutral"
 
 
+class ReplyDraft(BaseModel):
+	"""A reply the rep can edit and send. A draft, never a sent message."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	subject: str = Field(min_length=1, max_length=200)
+	body: str = Field(min_length=1, max_length=4000)
+
+
 def json_schema(model: type[BaseModel]) -> dict:
 	"""The schema to send as ``response_format``. Derived, never hand-written.
 
