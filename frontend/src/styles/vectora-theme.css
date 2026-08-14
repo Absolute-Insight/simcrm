@@ -1,7 +1,7 @@
 /* Vectora theme — generated, do not hand-edit values.
  *
- * Regenerate with the script noted in docs/superpowers/plans/2026-08-13-vectora-rebrand-7a.md
- * follow-up (Phase 7B): it reads frappe-ui/tailwind/generated/colors.json and re-emits
+ * Regenerate with: python3 frontend/scripts/generate_vectora_theme.py
+ * It reads frappe-ui/tailwind/generated/colors.json and re-emits
  * every gray-family semantic token against Vectora's indigo-tinted neutral ramps,
  * so this file survives frappe-ui token syncs by construction.
  *
