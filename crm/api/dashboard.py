@@ -4,6 +4,7 @@ import frappe
 from frappe import _
 from frappe.query_builder import Case, DocType
 from frappe.query_builder.functions import Avg, Coalesce, Count, Date, DateFormat, IfNull, Sum
+from frappe.utils import date_diff, get_first_day, get_last_day, getdate
 from pypika.functions import Function
 
 from crm.fcrm.doctype.crm_dashboard.crm_dashboard import create_default_manager_dashboard
@@ -1147,12 +1148,20 @@ def get_deals_by_salesperson(
 	}
 
 
+def get_base_currency():
+	"""
+	The currency every monetary aggregate is expressed in. Deal values are
+	multiplied by their stored exchange_rate to reach it, so nothing here ever
+	sums two currencies together.
+	"""
+	return frappe.db.get_single_value("FCRM Settings", "currency") or "USD"
+
+
 def get_base_currency_symbol():
 	"""
 	Get the base currency symbol from the system settings.
 	"""
-	base_currency = frappe.db.get_single_value("FCRM Settings", "currency") or "USD"
-	return frappe.db.get_value("Currency", base_currency, "symbol") or ""
+	return frappe.db.get_value("Currency", get_base_currency(), "symbol") or ""
 
 
 def get_deal_status_change_counts(
@@ -1321,6 +1330,92 @@ def take_forecast_snapshot():
 				}
 			).insert(ignore_permissions=True)
 	return len(rows)
+
+
+def quota_in_period(from_date: str, to_date: str, user: str | None = None) -> float:
+	"""Quota covering ``[from_date, to_date]``, pro-rated by how much of each month it covers.
+
+	Quota rows are monthly (see ``CRM Quota``). A dashboard range is arbitrary, so a
+	whole month's target cannot be compared with a week of revenue and called
+	attainment. Pro-rating by covered days makes every range honest: a full month
+	returns exactly that month's quota, a quarter returns three, a week returns a
+	week's worth.
+	"""
+	from_date, to_date = getdate(from_date), getdate(to_date)
+	if to_date < from_date:
+		return 0.0
+
+	filters = {
+		"period_start": ("between", [get_first_day(from_date), get_last_day(to_date)]),
+	}
+	if user:
+		filters["user"] = user
+	rows = frappe.get_all("CRM Quota", filters=filters, fields=["amount", "period_start"])
+
+	total = 0.0
+	for row in rows:
+		month_start = getdate(row.period_start)
+		month_end = get_last_day(month_start)
+		covered_from = max(month_start, from_date)
+		covered_to = min(month_end, to_date)
+		if covered_to < covered_from:
+			continue
+		days_in_month = date_diff(month_end, month_start) + 1
+		covered_days = date_diff(covered_to, covered_from) + 1
+		total += (row.amount or 0) * covered_days / days_in_month
+	return total
+
+
+def won_value_in_period(from_date: str, to_date: str, user: str | None = None) -> float:
+	"""Closed-won revenue in the period, normalised to the base currency."""
+	Deal = DocType("CRM Deal")
+	Status = DocType("CRM Deal Status")
+
+	cond = (
+		(Deal.closed_date >= from_date)
+		& (Deal.closed_date < frappe.utils.add_days(to_date, 1))
+		& (Status.type == "Won")
+	)
+	if user:
+		cond = cond & (Deal.deal_owner == user)
+
+	query = (
+		frappe.qb.from_(Deal)
+		.join(Status)
+		.on(Deal.status == Status.name)
+		.select(Sum(Case().when(cond, Deal.deal_value * IfNull(Deal.exchange_rate, 1)).else_(0)))
+	)
+	return float(query.run()[0][0] or 0)
+
+
+def get_quota_attainment(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+	"""
+	Closed-won revenue against quota for the period.
+
+	Both sides are in the base currency and both come from the same functions the
+	reports use, so the dashboard tile and the quota report can never disagree.
+	With no quota set the tile reports 0% and says so in its tooltip rather than
+	dividing by zero or hiding.
+	"""
+	quota = quota_in_period(from_date, to_date, user)
+	actual = won_value_in_period(from_date, to_date, user)
+	attainment = round(actual / quota * 100) if quota else 0
+
+	if quota:
+		tooltip = _("{0} of {1} closed-won against quota").format(
+			frappe.utils.fmt_money(actual, currency=get_base_currency()),
+			frappe.utils.fmt_money(quota, currency=get_base_currency()),
+		)
+	else:
+		tooltip = _("No quota set for this period")
+
+	return {
+		"title": _("Quota attainment"),
+		"tooltip": tooltip,
+		"value": attainment,
+		"suffix": "%",
+		"delta": 0,
+	}
 
 
 def get_forecast_accuracy(from_date: str | None = None, to_date: str | None = None, user: str | None = None):

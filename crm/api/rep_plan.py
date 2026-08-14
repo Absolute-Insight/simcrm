@@ -125,9 +125,16 @@ def save_plan(week_start: str, items: list | str):
 
 	plan.save(ignore_permissions=True)
 
-	accepted = [row.get("suggestion") for row in items if row.get("suggestion")]
-	for suggestion in set(accepted):
-		if frappe.db.get_value("CRM Suggestion", suggestion, "status") == "Open":
+	# Only the caller's own open suggestions may be closed by saving a plan — the
+	# item rows arrive from the client, so a name in there is a request, not proof
+	# of ownership.
+	accepted = {row.get("suggestion") for row in items if row.get("suggestion")}
+	for suggestion in accepted:
+		owner, status = frappe.db.get_value("CRM Suggestion", suggestion, ["user", "status"]) or (
+			None,
+			None,
+		)
+		if status == "Open" and owner == user:
 			frappe.db.set_value("CRM Suggestion", suggestion, "status", "Accepted")
 
 	return get_plan(week_start)

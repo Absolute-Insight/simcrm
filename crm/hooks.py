@@ -139,12 +139,18 @@ permission_query_conditions = {
 	"CRM Lead": "crm.permissions.org_hierarchy.get_lead_permission_query_conditions",
 	"CRM Deal": "crm.permissions.org_hierarchy.get_deal_permission_query_conditions",
 	"CRM Notification": "crm.fcrm.doctype.crm_notification.crm_notification.get_permission_query_conditions",
+	"CRM Quota": "crm.fcrm.doctype.crm_quota.crm_quota.get_permission_query_conditions",
+	"CRM Suggestion": "crm.fcrm.doctype.crm_suggestion.crm_suggestion.get_permission_query_conditions",
+	"CRM Rep Plan": "crm.fcrm.doctype.crm_rep_plan.crm_rep_plan.get_permission_query_conditions",
 }
 
 has_permission = {
 	"CRM Lead": "crm.permissions.org_hierarchy.has_lead_permission",
 	"CRM Deal": "crm.permissions.org_hierarchy.has_deal_permission",
 	"CRM Notification": "crm.fcrm.doctype.crm_notification.crm_notification.has_permission",
+	"CRM Quota": "crm.fcrm.doctype.crm_quota.crm_quota.has_permission",
+	"CRM Suggestion": "crm.fcrm.doctype.crm_suggestion.crm_suggestion.has_permission",
+	"CRM Rep Plan": "crm.fcrm.doctype.crm_rep_plan.crm_rep_plan.has_permission",
 }
 
 # DocType Class

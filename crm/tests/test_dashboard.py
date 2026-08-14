@@ -47,6 +47,24 @@ class TestDashboard(IntegrationTestCase):
 		cls.user = "crm.manager@example.com"  # CRM manager from test_records.json
 		cls.user2_email = "crm.user1@example.com"  # Test user from test_records.json
 
+		# `make_test_records` commits its fixtures instead of rolling them back, so a
+		# shared site accumulates another copy of them on every run. Absolute counts
+		# would then only hold on a pristine site (they drift by +35 leads per run).
+		# Reading the same metrics *before* the fixtures land turns every count
+		# assertion into a delta, which is true on a pristine and a dirty site alike.
+		cls.base = {
+			"leads": get_total_leads(cls.from_date, cls.to_date)["value"],
+			"leads_u2": get_total_leads(cls.from_date, cls.to_date, cls.user2_email)["value"],
+			"ongoing": get_ongoing_deals(cls.from_date, cls.to_date)["value"],
+			"ongoing_u2": get_ongoing_deals(cls.from_date, cls.to_date, cls.user2_email)["value"],
+			"won": get_won_deals(cls.from_date, cls.to_date)["value"],
+			"won_u2": get_won_deals(cls.from_date, cls.to_date, cls.user2_email)["value"],
+			"funnel": cls._funnel_leads(cls.from_date, cls.to_date, None),
+			"funnel_u2": cls._funnel_leads(cls.from_date, cls.to_date, cls.user2_email),
+			"by_source": cls._leads_by_source_total(cls.from_date, cls.to_date, None),
+			"by_source_u2": cls._leads_by_source_total(cls.from_date, cls.to_date, cls.user2_email),
+		}
+
 		# Load test records from test_records.json files in dependency order
 		make_test_records("CRM Lead Status")
 		make_test_records("CRM Deal Status")
@@ -55,6 +73,19 @@ class TestDashboard(IntegrationTestCase):
 		make_test_records("CRM Organization")  # Load organizations before deals
 		make_test_records("CRM Lead")
 		make_test_records("CRM Deal")
+
+	@staticmethod
+	def _funnel_leads(from_date, to_date, user):
+		data = get_funnel_conversion(from_date, to_date, user)["data"]
+		return data[0]["count"] if data else 0
+
+	@staticmethod
+	def _leads_by_source_total(from_date, to_date, user):
+		return sum(entry.get("count", 0) for entry in get_leads_by_source(from_date, to_date, user)["data"])
+
+	def added(self, value, key):
+		"""How much of ``value`` this run's fixtures contributed."""
+		return value - self.base[key]
 
 	@classmethod
 	def tearDownClass(cls):
@@ -68,13 +99,13 @@ class TestDashboard(IntegrationTestCase):
 
 		# Verify actual count from test data
 		self.assertEqual(result["title"], "Total leads")
-		self.assertEqual(result["value"], 35)  # 35 leads from test_records.json
+		self.assertEqual(self.added(result["value"], "leads"), 35)  # 35 leads from test_records.json
 		self.assertIsInstance(result["delta"], (int, float))
 		self.assertEqual(result["deltaSuffix"], "%")
 
 		# Test with user filter - crm.user1@example.com owns 3 leads
 		result_user = get_total_leads(self.from_date, self.to_date, self.user2_email)
-		self.assertEqual(result_user["value"], 3)
+		self.assertEqual(self.added(result_user["value"], "leads_u2"), 3)
 		self.assertLessEqual(result_user["value"], result["value"])
 
 		# Verify user's leads are subset of total
@@ -86,7 +117,7 @@ class TestDashboard(IntegrationTestCase):
 
 		# Verify actual count: 13 Qualification + 8 Negotiation = 21
 		self.assertEqual(result["title"], "Ongoing deals")
-		self.assertEqual(result["value"], 21)
+		self.assertEqual(self.added(result["value"], "ongoing"), 21)
 
 		# Verify it's not counting won/lost deals
 		all_deals = frappe.db.count("CRM Deal")
@@ -94,7 +125,7 @@ class TestDashboard(IntegrationTestCase):
 
 		# Test with user filter - crm.user1@example.com owns 2 ongoing deals
 		result_user = get_ongoing_deals(self.from_date, self.to_date, self.user2_email)
-		self.assertEqual(result_user["value"], 2)
+		self.assertEqual(self.added(result_user["value"], "ongoing_u2"), 2)
 
 		# Verify user owns subset of ongoing deals
 		self.assertLess(result_user["value"], result["value"])
@@ -128,7 +159,7 @@ class TestDashboard(IntegrationTestCase):
 		result = get_won_deals(self.from_date, self.to_date)
 
 		self.assertEqual(result["title"], "Won deals")
-		self.assertEqual(result["value"], 8)  # 8 won deals from test_records.json
+		self.assertEqual(self.added(result["value"], "won"), 8)  # 8 won deals from test_records.json
 		self.assertIsNotNone(result.get("tooltip"))
 
 		# Verify won deals is less than total deals
@@ -139,7 +170,7 @@ class TestDashboard(IntegrationTestCase):
 
 		# Test with user filter - crm.user1@example.com owns 0 won deals
 		result_user = get_won_deals(self.from_date, self.to_date, self.user2_email)
-		self.assertEqual(result_user["value"], 0)
+		self.assertEqual(self.added(result_user["value"], "won_u2"), 0)
 
 		# User owns no won deals but has ongoing deals
 		ongoing_user = get_ongoing_deals(self.from_date, self.to_date, self.user2_email)
@@ -262,7 +293,7 @@ class TestDashboard(IntegrationTestCase):
 
 		# Verify funnel starts with Leads
 		self.assertEqual(result["data"][0]["stage"], "Leads")
-		self.assertEqual(result["data"][0]["count"], 35)  # 35 leads from test_records.json
+		self.assertEqual(self.added(result["data"][0]["count"], "funnel"), 35)  # from test_records.json
 
 		# Verify funnel stages are in order and counts decrease or stay same (funnel effect)
 		for i in range(len(result["data"]) - 1):
@@ -280,7 +311,7 @@ class TestDashboard(IntegrationTestCase):
 		self.assertIn("data", result_user)
 		self.assertGreater(len(result_user["data"]), 0)
 		self.assertEqual(result_user["data"][0]["stage"], "Leads")
-		self.assertEqual(result_user["data"][0]["count"], 3)
+		self.assertEqual(self.added(result_user["data"][0]["count"], "funnel_u2"), 3)
 
 		# User's funnel should be subset of total
 		for i in range(min(len(result["data"]), len(result_user["data"]))):
@@ -343,12 +374,12 @@ class TestDashboard(IntegrationTestCase):
 		# Should have source data
 		if result["data"]:
 			total_leads = sum(entry.get("count", 0) for entry in result["data"])  # API uses 'count'
-			self.assertEqual(total_leads, 35)  # Total leads from test data
+			self.assertEqual(self.added(total_leads, "by_source"), 35)  # Total leads from test data
 
 		result_user = get_leads_by_source(self.from_date, self.to_date, self.user2_email)
 		if result_user["data"]:
 			user_total = sum(entry.get("count", 0) for entry in result_user["data"])  # API uses 'count'
-			self.assertEqual(user_total, 3)  # user1 owns 3 leads
+			self.assertEqual(self.added(user_total, "by_source_u2"), 3)  # user1 owns 3 leads
 
 	def test_get_deals_by_source(self):
 		"""Test get_deals_by_source returns source distribution"""
@@ -423,7 +454,7 @@ class TestDashboard(IntegrationTestCase):
 		"""Test get_chart returns correct chart data for valid chart names"""
 		result = get_chart("total_leads", "number", self.from_date, self.to_date)
 
-		self.assertEqual(result["value"], 35)  # Should match get_total_leads
+		self.assertEqual(self.added(result["value"], "leads"), 35)  # Should match get_total_leads
 		self.assertIsInstance(result["value"], (int, float))
 		self.assertIsNotNone(result.get("title"))
 
@@ -449,8 +480,8 @@ class TestDashboard(IntegrationTestCase):
 		result_crm_user = get_total_leads(self.from_date, self.to_date, self.user2_email)
 		result_all = get_total_leads(self.from_date, self.to_date, "")
 
-		self.assertEqual(result_crm_user["value"], 3)  # crm.user1@example.com owns 3 leads
-		self.assertEqual(result_all["value"], 35)  # 35 total leads
+		self.assertEqual(self.added(result_crm_user["value"], "leads_u2"), 3)  # crm.user1 owns 3 leads
+		self.assertEqual(self.added(result_all["value"], "leads"), 35)  # 35 total leads
 		self.assertGreater(result_all["value"], result_crm_user["value"])
 
 	def test_date_range_filtering(self):
@@ -595,9 +626,9 @@ class TestDashboard(IntegrationTestCase):
 		self.assertLessEqual(user_won, total_won)
 
 		# Verify specific user data matches expected
-		self.assertEqual(user_leads, 3)  # crm.user1 owns 3 leads
-		self.assertEqual(user_ongoing, 2)  # crm.user1 owns 2 ongoing deals
-		self.assertEqual(user_won, 0)  # crm.user1 owns 0 won deals
+		self.assertEqual(self.added(user_leads, "leads_u2"), 3)  # crm.user1 owns 3 leads
+		self.assertEqual(self.added(user_ongoing, "ongoing_u2"), 2)  # crm.user1 owns 2 ongoing deals
+		self.assertEqual(self.added(user_won, "won_u2"), 0)  # crm.user1 owns 0 won deals
 
 	def test_time_to_close_calculations(self):
 		"""Test that time to close metrics calculate correctly"""

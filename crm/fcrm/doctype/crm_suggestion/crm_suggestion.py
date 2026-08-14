@@ -1,7 +1,31 @@
 # Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
+import frappe
 from frappe.model.document import Document
+
+
+def get_permission_query_conditions(user=None):
+	"""A rep sees their own suggestions; managers see the whole queue.
+
+	The API endpoints scope by ``user`` too, but they are not the only door: the
+	generic document API reaches this doctype directly, so the rule has to live
+	on the doctype or it is not a rule.
+	"""
+	user = user or frappe.session.user
+	roles = frappe.get_roles(user)
+	if "System Manager" in roles or "Sales Manager" in roles:
+		return ""
+	return f"`tabCRM Suggestion`.`user` = {frappe.db.escape(user)}"
+
+
+def has_permission(doc, ptype="read", user=None):
+	user = user or frappe.session.user
+	roles = frappe.get_roles(user)
+	if "System Manager" in roles or "Sales Manager" in roles:
+		return True
+	# unowned suggestions are team-wide signals and stay in manager views only
+	return bool(doc.user) and doc.user == user
 
 
 class CRMSuggestion(Document):

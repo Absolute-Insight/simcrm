@@ -107,6 +107,46 @@ def _forecast_vs_actual(from_date, to_date, user):
 	]
 
 
+def _quota_attainment_by_rep(from_date, to_date, user):
+	from crm.api.dashboard import quota_in_period, won_value_in_period
+
+	reps = set(frappe.get_all("CRM Quota", pluck="user", distinct=True))
+	Deal = DocType("CRM Deal")
+	Status = DocType("CRM Deal Status")
+	won_owners = (
+		frappe.qb.from_(Deal)
+		.join(Status)
+		.on(Deal.status == Status.name)
+		.where(
+			(Deal.closed_date >= from_date)
+			& (Deal.closed_date <= to_date)
+			& (Status.type == "Won")
+			& Deal.deal_owner.isnotnull()
+		)
+		.select(Deal.deal_owner)
+		.distinct()
+		.run(pluck=True)
+	)
+	reps.update(won_owners)
+	if user:
+		reps &= {user}
+
+	rows = []
+	for rep in sorted(reps):
+		quota = quota_in_period(from_date, to_date, rep)
+		actual = won_value_in_period(from_date, to_date, rep)
+		rows.append(
+			{
+				"user": rep,
+				"quota": round(quota, 2),
+				"actual": round(actual, 2),
+				"gap": round(actual - quota, 2),
+				"attainment": round(actual / quota * 100) if quota else 0,
+			}
+		)
+	return rows
+
+
 REPORTS = {
 	"pipeline_by_stage": {
 		"title": _("Pipeline by stage"),
@@ -150,6 +190,18 @@ REPORTS = {
 			{"key": "actual", "label": _("Actual"), "type": "currency"},
 		],
 		"get_rows": _forecast_vs_actual,
+	},
+	"quota_attainment_by_rep": {
+		"title": _("Quota attainment by rep"),
+		"description": _("Closed-won revenue against quota for the period, per rep"),
+		"columns": [
+			{"key": "user", "label": _("Rep"), "type": "text"},
+			{"key": "quota", "label": _("Quota"), "type": "currency"},
+			{"key": "actual", "label": _("Closed won"), "type": "currency"},
+			{"key": "gap", "label": _("Gap"), "type": "currency"},
+			{"key": "attainment", "label": _("Attainment %"), "type": "percent"},
+		],
+		"get_rows": _quota_attainment_by_rep,
 	},
 }
 

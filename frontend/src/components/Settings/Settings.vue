@@ -49,6 +49,7 @@
 <script setup>
 import LucideLayoutDashboard from '~icons/lucide/layout-dashboard'
 import LucideNetwork from '~icons/lucide/network'
+import LucideTarget from '~icons/lucide/target'
 import MonitorCogIcon from '~icons/lucide/monitor-cog'
 import LucideTextCursorInput from '~icons/lucide/text-cursor-input'
 import SlidersIcon from '@/components/Icons/SlidersIcon.vue'
@@ -63,6 +64,7 @@ import SettingsIcon from '@/components/Icons/SettingsIcon.vue'
 import SettingsIcon2 from '@/components/Icons/SettingsIcon2.vue'
 import Users from '@/components/Settings/Users.vue'
 import Hierarchy from '@/components/Settings/Hierarchy/Hierarchy.vue'
+import Quotas from '@/components/Settings/Quotas.vue'
 import InviteUserPage from '@/components/Settings/InviteUserPage.vue'
 import ProfilePage from '@/components/Settings/Profile/ProfilePage.vue'
 import PreferencesSettings from '@/components/Settings/PreferencesSettings.vue'
@@ -169,6 +171,12 @@ const tabs = computed(() => {
           label: __('Sales Hierarchy'),
           icon: LucideNetwork,
           component: markRaw(Hierarchy),
+          condition: () => isManager(),
+        },
+        {
+          label: __('Sales Targets'),
+          icon: LucideTarget,
+          component: markRaw(Quotas),
           condition: () => isManager(),
         },
       ],
