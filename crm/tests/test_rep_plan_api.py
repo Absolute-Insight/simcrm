@@ -65,24 +65,21 @@ class RepPlanApiTest(IntegrationTestCase):
 		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
 		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 0)
 
-	def make_suggestion(self, user):
-		return (
-			frappe.get_doc(
-				{
-					"doctype": "CRM Suggestion",
-					"signal": "idle_deal",
-					"title": "Re-engage Plan API Org",
-					"reference_doctype": "CRM Deal",
-					"reference_docname": self.deal,
-					"user": user,
-					"status": "Open",
-					"suggested_action": "schedule_call",
-					"score": 70,
-				}
-			)
-			.insert(ignore_permissions=True)
-			.name
-		)
+	def make_suggestion(self, user, title="Re-engage Plan API Org", action_payload=None):
+		doc = {
+			"doctype": "CRM Suggestion",
+			"signal": "idle_deal",
+			"title": title,
+			"reference_doctype": "CRM Deal",
+			"reference_docname": self.deal,
+			"user": user,
+			"status": "Open",
+			"suggested_action": "schedule_call",
+			"score": 70,
+		}
+		if action_payload is not None:
+			doc["action_payload"] = frappe.as_json(action_payload)
+		return frappe.get_doc(doc).insert(ignore_permissions=True).name
 
 	def make_task(self) -> str:
 		task = frappe.get_doc(
@@ -180,6 +177,29 @@ class RepPlanApiTest(IntegrationTestCase):
 		self.assertTrue(drafts)
 		for draft in drafts:
 			self.assertGreaterEqual(frappe.utils.getdate(draft["planned_date"]), today)
+
+	def test_propose_week_notes_the_activity_not_the_nagging(self):
+		"""A stale_plan suggestion is titled after the miss, not after the work.
+
+		Drafting from the title wrote "Overdue plan item: Call Acme" onto the
+		card, and because find_stale_plan_items reads plan notes back, missing
+		that draft would title the next one "Overdue plan item: Overdue plan
+		item: Call Acme".
+		"""
+		self.make_suggestion(
+			REP,
+			title="Overdue plan item: Call Plan API Org",
+			action_payload={"title": "Call Plan API Org"},
+		)
+		frappe.set_user(REP)
+		drafts = propose_week(self.monday)
+		self.assertEqual(drafts[0]["note"], "Call Plan API Org")
+
+	def test_propose_week_falls_back_to_the_title_without_a_payload(self):
+		self.make_suggestion(REP, title="Re-engage Plan API Org")
+		frappe.set_user(REP)
+		drafts = propose_week(self.monday)
+		self.assertEqual(drafts[0]["note"], "Re-engage Plan API Org")
 
 	def test_saving_a_proposed_plan_accepts_its_suggestions(self):
 		suggestion = self.make_suggestion(REP)

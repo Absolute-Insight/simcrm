@@ -321,6 +321,7 @@ def propose_week(week_start: str):
 		fields=[
 			"name",
 			"title",
+			"action_payload",
 			"reference_doctype",
 			"reference_docname",
 			"suggested_action",
@@ -337,13 +338,30 @@ def propose_week(week_start: str):
 			{
 				"activity_type": ACTION_TO_ACTIVITY.get(s.suggested_action, "Task"),
 				"planned_date": str(days[i % len(days)]),
-				"note": s.title,
+				"note": _draft_note(s),
 				"reference_doctype": s.reference_doctype,
 				"reference_docname": s.reference_docname,
 				"suggestion": s.name,
 			}
 		)
 	return drafts
+
+
+def _draft_note(suggestion) -> str:
+	"""The activity to do, not the reason it is being suggested.
+
+	A suggestion's title addresses the rep ("Overdue plan item: Call Acme"),
+	while its payload title is the thing itself ("Call Acme"). Only the payload
+	makes sense written on a planner card -- and the ``stale_plan`` signal reads
+	plan notes back, so titling the draft from the title nests the prefix a
+	little deeper every week it is missed.
+	"""
+	try:
+		payload = json.loads(suggestion.action_payload or "{}")
+	except (ValueError, TypeError):
+		payload = {}
+	title = payload.get("title") if isinstance(payload, dict) else None
+	return (title or suggestion.title or "").strip()
 
 
 def _spread_days(monday):
