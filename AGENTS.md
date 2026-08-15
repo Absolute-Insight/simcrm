@@ -82,6 +82,17 @@ they run as evaluated strings in the browser.
 | `frontend/src/components/ui/` | `Skeleton`, `SkeletonTable`, `ErrorState` — loading and failure primitives |
 | `frontend/src/utils/chartTheme.js` | Brand chart palette, light and dark |
 
+**Coloured text uses the `-9` step.** `--ink-{green,red,orange}-*` is a
+readability ladder, not a lightness one: it runs light-to-dark in light mode and
+dark-to-light in dark mode, so a low step is a background tint in *both*.
+`text-ink-red-3` looks like a red on the dark theme and measures 1.24:1 on the
+light one. `-9` stays above 6.3:1 on every surface in both modes; `-8` grazes
+the AA floor on a tinted stat tile. Use orange, not amber, for warnings — no
+amber step clears 4.5 against a light surface.
+
+Check with a browser, in **both** themes — the generator's floors cover the
+tokens it writes, and these are not among them.
+
 ---
 
 ## Tests
