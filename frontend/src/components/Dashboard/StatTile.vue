@@ -44,7 +44,7 @@
          around, so the message is one line and the retry is the icon. -->
     <div v-else-if="error" class="flex items-start gap-2">
       <LucideTriangleAlert
-        class="mt-0.5 size-4 shrink-0 text-ink-red-4"
+        class="mt-0.5 size-4 shrink-0 text-ink-red-9"
         aria-hidden="true"
       />
       <div class="flex min-w-0 flex-1 flex-col gap-1">
@@ -72,8 +72,8 @@
         v-if="delta"
         class="text-sm font-medium"
         :class="{
-          'text-ink-green-3': tone === 'positive',
-          'text-ink-red-4': tone === 'negative',
+          'text-ink-green-9': tone === 'positive',
+          'text-ink-red-9': tone === 'negative',
           'text-ink-gray-5': tone === 'neutral',
         }"
       >

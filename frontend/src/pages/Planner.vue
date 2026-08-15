@@ -61,13 +61,13 @@
         class="flex items-center gap-2 text-sm text-ink-gray-6"
       >
         <span>{{ totals.planned }} {{ __('planned') }}</span>
-        <span class="text-ink-green-3">{{ totals.done }} {{ __('done') }}</span>
-        <span v-if="totals.missed" class="text-ink-red-4">
+        <span class="text-ink-green-9">{{ totals.done }} {{ __('done') }}</span>
+        <span v-if="totals.missed" class="text-ink-red-9">
           {{ totals.missed }} {{ __('missed') }}
         </span>
         <span
           v-if="unsaved.total"
-          class="rounded-full bg-surface-amber-1 px-2 py-0.5 text-ink-amber-3"
+          class="rounded-full bg-surface-amber-1 px-2 py-0.5 text-ink-orange-9"
         >
           {{ __('{0} unsaved', [unsaved.total]) }}
         </span>
@@ -99,7 +99,7 @@
        it, so the choice is the user's rather than ours. -->
   <div
     v-if="stale"
-    class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-surface-amber-1 px-5 py-2 text-sm text-ink-amber-3"
+    class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-surface-amber-1 px-5 py-2 text-sm text-ink-orange-9"
     role="alert"
   >
     <span class="flex-1">
@@ -614,8 +614,8 @@ function typeIcon(type) {
 }
 
 function statusColor(status) {
-  if (status === 'Done') return 'text-ink-green-3'
-  if (status === 'Missed') return 'text-ink-red-4'
+  if (status === 'Done') return 'text-ink-green-9'
+  if (status === 'Missed') return 'text-ink-red-9'
   return 'text-ink-gray-5'
 }
 

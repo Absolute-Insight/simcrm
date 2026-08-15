@@ -538,7 +538,7 @@ const PANEL_CATALOGUE = computed(() => {
       emptyDescription: __('Adherence appears once reps plan their weeks.'),
       rows: computed(() => teamAdherence.data?.rows || []),
       cell: (row) => `${row.adherence}%`,
-      tone: (row) => (row.adherence < 60 ? 'text-ink-amber-3' : ''),
+      tone: (row) => (row.adherence < 60 ? 'text-ink-orange-9' : ''),
     },
     {
       id: 'quota',
@@ -554,7 +554,7 @@ const PANEL_CATALOGUE = computed(() => {
       emptyDescription: __('Set monthly targets in Settings → Sales Targets.'),
       rows: computed(() => teamQuota.data?.rows || []),
       cell: (row) => `${row.attainment}%`,
-      tone: (row) => (row.attainment < 80 ? 'text-ink-amber-3' : ''),
+      tone: (row) => (row.attainment < 80 ? 'text-ink-orange-9' : ''),
     },
   )
   return panels

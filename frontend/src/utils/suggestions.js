@@ -149,15 +149,25 @@ export function acceptLabel(action) {
 /**
  * Urgency as a word. Never as the raw number: 82 and 82 mean opposite things
  * depending on whether you are reading a suggestion or a deal.
+ *
+ * The `-9` step is deliberate, and low steps are the trap. A frappe-ui colour
+ * ink ramp is a readability ladder, not a lightness one: it runs light-to-dark
+ * in light mode and dark-to-light in dark mode, so a low step is a background
+ * tint in *both*. `text-ink-red-3` measured 1.24:1 on the light surface -- it
+ * only ever looked right because this was built dark-mode-first. Measured
+ * against every surface these land on, `-9` never drops below 6.3:1 in either
+ * mode, where `-8` grazes the AA floor on a tinted stat tile (4.41:1). Orange
+ * rather than amber for the middle band: no amber step reaches 4.5 on a light
+ * surface at all, amber-8 tops out at 3.6.
  */
 export function urgencyBand(score) {
   const value = toScore(score)
   if (value === null) return null
   if (value >= URGENCY_HIGH) {
-    return { key: 'high', label: __('Urgent'), ink: 'text-ink-red-3' }
+    return { key: 'high', label: __('Urgent'), ink: 'text-ink-red-9' }
   }
   if (value >= URGENCY_MEDIUM) {
-    return { key: 'medium', label: __('Soon'), ink: 'text-ink-amber-3' }
+    return { key: 'medium', label: __('Soon'), ink: 'text-ink-orange-9' }
   }
   return { key: 'low', label: __('Low'), ink: 'text-ink-gray-5' }
 }
@@ -177,7 +187,7 @@ export function healthBand(score) {
       key: 'healthy',
       label: __('Healthy'),
       fill: 'bg-surface-green-3',
-      ink: 'text-ink-green-3',
+      ink: 'text-ink-green-9',
     }
   }
   if (value >= HEALTH_AT_RISK) {
@@ -185,14 +195,14 @@ export function healthBand(score) {
       key: 'at_risk',
       label: __('At risk'),
       fill: 'bg-surface-amber-2',
-      ink: 'text-ink-amber-3',
+      ink: 'text-ink-orange-9',
     }
   }
   return {
     key: 'critical',
     label: __('Critical'),
     fill: 'bg-surface-red-4',
-    ink: 'text-ink-red-3',
+    ink: 'text-ink-red-9',
   }
 }
 
