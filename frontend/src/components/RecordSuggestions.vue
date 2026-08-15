@@ -1,7 +1,7 @@
 <template>
   <div class="flex flex-col gap-3 border-b px-4 py-3 sm:px-6">
     <div class="flex items-center justify-between gap-2">
-      <div class="text-sm text-ink-gray-5">{{ __('Needs attention') }}</div>
+      <div class="text-sm text-ink-gray-5">{{ heading }}</div>
       <Skeleton
         v-if="healthLoading"
         shape="block"
@@ -165,6 +165,16 @@ const health = createResource({
 const scoresDeal = computed(() => props.doctype === 'CRM Deal')
 
 const rows = computed(() => recordSuggestions.data || [])
+
+/**
+ * The heading has to describe what is actually under it. A fixed "Needs
+ * attention" sat above "Healthy 85/100" and nothing else, which contradicts
+ * itself; on a lead there is no health score to head at all.
+ */
+const heading = computed(() => {
+  if (rows.value.length) return __('Needs attention')
+  return scoresDeal.value ? __('Deal health') : __('Signals')
+})
 
 const suggestionsLoading = computed(
   () =>

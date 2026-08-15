@@ -135,7 +135,11 @@ const deltaDisplay = computed(() => {
   const value = Number(props.delta) || 0
   const sign = value > 0 ? '+' : value < 0 ? '−' : ''
   const magnitude = Math.abs(value)
-  if (magnitude >= 1000) return `${sign}999+${props.deltaSuffix}`
+  // The clamp is a comparison, not a signed number: "+999+%" reads as a typo
+  // with its two plus signs, where ">999%" says the same thing once.
+  if (magnitude >= 1000) {
+    return `${value > 0 ? '>' : '<−'}999${props.deltaSuffix}`
+  }
   const rounded =
     magnitude >= 100 ? Math.round(magnitude) : Math.round(magnitude * 10) / 10
   return `${sign}${rounded}${props.deltaSuffix}`
