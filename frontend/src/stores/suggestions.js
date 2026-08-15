@@ -9,6 +9,7 @@ import {
   buildTaskDoc,
   composeDismissReason,
   dismissReasonOptions,
+  displayReferenceLabel,
   draftStatusMessage,
   fieldUpdateSpec,
   isDraftUsable,
@@ -53,10 +54,12 @@ export const openSuggestionsCount = computed(() => {
 export const referenceLabels = reactive({})
 
 export function referenceLabelFor(suggestion) {
-  return (
-    referenceLabels[
-      referenceKey(suggestion.reference_doctype, suggestion.reference_docname)
-    ] || ''
+  // display form: appends the short record id when two records of the same
+  // doctype resolve to the same name (three deals at one org, most commonly)
+  return displayReferenceLabel(
+    referenceLabels,
+    suggestion.reference_doctype,
+    suggestion.reference_docname,
   )
 }
 

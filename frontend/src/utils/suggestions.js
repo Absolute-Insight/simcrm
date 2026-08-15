@@ -83,6 +83,46 @@ export function referenceKey(doctype, docname) {
 }
 
 /**
+ * The short, recognisable form of a record's primary key: the trailing serial
+ * ("CRM-DEAL-2026-00042" → "#00042"). The full docname when the tail is not
+ * numeric — better verbose than wrong.
+ */
+export function shortRecordId(docname) {
+  const tail = String(docname || '')
+    .split('-')
+    .pop()
+  return /^\d+$/.test(tail) ? `#${tail}` : String(docname || '')
+}
+
+/**
+ * The label to display for a record, given the resolved-label map.
+ *
+ * Deals are labelled by organization and have no title field, so a rep with
+ * three deals at Acme Corp sees three rows called "Acme Corp" — identical, and
+ * since the risk signals fire on sibling deals together, usually adjacent. When
+ * a label collides with another record of the same doctype, the short record id
+ * is appended; the id is already user-visible (the record page header shows
+ * it), unique by construction, and the row still opens the right record.
+ * Unambiguous labels stay clean.
+ */
+export function displayReferenceLabel(labels, doctype, docname) {
+  const key = referenceKey(doctype, docname)
+  const label = labels?.[key]
+  if (!label) return ''
+  const prefix = `${doctype}:`
+  for (const [otherKey, otherLabel] of Object.entries(labels)) {
+    if (
+      otherKey !== key &&
+      otherLabel === label &&
+      otherKey.startsWith(prefix)
+    ) {
+      return `${label} · ${shortRecordId(docname)}`
+    }
+  }
+  return label
+}
+
+/**
  * Group the rows that still need a human name, by doctype.
  *
  * `already` is the resolved-label cache, so a scroll or a socket refresh only

@@ -343,7 +343,7 @@ import {
   toISODate,
 } from '@/utils/dashboardHome'
 import * as suggestionsModule from '@/stores/suggestions'
-import { referenceKey, urgencyBand } from '@/utils/suggestions'
+import { displayReferenceLabel, urgencyBand } from '@/utils/suggestions'
 import {
   getLastXDays,
   formatter,
@@ -442,7 +442,11 @@ const riskRows = computed(() =>
 )
 
 function recordLabel(row: { doctype: string; docname: string }) {
-  return referenceLabels[referenceKey(row.doctype, row.docname)] || row.docname
+  // display form: three deals at one org must not read as one deal three times
+  return (
+    displayReferenceLabel(referenceLabels, row.doctype, row.docname) ||
+    row.docname
+  )
 }
 
 function openRecord(row: { doctype: string; docname: string }) {
