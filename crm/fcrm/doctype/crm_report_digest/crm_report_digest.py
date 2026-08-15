@@ -80,12 +80,16 @@ def send_due_digests():
 				# would see on the Reports page
 				original_user = frappe.session.user
 				try:
-					# nosemgrep: deliberate — the digest must be scoped to the recipient, and
-					# the finally below restores the scheduler user unconditionally
-					frappe.set_user(recipient)
+					# Deliberate: this is what scopes the digest to its recipient, and the
+					# finally below restores the scheduler user unconditionally.
+					frappe.set_user(
+						recipient
+					)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser
 					report = get_report(digest.report, str(from_date), str(today))
 				finally:
-					frappe.set_user(original_user)
+					frappe.set_user(
+						original_user
+					)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser
 
 				frappe.sendmail(
 					recipients=[recipient],
@@ -101,25 +105,25 @@ def send_due_digests():
 	return sent
 
 
+# Email clients ignore stylesheets, so every rule has to be inline. Naming the
+# two of them keeps the markup on one line each and readable, instead of a run of
+# implicitly concatenated string literals that reads like a list missing a comma.
+TH_STYLE = (
+	"text-align:left;padding:6px 12px;border-bottom:2px solid #ebebf3;"
+	"font-size:12px;color:#7a7990;text-transform:uppercase;letter-spacing:0.04em"
+)
+TD_STYLE = "padding:6px 12px;border-bottom:1px solid #f2f2f8;font-variant-numeric:tabular-nums"
+
+
 def _render_digest(report, from_date, to_date) -> str:
 	"""Every interpolation is escaped: report cells carry user-authored text —
 	stage names, lost reasons, user names — straight into an email body."""
 	columns = report["columns"]
-	# nosemgrep: adjacent f-string literals building one HTML tag, not a list with
-	# a missing comma — every interpolated value goes through escape_html
-	head = "".join(
-		f'<th style="text-align:left;padding:6px 12px;border-bottom:2px solid #ebebf3;'
-		f'font-size:12px;color:#7a7990;text-transform:uppercase;letter-spacing:0.04em">'
-		f"{escape_html(str(col['label']))}</th>"
-		for col in columns
-	)
+	head = "".join(f'<th style="{TH_STYLE}">{escape_html(str(col["label"]))}</th>' for col in columns)
 	body = ""
 	for row in report["rows"]:
-		# nosemgrep: adjacent f-string literals, as above
 		cells = "".join(
-			f'<td style="padding:6px 12px;border-bottom:1px solid #f2f2f8;'
-			f'font-variant-numeric:tabular-nums">{escape_html(str(row.get(col["key"], "")))}</td>'
-			for col in columns
+			f'<td style="{TD_STYLE}">{escape_html(str(row.get(col["key"], "")))}</td>' for col in columns
 		)
 		body += f"<tr>{cells}</tr>"
 	if not report["rows"]:

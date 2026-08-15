@@ -117,9 +117,11 @@ def _render(template, doc_dict) -> str:
 	``as_dict()`` too, and it means a future sandbox regression cannot turn a
 	template field into a write primitive.
 	"""
-	# nosemgrep: the template is authored by a Sales Manager, validated at save,
-	# and rendered against a plain dict rather than the live Document
-	return frappe.render_template(template or "", {"doc": doc_dict})
+	# Authored by a Sales Manager, validated at save, rendered against a plain
+	# dict rather than the live Document.
+	return frappe.render_template(
+		template or "", {"doc": doc_dict}
+	)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-ssti
 
 
 def _apply(rule, doc) -> None:

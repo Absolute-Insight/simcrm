@@ -361,7 +361,7 @@ def match_actuals() -> int:
 		else:
 			# tests run inside one transaction that is rolled back afterwards
 			if not frappe.in_test:
-				frappe.db.commit()  # nosemgrep: per-plan commit so one bad plan cannot undo the run
+				frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit
 
 	_close_stranded_items(horizon)
 	return fulfilled
