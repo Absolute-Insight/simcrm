@@ -4,6 +4,14 @@ on:
   push:
     branches:
       - main
+
+# semantic-release creates the GitHub Release and pushes the version-bump
+# commit; contents:write covers both on an unprotected main.
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
 jobs:
   release:
     name: Release
@@ -22,9 +30,13 @@ jobs:
         run: |
           npm install @semantic-release/git @semantic-release/exec --no-save
       - name: Create Release
+        # RELEASE_TOKEN (a PAT) is only needed once main is branch-protected;
+        # until then the workflow token with contents:write does everything
+        # semantic-release asks of it. The fallback keeps the release runnable
+        # on a repo where that secret was never configured — which this one is.
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           GIT_AUTHOR_NAME: "Frappe PR Bot"
           GIT_AUTHOR_EMAIL: "developers@frappe.io"
           GIT_COMMITTER_NAME: "Frappe PR Bot"
