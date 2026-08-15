@@ -175,6 +175,11 @@
     </span>
   </div>
 
+  <!-- The columns flex to fill, and the min-width is only what decides when the
+       week starts scrolling sideways instead. 9rem x 7 = 1008px, so a 1280px
+       laptop still shows a whole week; 11rem needed 1232px against the 1200px a
+       1440px screen actually offers, and put a horizontal scrollbar under every
+       desktop. -->
   <div
     v-if="!plan.error && !showReadOnlyEmpty"
     class="flex flex-1 flex-col overflow-y-auto sm:flex-row sm:overflow-x-auto"
@@ -182,7 +187,7 @@
     <div
       v-for="day in weekDays"
       :key="day.date"
-      class="flex flex-col border-b last:border-b-0 sm:min-w-44 sm:flex-1 sm:border-b-0 sm:border-r sm:last:border-r-0"
+      class="flex flex-col border-b last:border-b-0 sm:min-w-36 sm:flex-1 sm:border-b-0 sm:border-r sm:last:border-r-0"
       :class="[
         day.isWeekend ? 'bg-surface-gray-1' : '',
         dragOverDate === day.date ? 'v-drop-target' : '',
