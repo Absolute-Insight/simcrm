@@ -47,10 +47,23 @@ def _funnel_conversion(from_date, to_date, user):
 	return rows
 
 
+def _rep_display(rows: list[dict]) -> list[dict]:
+	"""Add the human name next to each row's ``user`` key.
+
+	The Rep column shows ``rep``; ``user`` stays in the row because it is the
+	stable key — the dashboard panels join on it, and two reps can share a full
+	name. So the screen, the CSV and the digest all read "Jane Sales" while
+	anything programmatic still gets the email.
+	"""
+	for row in rows:
+		row["rep"] = frappe.utils.get_fullname(row.get("user")) or row.get("user")
+	return rows
+
+
 def _plan_adherence_by_rep(from_date, to_date, user):
 	from crm.api.dashboard import plan_adherence
 
-	return plan_adherence(from_date, to_date, user, group_by_user=True)
+	return _rep_display(plan_adherence(from_date, to_date, user, group_by_user=True))
 
 
 def _forecast_vs_actual(from_date, to_date, user):
@@ -108,7 +121,7 @@ def _quota_attainment_by_rep(from_date, to_date, user):
 				"attainment": round(actual / quota * 100) if quota else 0,
 			}
 		)
-	return rows
+	return _rep_display(rows)
 
 
 REPORTS = {
@@ -150,7 +163,7 @@ REPORTS = {
 		"title": "Plan adherence by rep",
 		"description": "Planned activities due in the period, and how many were done",
 		"columns": [
-			{"key": "user", "label": "Rep", "type": "text"},
+			{"key": "rep", "label": "Rep", "type": "text"},
 			{"key": "planned", "label": "Planned (due)", "type": "number"},
 			{"key": "done", "label": "Done", "type": "number"},
 			{"key": "missed", "label": "Missed", "type": "number"},
@@ -172,7 +185,7 @@ REPORTS = {
 		"title": "Quota attainment by rep",
 		"description": "Closed-won revenue against quota for the period, per rep",
 		"columns": [
-			{"key": "user", "label": "Rep", "type": "text"},
+			{"key": "rep", "label": "Rep", "type": "text"},
 			{"key": "quota", "label": "Quota", "type": "currency"},
 			{"key": "actual", "label": "Closed won", "type": "currency"},
 			{"key": "gap", "label": "Gap", "type": "currency"},
