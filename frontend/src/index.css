@@ -123,6 +123,16 @@ body {
   }
 }
 
+/* frappe-ui's NumberChart paints its positive delta text-ink-green-6, which
+   measures 2.74:1 on these cards in light mode and 3.75:1 in dark — both under
+   the 4.5:1 floor (the ink ramps are readability ladders; see AGENTS.md, Design
+   system). The negative delta already uses red-8 and passes. Upstream fix
+   belongs in frappe-ui; until then, remap just that token inside the dashboard
+   number cards, where green-9 measures 7.6:1 light / 12.5:1 dark. */
+.v-number-card .text-ink-green-6 {
+  color: var(--ink-green-9);
+}
+
 /* Slim, token-colored scrollbars everywhere. */
 * {
   scrollbar-width: thin;

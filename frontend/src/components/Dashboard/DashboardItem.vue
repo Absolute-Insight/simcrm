@@ -2,7 +2,7 @@
   <div class="h-full w-full">
     <div
       v-if="item.type == 'number_chart'"
-      class="flex h-full w-full rounded shadow overflow-hidden cursor-pointer"
+      class="v-number-card flex h-full w-full rounded shadow overflow-hidden cursor-pointer"
     >
       <Tooltip :text="__(item.data.tooltip)">
         <NumberChart
