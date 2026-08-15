@@ -42,13 +42,21 @@ export default {
         ],
       },
       colors: {
-        // Vectora brand palette — sampled from the logo mark.
-        // `brand` is the indigo primary; sky/magenta are the gradient endpoints
-        // and are reserved for accents, never for text on light surfaces.
+        // Vectora brand palette — sampled from the logo mark. This is the
+        // utility-class face of the brand; the CSS-variable face lives in
+        // scripts/generate_vectora_theme.py (BRAND) and the two share the
+        // same hexes. Kept as literals rather than `var(--brand-*)` so the
+        // Tailwind opacity modifiers (`text-brand-500/60`) keep working.
+        //
+        // The gradient endpoints (sky, magenta) are deliberately NOT here:
+        // they exist only to compose --brand-gradient, and a `text-brand-sky`
+        // utility would be advertising a colour the design language does not
+        // let you spend.
         brand: {
-          DEFAULT: '#5B5FE8',
-          sky: '#21ABFB',
-          magenta: '#DF5FEB',
+          // `text-brand` / `bg-brand` is the brand used as ink, so it has to
+          // flip with the theme: 500 is 4.9:1 on the light canvas but 3.3:1 on
+          // the dark one. The numbered steps below stay literal.
+          DEFAULT: 'var(--brand-ink)',
           50: '#EFF0FD',
           100: '#E0E2FB',
           200: '#C5C8F7',
@@ -60,10 +68,6 @@ export default {
           800: '#30308C',
           900: '#282870',
         },
-      },
-      backgroundImage: {
-        'brand-gradient':
-          'linear-gradient(100deg, #21ABFB 0%, #5B5FE8 55%, #DF5FEB 100%)',
       },
     },
   },

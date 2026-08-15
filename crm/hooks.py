@@ -195,10 +195,12 @@ doc_events = {
 			"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.create_customer_in_erpnext",
 			"crm.automation.run_automations",
 		],
+		"on_trash": ["crm.automation.clear_suggestions"],
 	},
 	"CRM Lead": {
 		"after_insert": ["crm.automation.run_automations"],
 		"on_update": ["crm.automation.run_automations"],
+		"on_trash": ["crm.automation.clear_suggestions"],
 	},
 	"Sales Order": {
 		"before_validate": [
@@ -245,6 +247,7 @@ scheduler_events = {
 		"crm.fcrm.doctype.crm_report_digest.crm_report_digest.send_due_digests",
 		"crm.fcrm.doctype.crm_invitation.crm_invitation.expire_invitations",
 		"crm.fcrm.doctype.crm_view_settings.crm_view_settings.clear_old_versions",
+		"crm.agent.signals.purge_old_suggestions",
 		"crm.telemetry.capture_feature_state",
 	],
 	"weekly": [
@@ -287,7 +290,10 @@ before_tests = "crm.tests.before_tests"
 # Ignore links to specified DocTypes when deleting documents
 # -----------------------------------------------------------
 
-ignore_links_on_delete = ["Failed Lead Sync Log"]
+# CRM Suggestion holds a Dynamic Link to the deal or lead it is about. Without this
+# an open suggestion makes its own record undeletable; the on_trash handler above
+# clears the rows so nothing orphaned survives the delete.
+ignore_links_on_delete = ["Failed Lead Sync Log", "CRM Suggestion"]
 
 # Request Events
 # ----------------

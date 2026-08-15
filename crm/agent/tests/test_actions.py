@@ -66,6 +66,7 @@ class DraftReplyEndpointTest(IntegrationTestCase):
 			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
 			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
 			mock.patch.object(api_mod.client, "complete", side_effect=AgentUnavailable("down")),
+			mock.patch.object(api_mod, "_budget_spent", return_value=False),
 		):
 			result = api_mod.draft_reply("CRM Deal", "CRM-DEAL-0001")
 		self.assertEqual(result["status"], "unavailable")
@@ -76,8 +77,19 @@ class DraftReplyEndpointTest(IntegrationTestCase):
 			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
 			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
 			mock.patch.object(api_mod.client, "complete", return_value=DRAFT) as complete,
+			mock.patch.object(api_mod, "_budget_spent", return_value=False),
 		):
 			result = api_mod.draft_reply("CRM Deal", "CRM-DEAL-0001")
 		self.assertEqual(result["status"], "ok")
 		self.assertEqual(result["draft"]["subject"], "Re: pricing")
 		self.assertIs(complete.call_args[0][1], ReplyDraft)
+
+	def test_the_endpoint_is_rate_limited(self):
+		"""Same reasoning as ``summarise_thread``: a draft holds a worker for up to
+		``timeout`` x ``MAX_ATTEMPTS``, so the per-user cap is what stands between one
+		authenticated user and the worker pool."""
+		self.assertTrue(hasattr(api_mod.draft_reply, "__wrapped__"))
+		self.assertIsNot(api_mod.draft_reply, api_mod.draft_reply.__wrapped__)
+
+	def test_the_endpoint_is_whitelisted(self):
+		self.assertIn(api_mod.draft_reply, frappe.whitelisted)

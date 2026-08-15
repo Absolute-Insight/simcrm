@@ -10,23 +10,62 @@ for the deduction, so the UI can show *why* a deal scores what it does.
 The model tier, when enabled, may re-rank or annotate — it never replaces
 this number silently.
 
+Three of the factors are forward-looking rather than post-mortem. Elapsed
+time (idle, stage age, an overdue close date) says what already happened;
+*stage velocity* against the historical median for that same stage, *slip
+risk* against a close date still in the future, and a *decaying cadence*
+against the deal's own rhythm say what is about to. Both kinds are here
+because a health score that only counts elapsed days ranks a dead deal above
+a fast-decaying live one.
+
+Every weight is a named constant rather than a literal inside a factor dict:
+the numbers are the tuning surface, and a tuning surface nobody can find is
+not one.
+
 Model-free like ``signals``: this module must not import ``crm.agent.client``.
 """
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import frappe
+
+from crm.agent.signals import EARLY_STAGE_PROBABILITY, cadence_ratio
 
 IDLE_GRACE_DAYS = 3
 STAGE_GRACE_DAYS = 21
+CLOSE_HORIZON_DAYS = 14
+# Below this multiple of the stage's historical median, a deal is moving normally.
+SLOW_STAGE_RATIO = 1.5
+# Below this multiple of the deal's own median contact gap, so is its cadence.
+COOLING_RATIO = 2.0
+
+IDLE_WEIGHT_PER_DAY = 4
+IDLE_WEIGHT_CAP = 50
+STAGE_STAGNATION_WEIGHT_CAP = 20
+SLOW_STAGE_WEIGHT_PER_MULTIPLE = 8
+SLOW_STAGE_WEIGHT_CAP = 20
+CLOSE_OVERDUE_BASE_WEIGHT = 10
+CLOSE_OVERDUE_WEIGHT_CAP = 30
+SLIP_RISK_WEIGHT = 25
+COOLING_WEIGHT_PER_MULTIPLE = 6
+COOLING_WEIGHT_CAP = 20
+NO_OPEN_TASK_WEIGHT = 15
+NO_INBOUND_WEIGHT = 10
+
+# Sample size below which a stage median is one team member's habit, not a norm.
+MIN_STAGE_SAMPLES = 5
+STAGE_SAMPLE_LIMIT = 500
 
 
 def score_deal(features: dict) -> dict:
 	"""Score 0-100 with factor attribution.
 
 	Expected feature keys (missing/None values are treated as unknown and
-	never punished): ``idle_days``, ``days_in_stage``, ``days_to_close``
-	(negative = past due), ``has_open_task``, ``inbound_ratio``.
+	never punished): ``idle_days``, ``days_in_stage``, ``stage``,
+	``stage_median_days``, ``stage_probability``, ``days_to_close`` (negative =
+	past due), ``cadence_ratio``, ``has_open_task``, ``inbound_ratio``.
 	"""
 	factors = []
 
@@ -36,7 +75,7 @@ def score_deal(features: dict) -> dict:
 			{
 				"key": "idle",
 				"label": f"No activity for {idle_days} days",
-				"weight": min(50, (idle_days - IDLE_GRACE_DAYS) * 4),
+				"weight": min(IDLE_WEIGHT_CAP, (idle_days - IDLE_GRACE_DAYS) * IDLE_WEIGHT_PER_DAY),
 			}
 		)
 
@@ -46,9 +85,27 @@ def score_deal(features: dict) -> dict:
 			{
 				"key": "stage_stagnation",
 				"label": f"In the same stage for {days_in_stage} days",
-				"weight": min(20, days_in_stage - STAGE_GRACE_DAYS),
+				"weight": min(STAGE_STAGNATION_WEIGHT_CAP, days_in_stage - STAGE_GRACE_DAYS),
 			}
 		)
+
+	stage_median = features.get("stage_median_days")
+	if days_in_stage is not None and stage_median:
+		ratio = days_in_stage / stage_median
+		if ratio >= SLOW_STAGE_RATIO:
+			stage = features.get("stage") or "this stage"
+			factors.append(
+				{
+					"key": "slow_stage",
+					"label": (
+						f"{ratio:.1f}x slower through {stage} than the usual " f"{stage_median:.0f} days"
+					),
+					"weight": min(
+						SLOW_STAGE_WEIGHT_CAP,
+						round((ratio - 1) * SLOW_STAGE_WEIGHT_PER_MULTIPLE),
+					),
+				}
+			)
 
 	days_to_close = features.get("days_to_close")
 	if days_to_close is not None and days_to_close < 0:
@@ -57,7 +114,37 @@ def score_deal(features: dict) -> dict:
 			{
 				"key": "close_overdue",
 				"label": f"Expected close date passed {overdue} days ago",
-				"weight": min(30, 10 + overdue),
+				"weight": min(CLOSE_OVERDUE_WEIGHT_CAP, CLOSE_OVERDUE_BASE_WEIGHT + overdue),
+			}
+		)
+
+	stage_probability = features.get("stage_probability")
+	if (
+		days_to_close is not None
+		and 0 <= days_to_close <= CLOSE_HORIZON_DAYS
+		and stage_probability is not None
+		and stage_probability < EARLY_STAGE_PROBABILITY
+	):
+		# fires while the date is still ahead — the only point at which the rep
+		# can do anything about it
+		factors.append(
+			{
+				"key": "slip_risk",
+				"label": (
+					f"Due to close in {days_to_close} days from a stage that closes "
+					f"{stage_probability:g}% of the time"
+				),
+				"weight": SLIP_RISK_WEIGHT,
+			}
+		)
+
+	ratio = features.get("cadence_ratio")
+	if ratio is not None and ratio >= COOLING_RATIO:
+		factors.append(
+			{
+				"key": "cadence_slowing",
+				"label": f"Contact has slowed to {ratio:.1f}x this deal's own gap",
+				"weight": min(COOLING_WEIGHT_CAP, round((ratio - 1) * COOLING_WEIGHT_PER_MULTIPLE)),
 			}
 		)
 
@@ -66,7 +153,7 @@ def score_deal(features: dict) -> dict:
 			{
 				"key": "no_open_task",
 				"label": "No open task scheduled",
-				"weight": 15,
+				"weight": NO_OPEN_TASK_WEIGHT,
 			}
 		)
 
@@ -76,7 +163,7 @@ def score_deal(features: dict) -> dict:
 			{
 				"key": "no_inbound",
 				"label": "Conversation is one-sided — no inbound responses",
-				"weight": 10,
+				"weight": NO_INBOUND_WEIGHT,
 			}
 		)
 
@@ -84,10 +171,37 @@ def score_deal(features: dict) -> dict:
 	return {"score": score, "factors": factors}
 
 
+def _stage_median_days(status: str) -> float | None:
+	"""Median days deals historically spent in ``status`` before leaving it.
+
+	Read from the status change log's own duration column, so the baseline is
+	this site's history rather than a number somebody guessed. Returns None
+	below MIN_STAGE_SAMPLES: comparing a deal against two other deals produces
+	a confident-looking factor backed by nothing.
+	"""
+	log = frappe.qb.DocType("CRM Status Change Log")
+	rows = (
+		frappe.qb.from_(log)
+		.select(log.duration)
+		.where(log.parenttype == "CRM Deal")
+		.where(log["from"] == status)
+		.where(log.duration > 0)
+		.limit(STAGE_SAMPLE_LIMIT)
+		.run()
+	)
+	durations = sorted(row[0] / 86400.0 for row in rows if row[0])
+	if len(durations) < MIN_STAGE_SAMPLES:
+		return None
+	middle = len(durations) // 2
+	if len(durations) % 2:
+		return durations[middle]
+	return (durations[middle - 1] + durations[middle]) / 2
+
+
 @frappe.whitelist()
 def get_deal_health(name: str) -> dict:
 	"""Feature extraction + scoring for one deal, permission-checked."""
-	from crm.agent.signals import _latest_activity
+	from crm.agent.signals import CADENCE_WINDOW_DAYS, _activity_history, _latest_activity
 
 	deal = frappe.get_doc("CRM Deal", name)
 	deal.check_permission("read")
@@ -100,9 +214,14 @@ def get_deal_health(name: str) -> dict:
 	if deal.status_change_log and deal.status_change_log[-1].to_date:
 		days_in_stage = max(0, (now - deal.status_change_log[-1].to_date).days)
 
+	# expected_closure_date, not closed_date: the latter is only written when a
+	# deal is Won, so a risk factor keyed on it can never fire on a live deal
 	days_to_close = None
-	if deal.closed_date:
-		days_to_close = (deal.closed_date - now.date()).days
+	if deal.expected_closure_date:
+		days_to_close = (deal.expected_closure_date - now.date()).days
+
+	history = _activity_history([name], now - timedelta(days=CADENCE_WINDOW_DAYS))
+	measured = cadence_ratio(history.get(name) or [], now)
 
 	has_open_task = bool(
 		frappe.get_all(
@@ -131,7 +250,13 @@ def get_deal_health(name: str) -> dict:
 		{
 			"idle_days": idle_days,
 			"days_in_stage": days_in_stage,
+			"stage": deal.status,
+			"stage_median_days": _stage_median_days(deal.status),
+			"stage_probability": frappe.utils.flt(
+				frappe.db.get_value("CRM Deal Status", deal.status, "probability")
+			),
 			"days_to_close": days_to_close,
+			"cadence_ratio": measured[0] if measured else None,
 			"has_open_task": has_open_task,
 			"inbound_ratio": inbound_ratio,
 		}

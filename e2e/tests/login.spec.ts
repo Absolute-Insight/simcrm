@@ -26,9 +26,7 @@ test.describe('Login', () => {
 	test('rejects invalid credentials', async ({ page }) => {
 		const login = new LoginPage(page)
 		await login.goto()
-		await page.fill('#login_email', 'Administrator')
-		await page.fill('#login_password', 'wrong-password')
-		await page.click('button.btn-login')
+		await login.submitCredentials('Administrator', 'wrong-password')
 
 		await login.expectOnLoginPage()
 	})

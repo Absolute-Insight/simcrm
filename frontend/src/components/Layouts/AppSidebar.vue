@@ -26,7 +26,9 @@
             id="notifications-btn"
             :label="__('Notifications')"
             :to="mobile ? { name: 'Notifications' } : undefined"
-            :active="mobile && activeItem === 'Notifications'"
+            :active="
+              mobile ? activeItem === 'Notifications' : notificationsVisible
+            "
             @click="onNotificationsClick"
           >
             <template #prefix>
@@ -52,11 +54,12 @@
             v-if="!mobile"
             id="suggestions-btn"
             :label="__('Suggestions')"
+            :active="suggestionsVisible"
             @click="toggleSuggestionsPanel"
           >
             <template #prefix>
               <span class="relative grid size-4 place-items-center">
-                <LucideSparkles class="size-4 text-ink-gray-7" />
+                <SuggestionsIcon class="size-4 text-ink-gray-7" />
                 <span
                   v-if="isCollapsed && openSuggestionsCount"
                   class="absolute -right-1 -top-1 size-1.5 rounded-full bg-surface-gray-9 ring-1 ring-[var(--surface-gray-1)]"
@@ -200,9 +203,10 @@
 
 <script setup>
 import BrushCleaningIcon from '~icons/lucide/brush-cleaning'
-import LucideLayoutDashboard from '~icons/lucide/layout-dashboard'
-import LucideCalendarCheck from '~icons/lucide/calendar-check'
-import LucideFileBarChart from '~icons/lucide/file-bar-chart'
+import DashboardIcon from '@/components/Icons/DashboardIcon.vue'
+import PlannerIcon from '@/components/Icons/PlannerIcon.vue'
+import ReportsIcon from '@/components/Icons/ReportsIcon.vue'
+import SuggestionsIcon from '@/components/Icons/SuggestionsIcon.vue'
 import CRMLogo from '@/components/Icons/CRMLogo.vue'
 import InviteIcon from '@/components/Icons/InviteIcon.vue'
 import ConvertIcon from '@/components/Icons/ConvertIcon.vue'
@@ -227,13 +231,17 @@ import NotificationsIcon from '@/components/Icons/NotificationsIcon.vue'
 import HelpIcon from '@/components/Icons/HelpIcon.vue'
 import Notifications from '@/components/Notifications.vue'
 import Suggestions from '@/components/Suggestions.vue'
-import LucideSparkles from '~icons/lucide/sparkles'
-import { suggestionsStore, openSuggestionsCount } from '@/stores/suggestions'
+import {
+  suggestionsStore,
+  openSuggestionsCount,
+  suggestionsVisible,
+} from '@/stores/suggestions'
 import Settings from '@/components/Settings/Settings.vue'
 import { viewsStore } from '@/stores/views'
 import {
   unreadNotificationsCount,
   notificationsStore,
+  visible as notificationsVisible,
 } from '@/stores/notifications'
 import { usersStore } from '@/stores/users'
 import { sessionStore } from '@/stores/session'
@@ -287,19 +295,19 @@ const isDemoSite = ref(window.is_demo_site)
 const links = [
   {
     label: 'Dashboard',
-    icon: LucideLayoutDashboard,
+    icon: DashboardIcon,
     to: 'Dashboard',
     condition: () => !props.mobile,
   },
   {
     label: 'Planner',
-    icon: LucideCalendarCheck,
+    icon: PlannerIcon,
     to: 'Planner',
     condition: () => !props.mobile,
   },
   {
     label: 'Reports',
-    icon: LucideFileBarChart,
+    icon: ReportsIcon,
     to: 'Reports',
     condition: () => !props.mobile,
   },

@@ -5,34 +5,58 @@
  * every gray-family semantic token against Vectora's indigo-tinted neutral ramps,
  * so this file survives frappe-ui token syncs by construction.
  *
- * Design system: cool graphite neutrals (hue ~243), brand indigo reserved for
- * focus/selection/active states, gradient reserved for the mark and the
- * position rail. Lightness matches stock frappe-ui ramps, so every contrast
- * relationship (and WCAG pairing) in frappe-ui components is preserved.
+ * Design system: indigo-tinted neutrals (OKLCH hue 278, the brand indigo's own
+ * hue), brand colour reserved for focus/selection/active states, gradient
+ * reserved for the mark and the position rail, elevation cast in the same
+ * indigo-black the neutrals are mixed from.
+ *
+ * Contrast: lightness tracks the stock frappe-ui ramps, so frappe-ui's relative
+ * contrast relationships are preserved; on top of that the text-bearing steps
+ * are solved for a WCAG AA floor and the generator asserts it before writing
+ * (>= 4.5:1 for ink-gray-5..9 and >= 3:1 for ink-gray-4 and the focus ring,
+ * measured in both modes against the darkest surface text routinely sits on).
  */
 
 :root {
   /* Vectora brand */
   --brand-sky: #21abfb;
-  --brand-indigo: #5b5fe8;
   --brand-magenta: #df5feb;
+  --brand-100: #e0e2fb;
+  --brand-300: #a5a8f2;
+  --brand-500: #5b5fe8;
+  --brand-600: #4a4bd1;
+  --brand-700: #3c3caf;
+  --brand-900: #282870;
   --brand-gradient: linear-gradient(
     135deg,
-    #21abfb 0%,
-    #5b5fe8 55%,
-    #df5feb 100%
+    var(--brand-sky) 0%,
+    var(--brand-500) 55%,
+    var(--brand-magenta) 100%
   );
-  --gray-50: #f7f7fb;
-  --gray-100: #f2f2f8;
-  --gray-200: #ebebf3;
-  --gray-300: #dfdfeb;
-  --gray-400: #c4c4d6;
-  --gray-500: #9695ab;
-  --gray-600: #7a7990;
-  --gray-700: #504f65;
-  --gray-800: #373647;
-  --gray-900: #16161f;
-  --gray-950: #0e0e14;
+  --brand-gradient-y: linear-gradient(
+    180deg,
+    var(--brand-sky) 0%,
+    var(--brand-500) 55%,
+    var(--brand-magenta) 100%
+  );
+
+  /* Motion */
+  --motion-fast: 90ms;
+  --motion-base: 160ms;
+  --motion-slow: 260ms;
+  --motion-ease: cubic-bezier(0.2, 0, 0, 1);
+  --motion-ease-out: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --gray-50: #f4f6ff;
+  --gray-100: #eef1fd;
+  --gray-200: #e7e9f9;
+  --gray-300: #daddf1;
+  --gray-400: #bfc3dc;
+  --gray-500: #63677f;
+  --gray-600: #51546c;
+  --gray-700: #3e4259;
+  --gray-800: #26283b;
+  --gray-900: #141623;
+  --gray-950: #0c0e18;
   --gray-alpha-50: #0e0e1f08;
   --gray-alpha-100: #0e0e1f0b;
   --gray-alpha-200: #0e0e1f12;
@@ -44,17 +68,17 @@
   --gray-alpha-800: #0e0e1fc7;
   --gray-alpha-900: #0e0e1fe8;
   --gray-alpha-950: #0e0e1ff0;
-  --surface-gray-1: #f7f7fb;
-  --surface-gray-2: #f2f2f8;
-  --surface-gray-3: #ebebf3;
-  --surface-gray-4: #dfdfeb;
-  --surface-gray-5: #c4c4d6;
-  --surface-gray-6: #9695ab;
-  --surface-gray-7: #7a7990;
-  --surface-gray-8: #504f65;
-  --surface-gray-9: #373647;
-  --surface-gray-10: #16161f;
-  --surface-sidebar: #f7f7fb;
+  --surface-gray-1: #f4f6ff;
+  --surface-gray-2: #eef1fd;
+  --surface-gray-3: #e7e9f9;
+  --surface-gray-4: #daddf1;
+  --surface-gray-5: #bfc3dc;
+  --surface-gray-6: #63677f;
+  --surface-gray-7: #51546c;
+  --surface-gray-8: #3e4259;
+  --surface-gray-9: #26283b;
+  --surface-gray-10: #141623;
+  --surface-sidebar: #f4f6ff;
   --surface-alpha-gray-1: #0e0e1f08;
   --surface-alpha-gray-2: #0e0e1f0b;
   --surface-alpha-gray-3: #0e0e1f12;
@@ -65,32 +89,32 @@
   --surface-alpha-gray-8: #0e0e1fad;
   --surface-alpha-gray-9: #0e0e1fc7;
   --surface-alpha-gray-10: #0e0e1fe8;
-  --surface-alpha-sidebar: #f7f7fb;
-  --ink-gray-1: #ebebf3;
-  --ink-gray-2: #dfdfeb;
-  --ink-gray-3: #c4c4d6;
-  --ink-gray-4: #9695ab;
-  --ink-gray-5: #7a7990;
-  --ink-gray-6: #504f65;
-  --ink-gray-7: #373647;
-  --ink-gray-8: #16161f;
-  --ink-gray-9: #0e0e14;
-  --ink-alert-button-default: #16161f;
-  --ink-alert-button-info: #16161f;
-  --ink-alert-button-success: #16161f;
-  --ink-alert-button-warning: #16161f;
-  --ink-alert-button-error: #16161f;
-  --outline-gray-1: #ebebf3;
-  --outline-gray-2: #dfdfeb;
-  --outline-gray-3: #c4c4d6;
-  --outline-gray-4: #9695ab;
-  --outline-gray-5: #7a7990;
-  --outline-gray-6: #504f65;
-  --outline-gray-7: #373647;
-  --outline-gray-8: #16161f;
-  --outline-gray-9: #0e0e14;
-  --outline-elevation-1: #ebebf3;
-  --outline-elevation-2: #ebebf3;
+  --surface-alpha-sidebar: #f4f6ff;
+  --ink-gray-1: #e7e9f9;
+  --ink-gray-2: #daddf1;
+  --ink-gray-3: #bfc3dc;
+  --ink-gray-4: #63677f;
+  --ink-gray-5: #51546c;
+  --ink-gray-6: #3e4259;
+  --ink-gray-7: #26283b;
+  --ink-gray-8: #141623;
+  --ink-gray-9: #0c0e18;
+  --ink-alert-button-default: #141623;
+  --ink-alert-button-info: #141623;
+  --ink-alert-button-success: #141623;
+  --ink-alert-button-warning: #141623;
+  --ink-alert-button-error: #141623;
+  --outline-gray-1: #e7e9f9;
+  --outline-gray-2: #daddf1;
+  --outline-gray-3: #bfc3dc;
+  --outline-gray-4: #63677f;
+  --outline-gray-5: #51546c;
+  --outline-gray-6: #3e4259;
+  --outline-gray-7: #26283b;
+  --outline-gray-8: #141623;
+  --outline-gray-9: #0c0e18;
+  --outline-elevation-1: #e7e9f9;
+  --outline-elevation-2: #e7e9f9;
   --outline-alpha-gray-1: #0e0e1f12;
   --outline-alpha-gray-2: #0e0e1f1d;
   --outline-alpha-gray-3: #0e0e1f38;
@@ -102,34 +126,76 @@
   --outline-alpha-gray-9: #0e0e1ff0;
   --outline-alpha-elevation-1: #0e0e1f12;
   --outline-alpha-elevation-2: #0e0e1f12;
-  --surface-base: #ffffff;
+  --surface-base: #fafbff;
   --surface-elevation-1: #ffffff;
   --surface-elevation-2: #ffffff;
   --surface-elevation-3: #ffffff;
   --surface-alert-button-default: #ffffff;
-  --surface-alpha-base: #ffffff;
+  --surface-alpha-base: #fafbff;
   --surface-alpha-elevation-1: #ffffff;
   --surface-alpha-elevation-2: #ffffff;
   --surface-alpha-elevation-3: #ffffff;
   --ink-base: #ffffff;
   --outline-base: #ffffff;
   --outline-alpha-base: #ffffff;
-  --focus-outline-default: 2px solid #a5a8f2e5;
+  --focus-outline-default: 2px solid var(--brand-500);
+  --focus-default: 0px 0px 0px 2px var(--brand-500);
+  --brand-ink: var(--brand-600);
+  --elevation-sm: 0px 1px 2px -1px #0e0e1f14, 0px 1px 3px 0px #0e0e1f1a;
+  --elevation-base: 0px 1px 2px -1px #0e0e1f14, 0px 2px 6px -1px #0e0e1f1f;
+  --elevation-md: 0px 0px 0px 1px #0e0e1f0d, 0px 2px 4px -2px #0e0e1f14,
+    0px 6px 14px -3px #0e0e1f24;
+  --elevation-lg: 0px 0px 0px 1px #0e0e1f0d, 0px 4px 8px -4px #0e0e1f14,
+    0px 14px 28px -6px #0e0e1f29;
+  --elevation-xl: 0px 0px 0px 1px #0e0e1f0d, 0px 6px 12px -6px #0e0e1f17,
+    0px 24px 40px -10px #0e0e1f2e;
+  --elevation-2xl: 0px 0px 0px 1px #0e0e1f0d, 0px 10px 20px -8px #0e0e1f1a,
+    0px 40px 64px -14px #0e0e1f33;
+  --elevation-status: 0px 0px 0px 1.5px var(--surface-base);
 }
 
 [data-theme='dark'] {
-  --dark-gray-50: #f7f7fb;
-  --dark-gray-100: #d8d8e1;
-  --dark-gray-200: #aeaebc;
-  --dark-gray-300: #9898a8;
-  --dark-gray-400: #79798a;
-  --dark-gray-450: #565666;
-  --dark-gray-500: #414150;
-  --dark-gray-600: #373745;
-  --dark-gray-700: #282834;
-  --dark-gray-800: #23232e;
-  --dark-gray-900: #1e1e28;
-  --dark-gray-950: #15151d;
+  /* Vectora brand */
+  --brand-sky: #21abfb;
+  --brand-magenta: #df5feb;
+  --brand-100: #e0e2fb;
+  --brand-300: #a5a8f2;
+  --brand-500: #5b5fe8;
+  --brand-600: #4a4bd1;
+  --brand-700: #3c3caf;
+  --brand-900: #282870;
+  --brand-gradient: linear-gradient(
+    135deg,
+    var(--brand-sky) 0%,
+    var(--brand-500) 55%,
+    var(--brand-magenta) 100%
+  );
+  --brand-gradient-y: linear-gradient(
+    180deg,
+    var(--brand-sky) 0%,
+    var(--brand-500) 55%,
+    var(--brand-magenta) 100%
+  );
+
+  /* Motion */
+  --motion-fast: 90ms;
+  --motion-base: 160ms;
+  --motion-slow: 260ms;
+  --motion-ease: cubic-bezier(0.2, 0, 0, 1);
+  --motion-ease-out: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --dark-gray-50: #f6f7fe;
+  --dark-gray-100: #d9dbe7;
+  --dark-gray-200: #e0e3f3;
+  --dark-gray-250: #cccfe2;
+  --dark-gray-300: #b6bace;
+  --dark-gray-400: #9da1b7;
+  --dark-gray-450: #53566a;
+  --dark-gray-500: #3e4154;
+  --dark-gray-600: #343749;
+  --dark-gray-700: #262838;
+  --dark-gray-800: #212332;
+  --dark-gray-900: #1c1e2c;
+  --dark-gray-950: #131521;
   --dark-gray-alpha-50: #ececf8f7;
   --dark-gray-alpha-100: #ececf8d4;
   --dark-gray-alpha-200: #ececf8a8;
@@ -142,21 +208,21 @@
   --dark-gray-alpha-800: #ececf80e;
   --dark-gray-alpha-900: #ececf809;
   --dark-gray-alpha-950: #0e0e1f0a;
-  --surface-base: #15151d;
-  --surface-gray-1: #1e1e28;
-  --surface-gray-2: #282834;
-  --surface-gray-3: #373745;
-  --surface-gray-4: #414150;
-  --surface-gray-5: #565666;
-  --surface-gray-6: #79798a;
-  --surface-gray-7: #9898a8;
-  --surface-gray-8: #aeaebc;
-  --surface-gray-9: #d8d8e1;
-  --surface-gray-10: #f7f7fb;
-  --surface-elevation-1: #1e1e28;
-  --surface-elevation-2: #23232e;
-  --surface-elevation-3: #373745;
-  --surface-alert-button-default: #414150;
+  --surface-base: #131521;
+  --surface-gray-1: #1c1e2c;
+  --surface-gray-2: #262838;
+  --surface-gray-3: #343749;
+  --surface-gray-4: #3e4154;
+  --surface-gray-5: #53566a;
+  --surface-gray-6: #9da1b7;
+  --surface-gray-7: #b6bace;
+  --surface-gray-8: #e0e3f3;
+  --surface-gray-9: #d9dbe7;
+  --surface-gray-10: #f6f7fe;
+  --surface-elevation-1: #1c1e2c;
+  --surface-elevation-2: #212332;
+  --surface-elevation-3: #343749;
+  --surface-alert-button-default: #3e4154;
   --surface-alpha-base: #0e0e1f0a;
   --surface-alpha-gray-1: #ececf80e;
   --surface-alpha-gray-2: #ececf814;
@@ -172,29 +238,29 @@
   --surface-alpha-elevation-1: #ececf809;
   --surface-alpha-elevation-2: #ececf80e;
   --surface-alpha-elevation-3: #ececf824;
-  --ink-base: #15151d;
-  --ink-gray-1: #23232e;
-  --ink-gray-2: #373745;
-  --ink-gray-3: #414150;
-  --ink-gray-4: #79798a;
-  --ink-gray-5: #79798a;
-  --ink-gray-6: #9898a8;
-  --ink-gray-7: #aeaebc;
-  --ink-gray-8: #d8d8e1;
-  --ink-gray-9: #f7f7fb;
-  --ink-alert-button-default: #f7f7fb;
-  --outline-base: #15151d;
-  --outline-gray-1: #23232e;
-  --outline-gray-2: #373745;
-  --outline-gray-3: #414150;
-  --outline-gray-4: #565666;
-  --outline-gray-5: #79798a;
-  --outline-gray-6: #9898a8;
-  --outline-gray-7: #ebebf3;
-  --outline-gray-8: #f2f2f8;
-  --outline-gray-9: #f7f7fb;
-  --outline-elevation-1: #282834;
-  --outline-elevation-2: #373745;
+  --ink-base: #131521;
+  --ink-gray-1: #212332;
+  --ink-gray-2: #343749;
+  --ink-gray-3: #3e4154;
+  --ink-gray-4: #9da1b7;
+  --ink-gray-5: #b6bace;
+  --ink-gray-6: #cccfe2;
+  --ink-gray-7: #e0e3f3;
+  --ink-gray-8: #d9dbe7;
+  --ink-gray-9: #f6f7fe;
+  --ink-alert-button-default: #f6f7fe;
+  --outline-base: #131521;
+  --outline-gray-1: #212332;
+  --outline-gray-2: #343749;
+  --outline-gray-3: #3e4154;
+  --outline-gray-4: #53566a;
+  --outline-gray-5: #9da1b7;
+  --outline-gray-6: #b6bace;
+  --outline-gray-7: #e7e9f9;
+  --outline-gray-8: #eef1fd;
+  --outline-gray-9: #f4f6ff;
+  --outline-elevation-1: #262838;
+  --outline-elevation-2: #343749;
   --outline-alpha-base: #0e0e1f0a;
   --outline-alpha-gray-1: #ececf80e;
   --outline-alpha-gray-2: #ececf824;
@@ -212,5 +278,20 @@
   --ink-alert-button-success: #7dc5a2;
   --ink-alert-button-warning: #e9a144;
   --ink-alert-button-error: #ff7575;
-  --focus-outline-default: 3px solid #3c3cafcc;
+  --focus-outline-default: 3px solid var(--brand-300);
+  --focus-default: 0px 0px 0px 3px var(--brand-300);
+  --brand-ink: var(--brand-300);
+  --elevation-sm: inset 0px 0.5px 0px 0px #ececf814, 0px 1px 2px -1px #00000059,
+    0px 1px 3px 0px #00000066;
+  --elevation-base: inset 0px 0.5px 0px 0px #ececf814,
+    0px 1px 2px -1px #00000059, 0px 2px 6px -1px #00000073;
+  --elevation-md: inset 0px 0.5px 0px 0px #ececf81a, 0px 0px 0px 1px #00000059,
+    0px 6px 14px -3px #00000080;
+  --elevation-lg: inset 0px 0.5px 0px 0px #ececf81a, 0px 0px 0px 1px #00000059,
+    0px 14px 28px -6px #0000008c;
+  --elevation-xl: inset 0px 0.5px 0px 0px #ececf81f, 0px 0px 0px 1px #00000059,
+    0px 24px 40px -10px #00000099;
+  --elevation-2xl: inset 0px 0.5px 0px 0px #ececf81f, 0px 0px 0px 1px #00000059,
+    0px 40px 64px -14px #000000a6;
+  --elevation-status: 0px 0px 0px 1.5px var(--surface-base);
 }

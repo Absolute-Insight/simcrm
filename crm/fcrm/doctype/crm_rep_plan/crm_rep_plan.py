@@ -6,18 +6,47 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import getdate
 
+READABLE = ("read", "select", "report", "export", "print", "email")
+
+
+def visible_users(user=None) -> list[str] | None:
+	"""Whose plans ``user`` may read, or None for everyone.
+
+	Plans follow the sales hierarchy that already scopes leads and deals, not the
+	role on its own: an in-tree team lead is a Sales User who must see their own
+	team, and an in-tree Sales Manager must not see outside theirs.
+	"""
+	from crm.permissions.org_hierarchy import _in_hierarchy, _team_mem_query, hierarchy_enabled
+
+	user = user or frappe.session.user
+	if user == "Administrator":
+		return None
+
+	roles = frappe.get_roles(user)
+	if "System Manager" in roles:
+		return None
+
+	if hierarchy_enabled() and _in_hierarchy(user):
+		return [user, *(_team_mem_query(user).run(pluck=True) or [])]
+
+	if "Sales Manager" in roles:
+		return None
+
+	return [user]
+
 
 def get_permission_query_conditions(user=None):
-	"""Reps list their own plans; managers list the team's."""
+	"""Reps list their own plans; managers list their subtree's."""
 	user = user or frappe.session.user
-	roles = frappe.get_roles(user)
-	if "System Manager" in roles or "Sales Manager" in roles:
+	users = visible_users(user)
+	if users is None:
 		return ""
-	return f"`tabCRM Rep Plan`.`user` = {frappe.db.escape(user)}"
+	escaped = ", ".join(frappe.db.escape(name) for name in users)
+	return f"`tabCRM Rep Plan`.`user` in ({escaped})"
 
 
 def has_permission(doc, ptype="read", user=None):
-	"""Managers read any plan; a plan is only ever *written* by the rep who owns it.
+	"""Managers read their subtree's plans; a plan is only ever *written* by its rep.
 
 	``crm.api.rep_plan`` enforces the same rule, but the generic document API is a
 	second door into this doctype and a rep editing a colleague's week through it
@@ -26,9 +55,41 @@ def has_permission(doc, ptype="read", user=None):
 	user = user or frappe.session.user
 	if doc.user == user:
 		return True
-	roles = frappe.get_roles(user)
-	is_manager = "System Manager" in roles or "Sales Manager" in roles
-	return is_manager and ptype in ("read", "select", "report", "export", "print", "email")
+	users = visible_users(user)
+	return ptype in READABLE and (users is None or doc.user in users)
+
+
+def on_doctype_update():
+	"""One plan per rep-week, enforced where two concurrent saves cannot slip past it.
+
+	``validate`` reads before it writes, so two requests that both find no plan
+	both insert one and the adherence tile then counts the week twice.
+	"""
+	_collapse_duplicate_weeks()
+	frappe.db.add_unique("CRM Rep Plan", ["user", "week_start"], constraint_name="unique_user_week")
+
+
+def _collapse_duplicate_weeks() -> None:
+	"""Drop the emptier half of any duplicate rep-week left behind by the old race."""
+	duplicates = frappe.db.sql(
+		"""select `user`, week_start from `tabCRM Rep Plan`
+		group by `user`, week_start having count(*) > 1""",
+		as_dict=True,
+	)
+	for row in duplicates:
+		plans = frappe.get_all(
+			"CRM Rep Plan",
+			filters={"user": row.user, "week_start": row.week_start},
+			pluck="name",
+		)
+		counts = {
+			name: frappe.db.count("CRM Rep Plan Item", {"parent": name, "parenttype": "CRM Rep Plan"})
+			for name in plans
+		}
+		keep = max(plans, key=lambda name: (counts[name], name))
+		for name in plans:
+			if name != keep:
+				frappe.delete_doc("CRM Rep Plan", name, force=True, ignore_permissions=True)
 
 
 class CRMRepPlan(Document):

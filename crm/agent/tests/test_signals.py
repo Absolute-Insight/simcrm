@@ -5,23 +5,38 @@
 
 The detection functions are pure -- rows in, suggestion dicts out -- so the
 thresholds and boundary behaviour are pinned here without a site. The runner
-(dedupe, insert, expire) is exercised against the test site at the end.
+(dedupe, insert, expire, isolation) is exercised against the test site at the
+end, scoped to its own fixtures: this site is shared, so nothing here asserts
+a site-wide count.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from unittest import mock
 
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
 from crm.agent.signals import (
+	CLOSE_HORIZON_DAYS,
+	COOLING_MIN_GAP_DAYS,
 	DISMISS_COOLDOWN_DAYS,
+	EARLY_STAGE_PROBABILITY,
+	EXPIRY_COOLDOWN_DAYS,
 	IDLE_DEAL_DAYS,
+	TITLE_MAX_LENGTH,
+	_batched,
+	_latest_activity,
+	cadence_ratio,
 	dedupe,
+	find_close_date_at_risk,
+	find_cooling_deals,
 	find_idle_deals,
 	find_missing_next_step,
 	find_sla_breached_leads,
+	find_stale_plan_items,
+	purge_old_suggestions,
 	run_signals,
 )
 
@@ -34,6 +49,9 @@ def deal_row(**overrides):
 		"organization": "Acme",
 		"deal_owner": "rep@example.com",
 		"next_step": None,
+		"status": "Qualification",
+		"stage_probability": 20.0,
+		"expected_closure_date": None,
 		"creation": NOW - timedelta(days=30),
 	}
 	row.update(overrides)
@@ -49,6 +67,20 @@ def lead_row(**overrides):
 		"sla_status": "First Response Due",
 		"response_by": NOW - timedelta(hours=2),
 		"first_response_time": None,
+	}
+	row.update(overrides)
+	return row
+
+
+def plan_row(**overrides):
+	row = {
+		"activity_type": "Call",
+		"planned_date": NOW.date() - timedelta(days=3),
+		"note": "Call Acme about pricing",
+		"status": "Planned",
+		"reference_doctype": "CRM Deal",
+		"reference_docname": "CRM-DEAL-1",
+		"user": "rep@example.com",
 	}
 	row.update(overrides)
 	return row
@@ -75,10 +107,23 @@ class IdleDealTest(UnitTestCase):
 		rows = [deal_row(creation=NOW - timedelta(days=1))]
 		self.assertEqual(find_idle_deals(rows, {}, NOW), [])
 
-	def test_factors_carry_the_idle_days_for_explainability(self):
+	def test_the_threshold_is_the_callers_to_set(self):
+		activity = {"CRM-DEAL-1": NOW - timedelta(days=4)}
+		self.assertEqual(find_idle_deals([deal_row()], activity, NOW), [])
+		self.assertEqual(len(find_idle_deals([deal_row()], activity, NOW, idle_days=3)), 1)
+
+	def test_factors_carry_the_idle_days_with_a_human_label(self):
 		activity = {"CRM-DEAL-1": NOW - timedelta(days=10)}
-		out = find_idle_deals([deal_row()], activity, NOW)
-		self.assertEqual(out[0]["factors"]["idle_days"], 10)
+		factor = find_idle_deals([deal_row()], activity, NOW)[0]["factors"][0]
+		self.assertEqual(factor["key"], "idle_days")
+		self.assertEqual(factor["value"], 10)
+		self.assertIn("10 days", factor["label"])
+
+	def test_a_very_long_organization_name_cannot_overflow_the_title(self):
+		"""CRM Suggestion.title is Data(140) and so is an organization name, so an
+		unclipped label used to raise CharacterLengthExceededError out of the insert."""
+		out = find_idle_deals([deal_row(organization="A" * 200)], {}, NOW)
+		self.assertLessEqual(len(out[0]["title"]), TITLE_MAX_LENGTH)
 
 
 class MissingNextStepTest(UnitTestCase):
@@ -119,13 +164,140 @@ class LeadSlaTest(UnitTestCase):
 		self.assertEqual(find_sla_breached_leads(rows, NOW), [])
 
 
+class CloseDateAtRiskTest(UnitTestCase):
+	"""The forward-looking detector: it must fire before the date, not after."""
+
+	def row(self, **overrides):
+		overrides.setdefault("expected_closure_date", NOW.date() + timedelta(days=5))
+		return deal_row(**overrides)
+
+	def test_a_near_close_date_from_an_early_stage_fires_while_still_in_the_future(self):
+		out = find_close_date_at_risk([self.row()], set(), NOW)
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]["signal"], "close_at_risk")
+		self.assertEqual(out[0]["factors"][0]["value"], 5)
+
+	def test_a_close_date_beyond_the_horizon_does_not_fire(self):
+		row = self.row(expected_closure_date=NOW.date() + timedelta(days=CLOSE_HORIZON_DAYS + 1))
+		self.assertEqual(find_close_date_at_risk([row], set(), NOW), [])
+
+	def test_a_late_stage_deal_closing_soon_is_not_at_risk(self):
+		row = self.row(stage_probability=EARLY_STAGE_PROBABILITY + 10)
+		self.assertEqual(find_close_date_at_risk([row], set(), NOW), [])
+
+	def test_a_scheduled_task_suppresses_it(self):
+		self.assertEqual(find_close_date_at_risk([self.row()], {"CRM-DEAL-1"}, NOW), [])
+
+	def test_a_deal_with_no_expected_close_date_is_never_at_risk(self):
+		self.assertEqual(find_close_date_at_risk([deal_row()], set(), NOW), [])
+
+	def test_urgency_rises_as_the_date_approaches(self):
+		far = find_close_date_at_risk(
+			[self.row(expected_closure_date=NOW.date() + timedelta(days=12))], set(), NOW
+		)
+		near = find_close_date_at_risk(
+			[self.row(expected_closure_date=NOW.date() + timedelta(days=1))], set(), NOW
+		)
+		self.assertGreater(near[0]["score"], far[0]["score"])
+
+	def test_every_factor_carries_a_human_label(self):
+		for factor in find_close_date_at_risk([self.row()], set(), NOW)[0]["factors"]:
+			self.assertTrue(factor["label"])
+			self.assertIn("key", factor)
+
+
+class CadenceTest(UnitTestCase):
+	def history(self, *days_ago):
+		return [NOW - timedelta(days=d) for d in days_ago]
+
+	def test_too_few_touches_have_no_cadence(self):
+		self.assertIsNone(cadence_ratio(self.history(10, 9), NOW))
+
+	def test_a_steady_cadence_reports_a_ratio_near_one(self):
+		ratio, gap, median = cadence_ratio(self.history(9, 6, 3), NOW)
+		self.assertAlmostEqual(median, 3.0)
+		self.assertAlmostEqual(gap, 3.0)
+		self.assertAlmostEqual(ratio, 1.0)
+
+	def test_a_stretching_gap_reports_a_ratio_above_one(self):
+		ratio, gap, _median = cadence_ratio(self.history(13, 12, 11, 4), NOW)
+		self.assertGreater(ratio, 3)
+		self.assertAlmostEqual(gap, 4.0)
+
+
+class CoolingDealTest(UnitTestCase):
+	"""Deceleration against a deal's own rhythm, days before the flat threshold."""
+
+	def history(self, *days_ago):
+		return {"CRM-DEAL-1": [NOW - timedelta(days=d) for d in days_ago]}
+
+	def test_a_daily_deal_gone_quiet_for_four_days_fires_before_idle_would(self):
+		out = find_cooling_deals([deal_row()], self.history(8, 7, 6, 5, 4), NOW)
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]["signal"], "deal_cooling")
+		# the idle detector is still three days away from saying anything
+		self.assertEqual(find_idle_deals([deal_row()], {"CRM-DEAL-1": NOW - timedelta(days=4)}, NOW), [])
+
+	def test_a_deal_that_was_always_slow_is_not_cooling(self):
+		out = find_cooling_deals([deal_row()], self.history(60, 40, 20, 4), NOW)
+		self.assertEqual(out, [])
+
+	def test_a_deal_touched_today_is_not_cooling(self):
+		out = find_cooling_deals([deal_row()], self.history(4, 3, 2, 0), NOW)
+		self.assertEqual(out, [])
+
+	def test_a_deal_already_idle_is_left_to_the_idle_detector(self):
+		out = find_cooling_deals([deal_row()], self.history(30, 29, 28), NOW)
+		self.assertEqual(out, [])
+
+	def test_the_factors_explain_the_comparison(self):
+		out = find_cooling_deals([deal_row()], self.history(8, 7, 6, 5, 4), NOW)
+		keys = {f["key"] for f in out[0]["factors"]}
+		self.assertEqual(keys, {"gap_days", "median_gap_days", "cadence_ratio"})
+		for factor in out[0]["factors"]:
+			self.assertTrue(factor["label"])
+
+	def test_a_gap_narrower_than_the_floor_never_fires(self):
+		history = {"CRM-DEAL-1": [NOW - timedelta(hours=h) for h in (30, 28, 26)]}
+		measured = cadence_ratio(history["CRM-DEAL-1"], NOW)
+		self.assertLess(measured[1], COOLING_MIN_GAP_DAYS)
+		self.assertEqual(find_cooling_deals([deal_row()], history, NOW), [])
+
+
+class StalePlanTest(UnitTestCase):
+	def test_a_planned_item_past_its_date_fires(self):
+		out = find_stale_plan_items([plan_row()], NOW)
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]["signal"], "stale_plan")
+		self.assertEqual(out[0]["user"], "rep@example.com")
+		self.assertEqual(out[0]["suggested_action"], "schedule_call")
+
+	def test_a_missed_item_fires_whatever_its_date(self):
+		rows = [plan_row(status="Missed", planned_date=NOW.date())]
+		self.assertEqual(len(find_stale_plan_items(rows, NOW)), 1)
+
+	def test_a_future_planned_item_does_not_fire(self):
+		rows = [plan_row(planned_date=NOW.date() + timedelta(days=2))]
+		self.assertEqual(find_stale_plan_items(rows, NOW), [])
+
+	def test_a_done_item_does_not_fire(self):
+		self.assertEqual(find_stale_plan_items([plan_row(status="Done")], NOW), [])
+
+	def test_an_item_with_nothing_to_act_on_is_skipped(self):
+		rows = [plan_row(reference_docname=None)]
+		self.assertEqual(find_stale_plan_items(rows, NOW), [])
+
+
 class DedupeTest(UnitTestCase):
-	def candidate(self):
-		return {
+	def candidate(self, **overrides):
+		row = {
 			"signal": "idle_deal",
 			"reference_doctype": "CRM Deal",
 			"reference_docname": "CRM-DEAL-1",
+			"user": "rep@example.com",
 		}
+		row.update(overrides)
+		return row
 
 	def existing(self, status, modified_days_ago):
 		return {
@@ -147,18 +319,174 @@ class DedupeTest(UnitTestCase):
 		existing = [self.existing("Dismissed", DISMISS_COOLDOWN_DAYS + 1)]
 		self.assertEqual(len(dedupe([self.candidate()], existing, NOW)), 1)
 
+	def test_an_acceptance_inside_the_cooldown_blocks(self):
+		existing = [self.existing("Accepted", DISMISS_COOLDOWN_DAYS - 1)]
+		self.assertEqual(dedupe([self.candidate()], existing, NOW), [])
+
 	def test_a_different_signal_on_the_same_record_is_not_blocked(self):
 		existing = [self.existing("Open", 1)]
 		other = dict(self.candidate(), signal="no_next_step")
 		self.assertEqual(len(dedupe([other], existing, NOW)), 1)
 
+	def test_a_freshly_expired_suggestion_does_not_come_straight_back(self):
+		"""The runner expires and re-detects in the same hour; without a cooldown of
+		its own an Expired row is re-created on the next run, forever."""
+		existing = [self.existing("Expired", 0)]
+		self.assertEqual(dedupe([self.candidate()], existing, NOW), [])
 
-class RunSignalsTest(IntegrationTestCase):
-	"""The runner against the test site: insert, idempotence, expiry."""
+	def test_an_expired_suggestion_returns_once_its_shorter_cooldown_passes(self):
+		existing = [self.existing("Expired", EXPIRY_COOLDOWN_DAYS + 1)]
+		self.assertEqual(len(dedupe([self.candidate()], existing, NOW)), 1)
+
+	def test_repeat_dismissals_stretch_the_cooldown_for_that_rep(self):
+		"""Dismissals are feedback, not just an audit trail: a rep who has said no to
+		this signal three times waits longer than one who never has."""
+		existing = [self.existing("Dismissed", DISMISS_COOLDOWN_DAYS + 1)]
+		dismissals = {("rep@example.com", "idle_deal"): 3}
+		self.assertEqual(len(dedupe([self.candidate()], existing, NOW)), 1)
+		self.assertEqual(dedupe([self.candidate()], existing, NOW, dismissals=dismissals), [])
+
+	def test_another_reps_dismissals_do_not_affect_this_one(self):
+		existing = [self.existing("Dismissed", DISMISS_COOLDOWN_DAYS + 1)]
+		dismissals = {("someone-else@example.com", "idle_deal"): 5}
+		self.assertEqual(len(dedupe([self.candidate()], existing, NOW, dismissals=dismissals)), 1)
+
+
+class BatchingTest(UnitTestCase):
+	"""The hourly job scans every working deal; an unchunked IN clause is the whole
+	site in one statement."""
+
+	def test_a_short_list_is_one_batch(self):
+		self.assertEqual(list(_batched(["a", "b"], size=10)), [["a", "b"]])
+
+	def test_a_long_list_is_split_and_loses_nothing(self):
+		values = list(range(2500))
+		batches = list(_batched(values, size=1000))
+		self.assertEqual([len(b) for b in batches], [1000, 1000, 500])
+		self.assertEqual([v for batch in batches for v in batch], values)
+
+	def test_an_empty_list_yields_no_query(self):
+		self.assertEqual(list(_batched([])), [])
+
+
+class LatestActivityTest(IntegrationTestCase):
+	"""The input every idle decision rests on, one source at a time.
+
+	The ``comment_type == "Comment"`` carve-out is load-bearing: assignment and
+	share comments are written by automation, so counting them would reset the
+	idle clock on deals nobody has touched.
+	"""
 
 	def setUp(self):
 		super().setUp()
-		frappe.db.delete("CRM Suggestion")
+		self.org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Activity Test Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		self.deal = frappe.get_doc({"doctype": "CRM Deal", "organization": self.org}).insert().name
+		old = frappe.utils.add_days(frappe.utils.now_datetime(), -30)
+		frappe.db.set_value("CRM Deal", self.deal, "creation", old, update_modified=False)
+		self.addCleanup(self._cleanup)
+
+	def _cleanup(self):
+		frappe.db.delete("CRM Suggestion", {"reference_docname": self.deal})
+		frappe.db.delete("Communication", {"reference_doctype": "CRM Deal", "reference_name": self.deal})
+		frappe.db.delete("Comment", {"reference_doctype": "CRM Deal", "reference_name": self.deal})
+		frappe.db.delete("CRM Task", {"reference_doctype": "CRM Deal", "reference_docname": self.deal})
+		frappe.db.delete("CRM Call Log", {"reference_doctype": "CRM Deal", "reference_docname": self.deal})
+		frappe.delete_doc("CRM Deal", self.deal, force=True, ignore_missing=True)
+
+	def add_communication(self):
+		frappe.get_doc(
+			{
+				"doctype": "Communication",
+				"communication_type": "Communication",
+				"communication_medium": "Email",
+				"sent_or_received": "Received",
+				"subject": "Pricing",
+				"content": "What is the price?",
+				"sender": "jane@acme.test",
+				"reference_doctype": "CRM Deal",
+				"reference_name": self.deal,
+			}
+		).insert(ignore_permissions=True)
+
+	def add_task(self):
+		frappe.get_doc(
+			{
+				"doctype": "CRM Task",
+				"title": "Call them back",
+				"status": "Todo",
+				"reference_doctype": "CRM Deal",
+				"reference_docname": self.deal,
+			}
+		).insert(ignore_permissions=True)
+
+	def add_call_log(self):
+		frappe.get_doc(
+			{
+				"doctype": "CRM Call Log",
+				"id": f"activity-test-{self.deal}",
+				"from": "+10000000000",
+				"to": "+10000000001",
+				"type": "Outgoing",
+				"status": "Completed",
+				"reference_doctype": "CRM Deal",
+				"reference_docname": self.deal,
+			}
+		).insert(ignore_permissions=True)
+
+	def add_comment(self, comment_type="Comment"):
+		frappe.get_doc(
+			{
+				"doctype": "Comment",
+				"comment_type": comment_type,
+				"content": "Spoke to them today",
+				"reference_doctype": "CRM Deal",
+				"reference_name": self.deal,
+			}
+		).insert(ignore_permissions=True)
+
+	def assert_counts_as_activity(self, add):
+		add()
+		latest = _latest_activity([self.deal])
+		self.assertIn(self.deal, latest)
+		self.assertLess((frappe.utils.now_datetime() - latest[self.deal]).total_seconds(), 300)
+		self.assertNotIn("idle_deal", self._signals_from_a_run())
+
+	def _signals_from_a_run(self):
+		run_signals()
+		return frappe.get_all("CRM Suggestion", filters={"reference_docname": self.deal}, pluck="signal")
+
+	def test_a_communication_counts_as_activity(self):
+		self.assert_counts_as_activity(self.add_communication)
+
+	def test_a_task_counts_as_activity(self):
+		self.assert_counts_as_activity(self.add_task)
+
+	def test_a_call_log_counts_as_activity(self):
+		self.assert_counts_as_activity(self.add_call_log)
+
+	def test_a_human_comment_counts_as_activity(self):
+		self.assert_counts_as_activity(self.add_comment)
+
+	def test_an_assignment_comment_does_not_count(self):
+		self.add_comment(comment_type="Assigned")
+		self.assertEqual(_latest_activity([self.deal]), {})
+		self.assertIn("idle_deal", self._signals_from_a_run())
+
+
+class RunSignalsTest(IntegrationTestCase):
+	"""The runner against the test site: insert, idempotence, expiry, isolation.
+
+	Every assertion is scoped to this suite's own deal. The site is shared and
+	carries other suites' records, so a site-wide count would be a coin toss.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		frappe.db.delete("CRM Suggestion", {"title": ("like", "%Signal Test Org%")})
 		self.org = (
 			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Signal Test Org"})
 			.insert(ignore_if_duplicate=True)
@@ -175,21 +503,19 @@ class RunSignalsTest(IntegrationTestCase):
 		frappe.db.set_value("CRM Deal", self.deal.name, "creation", old, update_modified=False)
 
 	def tearDown(self):
-		frappe.db.delete("CRM Suggestion")
-		frappe.delete_doc("CRM Deal", self.deal.name, force=True)
+		frappe.db.delete("CRM Suggestion", {"reference_docname": self.deal.name})
+		frappe.delete_doc("CRM Deal", self.deal.name, force=True, ignore_missing=True)
 		super().tearDown()
+
+	def signals_for_the_fixture(self):
+		return frappe.get_all("CRM Suggestion", filters={"reference_docname": self.deal.name}, pluck="signal")
 
 	def test_run_signals_is_idempotent(self):
 		run_signals()
-		first = frappe.get_all(
-			"CRM Suggestion", filters={"reference_docname": self.deal.name}, pluck="signal"
-		)
+		first = self.signals_for_the_fixture()
 		self.assertIn("idle_deal", first)
 		run_signals()
-		second = frappe.get_all(
-			"CRM Suggestion", filters={"reference_docname": self.deal.name}, pluck="signal"
-		)
-		self.assertEqual(sorted(first), sorted(second))
+		self.assertEqual(sorted(first), sorted(self.signals_for_the_fixture()))
 
 	def test_expired_suggestions_are_marked(self):
 		run_signals()
@@ -202,3 +528,118 @@ class RunSignalsTest(IntegrationTestCase):
 		frappe.db.set_value("CRM Suggestion", name, "expires_on", past, update_modified=False)
 		run_signals()
 		self.assertEqual(frappe.db.get_value("CRM Suggestion", name, "status"), "Expired")
+
+	def test_a_suggestion_that_expires_in_this_run_is_not_re_created_by_it(self):
+		"""Expiring before reading the existing rows made the job replace what it had
+		just expired, every hour, forever."""
+		run_signals()
+		before = frappe.db.count("CRM Suggestion", {"reference_docname": self.deal.name})
+		past = frappe.utils.add_days(frappe.utils.now_datetime(), -1)
+		frappe.db.set_value(
+			"CRM Suggestion",
+			{"reference_docname": self.deal.name},
+			"expires_on",
+			past,
+			update_modified=False,
+		)
+		run_signals()
+		self.assertEqual(frappe.db.count("CRM Suggestion", {"reference_docname": self.deal.name}), before)
+
+	def test_a_close_date_at_risk_is_emitted_end_to_end(self):
+		frappe.db.set_value(
+			"CRM Deal",
+			self.deal.name,
+			{"expected_closure_date": frappe.utils.add_days(frappe.utils.nowdate(), 3)},
+			update_modified=False,
+		)
+		run_signals()
+		self.assertIn("close_at_risk", self.signals_for_the_fixture())
+
+	def test_the_job_returns_nothing_when_signals_are_switched_off(self):
+		from crm.agent.config import SignalConfig
+
+		off = SignalConfig(
+			signals_enabled=False,
+			idle_deal_days=7,
+			suggestion_ttl_days=14,
+			dismiss_cooldown_days=14,
+			close_horizon_days=14,
+		)
+		with mock.patch("crm.agent.signals.get_signal_config", return_value=off):
+			self.assertEqual(run_signals(), 0)
+		self.assertEqual(self.signals_for_the_fixture(), [])
+
+	def test_one_bad_candidate_does_not_cost_the_whole_run(self):
+		"""A title over 140 characters or a deleted owner raises out of the insert.
+		Without per-candidate isolation that one record rolled back every suggestion
+		the hourly job had already created."""
+		good = {
+			"signal": "idle_deal",
+			"title": "Re-engage the fixture",
+			"reference_doctype": "CRM Deal",
+			"reference_docname": self.deal.name,
+			"user": None,
+			"suggested_action": "create_task",
+			"action_payload": {"title": "Re-engage"},
+			"factors": [{"key": "idle_days", "label": "No activity for 30 days", "value": 30}],
+			"rationale": "No activity.",
+			"score": 50.0,
+		}
+		bad = dict(good, signal="no_next_step", user="deleted-user@nowhere.invalid")
+		with mock.patch("crm.agent.signals._collect_candidates", return_value=[bad, good]):
+			created = run_signals()
+		self.assertEqual(created, 1)
+		self.assertEqual(self.signals_for_the_fixture(), ["idle_deal"])
+
+	def test_the_run_does_not_commit_during_a_test(self):
+		"""A commit inside the job breaks per-test rollback and leaks fixtures onto a
+		shared site, so the scheduler's commit is skipped under frappe.flags.in_test."""
+		with mock.patch.object(frappe.db, "commit") as commit:
+			run_signals()
+		commit.assert_not_called()
+
+
+class PurgeTest(IntegrationTestCase):
+	def setUp(self):
+		super().setUp()
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Purge Test Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		self.deal = frappe.get_doc({"doctype": "CRM Deal", "organization": org}).insert().name
+		self.addCleanup(frappe.delete_doc, "CRM Deal", self.deal, force=True, ignore_missing=True)
+		self.addCleanup(frappe.db.delete, "CRM Suggestion", {"reference_docname": self.deal})
+
+	def make(self, status, days_old):
+		name = (
+			frappe.get_doc(
+				{
+					"doctype": "CRM Suggestion",
+					"signal": "idle_deal",
+					"title": "Purge fixture",
+					"reference_doctype": "CRM Deal",
+					"reference_docname": self.deal,
+					"status": status,
+				}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
+		frappe.db.set_value(
+			"CRM Suggestion",
+			name,
+			"modified",
+			frappe.utils.add_days(frappe.utils.now_datetime(), -days_old),
+			update_modified=False,
+		)
+		return name
+
+	def test_settled_rows_past_the_window_go_and_the_rest_stay(self):
+		stale = self.make("Dismissed", 200)
+		recent = self.make("Dismissed", 2)
+		still_open = self.make("Open", 200)
+		purge_old_suggestions()
+		self.assertFalse(frappe.db.exists("CRM Suggestion", stale))
+		self.assertTrue(frappe.db.exists("CRM Suggestion", recent))
+		self.assertTrue(frappe.db.exists("CRM Suggestion", still_open))

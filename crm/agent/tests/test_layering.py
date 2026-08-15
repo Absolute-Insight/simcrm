@@ -35,8 +35,10 @@ ALLOWED_SIBLING_IMPORTS = {
 	"install": set(),
 	# The deterministic tier: signals and predict must work with the agent
 	# disabled, so neither may import client (or anything that knows a model
-	# exists). predict reuses signals' activity query.
-	"signals": set(),
+	# exists). config is allowed because the admin-tunable signal thresholds
+	# live on the same Single -- it reads settings, it does not know a model
+	# exists. predict reuses signals' activity query and its thresholds.
+	"signals": {"config"},
 	"predict": {"signals"},
 }
 

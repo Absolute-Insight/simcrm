@@ -4,7 +4,9 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import validate_email_address
+from frappe.utils import escape_html, validate_email_address
+
+CRM_ROLES = ("Sales User", "Sales Manager", "System Manager")
 
 
 class CRMReportDigest(Document):
@@ -28,6 +30,15 @@ class CRMReportDigest(Document):
 	def validate(self):
 		for email in self.recipient_list():
 			validate_email_address(email, throw=True)
+			self.validate_internal_user(email)
+
+	def validate_internal_user(self, email: str) -> None:
+		"""A digest carries deal values, so it may only go to someone who could
+		already read them in the app — never to an arbitrary outside address."""
+		if not frappe.db.exists("User", {"name": email, "enabled": 1}):
+			frappe.throw(_("{0} is not an enabled user of this site.").format(email))
+		if not set(frappe.get_roles(email)) & set(CRM_ROLES):
+			frappe.throw(_("{0} has no CRM role, so they cannot receive CRM data.").format(email))
 
 	def recipient_list(self) -> list[str]:
 		return [e.strip() for e in (self.recipients or "").split(",") if e.strip()]
@@ -35,7 +46,7 @@ class CRMReportDigest(Document):
 
 def send_due_digests():
 	"""Daily scheduler entry. Weekly digests fire on Mondays."""
-	from crm.api.reports import REPORTS
+	from crm.api.reports import REPORTS, get_report
 
 	is_monday = frappe.utils.getdate().weekday() == 0
 	digests = frappe.get_all(
@@ -46,49 +57,67 @@ def send_due_digests():
 
 	sent = 0
 	for digest in digests:
-		if digest.frequency == "Weekly" and not is_monday:
-			continue
-		report_def = REPORTS.get(digest.report)
-		if not report_def:
-			continue
+		# one bad digest must not take the rest of the day's mail down with it,
+		# the same isolation crm/automation.py gives each rule
+		try:
+			if digest.frequency == "Weekly" and not is_monday:
+				continue
+			report_def = REPORTS.get(digest.report)
+			if not report_def:
+				continue
 
-		today = frappe.utils.nowdate()
-		if digest.frequency == "Weekly":
-			from_date = frappe.utils.add_days(today, -7)
-		else:
-			from_date = frappe.utils.add_days(today, -1)
+			today = frappe.utils.nowdate()
+			days = 7 if digest.frequency == "Weekly" else 1
+			from_date = frappe.utils.add_days(today, -days)
 
-		rows = report_def["get_rows"](str(from_date), str(today), None)
-		recipients = [e.strip() for e in (digest.recipients or "").split(",") if e.strip()]
-		if not recipients:
+			recipients = [e.strip() for e in (digest.recipients or "").split(",") if e.strip()]
+			if not recipients:
+				continue
+
+			for recipient in recipients:
+				# rendered as the recipient, not as the scheduler: a rep gets
+				# their own rows and a manager gets the team's, exactly as each
+				# would see on the Reports page
+				original_user = frappe.session.user
+				try:
+					frappe.set_user(recipient)
+					report = get_report(digest.report, str(from_date), str(today))
+				finally:
+					frappe.set_user(original_user)
+
+				frappe.sendmail(
+					recipients=[recipient],
+					subject=_("Vectora digest: {0}").format(report["title"]),
+					message=_render_digest(report, from_date, today),
+					reference_doctype="CRM Report Digest",
+					reference_name=digest.name,
+				)
+			sent += 1
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), f"CRM Report Digest {digest.name} failed")
 			continue
-
-		frappe.sendmail(
-			recipients=recipients,
-			subject=_("Vectora digest: {0}").format(report_def["title"]),
-			message=_render_digest(report_def, rows, from_date, today),
-		)
-		sent += 1
 	return sent
 
 
-def _render_digest(report_def, rows, from_date, to_date) -> str:
-	columns = report_def["columns"]
+def _render_digest(report, from_date, to_date) -> str:
+	"""Every interpolation is escaped: report cells carry user-authored text —
+	stage names, lost reasons, user names — straight into an email body."""
+	columns = report["columns"]
 	head = "".join(
 		f'<th style="text-align:left;padding:6px 12px;border-bottom:2px solid #ebebf3;'
 		f'font-size:12px;color:#7a7990;text-transform:uppercase;letter-spacing:0.04em">'
-		f"{col['label']}</th>"
+		f"{escape_html(str(col['label']))}</th>"
 		for col in columns
 	)
 	body = ""
-	for row in rows:
+	for row in report["rows"]:
 		cells = "".join(
 			f'<td style="padding:6px 12px;border-bottom:1px solid #f2f2f8;'
-			f'font-variant-numeric:tabular-nums">{row.get(col["key"], "")}</td>'
+			f'font-variant-numeric:tabular-nums">{escape_html(str(row.get(col["key"], "")))}</td>'
 			for col in columns
 		)
 		body += f"<tr>{cells}</tr>"
-	if not rows:
+	if not report["rows"]:
 		body = (
 			f'<tr><td colspan="{len(columns)}" style="padding:12px;color:#7a7990">'
 			+ _("No data in this period.")
@@ -97,9 +126,9 @@ def _render_digest(report_def, rows, from_date, to_date) -> str:
 
 	return f"""
 	<div style="font-family:ui-sans-serif,system-ui,sans-serif;color:#16161f">
-		<h2 style="font-size:18px;margin:0 0 4px">{report_def["title"]}</h2>
+		<h2 style="font-size:18px;margin:0 0 4px">{escape_html(str(report["title"]))}</h2>
 		<p style="margin:0 0 16px;color:#7a7990;font-size:13px">
-			{from_date} – {to_date}
+			{escape_html(str(from_date))} – {escape_html(str(to_date))}
 		</p>
 		<table style="border-collapse:collapse;width:100%">
 			<thead><tr>{head}</tr></thead>

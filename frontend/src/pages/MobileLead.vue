@@ -71,6 +71,7 @@
             v-model="doc"
             @updateField="updateField"
           />
+          <RecordSuggestions doctype="CRM Lead" :docname="leadId" />
           <div
             v-if="sections.data"
             class="flex flex-1 flex-col justify-between overflow-hidden"
@@ -142,6 +143,7 @@ import Activities from '@/components/Activities/Activities.vue'
 import AssignTo from '@/components/AssignTo.vue'
 import SidePanelLayout from '@/components/SidePanelLayout.vue'
 import SLASection from '@/components/SLASection.vue'
+import RecordSuggestions from '@/components/RecordSuggestions.vue'
 import CustomActions from '@/components/CustomActions.vue'
 import { setupCustomizations, isTranslatable } from '@/utils'
 import { getView } from '@/utils/view'

@@ -13,6 +13,7 @@
   "column_break_main",
   "to_status",
   "condition",
+  "priority",
   "section_break_action",
   "action",
   "title_template",
@@ -74,6 +75,14 @@
    "fieldtype": "Code",
    "label": "Condition",
    "options": "Python"
+  },
+  {
+   "default": "0",
+   "description": "Rules run low to high. Ties break on name, so two rules at the same priority still run in a fixed order.",
+   "fieldname": "priority",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Priority"
   },
   {
    "fieldname": "section_break_action",

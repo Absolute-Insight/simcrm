@@ -22,6 +22,7 @@ class CRMAutomationRule(Document):
 		document_type: DF.Link
 		due_in_days: DF.Int
 		enabled: DF.Check
+		priority: DF.Int
 		task_priority: DF.Literal["Low", "Medium", "High"]
 		title: DF.Data
 		title_template: DF.Data
@@ -43,3 +44,17 @@ class CRMAutomationRule(Document):
 			except Exception:
 				# evaluation errors against the empty doc are fine; syntax is what we check
 				pass
+		self.validate_templates()
+
+	def validate_templates(self):
+		"""A template that will not compile fails at save, not on somebody's deal.
+
+		The engine swallows rule failures so a bad rule cannot block a save, which
+		means a broken template is otherwise invisible to the author who wrote it.
+		"""
+		for fieldname in ("title_template", "description_template"):
+			try:
+				frappe.render_template(self.get(fieldname) or "", {"doc": frappe._dict()})
+			except Exception as e:
+				label = self.meta.get_label(fieldname)
+				frappe.throw(_("Invalid {0}: {1}").format(label, e))

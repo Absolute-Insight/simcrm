@@ -26,6 +26,37 @@ from crm.agent.schemas import ThreadSummary
 # the whole worker pool from a loop. 10/min is far above any real human burst.
 SUMMARISE_RATE_LIMIT = 10
 
+BUDGET_CACHE_KEY = "crm_agent_daily_calls"
+
+
+def budget_key() -> str:
+	"""Today's counter key, site-scoped.
+
+	``incr`` and ``expire`` are raw redis commands and skip the site prefix that
+	``get_value``/``set_value`` apply, so the site name goes in the key by hand or
+	every site on the bench spends one shared budget.
+	"""
+	return f"{BUDGET_CACHE_KEY}:{frappe.local.site}:{frappe.utils.today()}"
+
+
+def _budget_spent(cfg) -> bool:
+	"""Count this call against the site-wide daily budget; True when it is gone.
+
+	The per-user rate limit bounds a burst, not a day: fifty users at ten calls a
+	minute is still an unbounded bill against whoever hosts the endpoint. The
+	counter is a redis key per day, so it costs one incr and expires itself.
+	"""
+	if cfg.daily_call_budget <= 0:
+		return False
+	key = budget_key()
+	try:
+		spent = frappe.cache().incr(key)
+		frappe.cache().expire(key, 60 * 60 * 36)
+	except Exception:
+		# a cache that is unavailable must not take the feature down with it
+		return False
+	return spent > cfg.daily_call_budget
+
 
 @frappe.whitelist()
 @rate_limit(limit=SUMMARISE_RATE_LIMIT, seconds=60)
@@ -38,6 +69,8 @@ def summarise_thread(reference_doctype: str, reference_name: str) -> dict:
 	cfg = get_config()
 	if not cfg.enabled:
 		return {"status": "disabled"}
+	if _budget_spent(cfg):
+		return {"status": "unavailable"}
 
 	record = tools.read_record(reference_doctype, reference_name)
 	thread = tools.read_thread(reference_doctype, reference_name)
@@ -64,6 +97,8 @@ def draft_reply(reference_doctype: str, reference_name: str) -> dict:
 	cfg = get_config()
 	if not cfg.enabled:
 		return {"status": "disabled"}
+	if _budget_spent(cfg):
+		return {"status": "unavailable"}
 
 	record = tools.read_record(reference_doctype, reference_name)
 	thread = tools.read_thread(reference_doctype, reference_name)

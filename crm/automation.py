@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import frappe
 
+from crm.agent.signals import clear_suggestions_for, resync_owner
+
 OWNER_FIELD = {"CRM Lead": "lead_owner", "CRM Deal": "deal_owner"}
 
 
@@ -22,9 +24,12 @@ def run_automations(doc, method=None):
 	if frappe.flags.in_install or frappe.flags.in_migrate or frappe.flags.in_patch:
 		return
 
+	if method == "on_update":
+		_resync_suggestion_owner(doc)
+
 	if method == "after_insert":
 		trigger = "Created"
-	elif method == "on_update" and doc.has_value_changed("status"):
+	elif method == "on_update" and _status_just_changed(doc):
 		trigger = "Status Changed"
 	else:
 		return
@@ -34,6 +39,7 @@ def run_automations(doc, method=None):
 		filters={"enabled": 1, "document_type": doc.doctype, "trigger": trigger},
 		fields=[
 			"name",
+			"priority",
 			"to_status",
 			"condition",
 			"action",
@@ -43,6 +49,9 @@ def run_automations(doc, method=None):
 			"due_in_days",
 			"assign_to_owner",
 		],
+		# without an explicit order the runner inherits `modified desc`, so editing
+		# any rule silently reorders every other rule's effects
+		order_by="priority asc, name asc",
 	)
 	for rule in rules:
 		try:
@@ -53,6 +62,37 @@ def run_automations(doc, method=None):
 				frappe.get_traceback(),
 				f"CRM Automation Rule {rule.name} failed on {doc.doctype} {doc.name}",
 			)
+
+
+def _status_just_changed(doc) -> bool:
+	"""True only for a real transition on an existing record.
+
+	frappe runs ``on_update`` as part of the insert too, and ``has_value_changed``
+	answers True there because there is no previous document to compare against --
+	so every new record used to fire the Created *and* the Status Changed rules.
+	"""
+	if doc.flags.in_insert or not doc.get_doc_before_save():
+		return False
+	return doc.has_value_changed("status")
+
+
+def _resync_suggestion_owner(doc) -> None:
+	"""Follow a reassignment with the record's open suggestions.
+
+	Nothing else moves them: a reassigned deal kept nagging the previous rep for
+	the rest of the suggestion TTL while staying invisible to the rep who
+	inherited it.
+	"""
+	field = OWNER_FIELD.get(doc.doctype)
+	if not field or doc.flags.in_insert or not doc.get_doc_before_save():
+		return
+	if doc.has_value_changed(field):
+		resync_owner(doc.doctype, doc.name, doc.get(field))
+
+
+def clear_suggestions(doc, method=None) -> None:
+	"""on_trash entry point: a deleted record leaves no suggestions behind."""
+	clear_suggestions_for(doc.doctype, doc.name)
 
 
 def _matches(rule, doc) -> bool:
@@ -67,16 +107,35 @@ def _status_label(doc) -> str | None:
 	return doc.status
 
 
-def _render(template, doc) -> str:
-	return frappe.render_template(template or "", {"doc": doc})
+def _render(template, doc_dict) -> str:
+	"""Render against a plain dict, never the live Document.
+
+	The sandbox does not stop a template calling methods on what it is given, so
+	a rule author with a title template would otherwise have ``doc.delete()`` and
+	``doc.db_set()`` from a field validated only as a template. The condition path
+	already passes ``as_dict()``; this matches it.
+	"""
+	return frappe.render_template(template or "", {"doc": doc_dict})
 
 
 def _apply(rule, doc) -> None:
+	doc_dict = doc.as_dict()
 	owner = doc.get(OWNER_FIELD.get(doc.doctype)) if rule.assign_to_owner else None
-	title = _render(rule.title_template, doc) or rule.name
-	description = _render(rule.description_template, doc)
+	title = _render(rule.title_template, doc_dict) or rule.name
+	description = _render(rule.description_template, doc_dict)
 
 	if rule.action == "Create Task":
+		# status flapping must not stack duplicate tasks for the same record
+		if frappe.db.exists(
+			"CRM Task",
+			{
+				"title": title,
+				"reference_doctype": doc.doctype,
+				"reference_docname": doc.name,
+				"status": ("not in", ("Done", "Canceled")),
+			},
+		):
+			return
 		frappe.get_doc(
 			{
 				"doctype": "CRM Task",
@@ -118,3 +177,10 @@ def _apply(rule, doc) -> None:
 				"score": 60.0,
 			}
 		).insert(ignore_permissions=True)
+
+		if owner:
+			# a rule that fires on save should light up the owner's inbox now, not
+			# at their next page load — same event the hourly signal run emits
+			from crm.agent.signals import publish_new_suggestions
+
+			publish_new_suggestions({owner})

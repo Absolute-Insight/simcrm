@@ -43,7 +43,7 @@ class CRMSuggestion(Document):
 		factors: DF.JSON | None
 		name: DF.Int | None
 		rationale: DF.SmallText | None
-		reference_docname: DF.DynamicLink
+		reference_docname: DF.DynamicLink | None
 		reference_doctype: DF.Link
 		score: DF.Float
 		signal: DF.Data

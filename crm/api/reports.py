@@ -5,8 +5,15 @@
 
 Every report is a registry entry producing ``{title, columns, rows}`` from the
 same functions the dashboard uses, so a report can never disagree with the
-dashboard (PLAN.md: one source of numbers). No custom-report builder until
-these four prove the layer.
+dashboard (PLAN.md: one source of numbers). Nothing here builds its own
+aggregate: where a report needs a different shape from a tile, the shared
+function in ``crm.api.dashboard`` grows a parameter and both call sites pass it.
+No custom-report builder until these prove the layer.
+
+Registry strings are untranslated literals; ``_()`` is applied per request in
+:func:`list_reports` and :func:`get_report`, because a module is imported once
+per worker and would otherwise freeze every label to the language of whoever
+happened to make the first request.
 """
 
 from __future__ import annotations
@@ -14,39 +21,17 @@ from __future__ import annotations
 import frappe
 from frappe import _
 from frappe.query_builder import DocType
-from frappe.query_builder.functions import Count, IfNull, Sum
+from frappe.rate_limiter import rate_limit
 
 from crm.utils import sales_user_only
 
 
 def _pipeline_by_stage(from_date, to_date, user):
-	Deal = DocType("CRM Deal")
-	Status = DocType("CRM Deal Status")
-	value = Deal.expected_deal_value * IfNull(Deal.exchange_rate, 1)
-	weighted = value * IfNull(Deal.probability, 0) / 100
+	from crm.api.dashboard import pipeline_by_stage
 
-	query = (
-		frappe.qb.from_(Deal)
-		.join(Status)
-		.on(Deal.status == Status.name)
-		.where(Status.type.isin(["Open", "Ongoing"]))
-		.select(
-			Deal.status.as_("stage"),
-			Count(Deal.name).as_("deals"),
-			Sum(value).as_("total_value"),
-			Sum(weighted).as_("weighted_value"),
-			Status.position.as_("position"),
-		)
-		.groupby(Deal.status, Status.position)
-		.orderby(Status.position)
-	)
-	if user:
-		query = query.where(Deal.deal_owner == user)
-	rows = query.run(as_dict=True)
+	rows = pipeline_by_stage(user=user)
 	for row in rows:
-		row.pop("position", None)
-		row["total_value"] = round(row["total_value"] or 0, 2)
-		row["weighted_value"] = round(row["weighted_value"] or 0, 2)
+		row.pop("status_type", None)
 	return rows
 
 
@@ -63,34 +48,9 @@ def _funnel_conversion(from_date, to_date, user):
 
 
 def _plan_adherence_by_rep(from_date, to_date, user):
-	today = frappe.utils.nowdate()
-	cutoff = min(str(to_date), today)
+	from crm.api.dashboard import plan_adherence
 
-	PlanItem = DocType("CRM Rep Plan Item")
-	Plan = DocType("CRM Rep Plan")
-	done = frappe.qb.terms.Case().when(PlanItem.status == "Done", 1).else_(None)
-	missed = frappe.qb.terms.Case().when(PlanItem.status == "Missed", 1).else_(None)
-
-	query = (
-		frappe.qb.from_(PlanItem)
-		.join(Plan)
-		.on(PlanItem.parent == Plan.name)
-		.where((PlanItem.planned_date >= from_date) & (PlanItem.planned_date <= cutoff))
-		.select(
-			Plan.user.as_("user"),
-			Count(PlanItem.name).as_("planned"),
-			Count(done).as_("done"),
-			Count(missed).as_("missed"),
-		)
-		.groupby(Plan.user)
-		.orderby(Plan.user)
-	)
-	if user:
-		query = query.where(Plan.user == user)
-	rows = query.run(as_dict=True)
-	for row in rows:
-		row["adherence"] = round(row["done"] / row["planned"] * 100) if row["planned"] else 0
-	return rows
+	return plan_adherence(from_date, to_date, user, group_by_user=True)
 
 
 def _forecast_vs_actual(from_date, to_date, user):
@@ -108,7 +68,7 @@ def _forecast_vs_actual(from_date, to_date, user):
 
 
 def _quota_attainment_by_rep(from_date, to_date, user):
-	from crm.api.dashboard import quota_in_period, won_value_in_period
+	from crm.api.dashboard import quota_in_period, visible_reps, won_value_in_period
 
 	reps = set(frappe.get_all("CRM Quota", pluck="user", distinct=True))
 	Deal = DocType("CRM Deal")
@@ -130,6 +90,10 @@ def _quota_attainment_by_rep(from_date, to_date, user):
 	reps.update(won_owners)
 	if user:
 		reps &= {user}
+	else:
+		visible = visible_reps()
+		if visible is not None:
+			reps &= set(visible)
 
 	rows = []
 	for rep in sorted(reps):
@@ -149,74 +113,97 @@ def _quota_attainment_by_rep(from_date, to_date, user):
 
 REPORTS = {
 	"pipeline_by_stage": {
-		"title": _("Pipeline by stage"),
-		"description": _("Open pipeline: deal count, value and probability-weighted value per stage"),
+		"title": "Pipeline by stage",
+		"description": "Open pipeline as it stands now: deal count, expected value and probability-weighted expected value per stage",
+		# the open pipeline is a snapshot of this moment, not of a window — the
+		# UI hides the date picker rather than showing one that does nothing
+		"period": False,
 		"columns": [
-			{"key": "stage", "label": _("Stage"), "type": "text"},
-			{"key": "deals", "label": _("Deals"), "type": "number"},
-			{"key": "total_value", "label": _("Total value"), "type": "currency"},
-			{"key": "weighted_value", "label": _("Weighted value"), "type": "currency"},
+			{"key": "stage", "label": "Stage", "type": "text"},
+			{"key": "deals", "label": "Deals", "type": "number"},
+			{
+				"key": "total_value",
+				"label": "Expected value",
+				"type": "currency",
+				"description": "Sum of expected deal value, in the base currency",
+			},
+			{
+				"key": "weighted_value",
+				"label": "Weighted expected value",
+				"type": "currency",
+				"description": "Expected deal value multiplied by stage probability",
+			},
 		],
 		"get_rows": _pipeline_by_stage,
 	},
 	"funnel_conversion": {
-		"title": _("Funnel conversion"),
-		"description": _("Lead-to-won conversion through the pipeline"),
+		"title": "Funnel conversion",
+		"description": "Lead-to-won conversion through the pipeline, including the deals that leaked out",
 		"columns": [
-			{"key": "stage", "label": _("Stage"), "type": "text"},
-			{"key": "count", "label": _("Count"), "type": "number"},
-			{"key": "conversion", "label": _("Conversion %"), "type": "percent"},
+			{"key": "stage", "label": "Stage", "type": "text"},
+			{"key": "count", "label": "Count", "type": "number"},
+			{"key": "conversion", "label": "Conversion %", "type": "percent"},
 		],
 		"get_rows": _funnel_conversion,
 	},
 	"plan_adherence_by_rep": {
-		"title": _("Plan adherence by rep"),
-		"description": _("Planned activities due in the period, and how many were done"),
+		"title": "Plan adherence by rep",
+		"description": "Planned activities due in the period, and how many were done",
 		"columns": [
-			{"key": "user", "label": _("Rep"), "type": "text"},
-			{"key": "planned", "label": _("Planned (due)"), "type": "number"},
-			{"key": "done", "label": _("Done"), "type": "number"},
-			{"key": "missed", "label": _("Missed"), "type": "number"},
-			{"key": "adherence", "label": _("Adherence %"), "type": "percent"},
+			{"key": "user", "label": "Rep", "type": "text"},
+			{"key": "planned", "label": "Planned (due)", "type": "number"},
+			{"key": "done", "label": "Done", "type": "number"},
+			{"key": "missed", "label": "Missed", "type": "number"},
+			{"key": "adherence", "label": "Adherence %", "type": "percent"},
 		],
 		"get_rows": _plan_adherence_by_rep,
 	},
 	"forecast_vs_actual": {
-		"title": _("Forecast vs actual"),
-		"description": _("Probability-weighted forecast against closed revenue per month"),
+		"title": "Forecast vs actual",
+		"description": "Probability-weighted forecast against closed revenue per month",
 		"columns": [
-			{"key": "month", "label": _("Month"), "type": "text"},
-			{"key": "forecasted", "label": _("Forecasted"), "type": "currency"},
-			{"key": "actual", "label": _("Actual"), "type": "currency"},
+			{"key": "month", "label": "Month", "type": "text"},
+			{"key": "forecasted", "label": "Forecasted", "type": "currency"},
+			{"key": "actual", "label": "Actual", "type": "currency"},
 		],
 		"get_rows": _forecast_vs_actual,
 	},
 	"quota_attainment_by_rep": {
-		"title": _("Quota attainment by rep"),
-		"description": _("Closed-won revenue against quota for the period, per rep"),
+		"title": "Quota attainment by rep",
+		"description": "Closed-won revenue against quota for the period, per rep",
 		"columns": [
-			{"key": "user", "label": _("Rep"), "type": "text"},
-			{"key": "quota", "label": _("Quota"), "type": "currency"},
-			{"key": "actual", "label": _("Closed won"), "type": "currency"},
-			{"key": "gap", "label": _("Gap"), "type": "currency"},
-			{"key": "attainment", "label": _("Attainment %"), "type": "percent"},
+			{"key": "user", "label": "Rep", "type": "text"},
+			{"key": "quota", "label": "Quota", "type": "currency"},
+			{"key": "actual", "label": "Closed won", "type": "currency"},
+			{"key": "gap", "label": "Gap", "type": "currency"},
+			{"key": "attainment", "label": "Attainment %", "type": "percent"},
 		],
 		"get_rows": _quota_attainment_by_rep,
 	},
 }
 
 
+def _translated_columns(report: dict) -> list[dict]:
+	return [{**column, "label": _(column["label"])} for column in report["columns"]]
+
+
 @frappe.whitelist()
 @sales_user_only
 def list_reports():
 	return [
-		{"name": key, "title": report["title"], "description": report["description"]}
+		{
+			"name": key,
+			"title": _(report["title"]),
+			"description": _(report["description"]),
+			"period": report.get("period", True),
+		}
 		for key, report in REPORTS.items()
 	]
 
 
 @frappe.whitelist()
 @sales_user_only
+@rate_limit(limit=60, seconds=60)
 def get_report(name: str, from_date: str | None = None, to_date: str | None = None, user: str | None = None):
 	if name not in REPORTS:
 		frappe.throw(_("Unknown report: {0}").format(name))
@@ -231,8 +218,9 @@ def get_report(name: str, from_date: str | None = None, to_date: str | None = No
 	report = REPORTS[name]
 	return {
 		"name": name,
-		"title": report["title"],
-		"description": report["description"],
-		"columns": report["columns"],
+		"title": _(report["title"]),
+		"description": _(report["description"]),
+		"period": report.get("period", True),
+		"columns": _translated_columns(report),
 		"rows": report["get_rows"](str(from_date), str(to_date), user),
 	}

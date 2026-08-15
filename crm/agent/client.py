@@ -82,6 +82,10 @@ def _post(cfg: AgentConfig, body: dict) -> str:
 			json=body,
 			timeout=cfg.timeout,
 			headers=_headers(cfg),
+			# a redirect would replay the configured Bearer token at whatever host
+			# the response names, which is a credential leak the admin never agreed
+			# to; an inference endpoint that redirects is misconfigured anyway
+			allow_redirects=False,
 		)
 		response.raise_for_status()
 		return response.json()["choices"][0]["message"]["content"]

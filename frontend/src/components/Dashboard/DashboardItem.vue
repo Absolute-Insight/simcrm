@@ -24,22 +24,28 @@
       v-else-if="item.type == 'axis_chart'"
       class="h-full w-full rounded-md bg-surface-base shadow"
     >
-      <AxisChart v-if="item.data" :config="item.data" />
+      <AxisChart v-if="item.data" :config="themed" />
     </div>
     <div
       v-else-if="item.type == 'donut_chart'"
       class="h-full w-full rounded-md bg-surface-base shadow overflow-hidden"
     >
-      <DonutChart v-if="item.data" :config="item.data" />
+      <DonutChart v-if="item.data" :config="themed" />
     </div>
   </div>
 </template>
 <script setup>
+import { withVectoraTheme } from '@/utils/chartTheme'
 import { AxisChart, DonutChart, NumberChart, Tooltip } from 'frappe-ui'
+import { computed } from 'vue'
 
-defineProps({
+const props = defineProps({
   index: { type: Number, required: true },
   item: { type: Object, required: true },
   editing: { type: Boolean, default: false },
 })
+
+// the server returns the chart's shape and data; its colours are a display
+// decision, so they are applied here rather than travelling over the wire
+const themed = computed(() => withVectoraTheme(props.item.data))
 </script>

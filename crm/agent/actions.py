@@ -4,12 +4,13 @@
 """The write-tier proposal layer: drafts only, never writes.
 
 Every function here returns a payload for a human to review in a compose
-window or ``formDialog()`` — nothing in this module may touch the database.
-That is a structural guarantee, not a convention: this module never imports
-``frappe`` (``test_actions`` parses the source and fails if it appears), so
-there is no route from a compromised model output to a record. Reads happen
-in the API layer through ``tools``; sends happen in the client after a human
-pressed the button.
+window or ``formDialog()`` — nothing in this module touches the database.
+What is actually enforced: this module imports no frappe symbol directly
+(``test_actions`` parses the source and fails if one appears) and performs no
+DB access of its own. It is not transitive isolation — ``config`` imports
+frappe — so read the diff, not just the test. Reads happen in the API layer
+through ``tools``; sends happen in the client after a human pressed the
+button.
 """
 
 from __future__ import annotations

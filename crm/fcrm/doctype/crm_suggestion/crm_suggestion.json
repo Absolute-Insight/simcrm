@@ -29,7 +29,8 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Signal",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "title",
@@ -50,14 +51,15 @@
    "fieldtype": "Dynamic Link",
    "label": "Reference Doc",
    "options": "reference_doctype",
-   "reqd": 1
+   "search_index": 1
   },
   {
    "fieldname": "user",
    "fieldtype": "Link",
    "in_standard_filter": 1,
    "label": "For User",
-   "options": "User"
+   "options": "User",
+   "search_index": 1
   },
   {
    "fieldname": "column_break_main",
@@ -71,7 +73,8 @@
    "in_standard_filter": 1,
    "label": "Status",
    "options": "Open\nAccepted\nDismissed\nExpired",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "default": "create_task",
@@ -81,14 +84,16 @@
    "options": "create_task\nschedule_call\nsend_reply\nupdate_field"
   },
   {
+   "description": "How loudly this suggestion is asking for attention (0-100). Not the deal-health score, which runs the other way.",
    "fieldname": "score",
    "fieldtype": "Float",
-   "label": "Score"
+   "label": "Urgency"
   },
   {
    "fieldname": "expires_on",
    "fieldtype": "Datetime",
-   "label": "Expires On"
+   "label": "Expires On",
+   "search_index": 1
   },
   {
    "fieldname": "section_break_detail",
@@ -155,8 +160,7 @@
    "read": 1,
    "report": 1,
    "role": "Sales User",
-   "share": 1,
-   "write": 1
+   "share": 1
   }
  ],
  "row_format": "Dynamic",

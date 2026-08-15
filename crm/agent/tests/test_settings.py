@@ -21,7 +21,7 @@ from __future__ import annotations
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from crm.agent.config import DEFAULT_SETTINGS
+from crm.agent.config import DEFAULT_SETTINGS, SIGNAL_DEFAULTS
 
 
 class AgentSettingsTest(IntegrationTestCase):
@@ -40,12 +40,42 @@ class AgentSettingsTest(IntegrationTestCase):
 		two copies in step: assert every field agrees, or the flag could ship on in one
 		place and off in the other."""
 		meta = frappe.get_meta("CRM Agent Settings")
-		self.assertEqual(len(DEFAULT_SETTINGS), 5)
-		for fieldname, default in DEFAULT_SETTINGS.items():
+		self.assertEqual(len(DEFAULT_SETTINGS), 6)
+		self.assertEqual(len(SIGNAL_DEFAULTS), 5)
+		for fieldname, default in {**DEFAULT_SETTINGS, **SIGNAL_DEFAULTS}.items():
 			field = meta.get_field(fieldname)
-			self.assertIsNotNone(field, f"{fieldname} is in DEFAULT_SETTINGS but not in the doctype")
+			self.assertIsNotNone(field, f"{fieldname} is in the defaults but not in the doctype")
 			self.assertEqual(
 				field.default,
 				str(default),
-				f"{fieldname}: doctype default {field.default!r} != DEFAULT_SETTINGS {default!r}",
+				f"{fieldname}: doctype default {field.default!r} != code default {default!r}",
 			)
+
+	def test_the_signal_switch_ships_on_while_the_model_tier_ships_off(self):
+		"""Constraint 3: the deterministic tier works with the agent disabled. If the
+		signal flag inherited the model flag's default the whole feature would ship
+		dark on every site."""
+		meta = frappe.get_meta("CRM Agent Settings")
+		self.assertEqual(meta.get_field("enabled").default, "0")
+		self.assertEqual(meta.get_field("signals_enabled").default, "1")
+
+
+class BaseUrlValidationTest(IntegrationTestCase):
+	"""The base URL is the target of a server-side POST that carries the API key."""
+
+	def save_url(self, url):
+		settings = frappe.get_doc("CRM Agent Settings")
+		self.addCleanup(frappe.db.rollback)
+		settings.base_url = url
+		settings.save()
+
+	def test_a_plausible_endpoint_is_accepted(self):
+		self.save_url("http://gpu.local:8000/v1")
+
+	def test_a_non_http_scheme_is_refused(self):
+		with self.assertRaises(frappe.ValidationError):
+			self.save_url("file:///etc/passwd")
+
+	def test_a_url_with_no_host_is_refused(self):
+		with self.assertRaises(frappe.ValidationError):
+			self.save_url("localhost:8000/v1")

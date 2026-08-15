@@ -2,7 +2,7 @@
   <div class="flex h-full flex-col gap-4">
     <div class="flex items-start justify-between gap-4">
       <div class="flex flex-col gap-1">
-        <h2 class="text-2xl-semibold text-ink-gray-8">
+        <h2 class="v-title text-ink-gray-8">
           {{ __('Sales Targets') }}
         </h2>
         <p class="text-p-sm text-ink-gray-5">

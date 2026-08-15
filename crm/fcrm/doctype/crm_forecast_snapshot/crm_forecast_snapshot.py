@@ -18,4 +18,5 @@ class CRMForecastSnapshot(Document):
 		month: DF.Data
 		name: DF.Int | None
 		snapshot_date: DF.Date
+		user: DF.Link | None
 	# end: auto-generated types
