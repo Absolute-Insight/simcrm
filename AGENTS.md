@@ -21,6 +21,7 @@ they run as evaluated strings in the browser.
 | Proactive signals, scoring, suggestion inbox | [feats/suggestions/README.md](./.pi/feats/suggestions/README.md) |
 | Rep planning and plan-vs-actual matching | [feats/planning/README.md](./.pi/feats/planning/README.md) |
 | Analytics, forecasting, quota, reports, digests | [feats/reporting/README.md](./.pi/feats/reporting/README.md) |
+| Deploying to a server (compose stack, upgrades, backups) | [deploy/README.md](./deploy/README.md) |
 
 ---
 
