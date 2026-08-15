@@ -404,6 +404,17 @@ class MetricsTest(IntegrationTestCase):
 		names = {widget["name"] for widget in json.loads(default_manager_dashboard_layout())}
 		self.assertEqual(names - set(CHARTS), set())
 
+	def test_default_grid_does_not_repeat_the_curated_tiles(self):
+		"""The tile row above the grid already carries these metrics; the default
+		grid showing them again is the same number answered twice on one page."""
+		from crm.fcrm.doctype.crm_dashboard.crm_dashboard import (
+			CURATED_TILE_METRICS,
+			default_manager_dashboard_layout,
+		)
+
+		names = {widget["name"] for widget in json.loads(default_manager_dashboard_layout())}
+		self.assertEqual(names & set(CURATED_TILE_METRICS), set())
+
 
 MANAGER = "metrics-manager@crmtest.test"
 REP = "metrics-teamrep@crmtest.test"
