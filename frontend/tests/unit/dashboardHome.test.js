@@ -8,6 +8,7 @@ import {
   mondayOf,
   movePanel,
   planBreakdown,
+  riskReason,
   standardViewPayload,
   toISODate,
 } from '@/utils/dashboardHome'
@@ -180,6 +181,23 @@ describe('groupRisksByRecord', () => {
     expect(rows[0].factors).toHaveLength(1)
   })
 
+  it('carries the rationale so a row can explain itself without factors', () => {
+    const rows = groupRisksByRecord([
+      {
+        signal: 'idle_deal',
+        reference_doctype: 'CRM Deal',
+        reference_docname: 'DEAL-7',
+        score: 5,
+        factors: '{"idle_days": 30}',
+        rationale: 'No activity on this deal for 30 days.',
+      },
+    ])
+    expect(rows[0].factors).toEqual([])
+    expect(rows[0].rationales).toEqual([
+      'No activity on this deal for 30 days.',
+    ])
+  })
+
   it('ignores rows with no reference and an absent list', () => {
     expect(groupRisksByRecord(null)).toEqual([])
     expect(
@@ -187,6 +205,37 @@ describe('groupRisksByRecord', () => {
         { signal: 'idle_deal', reference_doctype: 'CRM Deal' },
       ]),
     ).toEqual([])
+  })
+})
+
+describe('riskReason', () => {
+  it('prefers the factor labels, which are the scannable form', () => {
+    expect(
+      riskReason({
+        factors: [
+          { label: 'No open task' },
+          { label: 'No next step recorded' },
+        ],
+        rationales: ['This deal has no open task and no next step recorded.'],
+      }),
+    ).toBe('No open task · No next step recorded')
+  })
+
+  it('falls back to the rationale when the factors did not parse', () => {
+    // The legacy `{key: value}` shape is dropped by parseFactors rather than
+    // printed raw, which used to leave the panel promising a reason and showing
+    // a blank line -- three quarters of the rows on a real rep's inbox.
+    expect(
+      riskReason({
+        factors: [],
+        rationales: ['No activity on this deal for 30 days.'],
+      }),
+    ).toBe('No activity on this deal for 30 days.')
+  })
+
+  it('says nothing rather than throwing when a row carries neither', () => {
+    expect(riskReason({})).toBe('')
+    expect(riskReason(null)).toBe('')
   })
 })
 
