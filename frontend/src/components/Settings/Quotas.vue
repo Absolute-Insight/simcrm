@@ -102,8 +102,9 @@
               <input
                 v-if="editable"
                 :value="displayValue(row, month)"
-                class="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-right text-sm tabular-nums text-ink-gray-8 transition hover:border-outline-gray-2 focus:border-outline-gray-3 focus:bg-surface-white focus:outline-none focus:ring-2 focus:ring-outline-gray-3"
+                class="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-right text-sm tabular-nums text-ink-gray-8 transition placeholder:text-ink-gray-4 hover:border-outline-gray-2 focus:border-outline-gray-3 focus:bg-surface-white focus:outline-none focus:ring-2 focus:ring-outline-gray-3"
                 inputmode="decimal"
+                placeholder="—"
                 :aria-label="`${row.full_name} ${month}`"
                 @focus="onFocus($event, row, month)"
                 @blur="onBlur($event, row, month)"
@@ -193,8 +194,6 @@ const compact = new Intl.NumberFormat(undefined, {
   notation: 'compact',
   maximumFractionDigits: 1,
 })
-const plain = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 })
-
 function money(value) {
   if (!value) return '—'
   return compact.format(value)
@@ -202,7 +201,11 @@ function money(value) {
 
 function displayValue(row, month) {
   const amount = row.quota?.[month]
-  return amount ? plain.format(amount) : ''
+  // Compact, like the row and column totals. Twelve months across a settings
+  // dialog leaves each cell around 40px, and "250,000" clips to "250,0" there --
+  // a target you cannot read back. `onFocus` swaps in the exact digits, so the
+  // full number is one click away and nothing is lost.
+  return amount ? compact.format(amount) : ''
 }
 
 function rowTotal(row) {
