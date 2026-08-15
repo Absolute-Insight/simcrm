@@ -18,6 +18,10 @@ formality.
 - DNS for your site name pointing at the host
 - The image published (merge to `main`, wait for the **Build Container Image**
   workflow) — or build locally with frappe_docker and tag it to match
+- Access to the image: ghcr packages are **private by default**. Either make
+  the `simcrm` package public (github.com → your profile → Packages →
+  simcrm → settings), or on the host:
+  `docker login ghcr.io -u <github-user>` with a PAT that has `read:packages`
 
 ## First boot
 
