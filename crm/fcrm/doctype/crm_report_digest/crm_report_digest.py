@@ -82,14 +82,12 @@ def send_due_digests():
 				try:
 					# Deliberate: this is what scopes the digest to its recipient, and the
 					# finally below restores the scheduler user unconditionally.
-					frappe.set_user(
-						recipient
-					)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser
+					# nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser
+					frappe.set_user(recipient)
 					report = get_report(digest.report, str(from_date), str(today))
 				finally:
-					frappe.set_user(
-						original_user
-					)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser
+					# nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser
+					frappe.set_user(original_user)
 
 				frappe.sendmail(
 					recipients=[recipient],

@@ -40,10 +40,7 @@ class CRMAutomationRule(Document):
 			try:
 				frappe.safe_eval(self.condition, eval_locals={"doc": frappe._dict()})
 			except (SyntaxError, NameError) as e:
-				# The format string is a literal; only the exception text varies.
-				frappe.throw(
-					_("Invalid condition: {0}").format(e)
-				)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-format-string-injection
+				frappe.throw(_("Invalid condition: {0}").format(str(e)))
 			except Exception:
 				# evaluation errors against the empty doc are fine; syntax is what we check
 				pass
@@ -59,12 +56,8 @@ class CRMAutomationRule(Document):
 			try:
 				# Compiles against an empty dict to surface syntax errors at save; renders
 				# nothing and touches no record.
-				frappe.render_template(
-					self.get(fieldname) or "", {"doc": frappe._dict()}
-				)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-ssti
+				# nosemgrep: frappe-semgrep-rules.rules.security.frappe-ssti
+				frappe.render_template(self.get(fieldname) or "", {"doc": frappe._dict()})
 			except Exception as e:
 				label = self.meta.get_label(fieldname)
-				# The format string is a literal; only the label and exception text vary.
-				frappe.throw(
-					_("Invalid {0}: {1}").format(label, e)
-				)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-format-string-injection
+				frappe.throw(_("Invalid {0}: {1}").format(label, str(e)))

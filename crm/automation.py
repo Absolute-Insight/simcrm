@@ -119,9 +119,8 @@ def _render(template, doc_dict) -> str:
 	"""
 	# Authored by a Sales Manager, validated at save, rendered against a plain
 	# dict rather than the live Document.
-	return frappe.render_template(
-		template or "", {"doc": doc_dict}
-	)  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-ssti
+	# nosemgrep: frappe-semgrep-rules.rules.security.frappe-ssti
+	return frappe.render_template(template or "", {"doc": doc_dict})
 
 
 def _apply(rule, doc) -> None:
