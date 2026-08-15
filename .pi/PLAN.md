@@ -7,7 +7,7 @@
 
 ---
 
-## Product Direction (updated 2026-08-13)
+## Product Direction (updated 2026-08-15)
 
 The product rebrands to **Vectora**. Direction, in priority order:
 
@@ -39,12 +39,12 @@ Two tracks. The **product track** delivers the new direction; the **platform tra
 
 | Order | Phase | Track | Scope | Status |
 |---|---|---|---|---|
-| ~~1~~ | ~~Phase 7 — Vectora rebrand & design language~~ | Product | Brand + UI + coherence | ✅ Done — [see ARCHIVE](./ARCHIVE.md#phase-7--vectora-rebrand--design-language) |
-| **2** | [Phase 8 — Proactive agent workflows](#phase-8--proactive-agent-workflows) | Product | Signals, predictions, suggestions, automation | 🔜 Next |
-| **3** | [Phase 9 — Rep planning](#phase-9--rep-planning) | Product | Auto + manual plans linked to actuals | After 8 |
-| **4** | [Phase 10 — Dashboards, analytics & forecasts](#phase-10--dashboards-analytics--forecasts) | Product | Metrics layer, role-aware dashboards, forecasting | After 9 |
-| **5** | [Phase 11 — Reporting](#phase-11--reporting) | Product | Saved reports, exports, scheduled digests | After 10 |
-| 6 | [Phase 3B — Full decouple (Grid independent)](#phase-3b--full-decouple-grid-independent) | Platform | Structural refactor | Interleave; see conflict note |
+| ~~1~~ | ~~Phase 7 — Vectora rebrand & design language~~ | Product | Brand + UI + coherence | ✅ Done — [ARCHIVE](./ARCHIVE.md#phase-7--vectora-rebrand--design-language) |
+| ~~2~~ | ~~Phase 8 — Proactive agent workflows~~ | Product | Signals, predictions, suggestions, automation | ✅ Done — [ARCHIVE](./ARCHIVE.md#phase-8--proactive-agent-workflows) |
+| ~~3~~ | ~~Phase 9 — Rep planning~~ | Product | Auto + manual plans linked to actuals | ✅ Done — [ARCHIVE](./ARCHIVE.md#phase-9--rep-planning) |
+| **4** | [Phase 10 — Dashboards, analytics & forecasts](#phase-10--dashboards-analytics--forecasts) | Product | Metrics layer, role-aware dashboards, forecasting | 🔵 In progress — remaining items below |
+| ~~5~~ | ~~Phase 11 — Reporting~~ | Product | Built-in reports, exports, scheduled digests | ✅ Done — [ARCHIVE](./ARCHIVE.md#phase-11--reporting) |
+| 6 | [Phase 3B — Full decouple (Grid independent)](#phase-3b--full-decouple-grid-independent) | Platform | Structural refactor | 🔜 Next |
 | 7 | [Phase 4 — getMeta single source of truth](#phase-4--getmeta-single-source-of-truth) | Platform | Architectural cleanup | After 3B |
 | 8 | [Phase 6 — More Capabilities (selected)](#phase-6--more-capabilities-selected) | Platform | Feature expansion | After 4 |
 | 9 | [Phase 5 — Scripting DX Rethink](#phase-5--scripting-dx-rethink) | Platform | Syntax/API redesign | Last |
@@ -53,261 +53,43 @@ Two tracks. The **product track** delivers the new direction; the **platform tra
 `FieldLayout`/`Field`/`Grid`, so Phase 3B proceeds without conflict.
 
 ---
-
-## Phase 8 — Proactive Agent Workflows
-
-> **The spine of the product direction. Everything in Phases 9–11 plugs into this.**
-
-### Goal
-
-Move from "user asks → agent answers" (current read tier) to "system watches →
-predicts → proposes → user confirms → system acts". Proactive and predictive, never
-silently autonomous.
-
-### Hard constraints (from the live-model gate — see `feats/agent/README.md`)
-
-The injection testing showed **every model tried follows instructions embedded in email
-bodies**. These are design constraints, not preferences:
-
-1. Model output is attacker-influenced input. **No write happens without explicit user
-   confirmation** through `formDialog()` — the confirm dialog shows exactly what will be
-   written, as plain text, never HTML.
-2. Predictions that drive decisions are computed from **structured data** (stage age,
-   activity cadence, response gaps, amounts) — never solely from untrusted message text.
-3. Deterministic automation does not need a model. Rules fire reliably with the agent
-   disabled; the model *ranks and enriches*, it does not gate the feature.
-4. The injection thread from the gate becomes a permanent eval; new capabilities add to
-   that eval set before they ship.
-
-### Components
-
-**1. Signal engine** (server, `crm/agent/signals.py` + scheduler)
-Deterministic detectors over structured data, run via `doc_events` hooks + hourly/daily
-scheduler jobs. Initial signal set:
-
-- Deal idle: no activity logged in N days (N per stage, configurable)
-- No next step: deal has no open task/planned activity
-- Close date at risk: expected close within N days while stage is early
-- Unanswered inbound: communication received, no reply in N hours
-- Lead SLA: new lead untouched past the response-time target
-- Stale plan: rep plan item overdue with no linked activity (lands with Phase 9)
-
-**2. Prediction layer** (`crm/agent/predict.py`)
-Explainable-first scoring:
-
-- Deal health score + close-date risk from structured features (stage duration vs.
-  historical median, activity cadence, inbound/outbound balance)
-- Every score ships with its top contributing factors — shown in UI, always
-- Model-assisted refinement is optional and additive, applied only when the agent tier
-  is enabled and clearly labeled in the UI as model-derived
-
-**3. Suggestion queue** (`CRM Suggestion` doctype)
-The proactive surface. Fields: source signal, reference doctype/name, proposed action
-(typed: create task / schedule call / draft reply / update field), rationale,
-status (`open / accepted / dismissed / expired`), expiry.
-
-- Signals and predictions emit suggestions; dedupe on (signal, reference, open)
-- Accepting opens a pre-filled `formDialog()` confirm; the accepted action creates the
-  real record (task, event, draft) — the confirm is the write gate from constraint 1
-- Dismissals are recorded with reason — dismissal patterns tune signal thresholds
-- Realtime badge via `$socket`; suggestion inbox in the app shell + per-record section
-  on detail pages
-
-**4. Automation rules** (deterministic, admin-configured)
-Trigger → condition → action records (assignment rotation, SLA escalation, follow-up
-task on stage change). Runs with the agent disabled. Model involvement: none.
-
-**5. Write-tier capability layer** (`crm/agent/actions.py`)
-Mirror image of `tools.py`: typed, permission-checked, rate-limited *proposals* only —
-each returns a draft payload for the confirm dialog, never writes directly. Same AST
-allowlist test pattern as `tools.py`.
-
-### Decisions needed before starting
-
-1. First signal set — the list above, or trimmed? (Recommendation: ship idle-deal,
-   no-next-step, and lead-SLA first; they need no historical data.)
-2. Where the suggestion inbox lives — dedicated page vs. panel in the shell.
-   (Recommendation: panel in the shell + section on detail pages; a dedicated page adds
-   navigation for no benefit at this volume.)
-3. Snooze semantics — is "dismissed" final, or does a signal re-fire after N days?
-
-### Checklist
-
-- [x] `CRM Suggestion` doctype + dedupe + expiry (2026-08-14; dismissed/accepted
-      = 14-day cooldown, open blocks, expired never blocks — see
-      `docs/superpowers/plans/2026-08-14-proactive-suggestions-phase8.md`)
-- [x] `signals.py` — idle_deal / no_next_step / lead_sla, batched queries, hourly
-      scheduler, 19 tests; smoke on seeded site: 88 created, second run 0 (idempotent)
-- [x] `crm/api/suggestions.py` — get/accept/dismiss, ownership-checked, 6 tests
-      (accept/dismiss only flip status; record creation stays behind formDialog)
-- [x] `predict.py` heuristic scores + factor attribution + 9 unit tests
-- [x] `actions.py` write-tier proposals + AST no-frappe test (2026-08-14) —
-      `propose_reply` drafts a reply; `api.draft_reply` reads via `tools`, returns a dict,
-      never sends. Live gate re-run: granite confirmed the injected discount 3/3, held the
-      control 3/3 — recorded in `feats/agent/README.md`. The compose-window human is the
-      write gate
-- [x] Suggestion inbox UI (shell panel + count badge) + accept→`formDialog()` confirm
-      flow, verified end-to-end on the dev bench (2026-08-14). Still open: realtime
-      badge via `$socket` (polls on open/action for now)
-- [x] Per-record "Needs attention" section on Deal/Lead side panels: health score
-      badge + plain-language factors + inline accept/dismiss (2026-08-14)
-- [x] Automation rule doctype + runner + tests (2026-08-14) — Created / Status Changed
-      triggers, safe_eval conditions validated at save, Create Task / Create Suggestion
-      actions, per-rule failure isolation; model-free (agent-disabled path is the only
-      path). No admin UI yet — rules are authored via desk
-- [x] Injection gate run against the first model-touching write path (`draft_reply`);
-      the hostile thread is documented as a standing eval in `feats/agent/README.md`.
-      A codified eval *suite* (assert-on-refusal-rate across models) is still worth
-      building when a second write capability lands
-- [x] Rate limits on every endpoint that can trigger a model call — `draft_reply` carries
-      the same per-user `@rate_limit` as `summarise_thread`; the deterministic endpoints
-      are DB-only and need none
-
-> Known-dirty dev site: `crm.tests.test_dashboard` (8 pre-existing failures) asserts
-> pristine-site counts and every suite run leaks ~35 fixture leads; unrelated to Phase 8.
-
----
-
-## Phase 9 — Rep Planning
-
-> **After Phase 8 — auto-planning consumes the suggestion queue and the write gate.**
-
-### Goal
-
-Reps and managers plan activity per period (week/month); the agent proposes plans;
-every plan item links to the actual activity that fulfils it. Plan vs. actual is
-computed, not self-reported.
-
-### Model
-
-- `CRM Rep Plan` — user, period type (week/month), period start, status, rollup targets
-  (calls, meetings, new leads touched, deals advanced)
-- `CRM Rep Plan Item` (child) — planned activity type, linked Lead/Deal, planned date,
-  note, and **fulfilment link**: the actual `CRM Task` / `CRM Call Log` / event that
-  satisfied it, resolved automatically by matching (type, linked record, date window),
-  manually overridable
-
-Concrete items are the source of truth; the rollup targets are derived, so "planned 30
-calls" and the 30 planned call items can never disagree.
-
-### Flows
-
-- **Manual**: planner page — week grid, drag/reschedule items, per-rep; managers see the
-  team roster with plan status
-- **Auto**: "Propose my week" — the agent drafts a plan from open suggestions (idle
-  deals → planned touches, SLA leads → planned calls), rep reviews and confirms via the
-  Phase 8 write gate; items are editable after acceptance like manual ones
-- **Actuals linkage**: background job matches new activity records to open plan items;
-  unmatched planned items age into the "stale plan" signal (Phase 8)
-
-### Decisions needed before starting
-
-1. Period granularity to ship first — week only, or week+month? (Recommendation: week
-   only; month is a rollup view, not a separate plan.)
-2. Can managers edit a rep's plan, or only comment? (Ask — org-culture dependent.)
-
-### Checklist
-
-- [x] Doctypes + fulfilment-matching logic with unit tests (2026-08-14) — one plan per
-      (user, Monday week); pure `match_items` (kind + reference + week window, one
-      actual per item, closest date wins); decisions taken: week-only granularity,
-      managers read any plan / edit only their own
-- [x] Planner page (2026-08-14) — week grid, add/remove items, propose-my-week
-      review-then-save flow, planned/done/missed rollup, manager read-only view of any
-      rep. Deferred: drag-reschedule and manual fulfilment override (item dates change
-      via remove+add for now)
-- [x] "Propose my week" flow through the Phase 8 confirm gate — `propose_week` drafts
-      from open suggestions and writes nothing; saving the reviewed plan accepts them
-- [x] Actuals matcher job (daily) — manual override UI pending with the planner page
-- [x] Plan-vs-actual computed rollup exposed via `get_plan` for Phase 10
-
----
-
 ## Phase 10 — Dashboards, Analytics & Forecasts
 
-> **After Phase 9 — plan adherence and prediction data now exist to display.**
+> The metrics layer, the forecast and the role-aware dashboard all shipped
+> (2026-08-14/15). What is left is listed here; everything else moved to
+> [ARCHIVE](./ARCHIVE.md). Feature doc:
+> [feats/reporting/README.md](./feats/reporting/README.md).
 
-### Goal
+### Shipped
 
-Role-aware, user-friendly, powerful dashboards; accurate forecasts; all numbers from
-one tested source.
+- [x] One tested metrics layer. `crm/api/dashboard.py` is the only place an aggregate is
+      computed; `reports.py` consumes it and tests assert a tile and its report row are
+      equal for the same period.
+- [x] Forecast correctness: Lost deals excluded, actual bucketed by `closed_date`, the
+      selected range honoured, a patch clearing the snapshot history the old behaviour
+      contaminated.
+- [x] Hierarchy scoping on every aggregate (`scope_deals` / `scope_leads` /
+      `visible_reps`), and `belongs_to` so a rep's tile counts the deals assigned to them
+      as well as the ones they own — the definition their deal list has always used.
+- [x] `CRM Quota` — monthly per rep in the base currency, pro-rated by covered days for
+      an arbitrary range, with a Settings → Sales Targets grid. Quarter/year/team numbers
+      are sums, never stored.
+- [x] Weekly forecast snapshots per rep and site-wide; `get_forecast_accuracy` compares
+      the last pre-month snapshot against live actuals.
+- [x] Role-aware dashboard: rep home (attention, today's plan, own tiles) and manager
+      view (team adherence, quota attainment) with the customisable chart grid kept
+      underneath. Every tile drills through by writing the same standard view the list
+      reads.
+- [x] A migration patch adds the new widgets to layouts on existing sites, idempotently,
+      without clobbering a customised layout.
 
-### 1. Metrics layer first (`crm/api/metrics.py`)
+### Remaining
 
-Single module producing every aggregate: pipeline by stage, funnel conversion, activity
-counts, plan adherence, forecast. Unit-tested against fixtures, timezone- and
-currency-aware. **Dashboards, forecasts, and reports may only consume this module** —
-"accurate analytics" is an architecture decision, not a QA task: numbers can't disagree
-if they have one source.
-
-### 2. Dashboards (rebuild `frontend/src/pages/Dashboard.vue`)
-
-Use the `dataviz` skill at implementation time.
-
-- **Rep home**: my suggestions (Phase 8), my plan today vs. done (Phase 9), my pipeline,
-  my at-risk deals with the *why* (factor attribution from `predict.py`)
-- **Manager view**: team pipeline & forecast vs. quota, plan adherence per rep, funnel,
-  at-risk deals across the team
-- User-friendly = opinionated defaults with light customization (show/hide/reorder
-  cards), not a widget-builder. Powerful = every number clicks through to the filtered
-  list view behind it.
-
-### 3. Forecasting
-
-- Baseline: stage-probability-weighted pipeline per period per rep/team
-- Adjusted: baseline modulated by Phase 8 deal-health scores, shown side by side with
-  the baseline — never silently replacing it
-- **Forecast snapshots**: a scheduled job stores the forecast weekly, so forecast
-  accuracy is measured against reality over time — this is what makes "accurate
-  forecasts" verifiable rather than aspirational
-
-### Checklist
-
-> Architecture note (2026-08-14): the metrics layer already existed as
-> `crm/api/dashboard.py` (layout entries dispatch to `get_<name>` functions, exchange-
-> rate-aware). Phase 10 extends that module rather than adding a parallel `metrics.py`.
-
-- [x] Metrics with fixture-based tests (2026-08-14) — `get_plan_adherence` (done share
-      of items already due), `get_deals_at_risk` (health < 40, batched), plus the
-      pre-existing pipeline/funnel/forecast functions
-- [ ] Quota field/doctype (needed for forecast vs. quota — confirm shape with user)
-- [x] Widgets registered in the default dashboard (plan adherence, deals at risk) and
-      verified live. Full rep-home/manager-view redesign + click-through pending
-- [x] Forecast baseline (pre-existing, probability-weighted) + weekly snapshot job
-      (`CRM Forecast Snapshot`, idempotent per day)
-- [x] `get_forecast_accuracy` implemented and tested (earliest pre-month snapshot vs
-      latest actual); dashboard widget to be registered once snapshots accumulate
-
----
-
-## Phase 11 — Reporting
-
-> **After Phase 10 — reports are saved views over the metrics layer.**
-
-### Goal
-
-Clean, informative reporting: saved report definitions, exports, scheduled delivery.
-No new aggregation code — reports parameterize `metrics.py`.
-
-### Scope
-
-- `CRM Report` doctype: metric set, filters, grouping, period, recipients, schedule
-- Report viewer page: clean tabular + chart rendering, print stylesheet
-- Exports: CSV always; PDF via print view
-- Scheduled digests: weekly pipeline summary, plan-adherence summary, emailed to
-  recipients (uses existing frappe email queue)
-- Ship 3–4 strong built-in reports before building any custom-report UI: pipeline by
-  stage, funnel conversion, activity & plan adherence, forecast vs. actual
-
-### Checklist
-
-- [x] Report registry over the metrics layer (2026-08-14) — `crm/api/reports.py`;
-      a `CRM Report` builder doctype stays deferred until these four prove the layer
-- [x] Viewer page + print styles + CSV export (`/crm/reports`)
-- [x] Scheduled digests — `CRM Report Digest` doctype (report, recipients, daily/weekly)
-      + daily scheduler job rendering branded HTML tables from the same rows
-- [x] Four built-in reports: pipeline by stage, funnel conversion, plan adherence by
-      rep, forecast vs actual
+- [ ] Forecast-accuracy widget on the dashboard — the endpoint and the chart shape exist;
+      register it once a few weeks of snapshots have accumulated, so it does not ship
+      showing one point.
+- [ ] Territory/segment analytics (backlog) — the metrics layer can carry it now that
+      quota shape is settled.
 
 ---
 
@@ -556,9 +338,10 @@ continue to work. New syntax is additive.
 | List view scripting | Column visibility, custom cell renderers, bulk action hooks |
 | Inter-script communication | `this.emit('event', data)` / `this.on('event', handler)` across scripts |
 | Conditional field injection | Variant of 6A — scripts inject fields only when a condition is true |
-| Custom report builder UI | Only after the four built-in reports (Phase 11) prove the metrics layer |
-| Model-drafted email replies | Write-tier action; needs the Phase 8 eval set matured first |
-| Territory/segment analytics | Metrics layer extension once quota shape is settled |
+| Custom report builder UI | The five built-in reports have proven the metrics layer; this is now unblocked |
+| Codified injection eval suite | Assert-on-refusal-rate across models. The hostile thread is a documented standing eval; codify it when a second write capability lands |
+| Territory/segment analytics | Metrics layer extension; unblocked now that quota shape is settled |
+| Forecast-accuracy widget | Endpoint and chart shape exist; register once snapshots have accumulated |
 
 ---
 

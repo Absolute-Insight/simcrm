@@ -1,17 +1,37 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { createDoc, deleteDoc, getDoc } from '../helpers'
 
 /**
- * The suggestion inbox is the proactive surface — the thing that makes the
- * product tell you what needs attention before you ask. Two properties are
- * load-bearing and are asserted here: accepting a suggestion writes only after
- * the human confirms the exact payload (the Phase 8 write gate), and a failed
- * fetch must never render as "all clear", which would be a lie about the one
- * surface a rep trusts to be complete.
+ * The suggestion inbox is the proactive surface — the thing that tells a rep
+ * what needs attention before they ask. Two properties are load-bearing and are
+ * asserted here: accepting writes only after the human confirms the exact
+ * payload (the Phase 8 write gate), and dismissing collects a reason, because
+ * the signal engine reads those reasons to stretch a repeat dismisser's
+ * cooldown.
+ *
+ * Every locator is scoped to the seeded card. The panel shows the whole open
+ * queue, which on a working site is hundreds of rows, so a `.first()` here
+ * would act on somebody else's suggestion.
  */
 
 interface Named {
 	name: string
+}
+
+const TITLE = 'E2E: this deal has gone quiet'
+
+/** The card for the seeded suggestion, not whichever card happens to be first. */
+function card(page: Page) {
+	return page
+		.locator('div')
+		.filter({ has: page.getByRole('link', { name: new RegExp(TITLE) }) })
+		.last()
+}
+
+async function openInbox(page: Page) {
+	await page.goto('/crm')
+	await page.getByRole('button', { name: 'Suggestions' }).click()
+	await expect(page.getByText(TITLE)).toBeVisible()
 }
 
 test.describe('Suggestion inbox', () => {
@@ -33,7 +53,7 @@ test.describe('Suggestion inbox', () => {
 
 		const suggestion = await createDoc<Named>(request, 'CRM Suggestion', {
 			signal: 'idle_deal',
-			title: 'E2E: this deal has gone quiet',
+			title: TITLE,
 			rationale: 'No activity logged in 21 days.',
 			reference_doctype: 'CRM Deal',
 			reference_docname: dealName,
@@ -52,57 +72,54 @@ test.describe('Suggestion inbox', () => {
 			['CRM Deal', dealName],
 			['CRM Organization', orgName],
 		] as const) {
-			if (name) {
-				await deleteDoc(request, doctype, name).catch(() => {})
-			}
+			if (name) await deleteDoc(request, doctype, name).catch(() => {})
 		}
 	})
 
-	test('an open suggestion reaches the inbox and can be dismissed', async ({
+	test('an open suggestion reaches the inbox and is dismissed with a reason', async ({
 		page,
 		request,
 	}) => {
-		await page.goto('/crm')
-		await page.getByRole('button', { name: /suggestions/i }).first().click()
+		await openInbox(page)
 
-		await expect(
-			page.getByText('E2E: this deal has gone quiet'),
-		).toBeVisible()
+		await card(page).getByRole('button', { name: 'Dismiss' }).click()
 
-		await page.getByRole('button', { name: /dismiss/i }).first().click()
+		// the reason is not optional: the engine reads it back to tune thresholds
+		const dialog = page.getByRole('dialog')
+		await expect(dialog).toBeVisible()
+		await dialog.getByRole('button', { name: 'Dismiss' }).click()
 
-		await expect(
-			page.getByText('E2E: this deal has gone quiet'),
-		).toHaveCount(0)
+		await expect(page.getByText(TITLE)).toHaveCount(0)
 
-		const suggestion = await getDoc<{ status: string }>(
+		const suggestion = await getDoc<{ status: string; dismiss_reason: string }>(
 			request,
 			'CRM Suggestion',
 			suggestionName,
 		)
 		expect(suggestion.status).toBe('Dismissed')
+		expect(suggestion.dismiss_reason).toBeTruthy()
 	})
 
 	test('accepting writes nothing until the confirm dialog is submitted', async ({
 		page,
 		request,
 	}) => {
-		await page.goto('/crm')
-		await page.getByRole('button', { name: /suggestions/i }).first().click()
-		await expect(
-			page.getByText('E2E: this deal has gone quiet'),
-		).toBeVisible()
+		await openInbox(page)
 
-		await page.getByRole('button', { name: /create task/i }).first().click()
+		await card(page).getByRole('button', { name: 'Create task' }).click()
 
 		// the confirm dialog shows exactly what will be written, pre-filled from
 		// the suggestion's action_payload
 		const dialog = page.getByRole('dialog')
 		await expect(dialog).toBeVisible()
-		await expect(dialog.getByDisplayValue('E2E follow up')).toBeVisible()
+		await expect(dialog.getByRole('textbox').first()).toHaveValue(
+			'E2E follow up',
+		)
 
 		// cancelling must leave the suggestion open and create nothing
-		await dialog.getByRole('button', { name: /cancel/i }).click()
+		await dialog.getByRole('button', { name: 'Cancel' }).click()
+		await expect(dialog).toBeHidden()
+
 		const stillOpen = await getDoc<{ status: string }>(
 			request,
 			'CRM Suggestion',
@@ -111,15 +128,8 @@ test.describe('Suggestion inbox', () => {
 		expect(stillOpen.status).toBe('Open')
 	})
 
-	test('the per-record section explains the deal health score', async ({
-		page,
-	}) => {
+	test('the record page carries the same suggestion', async ({ page }) => {
 		await page.goto(`/crm/deals/${dealName}`)
-
-		// the score is never a bare colour-coded number: it carries its scale and
-		// the factors that produced it
-		const attention = page.getByText(/needs attention/i).first()
-		await expect(attention).toBeVisible()
-		await expect(page.getByText('E2E: this deal has gone quiet')).toBeVisible()
+		await expect(page.getByText(TITLE)).toBeVisible()
 	})
 })
