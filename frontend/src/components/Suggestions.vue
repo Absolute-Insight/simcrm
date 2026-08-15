@@ -158,6 +158,23 @@
                   />
                 </div>
               </div>
+
+              <!-- The badge counts everything open, the list is capped at what
+                   the endpoint returns. Without this the list just stops, and a
+                   rep with 300 open signals reads the last card as the last
+                   signal. -->
+              <div
+                v-if="hiddenCount"
+                class="px-4 py-3 text-sm text-ink-gray-5"
+                role="status"
+              >
+                {{
+                  __('Showing the {0} most urgent of {1} open suggestions.', [
+                    suggestions.data.length,
+                    openCount.data,
+                  ])
+                }}
+              </div>
             </div>
           </div>
 
@@ -185,6 +202,7 @@ import Skeleton from '@/components/ui/Skeleton.vue'
 import {
   suggestionsVisible,
   suggestions,
+  openCount,
   suggestionsStore,
 } from '@/stores/suggestions'
 import { globalStore } from '@/stores/global'
@@ -216,6 +234,10 @@ const busy = ref('')
 const MAX_FACTORS = 3
 
 const hasRows = computed(() => Boolean(suggestions.data?.length))
+
+const hiddenCount = computed(() =>
+  Math.max(0, (openCount.data || 0) - (suggestions.data?.length || 0)),
+)
 
 const showSkeleton = computed(
   () => suggestions.loading && !suggestions.fetched && !suggestions.error,
