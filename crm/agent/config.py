@@ -22,6 +22,19 @@ DEFAULT_SETTINGS = {
 	"model": "lfm2.5-2.6b",
 	"timeout": 30,
 	"max_tokens": 1024,
+	"daily_call_budget": 500,
+}
+
+# The deterministic tier's thresholds. Kept apart from DEFAULT_SETTINGS because they
+# gate a feature that runs with the model off: an admin who never enables the agent
+# still owns these numbers, and nothing here may make the signal job depend on the
+# model tier's flag.
+SIGNAL_DEFAULTS = {
+	"signals_enabled": 1,
+	"idle_deal_days": 7,
+	"suggestion_ttl_days": 14,
+	"dismiss_cooldown_days": 14,
+	"close_horizon_days": 14,
 }
 
 
@@ -49,6 +62,7 @@ class AgentConfig:
 	model: str
 	timeout: int
 	max_tokens: int
+	daily_call_budget: int = DEFAULT_SETTINGS["daily_call_budget"]
 	api_key: str = ""
 
 	@classmethod
@@ -73,7 +87,51 @@ class AgentConfig:
 			model=str(merged["model"]),
 			timeout=to_int("timeout", DEFAULT_SETTINGS["timeout"]),
 			max_tokens=to_int("max_tokens", DEFAULT_SETTINGS["max_tokens"]),
+			daily_call_budget=to_int("daily_call_budget", DEFAULT_SETTINGS["daily_call_budget"]),
 			api_key=str(merged.get("api_key") or ""),
+		)
+
+
+@dataclass(frozen=True)
+class SignalConfig:
+	"""Admin-tunable thresholds for the deterministic signal job.
+
+	Every count is clamped to at least one day: a zero threshold read from a
+	half-filled Single would make the hourly job emit a suggestion for every
+	record on the site, which is worse than any value an admin meant to type.
+	"""
+
+	signals_enabled: bool
+	idle_deal_days: int
+	suggestion_ttl_days: int
+	dismiss_cooldown_days: int
+	close_horizon_days: int
+
+	@classmethod
+	def from_settings(cls, settings: dict) -> SignalConfig:
+		supplied = {k: v for k, v in (settings or {}).items() if v not in (None, "")}
+		merged = {**SIGNAL_DEFAULTS, **supplied}
+
+		def to_days(field):
+			try:
+				value = int(merged[field])
+			except (ValueError, TypeError):
+				_warn_discarded(field, merged[field])
+				return SIGNAL_DEFAULTS[field]
+			return max(1, value)
+
+		try:
+			signals_enabled = bool(int(merged["signals_enabled"]))
+		except (ValueError, TypeError):
+			_warn_discarded("signals_enabled", merged["signals_enabled"])
+			signals_enabled = bool(SIGNAL_DEFAULTS["signals_enabled"])
+
+		return cls(
+			signals_enabled=signals_enabled,
+			idle_deal_days=to_days("idle_deal_days"),
+			suggestion_ttl_days=to_days("suggestion_ttl_days"),
+			dismiss_cooldown_days=to_days("dismiss_cooldown_days"),
+			close_horizon_days=to_days("close_horizon_days"),
 		)
 
 
@@ -88,3 +146,18 @@ def get_config() -> AgentConfig:
 	except Exception:
 		settings["api_key"] = ""
 	return AgentConfig.from_settings(settings)
+
+
+def get_signal_config() -> SignalConfig:
+	"""Build a ``SignalConfig`` from the same Single. Never reads ``enabled``.
+
+	The model flag and the signal flag are separate on purpose: turning the agent
+	tier off must not silence the deterministic suggestions (PLAN.md Phase 8,
+	constraint 3).
+
+	Read through ``get_singles_dict`` rather than the cached document: ``as_dict()``
+	coerces an Int field that was never saved to 0, so on a site whose admin has
+	not opened the settings page the whole section would read as "signals off,
+	every threshold zero" instead of falling back to SIGNAL_DEFAULTS.
+	"""
+	return SignalConfig.from_settings(frappe.db.get_singles_dict("CRM Agent Settings"))

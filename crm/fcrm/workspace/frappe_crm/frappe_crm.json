@@ -11,7 +11,7 @@
  "idx": 0,
  "indicator_color": "",
  "is_hidden": 0,
- "label": "Frappe CRM",
+ "label": "Vectora",
  "links": [],
  "modified": "2024-01-04 19:08:27.799960",
  "modified_by": "Administrator",
@@ -129,5 +129,5 @@
    "type": "DocType"
   }
  ],
- "title": "Frappe CRM"
+ "title": "Vectora"
 }

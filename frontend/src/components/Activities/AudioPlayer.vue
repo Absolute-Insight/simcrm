@@ -31,7 +31,7 @@
             id="volume"
             class="slider opacity-0 group-hover:opacity-100 w-0 group-hover:w-20 !h-[0.5] [&::-webkit-slider-thumb]:shadow [&::-webkit-slider-thumb:hover]:outline [&::-webkit-slider-thumb:hover]:outline-[0.5px]"
             :style="{
-              background: `linear-gradient(to right, #171717 ${volumnProgress}%, #ededed ${volumnProgress}%)`,
+              background: `linear-gradient(to right, var(--surface-gray-10, #171717) ${volumnProgress}%, var(--surface-gray-3, #ededed) ${volumnProgress}%)`,
             }"
             type="range"
             min="0"
@@ -209,22 +209,14 @@ const options = computed(() => {
   outline: none;
 }
 
+/* The thumb rides a track whose filled half is --surface-gray-10, i.e. near
+   black in light mode and near white in dark. Painting it with the canvas
+   token makes it invert with the track instead of vanishing into it. */
 .slider::-webkit-slider-thumb {
   width: var(--thumbRadius);
   height: var(--thumbRadius);
   margin-top: calc((var(--trackHeight) - var(--thumbRadius)) / 2);
-  background: #fff;
-  border-radius: 100px;
-  pointer-events: all;
-  appearance: none;
-  z-index: 1;
-}
-
-.slider::-webkit-slider-thumb {
-  width: var(--thumbRadius);
-  height: var(--thumbRadius);
-  margin-top: calc((var(--trackHeight) - var(--thumbRadius)) / 2);
-  background: #fff;
+  background: var(--surface-base);
   border-radius: 100px;
   pointer-events: all;
   appearance: none;

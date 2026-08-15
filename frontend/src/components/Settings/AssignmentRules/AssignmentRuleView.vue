@@ -80,7 +80,7 @@
             </template>
             <template #body="{ togglePopover }">
               <div
-                class="p-1 text-ink-gray-6 top-1 absolute bg-white shadow-2xl rounded w-[--reka-popper-anchor-width]"
+                class="p-1 text-ink-gray-6 top-1 absolute bg-surface-elevation-2 shadow-2xl rounded w-[--reka-popper-anchor-width]"
               >
                 <div
                   v-for="option in priorityOptions"
@@ -170,7 +170,7 @@
                 </template>
                 <template #body-main>
                   <div
-                    class="text-sm text-ink-gray-6 p-2 bg-white rounded-md max-w-96 text-wrap whitespace-pre-wrap leading-5"
+                    class="text-sm text-ink-gray-6 p-2 bg-surface-elevation-2 rounded-md max-w-96 text-wrap whitespace-pre-wrap leading-5"
                   >
                     <code>{{ assignmentRuleData.assignCondition }}</code>
                   </div>
@@ -254,7 +254,7 @@
                 </template>
                 <template #body-main>
                   <div
-                    class="text-sm text-ink-gray-6 p-2 bg-white rounded-md max-w-96 text-wrap whitespace-pre-wrap leading-5"
+                    class="text-sm text-ink-gray-6 p-2 bg-surface-elevation-2 rounded-md max-w-96 text-wrap whitespace-pre-wrap leading-5"
                   >
                     <code>{{ assignmentRuleData.unassignCondition }}</code>
                   </div>

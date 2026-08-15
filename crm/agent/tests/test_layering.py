@@ -28,8 +28,18 @@ ALLOWED_SIBLING_IMPORTS = {
 	"context": set(),
 	"client": {"config", "errors", "schemas"},
 	"tools": set(),
-	"api": {"client", "config", "context", "errors", "schemas", "tools"},
+	# actions is the write-tier proposal layer: drafts only. It may reach the
+	# client but never frappe (test_actions enforces the frappe ban on top).
+	"actions": {"client", "config", "context", "schemas"},
+	"api": {"actions", "client", "config", "context", "errors", "schemas", "tools"},
 	"install": set(),
+	# The deterministic tier: signals and predict must work with the agent
+	# disabled, so neither may import client (or anything that knows a model
+	# exists). config is allowed because the admin-tunable signal thresholds
+	# live on the same Single -- it reads settings, it does not know a model
+	# exists. predict reuses signals' activity query and its thresholds.
+	"signals": {"config"},
+	"predict": {"signals"},
 }
 
 

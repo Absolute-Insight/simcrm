@@ -128,7 +128,7 @@
                   </template>
                   <template #body-main>
                     <div
-                      class="text-sm text-ink-gray-6 p-2 bg-white rounded-md max-w-96 text-wrap whitespace-pre-wrap leading-5"
+                      class="text-sm text-ink-gray-6 p-2 bg-surface-elevation-2 rounded-md max-w-96 text-wrap whitespace-pre-wrap leading-5"
                     >
                       <code>{{ slaData.condition }}</code>
                     </div>

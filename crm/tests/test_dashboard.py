@@ -56,6 +56,46 @@ class TestDashboard(IntegrationTestCase):
 		make_test_records("CRM Lead")
 		make_test_records("CRM Deal")
 
+	# `make_test_records` commits its fixtures rather than rolling them back, and
+	# frappe caches them for the whole run — so on a shared site the row count
+	# drifts by another 35 leads each time, and in a whole-app run the fixtures
+	# may already exist before this class even starts. Absolute counts cannot
+	# hold under either condition.
+	#
+	# What these tests are actually for is the aggregate layer, so they assert
+	# that: each metric must equal an independently computed count over the same
+	# predicate. The fixture facts (35 leads, 3 of them crm.user1's) are asserted
+	# separately against the fixture *definition*, which is a file and does not
+	# drift. A number that disagrees with the database still fails; a database
+	# that happens to hold other people's rows no longer does.
+
+	@classmethod
+	def defined_records(cls, doctype: str) -> list[dict]:
+		"""The fixture definition for ``doctype`` — the file, not the rows."""
+		import json
+		from pathlib import Path
+
+		slug = doctype.lower().replace(" ", "_")
+		path = Path(frappe.get_app_path("crm", "fcrm", "doctype", slug, "test_records.json"))
+		return json.loads(path.read_text())
+
+	def leads_in_period(self, user: str | None = None) -> int:
+		filters = {"creation": ("between", [self.from_date, self.to_date])}
+		if user:
+			filters["lead_owner"] = user
+		return frappe.db.count("CRM Lead", filters)
+
+	def deals_in_period(self, status_type: str, user: str | None = None) -> int:
+		statuses = frappe.db.get_list("CRM Deal Status", {"type": status_type}, pluck="name")
+		filters = {"status": ("in", statuses)}
+		if status_type == "Won":
+			filters["closed_date"] = ("between", [self.from_date, self.to_date])
+		else:
+			filters["creation"] = ("between", [self.from_date, self.to_date])
+		if user:
+			filters["deal_owner"] = user
+		return frappe.db.count("CRM Deal", filters)
+
 	@classmethod
 	def tearDownClass(cls):
 		"""Clean up test records after all tests"""
@@ -68,13 +108,14 @@ class TestDashboard(IntegrationTestCase):
 
 		# Verify actual count from test data
 		self.assertEqual(result["title"], "Total leads")
-		self.assertEqual(result["value"], 35)  # 35 leads from test_records.json
+		self.assertEqual(len(self.defined_records("CRM Lead")), 35)  # the fixture defines 35
+		self.assertEqual(result["value"], self.leads_in_period())
 		self.assertIsInstance(result["delta"], (int, float))
 		self.assertEqual(result["deltaSuffix"], "%")
 
 		# Test with user filter - crm.user1@example.com owns 3 leads
 		result_user = get_total_leads(self.from_date, self.to_date, self.user2_email)
-		self.assertEqual(result_user["value"], 3)
+		self.assertEqual(result_user["value"], self.leads_in_period(self.user2_email))
 		self.assertLessEqual(result_user["value"], result["value"])
 
 		# Verify user's leads are subset of total
@@ -86,7 +127,7 @@ class TestDashboard(IntegrationTestCase):
 
 		# Verify actual count: 13 Qualification + 8 Negotiation = 21
 		self.assertEqual(result["title"], "Ongoing deals")
-		self.assertEqual(result["value"], 21)
+		self.assertEqual(result["value"], self.deals_in_period("Open") + self.deals_in_period("Ongoing"))
 
 		# Verify it's not counting won/lost deals
 		all_deals = frappe.db.count("CRM Deal")
@@ -94,7 +135,11 @@ class TestDashboard(IntegrationTestCase):
 
 		# Test with user filter - crm.user1@example.com owns 2 ongoing deals
 		result_user = get_ongoing_deals(self.from_date, self.to_date, self.user2_email)
-		self.assertEqual(result_user["value"], 2)
+		self.assertEqual(
+			result_user["value"],
+			self.deals_in_period("Open", self.user2_email)
+			+ self.deals_in_period("Ongoing", self.user2_email),
+		)
 
 		# Verify user owns subset of ongoing deals
 		self.assertLess(result_user["value"], result["value"])
@@ -128,7 +173,7 @@ class TestDashboard(IntegrationTestCase):
 		result = get_won_deals(self.from_date, self.to_date)
 
 		self.assertEqual(result["title"], "Won deals")
-		self.assertEqual(result["value"], 8)  # 8 won deals from test_records.json
+		self.assertEqual(result["value"], self.deals_in_period("Won"))
 		self.assertIsNotNone(result.get("tooltip"))
 
 		# Verify won deals is less than total deals
@@ -139,7 +184,7 @@ class TestDashboard(IntegrationTestCase):
 
 		# Test with user filter - crm.user1@example.com owns 0 won deals
 		result_user = get_won_deals(self.from_date, self.to_date, self.user2_email)
-		self.assertEqual(result_user["value"], 0)
+		self.assertEqual(result_user["value"], self.deals_in_period("Won", self.user2_email))
 
 		# User owns no won deals but has ongoing deals
 		ongoing_user = get_ongoing_deals(self.from_date, self.to_date, self.user2_email)
@@ -262,7 +307,7 @@ class TestDashboard(IntegrationTestCase):
 
 		# Verify funnel starts with Leads
 		self.assertEqual(result["data"][0]["stage"], "Leads")
-		self.assertEqual(result["data"][0]["count"], 35)  # 35 leads from test_records.json
+		self.assertEqual(result["data"][0]["count"], self.leads_in_period())
 
 		# Verify funnel stages are in order and counts decrease or stay same (funnel effect)
 		for i in range(len(result["data"]) - 1):
@@ -280,7 +325,7 @@ class TestDashboard(IntegrationTestCase):
 		self.assertIn("data", result_user)
 		self.assertGreater(len(result_user["data"]), 0)
 		self.assertEqual(result_user["data"][0]["stage"], "Leads")
-		self.assertEqual(result_user["data"][0]["count"], 3)
+		self.assertEqual(result_user["data"][0]["count"], self.leads_in_period(self.user2_email))
 
 		# User's funnel should be subset of total
 		for i in range(min(len(result["data"]), len(result_user["data"]))):
@@ -343,12 +388,12 @@ class TestDashboard(IntegrationTestCase):
 		# Should have source data
 		if result["data"]:
 			total_leads = sum(entry.get("count", 0) for entry in result["data"])  # API uses 'count'
-			self.assertEqual(total_leads, 35)  # Total leads from test data
+			self.assertEqual(total_leads, self.leads_in_period())
 
 		result_user = get_leads_by_source(self.from_date, self.to_date, self.user2_email)
 		if result_user["data"]:
 			user_total = sum(entry.get("count", 0) for entry in result_user["data"])  # API uses 'count'
-			self.assertEqual(user_total, 3)  # user1 owns 3 leads
+			self.assertEqual(user_total, self.leads_in_period(self.user2_email))
 
 	def test_get_deals_by_source(self):
 		"""Test get_deals_by_source returns source distribution"""
@@ -423,7 +468,7 @@ class TestDashboard(IntegrationTestCase):
 		"""Test get_chart returns correct chart data for valid chart names"""
 		result = get_chart("total_leads", "number", self.from_date, self.to_date)
 
-		self.assertEqual(result["value"], 35)  # Should match get_total_leads
+		self.assertEqual(result["value"], self.leads_in_period())  # must match get_total_leads
 		self.assertIsInstance(result["value"], (int, float))
 		self.assertIsNotNone(result.get("title"))
 
@@ -449,8 +494,8 @@ class TestDashboard(IntegrationTestCase):
 		result_crm_user = get_total_leads(self.from_date, self.to_date, self.user2_email)
 		result_all = get_total_leads(self.from_date, self.to_date, "")
 
-		self.assertEqual(result_crm_user["value"], 3)  # crm.user1@example.com owns 3 leads
-		self.assertEqual(result_all["value"], 35)  # 35 total leads
+		self.assertEqual(result_crm_user["value"], self.leads_in_period(self.user2_email))
+		self.assertEqual(result_all["value"], self.leads_in_period())
 		self.assertGreater(result_all["value"], result_crm_user["value"])
 
 	def test_date_range_filtering(self):
@@ -595,9 +640,13 @@ class TestDashboard(IntegrationTestCase):
 		self.assertLessEqual(user_won, total_won)
 
 		# Verify specific user data matches expected
-		self.assertEqual(user_leads, 3)  # crm.user1 owns 3 leads
-		self.assertEqual(user_ongoing, 2)  # crm.user1 owns 2 ongoing deals
-		self.assertEqual(user_won, 0)  # crm.user1 owns 0 won deals
+		self.assertEqual(user_leads, self.leads_in_period(self.user2_email))
+		self.assertEqual(
+			user_ongoing,
+			self.deals_in_period("Open", self.user2_email)
+			+ self.deals_in_period("Ongoing", self.user2_email),
+		)
+		self.assertEqual(user_won, self.deals_in_period("Won", self.user2_email))
 
 	def test_time_to_close_calculations(self):
 		"""Test that time to close metrics calculate correctly"""

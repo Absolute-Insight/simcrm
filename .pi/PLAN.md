@@ -1,35 +1,107 @@
-# CRM Development Plan
+# Vectora Development Plan
 
-> **This file**: Current and upcoming work only. No completed phases.  
-> **Completed phases**: [ARCHIVE.md](./ARCHIVE.md)  
+> **This file**: Current and upcoming work only. No completed phases.
+> **Completed phases**: [ARCHIVE.md](./ARCHIVE.md)
 > **Stable API contracts**: [SPEC.md](./SPEC.md)
+> **Per-phase task plans** (TDD, bite-sized): `docs/superpowers/plans/` — written when a phase starts.
+
+---
+
+## Product Direction (updated 2026-08-15)
+
+The product rebrands to **Vectora**. Direction, in priority order:
+
+1. **Agentic workflow & automation as the spine.** The system watches, predicts, and
+   proposes — *proactive with a predictive approach, not reactive*. The rep's day starts
+   with "here is what needs attention and why", not with an empty list view.
+2. **Global feature coherence.** Every module (Leads, Deals, Contacts, Organizations,
+   Tasks, Calls, Notes) uses the same patterns: filters, quick actions, empty/loading
+   states, keyboard behaviour. New features must reuse these patterns, never invent
+   parallel ones.
+3. **Original, intuitive, professional, modern, premium UI.** A deliberate design
+   language, not restyled defaults.
+4. **Rep planning linked to actual activity.** Plans (auto-proposed by the agent and
+   manually authored by reps) resolve against real logged activity — plan vs. actual is
+   a first-class measure.
+5. **Accurate analytics and forecasts; clean, informative reporting.** One tested
+   metrics layer is the single source of numbers for dashboards, forecasts, and reports.
+
+**Scope guard for the rebrand**: Vectora is a *display-layer* brand. `app_name = "crm"`,
+Python module paths, and `CRM *` doctype names stay — renaming them is a breaking data
+migration and breaks every existing Form Script, for zero user-visible gain.
 
 ---
 
 ## Implementation Order
 
-| Order | Phase | Scope | Status |
-|---|---|---|---|
-| ~~1~~ | ~~Phase 3A — FieldLayout standalone mode~~ | ~~Small~~ | ✅ Done — [see ARCHIVE](./ARCHIVE.md#phase-3a--fieldlayout-standalone-mode) |
-| ~~2~~ | ~~Phase 2 — formDialog()~~ | ~~Medium~~ | ✅ Done — [see ARCHIVE](./ARCHIVE.md#phase-2--formdialog) |
-| **3** | [Phase 3B — Full decouple (Grid independent)](#phase-3b--full-decouple-grid-independent) | Structural refactor | 🔜 Next |
-| **4** | [Phase 4 — getMeta single source of truth](#phase-4--getmeta-single-source-of-truth) | Architectural cleanup | After 3B |
-| **5** | [Phase 6 — More Capabilities (selected)](#phase-6--more-capabilities-selected) | Feature expansion | After 4 |
-| **6** | [Phase 5 — Scripting DX Rethink](#phase-5--scripting-dx-rethink) | Syntax/API redesign | Last |
+Two tracks. The **product track** delivers the new direction; the **platform track**
+(pre-existing refactors) continues and stays valuable, but no longer blocks product work.
+
+| Order | Phase | Track | Scope | Status |
+|---|---|---|---|---|
+| ~~1~~ | ~~Phase 7 — Vectora rebrand & design language~~ | Product | Brand + UI + coherence | ✅ Done — [ARCHIVE](./ARCHIVE.md#phase-7--vectora-rebrand--design-language) |
+| ~~2~~ | ~~Phase 8 — Proactive agent workflows~~ | Product | Signals, predictions, suggestions, automation | ✅ Done — [ARCHIVE](./ARCHIVE.md#phase-8--proactive-agent-workflows) |
+| ~~3~~ | ~~Phase 9 — Rep planning~~ | Product | Auto + manual plans linked to actuals | ✅ Done — [ARCHIVE](./ARCHIVE.md#phase-9--rep-planning) |
+| **4** | [Phase 10 — Dashboards, analytics & forecasts](#phase-10--dashboards-analytics--forecasts) | Product | Metrics layer, role-aware dashboards, forecasting | 🔵 In progress — remaining items below |
+| ~~5~~ | ~~Phase 11 — Reporting~~ | Product | Built-in reports, exports, scheduled digests | ✅ Done — [ARCHIVE](./ARCHIVE.md#phase-11--reporting) |
+| 6 | [Phase 3B — Full decouple (Grid independent)](#phase-3b--full-decouple-grid-independent) | Platform | Structural refactor | 🔜 Next |
+| 7 | [Phase 4 — getMeta single source of truth](#phase-4--getmeta-single-source-of-truth) | Platform | Architectural cleanup | After 3B |
+| 8 | [Phase 6 — More Capabilities (selected)](#phase-6--more-capabilities-selected) | Platform | Feature expansion | After 4 |
+| 9 | [Phase 5 — Scripting DX Rethink](#phase-5--scripting-dx-rethink) | Platform | Syntax/API redesign | Last |
+
+**Note (3B)**: Phase 7B shipped as a token/CSS layer and did not restructure
+`FieldLayout`/`Field`/`Grid`, so Phase 3B proceeds without conflict.
+
+---
+## Phase 10 — Dashboards, Analytics & Forecasts
+
+> The metrics layer, the forecast and the role-aware dashboard all shipped
+> (2026-08-14/15). What is left is listed here; everything else moved to
+> [ARCHIVE](./ARCHIVE.md). Feature doc:
+> [feats/reporting/README.md](./feats/reporting/README.md).
+
+### Shipped
+
+- [x] One tested metrics layer. `crm/api/dashboard.py` is the only place an aggregate is
+      computed; `reports.py` consumes it and tests assert a tile and its report row are
+      equal for the same period.
+- [x] Forecast correctness: Lost deals excluded, actual bucketed by `closed_date`, the
+      selected range honoured, a patch clearing the snapshot history the old behaviour
+      contaminated.
+- [x] Hierarchy scoping on every aggregate (`scope_deals` / `scope_leads` /
+      `visible_reps`), and `belongs_to` so a rep's tile counts the deals assigned to them
+      as well as the ones they own — the definition their deal list has always used.
+- [x] `CRM Quota` — monthly per rep in the base currency, pro-rated by covered days for
+      an arbitrary range, with a Settings → Sales Targets grid. Quarter/year/team numbers
+      are sums, never stored.
+- [x] Weekly forecast snapshots per rep and site-wide; `get_forecast_accuracy` compares
+      the last pre-month snapshot against live actuals.
+- [x] Role-aware dashboard: rep home (attention, today's plan, own tiles) and manager
+      view (team adherence, quota attainment) with the customisable chart grid kept
+      underneath. Every tile drills through by writing the same standard view the list
+      reads.
+- [x] A migration patch adds the new widgets to layouts on existing sites, idempotently,
+      without clobbering a customised layout.
+
+### Remaining
+
+- [ ] Forecast-accuracy widget on the dashboard — the endpoint and the chart shape exist;
+      register it once a few weeks of snapshots have accumulated, so it does not ship
+      showing one point.
+- [ ] Territory/segment analytics (backlog) — the metrics layer can carry it now that
+      quota shape is settled.
 
 ---
 
 ## Phase 3B — Full Decouple (Grid Independent)
 
-> **Do after Phase 2 is stable. Structural refactor.**
+> **Platform track. Structural refactor. See conflict note in Implementation Order.**
 
 ### Goal
 
-Make `Grid` work as a standalone component that does not depend on inject/provide chains from `FieldLayout → Field.vue`. Make `FieldLayout` and `Field` use a single unified context instead of 6+ separate inject keys.
-
-### Why after Phase 2
-
-Phase 3B touches `Field.vue` and `Grid.vue` — the riskiest components in the codebase (every form surface uses them). Phase 2 is now merged and stable.
+Make `Grid` work as a standalone component that does not depend on inject/provide chains
+from `FieldLayout → Field.vue`. Make `FieldLayout` and `Field` use a single unified
+context instead of 6+ separate inject keys.
 
 ### Current inject/provide chain (to eliminate)
 
@@ -42,11 +114,13 @@ Grid.vue provides:        parentDoc, fieldPropertyOverrides, parentFieldname
 GridRowModal provides:    parentFieldname
 ```
 
-If Grid is used outside this chain, all injects fall back to defaults (empty functions/objects) and scripting silently doesn't work.
+If Grid is used outside this chain, all injects fall back to defaults (empty
+functions/objects) and scripting silently doesn't work.
 
 ### Proposed approach
 
-**`useFieldLayout(doctype, options)` composable** — encapsulates all wiring. One provide/inject key replaces all 6+.
+**`useFieldLayout(doctype, options)` composable** — encapsulates all wiring. One
+provide/inject key replaces all 6+.
 
 ```js
 // src/composables/useFieldLayout.js
@@ -74,7 +148,9 @@ export function useFieldLayout(doctype, options = {}) {
 }
 ```
 
-`FieldLayout`, `Field.vue`, `Grid.vue` all inject `'fieldLayoutContext'` instead of 6 separate keys. External consumers that don't use `useFieldLayout` get safe no-op defaults automatically.
+`FieldLayout`, `Field.vue`, `Grid.vue` all inject `'fieldLayoutContext'` instead of 6
+separate keys. External consumers that don't use `useFieldLayout` get safe no-op
+defaults automatically.
 
 ### Decisions needed before starting
 
@@ -124,7 +200,8 @@ export function useFieldLayout(doctype, options = {}) {
 
 ### Why after Phase 3B
 
-Phase 3B gives a single context object (`useFieldLayout`) as the wiring point. Routing all field resolution through `getMeta.getField()` can happen there in one place.
+Phase 3B gives a single context object (`useFieldLayout`) as the wiring point. Routing
+all field resolution through `getMeta.getField()` can happen there in one place.
 
 ### What remains (not done in Phase 1)
 
@@ -180,7 +257,9 @@ Virtual fields are managed in a separate `virtualFields` map on the document con
 
 ### 6B — `usePermLevel` composable
 
-Move perm level restriction logic client-side. Currently `handle_perm_level_restrictions` in `crm_fields_layout.py` modifies `read_only`/`hidden` on the server. This means the client must re-fetch the layout to reflect permission changes.
+Move perm level restriction logic client-side. Currently `handle_perm_level_restrictions`
+in `crm_fields_layout.py` modifies `read_only`/`hidden` on the server. This means the
+client must re-fetch the layout to reflect permission changes.
 
 A `usePermLevel(doctype)` composable would:
 - Fetch the user's permitted perm levels per doctype (once, cached)
@@ -247,7 +326,8 @@ this.field('lost_reason')
 
 ### Backwards compatibility
 
-`setFieldProperty`, `setFieldProperties`, `removeFieldProperty`, `getField`, `formDialog` continue to work. New syntax is additive.
+`setFieldProperty`, `setFieldProperties`, `removeFieldProperty`, `getField`, `formDialog`
+continue to work. New syntax is additive.
 
 ---
 
@@ -258,19 +338,44 @@ this.field('lost_reason')
 | List view scripting | Column visibility, custom cell renderers, bulk action hooks |
 | Inter-script communication | `this.emit('event', data)` / `this.on('event', handler)` across scripts |
 | Conditional field injection | Variant of 6A — scripts inject fields only when a condition is true |
+| Custom report builder UI | The five built-in reports have proven the metrics layer; this is now unblocked |
+| Codified injection eval suite | Assert-on-refusal-rate across models. The hostile thread is a documented standing eval; codify it when a second write capability lands |
+| Territory/segment analytics | Metrics layer extension; unblocked now that quota shape is settled |
+| Forecast-accuracy widget | Endpoint and chart shape exist; register once snapshots have accumulated |
 
 ---
 
 ## Design Principles
 
-1. **Generic-first** — No CRM-specific assumptions in FieldLayout, Grid, Field, or the scripting engine. CRM-specific behaviour lives in Form Script records.
+1. **Generic-first** — No CRM-specific assumptions in FieldLayout, Grid, Field, or the
+   scripting engine. CRM-specific behaviour lives in Form Script records.
 
-2. **Ask before deciding** — Document the options, pick the right one with the maintainer. Especially for: prop names, composable APIs, breaking changes.
+2. **Ask before deciding** — Document the options, pick the right one with the
+   maintainer. Especially for: prop names, composable APIs, breaking changes.
 
-3. **Props > inject for public API** — Components accept props for their core inputs. inject/provide is for internal wiring only.
+3. **Props > inject for public API** — Components accept props for their core inputs.
+   inject/provide is for internal wiring only.
 
-4. **Test pure logic first** — Extract functions to utility files, write unit tests, then wire into components. Vitest is already set up (118 tests, ~250ms).
+4. **Test pure logic first** — Extract functions to utility files, write unit tests,
+   then wire into components. Vitest is already set up (118 tests, ~250ms).
 
 5. **Incremental, independently shippable** — Each phase merges and is usable on its own.
 
-6. **Extensibility via records** — Third-party apps extend via `CRM Form Script` records. No source code modification. Multiple scripts per doctype run sequentially; last-write-wins for overrides.
+6. **Extensibility via records** — Third-party apps extend via `CRM Form Script`
+   records. No source code modification. Multiple scripts per doctype run sequentially;
+   last-write-wins for overrides.
+
+7. **Proactive, not reactive** — Features surface the next action before the user asks.
+   Every prediction shows its contributing factors; nothing is an unexplained score.
+
+8. **Coherent by default** — A new surface reuses the global patterns (filters, quick
+   actions, states, shortcuts). Divergence is a bug, not a style choice.
+
+9. **Agent output is untrusted input** — Proven by the live-model injection gate
+   (`feats/agent/README.md`): no model-proposed write lands without a `formDialog()`
+   confirmation showing the exact payload as plain text; deterministic automation never
+   depends on a model being enabled.
+
+10. **One source of numbers** — Dashboards, forecasts, and reports consume only the
+    tested metrics layer. Two surfaces showing different values for the same metric is
+    a release blocker.

@@ -9,10 +9,10 @@
           v-if="!editing"
           :label="__('Refresh')"
           :iconLeft="LucideRefreshCcw"
-          @click="dashboardItems.reload"
+          @click="reloadAll"
         />
         <Button
-          v-if="!editing && isAdmin()"
+          v-if="!editing && showChartGrid"
           :label="__('Edit')"
           :iconLeft="LucidePenLine"
           @click="enableEditing"
@@ -61,7 +61,7 @@
         v-else
         ref="datePickerRef"
         class="!w-48"
-        :value="filters.period"
+        :value="parseDateRange(filters.period)"
         variant="outline"
         :placeholder="__('Period')"
         :formatter="formatRange"
@@ -117,13 +117,177 @@
       </Link>
     </div>
 
-    <div class="w-full overflow-y-scroll">
-      <DashboardGrid
-        v-if="!dashboardItems.loading && dashboardItems.data"
-        v-model="dashboardItems.data"
-        class="pt-1"
-        :editing="editing"
-      />
+    <div class="w-full flex-1 overflow-y-auto px-5 pb-6">
+      <!-- The headline numbers. Each one clicks through to the records behind
+           it, which is the whole difference between a dashboard you read and a
+           dashboard you work from. -->
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <StatTile
+          v-for="tile in tiles"
+          :key="tile.name"
+          :label="tile.label"
+          :value="tile.resource.data?.value"
+          :prefix="tile.resource.data?.prefix || ''"
+          :suffix="tile.resource.data?.suffix || ''"
+          :tooltip="tile.resource.data?.tooltip || ''"
+          :delta="tile.resource.data?.delta ?? 0"
+          :delta-suffix="tile.resource.data?.deltaSuffix || ''"
+          :negative-is-better="!!tile.resource.data?.negativeIsBetter"
+          :loading="tile.resource.loading"
+          :error="tile.resource.error"
+          :retry="() => tile.resource.reload()"
+          :drilldown-label="drilldownLabelFor(tile)"
+          @drill="drillInto(tile.name, drilldownContext)"
+        />
+      </div>
+
+      <div class="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">
+        <PanelCard
+          v-for="panel in visiblePanels"
+          :key="panel.id"
+          :title="panel.title"
+          :subtitle="panel.subtitle"
+          :loading="panel.loading.value"
+          :error="panel.error.value"
+          :retry="panel.retry"
+          :empty="panel.empty.value"
+          :empty-title="panel.emptyTitle"
+          :empty-description="panel.emptyDescription"
+          :empty-icon="panel.emptyIcon"
+        >
+          <template #actions>
+            <Button
+              variant="ghost"
+              :label="__('Hide')"
+              size="sm"
+              class="opacity-0 transition focus-visible:opacity-100 group-hover/panel:opacity-100"
+              @click="hidePanel(panel.id)"
+            />
+          </template>
+
+          <!-- Deals that need attention, with the reason. A score with no
+               "why" is something a rep learns to ignore. -->
+          <ul v-if="panel.id === 'attention'" class="flex flex-col gap-2">
+            <li v-for="row in riskRows" :key="row.key">
+              <button
+                type="button"
+                class="flex w-full items-start justify-between gap-3 rounded-md px-2 py-2 text-left transition hover:bg-surface-gray-2"
+                @click="openRecord(row)"
+              >
+                <span class="flex min-w-0 flex-col">
+                  <span class="truncate text-base text-ink-gray-8">
+                    {{ recordLabel(row) }}
+                  </span>
+                  <span class="truncate text-sm text-ink-gray-5">
+                    {{ row.factors.map((f) => f.label).join(' · ') }}
+                  </span>
+                </span>
+                <Badge
+                  :label="urgencyBand(row.score)?.label || ''"
+                  variant="subtle"
+                  :theme="row.score >= 70 ? 'red' : 'orange'"
+                />
+              </button>
+            </li>
+          </ul>
+
+          <!-- What the rep planned for today, against what is done. -->
+          <div v-else-if="panel.id === 'today'" class="flex flex-col gap-3">
+            <div class="flex items-baseline gap-2">
+              <span class="font-display text-3xl-medium text-ink-gray-9">
+                {{ todayBreakdown.done }}
+              </span>
+              <span class="text-base text-ink-gray-5">
+                {{ __('of {0} done today', [todayBreakdown.planned]) }}
+              </span>
+            </div>
+            <div
+              class="h-1.5 w-full overflow-hidden rounded-full bg-surface-gray-3"
+              role="img"
+              :aria-label="__('{0}% of today\'s plan done', [todayAdherence])"
+            >
+              <div
+                class="h-full rounded-full transition-[width]"
+                :style="{
+                  width: `${todayAdherence}%`,
+                  background: 'var(--brand-gradient)',
+                }"
+              />
+            </div>
+            <ul class="flex flex-col gap-1">
+              <li
+                v-for="item in todayItems"
+                :key="item.name"
+                class="flex items-center justify-between gap-2 text-base"
+              >
+                <span class="truncate text-ink-gray-7">
+                  {{ item.note || __(item.activity_type) }}
+                </span>
+                <span class="shrink-0 text-sm text-ink-gray-5">
+                  {{ __(item.status) }}
+                </span>
+              </li>
+            </ul>
+            <Button
+              :label="__('Open the planner')"
+              variant="subtle"
+              @click="router.push({ name: 'Planner' })"
+            />
+          </div>
+
+          <!-- Manager panels are report rows, rendered as a compact table so
+               the number in the panel and the number in the report are the
+               same number. -->
+          <table v-else class="w-full text-base">
+            <tbody>
+              <tr
+                v-for="(row, i) in panel.rows.value"
+                :key="i"
+                class="border-b border-outline-gray-1 last:border-b-0"
+              >
+                <td class="py-1.5 pr-2 text-ink-gray-7">
+                  {{ repName(row.user) }}
+                </td>
+                <td
+                  class="py-1.5 text-right tabular-nums text-ink-gray-8"
+                  :class="panel.tone?.(row)"
+                >
+                  {{ panel.cell(row) }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </PanelCard>
+      </div>
+
+      <div v-if="hiddenPanels.length" class="mt-3 flex items-center gap-2">
+        <span class="text-sm text-ink-gray-5">{{ __('Hidden:') }}</span>
+        <Button
+          v-for="panel in hiddenPanels"
+          :key="panel.id"
+          size="sm"
+          variant="outline"
+          :label="panel.title"
+          @click="showPanel(panel.id)"
+        />
+      </div>
+
+      <template v-if="showChartGrid">
+        <h2 class="v-title-sm mt-6 text-ink-gray-8">{{ __('Charts') }}</h2>
+        <SkeletonTable v-if="dashboardItems.loading" :rows="4" :columns="2" />
+        <ErrorState
+          v-else-if="dashboardItems.error"
+          compact
+          :error="dashboardItems.error"
+          :retry="() => dashboardItems.reload()"
+        />
+        <DashboardGrid
+          v-else-if="dashboardItems.data"
+          v-model="dashboardItems.data"
+          class="pt-1"
+          :editing="editing"
+        />
+      </template>
     </div>
   </div>
   <AddChartModal
@@ -134,17 +298,51 @@
 </template>
 
 <script setup lang="ts">
+/**
+ * The dashboard is role-aware on purpose.
+ *
+ * A rep opening this page wants "what needs me today"; a manager wants "how is
+ * the team tracking". Those are different pages, so they are different panel
+ * sets, chosen by role rather than by a widget picker the rep would have to
+ * assemble themselves.
+ *
+ * The customisable chart grid is kept for managers rather than replaced. It is
+ * the only place charts live, managers already have layouts saved in it, and
+ * "opinionated defaults with light customisation" means the curated panels come
+ * first and the grid stays underneath — not that the grid disappears.
+ *
+ * Panel show/hide is stored per user in localStorage. It is a display
+ * preference for a fixed catalogue of panels, so it does not warrant a doctype;
+ * `applyPanelPreference` is deliberately a filter over the catalogue, so a
+ * panel added in a later release appears for everyone instead of staying
+ * invisible behind a stale saved order.
+ */
 import AddChartModal from '@/components/Dashboard/AddChartModal.vue'
 import LucideRefreshCcw from '~icons/lucide/refresh-ccw'
 import LucideUndo2 from '~icons/lucide/undo-2'
 import LucidePenLine from '~icons/lucide/pen-line'
 import DashboardGrid from '@/components/Dashboard/DashboardGrid.vue'
+import PanelCard from '@/components/Dashboard/PanelCard.vue'
+import StatTile from '@/components/Dashboard/StatTile.vue'
+import { useDrilldown } from '@/components/Dashboard/drilldown'
+import ErrorState from '@/components/ui/ErrorState.vue'
+import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import UserAvatar from '@/components/UserAvatar.vue'
 import ViewBreadcrumbs from '@/components/ViewBreadcrumbs.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import Link from '@/components/Controls/Link.vue'
 import { usersStore } from '@/stores/users'
 import { copy } from '@/utils'
+import {
+  adherencePercent,
+  applyPanelPreference,
+  groupRisksByRecord,
+  mondayOf,
+  planBreakdown,
+  toISODate,
+} from '@/utils/dashboardHome'
+import * as suggestionsModule from '@/stores/suggestions'
+import { referenceKey, urgencyBand } from '@/utils/suggestions'
 import {
   getLastXDays,
   formatter,
@@ -154,16 +352,19 @@ import {
 import {
   usePageMeta,
   createResource,
+  Badge,
   DateRangePicker,
   Dropdown,
   Tooltip,
 } from 'frappe-ui'
 import { ref, reactive, computed, provide } from 'vue'
+import { useRouter } from 'vue-router'
 
 const { users, getUser, isManager, isAdmin } = usersStore()
+const router = useRouter()
+const { drillInto, canDrillInto } = useDrilldown()
 
 const editing = ref(false)
-
 const showDatePicker = ref(false)
 const datePickerRef = ref(null)
 const preset = ref('Last 30 Days')
@@ -174,58 +375,263 @@ const filters = reactive({
   user: null,
 })
 
-const fromDate = computed(() => {
-  return parseDateRange(filters.period)[0] || null
+const fromDate = computed(() => parseDateRange(filters.period)[0] || null)
+const toDate = computed(() => parseDateRange(filters.period)[1] || null)
+
+const isTeamView = computed(() => isAdmin() || isManager())
+const showChartGrid = computed(() => isTeamView.value)
+
+// A manager reading one rep's dashboard is reading that rep's numbers; with no
+// rep chosen they are reading the team's. A rep only ever reads their own, and
+// the server pins that regardless of what is sent.
+const scopeUser = computed(() => filters.user || null)
+
+function chartResource(name: string) {
+  return createResource({
+    url: 'crm.api.dashboard.get_chart',
+    makeParams: () => ({
+      name,
+      type: 'number_chart',
+      from_date: fromDate.value,
+      to_date: toDate.value,
+      user: scopeUser.value,
+    }),
+    auto: true,
+  })
+}
+
+const TILE_CATALOGUE = [
+  { name: 'total_leads', label: __('Leads'), teamOnly: true },
+  { name: 'ongoing_deals', label: __('Open deals'), teamOnly: false },
+  { name: 'won_deals', label: __('Won deals'), teamOnly: false },
+  { name: 'plan_adherence', label: __('Plan adherence'), teamOnly: false },
+  { name: 'quota_attainment', label: __('Quota attainment'), teamOnly: false },
+]
+
+const tileResources = Object.fromEntries(
+  TILE_CATALOGUE.map((t) => [t.name, chartResource(t.name)]),
+)
+
+const tiles = computed(() =>
+  TILE_CATALOGUE.filter((t) => isTeamView.value || !t.teamOnly).map((t) => ({
+    ...t,
+    resource: tileResources[t.name],
+  })),
+)
+
+const drilldownContext = computed(() => ({
+  user: scopeUser.value,
+  fromDate: fromDate.value,
+  toDate: toDate.value,
+}))
+
+function drilldownLabelFor(tile: { name: string; label: string }) {
+  return canDrillInto(tile.name, drilldownContext.value)
+    ? __('Show the records behind {0}', [tile.label])
+    : ''
+}
+
+// The shell inbox already loads and label-resolves these rows; reusing its
+// store means the dashboard shows the same records under the same names, and
+// costs no second request.
+const { suggestions, referenceLabels } = suggestionsModule
+
+const riskRows = computed(() =>
+  groupRisksByRecord(suggestions.data || [], { limit: 6 }),
+)
+
+function recordLabel(row: { doctype: string; docname: string }) {
+  return referenceLabels[referenceKey(row.doctype, row.docname)] || row.docname
+}
+
+function openRecord(row: { doctype: string; docname: string }) {
+  const name = row.doctype === 'CRM Lead' ? 'Lead' : 'Deal'
+  const key = row.doctype === 'CRM Lead' ? 'leadId' : 'dealId'
+  router.push({ name, params: { [key]: row.docname } })
+}
+
+const today = computed(() => toISODate(new Date()))
+
+const myPlan = createResource({
+  url: 'crm.api.rep_plan.get_plan',
+  makeParams: () => ({ week_start: mondayOf(new Date()) }),
+  auto: true,
 })
 
-const toDate = computed(() => {
-  return parseDateRange(filters.period)[1] || null
+const todayItems = computed(() =>
+  (myPlan.data?.items || []).filter(
+    (i) => toISODate(i.planned_date) === today.value,
+  ),
+)
+const todayBreakdown = computed(() =>
+  planBreakdown(myPlan.data?.items || [], { on: today.value }),
+)
+const todayAdherence = computed(() => adherencePercent(todayBreakdown.value))
+
+function reportResource(name: string) {
+  return createResource({
+    url: 'crm.api.reports.get_report',
+    makeParams: () => ({
+      name,
+      from_date: fromDate.value,
+      to_date: toDate.value,
+      user: scopeUser.value,
+    }),
+    auto: isTeamView.value,
+  })
+}
+
+const teamAdherence = reportResource('plan_adherence_by_rep')
+const teamQuota = reportResource('quota_attainment_by_rep')
+
+function repName(user: string) {
+  return getUser(user)?.full_name || user
+}
+
+const PANEL_CATALOGUE = computed(() => {
+  const panels = [
+    {
+      id: 'attention',
+      title: __('Needs your attention'),
+      subtitle: __('Ranked by urgency, with the reason'),
+      loading: computed(() => suggestions.loading),
+      error: computed(() => suggestions.error),
+      retry: () => suggestions.reload(),
+      empty: computed(() => !suggestions.loading && !riskRows.value.length),
+      emptyTitle: __('Nothing needs you right now'),
+      emptyDescription: __('New signals appear here as they are detected.'),
+      rows: computed(() => riskRows.value),
+      cell: () => '',
+    },
+  ]
+
+  if (!isTeamView.value) {
+    panels.push({
+      id: 'today',
+      title: __('Today'),
+      subtitle: __('Your plan against what is done'),
+      loading: computed(() => myPlan.loading),
+      error: computed(() => myPlan.error),
+      retry: () => myPlan.reload(),
+      empty: computed(() => !myPlan.loading && !todayBreakdown.value.planned),
+      emptyTitle: __('Nothing planned for today'),
+      emptyDescription: __('Plan your week to see it here.'),
+      rows: computed(() => todayItems.value),
+      cell: () => '',
+    })
+    return panels
+  }
+
+  panels.push(
+    {
+      id: 'adherence',
+      title: __('Plan adherence by rep'),
+      subtitle: __('Planned activities due in the period, and how many landed'),
+      loading: computed(() => teamAdherence.loading),
+      error: computed(() => teamAdherence.error),
+      retry: () => teamAdherence.reload(),
+      empty: computed(
+        () =>
+          !teamAdherence.loading && !(teamAdherence.data?.rows || []).length,
+      ),
+      emptyTitle: __('No plans in this period'),
+      emptyDescription: __('Adherence appears once reps plan their weeks.'),
+      rows: computed(() => teamAdherence.data?.rows || []),
+      cell: (row) => `${row.adherence}%`,
+      tone: (row) => (row.adherence < 60 ? 'text-ink-orange-9' : ''),
+    },
+    {
+      id: 'quota',
+      title: __('Quota attainment'),
+      subtitle: __('Closed-won against target, per rep'),
+      loading: computed(() => teamQuota.loading),
+      error: computed(() => teamQuota.error),
+      retry: () => teamQuota.reload(),
+      empty: computed(
+        () => !teamQuota.loading && !(teamQuota.data?.rows || []).length,
+      ),
+      emptyTitle: __('No targets set'),
+      emptyDescription: __('Set monthly targets in Settings → Sales Targets.'),
+      rows: computed(() => teamQuota.data?.rows || []),
+      cell: (row) => `${row.attainment}%`,
+      tone: (row) => (row.attainment < 80 ? 'text-ink-orange-9' : ''),
+    },
+  )
+  return panels
 })
+
+const PREFERENCE_KEY = 'vectora:dashboard-panels'
+
+function loadPreference() {
+  try {
+    return JSON.parse(localStorage.getItem(PREFERENCE_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+const preference = ref(loadPreference())
+
+function savePreference() {
+  try {
+    localStorage.setItem(PREFERENCE_KEY, JSON.stringify(preference.value))
+  } catch {
+    /* storage disabled: the preference just does not survive the session */
+  }
+}
+
+const visiblePanels = computed(() =>
+  applyPanelPreference(PANEL_CATALOGUE.value, preference.value),
+)
+
+const hiddenPanels = computed(() => {
+  const shown = new Set(visiblePanels.value.map((p) => p.id))
+  return PANEL_CATALOGUE.value.filter((p) => !shown.has(p.id))
+})
+
+function hidePanel(id: string) {
+  const hidden = new Set(preference.value.hidden || [])
+  hidden.add(id)
+  preference.value = { ...preference.value, hidden: [...hidden] }
+  savePreference()
+}
+
+function showPanel(id: string) {
+  const hidden = (preference.value.hidden || []).filter((h: string) => h !== id)
+  preference.value = { ...preference.value, hidden }
+  savePreference()
+}
 
 function updateFilter(key: string, value: unknown, callback?: () => void) {
   filters[key] = value
   callback?.()
+  reloadAll()
+}
+
+function reloadAll() {
   dashboardItems.reload()
+  Object.values(tileResources).forEach((r) => r.reload())
+  suggestions.reload()
+  if (isTeamView.value) {
+    teamAdherence.reload()
+    teamQuota.reload()
+  } else {
+    myPlan.reload()
+  }
 }
 
 const options = computed(() => [
   {
     group: 'Presets',
     hideLabel: true,
-    items: [
-      {
-        label: __('Last 7 Days'),
-        onClick: () => {
-          preset.value = 'Last 7 Days'
-          filters.period = getLastXDays(7)
-          dashboardItems.reload()
-        },
+    items: [7, 30, 60, 90].map((days) => ({
+      label: __('Last {0} Days', [days]),
+      onClick: () => {
+        preset.value = `Last ${days} Days`
+        filters.period = getLastXDays(days)
+        reloadAll()
       },
-      {
-        label: __('Last 30 Days'),
-        onClick: () => {
-          preset.value = 'Last 30 Days'
-          filters.period = getLastXDays(30)
-          dashboardItems.reload()
-        },
-      },
-      {
-        label: __('Last 60 Days'),
-        onClick: () => {
-          preset.value = 'Last 60 Days'
-          filters.period = getLastXDays(60)
-          dashboardItems.reload()
-        },
-      },
-      {
-        label: __('Last 90 Days'),
-        onClick: () => {
-          preset.value = 'Last 90 Days'
-          filters.period = getLastXDays(90)
-          dashboardItems.reload()
-        },
-      },
-    ],
+    })),
   },
   {
     label: __('Custom Range'),
@@ -307,6 +713,6 @@ function resetToDefault() {
 }
 
 usePageMeta(() => {
-  return { title: __('CRM Dashboard') }
+  return { title: __('Dashboard') }
 })
 </script>

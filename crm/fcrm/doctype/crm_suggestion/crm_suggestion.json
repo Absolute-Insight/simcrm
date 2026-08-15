@@ -1,0 +1,170 @@
+{
+ "actions": [],
+ "autoname": "autoincrement",
+ "creation": "2026-08-14 08:00:00.000000",
+ "default_view": "List",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "signal",
+  "title",
+  "reference_doctype",
+  "reference_docname",
+  "user",
+  "column_break_main",
+  "status",
+  "suggested_action",
+  "score",
+  "expires_on",
+  "section_break_detail",
+  "rationale",
+  "factors",
+  "action_payload",
+  "dismiss_reason"
+ ],
+ "fields": [
+  {
+   "fieldname": "signal",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Signal",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "label": "Reference Document Type",
+   "options": "DocType",
+   "reqd": 1
+  },
+  {
+   "fieldname": "reference_docname",
+   "fieldtype": "Dynamic Link",
+   "label": "Reference Doc",
+   "options": "reference_doctype",
+   "search_index": 1
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "For User",
+   "options": "User",
+   "search_index": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Open",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Open\nAccepted\nDismissed\nExpired",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "default": "create_task",
+   "fieldname": "suggested_action",
+   "fieldtype": "Select",
+   "label": "Suggested Action",
+   "options": "create_task\nschedule_call\nsend_reply\nupdate_field"
+  },
+  {
+   "description": "How loudly this suggestion is asking for attention (0-100). Not the deal-health score, which runs the other way.",
+   "fieldname": "score",
+   "fieldtype": "Float",
+   "label": "Urgency"
+  },
+  {
+   "fieldname": "expires_on",
+   "fieldtype": "Datetime",
+   "label": "Expires On",
+   "search_index": 1
+  },
+  {
+   "fieldname": "section_break_detail",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "rationale",
+   "fieldtype": "Small Text",
+   "label": "Rationale"
+  },
+  {
+   "fieldname": "factors",
+   "fieldtype": "JSON",
+   "label": "Factors"
+  },
+  {
+   "fieldname": "action_payload",
+   "fieldtype": "JSON",
+   "label": "Action Payload"
+  },
+  {
+   "fieldname": "dismiss_reason",
+   "fieldtype": "Small Text",
+   "label": "Dismiss Reason"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-14 08:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FCRM",
+ "name": "CRM Suggestion",
+ "naming_rule": "Autoincrement",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales User",
+   "share": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

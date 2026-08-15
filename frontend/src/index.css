@@ -1,6 +1,170 @@
 @import 'frappe-ui/style.css';
+@import '@fontsource-variable/space-grotesk';
+@import './styles/vectora-theme.css';
+
+/* Data app: digits align in tables, currency and timestamps everywhere. */
+body {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Vectora signature — the position rail. One gradient, one meaning: "you are
+   here". Vertical lists get the rail; horizontal strips get the same gradient
+   as an underline. It appears nowhere else except the logo mark itself.
+
+   `.v-rail` is the primitive: put it on any element that can be selected and
+   drive `data-state="active"`. The selectors below are aliases for the
+   selected-state surfaces that already carry their own state attribute, so
+   they pick the signature up without a markup change. */
+.v-rail,
+[data-slot='sidebar-item'] {
+  position: relative;
+}
+.v-rail[data-state='active']::before,
+.v-rail[aria-selected='true']::before,
+[data-slot='sidebar-item'][data-state='active']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 16px;
+  width: 2.5px;
+  transform: translateY(-50%);
+  border-radius: 9999px;
+  background: var(--brand-gradient-y);
+}
+
+/* Selected-tab underline: same rail, horizontal. The selector reaches the
+   fill div inside frappe-ui's TabsIndicator (the only absolute rounded-full
+   child of a tablist). */
+[role='tablist'] > .absolute.rounded-full > div {
+  background: var(--brand-gradient);
+}
+
+/* Selected text is a brand surface too — it is the one accent every user
+   produces by hand, on every screen. */
+::selection {
+  background-color: var(--brand-100);
+  color: var(--brand-900);
+}
+[data-theme='dark'] ::selection {
+  background-color: var(--brand-700);
+  color: var(--ink-gray-9);
+}
+
+/* Motion. Interactive surfaces share one hover/press timing so the whole app
+   settles at the same rate; `:where()` keeps the specificity at zero, so any
+   component that needs its own transition still wins. */
+@media (prefers-reduced-motion: no-preference) {
+  :where(
+      button,
+      a,
+      [role='tab'],
+      [role='option'],
+      [role='menuitem'],
+      [data-slot='sidebar-item']
+    ) {
+    transition:
+      background-color var(--motion-fast) var(--motion-ease),
+      border-color var(--motion-fast) var(--motion-ease),
+      box-shadow var(--motion-fast) var(--motion-ease),
+      color var(--motion-fast) var(--motion-ease);
+  }
+
+  /* Selection: the rail draws itself on rather than blinking into place. */
+  .v-rail[data-state='active']::before,
+  .v-rail[aria-selected='true']::before,
+  [data-slot='sidebar-item'][data-state='active']::before,
+  [role='tablist'][data-orientation='vertical']
+    > [role='tab'][data-state='active']::before {
+    animation: v-rail-in var(--motion-base) var(--motion-ease-out);
+  }
+
+  /* Anything that flies over the page — menus, selects, popovers — enters on
+     the same curve as the rail, from the edge it is anchored to. */
+  [data-state='open'][data-slot='content'],
+  [data-state='open'].menu-content,
+  [data-reka-popper-content-wrapper] > [data-state='open'] {
+    animation: v-overlay-in var(--motion-base) var(--motion-ease-out);
+  }
+}
+
+@keyframes v-rail-in {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) scaleY(0.25);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) scaleY(1);
+  }
+}
+
+@keyframes v-overlay-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The escape hatch has to be global: a user who asks for reduced motion means
+   every animation, including ones frappe-ui adds later. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Slim, token-colored scrollbars everywhere. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-gray-4) transparent;
+}
+
+/* Tab strips scroll on overflow but a permanent track under the tab row reads
+   as noise — the gradient indicator already signals position. */
+[role='tablist'] {
+  scrollbar-width: none;
+}
 
 @layer components {
+  /* Type system: one declaration block for the display face, aliased by every
+     hook that selects it — the semantic title classes, the `font-display`
+     utility, and the display-scale size utilities. Previously the face was
+     attached by three separate rules, one of which keyed off DOM position, so
+     two spans with the same size class rendered in different families
+     depending on where they sat. Size and intent decide the face; position
+     never does. */
+  .v-title-sm,
+  .v-title,
+  .font-display,
+  [class*='text-2xl-'],
+  [class*='text-3xl-'] {
+    font-family: theme(fontFamily.display);
+    letter-spacing: -0.02em;
+  }
+  /* text-lg-medium is overloaded — it sizes panel headings but also layout
+     containers whose children are body text (FieldLayout Section) — so the lg
+     step opts in by name instead of by size. Every lg heading that wants the
+     display face now says so with `.v-title-sm`; nothing selects the face by
+     DOM position any more. */
+  .v-title-sm {
+    @apply text-lg-medium;
+  }
+  /* No `.v-display` alias: the 3xl step already selects the face by size, so a
+     named class for it would be a second way to say the same thing. */
+  .v-title {
+    @apply text-2xl-semibold;
+  }
+
   .prose-f {
     @apply break-all
 			max-w-none

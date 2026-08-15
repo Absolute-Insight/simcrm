@@ -5,7 +5,7 @@
   >
     <div
       v-if="hasChildren"
-      class="z-10 size-5 shrink-0 flex items-center justify-center rounded-full border border-outline-elevation-2 bg-white text-ink-gray-1 cursor-pointer hover:bg-surface-gray-2"
+      class="z-10 size-5 shrink-0 flex items-center justify-center rounded-full border border-outline-elevation-2 bg-surface-elevation-2 text-ink-gray-1 cursor-pointer hover:bg-surface-gray-2"
       @click.stop="emit('toggle', $event)"
     >
       <FeatherIcon

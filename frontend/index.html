@@ -6,9 +6,42 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover maximum-scale=1.0, user-scalable=no"
     />
-    <title>Frappe CRM</title>
+    <title>Vectora</title>
+    <!--
+      Stamp the theme before first paint. useTheme() only runs once the app has
+      hydrated, so without this a dark-mode user gets a full-screen white flash
+      on every load. The logic mirrors frappe-ui's theme util exactly (same
+      storage key, same light/dark/system values); it stays in sync because both
+      read 'theme' and write [data-theme] and nothing else.
+    -->
+    <script>
+      ;(function () {
+        try {
+          var stored = localStorage.getItem('theme')
+          var theme =
+            stored === 'light' || stored === 'dark' || stored === 'system'
+              ? stored
+              : 'system'
+          var resolved =
+            theme === 'system'
+              ? window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+              : theme
+          var root = document.documentElement
+          root.setAttribute('data-theme', resolved)
+          // the stylesheet has not parsed yet, so paint the canvas by hand —
+          // these two values must track --surface-base in vectora-theme.css
+          root.style.colorScheme = resolved
+          root.style.backgroundColor =
+            resolved === 'dark' ? '#131521' : '#fafbff'
+        } catch (e) {
+          /* private mode or a blocked storage API: fall through to light */
+        }
+      })()
+    </script>
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="Frappe CRM" />
+    <meta name="apple-mobile-web-app-title" content="Vectora" />
     <meta name="apple-mobile-web-app-status-bar-style" content="white" />
 
     <!-- PWA -->

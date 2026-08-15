@@ -60,6 +60,8 @@ class _Handler(BaseHTTPRequestHandler):
 		)
 		body = json.dumps(payload).encode()
 		self.send_response(status)
+		if payload.get("location"):
+			self.send_header("Location", payload["location"])
 		self.send_header("Content-Type", "application/json")
 		self.send_header("Content-Length", str(len(body)))
 		self.end_headers()
@@ -183,3 +185,25 @@ class HttpTransportTest(UnitTestCase):
 
 		with self.assertRaises(AgentUnavailable):
 			client_mod.complete(self._cfg(timeout=2), ThreadSummary, MESSAGES)
+
+	def test_a_redirect_is_not_followed_and_never_replays_the_key(self):
+		"""A redirect would hand the configured Bearer token to whatever host the
+		response names -- an SSRF with credential replay, from a Data field an admin
+		filled in once. An inference endpoint that redirects is misconfigured anyway."""
+		elsewhere = type("_RedirectTargetHandler", (_Handler,), {"replies": [], "seen": []})
+		target = HTTPServer(("127.0.0.1", 0), elsewhere)
+		thread = threading.Thread(target=target.serve_forever, daemon=True)
+		thread.start()
+		self.addCleanup(thread.join, 5)
+		self.addCleanup(target.server_close)
+		self.addCleanup(target.shutdown)
+		elsewhere.replies.append((200, _completion(GOOD_CONTENT)))
+
+		port = target.server_address[1]
+		self.handler.replies.append((307, {"location": f"http://127.0.0.1:{port}/v1/chat/completions"}))
+		self.handler.replies.append((200, _completion(GOOD_CONTENT)))
+
+		with self.assertRaises(AgentUnavailable):
+			client_mod.complete(self._cfg(api_key="s3cret"), ThreadSummary, MESSAGES)
+
+		self.assertEqual(elsewhere.seen, [])

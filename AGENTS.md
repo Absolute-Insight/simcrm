@@ -18,6 +18,9 @@ they run as evaluated strings in the browser.
 | Form scripting user guide | [feats/form-scripting/guide.md](./.pi/feats/form-scripting/guide.md) |
 | formDialog() API reference | [feats/form-scripting/form-dialog.md](./.pi/feats/form-scripting/form-dialog.md) |
 | Local agent layer (`crm/agent/`) | [feats/agent/README.md](./.pi/feats/agent/README.md) |
+| Proactive signals, scoring, suggestion inbox | [feats/suggestions/README.md](./.pi/feats/suggestions/README.md) |
+| Rep planning and plan-vs-actual matching | [feats/planning/README.md](./.pi/feats/planning/README.md) |
+| Analytics, forecasting, quota, reports, digests | [feats/reporting/README.md](./.pi/feats/reporting/README.md) |
 
 ---
 
@@ -57,6 +60,38 @@ they run as evaluated strings in the browser.
 |---|---|
 | `frontend/src/stores/meta.js` | `getMeta(doctype)` — fetches DocType meta, exposes `getFields()`, formatters |
 | `frontend/src/stores/global.js` | `$dialog`, `$socket`, `makeCall` |
+| `frontend/src/stores/suggestions.js` | Suggestion inbox store, badge count, accept/dismiss flows |
+
+### Product surfaces (Vectora)
+| File | Role |
+|---|---|
+| `frontend/src/components/Suggestions.vue` | Shell inbox panel — the proactive surface |
+| `frontend/src/components/RecordSuggestions.vue` | Per-record "Needs attention" + deal health |
+| `frontend/src/pages/Planner.vue` | Weekly planner grid, propose-my-week, plan vs actual |
+| `frontend/src/pages/Reports.vue` | Report viewer, CSV export, print view |
+| `frontend/src/pages/Dashboard.vue` | Role-aware dashboard (rep home / manager view) |
+| `frontend/src/components/Settings/Quotas.vue` | Sales targets: rep × month grid |
+| `frontend/src/components/Settings/AutomationRules.vue` | Automation rule admin |
+
+### Design system
+| File | Role |
+|---|---|
+| `frontend/src/styles/vectora-theme.css` | **Generated** token overrides — never hand-edit |
+| `frontend/scripts/generate_vectora_theme.py` | The generator; asserts every contrast floor before it writes |
+| `frontend/src/index.css` | Position rail, motion/elevation language, display type scale |
+| `frontend/src/components/ui/` | `Skeleton`, `SkeletonTable`, `ErrorState` — loading and failure primitives |
+| `frontend/src/utils/chartTheme.js` | Brand chart palette, light and dark |
+
+**Coloured text uses the `-9` step.** `--ink-{green,red,orange}-*` is a
+readability ladder, not a lightness one: it runs light-to-dark in light mode and
+dark-to-light in dark mode, so a low step is a background tint in *both*.
+`text-ink-red-3` looks like a red on the dark theme and measures 1.24:1 on the
+light one. `-9` stays above 6.3:1 on every surface in both modes; `-8` grazes
+the AA floor on a tinted stat tile. Use orange, not amber, for warnings — no
+amber step clears 4.5 against a light surface.
+
+Check with a browser, in **both** themes — the generator's floors cover the
+tokens it writes, and these are not among them.
 
 ---
 

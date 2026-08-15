@@ -433,7 +433,7 @@
             <ERPNextIcon class="size-7.5 text-ink-gray-5" />
             <div class="flex flex-col items-center gap-1.5 text-center">
               <span class="text-lg-medium text-ink-gray-8">
-                {{ __('Connect ERPNext to Frappe CRM') }}
+                {{ __('Connect ERPNext to Vectora') }}
               </span>
               <span class="text-center text-p-base text-ink-gray-6">
                 {{

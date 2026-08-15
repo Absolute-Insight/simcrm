@@ -12,7 +12,15 @@
   "api_key",
   "column_break_endpoint",
   "timeout",
-  "max_tokens"
+  "max_tokens",
+  "daily_call_budget",
+  "signals_section",
+  "signals_enabled",
+  "idle_deal_days",
+  "close_horizon_days",
+  "column_break_signals",
+  "suggestion_ttl_days",
+  "dismiss_cooldown_days"
  ],
  "fields": [
   {
@@ -62,6 +70,58 @@
    "fieldname": "max_tokens",
    "fieldtype": "Int",
    "label": "Max Tokens"
+  },
+  {
+   "default": "500",
+   "description": "Site-wide cap on model calls per day, across all users. Endpoints report themselves unavailable once it is spent.",
+   "fieldname": "daily_call_budget",
+   "fieldtype": "Int",
+   "label": "Daily Call Budget"
+  },
+  {
+   "description": "Deterministic suggestions. These run with the agent tier off.",
+   "fieldname": "signals_section",
+   "fieldtype": "Section Break",
+   "label": "Signals"
+  },
+  {
+   "default": "1",
+   "description": "When off, the hourly signal job creates nothing.",
+   "fieldname": "signals_enabled",
+   "fieldtype": "Check",
+   "label": "Signals Enabled"
+  },
+  {
+   "default": "7",
+   "description": "Days without any logged activity before a deal is reported idle.",
+   "fieldname": "idle_deal_days",
+   "fieldtype": "Int",
+   "label": "Idle Deal Days"
+  },
+  {
+   "default": "14",
+   "description": "How far ahead an expected close date is checked against the deal's stage.",
+   "fieldname": "close_horizon_days",
+   "fieldtype": "Int",
+   "label": "Close Horizon Days"
+  },
+  {
+   "fieldname": "column_break_signals",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "14",
+   "description": "Days an unactioned suggestion stays open before it expires.",
+   "fieldname": "suggestion_ttl_days",
+   "fieldtype": "Int",
+   "label": "Suggestion TTL Days"
+  },
+  {
+   "default": "14",
+   "description": "Days a dismissal suppresses the same signal on the same record. Repeat dismissals by the same user extend it.",
+   "fieldname": "dismiss_cooldown_days",
+   "fieldtype": "Int",
+   "label": "Dismiss Cooldown Days"
   }
  ],
  "index_web_pages_for_search": 1,

@@ -1,11 +1,11 @@
 app_name = "crm"
-app_title = "Frappe CRM"
+app_title = "Vectora"
 app_publisher = "Frappe Technologies Pvt. Ltd."
-app_description = "Kick-ass Open Source CRM"
+app_description = "Vectora — proactive, open-source CRM"
 app_email = "shariq@frappe.io"
 app_license = "AGPLv3"
 app_icon_url = "/assets/crm/images/logo.svg"
-app_icon_title = "CRM"
+app_icon_title = "Vectora"
 app_icon_route = "/crm"
 
 # Apps
@@ -139,12 +139,18 @@ permission_query_conditions = {
 	"CRM Lead": "crm.permissions.org_hierarchy.get_lead_permission_query_conditions",
 	"CRM Deal": "crm.permissions.org_hierarchy.get_deal_permission_query_conditions",
 	"CRM Notification": "crm.fcrm.doctype.crm_notification.crm_notification.get_permission_query_conditions",
+	"CRM Quota": "crm.fcrm.doctype.crm_quota.crm_quota.get_permission_query_conditions",
+	"CRM Suggestion": "crm.fcrm.doctype.crm_suggestion.crm_suggestion.get_permission_query_conditions",
+	"CRM Rep Plan": "crm.fcrm.doctype.crm_rep_plan.crm_rep_plan.get_permission_query_conditions",
 }
 
 has_permission = {
 	"CRM Lead": "crm.permissions.org_hierarchy.has_lead_permission",
 	"CRM Deal": "crm.permissions.org_hierarchy.has_deal_permission",
 	"CRM Notification": "crm.fcrm.doctype.crm_notification.crm_notification.has_permission",
+	"CRM Quota": "crm.fcrm.doctype.crm_quota.crm_quota.has_permission",
+	"CRM Suggestion": "crm.fcrm.doctype.crm_suggestion.crm_suggestion.has_permission",
+	"CRM Rep Plan": "crm.fcrm.doctype.crm_rep_plan.crm_rep_plan.has_permission",
 }
 
 # DocType Class
@@ -184,9 +190,17 @@ doc_events = {
 		"on_update": ["crm.api.whatsapp.on_update"],
 	},
 	"CRM Deal": {
+		"after_insert": ["crm.automation.run_automations"],
 		"on_update": [
-			"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.create_customer_in_erpnext"
+			"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.create_customer_in_erpnext",
+			"crm.automation.run_automations",
 		],
+		"on_trash": ["crm.automation.clear_suggestions"],
+	},
+	"CRM Lead": {
+		"after_insert": ["crm.automation.run_automations"],
+		"on_update": ["crm.automation.run_automations"],
+		"on_trash": ["crm.automation.clear_suggestions"],
 	},
 	"Sales Order": {
 		"before_validate": [
@@ -223,14 +237,26 @@ doc_events = {
 
 scheduler_events = {
 	"all": ["crm.api.event.trigger_offset_event_notifications"],
-	"hourly": ["crm.api.event.trigger_hourly_event_notifications"],
+	"hourly": [
+		"crm.api.event.trigger_hourly_event_notifications",
+		"crm.agent.signals.run_signals",
+		# writes CRM Deal.health_score, which the at-risk tile counts rather than
+		# re-deriving on every dashboard load
+		"crm.agent.predict.score_open_deals",
+	],
 	"daily": [
 		"crm.api.event.trigger_daily_event_notifications",
+		"crm.rep_planning.match_actuals",
+		"crm.fcrm.doctype.crm_report_digest.crm_report_digest.send_due_digests",
 		"crm.fcrm.doctype.crm_invitation.crm_invitation.expire_invitations",
 		"crm.fcrm.doctype.crm_view_settings.crm_view_settings.clear_old_versions",
+		"crm.agent.signals.purge_old_suggestions",
 		"crm.telemetry.capture_feature_state",
 	],
-	"weekly": ["crm.api.event.trigger_weekly_event_notifications"],
+	"weekly": [
+		"crm.api.event.trigger_weekly_event_notifications",
+		"crm.api.dashboard.take_forecast_snapshot",
+	],
 	"daily_long": ["crm.lead_syncing.background_sync.sync_leads_from_sources_daily"],
 	"hourly_long": ["crm.lead_syncing.background_sync.sync_leads_from_sources_hourly"],
 	"monthly_long": ["crm.lead_syncing.background_sync.sync_leads_from_sources_monthly"],
@@ -267,7 +293,10 @@ before_tests = "crm.tests.before_tests"
 # Ignore links to specified DocTypes when deleting documents
 # -----------------------------------------------------------
 
-ignore_links_on_delete = ["Failed Lead Sync Log"]
+# CRM Suggestion holds a Dynamic Link to the deal or lead it is about. Without this
+# an open suggestion makes its own record undeletable; the on_trash handler above
+# clears the rows so nothing orphaned survives the delete.
+ignore_links_on_delete = ["Failed Lead Sync Log", "CRM Suggestion"]
 
 # Request Events
 # ----------------
