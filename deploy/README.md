@@ -76,6 +76,28 @@ off the host; a backup on the machine it protects is a copy, not a backup.
 - Outbound email needs an Email Account configured in Frappe as usual;
   nothing in this compose file sends mail on its own.
 
+## Pilot checklist
+
+The defaults below are deliberately conservative; loosen them as the pilot
+earns trust, not before.
+
+1. **Restore drill first.** Take a backup, restore it to a scratch site, log
+   in. A backup you have never restored is a hope, not a plan.
+2. **Agent tier off, digests off.** Deterministic automation (assignment, SLA,
+   automation rules) works with the agent disabled by design — you lose only
+   the model-drafted content. Enable `CRM Report Digest` records only after
+   deciding who may receive deal values by email.
+3. **Two or three willing reps**, one manager, one week. Their real pipeline,
+   not demo data.
+4. **Watch the scheduler.** `docker compose logs -f scheduler` on day one: the
+   hourly signal run and deal-health scoring have never run against real
+   volume on real cron. Frappe's Error Log (bench --site <site> console, or
+   the desk UI) catches anything a job swallows.
+5. **Judge it on questions, not features:** did the suggestions point at deals
+   the rep agreed were at risk? Did propose-my-week produce a plan worth
+   keeping? Do the dashboard numbers match what the manager believes? Every
+   "no" is a finding worth more than the pilot.
+
 ## What this is not
 
 A high-availability setup. One database, no replicas, volumes on the host.
