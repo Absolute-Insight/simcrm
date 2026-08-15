@@ -7,6 +7,8 @@ import {
   composeDismissReason,
   DISMISS_NOTE_MAX,
   dismissReasonOptions,
+  displayReferenceLabel,
+  shortRecordId,
   draftStatusMessage,
   fieldUpdateSpec,
   formatLocalDatetime,
@@ -106,6 +108,53 @@ describe('reference labels', () => {
   it('handles no rows', () => {
     expect(pendingReferences(undefined)).toEqual({})
     expect(pendingReferences([])).toEqual({})
+  })
+})
+
+describe('shortRecordId', () => {
+  it('takes the trailing serial of a frappe autoname', () => {
+    expect(shortRecordId('CRM-DEAL-2026-00042')).toBe('#00042')
+    expect(shortRecordId('_T-CRM Deal-00646')).toBe('#00646')
+  })
+
+  it('returns the whole docname when the tail is not numeric', () => {
+    expect(shortRecordId('acme-renewal')).toBe('acme-renewal')
+    expect(shortRecordId('')).toBe('')
+  })
+})
+
+describe('displayReferenceLabel', () => {
+  const labels = {
+    'CRM Deal:D-00001': 'Acme Corp',
+    'CRM Deal:D-00002': 'Acme Corp',
+    'CRM Deal:D-00003': 'Globex',
+    'CRM Lead:L-00004': 'Acme Corp',
+  }
+
+  it('appends the short id when two records of a doctype share a name', () => {
+    // three deals at one org must not read as one deal three times
+    expect(displayReferenceLabel(labels, 'CRM Deal', 'D-00001')).toBe(
+      'Acme Corp · #00001',
+    )
+    expect(displayReferenceLabel(labels, 'CRM Deal', 'D-00002')).toBe(
+      'Acme Corp · #00002',
+    )
+  })
+
+  it('leaves an unambiguous label clean', () => {
+    expect(displayReferenceLabel(labels, 'CRM Deal', 'D-00003')).toBe('Globex')
+  })
+
+  it('does not treat a lead and a deal at the same org as a collision', () => {
+    // the UI already prefixes the doctype ("Deal ·" / "Lead ·")
+    expect(displayReferenceLabel(labels, 'CRM Lead', 'L-00004')).toBe(
+      'Acme Corp',
+    )
+  })
+
+  it('returns empty for an unresolved or absent label', () => {
+    expect(displayReferenceLabel(labels, 'CRM Deal', 'D-99999')).toBe('')
+    expect(displayReferenceLabel(null, 'CRM Deal', 'D-00001')).toBe('')
   })
 })
 

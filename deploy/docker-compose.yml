@@ -1,0 +1,138 @@
+# Production stack for Vectora (this repo's CRM build).
+#
+# Consumes the image that .github/workflows/builds.yml publishes on every push
+# to main: ghcr.io/absolute-insight/simcrm. The layout is frappe_docker's
+# canonical production shape — one image, many roles — so anyone who has run a
+# Frappe app in containers will recognise every service here:
+#
+#   configurator  one-shot: points the bench at db/redis (idempotent)
+#   create-site   one-shot: creates the site on first boot, skips after
+#   backend       gunicorn (the image's default command)
+#   frontend      nginx serving built assets, proxying /api and /socket.io
+#   websocket     socketio server (realtime: suggestion inbox pushes)
+#   queue-*       background workers (automation, emails)
+#   scheduler     cron ticks — the hourly signal run, deal-health scoring,
+#                 and the daily digest live here; without it the proactive
+#                 tier is silent
+#
+# Copy .env.example to .env, set the secrets, then: docker compose up -d
+# See README.md in this directory for first boot, upgrades and backups.
+
+name: vectora
+
+x-app: &app
+  image: ${VECTORA_IMAGE:-ghcr.io/absolute-insight/simcrm}:${VECTORA_TAG:-stable}
+  restart: unless-stopped
+  volumes:
+    - sites:/home/frappe/frappe-bench/sites
+    - logs:/home/frappe/frappe-bench/logs
+  depends_on:
+    configurator:
+      condition: service_completed_successfully
+
+services:
+  db:
+    image: mariadb:10.6
+    restart: unless-stopped
+    healthcheck:
+      test: mysqladmin ping -h localhost --password=${DB_ROOT_PASSWORD}
+      interval: 1s
+      retries: 20
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/mysql
+
+  redis-cache:
+    image: redis:6.2-alpine
+    restart: unless-stopped
+
+  redis-queue:
+    image: redis:6.2-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-queue-data:/data
+
+  configurator:
+    <<: *app
+    restart: on-failure
+    depends_on:
+      db:
+        condition: service_healthy
+      redis-cache:
+        condition: service_started
+      redis-queue:
+        condition: service_started
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        bench set-config -g db_host db;
+        bench set-config -gp db_port 3306;
+        bench set-config -g redis_cache "redis://redis-cache:6379";
+        bench set-config -g redis_queue "redis://redis-queue:6379";
+        bench set-config -g redis_socketio "redis://redis-queue:6379";
+        bench set-config -gp socketio_port 9000;
+
+  create-site:
+    <<: *app
+    restart: on-failure
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        wait-for-it -t 120 db:3306;
+        wait-for-it -t 120 redis-cache:6379;
+        wait-for-it -t 120 redis-queue:6379;
+        if [ -d "sites/${SITE_NAME}" ]; then
+          echo "Site ${SITE_NAME} already exists — skipping create";
+          exit 0;
+        fi;
+        bench new-site "${SITE_NAME}"
+        --mariadb-user-host-login-scope='%'
+        --db-root-password="${DB_ROOT_PASSWORD}"
+        --admin-password="${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}"
+        --install-app crm;
+
+  backend:
+    <<: *app
+
+  websocket:
+    <<: *app
+    command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
+
+  frontend:
+    <<: *app
+    command: ["nginx-entrypoint.sh"]
+    environment:
+      BACKEND: backend:8000
+      SOCKETIO: websocket:9000
+      FRAPPE_SITE_NAME_HEADER: ${SITE_NAME:?set SITE_NAME in .env}
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      PROXY_READ_TIMEOUT: 120
+      CLIENT_MAX_BODY_SIZE: 50m
+    ports:
+      - "${HTTP_PUBLISH_PORT:-8080}:8080"
+
+  queue-short:
+    <<: *app
+    command: ["bench", "worker", "--queue", "short,default"]
+
+  queue-long:
+    <<: *app
+    command: ["bench", "worker", "--queue", "long,default,short"]
+
+  scheduler:
+    <<: *app
+    command: ["bench", "schedule"]
+
+volumes:
+  db-data:
+  redis-queue-data:
+  sites:
+  logs:

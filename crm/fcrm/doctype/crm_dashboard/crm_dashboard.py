@@ -9,11 +9,27 @@ class CRMDashboard(Document):
 	pass
 
 
+# The curated tile row above the grid already answers "how many leads, open,
+# won, adherence, attainment" (Dashboard.vue TILE_CATALOGUE), so the default
+# grid must not answer it again: the same metric twice on one page is the
+# two-answers-to-one-question failure, and once the two are computed by
+# different code paths they will eventually disagree. The grid's number cards
+# are only the metrics the tile row does NOT carry. Existing sites keep their
+# saved layouts — this default applies to fresh installs and Reset to Default.
+CURATED_TILE_METRICS = (
+	"total_leads",
+	"ongoing_deals",
+	"won_deals",
+	"plan_adherence",
+	"quota_attainment",
+)
+
+
 def default_manager_dashboard_layout():
 	"""
 	Returns the default layout for the CRM Manager Dashboard.
 	"""
-	return '[{"name":"total_leads","type":"number_chart","tooltip":"Total number of leads","layout":{"x":0,"y":0,"w":4,"h":3,"i":"total_leads"}},{"name":"ongoing_deals","type":"number_chart","tooltip":"Total number of ongoing deals","layout":{"x":8,"y":0,"w":4,"h":3,"i":"ongoing_deals"}},{"name":"won_deals","type":"number_chart","tooltip":"Total number of won deals","layout":{"x":12,"y":0,"w":4,"h":3,"i":"won_deals"}},{"name":"average_won_deal_value","type":"number_chart","tooltip":"Average value of won deals","layout":{"x":16,"y":0,"w":4,"h":3,"i":"average_won_deal_value"}},{"name":"average_deal_value","type":"number_chart","tooltip":"Average deal value of ongoing and won deals","layout":{"x":0,"y":2,"w":4,"h":3,"i":"average_deal_value"}},{"name":"average_time_to_close_a_lead","type":"number_chart","tooltip":"Average time taken to close a lead","layout":{"x":4,"y":0,"w":4,"h":3,"i":"average_time_to_close_a_lead"}},{"name":"average_time_to_close_a_deal","type":"number_chart","layout":{"x":4,"y":2,"w":4,"h":3,"i":"average_time_to_close_a_deal"}},{"name":"plan_adherence","type":"number_chart","tooltip":"Planned activities completed, out of those already due","layout":{"x":8,"y":2,"w":4,"h":3,"i":"plan_adherence"}},{"name":"deals_at_risk","type":"number_chart","tooltip":"Open deals with a health score below 40","layout":{"x":12,"y":2,"w":4,"h":3,"i":"deals_at_risk"}},{"name":"quota_attainment","type":"number_chart","tooltip":"Closed-won revenue against quota for the period","layout":{"x":16,"y":2,"w":4,"h":3,"i":"quota_attainment"}},{"name":"sales_trend","type":"axis_chart","layout":{"x":0,"y":4,"w":10,"h":9,"i":"sales_trend"}},{"name":"forecasted_revenue","type":"axis_chart","layout":{"x":10,"y":4,"w":10,"h":9,"i":"forecasted_revenue"}},{"name":"funnel_conversion","type":"axis_chart","layout":{"x":0,"y":11,"w":10,"h":9,"i":"funnel_conversion"}},{"name":"deals_by_stage_donut","type":"donut_chart","layout":{"x":10,"y":11,"w":10,"h":9,"i":"deals_by_stage_donut"}},{"name":"lost_deal_reasons","type":"axis_chart","layout":{"x":0,"y":32,"w":20,"h":9,"i":"lost_deal_reasons"}},{"name":"leads_by_source","type":"donut_chart","layout":{"x":0,"y":18,"w":10,"h":9,"i":"leads_by_source"}},{"name":"deals_by_source","type":"donut_chart","layout":{"x":10,"y":18,"w":10,"h":9,"i":"deals_by_source"}},{"name":"deals_by_territory","type":"axis_chart","layout":{"x":0,"y":25,"w":10,"h":9,"i":"deals_by_territory"}},{"name":"deals_by_salesperson","type":"axis_chart","layout":{"x":10,"y":25,"w":10,"h":9,"i":"deals_by_salesperson"}}]'
+	return '[{"name":"average_time_to_close_a_lead","type":"number_chart","tooltip":"Average time taken to close a lead","layout":{"x":0,"y":0,"w":4,"h":3,"i":"average_time_to_close_a_lead"}},{"name":"average_time_to_close_a_deal","type":"number_chart","layout":{"x":4,"y":0,"w":4,"h":3,"i":"average_time_to_close_a_deal"}},{"name":"average_deal_value","type":"number_chart","tooltip":"Average deal value of ongoing and won deals","layout":{"x":8,"y":0,"w":4,"h":3,"i":"average_deal_value"}},{"name":"average_won_deal_value","type":"number_chart","tooltip":"Average value of won deals","layout":{"x":12,"y":0,"w":4,"h":3,"i":"average_won_deal_value"}},{"name":"deals_at_risk","type":"number_chart","tooltip":"Open deals with a health score below 40","layout":{"x":16,"y":0,"w":4,"h":3,"i":"deals_at_risk"}},{"name":"sales_trend","type":"axis_chart","layout":{"x":0,"y":2,"w":10,"h":9,"i":"sales_trend"}},{"name":"forecasted_revenue","type":"axis_chart","layout":{"x":10,"y":2,"w":10,"h":9,"i":"forecasted_revenue"}},{"name":"funnel_conversion","type":"axis_chart","layout":{"x":0,"y":9,"w":10,"h":9,"i":"funnel_conversion"}},{"name":"deals_by_stage_donut","type":"donut_chart","layout":{"x":10,"y":9,"w":10,"h":9,"i":"deals_by_stage_donut"}},{"name":"leads_by_source","type":"donut_chart","layout":{"x":0,"y":16,"w":10,"h":9,"i":"leads_by_source"}},{"name":"deals_by_source","type":"donut_chart","layout":{"x":10,"y":16,"w":10,"h":9,"i":"deals_by_source"}},{"name":"deals_by_territory","type":"axis_chart","layout":{"x":0,"y":23,"w":10,"h":9,"i":"deals_by_territory"}},{"name":"deals_by_salesperson","type":"axis_chart","layout":{"x":10,"y":23,"w":10,"h":9,"i":"deals_by_salesperson"}},{"name":"lost_deal_reasons","type":"axis_chart","layout":{"x":0,"y":30,"w":20,"h":9,"i":"lost_deal_reasons"}}]'
 
 
 def create_default_manager_dashboard(force=False):

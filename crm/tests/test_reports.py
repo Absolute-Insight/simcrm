@@ -43,9 +43,18 @@ class ReportsTest(IntegrationTestCase):
 
 	def test_every_registered_report_returns_its_declared_columns(self):
 		today = str(frappe.utils.nowdate())
+		# The per-rep reports carry `user` beside the displayed `rep` column: the
+		# email is the stable join key (dashboard panels key on it, and two reps
+		# can share a full name). It is the ONLY undeclared key a report may
+		# return — everything else in a row must be a declared column, so a
+		# report cannot quietly dump extra record data into its payload.
+		allowed_extra = {
+			"plan_adherence_by_rep": {"user"},
+			"quota_attainment_by_rep": {"user"},
+		}
 		for name in REPORTS:
 			out = get_report(name, today, today)
-			declared = {c["key"] for c in out["columns"]}
+			declared = {c["key"] for c in out["columns"]} | allowed_extra.get(name, set())
 			for row in out["rows"]:
 				self.assertEqual(
 					set(row), declared, f"{name} row keys {set(row)} != declared columns {declared}"
