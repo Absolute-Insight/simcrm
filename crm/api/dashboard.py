@@ -1661,14 +1661,53 @@ def get_deals_at_risk(from_date: str | None = None, to_date: str | None = None, 
 	stood a month ago, but "how many of these arrived this period" is a real
 	period-over-period movement and a rising one is bad news.
 	"""
-	scored = _at_risk_deals(to_date, user)
-	at_risk = [deal for deal in scored if deal["score"] < 40]
-	opened_in_period = sum(1 for deal in at_risk if from_date and str(deal["creation"]) >= str(from_date))
+	from crm.agent.predict import AT_RISK_BELOW
+
+	Deal = DocType("CRM Deal")
+	Status = DocType("CRM Deal Status")
+
+	def count(extra=None):
+		query = (
+			frappe.qb.from_(Deal)
+			.join(Status)
+			.on(Deal.status == Status.name)
+			.select(Count(Deal.name))
+			# gate on the timestamp, not the score: an unscored deal has
+			# health_score = 0 (frappe Floats are NOT NULL DEFAULT 0), which would
+			# otherwise read as the worst possible health and count every deal on a
+			# site where the scorer has not run yet
+			.where(
+				Status.type.isin(["Open", "Ongoing"])
+				& Deal.health_scored_on.isnotnull()
+				& (Deal.health_score < AT_RISK_BELOW)
+			)
+		)
+		if to_date:
+			query = query.where(Deal.creation <= f"{to_date} 23:59:59")
+		if user:
+			query = query.where(belongs_to(Deal, user, "CRM Deal"))
+		query = scope_deals(query)
+		if extra is not None:
+			query = query.where(extra)
+		return query.run()[0][0] or 0
+
+	at_risk = count()
+	opened_in_period = count(Deal.creation >= str(from_date)) if from_date else 0
+
+	# `health_score` is written by the hourly scorer, so say when it last ran —
+	# a number that is quietly an hour old is fine, a number that is quietly two
+	# days old because the scheduler is wedged is not.
+	scored_on = frappe.db.sql("select max(health_scored_on) from `tabCRM Deal`")[0][0]
+	freshness = (
+		_("as of {0}").format(frappe.utils.format_datetime(scored_on, "medium"))
+		if scored_on
+		else _("not scored yet — the hourly scorer has not run")
+	)
 
 	return {
 		"title": _("Deals at risk"),
-		"tooltip": _("Open deals with a health score below 40"),
-		"value": len(at_risk),
+		"tooltip": _("Open deals with a health score below {0} ({1})").format(AT_RISK_BELOW, freshness),
+		"value": at_risk,
 		"delta": opened_in_period,
 		"negativeIsBetter": True,
 	}

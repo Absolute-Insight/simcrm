@@ -16,6 +16,8 @@
   "deal_owner",
   "section_break_jgpm",
   "probability",
+  "health_score",
+  "health_scored_on",
   "expected_deal_value",
   "deal_value",
   "column_break_kpxa",
@@ -95,6 +97,23 @@
    "fieldname": "probability",
    "fieldtype": "Percent",
    "label": "Probability"
+  },
+  {
+   "fieldname": "health_score",
+   "fieldtype": "Float",
+   "label": "Health Score",
+   "read_only": 1,
+   "no_copy": 1,
+   "search_index": 1,
+   "precision": "2",
+   "description": "Set by the hourly scorer, not by hand. Empty means this deal has not been scored yet."
+  },
+  {
+   "fieldname": "health_scored_on",
+   "fieldtype": "Datetime",
+   "label": "Health Scored On",
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fetch_from": ".annual_revenue",
@@ -420,7 +439,7 @@
   },
   {
    "default": "1",
-   "description": "The rate used to convert the deal\u2019s currency to your crm's base currency (set in CRM Settings). It is set once when the currency is first added and doesn't change automatically.",
+   "description": "The rate used to convert the deal’s currency to your crm's base currency (set in CRM Settings). It is set once when the currency is first added and doesn't change automatically.",
    "fieldname": "exchange_rate",
    "fieldtype": "Float",
    "label": "Exchange Rate"

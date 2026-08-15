@@ -17,6 +17,7 @@ import frappe
 from frappe import _
 from frappe.tests import IntegrationTestCase
 
+from crm.agent.predict import score_open_deals
 from crm.api.dashboard import (
 	get_chart,
 	get_deals_at_risk,
@@ -154,6 +155,9 @@ class MetricsTest(IntegrationTestCase):
 		):
 			frappe.db.delete(doctype, {"reference_doctype": "CRM Deal", ref_field: deal.name})
 
+		# the tile counts what the hourly scorer wrote, so score first — that is the
+		# contract now, not an incidental ordering
+		score_open_deals()
 		out = get_deals_at_risk(user=USER)
 		self.assertEqual(out["value"], 1)
 
@@ -169,6 +173,7 @@ class MetricsTest(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 
+		score_open_deals()
 		out = get_deals_at_risk(user=USER)
 		self.assertEqual(out["value"], 0)
 

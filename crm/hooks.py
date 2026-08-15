@@ -240,6 +240,9 @@ scheduler_events = {
 	"hourly": [
 		"crm.api.event.trigger_hourly_event_notifications",
 		"crm.agent.signals.run_signals",
+		# writes CRM Deal.health_score, which the at-risk tile counts rather than
+		# re-deriving on every dashboard load
+		"crm.agent.predict.score_open_deals",
 	],
 	"daily": [
 		"crm.api.event.trigger_daily_event_notifications",

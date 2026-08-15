@@ -41,6 +41,10 @@ SLOW_STAGE_RATIO = 1.5
 # Below this multiple of the deal's own median contact gap, so is its cadence.
 COOLING_RATIO = 2.0
 
+# A deal below this is "at risk". One definition, read by the stored-score job
+# and by the dashboard tile that counts what it wrote.
+AT_RISK_BELOW = 40
+
 IDLE_WEIGHT_PER_DAY = 4
 IDLE_WEIGHT_CAP = 50
 STAGE_STAGNATION_WEIGHT_CAP = 20
@@ -261,3 +265,69 @@ def get_deal_health(name: str) -> dict:
 			"inbound_ratio": inbound_ratio,
 		}
 	)
+
+
+def score_open_deals(batch_size: int = 1000) -> int:
+	"""Hourly: write every open deal's health score onto the deal.
+
+	The dashboard used to score the whole open pipeline on every page load, which
+	is 8 seconds of work at 100k deals for a single number, repeated per viewer.
+	Scoring is the same for everyone and changes on the hour at most, so it is
+	computed once here and the tile becomes a COUNT.
+
+	Feature extraction is shared with :func:`crm.api.dashboard._at_risk_deals`
+	(and therefore with :func:`get_deal_health`) so a deal cannot score one way
+	in the tile and another on its own page.
+	"""
+	from crm.api.dashboard import _at_risk_deals
+
+	scored = _at_risk_deals()
+	if not scored:
+		return 0
+
+	now = frappe.utils.now_datetime()
+	Deal = frappe.qb.DocType("CRM Deal")
+	for start in range(0, len(scored), batch_size):
+		chunk = scored[start : start + batch_size]
+		# one UPDATE per batch with a CASE, rather than a write per deal: at 100k
+		# deals the per-row version is 100k round trips
+		case = frappe.qb.terms.Case()
+		for deal in chunk:
+			case = case.when(Deal.name == deal["name"], deal["score"])
+		(
+			frappe.qb.update(Deal)
+			.set(Deal.health_score, case.else_(Deal.health_score))
+			.set(Deal.health_scored_on, now)
+			.where(Deal.name.isin([deal["name"] for deal in chunk]))
+			.run()
+		)
+		if not frappe.flags.in_test:
+			frappe.db.commit()
+
+	# a deal that closed since the last run keeps a stale score, and the tile
+	# filters on open status anyway — but clear it so nothing downstream reads a
+	# score that no longer describes anything
+	Status = frappe.qb.DocType("CRM Deal Status")
+	closed = (
+		frappe.qb.from_(Deal)
+		.join(Status)
+		.on(Deal.status == Status.name)
+		.select(Deal.name)
+		.where(Status.type.isin(["Won", "Lost"]) & Deal.health_scored_on.isnotnull())
+		.run(pluck=True)
+	)
+	if closed:
+		# clearing `health_scored_on` is what un-scores a deal: frappe Float columns
+		# are NOT NULL DEFAULT 0, so a zeroed score is indistinguishable from the
+		# worst possible health, and every reader must gate on the timestamp
+		(
+			frappe.qb.update(Deal)
+			.set(Deal.health_score, 0)
+			.set(Deal.health_scored_on, None)
+			.where(Deal.name.isin(closed))
+			.run()
+		)
+		if not frappe.flags.in_test:
+			frappe.db.commit()
+
+	return len(scored)
