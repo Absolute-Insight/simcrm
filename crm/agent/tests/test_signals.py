@@ -28,6 +28,7 @@ from crm.agent.signals import (
 	TITLE_MAX_LENGTH,
 	_batched,
 	_latest_activity,
+	_sla_lead_rows,
 	cadence_ratio,
 	dedupe,
 	find_close_date_at_risk,
@@ -643,3 +644,103 @@ class PurgeTest(IntegrationTestCase):
 		self.assertFalse(frappe.db.exists("CRM Suggestion", stale))
 		self.assertTrue(frappe.db.exists("CRM Suggestion", recent))
 		self.assertTrue(frappe.db.exists("CRM Suggestion", still_open))
+
+
+SLA_REP = "sla-rep@crmtest.test"
+
+
+class SlaLeadRowsTest(IntegrationTestCase):
+	"""The query that decides which leads the SLA detector even considers.
+
+	The detector itself is pure and well covered, but it only ever sees what
+	this query hands it — so an exclusion that silently stops working (a Lost
+	lead re-entering the set, an unowned one arriving with nobody to notify)
+	fails here rather than as a suggestion nobody can action.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		if not frappe.db.exists("User", SLA_REP):
+			user = frappe.get_doc(
+				{"doctype": "User", "email": SLA_REP, "first_name": "SLA Rep", "send_welcome_email": 0}
+			).insert(ignore_permissions=True)
+			user.add_roles("Sales User")
+
+		self.open_status = frappe.get_all(
+			"CRM Lead Status", filters={"type": ("in", ("Open", "Ongoing"))}, pluck="name"
+		)
+		self.dead_status = frappe.get_all("CRM Lead Status", filters={"type": "Lost"}, pluck="name")
+		if not self.open_status or not self.dead_status:
+			self.skipTest("site has no open and lost lead statuses")
+
+		# A site with no SLA policy would make every assertion here vacuous, so the
+		# fixture brings its own rather than skipping.
+		self.sla = self.ensure_sla()
+
+	def ensure_sla(self) -> str:
+		name = "SLA Rows Test Policy"
+		if frappe.db.exists("CRM Service Level Agreement", name):
+			return name
+		priority = frappe.get_all("CRM Communication Status", limit=1, pluck="name")
+		if not priority:
+			self.skipTest("site has no communication status to build an SLA priority from")
+		doc = frappe.get_doc(
+			{
+				"doctype": "CRM Service Level Agreement",
+				"sla_name": name,
+				"apply_on": "CRM Lead",
+				"enabled": 1,
+				"priorities": [
+					{
+						"priority": priority[0],
+						"default_priority": 1,
+						"first_response_time": 3600,
+					}
+				],
+				"working_hours": [
+					{"workday": day, "start_time": "09:00:00", "end_time": "17:00:00"}
+					for day in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+				],
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Service Level Agreement", doc.name, force=True)
+		return doc.name
+
+	def make_lead(self, **overrides) -> str:
+		lead = frappe.get_doc(
+			{
+				"doctype": "CRM Lead",
+				"first_name": "SLA",
+				"last_name": "Candidate",
+				"lead_owner": SLA_REP,
+				"status": self.open_status[0],
+				"sla": self.sla,
+				**overrides,
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Lead", lead.name, force=True)
+		return lead.name
+
+	def names(self) -> set[str]:
+		return {row["name"] for row in _sla_lead_rows()}
+
+	def test_an_open_owned_lead_with_an_sla_is_considered(self):
+		name = self.make_lead()
+		self.assertIn(name, self.names())
+
+	def test_a_dead_lead_is_not_chased(self):
+		name = self.make_lead()
+		frappe.db.set_value("CRM Lead", name, "status", self.dead_status[0])
+		self.assertNotIn(name, self.names())
+
+	def test_an_unowned_lead_is_not_chased(self):
+		"""Nobody to notify means nothing to suggest — an unowned breach is a
+		manager's report, not a rep's inbox item."""
+		name = self.make_lead()
+		frappe.db.set_value("CRM Lead", name, "lead_owner", "")
+		self.assertNotIn(name, self.names())
+
+	def test_a_converted_lead_is_not_chased(self):
+		name = self.make_lead()
+		frappe.db.set_value("CRM Lead", name, "converted", 1)
+		self.assertNotIn(name, self.names())

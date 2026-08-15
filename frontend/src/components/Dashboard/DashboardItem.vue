@@ -24,13 +24,15 @@
       v-else-if="item.type == 'axis_chart'"
       class="h-full w-full rounded-md bg-surface-base shadow"
     >
-      <AxisChart v-if="item.data" :config="themed" />
+      <p v-if="blankReason" :class="blankClass">{{ blankReason }}</p>
+      <AxisChart v-else-if="item.data" :config="themed" />
     </div>
     <div
       v-else-if="item.type == 'donut_chart'"
       class="h-full w-full rounded-md bg-surface-base shadow overflow-hidden"
     >
-      <DonutChart v-if="item.data" :config="themed" />
+      <p v-if="blankReason" :class="blankClass">{{ blankReason }}</p>
+      <DonutChart v-else-if="item.data" :config="themed" />
     </div>
   </div>
 </template>
@@ -48,4 +50,16 @@ const props = defineProps({
 // the server returns the chart's shape and data; its colours are a display
 // decision, so they are applied here rather than travelling over the wire
 const themed = computed(() => withVectoraTheme(props.item.data))
+
+/**
+ * Why this chart is blank, when the aggregate knows why.
+ *
+ * A chart with nothing in it, sitting beside tiles showing real money, reads as
+ * a broken widget. Only the function that produced no rows can tell "no deals
+ * matched this period" from "forecasting is switched off", so it says so on the
+ * payload and this renders it instead of an empty plot.
+ */
+const blankReason = computed(() => props.item.data?.emptyState || '')
+const blankClass =
+  'flex h-full w-full items-center justify-center p-6 text-center text-sm text-ink-gray-5'
 </script>
