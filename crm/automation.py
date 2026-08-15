@@ -110,11 +110,15 @@ def _status_label(doc) -> str | None:
 def _render(template, doc_dict) -> str:
 	"""Render against a plain dict, never the live Document.
 
-	The sandbox does not stop a template calling methods on what it is given, so
-	a rule author with a title template would otherwise have ``doc.delete()`` and
-	``doc.db_set()`` from a field validated only as a template. The condition path
-	already passes ``as_dict()``; this matches it.
+	Measured on this frappe version, the Jinja sandbox already refuses
+	``doc.delete()``, ``doc.save()`` and ``doc.db_set()`` on a live Document, so
+	this is defence in depth rather than the only thing standing in the way. It
+	is still worth doing: it matches the condition path, which passes
+	``as_dict()`` too, and it means a future sandbox regression cannot turn a
+	template field into a write primitive.
 	"""
+	# nosemgrep: the template is authored by a Sales Manager, validated at save,
+	# and rendered against a plain dict rather than the live Document
 	return frappe.render_template(template or "", {"doc": doc_dict})
 
 

@@ -80,6 +80,8 @@ def send_due_digests():
 				# would see on the Reports page
 				original_user = frappe.session.user
 				try:
+					# nosemgrep: deliberate — the digest must be scoped to the recipient, and
+					# the finally below restores the scheduler user unconditionally
 					frappe.set_user(recipient)
 					report = get_report(digest.report, str(from_date), str(today))
 				finally:
@@ -103,6 +105,8 @@ def _render_digest(report, from_date, to_date) -> str:
 	"""Every interpolation is escaped: report cells carry user-authored text —
 	stage names, lost reasons, user names — straight into an email body."""
 	columns = report["columns"]
+	# nosemgrep: adjacent f-string literals building one HTML tag, not a list with
+	# a missing comma — every interpolated value goes through escape_html
 	head = "".join(
 		f'<th style="text-align:left;padding:6px 12px;border-bottom:2px solid #ebebf3;'
 		f'font-size:12px;color:#7a7990;text-transform:uppercase;letter-spacing:0.04em">'
@@ -111,6 +115,7 @@ def _render_digest(report, from_date, to_date) -> str:
 	)
 	body = ""
 	for row in report["rows"]:
+		# nosemgrep: adjacent f-string literals, as above
 		cells = "".join(
 			f'<td style="padding:6px 12px;border-bottom:1px solid #f2f2f8;'
 			f'font-variant-numeric:tabular-nums">{escape_html(str(row.get(col["key"], "")))}</td>'

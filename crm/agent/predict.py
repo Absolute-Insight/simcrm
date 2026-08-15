@@ -302,7 +302,7 @@ def score_open_deals(batch_size: int = 1000) -> int:
 			.run()
 		)
 		if not frappe.flags.in_test:
-			frappe.db.commit()
+			frappe.db.commit()  # nosemgrep: a batch job over the whole pipeline cannot hold one transaction
 
 	# a deal that closed since the last run keeps a stale score, and the tile
 	# filters on open status anyway — but clear it so nothing downstream reads a
@@ -328,6 +328,6 @@ def score_open_deals(batch_size: int = 1000) -> int:
 			.run()
 		)
 		if not frappe.flags.in_test:
-			frappe.db.commit()
+			frappe.db.commit()  # nosemgrep: a batch job over the whole pipeline cannot hold one transaction
 
 	return len(scored)

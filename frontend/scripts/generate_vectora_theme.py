@@ -176,6 +176,8 @@ LIGHT_ALPHA_BASE = "#0e0e1f"  # was pure black
 DARK_ALPHA_BASE = "#ececf8"  # was pure white
 DARK_ALPHA_950 = "#0e0e1f"  # dark 950 is a black alpha in stock tokens
 
+# nosemgrep: a build script reading two module-level constant paths; it never
+# runs in the app and takes no input from a request
 d = json.load(open(SRC))
 stock_light_alpha = d["lightMode"]["gray-alpha"]
 stock_dark_alpha = d["darkMode"]["gray-alpha"]
@@ -491,6 +493,7 @@ css = (
 	+ "\n"
 )
 
+# nosemgrep: constant path, build-time only (see above)
 with open(OUT, "w") as f:
 	f.write(css)
 

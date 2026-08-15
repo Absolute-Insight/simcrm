@@ -40,6 +40,7 @@ class CRMAutomationRule(Document):
 			try:
 				frappe.safe_eval(self.condition, eval_locals={"doc": frappe._dict()})
 			except (SyntaxError, NameError) as e:
+				# nosemgrep: the format string is a literal; only the exception text varies
 				frappe.throw(_("Invalid condition: {0}").format(e))
 			except Exception:
 				# evaluation errors against the empty doc are fine; syntax is what we check
@@ -54,7 +55,11 @@ class CRMAutomationRule(Document):
 		"""
 		for fieldname in ("title_template", "description_template"):
 			try:
+				# nosemgrep: compiles the template against an empty dict to surface syntax
+				# errors at save; renders nothing and touches no record
 				frappe.render_template(self.get(fieldname) or "", {"doc": frappe._dict()})
 			except Exception as e:
 				label = self.meta.get_label(fieldname)
+				# nosemgrep: the format string is a literal; only the field label and the
+				# exception text vary
 				frappe.throw(_("Invalid {0}: {1}").format(label, e))

@@ -707,10 +707,10 @@ def run_signals() -> int:
 			# a long run should not hold every row in one transaction; tests run
 			# inside one and roll it back, so committing there would leak fixtures
 			if created % COMMIT_EVERY == 0 and not frappe.flags.in_test:
-				frappe.db.commit()
+				frappe.db.commit()  # nosemgrep: a batch job over the whole pipeline cannot hold one transaction
 
 	if created and not frappe.flags.in_test:
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: a batch job over the whole pipeline cannot hold one transaction
 	publish_new_suggestions(notify)
 	return created
 
