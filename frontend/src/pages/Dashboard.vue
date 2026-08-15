@@ -179,7 +179,7 @@
                     {{ recordLabel(row) }}
                   </span>
                   <span class="truncate text-sm text-ink-gray-5">
-                    {{ row.factors.map((f) => f.label).join(' · ') }}
+                    {{ riskReason(row) }}
                   </span>
                 </span>
                 <Badge
@@ -339,6 +339,7 @@ import {
   groupRisksByRecord,
   mondayOf,
   planBreakdown,
+  riskReason,
   toISODate,
 } from '@/utils/dashboardHome'
 import * as suggestionsModule from '@/stores/suggestions'

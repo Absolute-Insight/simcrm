@@ -113,6 +113,7 @@ export function groupRisksByRecord(
         score: 0,
         signals: [],
         factors: [],
+        rationales: [],
       }
       byRecord.set(key, entry)
     }
@@ -129,12 +130,35 @@ export function groupRisksByRecord(
         label: factor.label,
       })
     }
+    const rationale = (suggestion.rationale || '').trim()
+    if (rationale && !entry.rationales.includes(rationale)) {
+      entry.rationales.push(rationale)
+    }
   }
 
   const rows = [...byRecord.values()].sort(
     (a, b) => b.score - a.score || a.docname.localeCompare(b.docname),
   )
   return limit > 0 ? rows.slice(0, limit) : rows
+}
+
+/**
+ * The one-line "why" for a grouped risk row.
+ *
+ * Factor labels first — they are the short, scannable form the panel is built
+ * around. But `parseFactors` deliberately drops the legacy `{key: value}` shape
+ * rather than print raw field names, and rows written before the list shape
+ * landed still carry it. On a real rep's inbox that was three quarters of them,
+ * so the panel rendered a blank line under a subtitle promising the reason.
+ *
+ * The rationale is the same explanation as a sentence, always written by the
+ * signal that raised it, and already what the inbox shows. Falling back to it
+ * means the row explains itself whatever shape the factors arrived in.
+ */
+export function riskReason(row) {
+  const labels = (row?.factors || []).map((factor) => factor.label)
+  if (labels.length) return labels.join(' · ')
+  return (row?.rationales || []).join(' · ')
 }
 
 const STANDARD_VIEW_LABELS = {
