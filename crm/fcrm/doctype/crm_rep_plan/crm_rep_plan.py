@@ -64,32 +64,30 @@ def on_doctype_update():
 
 	``validate`` reads before it writes, so two requests that both find no plan
 	both insert one and the adherence tile then counts the week twice.
+
+	This runs on every migrate and so does exactly one thing: add the index. It
+	deliberately does **not** clean up duplicates — deleting a rep's planned week
+	is not something a schema sync should do quietly, and it once did. The
+	merging cleanup is a one-time patch
+	(``crm.patches.v1_0.merge_duplicate_rep_plan_weeks``) that runs earlier in the
+	same migrate, keeps every item, and prints what it touched.
 	"""
-	_collapse_duplicate_weeks()
-	frappe.db.add_unique("CRM Rep Plan", ["user", "week_start"], constraint_name="unique_user_week")
-
-
-def _collapse_duplicate_weeks() -> None:
-	"""Drop the emptier half of any duplicate rep-week left behind by the old race."""
-	duplicates = frappe.db.sql(
-		"""select `user`, week_start from `tabCRM Rep Plan`
-		group by `user`, week_start having count(*) > 1""",
-		as_dict=True,
-	)
-	for row in duplicates:
-		plans = frappe.get_all(
-			"CRM Rep Plan",
-			filters={"user": row.user, "week_start": row.week_start},
-			pluck="name",
+	try:
+		frappe.db.add_unique("CRM Rep Plan", ["user", "week_start"], constraint_name="unique_user_week")
+	except Exception:
+		# A migrate must not abort here, and must not "fix" it by deleting data.
+		# Without the index the read-then-throw in validate is still the guard, as
+		# it was before; the operator gets told what to resolve.
+		frappe.log_error(
+			title="CRM Rep Plan: could not add the unique (user, week_start) index",
+			message=(
+				"Duplicate rep-weeks are present, so the index was not created and concurrent "
+				"saves can still double a week.\n\nRun "
+				"`bench --site <site> execute crm.patches.v1_0.merge_duplicate_rep_plan_weeks.execute` "
+				"to merge them (it keeps every planned item), then migrate again.\n\n"
+				+ frappe.get_traceback()
+			),
 		)
-		counts = {
-			name: frappe.db.count("CRM Rep Plan Item", {"parent": name, "parenttype": "CRM Rep Plan"})
-			for name in plans
-		}
-		keep = max(plans, key=lambda name: (counts[name], name))
-		for name in plans:
-			if name != keep:
-				frappe.delete_doc("CRM Rep Plan", name, force=True, ignore_permissions=True)
 
 
 class CRMRepPlan(Document):
