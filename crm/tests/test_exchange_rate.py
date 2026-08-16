@@ -181,3 +181,47 @@ class TestGetExchangeRate(FrappeTestCase):
 
 		with self.assertRaises(frappe.exceptions.ValidationError):
 			get_exchange_rate("USD", "XYZ")
+
+
+class TestDealSurvivesAnUnreachableProvider(FrappeTestCase):
+	"""A deal must save when the FX providers are down.
+
+	``update_exchange_rate`` runs inside ``validate`` and ``get_exchange_rate``
+	throws when no provider answers, so this used to fail every save of a
+	non-base-currency deal — on a host with no outbound internet, that is every
+	such save, forever. A stale rate is a wrong number in a report; an
+	unsaveable deal is a rep who cannot work.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		self.org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "FX Test Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		self.base = frappe.db.get_single_value("FCRM Settings", "currency") or "USD"
+		self.foreign = "EUR" if self.base != "EUR" else "GBP"
+
+	@patch("crm.api.exchange_rate._fetch_exchange_rate")
+	def test_a_foreign_currency_deal_saves_when_no_provider_answers(self, mock_fetch):
+		mock_fetch.return_value = (None, "frankfurter")
+
+		deal = frappe.get_doc(
+			{"doctype": "CRM Deal", "organization": self.org, "currency": self.foreign}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True)
+
+		self.assertTrue(frappe.db.exists("CRM Deal", deal.name))
+
+	@patch("crm.api.exchange_rate._fetch_exchange_rate")
+	def test_a_base_currency_deal_never_calls_a_provider(self, mock_fetch):
+		"""The rate is 1 by definition, so reaching for the network at all was
+		an outbound call on the save path of the most common case."""
+		deal = frappe.get_doc(
+			{"doctype": "CRM Deal", "organization": self.org, "currency": self.base}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True)
+
+		mock_fetch.assert_not_called()
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "exchange_rate"), 1)
