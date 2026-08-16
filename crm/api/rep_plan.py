@@ -23,6 +23,7 @@ from frappe import _
 
 from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
 from crm.rep_planning import ACTUAL_SOURCES, MATCH_HORIZON_WEEKS
+from crm.utils import sales_user_only
 
 ITEM_FIELDS = (
 	"activity_type",
@@ -74,6 +75,7 @@ def _monday_or_throw(week_start) -> str:
 
 
 @frappe.whitelist()
+@sales_user_only
 def get_visible_reps() -> list[str]:
 	"""The users whose plans the caller may open, for the planner's rep picker.
 
@@ -95,6 +97,7 @@ def get_visible_reps() -> list[str]:
 
 
 @frappe.whitelist()
+@sales_user_only
 def get_plan(week_start: str, user: str | None = None):
 	"""The plan for one user-week, with a plan-vs-actual rollup per type."""
 	week_start = _monday_or_throw(week_start)
@@ -169,6 +172,7 @@ def _stage_items(plan, items: list[dict]) -> set[str]:
 
 
 @frappe.whitelist()
+@sales_user_only
 def save_plan(week_start: str, items: list | str, modified: str | None = None):
 	"""Create or replace the caller's own plan for the week.
 
@@ -248,6 +252,7 @@ def _own_plan_of(item: str):
 
 
 @frappe.whitelist()
+@sales_user_only
 def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled_by: str | None = None):
 	"""Mark one of the caller's own items done by hand, optionally naming the record.
 
@@ -276,6 +281,7 @@ def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled
 
 
 @frappe.whitelist()
+@sales_user_only
 def mark_missed(item: str):
 	"""Write one of the caller's own items off by hand, before its week is over."""
 	plan = _own_plan_of(item)
@@ -293,6 +299,7 @@ def mark_missed(item: str):
 
 
 @frappe.whitelist()
+@sales_user_only
 def clear_override(item: str):
 	"""Hand an item the rep had corrected back to the matcher."""
 	plan = _own_plan_of(item)
@@ -310,6 +317,7 @@ def clear_override(item: str):
 
 
 @frappe.whitelist()
+@sales_user_only
 def propose_week(week_start: str):
 	"""Draft a week from the caller's open suggestions. Writes nothing."""
 	week_start = _monday_or_throw(week_start)

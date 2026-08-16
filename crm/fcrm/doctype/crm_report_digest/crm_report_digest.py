@@ -44,6 +44,18 @@ class CRMReportDigest(Document):
 		return [e.strip() for e in (self.recipients or "").split(",") if e.strip()]
 
 
+def _still_entitled(email: str) -> bool:
+	"""The save-time rule from ``validate_internal_user``, asked again at send.
+
+	Same two conditions -- an enabled user of this site, holding a CRM role --
+	expressed as a predicate because the send loop must skip a recipient rather
+	than throw and take the whole digest down with it.
+	"""
+	if not frappe.db.exists("User", {"name": email, "enabled": 1}):
+		return False
+	return bool(set(frappe.get_roles(email)) & set(CRM_ROLES))
+
+
 def send_due_digests():
 	"""Daily scheduler entry. Weekly digests fire on Mondays."""
 	from crm.api.reports import REPORTS, get_report
@@ -71,6 +83,14 @@ def send_due_digests():
 			from_date = frappe.utils.add_days(today, -days)
 
 			recipients = [e.strip() for e in (digest.recipients or "").split(",") if e.strip()]
+			# Re-check at send time, not just at save time. validate() runs when
+			# somebody edits the digest; offboarding happens somewhere else
+			# entirely, so a rep who has been disabled and stripped of their
+			# roles kept receiving pipeline values at a personal address every
+			# day, indefinitely, and the deploy runbook told operators these
+			# were validated. Dropping a recipient is silent on purpose -- the
+			# digest still goes to everyone still entitled to it.
+			recipients = [email for email in recipients if _still_entitled(email)]
 			if not recipients:
 				continue
 

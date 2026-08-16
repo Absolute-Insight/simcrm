@@ -12,8 +12,7 @@ export function _eval(code, context = {}) {
     let expression_function = new Function(...variable_names, code)
     return expression_function(...variables)
   } catch (error) {
-    console.log('Error evaluating the following expression:')
-    console.error(code)
+    console.error('Error evaluating the following expression:', code)
     throw error
   }
 }

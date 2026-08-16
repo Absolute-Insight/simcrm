@@ -76,7 +76,6 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 })
 
-console.log(props.showMail)
 const selected = defineModel({ type: Array, default: () => [] })
 const query = ref('')
 
