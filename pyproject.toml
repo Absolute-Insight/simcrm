@@ -14,7 +14,7 @@ dependencies = [
     # Public Suffix List lookups for the enrichment crawler's same-site scoping
     # (registrable_domain). Pinned to its bundled PSL snapshot at runtime -- no
     # network fetch (see crawler._tld_extractor).
-    "tldextract>=5.0.0",
+    "tldextract>=5.3.2",
     # beautifulsoup4 is a hard dependency of frappe -- do not re-declare it here (the
     # enrichment crawler imports `from bs4 import BeautifulSoup` and uses only the
     # stdlib html.parser backend, so no extra dependency is needed).
