@@ -394,7 +394,6 @@ function makeOutgoingCall(number) {
     auto: true,
     onSuccess(callDetails) {
       callData.value = callDetails
-      console.log(callDetails)
 
       callStatus.value = 'Calling...'
       showCallPopup.value = true
@@ -417,7 +416,6 @@ function makeOutgoingCall(number) {
 function setup() {
   $socket.on('exotel_call', (data) => {
     callData.value = data
-    console.log(data)
 
     callStatus.value = updateStatus(data)
     const { user } = sessionStore()

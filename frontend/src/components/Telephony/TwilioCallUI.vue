@@ -325,10 +325,6 @@ function handleIncomingCall(call) {
   showCallPopup.value = true
   _call = call
 
-  _call.on('accept', (conn) => {
-    console.log('conn', conn)
-  })
-
   // add event listener to call object
   call.on('cancel', handleDisconnectedIncomingCall)
   call.on('disconnect', handleDisconnectedIncomingCall)
@@ -471,14 +467,6 @@ function toggleCallWindow() {
   showCallPopup.value = !showCallPopup.value
   showSmallCallWindow.value = !showSmallCallWindow.value
 }
-
-watch(
-  () => log.value,
-  (value) => {
-    console.log(value)
-  },
-  { immediate: true },
-)
 
 defineExpose({ makeOutgoingCall, setup: startupClient })
 </script>

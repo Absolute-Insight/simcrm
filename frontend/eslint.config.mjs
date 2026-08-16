@@ -38,6 +38,13 @@ export default [
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-unused-vars': 'warn',
       'no-undef': 'error',
+      // The telephony components shipped every inbound caller's phone number
+      // and the full call payload to the browser console of every rep's
+      // machine, where a console-forwarding error tracker or a screen
+      // recording picks it up. Those calls are gone; this stops the next one.
+      // warn/error stay allowed -- a bundle that cannot report a real failure
+      // is worse than a chatty one.
+      'no-console': ['error', { allow: ['warn', 'error', 'info'] }],
     },
   },
   configPrettier,
