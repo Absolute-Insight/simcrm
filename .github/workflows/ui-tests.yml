@@ -1,14 +1,22 @@
 name: UI Tests
 
-# E2E (Playwright) suite. Heavy gate: runs on the main-hotfix staging lane
-# before promoting to main, plus on demand. Develop stays on the fast lane.
+# E2E (Playwright) suite.
+#
+# This used to trigger only on `main-hotfix` -- a staging lane that was never
+# created. The branch does not exist, so the suite had never run in CI once:
+# the only evidence of it ever executing was a local run left in test-results/.
+# It now gates the branches that actually exist. The suite is small enough
+# (~18 specs) that running it per-PR costs less than shipping a regression it
+# would have caught.
 on:
   push:
     branches:
-      - main-hotfix
+      - main
+      - develop
   pull_request:
     branches:
-      - main-hotfix
+      - main
+      - develop
   workflow_dispatch:
 
 concurrency:
