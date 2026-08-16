@@ -1,11 +1,12 @@
 import LucideCheck from '~icons/lucide/check'
+import Icon from '@/components/Icon.vue'
 import TaskStatusIcon from '@/components/Icons/TaskStatusIcon.vue'
 import TaskPriorityIcon from '@/components/Icons/TaskPriorityIcon.vue'
 import { usersStore } from '@/stores/users'
 import { getMeta } from '@/stores/meta'
 import { gemoji } from 'gemoji'
 import DOMPurify from 'dompurify'
-import { toast, dayjsLocal, dayjs, getConfig, FeatherIcon } from 'frappe-ui'
+import { toast, dayjsLocal, dayjs, getConfig } from 'frappe-ui'
 import { h } from 'vue'
 
 export function formatTime(seconds) {
@@ -541,14 +542,14 @@ export function DropdownOption({ option, icon, selected, onClick }) {
     'button',
     {
       class:
-        'group flex w-full text-ink-gray-8 justify-between items-center rounded-md px-2 py-2 text-sm hover:bg-surface-gray-2',
+        'group flex w-full text-ink-gray-8 justify-between items-center rounded-5 px-2 py-2 text-sm hover:bg-surface-gray-2',
       onClick,
     },
     [
       h('div', { class: 'flex gap-2' }, [
         icon
-          ? h(FeatherIcon, {
-              name: icon,
+          ? h(Icon, {
+              icon: icon,
               class: ['h-4 w-4 shrink-0'],
               'aria-hidden': true,
             })
@@ -793,15 +794,15 @@ export function TemplateOption({ active, option, variant, icon, onClick }) {
     {
       class: [
         active ? 'bg-surface-gray-2' : 'text-ink-gray-7',
-        'group flex w-full gap-2 items-center rounded-md px-2 py-2 text-base hover:bg-surface-gray-3',
+        'group flex w-full gap-2 items-center rounded-5 px-2 py-2 text-base hover:bg-surface-gray-3',
         variant == 'danger' ? 'text-ink-red-6 hover:bg-ink-red-1' : '',
       ],
       onClick: onClick,
     },
     [
       icon
-        ? h(FeatherIcon, {
-            name: icon,
+        ? h(Icon, {
+            icon: icon,
             class: ['h-4 w-4 shrink-0'],
             'aria-hidden': true,
           })

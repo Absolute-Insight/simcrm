@@ -1,8 +1,8 @@
 <template>
   <Tooltip v-if="!disabled">
-    <template #body>
+    <template #content>
       <div
-        class="rounded bg-surface-gray-10 py-1.5 px-2 text-xs text-ink-base shadow-xl"
+        class="rounded-4 bg-surface-gray-10 py-1.5 px-2 text-xs text-ink-base shadow-xl"
       >
         <span class="flex items-center gap-1">
           <span>{{ label }}</span>

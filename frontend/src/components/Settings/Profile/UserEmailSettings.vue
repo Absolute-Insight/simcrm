@@ -37,7 +37,7 @@
           </span>
         </div>
         <TextEditor
-          editor-class="prose-sm min-h-28 max-w-full border rounded-b-lg border-t-0 p-2 border-outline-elevation-2"
+          editor-class="prose-sm min-h-28 max-w-full border rounded-b-6 border-t-0 p-2 border-outline-elevation-2"
           :content="user.doc.email_signature"
           placeholder="Type something..."
           :bubbleMenu="true"
@@ -59,7 +59,7 @@
         <div>
           <div
             v-if="user.doc.user_emails?.length"
-            class="w-full border rounded-md mb-2 border-outline-elevation-2"
+            class="w-full border rounded-5 mb-2 border-outline-elevation-2"
           >
             <div
               class="grid grid-cols-[4fr_4fr_0.3fr] gap-2 px-4 py-3 text-sm-medium text-ink-gray-5 border-b border-outline-elevation-2"
@@ -98,7 +98,7 @@
                 class="!bg-surface-elevation-2"
                 variant="outline"
                 :label="__('Add Email')"
-                iconLeft="plus"
+                iconLeft="lucide-plus"
                 @click="setOpen(!open)"
               />
             </template>
@@ -124,9 +124,10 @@ import {
   Combobox,
   createDocumentResource,
   createListResource,
-  TextEditor,
   toast,
 } from 'frappe-ui'
+// parked in experimental for v1 (frappe-ui migration doc)
+import { TextEditor } from 'frappe-ui/experimental'
 import { computed, inject } from 'vue'
 
 const emit = defineEmits(['updateStep'])

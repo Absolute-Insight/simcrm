@@ -2,7 +2,7 @@
   <div class="h-full w-full">
     <div
       v-if="item.type == 'number_chart'"
-      class="v-number-card flex h-full w-full rounded shadow overflow-hidden cursor-pointer"
+      class="v-number-card flex h-full w-full rounded-4 shadow overflow-hidden cursor-pointer"
     >
       <Tooltip :text="__(item.data.tooltip)">
         <NumberChart
@@ -15,21 +15,21 @@
     </div>
     <div
       v-else-if="item.type == 'spacer'"
-      class="rounded bg-surface-base h-full overflow-hidden text-ink-gray-5 flex items-center justify-center"
+      class="rounded-4 bg-surface-base h-full overflow-hidden text-ink-gray-5 flex items-center justify-center"
       :class="editing ? 'border border-dashed border-outline-gray-2' : ''"
     >
       {{ editing ? __('Spacer') : '' }}
     </div>
     <div
       v-else-if="item.type == 'axis_chart'"
-      class="h-full w-full rounded-md bg-surface-base shadow"
+      class="h-full w-full rounded-5 bg-surface-base shadow"
     >
       <p v-if="blankReason" :class="blankClass">{{ blankReason }}</p>
       <AxisChart v-else-if="item.data" :config="themed" />
     </div>
     <div
       v-else-if="item.type == 'donut_chart'"
-      class="h-full w-full rounded-md bg-surface-base shadow overflow-hidden"
+      class="h-full w-full rounded-5 bg-surface-base shadow overflow-hidden"
     >
       <p v-if="blankReason" :class="blankClass">{{ blankReason }}</p>
       <DonutChart v-else-if="item.data" :config="themed" />
@@ -38,7 +38,9 @@
 </template>
 <script setup>
 import { withVectoraTheme } from '@/utils/chartTheme'
-import { AxisChart, DonutChart, NumberChart, Tooltip } from 'frappe-ui'
+import { Tooltip } from 'frappe-ui'
+// parked in experimental for v1 (frappe-ui migration doc)
+import { AxisChart, DonutChart, NumberChart } from 'frappe-ui/experimental'
 import { computed } from 'vue'
 
 const props = defineProps({

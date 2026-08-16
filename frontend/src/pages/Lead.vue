@@ -23,11 +23,7 @@
         @done="onEnriched"
       />
       <AssignTo v-model="assignees.data" doctype="CRM Lead" :docname="leadId" />
-      <Dropdown
-        v-if="doc && document.statuses"
-        :options="statuses"
-        placement="right"
-      >
+      <Dropdown v-if="doc && document.statuses" :options="statuses" align="end">
         <template #default="{ open }">
           <Button
             v-if="doc.status"
@@ -51,7 +47,7 @@
     <Tabs
       v-model="tabIndex"
       :tabs="tabs"
-      class="flex flex-1 overflow-hidden flex-col [&_[role='tab']]:px-0 [&_[role='tab']]:shrink-0 [&_[role='tablist']]:px-5 [&_[role='tablist']::-webkit-scrollbar]:h-0 [&_[role='tablist']]:min-h-[45px] [&_[role='tablist']]:gap-7.5 [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:grow"
+      class="flex flex-1 overflow-hidden flex-col [&_[role='tab']]:px-0 [&_[role='tab']]:shrink-0 [&_[role='tablist']]:px-5 [&_[role='tablist']::-webkit-scrollbar]:h-0 [&_[role='tablist']]:min-h-[45px] [&_[role='tablist']]:gap-7.5 [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:flex-col [&_[role='tabpanel']:not([hidden])]:grow [&_[role='tabpanel']:not([hidden])]:overflow-hidden"
     >
       <template #tab-panel>
         <Activities
@@ -476,7 +472,13 @@ const tabs = computed(() => {
       condition: () => whatsappEnabled.value,
     },
   ]
-  return tabOptions.filter((tab) => (tab.condition ? tab.condition() : true))
+  return tabOptions.map((tab) => ({
+    value: tab.name,
+    ...tab,
+    // v1 renders `icon` as icon-only; iconLeft keeps the label beside it
+    iconLeft: tab.icon,
+    icon: undefined,
+  }))
 })
 
 const { tabIndex, changeTabTo } = useActiveTabManager(tabs, 'lastLeadTab')
@@ -521,7 +523,8 @@ function deleteLead() {
 }
 
 function openEmailBox() {
-  let currentTab = tabs.value[tabIndex.value]
+  let currentTab =
+    tabs.value.find((tab) => tab.value === tabIndex.value) || tabs.value[0]
   if (!['Emails', 'Comments', 'Activities'].includes(currentTab.name)) {
     activities.value.changeTabTo('emails')
   }

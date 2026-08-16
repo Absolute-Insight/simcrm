@@ -47,7 +47,7 @@
         <div class="h-px border-t mx-2 border-outline-elevation-2" />
         <template v-for="(form, i) in forms.data" :key="form.name">
           <div
-            class="flex w-full items-center rounded px-2 py-3 hover:bg-surface-gray-2"
+            class="flex w-full items-center rounded-4 px-2 py-3 hover:bg-surface-gray-2"
           >
             <div
               class="w-6/12 min-w-0 cursor-pointer"
@@ -89,8 +89,8 @@
   </div>
 
   <!-- create dialog -->
-  <Dialog v-model="showCreate" :options="{ title: __('New form') }">
-    <template #body-content>
+  <Dialog v-model="showCreate" :title="__('New form')">
+    <template #default>
       <div class="flex flex-col gap-4">
         <FormControl
           v-model="draft.title"
@@ -108,7 +108,7 @@
         <div>
           <div class="mb-1.5 text-sm text-ink-gray-5">{{ __('Route') }}</div>
           <div
-            class="flex h-7 cursor-text items-center rounded border border-transparent bg-surface-gray-2 px-2.5 text-base transition-colors hover:bg-surface-gray-3 focus-within:border-outline-gray-4 focus-within:bg-surface-base"
+            class="flex h-7 cursor-text items-center rounded-4 border border-transparent bg-surface-gray-2 px-2.5 text-base transition-colors hover:bg-surface-gray-3 focus-within:border-outline-gray-4 focus-within:bg-surface-base"
             @click="focusRouteEnd"
           >
             <span class="shrink-0 text-ink-gray-4">/crm-form/</span>
@@ -149,7 +149,7 @@ import {
   call,
   toast,
 } from 'frappe-ui'
-import { useTelemetry } from 'frappe-ui/frappe'
+import { useTelemetry } from '@framework/ui/telemetry'
 import LucideTextCursorInput from '~icons/lucide/text-cursor-input'
 import { ref, reactive, h } from 'vue'
 import { ConfirmDelete, copyToClipboard } from '../../../utils'

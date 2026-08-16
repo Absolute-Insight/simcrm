@@ -486,7 +486,7 @@ import { usersStore } from '@/stores/users'
 import { useTimelinePreferences } from '@/composables/useTimelinePreferences'
 import { whatsappEnabled } from '@/composables/whatsapp'
 import { useDocument } from '@/data/document'
-import { useTelemetry } from 'frappe-ui/frappe'
+import { useTelemetry } from '@framework/ui/telemetry'
 import { Button, createResource, toast } from 'frappe-ui'
 import { useElementVisibility } from '@vueuse/core'
 import {
@@ -517,7 +517,11 @@ const emit = defineEmits(['beforeSave', 'afterSave'])
 const route = useRoute()
 
 const reload = defineModel('reload', { type: Boolean, default: false })
-const tabIndex = defineModel('tabIndex', { type: Number, default: 0 })
+// v1 Tabs models the trigger value, so this carries the tab's value/name
+const tabIndex = defineModel('tabIndex', {
+  type: [String, Number],
+  default: 'Activity',
+})
 
 const { document: _document } = useDocument(props.doctype, props.docname)
 
@@ -527,13 +531,18 @@ const reload_email = ref(false)
 const modalRef = ref(null)
 const showFilesUploader = ref(false)
 
-const title = computed(() => props.tabs?.[tabIndex.value]?.name || 'Activity')
+const title = computed(
+  () =>
+    props.tabs?.find((tab) => (tab.value ?? tab.name) === tabIndex.value)
+      ?.name || 'Activity',
+)
 
 const changeTabTo = (tabName) => {
-  const tabNames = props.tabs?.map((tab) => tab.name?.toLowerCase())
-  const index = tabNames?.indexOf(tabName)
-  if (index == -1) return
-  tabIndex.value = index
+  const tab = props.tabs?.find(
+    (t) => (t.value ?? t.name)?.toLowerCase() === String(tabName).toLowerCase(),
+  )
+  if (!tab) return
+  tabIndex.value = tab.value ?? tab.name
 }
 
 const all_activities = createResource({

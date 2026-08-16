@@ -8,15 +8,15 @@
       class="z-10 size-5 shrink-0 flex items-center justify-center rounded-full border border-outline-elevation-2 bg-surface-elevation-2 text-ink-gray-1 cursor-pointer hover:bg-surface-gray-2"
       @click.stop="emit('toggle', $event)"
     >
-      <FeatherIcon
-        :name="isCollapsed ? 'chevron-right' : 'chevron-down'"
+      <Icon
+        :icon="isCollapsed ? 'chevron-right' : 'chevron-down'"
         class="size-3 stroke-2 stroke-ink-gray-5"
       />
     </div>
     <span v-else class="size-5 shrink-0"></span>
 
     <div
-      class="group relative flex-1 flex items-center gap-2 px-2 py-1.5 text-base rounded-md select-none after:content-[''] after:absolute after:bottom-0 after:left-1 after:right-3 after:border-outline-elevation-2"
+      class="group relative flex-1 flex items-center gap-2 px-2 py-1.5 text-base rounded-5 select-none after:content-[''] after:absolute after:bottom-0 after:left-1 after:right-3 after:border-outline-elevation-2"
       :class="[
         rowClass,
         canEdit ? 'cursor-grab' : 'cursor-pointer',
@@ -58,20 +58,15 @@
         "
         @click.stop
       >
-        <Popover placement="bottom-end" @update:show="popoverOpen = $event">
-          <template #target="{ togglePopover }">
+        <Popover side="bottom" align="end" @update:open="popoverOpen = $event">
+          <template #trigger>
             <Tooltip :text="__('Add direct reports')">
-              <Button
-                variant="ghost"
-                size="sm"
-                icon="lucide-plus"
-                @click="togglePopover()"
-              />
+              <Button variant="ghost" size="sm" icon="lucide-plus" />
             </Tooltip>
           </template>
-          <template #body="{ togglePopover }">
+          <template #default="{ close }">
             <div
-              class="mt-1 rounded-lg bg-surface-base shadow-2xl w-72 border border-outline-gray-2"
+              class="mt-1 rounded-6 bg-surface-base shadow-2xl w-72 border border-outline-gray-2"
             >
               <UserMultiSelect
                 v-model="selected"
@@ -83,13 +78,13 @@
                   variant="solid"
                   :disabled="!selected.length"
                   :label="__('Add ({0})', [selected.length])"
-                  @click="commit(togglePopover)"
+                  @click="commit(close)"
                 />
               </div>
             </div>
           </template>
         </Popover>
-        <Dropdown :options="moreOptions" placement="right">
+        <Dropdown :options="moreOptions" align="end">
           <template #default="{ open }">
             <Button
               variant="ghost"
@@ -106,15 +101,8 @@
 
 <script setup>
 import UserMultiSelect from './UserMultiSelect.vue'
-import {
-  Avatar,
-  Badge,
-  Button,
-  Dropdown,
-  FeatherIcon,
-  Popover,
-  Tooltip,
-} from 'frappe-ui'
+import Icon from '@/components/Icon.vue'
+import { Avatar, Badge, Button, Dropdown, Popover, Tooltip } from 'frappe-ui'
 import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
@@ -146,11 +134,11 @@ watch(popoverOpen, (open) => {
   if (!open) selected.value = []
 })
 
-function commit(togglePopover) {
+function commit(closePopover) {
   if (!selected.value.length) return
   emit('bulk-add', { parent: props.node, userIds: selected.value })
   selected.value = []
-  togglePopover()
+  closePopover?.()
 }
 
 const moreOptions = computed(() => {

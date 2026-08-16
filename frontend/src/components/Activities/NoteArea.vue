@@ -1,6 +1,6 @@
 <template>
   <div
-    class="activity group flex h-48 cursor-pointer flex-col justify-between gap-2 rounded-md bg-surface-gray-1 px-4 py-3 hover:bg-surface-gray-2"
+    class="activity group flex h-48 cursor-pointer flex-col justify-between gap-2 rounded-5 bg-surface-gray-1 px-4 py-3 hover:bg-surface-gray-2"
   >
     <div class="flex items-center justify-between">
       <div class="truncate text-lg-medium text-ink-gray-8">
@@ -57,7 +57,9 @@
 <script setup>
 import UserAvatar from '@/components/UserAvatar.vue'
 import TimelineTimestamp from '@/components/Activities/TimelineTimestamp.vue'
-import { Dropdown, TextEditor, call, toast } from 'frappe-ui'
+import { Dropdown, call, toast } from 'frappe-ui'
+// parked in experimental for v1 (frappe-ui migration doc)
+import { TextEditor } from 'frappe-ui/experimental'
 import { usersStore } from '@/stores/users'
 
 defineProps({

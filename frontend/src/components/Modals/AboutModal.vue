@@ -1,6 +1,6 @@
 <template>
-  <Dialog v-model:open="show" :size="'sm'">
-    <template #body>
+  <Dialog bare v-model:open="show" :size="'sm'">
+    <template #default>
       <div class="p-4 pt-5">
         <div class="flex justify-center">
           <div class="flex flex-col items-center">
@@ -13,7 +13,7 @@
           <a
             v-for="link in links"
             :key="link.label"
-            class="flex py-2 px-2 hover:bg-surface-gray-1 rounded cursor-pointer"
+            class="flex py-2 px-2 hover:bg-surface-gray-1 rounded-4 cursor-pointer"
             target="_blank"
             :href="link.url"
           >

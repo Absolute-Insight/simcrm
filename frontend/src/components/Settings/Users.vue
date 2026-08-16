@@ -51,7 +51,7 @@
       v-if="!users.loading && users.data?.crmUsers?.length == 1"
       name="Users"
       :description="__('Add one to get started.')"
-      icon="user"
+      icon="lucide-user"
     />
 
     <!-- Users List -->

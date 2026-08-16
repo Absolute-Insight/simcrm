@@ -1,26 +1,25 @@
 <template>
   <Popover class="w-full min-w-0">
-    <template #target="{ isOpen, togglePopover }">
+    <template #trigger="{ open }">
       <Button
         :label="value"
         class="dropdown-button flex w-full items-center !justify-between bg-surface-base !px-2.5 py-1.5 text-base text-ink-gray-8 placeholder-ink-gray-4 transition-colors hover:bg-surface-base focus:bg-surface-base focus:outline-none focus:ring-0"
-        @click="togglePopover"
       >
         <div v-if="value" class="truncate">{{ value }}</div>
         <div v-else class="text-base leading-5 text-ink-gray-4 truncate">
           {{ placeholder }}
         </div>
         <template #suffix>
-          <FeatherIcon
-            :name="isOpen ? 'chevron-up' : 'chevron-down'"
+          <Icon
+            :icon="open ? 'chevron-up' : 'chevron-down'"
             class="h-4 text-ink-gray-5"
           />
         </template>
       </Button>
     </template>
-    <template #body>
+    <template #default>
       <div
-        class="my-2 p-1.5 w-72 space-y-1.5 divide-y divide-outline-gray-1 rounded-lg bg-surface-elevation-2 shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none"
+        class="my-2 p-1.5 w-72 space-y-1.5 divide-y divide-outline-gray-1 rounded-6 bg-surface-elevation-2 shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none"
       >
         <div class="space-y-1">
           <PrimaryDropdownItem
@@ -47,7 +46,7 @@
             variant="ghost"
             class="w-full !justify-start"
             :label="__('Create New')"
-            iconLeft="plus"
+            iconLeft="lucide-plus"
             @click="addDraft"
           />
         </div>
@@ -58,6 +57,7 @@
 
 <script setup>
 import PrimaryDropdownItem from '@/components/PrimaryDropdownItem.vue'
+import Icon from '@/components/Icon.vue'
 import { Popover } from 'frappe-ui'
 import { ref } from 'vue'
 

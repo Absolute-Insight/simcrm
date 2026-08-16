@@ -2,13 +2,12 @@
   <div
     class="flex flex-col"
     :class="{
-      'border border-outline-gray-1 rounded-lg': hasTabs,
+      'border border-outline-gray-1 rounded-6': hasTabs,
       'border-outline-elevation-2': hasTabs,
     }"
   >
     <Tabs
       v-model="tabIndex"
-      as="div"
       :tabs="processedTabs"
       :class="[
         !hasTabs ? `[&_[role='tablist']]:hidden` : '',
@@ -42,7 +41,7 @@ const props = defineProps({
   context: { type: Object, default: null },
 })
 
-const tabIndex = ref(0)
+const tabIndex = ref(null)
 
 // The authoritative document name. Prefer the explicit docname prop (known
 // synchronously by the parent modal) over data.name, which is empty while the
@@ -68,6 +67,8 @@ const processedTabs = computed(() => {
       const tabOverrides = ov[tab.name]
       const processedTab = tabOverrides ? { ...tab, ...tabOverrides } : tab
       return {
+        // v1 Tabs selects by trigger value, so every tab carries one
+        value: processedTab.name,
         ...processedTab,
         sections: processedTab.sections.map((section) => {
           const sectionOverrides = ov[section.name]

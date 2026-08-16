@@ -11,7 +11,7 @@
   <component
     :is="clickable ? 'button' : 'div'"
     :type="clickable ? 'button' : undefined"
-    class="v-stat-tile group relative flex min-h-[6.5rem] w-full flex-col justify-between gap-2 rounded-lg border border-outline-gray-1 bg-surface-elevation-2 p-4 text-left"
+    class="v-stat-tile group relative flex min-h-[6.5rem] w-full flex-col justify-between gap-2 rounded-6 border border-outline-gray-1 bg-surface-elevation-2 p-4 text-left"
     :class="
       clickable
         ? 'cursor-pointer hover:border-outline-gray-2 hover:shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2'
@@ -54,7 +54,7 @@
         <button
           v-if="retry"
           type="button"
-          class="self-start rounded text-sm text-ink-gray-5 underline underline-offset-2 hover:text-ink-gray-8 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+          class="self-start rounded-4 text-sm text-ink-gray-5 underline underline-offset-2 hover:text-ink-gray-8 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
           @click.stop="retry"
         >
           {{ __('Try again') }}

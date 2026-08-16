@@ -112,7 +112,7 @@
               ? __('No users match the current filter.')
               : __('Add one to get started.')
           "
-          icon="users"
+          icon="lucide-users"
         />
         <HierarchyTree
           v-for="root in visibleRoots"
@@ -145,7 +145,7 @@
     <Teleport to="body">
       <div
         v-if="dragLabel"
-        class="fixed pointer-events-none px-2 py-1 rounded-md bg-gray-900 text-white text-xs shadow-lg"
+        class="fixed pointer-events-none px-2 py-1 rounded-5 bg-gray-900 text-white text-xs shadow-lg"
         :style="{
           top: `${dragState.y + 25}px`,
           left: `${dragState.x - 25}px`,
@@ -155,6 +155,7 @@
       </div>
     </Teleport>
     <Dialog
+      bare
       v-model:open="showAddDialog"
       :title="__('Add Users')"
       :actions="[
@@ -176,8 +177,8 @@
         />
       </template>
     </Dialog>
-    <Dialog v-model:open="showRemoveDialog" :size="'md'">
-      <template #body>
+    <Dialog bare v-model:open="showRemoveDialog" :size="'md'">
+      <template #default>
         <div class="bg-surface-elevation-2 px-4 pb-6 pt-5 sm:px-6">
           <div class="mb-4 flex items-center justify-between">
             <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">

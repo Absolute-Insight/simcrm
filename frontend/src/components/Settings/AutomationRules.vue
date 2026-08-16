@@ -75,7 +75,7 @@
         <Button
           class="opacity-0 transition group-hover:opacity-100"
           variant="ghost"
-          icon="trash-2"
+          icon="lucide-trash-2"
           :aria-label="__('Delete rule')"
           @click="confirmDelete(rule)"
         />
@@ -84,12 +84,10 @@
 
     <Dialog
       v-model="editorOpen"
-      :options="{
-        title: draft.name ? __('Edit rule') : __('New rule'),
-        size: '2xl',
-      }"
+      :title="draft.name ? __('Edit rule') : __('New rule')"
+      size="2xl"
     >
-      <template #body-content>
+      <template #default>
         <div class="flex flex-col gap-4">
           <FormControl
             v-model="draft.title"

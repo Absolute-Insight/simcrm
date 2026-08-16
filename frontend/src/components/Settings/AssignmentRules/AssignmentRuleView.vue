@@ -63,10 +63,9 @@
         <div class="flex flex-col gap-1.5">
           <FormLabel :label="__('Priority')" />
           <Popover>
-            <template #target="{ togglePopover }">
+            <template #trigger>
               <div
-                class="flex items-center justify-between text-base rounded h-7 py-1.5 pl-2 pr-2 border border-outline-gray-2 bg-surface-gray-2 placeholder-ink-gray-4 hover:border-outline-elevation-2 hover:bg-surface-gray-3 focus:bg-surface-base focus:border-outline-gray-4 focus:ring-0 focus-visible:ring-2 focus-visible:ring-outline-gray-3 text-ink-gray-8 transition-colors w-full dark:[color-scheme:dark] cursor-default"
-                @click="togglePopover()"
+                class="flex items-center justify-between text-base rounded-4 h-7 py-1.5 pl-2 pr-2 border border-outline-gray-2 bg-surface-gray-2 placeholder-ink-gray-4 hover:border-outline-elevation-2 hover:bg-surface-gray-3 focus:bg-surface-base focus:border-outline-gray-4 focus:ring-0 focus-visible:ring-2 focus-visible:ring-outline-gray-3 text-ink-gray-8 transition-colors w-full dark:[color-scheme:dark] cursor-default"
               >
                 <div>
                   {{
@@ -78,18 +77,18 @@
                 <span class="lucide-chevron-down size-4" aria-hidden="true" />
               </div>
             </template>
-            <template #body="{ togglePopover }">
+            <template #default="{ close }">
               <div
-                class="p-1 text-ink-gray-6 top-1 absolute bg-surface-elevation-2 shadow-2xl rounded w-[--reka-popper-anchor-width]"
+                class="p-1 text-ink-gray-6 top-1 absolute bg-surface-elevation-2 shadow-2xl rounded-4 w-[--reka-popper-anchor-width]"
               >
                 <div
                   v-for="option in priorityOptions"
                   :key="option.value"
-                  class="p-2 cursor-pointer hover:bg-surface-gray-1 text-base flex items-center justify-between rounded"
+                  class="p-2 cursor-pointer hover:bg-surface-gray-1 text-base flex items-center justify-between rounded-4"
                   @click="
                     () => {
                       assignmentRuleData.priority = option.value
-                      togglePopover()
+                      close()
                     }
                   "
                 >
@@ -160,7 +159,7 @@
             </span>
             <div v-if="isOldSla && step.data">
               <Popover trigger="hover" :hoverDelay="0.25" placement="top-end">
-                <template #target>
+                <template #trigger>
                   <div
                     class="text-sm text-ink-gray-6 flex gap-1 cursor-default text-nowrap items-center"
                   >
@@ -168,9 +167,9 @@
                     <span class="lucide-info size-4" aria-hidden="true" />
                   </div>
                 </template>
-                <template #body-main>
+                <template #default>
                   <div
-                    class="text-sm text-ink-gray-6 p-2 bg-surface-elevation-2 rounded-md max-w-96 text-wrap whitespace-pre-wrap leading-5"
+                    class="text-sm text-ink-gray-6 p-2 bg-surface-elevation-2 rounded-5 max-w-96 text-wrap whitespace-pre-wrap leading-5"
                   >
                     <code>{{ assignmentRuleData.assignCondition }}</code>
                   </div>
@@ -182,7 +181,7 @@
         <div class="mt-5">
           <div
             v-if="!useNewUI && assignmentRuleData.assignCondition"
-            class="flex flex-col gap-3 items-center text-center text-ink-gray-7 text-sm mb-2 border border-outline-gray-2 rounded-md p-3 py-4"
+            class="flex flex-col gap-3 items-center text-center text-ink-gray-7 text-sm mb-2 border border-outline-gray-2 rounded-5 p-3 py-4"
           >
             <span class="text-p-sm">
               {{ __('Conditions for this rule were created from') }}
@@ -244,7 +243,7 @@
               "
             >
               <Popover trigger="hover" :hoverDelay="0.25" placement="top-end">
-                <template #target>
+                <template #trigger>
                   <div
                     class="text-sm text-ink-gray-6 flex gap-1 cursor-default text-nowrap items-center"
                   >
@@ -252,9 +251,9 @@
                     <span class="lucide-info size-4" aria-hidden="true" />
                   </div>
                 </template>
-                <template #body-main>
+                <template #default>
                   <div
-                    class="text-sm text-ink-gray-6 p-2 bg-surface-elevation-2 rounded-md max-w-96 text-wrap whitespace-pre-wrap leading-5"
+                    class="text-sm text-ink-gray-6 p-2 bg-surface-elevation-2 rounded-5 max-w-96 text-wrap whitespace-pre-wrap leading-5"
                   >
                     <code>{{ assignmentRuleData.unassignCondition }}</code>
                   </div>
@@ -266,7 +265,7 @@
         <div class="mt-5">
           <div
             v-if="!useNewUI && assignmentRuleData.unassignCondition"
-            class="flex flex-col gap-3 items-center text-center text-ink-gray-7 text-sm mb-2 border border-outline-gray-2 rounded-md p-3 py-4"
+            class="flex flex-col gap-3 items-center text-center text-ink-gray-7 text-sm mb-2 border border-outline-gray-2 rounded-5 p-3 py-4"
           >
             <span class="text-p-sm">
               {{ __('Conditions for this rule were created from') }}
@@ -341,9 +340,9 @@ import {
   Select,
   Switch,
   toast,
-  ConfirmDialog,
 } from 'frappe-ui'
-import { useTelemetry } from 'frappe-ui/frappe'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import { useTelemetry } from '@framework/ui/telemetry'
 import { onUnmounted, ref, inject, watch, provide, computed } from 'vue'
 import AssignmentRulesSection from './AssignmentRulesSection.vue'
 import AssignmentSchedule from './AssignmentSchedule.vue'

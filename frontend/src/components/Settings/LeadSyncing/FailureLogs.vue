@@ -87,10 +87,11 @@ import {
   Badge,
   createListResource,
   Textarea,
-  ListView,
   FormControl,
   toast,
 } from 'frappe-ui'
+// parked in experimental for v1 (frappe-ui migration doc)
+import { ListView } from 'frappe-ui/experimental'
 
 const props = defineProps({
   source: { type: String, required: true },

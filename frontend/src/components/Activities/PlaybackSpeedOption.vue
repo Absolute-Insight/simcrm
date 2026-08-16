@@ -1,7 +1,7 @@
 <template>
   <div>
     <Button
-      class="flex justify-between w-full rounded text-base"
+      class="flex justify-between w-full rounded-4 text-base"
       variant="ghost"
       :label="label"
       @click="onClick"

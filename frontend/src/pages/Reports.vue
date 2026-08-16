@@ -53,7 +53,7 @@
         <button
           v-for="r in reports.data || []"
           :key="r.name"
-          class="v-rail rounded px-2.5 py-2 text-left text-base"
+          class="v-rail rounded-4 px-2.5 py-2 text-left text-base"
           :class="
             r.name === active
               ? 'bg-surface-elevation-3 text-ink-gray-9 shadow-sm'
@@ -187,7 +187,7 @@
 
         <EmptyState
           v-if="!showing.rows.length"
-          icon="bar-chart-2"
+          icon="lucide-bar-chart-2"
           :title="__('Nothing to report')"
           :description="
             showing.period === false
@@ -301,7 +301,7 @@ const presetOptions = computed(() => [
   {
     group: 'Presets',
     hideLabel: true,
-    items: PRESET_DAYS.map((days) => ({
+    options: PRESET_DAYS.map((days) => ({
       label: __('Last {0} Days', [String(days)]),
       onClick: () => {
         showDatePicker.value = false

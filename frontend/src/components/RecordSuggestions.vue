@@ -84,7 +84,7 @@
     <div
       v-for="s in rows"
       :key="s.name"
-      class="flex flex-col gap-1.5 rounded-md bg-surface-gray-1 px-3 py-2"
+      class="flex flex-col gap-1.5 rounded-5 bg-surface-gray-1 px-3 py-2"
     >
       <div class="flex items-center justify-between gap-2">
         <div class="min-w-0 text-base text-ink-gray-8">{{ s.title }}</div>
@@ -99,7 +99,7 @@
           <Button
             variant="ghost"
             size="sm"
-            icon="x"
+            icon="lucide-x"
             :tooltip="__('Dismiss')"
             :aria-label="__('Dismiss')"
             :disabled="busy === s.name"

@@ -14,8 +14,8 @@
       :placement="attrs.placement"
       :filterable="false"
     >
-      <template #target="{ open, togglePopover }">
-        <slot name="target" v-bind="{ open, togglePopover }" />
+      <template #trigger="{ open, toggle }">
+        <slot name="trigger" v-bind="{ open, toggle }" />
       </template>
 
       <template #prefix>
@@ -48,7 +48,7 @@
             variant="ghost"
             class="w-full !justify-start"
             :label="__('Create New')"
-            iconLeft="plus"
+            iconLeft="lucide-plus"
             @click="() => attrs.onCreate(v, close)"
           />
         </div>
@@ -57,7 +57,7 @@
             variant="ghost"
             class="w-full !justify-start"
             :label="__('Clear')"
-            iconLeft="x"
+            iconLeft="lucide-x"
             @click="() => clearValue(close)"
           />
         </div>

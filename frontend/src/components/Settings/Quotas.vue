@@ -16,7 +16,7 @@
       <div class="flex shrink-0 items-center gap-1">
         <Button
           variant="ghost"
-          icon="chevron-left"
+          icon="lucide-chevron-left"
           :aria-label="__('Previous year')"
           @click="year -= 1"
         />
@@ -25,7 +25,7 @@
         </div>
         <Button
           variant="ghost"
-          icon="chevron-right"
+          icon="lucide-chevron-right"
           :aria-label="__('Next year')"
           @click="year += 1"
         />
@@ -102,7 +102,7 @@
               <input
                 v-if="editable"
                 :value="displayValue(row, month)"
-                class="w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-right text-sm tabular-nums text-ink-gray-8 transition placeholder:text-ink-gray-4 hover:border-outline-gray-2 focus:border-outline-gray-3 focus:bg-surface-white focus:outline-none focus:ring-2 focus:ring-outline-gray-3"
+                class="w-full rounded-4 border border-transparent bg-transparent px-1.5 py-1 text-right text-sm tabular-nums text-ink-gray-8 transition placeholder:text-ink-gray-4 hover:border-outline-gray-2 focus:border-outline-gray-3 focus:bg-surface-white focus:outline-none focus:ring-2 focus:ring-outline-gray-3"
                 inputmode="decimal"
                 placeholder="—"
                 :aria-label="`${row.full_name} ${month}`"

@@ -169,9 +169,9 @@
                   >
                     ?
                   </div>
-                  <FeatherIcon
+                  <Icon
                     v-else
-                    :name="
+                    :icon="
                       _event.attending === 'Yes'
                         ? 'check'
                         : _event.attending === 'No'
@@ -211,9 +211,9 @@
                   >
                     ?
                   </div>
-                  <FeatherIcon
+                  <Icon
                     v-else
-                    :name="
+                    :icon="
                       att.attending === 'Yes'
                         ? 'check'
                         : att.attending === 'No'
@@ -230,7 +230,7 @@
             v-if="!showAllParticipants && peoples.length > 2"
             variant="ghost"
             :label="__('See All Participants')"
-            iconLeft="more-horizontal"
+            iconLeft="lucide-more-horizontal"
             class="!justify-start w-fit"
             @click="showAllParticipants = true"
           />
@@ -238,7 +238,7 @@
             v-else-if="showAllParticipants"
             variant="ghost"
             :label="__('Show Less')"
-            iconLeft="chevron-up"
+            iconLeft="lucide-chevron-up"
             class="!justify-start w-fit"
             @click="showAllParticipants = false"
           />
@@ -265,7 +265,7 @@
       <div class="flex gap-2 items-center px-4.5 py-3">
         <Dropdown class="ml-1" :options="colors">
           <div
-            class="flex items-center justify-center size-8 shrink-0 border border-outline-gray-2 bg-surface-base hover:border-outline-gray-3 hover:shadow-sm rounded cursor-pointer"
+            class="flex items-center justify-center size-8 shrink-0 border border-outline-gray-2 bg-surface-base hover:border-outline-gray-3 hover:shadow-sm rounded-4 cursor-pointer"
           >
             <div
               class="size-2.5 rounded-full cursor-pointer"
@@ -314,11 +314,11 @@
             :clearable="false"
             @update:modelValue="(date) => updateDate(date, true)"
           >
-            <template #suffix="{ togglePopover }">
+            <template #suffix="{ open, setOpen }">
               <span
                 class="lucide-chevron-down h-4 w-4 cursor-pointer"
                 aria-hidden="true"
-                @click="togglePopover"
+                @click="() => setOpen(!open)"
               />
             </template>
           </DatePicker>
@@ -381,9 +381,9 @@
       </div>
       <div class="flex justify-between gap-3 mx-4.5 my-2.5 text-ink-gray-7">
         <DescriptionIcon class="size-4 mt-1.5" />
-        <div class="flex w-full items-center gap-x-2 border rounded py-1">
+        <div class="flex w-full items-center gap-x-2 border rounded-4 py-1">
           <TextEditor
-            editor-class="!prose-sm !leading-[1.13rem] overflow-auto px-2.5 rounded placeholder-ink-gray-4 focus:bg-surface-base focus:ring-0 text-ink-gray-8 transition-colors"
+            editor-class="!prose-sm !leading-[1.13rem] overflow-auto px-2.5 rounded-4 placeholder-ink-gray-4 focus:bg-surface-base focus:ring-0 text-ink-gray-8 transition-colors"
             :bubbleMenu="true"
             :content="_event.description"
             :placeholder="__('Add Description')"
@@ -547,6 +547,7 @@
 
 <script setup>
 import CalendarIcon from '@/components/Icons/CalendarIcon.vue'
+import Icon from '@/components/Icon.vue'
 import BellIcon from '@/components/Icons/BellIcon.vue'
 import MapIcon from '@/components/Icons/MapIcon.vue'
 import ShieldIcon from '@/components/Icons/ShieldIcon.vue'
@@ -576,17 +577,21 @@ import {
   Switch,
   DatePicker,
   TimePicker,
-  TextEditor,
   ErrorMessage,
   Dropdown,
   dayjs,
-  CalendarColorMap as colorMap,
-  CalendarActiveEvent as activeEvent,
   createDocumentResource,
   TabButtons,
   toast,
   call,
 } from 'frappe-ui'
+// parked in experimental for v1 (frappe-ui migration doc)
+import { TextEditor } from 'frappe-ui/experimental'
+// the calendar family is parked in experimental for v1 (frappe-ui migration doc)
+import {
+  CalendarColorMap as colorMap,
+  CalendarActiveEvent as activeEvent,
+} from 'frappe-ui/experimental'
 import { ref, computed, watch, h, inject } from 'vue'
 import { useRouter } from 'vue-router'
 

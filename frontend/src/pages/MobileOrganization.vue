@@ -73,7 +73,7 @@
                   :label="__('Delete')"
                   theme="red"
                   size="sm"
-                  iconLeft="trash-2"
+                  iconLeft="lucide-trash-2"
                   @click="deleteOrganization"
                 />
               </div>
@@ -85,9 +85,8 @@
     </FileUploader>
     <Tabs
       v-model="tabIndex"
-      as="div"
       :tabs="tabs"
-      class="flex flex-1 overflow-auto flex-col [&_[role='tablist']]:gap-7.5 [&_[role='tablist']]:px-4 [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:grow"
+      class="flex flex-1 overflow-auto flex-col [&_[role='tablist']]:gap-7.5 [&_[role='tablist']]:px-4 [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:flex-col [&_[role='tabpanel']:not([hidden])]:grow [&_[role='tabpanel']:not([hidden])]:overflow-hidden"
     >
       <template #tab-item="{ tab, selected }">
         <button
@@ -185,7 +184,7 @@ import {
   toast,
 } from 'frappe-ui'
 import { useDoctypeModal } from '@/composables/doctypeModal'
-import { useTelemetry } from 'frappe-ui/frappe'
+import { useTelemetry } from '@framework/ui/telemetry'
 import { h, computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -332,8 +331,8 @@ function getParsedSections(_sections) {
   })
 }
 
-const tabIndex = ref(0)
-const tabs = [
+const tabIndex = ref('Details')
+const _rawTabs = [
   {
     name: 'Details',
     label: __('Details'),
@@ -352,6 +351,12 @@ const tabs = [
     count: computed(() => contacts.data?.length),
   },
 ]
+const tabs = _rawTabs.map((tab) => ({
+  value: tab.name,
+  ...tab,
+  iconLeft: tab.icon,
+  icon: undefined,
+}))
 
 const deals = createListResource({
   type: 'list',
@@ -410,7 +415,7 @@ const rows = computed(() => {
 const { getFormattedCurrency } = getMeta('CRM Deal')
 
 const columns = computed(() => {
-  return tabIndex.value === 0 ? dealColumns : contactColumns
+  return tabIndex.value === 'Deals' ? dealColumns : contactColumns
 })
 
 function getDealRowObject(deal) {

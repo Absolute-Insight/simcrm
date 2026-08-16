@@ -20,7 +20,7 @@
         <Button
           v-if="editing"
           :label="__('Chart')"
-          iconLeft="plus"
+          iconLeft="lucide-plus"
           @click="showAddChartModal = true"
         />
         <Button
@@ -171,7 +171,7 @@
             <li v-for="row in riskRows" :key="row.key">
               <button
                 type="button"
-                class="flex w-full items-start justify-between gap-3 rounded-md px-2 py-2 text-left transition hover:bg-surface-gray-2"
+                class="flex w-full items-start justify-between gap-3 rounded-5 px-2 py-2 text-left transition hover:bg-surface-gray-2"
                 @click="openRecord(row)"
               >
                 <span class="flex min-w-0 flex-col">
@@ -629,7 +629,7 @@ const options = computed(() => [
   {
     group: 'Presets',
     hideLabel: true,
-    items: [7, 30, 60, 90].map((days) => ({
+    options: [7, 30, 60, 90].map((days) => ({
       label: __('Last {0} Days', [days]),
       onClick: () => {
         preset.value = `Last ${days} Days`

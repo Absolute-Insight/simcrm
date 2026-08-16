@@ -100,9 +100,8 @@
     </FileUploader>
     <Tabs
       v-model="tabIndex"
-      as="div"
       :tabs="tabs"
-      class="flex flex-1 overflow-auto flex-col [&_[role='tablist']]:gap-3 [&_[role='tablist']]:px-4 [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:grow"
+      class="flex flex-1 overflow-auto flex-col [&_[role='tablist']]:gap-3 [&_[role='tablist']]:px-4 [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:flex-col [&_[role='tabpanel']:not([hidden])]:grow [&_[role='tabpanel']:not([hidden])]:overflow-hidden"
     >
       <template #tab-item="{ tab, selected }">
         <button
@@ -191,7 +190,7 @@ import {
   toast,
 } from 'frappe-ui'
 import { useDoctypeModal } from '@/composables/doctypeModal'
-import { useTelemetry } from 'frappe-ui/frappe'
+import { useTelemetry } from '@framework/ui/telemetry'
 import { ref, computed, h, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -297,8 +296,8 @@ async function deleteContact() {
   })
 }
 
-const tabIndex = ref(0)
-const tabs = [
+const tabIndex = ref('Details')
+const _rawTabs = [
   {
     name: 'Details',
     label: __('Details'),
@@ -311,6 +310,12 @@ const tabs = [
     count: computed(() => deals.data?.length),
   },
 ]
+const tabs = _rawTabs.map((tab) => ({
+  value: tab.name,
+  ...tab,
+  iconLeft: tab.icon,
+  icon: undefined,
+}))
 
 const deals = createResource({
   url: 'crm.api.contact.get_linked_deals',

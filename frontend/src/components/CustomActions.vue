@@ -7,7 +7,7 @@
       @click="action.onClick(close)"
     >
       <template v-if="action.icon" #prefix>
-        <FeatherIcon :name="action.icon" class="h-4 w-4" />
+        <Icon :icon="action.icon" class="h-4 w-4" />
       </template>
     </Button>
   </template>
@@ -28,6 +28,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import Icon from '@/components/Icon.vue'
 import { Dropdown } from 'frappe-ui'
 import { isMobileView } from '@/composables/settings'
 
@@ -75,7 +76,7 @@ const groupedActions = computed(() => {
     _actions.push({
       group: __('Actions'),
       hideLabel: true,
-      items: _normalActions.map((action) => ({
+      options: _normalActions.map((action) => ({
         label: action.label,
         onClick: () => action.onClick(props.close),
         icon: action.icon,

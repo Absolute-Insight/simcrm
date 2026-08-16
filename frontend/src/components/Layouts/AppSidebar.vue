@@ -115,7 +115,7 @@
                 </template>
                 <Tooltip
                   :text="__(link.label)"
-                  placement="right"
+                  side="right"
                   :hoverDelay="1.5"
                   :disabled="isCollapsed"
                 >
@@ -253,17 +253,17 @@ import {
 import { showChangePasswordModal } from '@/composables/modals'
 import { useBroadcast } from '@/composables/useBroadcast.js'
 import { call, Sidebar, SidebarItem, SidebarLabel, Tooltip } from 'frappe-ui'
+import { SignupBanner } from '@framework/ui/components/SignupBanner'
+import { TrialBanner } from '@framework/ui/components/TrialBanner'
 import {
-  SignupBanner,
-  TrialBanner,
   HelpModal,
   GettingStartedBanner,
   useOnboarding,
   showHelpModal,
   minimize,
   IntermediateStepModal,
-  useTelemetry,
-} from 'frappe-ui/frappe'
+} from '@framework/ui/components/Onboarding'
+import { useTelemetry } from '@framework/ui/telemetry'
 import router from '@/router'
 import { useStorage } from '@vueuse/core'
 import { useDemoData } from '@/composables/demoData'

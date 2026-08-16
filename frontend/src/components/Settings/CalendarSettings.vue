@@ -72,7 +72,7 @@
         </div>
         <div
           v-if="notifications?.length"
-          class="rounded-lg flex flex-col gap-2 w-fit"
+          class="rounded-6 flex flex-col gap-2 w-fit"
         >
           <div v-for="notification in notifications" :key="notification.name">
             <div class="flex items-center gap-2">
@@ -141,7 +141,7 @@
         <Button
           class="w-fit"
           :label="__('Add Notification')"
-          iconLeft="plus"
+          iconLeft="lucide-plus"
           @click="
             notifications.push({
               type: 'Notification',
@@ -168,7 +168,7 @@
         </div>
         <div
           v-if="allDayNotifications?.length"
-          class="rounded-lg flex flex-col gap-2 w-fit"
+          class="rounded-6 flex flex-col gap-2 w-fit"
         >
           <div
             v-for="notification in allDayNotifications"
@@ -241,7 +241,7 @@
         <Button
           class="w-fit"
           :label="__('Add Notification')"
-          iconLeft="plus"
+          iconLeft="lucide-plus"
           @click="
             allDayNotifications.push({
               type: 'Notification',

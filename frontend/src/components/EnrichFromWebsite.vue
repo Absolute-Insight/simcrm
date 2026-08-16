@@ -8,15 +8,16 @@
     @click="enrich"
   >
     <template v-if="!running" #prefix>
-      <FeatherIcon name="zap" class="h-4 w-4" />
+      <Icon icon="lucide-zap" class="h-4 w-4" />
     </template>
   </Button>
 </template>
 
 <script setup>
 import { ref, onBeforeUnmount } from 'vue'
-import { Button, FeatherIcon, call, toast } from 'frappe-ui'
-import { useTelemetry } from 'frappe-ui/frappe'
+import Icon from '@/components/Icon.vue'
+import { Button, call, toast } from 'frappe-ui'
+import { useTelemetry } from '@framework/ui/telemetry'
 import { globalStore } from '@/stores/global'
 import { organizationsStore } from '@/stores/organizations'
 
