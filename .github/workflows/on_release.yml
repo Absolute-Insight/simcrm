@@ -30,8 +30,12 @@ jobs:
         # conventional-changelog-conventionalcommits backs the preset in
         # .releaserc; semantic-release only bundles the angular preset, which
         # ignores the `feat!:`/`fix!:` breaking-change shorthand outright.
+        # Pinned to major 9: v10 loads cleanly against release-notes-generator
+        # 14 but its writer silently renders an empty body — v3.0.0 shipped
+        # with headerless notes that way. Unpin only after a release dry-run
+        # shows populated sections.
         run: |
-          npm install @semantic-release/git @semantic-release/exec conventional-changelog-conventionalcommits --no-save
+          npm install @semantic-release/git @semantic-release/exec conventional-changelog-conventionalcommits@9 --no-save
       - name: Create Release
         # RELEASE_TOKEN (a PAT) is only needed once main is branch-protected;
         # until then the workflow token with contents:write does everything
