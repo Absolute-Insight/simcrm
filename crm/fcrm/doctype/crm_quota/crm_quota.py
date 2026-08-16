@@ -58,18 +58,35 @@ class CRMQuota(Document):
 
 
 def get_permission_query_conditions(user=None):
-	"""Reps see their own quota; managers see everyone's."""
+	"""Reps see their own quota; managers see their subtree's.
+
+	This used to return "" for anyone holding Sales Manager, which handed an
+	in-tree manager every rep's target in the company — the exact thing
+	SECURITY.md names as an invariant, and the thing the deal and plan queries
+	beside it already honour. ``visible_users`` is the hierarchy the rest of the
+	app scopes by, so Settings → Sales Targets now covers the same people a
+	manager's deal tiles do.
+	"""
+	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
+
 	user = user or frappe.session.user
-	roles = frappe.get_roles(user)
-	if "System Manager" in roles or "Sales Manager" in roles:
+	users = visible_users(user)
+	if users is None:
 		return ""
-	return f"`tabCRM Quota`.`user` = {frappe.db.escape(user)}"
+	escaped = ", ".join(frappe.db.escape(name) for name in users)
+	return f"`tabCRM Quota`.`user` in ({escaped})"
 
 
 def has_permission(doc, ptype="read", user=None):
+	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
+
 	user = user or frappe.session.user
-	roles = frappe.get_roles(user)
-	if "System Manager" in roles or "Sales Manager" in roles:
+	users = visible_users(user)
+	if users is None:
 		return True
+	if doc.user not in users:
+		return False
 	# a rep may read their own target and nothing else — writing is a manager act
-	return ptype == "read" and doc.user == user
+	if doc.user == user and "Sales Manager" not in frappe.get_roles(user):
+		return ptype == "read"
+	return True

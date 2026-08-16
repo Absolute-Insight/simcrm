@@ -648,6 +648,22 @@ class ScopedMetricsTest(IntegrationTestCase):
 		# rep's 1000 -- the outsider's 9000 must not be in it
 		self.assertEqual(quota_in_period(month, month_end), 1000)
 
+	def test_the_quota_list_itself_is_scoped_to_the_subtree(self):
+		"""SECURITY.md's rep-isolation invariant, asserted on the doctype.
+
+		Scoping only the aggregate would leave Settings -> Sales Targets, which
+		lists CRM Quota directly, showing every rep's number to any in-tree
+		manager. The permission query returned "" for anyone holding Sales
+		Manager, so it did."""
+		self.make_quota(REP, 1000)
+		self.make_quota(OUTSIDER, 9000)
+
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(MANAGER)
+		owners = set(frappe.get_list("CRM Quota", pluck="user", limit_page_length=0))
+		self.assertIn(REP, owners)
+		self.assertNotIn(OUTSIDER, owners)
+
 	def test_a_manager_cannot_name_a_rep_outside_their_subtree(self):
 		"""The user parameter was trusted for anyone holding Sales Manager, so an
 		in-tree one could read another team's figures by naming them."""

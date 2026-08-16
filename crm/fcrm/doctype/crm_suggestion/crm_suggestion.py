@@ -12,20 +12,32 @@ def get_permission_query_conditions(user=None):
 	generic document API reaches this doctype directly, so the rule has to live
 	on the doctype or it is not a rule.
 	"""
+	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
+
 	user = user or frappe.session.user
-	roles = frappe.get_roles(user)
-	if "System Manager" in roles or "Sales Manager" in roles:
+	users = visible_users(user)
+	if users is None:
 		return ""
-	return f"`tabCRM Suggestion`.`user` = {frappe.db.escape(user)}"
+	# an unowned suggestion is a team-wide signal with no rep attached; it stays
+	# visible to anyone who manages a team rather than belonging to one of them
+	escaped = ", ".join(frappe.db.escape(name) for name in users)
+	own = f"`tabCRM Suggestion`.`user` in ({escaped})"
+	if "Sales Manager" in frappe.get_roles(user):
+		return f"({own} or ifnull(`tabCRM Suggestion`.`user`, '') = '')"
+	return own
 
 
 def has_permission(doc, ptype="read", user=None):
+	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
+
 	user = user or frappe.session.user
-	roles = frappe.get_roles(user)
-	if "System Manager" in roles or "Sales Manager" in roles:
+	users = visible_users(user)
+	if users is None:
 		return True
-	# unowned suggestions are team-wide signals and stay in manager views only
-	return bool(doc.user) and doc.user == user
+	if not doc.user:
+		# unowned suggestions are team-wide signals and stay in manager views only
+		return "Sales Manager" in frappe.get_roles(user)
+	return doc.user in users
 
 
 class CRMSuggestion(Document):
