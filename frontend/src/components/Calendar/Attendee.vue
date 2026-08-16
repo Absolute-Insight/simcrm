@@ -32,7 +32,7 @@
         </ComboboxAnchor>
         <ComboboxPortal>
           <ComboboxContent
-            class="z-10 mt-1 min-w-48 w-full max-w-md bg-surface-elevation-2 overflow-hidden rounded-6 shadow-2xl ring-1 ring-black ring-opacity-5"
+            class="z-10 mt-1 min-w-48 w-full max-w-md bg-surface-elevation-2 overflow-hidden rounded-6 shadow-2xl ring-1 ring-black/5"
             position="popper"
             :align="'start'"
             @openAutoFocus.prevent

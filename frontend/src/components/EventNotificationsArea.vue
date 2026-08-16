@@ -58,7 +58,7 @@
                 </div>
               </div>
 
-              <div class="flex items-center gap-2 flex-shrink-0">
+              <div class="flex items-center gap-2 shrink-0">
                 <MultipleAvatar
                   v-if="e.participants?.length > 1"
                   :avatars="e.participants"

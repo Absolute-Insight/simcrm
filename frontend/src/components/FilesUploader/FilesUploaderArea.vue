@@ -68,7 +68,7 @@
       >
         <div class="flex items-center gap-4 truncate">
           <div
-            class="size-11 rounded-4 overflow-hidden flex-shrink-0 flex justify-center items-center"
+            class="size-11 rounded-4 overflow-hidden shrink-0 flex justify-center items-center"
             :class="{ border: !file.type?.startsWith('image') }"
           >
             <img

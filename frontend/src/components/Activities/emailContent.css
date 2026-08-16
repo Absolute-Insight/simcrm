@@ -1,7 +1,7 @@
 @config '../../../tailwind.email.config.js';
 
-@tailwind base;
-@tailwind components;
+/* no source scanning: this sheet only needs the .prose-f component below */
+@import 'tailwindcss' source(none);
 
 @layer components {
   .prose-f {

@@ -1,0 +1,5 @@
+/* Inter is loaded through this indirection because the compat style.css must
+   work with both frappe-ui locations (node_modules in bare builds, the
+   submodule in dev) — the vite alias 'frappe-ui-fonts-inter.css' points at
+   whichever is active. */
+@import 'frappe-ui-fonts-inter.css';

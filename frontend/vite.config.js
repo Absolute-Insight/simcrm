@@ -97,9 +97,14 @@ export default defineConfig(async ({ mode }) => {
           import.meta.dirname,
           'node_modules/frappe-ui/internals.ts',
         ),
+        // tailwind-4 compat: frappe-ui's stylesheet still uses v3 directives
         'frappe-ui/style.css': path.resolve(
           import.meta.dirname,
-          'node_modules/frappe-ui/src/style.css',
+          'src/lib/frappe-ui-compat/style.css',
+        ),
+        'frappe-ui-fonts-inter.css': path.resolve(
+          import.meta.dirname,
+          'node_modules/frappe-ui/src/fonts/Inter/inter.css',
         ),
         'frappe-ui/tailwind': path.resolve(
           import.meta.dirname,
@@ -248,7 +253,11 @@ function getAliases(config) {
     ),
     'frappe-ui/style.css': path.resolve(
       import.meta.dirname,
-      '../frappe-ui/src/style.css',
+      'src/lib/frappe-ui-compat/style.css',
+    ),
+    'frappe-ui-fonts-inter.css': path.resolve(
+      import.meta.dirname,
+      '../frappe-ui/src/fonts/Inter/inter.css',
     ),
     'frappe-ui/experimental': path.resolve(
       import.meta.dirname,
