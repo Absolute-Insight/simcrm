@@ -83,6 +83,7 @@ const numberCharts = [
     label: __('Avg Time to Close a Deal'),
     value: 'average_time_to_close_a_deal',
   },
+  { label: __('Deals at Risk'), value: 'deals_at_risk' },
 ]
 
 const axisChart = ref('sales_trend')
@@ -94,6 +95,7 @@ const axisCharts = [
   { label: __('Lost Deal Reasons'), value: 'lost_deal_reasons' },
   { label: __('Deals by Territory'), value: 'deals_by_territory' },
   { label: __('Deals by Salesperson'), value: 'deals_by_salesperson' },
+  { label: __('Forecast Accuracy'), value: 'forecast_accuracy' },
 ]
 
 const donutChart = ref('deals_by_stage_donut')
