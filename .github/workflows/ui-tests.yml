@@ -56,12 +56,18 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          # 3.14 and node 24 below, matching every other workflow here. Both
+          # were stale -- 3.12 and 22 -- and neither was ever corrected because
+          # this file never ran. frappe develop requires Python >=3.14 (its
+          # solver refused outright) and node >=24 (yarn install refused during
+          # bench init). Two layers of the same rot, found one after the other
+          # by actually running it.
+          python-version: "3.14"
 
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           check-latest: true
 
       - name: Add to Hosts
