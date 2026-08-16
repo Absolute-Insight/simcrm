@@ -27,8 +27,11 @@ jobs:
         with:
           node-version: 24
       - name: Setup dependencies
+        # conventional-changelog-conventionalcommits backs the preset in
+        # .releaserc; semantic-release only bundles the angular preset, which
+        # ignores the `feat!:`/`fix!:` breaking-change shorthand outright.
         run: |
-          npm install @semantic-release/git @semantic-release/exec --no-save
+          npm install @semantic-release/git @semantic-release/exec conventional-changelog-conventionalcommits --no-save
       - name: Create Release
         # RELEASE_TOKEN (a PAT) is only needed once main is branch-protected;
         # until then the workflow token with contents:write does everything
