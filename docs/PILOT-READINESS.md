@@ -40,7 +40,7 @@ polish · **P4** platform work beyond the pilot.
       themselves. Combined with the item above, an in-tree manager can read another team's
       quota targets — compensation data. `rep_plan.py:63` already has the right pattern
       (`_can_view`); the metrics layer doesn't use it. **2–3 h.**
-- [ ] **Quota and Suggestion permission queries are role-based, not hierarchy-scoped —
+- [x] **Quota and Suggestion permission queries were role-based, not hierarchy-scoped —
       contradicting SECURITY.md.** `crm_quota.py:60`, `crm_suggestion.py:8` return
       unrestricted for any Sales Manager. `SECURITY.md:26` states rep isolation as an
       invariant, and CRM Rep Plan honours it; these two don't. An in-tree manager sees every
@@ -56,7 +56,7 @@ polish · **P4** platform work beyond the pilot.
       `_raise_exchange_rate_error` throws if both providers fail. On a host with no outbound
       internet — a normal corporate deployment — *every* non-base-currency deal save fails.
       Also the only outbound endpoint in the app with no `@rate_limit`. **3–4 h.**
-- [ ] **Customer PII logged to the browser console in production.** `TwilioCallUI.vue:475`
+- [x] **Customer PII was logged to the browser console in production.** `TwilioCallUI.vue:475`
       logs every inbound caller's phone number; `:329`, `ExotelCallUI.vue:397,420` log full
       call payloads; `UserMultiSelect.vue:79` is a bare debug leftover. `vite.config.js` has
       no `build:` block, so no `drop_console` — these ship verbatim. **1 h.**
@@ -64,10 +64,10 @@ polish · **P4** platform work beyond the pilot.
       `automation.py:110`. `frappe.render_template` with default globals still exposes
       `frappe.db.sql` and a `get_all` forced to `ignore_permissions=True`. A customer's line
       manager can read arbitrary tables via an automation rule's title template. **2–4 h.**
-- [ ] **Digest recipients are validated only at save time.** `crm_report_digest.py:30` vs
+- [x] **Digest recipients were validated only at save time.** `crm_report_digest.py:30` vs
       `:47`. An offboarded rep keeps receiving daily pipeline values at a personal address
       indefinitely. The deploy runbook currently claims otherwise. **30 min.**
-- [ ] **`crm/api/rep_plan.py` has no role gate** on any of its 7 endpoints and writes with
+- [x] **`crm/api/rep_plan.py` had no role gate** on any of its 7 endpoints and writes with
       `ignore_permissions` (`:204`). Any authenticated account — including a portal user
       with no CRM role — can create plan records that feed the adherence metric. **15 min.**
 - [ ] **`CRMSalesHierarchy.on_trash` overrides `NestedSet.on_trash` without calling
