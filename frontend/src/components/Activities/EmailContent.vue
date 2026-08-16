@@ -1,7 +1,13 @@
 <template>
+  <!-- sandbox without allow-scripts: a srcdoc iframe is same-origin, so
+       anything that ever slipped past the server-side sanitiser would have run
+       with full access to this app's session. allow-same-origin stays because
+       the onload handler below reads contentWindow.document to size the frame
+       and mirror the theme; it grants no script execution on its own. -->
   <iframe
     ref="iframeRef"
     :srcdoc="htmlContent"
+    sandbox="allow-same-origin"
     class="prose-f block h-10 max-h-[500px] w-full"
   />
 </template>
@@ -100,10 +106,28 @@ function replaceReplyToContent(replyToContentElement, forGmail) {
   )
 }
 
+// Defence in depth, not the primary control: frappe sanitises Text Editor
+// fields with nh3 on save, and this is a second lock on the same door. 'none'
+// by default blocks script, frame, object and form targets outright; images and
+// fonts stay reachable because business email is full of logos and signatures,
+// and inline styles are the sheet injected just below.
+//
+// Remote images do still load, which hands an external sender a read receipt on
+// every rep who opens their mail. Blocking them is normal mail-client behaviour
+// but needs a "load images" affordance to not look broken — tracked separately
+// rather than smuggled in here.
+const CSP = [
+  "default-src 'none'",
+  'img-src http: https: data: cid:',
+  'font-src http: https: data:',
+  "style-src 'unsafe-inline' http: https:",
+].join('; ')
+
 const htmlContent = `
 <!DOCTYPE html>
 <html>
 <head>
+  <meta http-equiv="Content-Security-Policy" content="${CSP}">
   <style>${emailContentStyles}</style>
 </head>
 <body>

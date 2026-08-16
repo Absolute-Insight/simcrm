@@ -75,11 +75,15 @@ polish · **P4** platform work beyond the pilot.
       and the lft/rgt repair, on the doctype that *defines* rep isolation — whose test file
       is a 9-line empty stub. Offboarding a manager orphans their reports or 500s after the
       role removal already committed. **2 h + tests.**
-- [ ] **Inbound email renders in an unsandboxed same-origin iframe.**
+- [x] **Inbound email rendered in an unsandboxed same-origin iframe.**
       `EmailContent.vue:103`, `srcdoc` with no `sandbox`. Not a confirmed XSS — Frappe
       sanitises Text Editor fields with nh3 — but there is no defence in depth and no CSP
       anywhere in the app, and remote content loads automatically, giving external senders
       read receipts on every rep who opens their mail. **2 h.**
+- [ ] **Remote images in inbound email still load automatically**, so an external
+      sender gets a read receipt on every rep who opens their mail. Blocking them is
+      normal mail-client behaviour but needs a "load images" affordance to not look
+      broken, so it was left out of the sandbox fix rather than smuggled in. **1 day.**
 - [ ] **Demo data contaminates forecast history irreversibly.** `hooks.py:97` seeds demo
       data on desk setup-wizard completion — which `deploy/README.md:107` sends operators
       to. `crm/demo/` never cleans `CRM Suggestion`, `CRM Forecast Snapshot` or
