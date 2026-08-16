@@ -89,6 +89,56 @@ off the host; a backup on the machine it protects is a copy, not a backup.
   you actually run. Either way a slow model occupies a worker for its whole
   duration: size the pool before pointing this at something big.
 
+## Running the agent on a local model
+
+The agent tier is an HTTP client to any OpenAI-compatible endpoint — it does no
+inference itself. Nothing about the CRM changes between a hosted API and a model
+on your own hardware; only `base_url` in **CRM Agent Settings** does. Three
+shapes are supported:
+
+| | What it costs | When |
+|---|---|---|
+| **Off** | nothing | The default. Every deterministic feature — signals, deal health, planner, digests, automation — works with the agent disabled by design. You lose only model-drafted content. |
+| **Hosted API** | per-token billing | Cheapest to run. Note that thread contents, including customer email, leave your infrastructure — a decision for whoever owns that data. |
+| **Local model** | one host with a GPU | Nothing leaves your network. |
+
+For the local shape this stack ships an opt-in profile:
+
+```bash
+docker compose --profile local-model up -d
+docker compose logs -f ollama-pull    # first run downloads several GB
+```
+
+Then point the CRM at it — **CRM Agent Settings** → `base_url`
+`http://ollama:11434/v1`, `model` the same value as `VECTORA_AGENT_MODEL`, and
+`enabled` on. `127.0.0.1` will not work: from inside the backend container that
+is the container itself, so the endpoint has to be the service name.
+
+`ollama-pull` is a one-shot that fetches the weights and then makes one
+throwaway call to warm them. It is idempotent, so `up -d` stays safe to re-run.
+
+**Hardware.** A GPU with 8GB or more is the sensible floor for the default
+model; add a device reservation to the `ollama` service (there is a commented
+example in `docker-compose.yml`). CPU-only inference does work, but a summary
+takes tens of seconds rather than about one, which pushes you into the timeout
+interaction described above — raise the agent `timeout`, and
+`PROXY_READ_TIMEOUT` with it, or every call will fail at the proxy. The 4GB VM
+that comfortably runs the rest of this stack is **not** enough to also host a
+model; put inference on its own machine.
+
+**Model choice.** `granite-4.0-h-tiny` at Q4_K_M is what this stack is verified
+against: guided decoding is clean and a warm summary returns in about a second
+on a small GPU, against roughly nine and a half seconds cold — which is what
+`OLLAMA_KEEP_ALIVE` exists to avoid. `LFM2.5-2.6B` also works, more slowly. Do
+not ship `MiniCPM5-1B`: it intermittently returns empty content, which the agent
+correctly reports as `unavailable` rather than inventing a summary.
+
+**What a local model does not fix.** Prompt injection. Every model tested so far
+follows instructions embedded in a customer's email — that is why this tier has
+no write tools and why drafted replies are always shown to a human before
+sending. Running the model yourself changes where the weights live, not whether
+the output can be steered by someone who emails your reps.
+
 ## Pilot checklist
 
 The defaults below are deliberately conservative; loosen them as the pilot

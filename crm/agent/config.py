@@ -18,7 +18,13 @@ import frappe
 # populate a freshly-created row, which may not exist yet.
 DEFAULT_SETTINGS = {
 	"enabled": 0,
-	"base_url": "http://localhost:8000/v1",
+	# An inference server's port, not ours. This used to default to
+	# localhost:8000/v1 -- frappe's own web port -- so an admin who enabled the
+	# tier without editing it made the CRM POST to itself, collect a 404 and
+	# report "unavailable" with nothing to suggest why. 11434 is ollama's
+	# default and what the deploy stack's local-model profile serves, so the
+	# default is now either correct or refused at connect, which reads honestly.
+	"base_url": "http://localhost:11434/v1",
 	"model": "lfm2.5-2.6b",
 	"timeout": 30,
 	"max_tokens": 1024,
