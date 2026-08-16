@@ -131,7 +131,63 @@ services:
     <<: *app
     command: ["bench", "schedule"]
 
+  # --- Local model, opt-in ----------------------------------------------------
+  # docker compose --profile local-model up -d
+  #
+  # The agent tier is an HTTP client to any OpenAI-compatible endpoint, so it
+  # does not care whether the model runs here, on another host, or at a vendor.
+  # This profile exists so "run it on our own hardware" is a supported, tested
+  # shape rather than something each operator reinvents. Without the profile
+  # these two services are not created at all and the stack is unchanged.
+  #
+  # GPU: add a device reservation to `ollama` if the host has one --
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
+  # CPU-only works but is slow enough that the agent timeout needs raising, and
+  # the proxy ceiling with it. See README.md.
+  ollama:
+    image: ollama/ollama:0.12.12
+    profiles: ["local-model"]
+    restart: unless-stopped
+    environment:
+      # Weights unload between calls without this, and the first call after a
+      # quiet period pays the reload before it answers.
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # One-shot: pull the weights, then make one throwaway call so the first real
+  # request from a rep is a warm one. Idempotent -- a pull of a model already
+  # present is a no-op, so `up -d` stays safe to re-run.
+  ollama-pull:
+    image: ollama/ollama:0.12.12
+    profiles: ["local-model"]
+    restart: on-failure
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      MODEL: ${VECTORA_AGENT_MODEL:-hf.co/ibm-granite/granite-4.0-h-tiny-GGUF:Q4_K_M}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "Pulling $$MODEL (first run downloads several GB)"
+        ollama pull "$$MODEL"
+        echo "Warming $$MODEL"
+        ollama run "$$MODEL" "reply with the single word: ready" >/dev/null
+        echo "Local model ready. Point CRM Agent Settings at http://ollama:11434/v1"
+
 volumes:
+  ollama-models:
   db-data:
   redis-queue-data:
   sites:
