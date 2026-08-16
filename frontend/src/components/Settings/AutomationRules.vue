@@ -170,10 +170,19 @@
                 class="w-40"
               />
               <div class="flex items-center gap-2 pt-5">
-                <Switch v-model="draft.assign_to_owner" size="sm" />
-                <span class="text-base text-ink-gray-7">
-                  {{ __('Assign to the record owner') }}
-                </span>
+                <!-- assign_to_owner is stored 0/1, and reka-ui's SwitchRoot
+                     compares strictly against `true`: bound raw it looked on,
+                     announced aria-checked="false", and ate the first click that
+                     tried to turn it off. Coerced both ways, like the rule-list
+                     switch above. `label` is what gives the control its
+                     accessible name -- frappe-ui only renders the associated
+                     label element when the prop is present. -->
+                <Switch
+                  :model-value="!!draft.assign_to_owner"
+                  size="sm"
+                  :label="__('Assign to the record owner')"
+                  @update:model-value="draft.assign_to_owner = $event ? 1 : 0"
+                />
               </div>
             </div>
           </div>
