@@ -415,6 +415,19 @@ class MetricsTest(IntegrationTestCase):
 		names = {widget["name"] for widget in json.loads(default_manager_dashboard_layout())}
 		self.assertEqual(names & set(CURATED_TILE_METRICS), set())
 
+	def test_the_widget_patch_does_not_repeat_the_curated_tiles(self):
+		"""Same rule as the default layout, enforced where it actually broke.
+
+		The patch predates CURATED_TILE_METRICS and merged two of them into every
+		upgraded site's grid. The default-layout test above could not catch that,
+		because the patch is a second, independent way for a widget to reach a
+		layout."""
+		from crm.fcrm.doctype.crm_dashboard.crm_dashboard import CURATED_TILE_METRICS
+		from crm.patches.v1_0.add_vectora_dashboard_widgets import WIDGETS
+
+		names = {widget["name"] for widget in WIDGETS}
+		self.assertEqual(names & set(CURATED_TILE_METRICS), set())
+
 
 MANAGER = "metrics-manager@crmtest.test"
 REP = "metrics-teamrep@crmtest.test"
@@ -584,6 +597,13 @@ class ScopedMetricsTest(IntegrationTestCase):
 
 		today = frappe.utils.getdate()
 		monday = frappe.utils.add_days(today, -today.weekday())
+		# plan_adherence only counts days that have settled (cutoff is yesterday),
+		# so on a Monday this week has no countable day and every rep returns no
+		# row -- the assertion below would read that emptiness as "the manager saw
+		# nobody", which is a pass for the wrong reason on six days and a failure
+		# on the seventh. test_reports guards its sibling case the same way.
+		if frappe.utils.add_days(today, -1) < monday:
+			self.skipTest("no settled day inside this week yet")
 		for owner in (REP, OUTSIDER):
 			plan = frappe.get_doc(
 				{
