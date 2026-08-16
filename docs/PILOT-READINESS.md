@@ -29,13 +29,13 @@ polish · **P4** platform work beyond the pilot.
       first boot step is `cp .env.example .env` *inside the working tree*, and that file
       holds `DB_ROOT_PASSWORD` and `ADMIN_PASSWORD`. One `git add -A` on a deploy host
       publishes a production database password.
-- [ ] **Quota attainment divides a scoped numerator by an unscoped denominator.**
+- [x] **Quota attainment divided a scoped numerator by an unscoped denominator.**
       `crm/api/dashboard.py:1770` vs `:1799`. `quota_in_period` uses `frappe.get_all`, which
       does not check permissions; `won_value_in_period` is subtree-scoped. An in-tree
       manager at 90% attainment sees ~30% — and `quota_attainment` is a curated tile, the
       first number on the manager dashboard. `forecast_accuracy_rows` (`:1850`) has the same
       shape. **1–2 h.**
-- [ ] **The `user=` parameter is trusted for anyone holding Sales Manager.**
+- [x] **The `user=` parameter was trusted for anyone holding Sales Manager.**
       `dashboard.py:112,149`; `reports.py:104,227`. Only a *plain* Sales User is pinned to
       themselves. Combined with the item above, an in-tree manager can read another team's
       quota targets — compensation data. `rep_plan.py:63` already has the right pattern
@@ -45,7 +45,7 @@ polish · **P4** platform work beyond the pilot.
       unrestricted for any Sales Manager. `SECURITY.md:26` states rep isolation as an
       invariant, and CRM Rep Plan honours it; these two don't. An in-tree manager sees every
       rep's targets company-wide. **2 h.**
-- [ ] **Bulk "Convert to Deal" silently loses conversions.** `ListBulkActions.vue:88`
+- [x] **Bulk "Convert to Deal" silently lost conversions.** `ListBulkActions.vue:88`
       fires one un-awaited POST per lead with no `.catch`; the first response closes the
       dialog while the rest are in flight. A rep converts 30 leads, sees success toasts, and
       some silently did not convert. Real pipeline lost. **2 h** (`Promise.allSettled` + one
@@ -102,7 +102,7 @@ polish · **P4** platform work beyond the pilot.
 - [ ] **Nothing gates merges.** `develop` and `main` are both unprotected, `.mergify.yml`
       has no `check-success` condition, and `codecov.yml:19` sets `if_ci_failed: ignore`.
       **30 min.**
-- [ ] **The Playwright suite has never run in CI.** `ui-tests.yml:6` triggers only on
+- [x] **The Playwright suite had never run in CI.** `ui-tests.yml:6` triggers only on
       branch `main-hotfix`, which does not exist. **5 min.**
 - [ ] **The frontend coverage gate cannot fail.** `vitest.config.js:12` scopes coverage to
       10 hand-picked `src/utils` files, so the 85% patch target in `codecov.yml` passes
