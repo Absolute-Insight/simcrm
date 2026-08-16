@@ -30,3 +30,10 @@ AGENTS.md
 .pi
 .patch
 *.pdf
+
+# deploy/README.md's first boot step is `cp .env.example .env` *inside this
+# working tree*, and that file holds DB_ROOT_PASSWORD and ADMIN_PASSWORD. This
+# repository is public: one `git add -A` on a deploy host would publish a
+# production database password. .env.example stays tracked; .env never is.
+.env
+deploy/.env
