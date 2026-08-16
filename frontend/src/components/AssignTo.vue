@@ -1,7 +1,7 @@
 <template>
-  <Popover placement="bottom-end">
-    <template #target="{ togglePopover }">
-      <div class="flex items-center" @click="togglePopover">
+  <Popover bare placement="bottom-end">
+    <template #trigger>
+      <div class="flex items-center">
         <component
           :is="assignees?.length == 1 ? 'Button' : 'div'"
           v-if="assignees?.length"
@@ -11,13 +11,13 @@
         <Button v-else :label="__('Assign To')" />
       </div>
     </template>
-    <template #body="{ isOpen }">
+    <template #default="{ open }">
       <AssignToBody
-        v-show="isOpen"
+        v-show="open"
         v-model="assignees"
         :docname="docname"
         :doctype="doctype"
-        :open="isOpen"
+        :open="open"
         :onUpdate="ownerField && saveAssignees"
       />
     </template>

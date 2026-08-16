@@ -31,7 +31,7 @@
                  it, so show it alongside until a lucide icon is picked -->
             <div
               v-if="currentIsEmoji"
-              class="grid size-8 shrink-0 place-items-center rounded bg-surface-gray-3 text-lg leading-none"
+              class="grid size-8 shrink-0 place-items-center rounded-4 bg-surface-gray-3 text-lg leading-none"
               :title="__('Current icon')"
             >
               {{ view.icon }}
@@ -70,7 +70,8 @@
 </template>
 
 <script setup>
-import { IconPicker } from 'frappe-ui/icons'
+// parked in experimental for v1 (frappe-ui migration doc)
+import { IconPicker } from 'frappe-ui/experimental'
 import { isEmoji } from '@/utils'
 import { call } from 'frappe-ui'
 import { ref, computed, watch, nextTick } from 'vue'

@@ -39,7 +39,7 @@
     </div>
     <div
       v-show="showCallPopup"
-      class="fixed z-20 w-[280px] min-h-44 flex gap-2 flex-col rounded-lg bg-surface-gray-10 p-4 pt-2.5 text-ink-gray-2 shadow-2xl"
+      class="fixed z-20 w-[280px] min-h-44 flex gap-2 flex-col rounded-6 bg-surface-gray-10 p-4 pt-2.5 text-ink-gray-2 shadow-2xl"
       :style="style"
       @click.stop
     >
@@ -238,7 +238,9 @@ import CountUpTimer from '@/components/CountUpTimer.vue'
 import { globalStore } from '@/stores/global'
 import { sessionStore } from '@/stores/session'
 import { useDraggable, useWindowSize } from '@vueuse/core'
-import { TextEditor, Avatar, Button, createResource, toast } from 'frappe-ui'
+import { Avatar, Button, createResource, toast } from 'frappe-ui'
+// parked in experimental for v1 (frappe-ui migration doc)
+import { TextEditor } from 'frappe-ui/experimental'
 import { ref, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 

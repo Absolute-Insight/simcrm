@@ -16,7 +16,7 @@
         <Dropdown
           v-if="isOwner && !editing"
           :options="menuOptions"
-          placement="right"
+          align="end"
           @click="confirmingDelete = false"
         >
           <Button
@@ -28,7 +28,7 @@
       </div>
     </div>
     <div
-      class="rounded bg-surface-gray-1 px-3 py-[7.5px] text-base leading-6 transition-all duration-300 ease-in-out"
+      class="rounded-4 bg-surface-gray-1 px-3 py-[7.5px] text-base leading-6 transition-all duration-300 ease-in-out"
     >
       <template v-if="editing">
         <TextEditor
@@ -68,7 +68,9 @@
 <script setup>
 import UserAvatar from '@/components/UserAvatar.vue'
 import AttachmentItem from '@/components/AttachmentItem.vue'
-import { Dropdown, Button, TextEditor, call, toast } from 'frappe-ui'
+import { Dropdown, Button, call, toast } from 'frappe-ui'
+// parked in experimental for v1 (frappe-ui migration doc)
+import { TextEditor } from 'frappe-ui/experimental'
 import TimelineTimestamp from '@/components/Activities/TimelineTimestamp.vue'
 import { sanitizeHTML, ConfirmDelete } from '@/utils'
 import { sessionStore } from '@/stores/session'

@@ -60,13 +60,13 @@
            to paste to your administrator". -->
       <details v-if="described.detail" class="v-error-detail w-full text-left">
         <summary
-          class="flex cursor-pointer list-none items-center justify-center gap-1 rounded py-1 text-sm text-ink-gray-5 hover:text-ink-gray-7 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+          class="flex cursor-pointer list-none items-center justify-center gap-1 rounded-4 py-1 text-sm text-ink-gray-5 hover:text-ink-gray-7 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
         >
           <LucideChevronRight class="v-error-detail__caret size-3.5" />
           {{ __('Technical details') }}
         </summary>
         <div
-          class="mt-2 flex items-start gap-2 rounded-md bg-surface-gray-2 p-3"
+          class="mt-2 flex items-start gap-2 rounded-5 bg-surface-gray-2 p-3"
         >
           <pre
             class="max-h-40 min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-ink-gray-6"

@@ -8,7 +8,7 @@
 -->
 <template>
   <section
-    class="flex min-w-0 flex-col rounded-lg border border-outline-gray-1 bg-surface-elevation-2"
+    class="flex min-w-0 flex-col rounded-6 border border-outline-gray-1 bg-surface-elevation-2"
     :aria-labelledby="headingId"
   >
     <header

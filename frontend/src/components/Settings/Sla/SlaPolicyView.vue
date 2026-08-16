@@ -117,8 +117,13 @@
                 @update:model-value="toggleDefaultSla"
               />
               <div v-if="isOldSla && step.data && !slaData.default">
-                <Popover trigger="hover" :hoverDelay="0.25" placement="top-end">
-                  <template #target>
+                <Popover
+                  trigger="hover"
+                  :hoverDelay="0.25"
+                  side="top"
+                  align="end"
+                >
+                  <template #trigger>
                     <div
                       class="text-sm text-ink-gray-6 flex gap-1 cursor-default"
                     >
@@ -126,9 +131,9 @@
                       <span class="lucide-info size-4" aria-hidden="true" />
                     </div>
                   </template>
-                  <template #body-main>
+                  <template #default>
                     <div
-                      class="text-sm text-ink-gray-6 p-2 bg-surface-elevation-2 rounded-md max-w-96 text-wrap whitespace-pre-wrap leading-5"
+                      class="text-sm text-ink-gray-6 p-2 bg-surface-elevation-2 rounded-5 max-w-96 text-wrap whitespace-pre-wrap leading-5"
                     >
                       <code>{{ slaData.condition }}</code>
                     </div>
@@ -139,7 +144,7 @@
             <div class="mt-5">
               <div
                 v-if="!useNewUI"
-                class="flex flex-col gap-3 items-center text-center text-ink-gray-7 text-sm mb-2 border border-outline-gray-3 rounded-md p-3 py-4"
+                class="flex flex-col gap-3 items-center text-center text-ink-gray-7 text-sm mb-2 border border-outline-gray-3 rounded-5 p-3 py-4"
               >
                 <span class="text-p-sm">
                   Conditions for this SLA were created from
@@ -248,7 +253,6 @@ import {
   Badge,
   Button,
   Checkbox,
-  ConfirmDialog,
   createResource,
   DatePicker,
   ErrorMessage,
@@ -260,6 +264,7 @@ import {
   Switch,
   toast,
 } from 'frappe-ui'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { inject, onUnmounted, ref, watch } from 'vue'
 import SettingsLayoutBase from '../../Layouts/SettingsLayoutBase.vue'
 import {

@@ -11,9 +11,9 @@
     </template>
     <template #suffix>
       <Tooltip>
-        <template #body>
+        <template #content>
           <div
-            class="rounded bg-surface-gray-10 py-1.5 px-2 text-xs text-ink-base shadow-xl"
+            class="rounded-4 bg-surface-gray-10 py-1.5 px-2 text-xs text-ink-base shadow-xl"
           >
             <span class="flex items-center gap-1">
               {{ show ? __('Hide Password') : __('Show Password') }}
@@ -28,9 +28,9 @@
           </div>
         </template>
         <div>
-          <FeatherIcon
+          <Icon
             v-show="showEye"
-            :name="show ? 'eye-off' : 'eye'"
+            :icon="show ? 'eye-off' : 'eye'"
             class="h-3 cursor-pointer mr-1"
             @click="show = !show"
           />
@@ -41,6 +41,7 @@
 </template>
 <script setup>
 import KeyboardShortcut from '@/components/KeyboardShortcut.vue'
+import Icon from '@/components/Icon.vue'
 import { FormControl, Tooltip } from 'frappe-ui'
 import { ref, computed } from 'vue'
 

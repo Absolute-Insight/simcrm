@@ -26,7 +26,7 @@
             <div
               v-for="e in event.items"
               :key="e.id"
-              class="flex items-center justify-between gap-2 h-full p-2 group hover:bg-surface-gray-1 rounded cursor-pointer"
+              class="flex items-center justify-between gap-2 h-full p-2 group hover:bg-surface-gray-1 rounded-4 cursor-pointer"
               @click="handleEventClick(e)"
             >
               <div class="flex items-stretch gap-1.5 flex-1 min-w-0">
@@ -46,7 +46,7 @@
                   <div class="flex items-center gap-1">
                     <div class="flex justify-center items-center size-4">
                       <div
-                        class="size-[6px] rounded shrink-0"
+                        class="size-[6px] rounded-4 shrink-0"
                         :style="{ backgroundColor: e.color || '#30A66D' }"
                       />
                     </div>

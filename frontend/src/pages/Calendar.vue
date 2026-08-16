@@ -60,13 +60,12 @@
               :clearable="false"
               @update:modelValue="(val) => onMonthYearChange(val)"
             >
-              <template #target="{ togglePopover }">
+              <template #trigger>
                 <Button
                   variant="ghost"
                   class="text-lg-medium text-ink-gray-7"
                   :label="currentMonthYear"
-                  iconRight="chevron-down"
-                  @click="togglePopover"
+                  iconRight="lucide-chevron-down"
                 />
               </template>
             </DatePicker>
@@ -174,15 +173,18 @@ import { globalStore } from '@/stores/global'
 import { getSettings } from '@/stores/settings'
 import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
 import {
-  Calendar,
   createListResource,
   dayjs,
   DatePicker,
   Tooltip,
-  CalendarActiveEvent as activeEvent,
   call,
   toast,
 } from 'frappe-ui'
+// the calendar family is parked in experimental for v1 (frappe-ui migration doc)
+import {
+  Calendar,
+  CalendarActiveEvent as activeEvent,
+} from 'frappe-ui/experimental'
 import { onMounted, ref, computed, provide, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 

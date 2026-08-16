@@ -96,7 +96,7 @@
                   :label="__('Delete')"
                   theme="red"
                   size="sm"
-                  iconLeft="trash-2"
+                  iconLeft="lucide-trash-2"
                   @click="deleteOrganization()"
                 />
                 <Button
@@ -124,9 +124,8 @@
     </Resizer>
     <Tabs
       v-model="tabIndex"
-      as="div"
       :tabs="tabs"
-      class="flex flex-1 overflow-hidden flex-col [&_[role='tablist']]:gap-7.5 [&_[role='tablist']]:px-5 [&_[role='tablist']::-webkit-scrollbar]:h-0 [&_[role='tablist']]:min-h-[45px] [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:grow"
+      class="flex flex-1 overflow-hidden flex-col [&_[role='tablist']]:gap-7.5 [&_[role='tablist']]:px-5 [&_[role='tablist']::-webkit-scrollbar]:h-0 [&_[role='tablist']]:min-h-[45px] [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:flex-col [&_[role='tabpanel']:not([hidden])]:grow [&_[role='tabpanel']:not([hidden])]:overflow-hidden"
     >
       <template #tab-item="{ tab, selected }">
         <button
@@ -224,7 +223,7 @@ import {
   call,
 } from 'frappe-ui'
 import { useDoctypeModal } from '@/composables/doctypeModal'
-import { useTelemetry } from 'frappe-ui/frappe'
+import { useTelemetry } from '@framework/ui/telemetry'
 import { computed, ref, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -381,16 +380,18 @@ function getParsedSections(_sections) {
   })
 }
 
-const tabIndex = ref(0)
+const tabIndex = ref('Deals')
 const tabs = [
   {
+    value: 'Deals',
     label: 'Deals',
-    icon: DealsIcon,
+    iconLeft: DealsIcon,
     count: computed(() => deals.data?.length),
   },
   {
+    value: 'Contacts',
     label: 'Contacts',
-    icon: ContactsIcon,
+    iconLeft: ContactsIcon,
     count: computed(() => contacts.data?.length),
   },
 ]
@@ -452,7 +453,7 @@ const rows = computed(() => {
 const { getFormattedCurrency } = getMeta('CRM Deal')
 
 const columns = computed(() => {
-  return tabIndex.value === 0 ? dealColumns : contactColumns
+  return tabIndex.value === 'Deals' ? dealColumns : contactColumns
 })
 
 function getDealRowObject(deal) {

@@ -20,7 +20,7 @@
             class="mr-3"
             :tooltip="__('Refresh')"
             :aria-label="__('Refresh')"
-            icon="refresh-cw"
+            icon="lucide-refresh-cw"
             variant="ghost"
             :loading="suggestions.loading"
             @click="reload()"

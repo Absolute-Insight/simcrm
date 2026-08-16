@@ -8,7 +8,7 @@
         <div
           v-for="alert in visibleAlerts"
           :key="alert.id"
-          class="group flex flex-col relative bg-surface-elevation-1 rounded-lg drop-shadow-2xl shadow-sm"
+          class="group flex flex-col relative bg-surface-elevation-1 rounded-6 drop-shadow-2xl shadow-sm"
         >
           <div class="flex justify-between items-center gap-1 p-3">
             <div class="flex items-stretch space-x-2">

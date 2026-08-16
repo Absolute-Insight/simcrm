@@ -17,55 +17,55 @@
       </Button>
     </template>
   </Combobox>
-  <Popover v-else placement="bottom-end">
-    <template #target="{ isOpen, togglePopover }">
-      <Button
-        v-if="sortValues.size > 1"
-        :label="__('Sort')"
-        :icon="hideLabel && SortIcon"
-        :iconLeft="!hideLabel && SortIcon"
-        @click="togglePopover"
-      >
-        <template v-if="sortValues?.size" #suffix>
-          <div
-            class="flex h-5 w-5 items-center justify-center rounded-[5px] bg-surface-base pt-px text-xs-medium text-ink-gray-8 shadow-sm"
-          >
-            {{ sortValues.size }}
-          </div>
-        </template>
-      </Button>
-      <div v-else class="flex items-center justify-center">
+  <Popover v-else side="bottom" align="end">
+    <template #trigger="{ open }">
+      <div class="flex items-center justify-center">
         <Button
-          v-if="sortValues.size"
-          class="rounded-r-none border-r"
-          :icon="
-            Array.from(sortValues)[0].direction == 'asc'
-              ? AscendingIcon
-              : DesendingIcon
-          "
-          @click.stop="
-            () => {
-              Array.from(sortValues)[0].direction =
-                Array.from(sortValues)[0].direction == 'asc' ? 'desc' : 'asc'
-              apply()
-            }
-          "
-        />
-        <Button
-          :label="getSortLabel()"
-          class="shrink-0 [&_svg]:text-ink-gray-5"
-          :iconLeft="!hideLabel && !sortValues?.size && SortIcon"
-          :iconRight="
-            sortValues?.size && (isOpen ? 'chevron-up' : 'chevron-down')
-          "
-          :class="sortValues.size ? 'rounded-l-none' : ''"
-          @click.stop="togglePopover"
-        />
+          v-if="sortValues.size > 1"
+          :label="__('Sort')"
+          :icon="hideLabel && SortIcon"
+          :iconLeft="!hideLabel && SortIcon"
+        >
+          <template v-if="sortValues?.size" #suffix>
+            <div
+              class="flex h-5 w-5 items-center justify-center rounded-[5px] bg-surface-base pt-px text-xs-medium text-ink-gray-8 shadow-sm"
+            >
+              {{ sortValues.size }}
+            </div>
+          </template>
+        </Button>
+        <div v-else class="flex items-center justify-center">
+          <Button
+            v-if="sortValues.size"
+            class="rounded-r-none border-r"
+            :icon="
+              Array.from(sortValues)[0].direction == 'asc'
+                ? AscendingIcon
+                : DesendingIcon
+            "
+            @click.stop="
+              () => {
+                Array.from(sortValues)[0].direction =
+                  Array.from(sortValues)[0].direction == 'asc' ? 'desc' : 'asc'
+                apply()
+              }
+            "
+          />
+          <Button
+            :label="getSortLabel()"
+            class="shrink-0 [&_svg]:text-ink-gray-5"
+            :iconLeft="!hideLabel && !sortValues?.size && SortIcon"
+            :iconRight="
+              sortValues?.size && (open ? 'chevron-up' : 'chevron-down')
+            "
+            :class="sortValues.size ? 'rounded-l-none' : ''"
+          />
+        </div>
       </div>
     </template>
-    <template #body="{ close }">
+    <template #default="{ close }">
       <div
-        class="my-2 min-w-40 rounded-lg bg-surface-elevation-2 shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none"
+        class="my-2 min-w-40 rounded-6 bg-surface-elevation-2 shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none"
       >
         <div class="min-w-60 p-2">
           <div
@@ -134,7 +134,7 @@
                   class="!text-ink-gray-5"
                   :label="__('Add Sort')"
                   variant="ghost"
-                  iconLeft="plus"
+                  iconLeft="lucide-plus"
                   @click="setOpen(!open)"
                 />
               </template>

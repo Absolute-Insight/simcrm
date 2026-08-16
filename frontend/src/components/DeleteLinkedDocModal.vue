@@ -1,6 +1,6 @@
 <template>
-  <Dialog v-model:open="show" :size="'xl'">
-    <template #body>
+  <Dialog v-model:open="show" bare :size="'xl'">
+    <template #default>
       <div
         v-if="!confirmDeleteInfo.show"
         class="bg-surface-elevation-2 px-4 pb-6 pt-5 sm:px-6"
@@ -71,7 +71,7 @@
             "
             theme="red"
             variant="solid"
-            icon-left="trash-2"
+            icon-left="lucide-trash-2"
             @click="confirmDelete()"
           />
           <Button
@@ -83,7 +83,7 @@
             "
             variant="subtle"
             theme="gray"
-            icon-left="unlock"
+            icon-left="lucide-unlock"
             @click="confirmUnlink()"
           />
           <Button

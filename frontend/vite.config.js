@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
+import fs from 'node:fs'
 import path from 'path'
 import { VitePWA } from 'vite-plugin-pwa'
 
@@ -59,14 +60,71 @@ export default defineConfig(async ({ mode }) => {
     resolve: {
       alias: {
         '@': path.resolve(import.meta.dirname, 'src'),
-        // point at the package src dir (not index.ts) so subpath imports like
-        // `@framework/ui/components/Notifications` resolve. Importing subpaths avoids the
-        // barrel, which `export *`s components (Grid/Phone/FormLayout) that need a newer
-        // frappe-ui (`frappe-ui/internals`) than this app pins.
-        '@framework/ui': path.resolve(
+        // ---- frappe-ui compat layer -------------------------------------
+        // @framework/ui still imports FeatherIcon from 'frappe-ui'; beta.53
+        // removed it (ADR-0008). The bare specifier resolves to a shim that
+        // re-exports the real package plus a sprite-backed FeatherIcon; the
+        // real package is reachable as 'frappe-ui-actual'. Subpath entries
+        // must precede the bare key — a string alias matches by prefix, so
+        // without them 'frappe-ui/experimental' would rewrite under the shim
+        // directory. getAliases() overrides all of these to the local
+        // checkout for dev.
+        'frappe-ui/experimental': path.resolve(
           import.meta.dirname,
-          '../../frappe/ui/src',
+          'node_modules/frappe-ui/experimental.ts',
         ),
+        'frappe-ui/editor-style.css': path.resolve(
+          import.meta.dirname,
+          'node_modules/frappe-ui/src/molecules/editor/style.css',
+        ),
+        'frappe-ui/editor': path.resolve(
+          import.meta.dirname,
+          'node_modules/frappe-ui/src/molecules/editor/index.ts',
+        ),
+        'frappe-ui/list': path.resolve(
+          import.meta.dirname,
+          'node_modules/frappe-ui/src/molecules/list/index.ts',
+        ),
+        'frappe-ui/charts': path.resolve(
+          import.meta.dirname,
+          'node_modules/frappe-ui/src/charts/index.ts',
+        ),
+        'frappe-ui/icons': path.resolve(
+          import.meta.dirname,
+          'node_modules/frappe-ui/icons/index.ts',
+        ),
+        'frappe-ui/internals': path.resolve(
+          import.meta.dirname,
+          'node_modules/frappe-ui/internals.ts',
+        ),
+        'frappe-ui/style.css': path.resolve(
+          import.meta.dirname,
+          'node_modules/frappe-ui/src/style.css',
+        ),
+        'frappe-ui/tailwind': path.resolve(
+          import.meta.dirname,
+          'node_modules/frappe-ui/tailwind/index.js',
+        ),
+        'frappe-ui-actual': path.resolve(
+          import.meta.dirname,
+          'node_modules/frappe-ui/src/index.ts',
+        ),
+        'frappe-ui': path.resolve(
+          import.meta.dirname,
+          'src/lib/frappe-ui-compat/index.ts',
+        ),
+        // -----------------------------------------------------------------
+        // point at the package src dir (not index.ts) so subpath imports like
+        // `@framework/ui/components/Onboarding` resolve. Importing subpaths avoids the
+        // barrel, which `export *`s components (Grid/Phone/FormLayout) beyond
+        // what this app uses.
+        //
+        // @framework/ui is unpublished; the real package only exists inside a
+        // bench (dev, frappe_docker builds). A bare checkout — CI's Production
+        // Build — gets the in-repo no-op stub instead, and FRAMEWORK_UI_STUB=1
+        // forces the stub so that bare path can be tested from a dev bench.
+        // See src/lib/framework-ui-stub/README.md.
+        '@framework/ui': resolveFrameworkUi(),
       },
       // ensure the linked framework package reuses the host app's single copy of each peer.
       // `dompurify` is an implicit dep of @framework/ui's sanitize util (not declared in its
@@ -127,6 +185,25 @@ export default defineConfig(async ({ mode }) => {
   return config
 })
 
+function resolveFrameworkUi() {
+  // two layouts carry the real package: building through the bench symlink
+  // (frappe-bench/apps/crm/frontend) and building from the working tree with
+  // the bench checked out beside it
+  const candidates = [
+    path.resolve(import.meta.dirname, '../../frappe/ui/src'),
+    path.resolve(import.meta.dirname, '../frappe-bench/apps/frappe/ui/src'),
+  ]
+  const stub = path.resolve(import.meta.dirname, 'src/lib/framework-ui-stub')
+  if (process.env.FRAMEWORK_UI_STUB === '1') {
+    console.info('@framework/ui: stub forced via FRAMEWORK_UI_STUB=1')
+    return stub
+  }
+  const real = candidates.find((p) => fs.existsSync(p))
+  if (real) return real
+  console.warn('@framework/ui: no bench sibling found, building with the stub')
+  return stub
+}
+
 async function importFrappeUIPlugin(isDev, config) {
   if (isDev) {
     try {
@@ -160,37 +237,54 @@ async function importFrappeUIPlugin(isDev, config) {
 function getAliases(config) {
   return {
     ...config.resolve.alias,
+    // dev: point every frappe-ui path at the local checkout. Subpath entries
+    // must precede the bare key (string aliases match by prefix), and the
+    // bare 'frappe-ui' stays on the compat shim — only 'frappe-ui-actual'
+    // moves to the local checkout, so the FeatherIcon bridge for
+    // @framework/ui works identically in dev and prod.
     'frappe-ui/tailwind': path.resolve(
       import.meta.dirname,
-      '../frappe-ui/tailwind/preset.js',
+      '../frappe-ui/tailwind/index.js',
     ),
     'frappe-ui/style.css': path.resolve(
       import.meta.dirname,
       '../frappe-ui/src/style.css',
     ),
-    'frappe-ui/frappe': path.resolve(
+    'frappe-ui/experimental': path.resolve(
       import.meta.dirname,
-      '../frappe-ui/frappe/index.js',
+      '../frappe-ui/experimental.ts',
     ),
-    // subpath entries must precede the bare `frappe-ui` key: a plain string alias
-    // matches by prefix, so without these subpaths would rewrite under
-    // `.../src/index.ts`. `internals` is pulled in by @framework/ui.
     'frappe-ui/icons': path.resolve(
       import.meta.dirname,
       '../frappe-ui/icons/index.ts',
-    ),
-    'frappe-ui/editor': path.resolve(
-      import.meta.dirname,
-      '../frappe-ui/src/molecules/editor/index.ts',
     ),
     'frappe-ui/editor-style.css': path.resolve(
       import.meta.dirname,
       '../frappe-ui/src/molecules/editor/style.css',
     ),
+    'frappe-ui/editor': path.resolve(
+      import.meta.dirname,
+      '../frappe-ui/src/molecules/editor/index.ts',
+    ),
+    'frappe-ui/list': path.resolve(
+      import.meta.dirname,
+      '../frappe-ui/src/molecules/list/index.ts',
+    ),
+    'frappe-ui/charts': path.resolve(
+      import.meta.dirname,
+      '../frappe-ui/src/charts/index.ts',
+    ),
     'frappe-ui/internals': path.resolve(
       import.meta.dirname,
       '../frappe-ui/internals.ts',
     ),
-    'frappe-ui': path.resolve(import.meta.dirname, '../frappe-ui/src/index.ts'),
+    'frappe-ui-actual': path.resolve(
+      import.meta.dirname,
+      '../frappe-ui/src/index.ts',
+    ),
+    'frappe-ui': path.resolve(
+      import.meta.dirname,
+      'src/lib/frappe-ui-compat/index.ts',
+    ),
   }
 }

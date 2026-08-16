@@ -55,9 +55,8 @@
   <div v-if="doc.name" class="flex h-full overflow-hidden">
     <Tabs
       v-model="tabIndex"
-      as="div"
       :tabs="tabs"
-      class="flex flex-1 overflow-auto flex-col [&_[role='tab']]:px-0 [&_[role='tab']]:shrink-0 [&_[role='tablist']]:px-3 [&_[role='tablist']]:min-h-[45px] [&_[role='tablist']]:gap-7.5 [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:grow"
+      class="flex flex-1 overflow-auto flex-col [&_[role='tab']]:px-0 [&_[role='tab']]:shrink-0 [&_[role='tablist']]:px-3 [&_[role='tablist']]:min-h-[45px] [&_[role='tablist']]:gap-7.5 [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:flex-col [&_[role='tabpanel']:not([hidden])]:grow [&_[role='tabpanel']:not([hidden])]:overflow-hidden"
     >
       <template #tab-panel="{ tab }">
         <div v-if="tab.name == 'Details'">
@@ -96,12 +95,11 @@
                     "
                     @change="(e) => addContact(e)"
                   >
-                    <template #target="{ togglePopover }">
+                    <template #trigger>
                       <Button
                         class="h-7 px-3"
                         variant="ghost"
                         icon="lucide-plus"
-                        @click="togglePopover()"
                       />
                     </template>
                   </Link>
@@ -486,7 +484,13 @@ const tabs = computed(() => {
       condition: () => whatsappEnabled.value,
     },
   ]
-  return tabOptions.filter((tab) => (tab.condition ? tab.condition() : true))
+  return tabOptions.map((tab) => ({
+    value: tab.name,
+    ...tab,
+    // v1 renders `icon` as icon-only; iconLeft keeps the label beside it
+    iconLeft: tab.icon,
+    icon: undefined,
+  }))
 })
 const { tabIndex } = useActiveTabManager(tabs, 'lastDealTab')
 

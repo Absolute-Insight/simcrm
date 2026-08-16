@@ -33,7 +33,7 @@
         <div
           v-for="template in filteredTemplates"
           :key="template.name"
-          class="flex h-56 cursor-pointer flex-col gap-2 rounded-lg border p-3 hover:bg-surface-gray-2"
+          class="flex h-56 cursor-pointer flex-col gap-2 rounded-6 border p-3 hover:bg-surface-gray-2"
           @click="emit('send', template.name)"
         >
           <div
@@ -68,7 +68,9 @@
 </template>
 
 <script setup>
-import { TextEditor, createListResource } from 'frappe-ui'
+import { createListResource } from 'frappe-ui'
+// parked in experimental for v1 (frappe-ui migration doc)
+import { TextEditor } from 'frappe-ui/experimental'
 import { ref, computed, nextTick, watch, onMounted } from 'vue'
 
 const props = defineProps({

@@ -10,7 +10,7 @@
         @update:modelValue="onSelect"
       >
         <ComboboxAnchor
-          class="flex w-full text-base items-center gap-1 rounded border border-outline-gray-2 bg-surface-base hover:border-outline-gray-3 focus:border-outline-gray-4 focus:ring-0 focus-visible:ring-2 focus-visible:ring-outline-gray-3 px-2 py-1"
+          class="flex w-full text-base items-center gap-1 rounded-4 border border-outline-gray-2 bg-surface-base hover:border-outline-gray-3 focus:border-outline-gray-4 focus:ring-0 focus-visible:ring-2 focus-visible:ring-outline-gray-3 px-2 py-1"
           :class="[size === 'sm' ? 'h-7' : 'h-8 ', inputClass]"
           @click="showOptions = true"
         >
@@ -32,7 +32,7 @@
         </ComboboxAnchor>
         <ComboboxPortal>
           <ComboboxContent
-            class="z-10 mt-1 min-w-48 w-full max-w-md bg-surface-elevation-2 overflow-hidden rounded-lg shadow-2xl ring-1 ring-black ring-opacity-5"
+            class="z-10 mt-1 min-w-48 w-full max-w-md bg-surface-elevation-2 overflow-hidden rounded-6 shadow-2xl ring-1 ring-black ring-opacity-5"
             position="popper"
             :align="'start'"
             @openAutoFocus.prevent
@@ -40,7 +40,7 @@
           >
             <ComboboxViewport class="max-h-60 overflow-auto p-1.5">
               <ComboboxEmpty
-                class="flex gap-2 rounded px-2 py-1 text-base text-ink-gray-5"
+                class="flex gap-2 rounded-4 px-2 py-1 text-base text-ink-gray-5"
               >
                 <span
                   v-if="fetchContacts"
@@ -53,7 +53,7 @@
                 v-for="option in options"
                 :key="option.value"
                 :value="option.value"
-                class="text-base leading-none text-ink-gray-7 rounded flex items-center px-2 py-1 relative select-none data-[highlighted]:outline-none data-[highlighted]:bg-surface-gray-3 cursor-pointer"
+                class="text-base leading-none text-ink-gray-7 rounded-4 flex items-center px-2 py-1 relative select-none data-[highlighted]:outline-none data-[highlighted]:bg-surface-gray-3 cursor-pointer"
                 @mousedown.prevent="onSelect(option.value, option)"
               >
                 <UserAvatar class="mr-2" :user="option.value" size="lg" />

@@ -1,6 +1,6 @@
 <template>
-  <Dialog v-model:open="show" :size="'xl'">
-    <template #body>
+  <Dialog bare v-model:open="show" :size="'xl'">
+    <template #default>
       <div class="px-4 pt-5 pb-6 bg-surface-elevation-2 sm:px-6">
         <div class="flex items-center justify-between mb-5">
           <div>
@@ -48,7 +48,7 @@
             :loading="isEnriching"
             :disabled="!organization.doc.website"
             :tooltip="__('Fill fields from the company website')"
-            iconLeft="zap"
+            iconLeft="lucide-zap"
             @click="enrichFromWebsite"
           />
         </div>
@@ -65,7 +65,7 @@ import { isMobileView } from '@/composables/settings'
 import { showQuickEntryModal, quickEntryProps } from '@/composables/modals'
 import { useDocument } from '@/data/document'
 import { useDoctypeModal } from '@/composables/doctypeModal'
-import { useTelemetry } from 'frappe-ui/frappe'
+import { useTelemetry } from '@framework/ui/telemetry'
 import { call, createResource, toast } from 'frappe-ui'
 import { ref, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'

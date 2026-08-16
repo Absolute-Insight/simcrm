@@ -16,12 +16,12 @@
       #header-bottom
     >
       <div class="relative">
-        <Input
+        <TextInput
           :model-value="slaSearchQuery"
           :placeholder="__('Search')"
           type="text"
-          class="bg-surface-gray-2 hover:bg-surface-gray-2 focus:ring-0 border-outline-gray-2 rounded"
-          icon-left="search"
+          class="bg-surface-gray-2 hover:bg-surface-gray-2 focus:ring-0 border-outline-gray-2 rounded-4"
+          icon-left="lucide-search"
           debounce="300"
           inputClass="p-4 pr-12"
           @input="slaSearchQuery = $event"
@@ -70,7 +70,7 @@
             :key="sla.name"
           >
             <div
-              class="grid grid-cols-7 items-center gap-4 cursor-pointer hover:bg-surface-sidebar rounded"
+              class="grid grid-cols-7 items-center gap-4 cursor-pointer hover:bg-surface-sidebar rounded-4"
             >
               <div
                 class="w-full pl-2 col-span-5 flex items-center h-14 gap-2"

@@ -35,11 +35,11 @@
           </div>
         </div>
         <div
-          class="flex gap-2 border cursor-pointer border-outline-elevation-2 rounded-lg bg-surface-elevation-1 px-2.5 py-2.5 text-ink-gray-9"
+          class="flex gap-2 border cursor-pointer border-outline-elevation-2 rounded-6 bg-surface-elevation-1 px-2.5 py-2.5 text-ink-gray-9"
           @click="showEvent(event)"
         >
           <div
-            class="flex w-[2px] rounded-lg"
+            class="flex w-[2px] rounded-6"
             :style="{ backgroundColor: event.color || '#30A66D' }"
           />
           <div class="flex-1 flex flex-col gap-1 text-base">

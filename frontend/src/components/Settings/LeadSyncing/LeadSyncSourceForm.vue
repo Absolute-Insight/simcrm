@@ -194,22 +194,24 @@ const emit = defineEmits(['updateStep'])
 const tabs = computed(() => {
   const tabList = [
     {
+      value: 'details',
       label: __('Details'),
-      icon: DetailsIcon,
+      iconLeft: DetailsIcon,
     },
   ]
 
   if (!isLocal.value) {
     tabList.push({
+      value: 'failure-logs',
       label: __('Failure Logs'),
-      icon: RefreshIcon,
+      iconLeft: RefreshIcon,
     })
   }
 
   return tabList
 })
 
-const tabIndex = ref(0)
+const tabIndex = ref('details')
 
 const docResource = ref(null)
 const mappingFormDocResource = ref(null)

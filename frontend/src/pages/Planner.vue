@@ -32,7 +32,7 @@
     <div class="flex items-center gap-2">
       <Button
         variant="ghost"
-        icon="chevron-left"
+        icon="lucide-chevron-left"
         :label="__('Previous week')"
         @click="shiftWeek(-7)"
       />
@@ -41,7 +41,7 @@
       </div>
       <Button
         variant="ghost"
-        icon="chevron-right"
+        icon="lucide-chevron-right"
         :label="__('Next week')"
         @click="shiftWeek(7)"
       />
@@ -148,7 +148,7 @@
   <EmptyState
     v-else-if="showReadOnlyEmpty"
     class="flex-1"
-    icon="calendar"
+    icon="lucide-calendar"
     :title="__('Nothing planned for this week')"
     :description="
       __('No activities are planned for the week of {0}.', [weekLabel])
@@ -225,7 +225,7 @@
           <div
             v-for="item in byDay[day.date]"
             :key="item._uid"
-            class="v-plan-card group rounded-md border border-outline-gray-1 bg-surface-elevation-1 px-2.5 py-2 shadow-sm"
+            class="v-plan-card group rounded-5 border border-outline-gray-1 bg-surface-elevation-1 px-2.5 py-2 shadow-sm"
             :class="dragging === item ? 'opacity-50' : ''"
             :data-plan-uid="item._uid"
             :draggable="canEdit"
@@ -247,7 +247,7 @@
                      single truncated line renders most notes as "Set the ne…". -->
                 <button
                   data-plan-focus
-                  class="line-clamp-2 rounded text-left text-sm text-ink-gray-8 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                  class="line-clamp-2 rounded-4 text-left text-sm text-ink-gray-8 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
                   :class="canEdit ? 'hover:text-ink-gray-9' : 'cursor-default'"
                   :disabled="!canEdit"
                   @click="editItem(item)"
@@ -273,12 +273,12 @@
                 <Dropdown
                   v-if="canEdit"
                   :options="itemActions(item)"
-                  placement="right"
+                  align="end"
                 >
                   <Button
                     class="v-card-action !size-5"
                     variant="ghost"
-                    icon="more-horizontal"
+                    icon="lucide-more-horizontal"
                     :label="__('Actions for this planned activity')"
                   />
                 </Dropdown>
@@ -286,7 +286,7 @@
                   v-if="canEdit"
                   class="v-card-action !size-5"
                   variant="ghost"
-                  icon="x"
+                  icon="lucide-x"
                   :label="__('Remove planned activity')"
                   @click="removeItem(item)"
                 />
@@ -296,7 +296,7 @@
             <router-link
               v-if="referenceRoute(item)"
               :to="referenceRoute(item)"
-              class="mt-1 block truncate rounded text-xs text-ink-gray-5 underline-offset-2 hover:text-ink-gray-7 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+              class="mt-1 block truncate rounded-4 text-xs text-ink-gray-5 underline-offset-2 hover:text-ink-gray-7 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
             >
               {{ referenceKind(item) }} · {{ referenceTitle(item) }}
             </router-link>
@@ -320,7 +320,7 @@
             v-if="canEdit"
             class="w-full opacity-60 hover:opacity-100 focus-visible:opacity-100"
             variant="ghost"
-            icon="plus"
+            icon="lucide-plus"
             :label="__('Add an activity')"
             @click="addItem(day.date)"
           />
