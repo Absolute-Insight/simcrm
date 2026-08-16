@@ -131,12 +131,25 @@ set_field() {
 }
 set_field base_url "http://127.0.0.1:11434/v1"
 set_field model    "hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M"
-set_field timeout  120     # the shipped default of 30 is tight for a reasoning model
+set_field timeout  120     # dev only -- see the proxy ceiling below before copying this
 set_field enabled  1
 
 PYTHONPATH=/workspace bench --site dev.localhost execute crm.agent.api.summarise_thread \
   --kwargs "{'reference_doctype': 'CRM Deal', 'reference_name': 'CRM-DEAL-2026-00001'}"
 ```
+
+> **`timeout` has a ceiling in front of it, and it is not `timeout`.** A call costs up
+> to `timeout × client.MAX_ATTEMPTS` (two attempts), and these endpoints are synchronous
+> whitelisted calls — the wait happens in a *web* worker, behind whatever reverse proxy
+> serves the site. `deploy/docker-compose.yml` sets nginx `PROXY_READ_TIMEOUT: 120`, so
+> `timeout 120` means the backend can still be working at 240 s on a request nginx
+> abandoned at 120: the rep sees a failed call, and a worker keeps burning for another
+> two minutes producing a reply nobody will read.
+>
+> Keep **`timeout × 2 < PROXY_READ_TIMEOUT`**. At the shipped proxy setting that caps
+> `timeout` at ~55. Raise `PROXY_READ_TIMEOUT` first if a model genuinely needs longer,
+> and remember a slow model holds a worker either way — size the pool for it. The 120
+> above is safe *here* only because a bench dev server has no nginx in front of it.
 
 A dev site seeded only by the test suite has **no Deal with a thread on it** — every
 `_T-` record is a leaked fixture and none carry Communications. Create a Deal, a
