@@ -144,10 +144,13 @@ function clearAssignments(selections, unselectAll) {
         theme: 'red',
         onClick: (close) => {
           capture('bulk_clear_assignment')
+          // no ignore_permissions here: remove_multiple does not accept it
+          // today, so it was silently dropped, but sending it means the day
+          // upstream adds that parameter this becomes a live permission bypass
+          // shipped from the browser.
           call('frappe.desk.form.assign_to.remove_multiple', {
             doctype: props.doctype,
             names: JSON.stringify(Array.from(selections)),
-            ignore_permissions: true,
           }).then(() => {
             toast.success(__('Assignment Cleared Successfully'))
             reload(unselectAll)

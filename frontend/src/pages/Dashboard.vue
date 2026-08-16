@@ -41,7 +41,7 @@
       </template>
     </LayoutHeader>
 
-    <div class="p-5 pb-2 flex items-center gap-4">
+    <div class="p-5 pb-2 flex flex-wrap items-center gap-4">
       <Dropdown
         v-if="!showDatePicker"
         v-model="preset"
@@ -185,7 +185,7 @@
                 <Badge
                   :label="urgencyBand(row.score)?.label || ''"
                   variant="subtle"
-                  :theme="row.score >= 70 ? 'red' : 'orange'"
+                  :theme="row.score >= 70 ? 'red' : 'amber'"
                 />
               </button>
             </li>
@@ -333,6 +333,7 @@ import LayoutHeader from '@/components/LayoutHeader.vue'
 import Link from '@/components/Controls/Link.vue'
 import { usersStore } from '@/stores/users'
 import { copy } from '@/utils'
+import { describeError } from '@/utils/describeError'
 import {
   adherencePercent,
   applyPanelPreference,
@@ -357,6 +358,7 @@ import {
   DateRangePicker,
   Dropdown,
   Tooltip,
+  toast,
 } from 'frappe-ui'
 import { ref, reactive, computed, provide } from 'vue'
 import { useRouter } from 'vue-router'
@@ -682,6 +684,16 @@ function cancel() {
   dashboardItems.data = copy(oldItems.value)
 }
 
+// Without onError, frappe-ui rethrows: the spinner stops, the page stays in
+// edit mode, and a permission or validation failure says nothing at all. The
+// layout the manager just arranged is gone on the next reload with no clue why.
+function reportFailure(error: unknown) {
+  const described = describeError(error)
+  toast.error(
+    described.message || __('Something went wrong. Please try again.'),
+  )
+}
+
 const saveDashboard = createResource({
   url: 'frappe.client.set_value',
   method: 'POST',
@@ -689,6 +701,7 @@ const saveDashboard = createResource({
     dashboardItems.reload()
     editing.value = false
   },
+  onError: reportFailure,
 })
 
 function save() {
@@ -714,6 +727,7 @@ function resetToDefault() {
       dashboardItems.reload()
       editing.value = false
     },
+    onError: reportFailure,
   })
 }
 

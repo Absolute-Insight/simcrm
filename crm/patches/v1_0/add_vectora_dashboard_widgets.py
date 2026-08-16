@@ -14,24 +14,17 @@ import json
 
 import frappe
 
+# Only metrics the curated tile row does NOT carry belong in the grid -- see
+# CURATED_TILE_METRICS in crm_dashboard.py. This list once also merged
+# plan_adherence and quota_attainment, which became curated tiles in a later
+# commit; sites upgraded in between show both, and remove_duplicated_grid_tiles
+# cleans that up. test_metrics guards the intersection so it cannot drift again.
 WIDGETS = [
-	{
-		"name": "plan_adherence",
-		"type": "number_chart",
-		"tooltip": "Planned activities completed, out of those already due",
-		"layout": {"x": 8, "y": 2, "w": 4, "h": 3, "i": "plan_adherence"},
-	},
 	{
 		"name": "deals_at_risk",
 		"type": "number_chart",
 		"tooltip": "Open deals with a health score below 40",
 		"layout": {"x": 12, "y": 2, "w": 4, "h": 3, "i": "deals_at_risk"},
-	},
-	{
-		"name": "quota_attainment",
-		"type": "number_chart",
-		"tooltip": "Closed-won revenue against quota for the period",
-		"layout": {"x": 16, "y": 2, "w": 4, "h": 3, "i": "quota_attainment"},
 	},
 ]
 

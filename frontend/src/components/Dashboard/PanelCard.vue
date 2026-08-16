@@ -7,8 +7,13 @@
   resource, so a panel built from two calls can still say "loading" once.
 -->
 <template>
+  <!-- group/panel is load-bearing: the header's hide button reveals itself with
+       `group-hover/panel:opacity-100`, and without the group on this ancestor the
+       variant never fires. It stayed at opacity-0 -- invisible but still
+       clickable, since opacity does not disable pointer events -- so a stray
+       click made a panel vanish with no visible control to blame. -->
   <section
-    class="flex min-w-0 flex-col rounded-6 border border-outline-gray-1 bg-surface-elevation-2"
+    class="group/panel flex min-w-0 flex-col rounded-6 border border-outline-gray-1 bg-surface-elevation-2"
     :aria-labelledby="headingId"
   >
     <header

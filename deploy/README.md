@@ -79,6 +79,15 @@ off the host; a backup on the machine it protects is a copy, not a backup.
   review `CRM Report Digest` records before enabling outbound email.
 - Outbound email needs an Email Account configured in Frappe as usual;
   nothing in this compose file sends mail on its own.
+- **If you enable the agent tier, its `timeout` must clear this stack's proxy.**
+  `frontend` sets `PROXY_READ_TIMEOUT: 120`, and one agent call costs up to
+  `timeout × 2` (it retries once) in a *web* worker — so a `timeout` of 120,
+  which the agent runbook suggests for a reasoning model, lets the backend work
+  for 240 s on a request nginx gave up on at 120. The rep sees a failure and a
+  worker stays busy for two more minutes. Keep `timeout × 2 < PROXY_READ_TIMEOUT`
+  (≈55 at the shipped setting), or raise `PROXY_READ_TIMEOUT` to match the model
+  you actually run. Either way a slow model occupies a worker for its whole
+  duration: size the pool before pointing this at something big.
 
 ## Pilot checklist
 

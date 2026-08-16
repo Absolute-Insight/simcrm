@@ -15,7 +15,8 @@ Please allow a fix to ship before disclosing publicly.
 
 | Version | Supported |
 | ------- | --------- |
-| 2.x     | ✅        |
+| 3.x     | ✅        |
+| 2.x     | ❌ (superseded by 3.0.0; upgrade) |
 | < 2.0   | ❌ (pre-release history; no fixes) |
 
 ## Scope notes for researchers
