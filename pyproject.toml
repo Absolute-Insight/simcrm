@@ -10,7 +10,7 @@ dynamic = ["version"]
 dependencies = [
     # "frappe~=15.0.0" # Installed and managed by bench.
     "twilio==8.5.0",
-    "requests>=2.28.0",
+    "requests>=2.34.2",
     # Public Suffix List lookups for the enrichment crawler's same-site scoping
     # (registrable_domain). Pinned to its bundled PSL snapshot at runtime -- no
     # network fetch (see crawler._tld_extractor).
