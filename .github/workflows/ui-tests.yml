@@ -1,14 +1,22 @@
 name: UI Tests
 
-# E2E (Playwright) suite. Heavy gate: runs on the main-hotfix staging lane
-# before promoting to main, plus on demand. Develop stays on the fast lane.
+# E2E (Playwright) suite.
+#
+# This used to trigger only on `main-hotfix` -- a staging lane that was never
+# created. The branch does not exist, so the suite had never run in CI once:
+# the only evidence of it ever executing was a local run left in test-results/.
+# It now gates the branches that actually exist. The suite is small enough
+# (~18 specs) that running it per-PR costs less than shipping a regression it
+# would have caught.
 on:
   push:
     branches:
-      - main-hotfix
+      - main
+      - develop
   pull_request:
     branches:
-      - main-hotfix
+      - main
+      - develop
   workflow_dispatch:
 
 concurrency:
@@ -23,6 +31,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     name: Playwright E2E Tests
+    # Advisory for now, and deliberately so. The first real run scored 15/18;
+    # the three failures all predate this workflow being reachable at all --
+    # planner.spec.ts:104 fails on a clean develop locally too, and login/email
+    # pass locally but not against a freshly created site. Making the job
+    # blocking today would block every unrelated PR on failures nobody has
+    # triaged yet. Flip this off once docs/PILOT-READINESS.md's e2e item is
+    # closed; a suite that is advisory forever is the state it just came from.
+    continue-on-error: true
 
     services:
       redis-cache:
@@ -48,12 +64,18 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          # 3.14 and node 24 below, matching every other workflow here. Both
+          # were stale -- 3.12 and 22 -- and neither was ever corrected because
+          # this file never ran. frappe develop requires Python >=3.14 (its
+          # solver refused outright) and node >=24 (yarn install refused during
+          # bench init). Two layers of the same rot, found one after the other
+          # by actually running it.
+          python-version: "3.14"
 
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           check-latest: true
 
       - name: Add to Hosts

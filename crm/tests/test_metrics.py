@@ -619,3 +619,43 @@ class ScopedMetricsTest(IntegrationTestCase):
 		frappe.set_user(MANAGER)
 		rows = plan_adherence(str(monday), str(frappe.utils.add_days(monday, 6)), group_by_user=True)
 		self.assertEqual({row["user"] for row in rows}, {REP})
+
+	def make_quota(self, user: str, amount: float) -> None:
+		month = frappe.utils.get_first_day(frappe.utils.nowdate())
+		quota = frappe.get_doc(
+			{"doctype": "CRM Quota", "user": user, "period_start": month, "amount": amount}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Quota", quota.name, force=True)
+
+	def test_quota_totals_cover_the_subtree_not_the_company(self):
+		"""The numerator is permission-scoped, so the denominator must be too.
+
+		quota_in_period reads through frappe.get_all, which does not check
+		permissions, and quota is keyed on a user rather than a deal so nothing
+		else narrows it. Unfiltered, a manager's subtree revenue was divided by
+		every rep's target in the company and the tile under-reported badly."""
+		from crm.api.dashboard import quota_in_period
+
+		self.make_quota(REP, 1000)
+		self.make_quota(OUTSIDER, 9000)
+
+		month = str(frappe.utils.get_first_day(frappe.utils.nowdate()))
+		month_end = str(frappe.utils.get_last_day(frappe.utils.nowdate()))
+
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(MANAGER)
+		# the manager's own node carries no quota, so the subtree total is the
+		# rep's 1000 -- the outsider's 9000 must not be in it
+		self.assertEqual(quota_in_period(month, month_end), 1000)
+
+	def test_a_manager_cannot_name_a_rep_outside_their_subtree(self):
+		"""The user parameter was trusted for anyone holding Sales Manager, so an
+		in-tree one could read another team's figures by naming them."""
+		from crm.api.dashboard import pin_user
+
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(MANAGER)
+
+		self.assertEqual(pin_user(REP), REP)
+		with self.assertRaises(frappe.PermissionError):
+			pin_user(OUTSIDER)

@@ -224,9 +224,13 @@ def get_report(name: str, from_date: str | None = None, to_date: str | None = No
 		from_date = frappe.utils.get_first_day(frappe.utils.nowdate())
 		to_date = frappe.utils.get_last_day(frappe.utils.nowdate())
 
-	roles = frappe.get_roles()
-	if "Sales Manager" not in roles and "System Manager" not in roles:
-		user = frappe.session.user
+	# Same rule as the dashboard: a plain Sales User is pinned to themselves, and
+	# anyone else may only name a rep inside their own subtree. Trusting the
+	# parameter for any Sales Manager let an in-tree one read another team's
+	# quota_attainment_by_rep row -- compensation data, one query string away.
+	from crm.api.dashboard import pin_user
+
+	user = pin_user(user)
 
 	report = REPORTS[name]
 	return {
