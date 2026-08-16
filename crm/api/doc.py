@@ -588,21 +588,24 @@ def get_records_based_on_order(doctype, rows, filters, page_length, order):
 
 
 @frappe.whitelist()
-def remove_assignments(doctype: str, name: str, assignees: str | list, ignore_permissions: bool = False):
+def remove_assignments(doctype: str, name: str, assignees: str | list):
+	"""Cancel the ToDo assignments named in ``assignees``.
+
+	``ignore_permissions`` used to be a parameter here, which made it a *client*
+	parameter: whitelisted arguments arrive from the request, and
+	``set_status`` skips its permission check entirely when the flag is set. Any
+	authenticated user could unassign anyone from any record, including records
+	they cannot read -- and since a ToDo assignment is one of the clauses that
+	grants a rep visibility of a deal, that is a way to take a record away from
+	the rep who owns it. Neither caller ever passed it.
+	"""
 	assignees = frappe.parse_json(assignees)
 
 	if not assignees:
 		return
 
 	for assign_to in assignees:
-		set_status(
-			doctype,
-			name,
-			todo=None,
-			assign_to=assign_to,
-			status="Cancelled",
-			ignore_permissions=ignore_permissions,
-		)
+		set_status(doctype, name, todo=None, assign_to=assign_to, status="Cancelled")
 
 
 @frappe.whitelist()
