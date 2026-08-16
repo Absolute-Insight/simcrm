@@ -64,6 +64,34 @@ def belongs_to(table, user: str, doctype: str):
 	return (table[owner_field] == user) | assigned
 
 
+def pin_user(user: str | None) -> str | None:
+	"""Resolve a caller-supplied ``user`` filter to one they are allowed to read.
+
+	A plain Sales User is pinned to themselves, as before. The gap this closes is
+	everyone else: the parameter was taken at face value for anyone holding
+	Sales Manager, so an in-tree manager -- restricted to their own subtree for
+	every deal aggregate on the page -- could name a rep from another team and
+	read their figures, quota target included.
+
+	Out-of-subtree requests raise rather than falling back to the caller's own
+	numbers: silently answering a different question than the one asked is how
+	a wrong number ends up in front of a client.
+	"""
+	roles = frappe.get_roles(frappe.session.user)
+	is_manager = "Sales Manager" in roles or "System Manager" in roles
+
+	if "Sales User" in roles and not is_manager:
+		return frappe.session.user
+
+	if not user:
+		return None
+
+	reps = visible_reps()
+	if reps is not None and user not in reps:
+		frappe.throw(_("You are not permitted to read {0}'s figures.").format(user), frappe.PermissionError)
+	return user
+
+
 def visible_reps() -> list[str] | None:
 	"""Users whose plans and targets the caller may read, or ``None`` for everyone.
 
@@ -109,12 +137,7 @@ def get_dashboard(from_date: str | None = None, to_date: str | None = None, user
 		from_date = frappe.utils.get_first_day(from_date or frappe.utils.nowdate())
 		to_date = frappe.utils.get_last_day(to_date or frappe.utils.nowdate())
 
-	roles = frappe.get_roles(frappe.session.user)
-	is_sales_manager = "Sales Manager" in roles or "System Manager" in roles
-	is_sales_user = "Sales User" in roles and not is_sales_manager
-
-	if is_sales_user:
-		user = frappe.session.user
+	user = pin_user(user)
 
 	dashboard = frappe.db.exists("CRM Dashboard", "Manager Dashboard")
 
@@ -146,12 +169,7 @@ def get_chart(
 		from_date = frappe.utils.get_first_day(from_date or frappe.utils.nowdate())
 		to_date = frappe.utils.get_last_day(to_date or frappe.utils.nowdate())
 
-	roles = frappe.get_roles(frappe.session.user)
-	is_sales_manager = "Sales Manager" in roles or "System Manager" in roles
-	is_sales_user = "Sales User" in roles and not is_sales_manager
-
-	if is_sales_user:
-		user = frappe.session.user
+	user = pin_user(user)
 
 	chart = CHARTS.get(name)
 	if not chart:
@@ -1767,6 +1785,16 @@ def quota_in_period(from_date: str, to_date: str, user: str | None = None) -> fl
 	}
 	if user:
 		filters["user"] = user
+	else:
+		# frappe.get_all does not check permissions, and quota is keyed on a user
+		# rather than a deal, so nothing else here would scope it. Unfiltered, an
+		# in-tree manager divided their subtree's closed-won by the *company's*
+		# quota and read back a third of their real attainment -- on the first
+		# tile of the dashboard. visible_reps() is the same subtree the deal
+		# aggregates beside it use.
+		reps = visible_reps()
+		if reps is not None:
+			filters["user"] = ("in", reps)
 	rows = frappe.get_all("CRM Quota", filters=filters, fields=["amount", "period_start"])
 
 	total = 0.0
