@@ -85,18 +85,41 @@ function convertToDeal(selections, unselectAll) {
       {
         label: __('Convert'),
         variant: 'solid',
-        onClick: (close) => {
+        // One un-awaited request per lead used to be fired here, each with its
+        // own success toast and its own close(): the first response tore the
+        // dialog down while the rest were still in flight, and no .catch meant
+        // a failed conversion was an unhandled rejection the rep never saw. A
+        // bulk convert of 30 qualified leads could silently drop some and still
+        // look like it worked. Settle them all, then report once, honestly.
+        onClick: async (close) => {
           capture('bulk_convert_to_deal')
-          Array.from(selections).forEach((name) => {
-            call('crm.fcrm.doctype.crm_lead.crm_lead.convert_to_deal', {
-              lead: name,
-            }).then(() => {
-              toast.success(__('Converted Successfully'))
-              list.value.reload()
-              unselectAll()
-              close()
-            })
-          })
+          const names = Array.from(selections)
+          const results = await Promise.allSettled(
+            names.map((name) =>
+              call('crm.fcrm.doctype.crm_lead.crm_lead.convert_to_deal', {
+                lead: name,
+              }),
+            ),
+          )
+          const failed = results.filter((r) => r.status === 'rejected').length
+
+          list.value.reload()
+          unselectAll()
+          close()
+
+          if (!failed) {
+            toast.success(
+              __('Converted {0} lead(s) successfully', [names.length]),
+            )
+          } else {
+            toast.error(
+              __('Converted {0} of {1}; {2} failed', [
+                names.length - failed,
+                names.length,
+                failed,
+              ]),
+            )
+          }
         },
       },
     ],
