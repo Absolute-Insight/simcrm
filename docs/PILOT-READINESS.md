@@ -50,7 +50,7 @@ polish · **P4** platform work beyond the pilot.
       dialog while the rest are in flight. A rep converts 30 leads, sees success toasts, and
       some silently did not convert. Real pipeline lost. **2 h** (`Promise.allSettled` + one
       summary toast). **Highest-value single fix in this list.**
-- [ ] **Deal saves in a foreign currency block on a third-party API and throw when it is
+- [x] **Deal saves in a foreign currency blocked on a third-party API and threw when it was
       down.** `crm_deal.py:102` → `exchange_rate.py:8`. Synchronous `requests.get` to
       frankfurter/exchangerate.host inside `validate`, up to 10 s in a web worker, and
       `_raise_exchange_rate_error` throws if both providers fail. On a host with no outbound

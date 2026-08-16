@@ -290,13 +290,38 @@ class CRMDeal(Document):
 			add_or_remove_lost_reason_section_in_sidepanel(self)
 
 	def update_exchange_rate(self):
-		if self.has_value_changed("currency") or not self.exchange_rate:
-			system_currency = frappe.db.get_single_value("FCRM Settings", "currency") or "USD"
-			exchange_rate = 1
-			if self.currency and self.currency != system_currency:
-				exchange_rate = get_exchange_rate(self.currency, system_currency)
+		"""Refresh the rate, but never let a third party decide whether a deal saves.
 
-			self.db_set("exchange_rate", exchange_rate)
+		This runs inside ``validate``. ``get_exchange_rate`` throws when its
+		providers cannot be reached, so a host with no outbound internet -- an
+		ordinary corporate deployment -- or a free API having a bad afternoon
+		used to fail *every* save of a non-base-currency deal, for every rep,
+		with no way through it. A stale or missing rate is a wrong number in a
+		report; an unsaveable deal is a rep who cannot do their job.
+
+		So: keep whatever rate the deal already carries, tell the person their
+		figure may be stale, and leave the reason in the Error Log.
+		"""
+		if not (self.has_value_changed("currency") or not self.exchange_rate):
+			return
+
+		system_currency = frappe.db.get_single_value("FCRM Settings", "currency") or "USD"
+
+		if not self.currency or self.currency == system_currency:
+			self.db_set("exchange_rate", 1)
+			return
+
+		try:
+			self.db_set("exchange_rate", get_exchange_rate(self.currency, system_currency))
+		except Exception:
+			# get_exchange_rate has already logged which provider failed
+			frappe.msgprint(
+				_("Could not fetch the {0} to {1} exchange rate. Saved with the previous rate.").format(
+					self.currency, system_currency
+				),
+				indicator="orange",
+				alert=True,
+			)
 
 	@staticmethod
 	def default_list_data():

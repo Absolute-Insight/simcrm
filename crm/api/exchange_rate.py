@@ -1,11 +1,20 @@
 import frappe
 import requests
 from frappe import _
+from frappe.rate_limiter import rate_limit
 
 from crm.fcrm.doctype.fcrm_settings.fcrm_settings import FCRMSettings
 
+# Every other outbound-fetch endpoint in this app is rate limited per user --
+# the agent tier and domain enrichment both are. This one was not, and its cache
+# key varies per currency pair and date, so a loop over distinct pairs missed the
+# cache every time and held a worker for up to two provider timeouts per call.
+# 30/min is far above any real use: the UI fetches on a currency change.
+EXCHANGE_RATE_LIMIT = 30
+
 
 @frappe.whitelist()
+@rate_limit(limit=EXCHANGE_RATE_LIMIT, seconds=60)
 def get_exchange_rate(from_currency: str, to_currency: str, date: str | None = None):
 	if not date:
 		date = "latest"
