@@ -3,7 +3,7 @@
     <template #trigger="{ open }">
       <Button
         :label="value"
-        class="dropdown-button flex w-full items-center !justify-between bg-surface-base !px-2.5 py-1.5 text-base text-ink-gray-8 placeholder-ink-gray-4 transition-colors hover:bg-surface-base focus:bg-surface-base focus:outline-none focus:ring-0"
+        class="dropdown-button flex w-full items-center !justify-between bg-surface-base !px-2.5 py-1.5 text-base text-ink-gray-8 placeholder:text-ink-gray-4 transition-colors hover:bg-surface-base focus:bg-surface-base focus:outline-none focus:ring-0"
       >
         <div v-if="value" class="truncate">{{ value }}</div>
         <div v-else class="text-base leading-5 text-ink-gray-4 truncate">
@@ -19,7 +19,7 @@
     </template>
     <template #default>
       <div
-        class="my-2 p-1.5 w-72 space-y-1.5 divide-y divide-outline-gray-1 rounded-6 bg-surface-elevation-2 shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none"
+        class="my-2 p-1.5 w-72 space-y-1.5 divide-y divide-outline-gray-1 rounded-6 bg-surface-elevation-2 shadow-2xl ring-1 ring-black/5 focus:outline-none"
       >
         <div class="space-y-1">
           <PrimaryDropdownItem

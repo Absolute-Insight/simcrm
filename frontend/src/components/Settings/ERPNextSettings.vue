@@ -199,7 +199,7 @@
                     :doc="'Company'"
                     :doctype="'Company'"
                     :placeholder="__('Select Company')"
-                    class="w-48 flex-shrink-0"
+                    class="w-48 shrink-0"
                   />
                 </div>
               </div>
@@ -315,7 +315,7 @@
                       !erpnextCRMSettingsResource.doc
                         .create_customer_on_status_change
                     "
-                    class="w-48 flex-shrink-0"
+                    class="w-48 shrink-0"
                   />
                 </div>
               </div>

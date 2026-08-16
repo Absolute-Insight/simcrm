@@ -383,7 +383,7 @@
         <DescriptionIcon class="size-4 mt-1.5" />
         <div class="flex w-full items-center gap-x-2 border rounded-4 py-1">
           <TextEditor
-            editor-class="!prose-sm !leading-[1.13rem] overflow-auto px-2.5 rounded-4 placeholder-ink-gray-4 focus:bg-surface-base focus:ring-0 text-ink-gray-8 transition-colors"
+            editor-class="!prose-sm !leading-[1.13rem] overflow-auto px-2.5 rounded-4 placeholder:text-ink-gray-4 focus:bg-surface-base focus:ring-0 text-ink-gray-8 transition-colors"
             :bubbleMenu="true"
             :content="_event.description"
             :placeholder="__('Add Description')"

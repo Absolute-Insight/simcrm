@@ -6,7 +6,7 @@
       <div class="text-base-medium text-ink-gray-7">{{ data.name }}</div>
       <div
         v-if="data.description && data.description.length > 0"
-        class="text-p-base w-full text-ink-gray-5 mt-0.5 whitespace-nowrap overflow-ellipsis overflow-hidden"
+        class="text-p-base w-full text-ink-gray-5 mt-0.5 whitespace-nowrap text-ellipsis overflow-hidden"
       >
         {{ data.description }}
       </div>

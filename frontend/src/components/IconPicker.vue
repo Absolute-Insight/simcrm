@@ -8,7 +8,7 @@
     <template #default="{ close }">
       <div
         v-if="reaction"
-        class="px-2 py-1 flex items-center justify-center gap-2 rounded-full bg-surface-elevation-2 shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none"
+        class="px-2 py-1 flex items-center justify-center gap-2 rounded-full bg-surface-elevation-2 shadow-2xl ring-1 ring-black/5 focus:outline-none"
       >
         <div
           v-for="r in reactionEmojis"
@@ -28,7 +28,7 @@
       </div>
       <div v-else class="my-3 max-w-max transform bg-surface-base px-4 sm:px-0">
         <div
-          class="relative max-h-96 pb-3 overflow-y-auto min-w-40 rounded-6 bg-surface-elevation-2 shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none"
+          class="relative max-h-96 pb-3 overflow-y-auto min-w-40 rounded-6 bg-surface-elevation-2 shadow-2xl ring-1 ring-black/5 focus:outline-none"
         >
           <div class="flex gap-2 px-3 pb-1 pt-3">
             <div class="flex-1">

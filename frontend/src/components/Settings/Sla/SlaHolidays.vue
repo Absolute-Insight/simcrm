@@ -22,7 +22,7 @@
       </template>
       <template #default>
         <div
-          class="my-2 min-w-40 rounded-6 bg-surface-elevation-2 shadow-2xl ring-1 ring-black ring-opacity-5 focus:outline-none"
+          class="my-2 min-w-40 rounded-6 bg-surface-elevation-2 shadow-2xl ring-1 ring-black/5 focus:outline-none"
         >
           <div class="max-h-52 overflow-y-auto p-1">
             <div

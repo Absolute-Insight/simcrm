@@ -7,7 +7,7 @@
       >
         <div class="flex gap-2 truncate">
           <div
-            class="size-11 bg-surface-base rounded-4 overflow-hidden flex-shrink-0 flex justify-center items-center"
+            class="size-11 bg-surface-base rounded-4 overflow-hidden shrink-0 flex justify-center items-center"
             :class="{ border: !isImage(attachment.file_type) }"
           >
             <img
@@ -31,7 +31,7 @@
             </div>
           </div>
         </div>
-        <div class="flex flex-col items-end gap-2 flex-shrink-0">
+        <div class="flex flex-col items-end gap-2 shrink-0">
           <TimelineTimestamp :date="attachment.creation" />
           <div class="flex gap-1">
             <Button

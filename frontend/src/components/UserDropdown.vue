@@ -11,7 +11,7 @@
               : 'w-full px-2 hover:bg-surface-gray-2'
         "
       >
-        <BrandLogo v-model="brand" class="h-8 max-w-16 flex-shrink-0" />
+        <BrandLogo v-model="brand" class="h-8 max-w-16 shrink-0" />
         <div
           class="flex flex-1 flex-col text-left duration-300 ease-in-out truncate"
           :class="

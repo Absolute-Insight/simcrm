@@ -1,0 +1,65 @@
+/* v4 stand-in for frappe-ui/style.css, which still carries tailwind v3's
+   `@tailwind base/components/utilities` directives — the v4 engine rejects
+   those outright. The vite alias points `frappe-ui/style.css` here; this file
+   loads the v4 core against the existing JS config (the frappe-ui preset works
+   through v4's `@config` compat layer) and then restores the v3 behaviours the
+   library's own source still assumes. Delete when frappe-ui ships a
+   tailwind-4 stylesheet. */
+
+@import './fonts-inter.css';
+
+@import 'tailwindcss';
+@config '../../../tailwind.config.js';
+
+/* The preset safelists these for the editor's computed class strings; v4's
+   @config compat does not carry safelist, @source inline() is its successor. */
+@source inline('prose prose-v3');
+
+@theme {
+  /* v3's bare `ring` was 3px; v4's is 1px. The library uses bare ring for
+     focus states. */
+  --default-ring-width: 3px;
+}
+
+/* v3 preflight compat, per the v4 upgrade guide: border/divide default color
+   was gray-200 (here: the token the app themes it with), placeholders were
+   gray-400, buttons were cursor:pointer. The library's components assume all
+   three. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--outline-gray-1, currentColor);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--ink-gray-4);
+  }
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+/* v4 removed the *-opacity-* and flex-shrink-* utilities. The app's own
+   usages are migrated; frappe-ui's source still says `ring-1 ring-black
+   ring-opacity-5` (its hairline panel idiom) and `flex-shrink-0`, and we
+   compile its source. Reproduce just those, scoped to exactly the two
+   utilities the library uses. */
+/* prettier-ignore */
+@utility flex-shrink-0 {
+  flex-shrink: 0;
+}
+.ring-opacity-5 {
+  --tw-ring-color: rgb(0 0 0 / 0.05) !important;
+}
+
+/* Verbatim from frappe-ui/src/style.css: `useColorScheme` stamps this on
+   <html> around a light/dark swap so surfaces don't cross-fade one by one. */
+.no-transition *,
+.no-transition *::before,
+.no-transition *::after {
+  transition: none !important;
+}
