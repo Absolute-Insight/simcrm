@@ -1,0 +1,47 @@
+# Dependabot version updates. Security updates are enabled separately at the
+# repo level and fire regardless of this schedule.
+#
+# Weekly and grouped on purpose: a Monday batch of minor/patch bumps is one
+# review; ten single-dependency PRs spread over a week is ten. Majors stay
+# ungrouped so a breaking bump is a deliberate decision, never a rider on a
+# routine batch.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      python-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      frontend-minor-patch:
+        update-types: [minor, patch]
+
+  # Root package.json carries the Playwright e2e tooling only.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      e2e-minor-patch:
+        update-types: [minor, patch]
