@@ -153,7 +153,7 @@ polish · **P4** platform work beyond the pilot.
       **0.5 day.**
 
 ### Local model support (explicitly mandated)
-- [ ] **No local inference service in the deploy stack.** *Verified: the core code already
+- [x] **No local inference service in the deploy stack.** *Verified: the core code already
       works* — `crm.agent.client.complete()` against ollama returns a schema-valid summary in
       **1.03 s warm** (9.46 s cold), guided decoding clean. So this is deployment work, not a
       rewrite: an opt-in compose profile, a weights volume, `base_url` on a service name
@@ -165,7 +165,7 @@ polish · **P4** platform work beyond the pilot.
       For a pilot whose thresholds *will* need tuning, that is real friction. **1 day.**
 - [ ] **No way to validate an endpoint.** The only way to learn `base_url` is wrong is a rep
       clicking a feature and getting a degraded dialog. Add a test-connection action. **3 h.**
-- [ ] **Default `base_url` is `http://localhost:8000/v1` — Frappe's own port.** Enabling the
+- [x] **Default `base_url` was `http://localhost:8000/v1` — Frappe's own port.** Enabling the
       tier without editing it makes the CRM POST to itself and fail opaquely. **15 min.**
 - [ ] **Nothing enforces `timeout × 2 < PROXY_READ_TIMEOUT`.** Documented in both runbooks
       now, but an admin can still set 300 and discover it in production. Clamp it. **1 h.**

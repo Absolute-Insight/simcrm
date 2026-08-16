@@ -36,7 +36,7 @@
    "label": "Inference Endpoint"
   },
   {
-   "default": "http://localhost:8000/v1",
+   "default": "http://localhost:11434/v1",
    "description": "OpenAI-compatible base URL, including the version prefix.",
    "fieldname": "base_url",
    "fieldtype": "Data",
@@ -127,7 +127,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-13 00:00:00.000000",
+ "modified": "2026-08-16 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Agent",
  "name": "CRM Agent Settings",
