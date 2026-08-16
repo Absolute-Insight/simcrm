@@ -5,13 +5,13 @@
 	"description": "Frappe CRM helps you work, not slow you down. Open-source, intuitive, and free from extra costs.",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/frappe/crm.git"
+		"url": "git+https://github.com/Absolute-Insight/simcrm.git"
 	},
-	"homepage": "https://frappe.io/crm",
+	"homepage": "https://github.com/Absolute-Insight/simcrm",
 	"author": "Frappe Technologies Pvt. Ltd.",
 	"license": "GPL-3.0",
 	"bugs": {
-		"url": "https://github.com/frappe/crm/issues"
+		"url": "https://github.com/Absolute-Insight/simcrm/issues"
 	},
 	"scripts": {
 		"postinstall": "cd frontend && yarn install --check-files",
