@@ -37,13 +37,15 @@ def handle_request(**kwargs):
 			return
 
 		call_payload = kwargs
+		call_log = get_call_log(call_payload)
 
-		frappe.publish_realtime("exotel_call", call_payload)
+		_publish_call_to_agent(call_payload, call_log)
+
 		status = call_payload.get("Status")
 		if status == "free":
 			return
 
-		if call_log := get_call_log(call_payload):
+		if call_log:
 			update_call_log(call_payload, call_log=call_log)
 		elif call_payload.get("Direction") == "incoming":
 			create_call_log(
@@ -240,6 +242,55 @@ def link(contact_number, call_log):
 			doctype = "CRM Deal"
 			docname = contact.get("deal")
 		call_log.link_with_reference_doc(doctype, docname)
+
+
+def _call_agent(call_payload, call_log=None):
+	"""The one user this call belongs to, or None if it cannot be determined.
+
+	Every real path carries the agent: an existing log has them on `receiver`
+	(incoming) or `caller` (outgoing), a new incoming call arrives with
+	`AgentEmail`, and outgoing status callbacks come back through the URL
+	`get_status_updater_url` builds, which appends `&agent=<session user>`.
+	"""
+	if call_log:
+		agent = call_log.get("receiver") or call_log.get("caller")
+		if agent:
+			return agent
+
+	if agent := call_payload.get("AgentEmail"):
+		return agent
+
+	try:
+		return frappe.request.args.get("agent")
+	except Exception:
+		# No request context -- a retry from a worker, or a test.
+		return None
+
+
+def _publish_call_to_agent(call_payload, call_log=None):
+	"""Push the call to the agent it belongs to, and to nobody else.
+
+	This used to be an unscoped `publish_realtime`, which frappe delivers to
+	`get_site_room()` -- every logged-in session. The payload is Exotel's raw
+	passthru, so `CallFrom` (the customer's number) reached every rep's browser
+	for every call on the site. ExotelCallUI filters by `AgentEmail` before it
+	shows the popup, but that is a decision made after the data has already
+	crossed the wire.
+
+	When the agent cannot be worked out we publish nothing. A popup that does
+	not appear is a smaller failure than broadcasting a customer's phone number
+	to the whole company, and the log line says which happened.
+	"""
+	agent = _call_agent(call_payload, call_log)
+	if not agent:
+		frappe.log_error(
+			f"Exotel call {call_payload.get('CallSid')}: no agent could be resolved, "
+			"so no realtime notification was sent.",
+			"CRM Exotel: unaddressed call",
+		)
+		return
+
+	frappe.publish_realtime("exotel_call", call_payload, user=agent)
 
 
 def get_call_log(call_payload):
