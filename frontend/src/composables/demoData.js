@@ -1,6 +1,7 @@
 import { createResource } from 'frappe-ui'
 import { ref } from 'vue'
 import { globalStore } from '@/stores/global'
+import { reportActionError } from '@/utils/reportActionError'
 
 const isDemoDataCreated = ref(window.demo_data_created || false)
 
@@ -9,6 +10,12 @@ const _clearDemoData = createResource({
   onSuccess() {
     isDemoDataCreated.value = false
     window.location.reload()
+  },
+  /* The dialog closes on click and success reloads the page, so a rejection
+     with no handler looked exactly like a slow success: the demo data stayed,
+     and the only evidence was a console line. */
+  onError(error) {
+    reportActionError(error, __('Could not clear the demo data.'))
   },
 })
 

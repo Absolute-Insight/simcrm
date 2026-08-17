@@ -331,6 +331,17 @@
               >
                 <LoadingIndicator class="size-5" />
               </div>
+              <!-- Ahead of the sections, not after them. `data` falls back to
+                   {} on a failed fetch, so every tab rendered its empty copy --
+                   an admin checking whether the sync broke was told "No failed
+                   syncs" by a panel that had not managed to ask. -->
+              <ErrorState
+                v-else-if="productSyncStatus.error"
+                :error="productSyncStatus.error"
+                compact
+                :title="__('Could not load the sync status')"
+                :retry="() => productSyncStatus.submit()"
+              />
               <div v-else class="flex flex-col gap-2">
                 <div
                   class="flex gap-5 border-b border-outline-elevation-2 overflow-x-auto"
@@ -469,6 +480,7 @@ import {
   Tooltip,
 } from 'frappe-ui'
 import SettingsLayoutBase from '@/components/Layouts/SettingsLayoutBase.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Link from '../Controls/Link.vue'
 import { globalStore } from '@/stores/global'

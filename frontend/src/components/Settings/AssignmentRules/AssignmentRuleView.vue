@@ -761,23 +761,42 @@ const updateAssignmentRule = async () => {
     assignmentRuleData.value.name !==
     assignmentRuleData.value.assignmentRuleName
   ) {
-    await call('frappe.client.rename_doc', {
+    /* The catch used to swallow the rejection and let execution fall through
+       to a refetch under the *new* name, which does not exist when the rename
+       failed. That submit rejected with nobody listening, so the two lines
+       below it never ran: no success toast, but no `isLoading = false` either,
+       and the spinner stayed up until the page was reloaded. */
+    const renamed = await call('frappe.client.rename_doc', {
       doctype: 'Assignment Rule',
       old_name: assignmentRuleData.value.name,
       new_name: assignmentRuleData.value.assignmentRuleName,
-    }).catch(async (er) => {
-      const error =
-        er?.messages?.[0] ||
-        __('Some error occurred while renaming assignment rule')
-      toast.error(error)
-      // Reset assignment rule to previous state
-      await getAssignmentRuleData.reload()
+    })
+      .then(() => true)
+      .catch(async (er) => {
+        toast.error(
+          er?.messages?.[0] ||
+            __('Some error occurred while renaming assignment rule'),
+        )
+        // Reset assignment rule to previous state
+        await getAssignmentRuleData.reload()
+        return false
+      })
+    if (!renamed) {
       isLoading.value = false
-    })
-    await getAssignmentRuleData.submit({
-      doctype: 'Assignment Rule',
-      name: assignmentRuleData.value.assignmentRuleName,
-    })
+      return
+    }
+    await getAssignmentRuleData
+      .submit({
+        doctype: 'Assignment Rule',
+        name: assignmentRuleData.value.assignmentRuleName,
+      })
+      .catch((er) =>
+        // The rename landed; this is a stale form, not a failed save.
+        reportActionError(
+          er,
+          __('Renamed, but the rule could not be reloaded. Refresh to see it.'),
+        ),
+      )
   } else {
     getAssignmentRuleData.reload()
   }

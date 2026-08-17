@@ -446,9 +446,38 @@ polish · **P4** platform work beyond the pilot.
       assignment that never happened. It now rolls back and reports. `CalendarEventPanel`'s
       existing handler read `err.messages[0]` unguarded and threw a second error inside the
       catch on any rejection without that array.
-- [ ] **Resources submitted with no `onError` are a second, unenumerated category.**
-      `AssignToBody` was found by accident; nothing has swept `createResource` call sites
-      the way this pass swept `.then(`. **4 h** to enumerate and triage.
+- [x] **Resources submitted with no `onError` are a second, unenumerated category.**
+      Swept: **157** `createResource`/`createListResource`/`createDocumentResource`
+      declarations across 100 files.
+      **The obvious metric was the wrong one.** Counting declarations without an `onError`
+      key gives 130, and that number is close to meaningless — a resource also handles
+      failure by exposing `.error` for the template to render (`StatTile`, `ErrorState`),
+      by taking `onError` inline at the `submit()` call, or by being awaited inside a
+      `try`. `AssignToBody`, `LeadModal` and every dashboard chart come back "unhandled"
+      under that test and are all fine. The question worth asking is whether a rejection
+      reaches the user, not whether one particular key is present.
+      Re-triaged on that basis: **8 candidates that mutate or mislead**, of which 4 were
+      real. Two were bugs rather than missing messages:
+      - `SlaPolicyView` caught a failed rename and then *carried on*, refetching under the
+        new name that does not exist, unawaited — then fired `toast.success('SLA policy
+        updated')` unconditionally. A failed rename showed an error toast and a success
+        toast, in that order.
+      - `AssignmentRuleView` had the same shape, and there the unhandled rejection skipped
+        the `isLoading = false` two lines below it: the spinner stayed up until reload.
+      - `ERPNextSettings.productSyncStatus` falls back to `{}` on failure, so every tab
+        rendered its empty copy — an admin checking whether the product sync had broken
+        was told **"No failed syncs"** by a panel that had not managed to ask. Now an
+        `ErrorState` ahead of the sections, with retry.
+      - `demoData.clearDemoData` closed its confirm dialog and reported nothing on
+        rejection, which looked identical to a slow success.
+      **What remains, and why it is not a defect list.** ~92 read-only resources still have
+      no explicit handler — mostly tab layouts, link-field option lookups and dropdown
+      fetches, where failure degrades to an empty control rather than a false statement.
+      The subset that *would* matter is the one where empty renders as a confident "none";
+      those are the Vectora surfaces, and they already use `ErrorState`. Worth a pass, but
+      it is polish, not a lie: **moved to P3.** The sweep script is heuristic (regex over
+      brace-matched blocks) and is a candidate list, not an oracle — every fix above was
+      confirmed by reading the call site.
 - [x] **Two endpoints returned `"success"` when they did nothing.** `remove_linked_doc_
       reference` skips items the user cannot write and items that fail validation;
       `delete_bulk_docs` hands anything over ten records to a worker. Both answered
