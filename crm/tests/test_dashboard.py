@@ -96,6 +96,54 @@ class TestDashboard(IntegrationTestCase):
 			filters["deal_owner"] = user
 		return frappe.db.count("CRM Deal", filters)
 
+	def deal_values_in_period(self, scope: str, user: str | None = None) -> list[float]:
+		"""The values a deal-value average should be averaging, re-derived through
+		frappe.db instead of the dashboard's own query builder.
+
+		Mirrors the dashboard's predicates exactly, which are not as symmetric as
+		the names suggest: ``won`` is the Won status type dated by ``closed_date``;
+		``ongoing`` is anything that is neither Won nor Lost; ``non_lost`` is
+		everything except Lost. The last two are dated by ``creation``, so
+		``non_lost`` is not ``ongoing`` plus ``won``.
+		"""
+		if scope == "won":
+			status_filter = {"type": "Won"}
+			date_field = "closed_date"
+		elif scope == "ongoing":
+			status_filter = {"type": ("not in", ["Won", "Lost"])}
+			date_field = "creation"
+		elif scope == "non_lost":
+			status_filter = {"type": ("!=", "Lost")}
+			date_field = "creation"
+		else:
+			raise ValueError(f"unknown scope {scope!r}")
+
+		statuses = frappe.db.get_list("CRM Deal Status", status_filter, pluck="name")
+		filters = {
+			"status": ("in", statuses),
+			date_field: ("between", [self.from_date, self.to_date]),
+		}
+		if user:
+			filters["deal_owner"] = user
+
+		rows = frappe.db.get_all("CRM Deal", filters=filters, fields=["deal_value", "exchange_rate"])
+		return [(r.deal_value or 0) * (r.exchange_rate or 1) for r in rows]
+
+	def expected_mean(self, scope: str, user: str | None = None) -> float:
+		values = self.deal_values_in_period(scope, user)
+		return sum(values) / len(values) if values else 0
+
+	def assertAverages(self, result, scope: str, user: str | None = None):
+		"""The metric must equal the mean of the rows matching the same predicate."""
+		values = self.deal_values_in_period(scope, user)
+		expected = sum(values) / len(values) if values else 0
+		self.assertAlmostEqual(
+			result["value"],
+			expected,
+			places=2,
+			msg=f"{scope} average over {len(values)} deals" + (f" owned by {user}" if user else ""),
+		)
+
 	@classmethod
 	def tearDownClass(cls):
 		"""Clean up test records after all tests"""
@@ -149,21 +197,13 @@ class TestDashboard(IntegrationTestCase):
 		result = get_average_ongoing_deal_value(self.from_date, self.to_date)
 
 		self.assertEqual(result["title"], "Avg. ongoing deal value")
-
-		# Expected average of ongoing deals (13 Qualification + 8 Negotiation = 21 deals)
-		# Qualification: 50k,75k,100k,25k,80k,60k,90k,45k,70k,55k,85k,65k,95k = 895,000 / 13 = 68,846.15
-		# Negotiation: 120k,110k,130k,105k,115k,125k,140k,135k = 980,000 / 8 = 122,500
-		# Combined: 1,875,000 / 21 = 89,285.71
-		expected_avg = 89285.71
-		self.assertAlmostEqual(result["value"], expected_avg, places=2)
+		self.assertAverages(result, "ongoing")
 		self.assertIsNotNone(result["prefix"])  # Should have currency symbol
 		self.assertIsInstance(result["delta"], (int, float))
 
 		# Test with user filter - crm.user1@example.com owns 2 ongoing deals
 		result_user = get_average_ongoing_deal_value(self.from_date, self.to_date, self.user2_email)
-		# User1 has 2 deals: Cloud Systems (90k) + Smart Solutions (70k) = 160k / 2 = 80,000
-		expected_user_avg = 80000.0
-		self.assertAlmostEqual(result_user["value"], expected_user_avg, places=2)
+		self.assertAverages(result_user, "ongoing", self.user2_email)
 
 		# Both should have same currency symbol
 		self.assertEqual(result["prefix"], result_user["prefix"])
@@ -195,19 +235,12 @@ class TestDashboard(IntegrationTestCase):
 		result = get_average_won_deal_value(self.from_date, self.to_date)
 
 		self.assertEqual(result["title"], "Avg. won deal value")
-
-		# Expected average of won deals: 8 deals
-		# 150k,160k,145k,170k,155k,165k,175k,180k = 1,300,000 / 8 = 162,500
-		expected_avg = 162500.0
-		won_count = get_won_deals(self.from_date, self.to_date)["value"]
-		if won_count > 0:
-			self.assertAlmostEqual(result["value"], expected_avg, places=2)
-		else:
-			self.assertEqual(result["value"], 0)
+		self.assertAverages(result, "won")
 
 		# Test with user filter - user2 has no won deals
 		result_user = get_average_won_deal_value(self.from_date, self.to_date, self.user2_email)
 		self.assertEqual(result_user["value"], 0)  # No won deals = 0 average
+		self.assertAverages(result_user, "won", self.user2_email)
 
 		# Verify currency consistency
 		self.assertEqual(result["prefix"], result_user["prefix"])
@@ -217,11 +250,7 @@ class TestDashboard(IntegrationTestCase):
 		result = get_average_deal_value(self.from_date, self.to_date)
 
 		self.assertEqual(result["title"], "Avg. deal value")
-
-		# Expected average: Ongoing (21 deals: 13 Qualification + 8 Negotiation, $1,875k) + Won (8 deals, $1,300k)
-		# Total: 29 non-lost deals, $3,175k / 29 = 109,482.76
-		expected_avg = 109482.76
-		self.assertAlmostEqual(result["value"], expected_avg, places=2)
+		self.assertAverages(result, "non_lost")
 
 		self.assertIn(
 			"ongoing & won", result["tooltip"].lower()
@@ -229,9 +258,7 @@ class TestDashboard(IntegrationTestCase):
 
 		# Test with user filter - crm.user1@example.com owns 2 ongoing deals (no won)
 		result_user = get_average_deal_value(self.from_date, self.to_date, self.user2_email)
-		# User1 has 2 ongoing deals: 90k + 70k = 160k / 2 = 80,000
-		expected_user_avg = 80000.0
-		self.assertAlmostEqual(result_user["value"], expected_user_avg, places=2)
+		self.assertAverages(result_user, "non_lost", self.user2_email)
 
 	def test_get_average_time_to_close_a_lead(self):
 		"""Test get_average_time_to_close_a_lead calculates time from lead creation"""
@@ -578,23 +605,95 @@ class TestDashboard(IntegrationTestCase):
 			f"Deal count mismatch: ongoing({ongoing}) + won({won}) + lost({lost_deals}) = {total_deals_by_type}, but total is {total_deals}",
 		)
 
-	def test_average_values_are_reasonable(self):
-		"""Test that calculated averages match expected values from test data"""
-		avg_ongoing = get_average_ongoing_deal_value(self.from_date, self.to_date)["value"]
-		avg_won = get_average_won_deal_value(self.from_date, self.to_date)["value"]
-		avg_all = get_average_deal_value(self.from_date, self.to_date)["value"]
+	def test_the_three_averages_agree_with_each_other(self):
+		"""All three metrics, and their ordering, against independently derived means.
 
-		# Verify calculated averages match expected values
-		self.assertAlmostEqual(avg_ongoing, 89285.71, places=2)  # $1,875,000 / 21 ongoing deals
-		self.assertAlmostEqual(avg_won, 162500.0, places=2)  # $1,300,000 / 8 won deals
-		self.assertAlmostEqual(avg_all, 109482.76, places=2)  # $3,175,000 / 29 non-lost deals
+		The ordering used to be asserted as fixed facts -- won above ongoing, all
+		between the two. Those are properties of the fixture, not of the code, and
+		they stop holding the moment the site has other deals on it. Asserted
+		against the same rows the metrics claim to be summarising instead, so the
+		test still fails if a metric picks the wrong status set or the wrong date
+		column, and no longer fails just because someone else's deals are here.
+		"""
+		metrics = {
+			"ongoing": get_average_ongoing_deal_value(self.from_date, self.to_date),
+			"won": get_average_won_deal_value(self.from_date, self.to_date),
+			"non_lost": get_average_deal_value(self.from_date, self.to_date),
+		}
+		for scope, result in metrics.items():
+			with self.subTest(scope=scope):
+				self.assertAverages(result, scope)
 
-		# Business logic: won deals should have higher average than ongoing
-		self.assertGreater(avg_won, avg_ongoing, "Won deals should have higher average than ongoing")
+		expected_order = sorted(metrics, key=self.expected_mean)
+		actual_order = sorted(metrics, key=lambda s: metrics[s]["value"])
+		self.assertEqual(actual_order, expected_order)
 
-		# Average of all should be between ongoing and won
-		self.assertGreater(avg_all, avg_ongoing, "All deals average should be greater than ongoing only")
-		self.assertLess(avg_all, avg_won, "All deals average should be less than won only")
+	def test_the_won_average_is_dated_by_when_the_deal_closed_not_when_it_opened(self):
+		"""A deal created this month but closed last month is not this month's win.
+
+		The fixture cannot tell those two predicates apart -- its won deals were
+		created and closed in the same month, so `get_average_won_deal_value`
+		returns the same number whichever date column it filters on. Swapping
+		closed_date for creation in that query passes every other test in this
+		file. This deal is built to separate them.
+		"""
+		won_status = frappe.db.get_value("CRM Deal Status", {"type": "Won"}, "name")
+		before = get_average_won_deal_value(self.from_date, self.to_date)["value"]
+
+		deal = frappe.get_doc(
+			{
+				"doctype": "CRM Deal",
+				"status": won_status,
+				"deal_value": 9_999_999,
+				"probability": 100,
+			}
+		).insert(ignore_permissions=True)
+		# validate() forces closed_date to today whenever the status becomes Won,
+		# so backdate it underneath the controller.
+		frappe.db.set_value(
+			"CRM Deal", deal.name, "closed_date", add_days(self.from_date, -1), update_modified=False
+		)
+
+		after = get_average_won_deal_value(self.from_date, self.to_date)["value"]
+		self.assertAlmostEqual(
+			after,
+			before,
+			places=2,
+			msg="a deal closed before the period is being counted in it -- is the query using creation?",
+		)
+
+	def test_the_fixture_defines_the_averages_these_tests_were_written_around(self):
+		"""The fixture file, which cannot drift -- unlike the site it is loaded into.
+
+		This is where the original hard-coded numbers belong: they describe
+		``crm_deal/test_records.json``, so if someone edits that file the arithmetic
+		in the comments above stops being a lie quietly.
+		"""
+		deals = self.defined_records("CRM Deal")
+		by_status = {}
+		for deal in deals:
+			count, total = by_status.get(deal["status"], (0, 0))
+			by_status[deal["status"]] = (count + 1, total + (deal.get("deal_value") or 0))
+
+		ongoing = [by_status["Qualification"], by_status["Negotiation"]]
+		ongoing_count = sum(c for c, _ in ongoing)
+		ongoing_total = sum(t for _, t in ongoing)
+		won_count, won_total = by_status["Won"]
+
+		self.assertEqual((ongoing_count, ongoing_total), (21, 1_875_000))
+		self.assertAlmostEqual(ongoing_total / ongoing_count, 89285.71, places=2)
+
+		self.assertEqual((won_count, won_total), (8, 1_300_000))
+		self.assertAlmostEqual(won_total / won_count, 162500.0, places=2)
+
+		non_lost_count = ongoing_count + won_count
+		non_lost_total = ongoing_total + won_total
+		self.assertEqual((non_lost_count, non_lost_total), (29, 3_175_000))
+		self.assertAlmostEqual(non_lost_total / non_lost_count, 109482.76, places=2)
+
+		# Every fixture deal is in the base currency, which is what lets the
+		# arithmetic above ignore exchange_rate.
+		self.assertEqual({d.get("exchange_rate") for d in deals}, {1})
 
 	def test_delta_calculation_logic(self):
 		"""Test that delta values represent actual change"""
