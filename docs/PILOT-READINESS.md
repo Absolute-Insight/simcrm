@@ -489,7 +489,33 @@ polish · **P4** platform work beyond the pilot.
 - [ ] **Facebook lead sync pagination** — follow `paging.next` in `fetch_leads()` and
       advance `last_synced_at` only to the newest lead actually imported, then flip the
       default in `crm/lead_syncing/__init__.py`. **1 day.**
-- [ ] **Scheduled re-enrichment** — documented as "future feature, not implemented". **2 d.**
+- [x] **Scheduled re-enrichment.** Enrichment had two triggers — the button and
+      record creation — so data captured once was never refreshed; a pilot running for
+      months would be reading whatever a company's website said the day the record was
+      made. `tasks.reenrich_stale_records` on `daily_long`, off unless
+      `scheduled_reenrichment` is ticked, tuned by `reenrich_after_days` (90) and
+      `reenrich_batch_size` (25).
+
+      The selection rule is the part worth reading. Staleness comes from
+      `CRM Enrichment Run` history, **not** from scanning the doctype: a record that
+      has never been enriched is not stale, it is untouched, and sweeping those in
+      would mean ticking one checkbox crawls every website in the CRM that night. The
+      newest run counts whatever its status, so an uncrawlable site is retried on the
+      sweep's cadence rather than nightly. Oldest first and capped, so a backlog is
+      worked through over days. Independent of `auto_enrich`, so an admin can decline
+      to crawl every new record and still keep the enriched ones fresh. Queued through
+      the shared `enqueue_enrichment`, whose per-document `job_id` + `deduplicate` stop
+      a sweep racing a rep who just pressed Enrich. Scheduled runs publish no realtime
+      progress — nobody is waiting, and the alternative was a progress stream to a user
+      who never asked (or, worse, a site-wide broadcast).
+
+      16 tests. The negative cases each carry a control record that must still be
+      swept, so "the sweep found nothing" cannot pass for "the sweep correctly declined
+      this one". Two mutations checked: dropping the staleness cutoff fails 3 tests,
+      reversing the ordering fails 1.
+
+      **Note for the pilot:** enrichment settings remain desk-only — there is no
+      Settings pane for them, unlike the assistant and digests.
 - [ ] **Territory/segment analytics** — one territory chart exists; no segment dimension
       anywhere, no territory filter on dashboard or reports. **3–5 days.**
 - [ ] **`quota_attainment_by_rep` cannot be scheduled** — the digest doctype hardcodes four

@@ -33,6 +33,9 @@ DEFAULT_SETTINGS = {
 	"enable_deal": 1,
 	"enable_organization": 1,
 	"auto_enrich": 0,
+	"scheduled_reenrichment": 0,
+	"reenrich_after_days": 90,
+	"reenrich_batch_size": 25,
 	"max_pages": 10,
 	"max_depth": 2,
 	"use_sitemap": 1,
@@ -64,13 +67,24 @@ def get_settings():
 	return frappe.get_cached_doc("CRM Enrichment Settings")
 
 
+def enrichment_enabled_for(doctype: str) -> bool:
+	"""True if enrichment may touch ``doctype`` at all -- feature on, doctype on.
+
+	The half of ``auto_enrich_enabled_for`` that is not about *creation*, so the
+	scheduled sweep can ask the same question without inheriting the auto-enrich
+	flag: an admin who does not want every new record crawled may still want the
+	ones already enriched kept fresh.
+	"""
+	s = get_settings()
+	flag = ENABLE_FLAG_BY_DOCTYPE.get(doctype)
+	return bool(_setting(s, "enabled") and flag and _setting(s, flag))
+
+
 def auto_enrich_enabled_for(doctype: str) -> bool:
 	"""True if auto-enrich-on-create should fire for ``doctype``. A cheap,
 	Settings-only check (feature enabled + auto_enrich on + this doctype enabled) --
 	no Rules/Mappings assembled."""
-	s = get_settings()
-	flag = ENABLE_FLAG_BY_DOCTYPE.get(doctype)
-	return bool(_setting(s, "enabled") and _setting(s, "auto_enrich") and flag and _setting(s, flag))
+	return bool(enrichment_enabled_for(doctype) and _setting(get_settings(), "auto_enrich"))
 
 
 # Industry classifier thresholds. These are mechanics (how confident the winner

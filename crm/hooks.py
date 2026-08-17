@@ -262,7 +262,12 @@ scheduler_events = {
 		"crm.api.event.trigger_weekly_event_notifications",
 		"crm.api.dashboard.take_forecast_snapshot",
 	],
-	"daily_long": ["crm.lead_syncing.background_sync.sync_leads_from_sources_daily"],
+	"daily_long": [
+		"crm.lead_syncing.background_sync.sync_leads_from_sources_daily",
+		# off unless an admin turns scheduled_reenrichment on; long because each
+		# record it queues is a crawl of somebody else's website
+		"crm.domain_enrichment.tasks.reenrich_stale_records",
+	],
 	"hourly_long": ["crm.lead_syncing.background_sync.sync_leads_from_sources_hourly"],
 	"monthly_long": ["crm.lead_syncing.background_sync.sync_leads_from_sources_monthly"],
 	"cron": {

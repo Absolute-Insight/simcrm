@@ -286,11 +286,32 @@ write back to the Organization. The field-writing reuses `mapper.apply_to_docume
   `og:image`/`twitter:image`) is captured separately as `image` in the run JSON — it is
   **not** used as the logo (`og:image` is usually a wide banner) and isn't mapped to a
   record field by default.
-- **Scheduled re-enrichment — _future feature, not implemented._** Triggering is
-  either manual (Enrich button) or automatic on Lead/Deal/Organization creation (`auto_enrich`);
-  there is no *scheduled* re-enrichment of existing records. A future version could enqueue periodic re-enrichment of
-  stale records (e.g. via a scheduled job that re-runs `tasks.run_enrichment` for
-  records whose last `CRM Enrichment Run` is older than N days).
+- **Scheduled re-enrichment.** Three triggers now: the Enrich button, creation
+  (`auto_enrich`), and a daily sweep (`tasks.reenrich_stale_records`, wired to
+  `daily_long`). The sweep is **off** unless `scheduled_reenrichment` is ticked —
+  crawling other people's websites on a timer is not something to start doing by
+  default — and is tuned by `reenrich_after_days` (90) and `reenrich_batch_size` (25).
+
+  What it selects, and why:
+
+  - **Only records that have been enriched before.** Staleness is measured off
+    `CRM Enrichment Run` history, not by scanning the doctype. A record that has never
+    been enriched is not stale, it is untouched, and sweeping those in would mean
+    ticking one checkbox crawls every website in the CRM that night. Untouched records
+    are what the button and `auto_enrich` are for.
+  - **The newest run counts whatever its status.** A site that cannot be crawled is
+    retried on the sweep's cadence rather than every single night.
+  - **Oldest first, capped per run.** A backlog is worked through over days instead of
+    the same records being re-picked, and a large database is never crawled at once.
+  - **Independent of `auto_enrich`.** An admin can decline to crawl every new record
+    and still keep the ones they have already enriched up to date.
+
+  It enqueues through the same `enqueue_enrichment` as the other two triggers, so the
+  per-document `job_id` + `deduplicate` stop a sweep racing a rep who just pressed
+  Enrich. Scheduled runs publish **no** realtime progress: nobody is waiting on them,
+  and publishing to the job's own user would push a progress stream for records they
+  never asked about (publishing to no user at all is a site-wide broadcast, which is
+  worse). Covered by `tests/test_reenrichment.py`.
 - **TLS fingerprinting.** The fetcher uses `requests`, so its TLS ClientHello
   fingerprints (JA3/JA4) as a non-browser client. Bot walls that fingerprint TLS
   (Cloudflare, Akamai, DataDome) can still block it even though `http.build_session`
