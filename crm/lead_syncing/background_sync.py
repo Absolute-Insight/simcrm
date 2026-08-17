@@ -1,7 +1,16 @@
 import frappe
 
+from crm.lead_syncing import lead_syncing_enabled
+
 
 def sync_leads_from_all_enabled_sources(frequency: str | None = None) -> None:
+	# The scheduler hooks stay registered so that flipping the site config is
+	# the whole of re-enabling, rather than a config change that quietly only
+	# restores the manual "Sync Now" button. See crm/lead_syncing/__init__.py
+	# for why this is off.
+	if not lead_syncing_enabled():
+		return
+
 	enabled_sources = frappe.get_all(
 		"Lead Sync Source", filters={"enabled": 1, "background_sync_frequency": frequency}, pluck="name"
 	)

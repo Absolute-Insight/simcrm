@@ -138,6 +138,25 @@ off the host; a backup on the machine it protects is a copy, not a backup.
   you actually run. Either way a slow model occupies a worker for its whole
   duration: size the pool before pointing this at something big.
 
+## Lead syncing is off
+
+The Facebook lead-ads connector ships disabled and its settings tab is hidden.
+It asks the Graph API for one enormous page and ignores the paging cursor, then
+marks everything up to now as synced — so a form that produces more new leads
+than fit in one page loses the remainder silently, with nothing in Failed Lead
+Sync Log to show for it. The failure only appears when a campaign does well.
+
+Nothing else depends on it; leads still arrive through the web form, the API
+and manual entry. If you need it anyway and accept that behaviour, set
+`crm_enable_lead_syncing` in site config:
+
+```bash
+docker compose exec backend bench --site <site> set-config crm_enable_lead_syncing 1
+```
+
+That restores the background jobs, the **Sync Now** button and the settings
+tab together. Leave it unset until `fetch_leads()` follows `paging.next`.
+
 ## Running the agent on a local model
 
 The agent tier is an HTTP client to any OpenAI-compatible endpoint — it does no

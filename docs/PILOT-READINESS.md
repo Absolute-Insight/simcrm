@@ -278,10 +278,17 @@ polish · **P4** platform work beyond the pilot.
       never settles. **1 h.**
 
 ### Feature gaps
-- [ ] **Facebook lead sync drops paginated leads permanently.** `facebook.py:73`
+- [x] **Facebook lead sync drops paginated leads permanently.** `facebook.py:73`
       (`limit: 100000, # TODO: pagination`) never follows `paging.next`, and `:39` advances
       the watermark unconditionally — overflow leads are dropped *and* never re-fetched.
-      **Blocker if the pilot uses Facebook lead ads; otherwise P2.** **1 day.**
+      **Disabled rather than fixed** (decision, 2026-08-17): the connector is now gated on
+      `crm_enable_lead_syncing` in site config, default off, blocking the background jobs,
+      the "Sync Now" button and the `enabled` checkbox, and hiding the settings tab.
+      Six tests in `test_lead_sync_source.py` pin the switch. **The underlying pagination
+      bug is untouched** — the work below still stands whenever Facebook lead ads matter.
+- [ ] **Facebook lead sync pagination** — follow `paging.next` in `fetch_leads()` and
+      advance `last_synced_at` only to the newest lead actually imported, then flip the
+      default in `crm/lead_syncing/__init__.py`. **1 day.**
 - [ ] **Scheduled re-enrichment** — documented as "future feature, not implemented". **2 d.**
 - [ ] **Territory/segment analytics** — one territory chart exists; no segment dimension
       anywhere, no territory filter on dashboard or reports. **3–5 days.**
