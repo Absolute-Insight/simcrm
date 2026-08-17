@@ -128,6 +128,14 @@ jobs:
           bench setup requirements --dev
           bench new-site --db-root-password root --admin-password admin crm.test
           bench --site crm.test install-app crm
+          # frappe's assets too, not just ours. The login page is served by
+          # frappe and its submit handler lives in frappe's bundles: without
+          # them the page still renders (the markup is server-side) but no JS
+          # attaches, so clicking Sign In does nothing at all -- no request, no
+          # error, just a navigation that never happens. Every other spec
+          # authenticates through the API and loads the CRM bundle, which is why
+          # the login spec was the only casualty.
+          bench build --app frappe
           bench build --app crm
         env:
           CI: "Yes"
