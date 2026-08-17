@@ -48,6 +48,14 @@ class CRMSalesHierarchy(NestedSet):
 			frappe.db.set_value("CRM Sales Hierarchy", self.reports_to, "is_group", 1)
 
 	def on_trash(self):
+		# super() is load-bearing, and this override used to skip it. NestedSet's
+		# on_trash does two things nothing else does: validate_if_child_exists()
+		# refuses to delete a manager who still has reports, and update_nsm()
+		# repairs the lft/rgt bounds every subtree query depends on. Without
+		# them, offboarding a manager silently orphaned their reports in the
+		# tree that defines rep isolation -- so a rep could keep or lose
+		# visibility of deals depending on where the bounds landed.
+		super().on_trash()
 		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
 
 

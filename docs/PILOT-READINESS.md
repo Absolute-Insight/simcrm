@@ -70,7 +70,7 @@ polish · **P4** platform work beyond the pilot.
 - [x] **`crm/api/rep_plan.py` had no role gate** on any of its 7 endpoints and writes with
       `ignore_permissions` (`:204`). Any authenticated account — including a portal user
       with no CRM role — can create plan records that feed the adherence metric. **15 min.**
-- [ ] **`CRMSalesHierarchy.on_trash` overrides `NestedSet.on_trash` without calling
+- [x] **`CRMSalesHierarchy.on_trash` overrode `NestedSet.on_trash` without calling
       super.** `crm_sales_hierarchy.py:50`. Skips both the "manager still has reports" guard
       and the lft/rgt repair, on the doctype that *defines* rep isolation — whose test file
       is a 9-line empty stub. Offboarding a manager orphans their reports or 500s after the
@@ -90,11 +90,11 @@ polish · **P4** platform work beyond the pilot.
       `CRM Rep Plan`, so hourly signals and weekly snapshots run against fake deals and
       three fake users, and "Clear Demo Data" leaves immutable snapshots behind forever.
       One patch for contaminated snapshots has already shipped once. **3 h.**
-- [ ] **Two SSRF guards have diverged.** `integrations/api.py:183` (call-recording fetch)
+- [x] **Two SSRF guards had diverged.** `integrations/api.py:183` (call-recording fetch)
       lacks the explicit multicast reject that `domain_enrichment/http.py:83` documents as
       necessary. The TODO at `integrations/api.py:213` says to share the helper "until
       enrichment ships" — it shipped. **1 h.**
-- [ ] **`get_assigned_users` is unscoped** (`doc.py:608`) — any user can enumerate who is
+- [x] **`get_assigned_users` was unscoped** (`doc.py:608`) — any user can enumerate who is
       assigned to any record. **15 min.**
 
 ## P1 — Release and CI integrity
