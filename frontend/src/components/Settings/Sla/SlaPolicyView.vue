@@ -265,6 +265,7 @@ import {
   toast,
 } from 'frappe-ui'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import { reportActionError } from '@/utils/reportActionError'
 import { inject, onUnmounted, ref, watch } from 'vue'
 import SettingsLayoutBase from '../../Layouts/SettingsLayoutBase.vue'
 import {
@@ -497,19 +498,40 @@ const updateSla = async () => {
     },
   )
 
+  /* The rename used to be caught and then ignored: execution carried on to
+     refetch under the *new* name -- which does not exist when the rename
+     failed -- and that submit was not awaited, so its rejection went nowhere.
+     Then the success toast fired unconditionally, so a failed rename showed an
+     error and "SLA policy updated" one after the other. */
   if (slaData.value.name !== slaData.value.sla_name) {
-    await renameSlaResource.submit().catch(async (er) => {
-      const error =
-        er?.messages?.[0] || __('Some error occurred while renaming SLA policy')
-      toast.error(error)
-      // Reset assignment rule to previous state
-      await getSlaResource.reload()
-    })
+    const renamed = await renameSlaResource
+      .submit()
+      .then(() => true)
+      .catch(async (er) => {
+        toast.error(
+          er?.messages?.[0] ||
+            __('Some error occurred while renaming SLA policy'),
+        )
+        await getSlaResource.reload()
+        return false
+      })
+    if (!renamed) return
 
-    getSlaResource.submit({
-      doctype: 'CRM Service Level Agreement',
-      name: slaData.value.sla_name,
-    })
+    await getSlaResource
+      .submit({
+        doctype: 'CRM Service Level Agreement',
+        name: slaData.value.sla_name,
+      })
+      .catch((er) =>
+        // The rename did land, so this is a stale form rather than a failed
+        // save -- say which, or the admin re-types a change already stored.
+        reportActionError(
+          er,
+          __(
+            'Renamed, but the policy could not be reloaded. Refresh to see it.',
+          ),
+        ),
+      )
   } else {
     await getSlaResource.reload()
   }
