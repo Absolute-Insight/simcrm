@@ -516,8 +516,46 @@ polish · **P4** platform work beyond the pilot.
 
       **Note for the pilot:** enrichment settings remain desk-only — there is no
       Settings pane for them, unlike the assistant and digests.
-- [ ] **Territory/segment analytics** — one territory chart exists; no segment dimension
-      anywhere, no territory filter on dashboard or reports. **3–5 days.**
+- [x] **Segment analytics.** The dashboard could say *where* deals were (territory) and
+      *who* owned them, but not **who we sell to**. Two charts —
+      `deals_by_industry` and `deals_by_company_size` — plus a `pipeline_by_segment`
+      report that reuses the charts' own aggregates, so the report and the dashboard
+      cannot disagree about the same number. Both charts are in `CHARTS` and in the
+      add-chart modal; the report is in `REPORTS` and therefore schedulable as a digest.
+
+      Two things worth reading:
+
+      **Company size is ordered by the field's declared option order, not by the label.**
+      Sorted as strings those values run `1-10, 1000+, 11-50, 201-500, 51-200` — an axis
+      that reads as a size ordering and is not one. Every individual number stays correct
+      while the shape of the chart lies, which is the worst kind of wrong for a chart.
+      The test fails against the alphabetical version.
+
+      **An unanswered employee count was silently recorded as `1-10`.** Frappe
+      pre-selects the first option of a Select that declares no default, so
+      `no_of_employees` on Deal, Lead and Organization stored the smallest band for every
+      record where nobody answered. On this container's data that is **1012 of 1044
+      deals** — a company-size chart built on it would have reported almost the entire
+      pipeline as micro-businesses and called it a finding. All three fields now lead
+      with a blank option, so unset stays unset. 13 tests.
+
+      **Note for the pilot:** rows written *before* this fix cannot be told apart — a
+      stored `1-10` may be a real answer or an unanswered one. Read the earliest months
+      of a company-size chart with that in mind on any site that predates the upgrade.
+
+- [ ] **Territory filter on dashboard and reports.** Still open, and larger than it looks.
+      The obvious seam is `scope_deals`/`scope_leads`, which every chart calls — except
+      it isn't: `plan_adherence`, `quota_attainment`, `forecasted_revenue`,
+      `forecast_accuracy` and `deals_by_stage_axis` do not go through it. A filter hung
+      there would apply to 17 of 22 charts **silently**, putting EMEA revenue next to
+      global quota attainment with nothing to say so — worse than no filter.
+
+      Three of those five cannot honour a territory at all: quotas are per rep per month,
+      rep plans have no territory, and `CRM Forecast Snapshot` has no territory dimension
+      to slice (it would need re-snapshotting per territory). So the design has to be an
+      explicit parameter threaded into every chart signature, plus a visible marker on
+      the charts that cannot apply it. **2–3 days**, and it needs the "not filtered"
+      affordance designed rather than assumed.
 - [x] **`quota_attainment_by_rep` could not be scheduled.** The digest doctype's Select
       hardcoded four of the five registry reports, so the one report a sales manager most
       wants mailed to them was simply not on offer — and nothing failed to say so. Added,

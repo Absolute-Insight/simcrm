@@ -17,7 +17,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Report",
-   "options": "pipeline_by_stage\nfunnel_conversion\nplan_adherence_by_rep\nforecast_vs_actual\nquota_attainment_by_rep",
+   "options": "pipeline_by_stage\nfunnel_conversion\nplan_adherence_by_rep\nforecast_vs_actual\nquota_attainment_by_rep\npipeline_by_segment",
    "reqd": 1
   },
   {

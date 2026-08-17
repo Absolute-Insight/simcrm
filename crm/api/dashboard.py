@@ -1333,6 +1333,124 @@ def get_deals_by_territory(from_date: str | None = None, to_date: str | None = N
 	}
 
 
+def company_size_bands() -> list[str]:
+	"""The ``no_of_employees`` Select's own options, in the order it declares them.
+
+	Read from meta rather than written down here: the field is admin-customisable,
+	and a hard-coded list would silently drop a band somebody added.
+	"""
+	field = frappe.get_meta("CRM Deal").get_field("no_of_employees")
+	return [option.strip() for option in (field.options or "").split("\n") if option.strip()]
+
+
+def get_deals_by_industry(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+	"""Deal count and value per industry -- the vertical view of the pipeline.
+
+	The territory chart answers "where"; this answers "who we sell to", which is
+	the question behind every "should we build for this vertical" conversation and
+	the one the dashboard could not answer at all.
+	"""
+	if not from_date or not to_date:
+		from_date = frappe.utils.get_first_day(from_date or frappe.utils.nowdate())
+		to_date = frappe.utils.get_last_day(to_date or frappe.utils.nowdate())
+
+	CRMDeal = DocType("CRM Deal")
+	value = Sum(Coalesce(CRMDeal.deal_value, 0) * IfNull(CRMDeal.exchange_rate, 1))
+
+	query = (
+		frappe.qb.from_(CRMDeal)
+		.select(
+			IfNull(CRMDeal.industry, "Empty").as_("industry"),
+			Count("*").as_("deals"),
+			value.as_("value"),
+		)
+		.where(Date(CRMDeal.creation).between(from_date, to_date))
+		.groupby(CRMDeal.industry)
+		.orderby(Count("*"), order=frappe.qb.desc)
+		.orderby(value, order=frappe.qb.desc)
+	)
+
+	if user:
+		query = query.where(belongs_to(CRMDeal, user, "CRM Deal"))
+
+	query = scope_deals(query)
+
+	return {
+		"data": query.run(as_dict=True) or [],
+		"title": _("Deals by industry"),
+		"subtitle": _("Which verticals the pipeline is actually in"),
+		"xAxis": {"title": _("Industry"), "key": "industry", "type": "category"},
+		"yAxis": {"title": _("Number of deals")},
+		"y2Axis": {"title": _("Deal value") + f" ({get_base_currency_symbol()})"},
+		"series": [
+			{"name": "deals", "type": "bar"},
+			{"name": "value", "type": "line", "showDataPoints": True, "axis": "y2"},
+		],
+	}
+
+
+def get_deals_by_company_size(
+	from_date: str | None = None, to_date: str | None = None, user: str | None = None
+):
+	"""Deal count and value per employee band -- SMB against enterprise.
+
+	Ordered by the Select's own option order, not by the label. Sorting these
+	strings alphabetically gives ``1-10, 1000+, 11-50, 201-500, 51-200``, which
+	reads as a size axis and is not one -- the shape of the chart would be a lie
+	while every individual number in it stayed correct.
+	"""
+	if not from_date or not to_date:
+		from_date = frappe.utils.get_first_day(from_date or frappe.utils.nowdate())
+		to_date = frappe.utils.get_last_day(to_date or frappe.utils.nowdate())
+
+	CRMDeal = DocType("CRM Deal")
+	value = Sum(Coalesce(CRMDeal.deal_value, 0) * IfNull(CRMDeal.exchange_rate, 1))
+
+	# CASE band -> declared position, so the x axis runs small to large. Unset
+	# lands after every real band rather than at the front.
+	bands = company_size_bands()
+	rank = Case()
+	for index, band in enumerate(bands):
+		rank = rank.when(CRMDeal.no_of_employees == band, index)
+	rank = rank.else_(len(bands))
+
+	query = (
+		frappe.qb.from_(CRMDeal)
+		.select(
+			IfNull(CRMDeal.no_of_employees, "Empty").as_("company_size"),
+			Count("*").as_("deals"),
+			value.as_("value"),
+		)
+		.where(Date(CRMDeal.creation).between(from_date, to_date))
+		.groupby(CRMDeal.no_of_employees)
+		.orderby(rank)
+	)
+
+	if user:
+		query = query.where(belongs_to(CRMDeal, user, "CRM Deal"))
+
+	query = scope_deals(query)
+
+	rows = query.run(as_dict=True) or []
+	# An empty string is a stored "no answer" and IfNull cannot see it.
+	for row in rows:
+		if not row.get("company_size"):
+			row["company_size"] = "Empty"
+
+	return {
+		"data": rows,
+		"title": _("Deals by company size"),
+		"subtitle": _("Where the pipeline sits between SMB and enterprise"),
+		"xAxis": {"title": _("Employees"), "key": "company_size", "type": "category"},
+		"yAxis": {"title": _("Number of deals")},
+		"y2Axis": {"title": _("Deal value") + f" ({get_base_currency_symbol()})"},
+		"series": [
+			{"name": "deals", "type": "bar"},
+			{"name": "value", "type": "line", "showDataPoints": True, "axis": "y2"},
+		],
+	}
+
+
 def get_deals_by_salesperson(
 	from_date: str | None = None, to_date: str | None = None, user: str | None = None
 ):
@@ -2078,6 +2196,8 @@ CHARTS = {
 	"leads_by_source": get_leads_by_source,
 	"deals_by_source": get_deals_by_source,
 	"deals_by_territory": get_deals_by_territory,
+	"deals_by_industry": get_deals_by_industry,
+	"deals_by_company_size": get_deals_by_company_size,
 	"deals_by_salesperson": get_deals_by_salesperson,
 }
 """Charts the dashboard may render, by layout name.

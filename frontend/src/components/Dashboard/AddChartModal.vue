@@ -94,6 +94,8 @@ const axisCharts = [
   { label: __('Deals by Ongoing & Won Stage'), value: 'deals_by_stage_axis' },
   { label: __('Lost Deal Reasons'), value: 'lost_deal_reasons' },
   { label: __('Deals by Territory'), value: 'deals_by_territory' },
+  { label: __('Deals by Industry'), value: 'deals_by_industry' },
+  { label: __('Deals by Company Size'), value: 'deals_by_company_size' },
   { label: __('Deals by Salesperson'), value: 'deals_by_salesperson' },
   { label: __('Forecast Accuracy'), value: 'forecast_accuracy' },
 ]
