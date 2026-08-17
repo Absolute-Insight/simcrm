@@ -159,9 +159,16 @@ polish · **P4** platform work beyond the pilot.
       verified: real package builds, explicit stub builds, absent bench refuses.
       *(The gate still does not compile the real integration — that needs a bench in CI,
       which is a separate item.)*
-- [ ] **The migration test upgrades from upstream `frappe/crm`, not from a previous
-      Vectora release.** `migration-test.yml:94`. The fork's own patches never run against
-      data a previous fork version produced. **3 h.**
+- [x] **The migration test upgraded from upstream `frappe/crm`, not from a previous
+      Vectora release.** Upstream has no `CRM Rep Plan`, `CRM Quota`, `CRM Suggestion` or
+      `CRM Forecast Snapshot`, so every patch this fork ships ran against zero rows —
+      `merge_duplicate_rep_plan_weeks` "passed" by having nothing to merge. The base is now
+      this fork's most recent release tag, which is the upgrade a customer actually
+      performs. The checkout fetches tags (a shallow one has none), and the job **fails
+      loudly** rather than falling back to the PR's own code as its own base, which would
+      pass while testing nothing. Also drops the inherited `main → version-15` mapping:
+      `pyproject.toml` requires frappe `>=16.0.0-dev`, so that lane could only ever have
+      been green by never running.
 - [ ] **No rollback path is documented, and upgrades serve new code on an old schema.**
       `deploy/README.md:48` starts containers before `bench migrate`. **3 h.**
 
