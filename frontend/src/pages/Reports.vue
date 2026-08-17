@@ -238,8 +238,31 @@
         </div>
       </div>
 
+      <!-- The report *list* failing is its own state, and it has to be handled
+           here rather than only in the rail: the rail is `hidden sm:flex`, so
+           below 640px its ErrorState is off-screen and the pane underneath used
+           to sit on a never-resolving skeleton with no message anywhere. -->
       <ErrorState
-        v-if="source.error"
+        v-if="listFailed"
+        class="flex-1"
+        :error="reports.error"
+        :title="__('Could not load the report list')"
+        :retry="reports.reload"
+      />
+
+      <!-- An empty registry is not a slow one. `active` is only ever set from a
+           non-empty list, so the fetch watcher never fires and the skeleton
+           never resolves -- it shimmers until the tab is closed. -->
+      <EmptyState
+        v-else-if="listEmpty"
+        icon="lucide-bar-chart-2"
+        :title="__('No reports available')"
+        :description="__('No reports are registered on this site.')"
+        top="20%"
+      />
+
+      <ErrorState
+        v-else-if="source.error"
         class="flex-1"
         :error="source.error"
         :title="__('Could not load this report')"
@@ -423,6 +446,18 @@ const reports = createResource({
     if (!data.some((r) => r.name === active.value)) active.value = data[0].name
   },
 })
+
+/* Both guarded on `isBuilder`: the builder does not come from the registry, so
+   a failed or empty report list is no reason to stop it working. Someone whose
+   list request 500'd can still open it from the mobile Select. */
+const listFailed = computed(() => Boolean(reports.error) && !isBuilder.value)
+const listEmpty = computed(
+  () =>
+    !isBuilder.value &&
+    !reports.loading &&
+    !reports.error &&
+    !(reports.data || []).length,
+)
 
 /* The builder is a rail entry rather than a page of its own: it produces the
    same {title, columns, rows} shape, so the table, CSV, print sheet, territory
