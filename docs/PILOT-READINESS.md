@@ -191,9 +191,14 @@ polish · **P4** platform work beyond the pilot.
       `add_vectora_dashboard_widgets` merged two metrics that a later commit made curated
       tiles. *Patch corrected, `remove_duplicated_grid_tiles` added for sites that already
       ran it, and a test now guards the intersection.*
-- [ ] **`summarise_thread` has no UI.** Fully built, tested, rate-limited, budget-capped,
-      documented as user-facing — and called by nothing. Half the model tier is unreachable.
-      Render as plain text, never HTML. **0.5–1 day.**
+- [x] **`summarise_thread` had no UI.** Fully built, tested, rate-limited, budget-capped,
+      documented as user-facing — and called by nothing. Now a "Summarise thread" action on
+      the per-record panel, on demand rather than on load because each press costs a model
+      call. Rendered strictly as text: the summary is written from a thread a counterparty
+      contributed to, and every model tested follows instructions embedded in an email, so
+      there is no `v-html` and must never be one. Degrades like the rest of the tier —
+      `disabled` and `unavailable` each get a sentence saying what to do instead. Verified
+      in a browser against a live local model, not just compiled.
 - [ ] **`get_dismissal_stats` has no UI.** Same story. It exists so "a threshold reps keep
       rejecting is visible rather than guessed at" — exactly the pilot's feedback loop.
       **0.5 day.**
