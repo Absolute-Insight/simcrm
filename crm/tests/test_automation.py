@@ -346,3 +346,160 @@ class AutomationTemplateSandboxTest(IntegrationTestCase):
 		time instead of the rule failing silently on somebody's deal later."""
 		with self.assertRaises(frappe.ValidationError):
 			make_rule(title="Exfiltrate", title_template="{{ frappe.db.sql('select 1') }}")
+
+
+class RuleSuggestionScoreTest(IntegrationTestCase):
+	"""A rule's suggestions have to be rankable against the built-in signals.
+
+	Every rule wrote 60.0, so an admin who added a rule for the thing their team
+	most needs to see could not float it above a routine "no next step" nudge --
+	the inbox is ordered by score and the number was not theirs to set.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		frappe.db.delete("CRM Automation Rule")
+		frappe.db.delete("CRM Suggestion", {"signal": ("like", "rule:%")})
+		self.org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Scored Rule Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		self._made = []
+
+	def tearDown(self):
+		frappe.db.delete("CRM Automation Rule")
+		frappe.db.delete("CRM Suggestion", {"signal": ("like", "rule:%")})
+		for doctype, name in self._made:
+			frappe.delete_doc(doctype, name, force=True, ignore_missing=True)
+		super().tearDown()
+
+	def fire(self, **rule_fields):
+		make_rule(
+			title=rule_fields.pop("title", "Scored"),
+			action="Create Suggestion",
+			title_template="Look at {{ doc.organization }}",
+			**rule_fields,
+		)
+		deal = frappe.get_doc({"doctype": "CRM Deal", "organization": self.org}).insert()
+		self._made.append(("CRM Deal", deal.name))
+		return frappe.get_all(
+			"CRM Suggestion",
+			filters={"reference_docname": deal.name, "signal": ("like", "rule:%")},
+			pluck="score",
+		)
+
+	# --- the resolver ------------------------------------------------------
+
+	def test_an_unset_score_reads_as_the_default_not_as_zero(self):
+		"""A rule written before the field existed holds no value. Taking that
+		literally would file its suggestions below everything else."""
+		from crm.automation import DEFAULT_RULE_SUGGESTION_SCORE, rule_suggestion_score
+
+		self.assertEqual(rule_suggestion_score(None), DEFAULT_RULE_SUGGESTION_SCORE)
+		self.assertEqual(rule_suggestion_score(""), DEFAULT_RULE_SUGGESTION_SCORE)
+
+	def test_a_score_the_admin_typed_is_kept(self):
+		from crm.automation import rule_suggestion_score
+
+		self.assertEqual(rule_suggestion_score(85), 85.0)
+		self.assertEqual(rule_suggestion_score(0), 0.0)
+
+	def test_a_score_outside_the_band_is_clamped_rather_than_obeyed(self):
+		"""The inbox sorts on this. A typo of 10000 would pin one rule to the top
+		of every rep's list permanently, and nothing on screen would explain it."""
+		from crm.automation import rule_suggestion_score
+
+		self.assertEqual(rule_suggestion_score(10000), 100.0)
+		self.assertEqual(rule_suggestion_score(-50), 0.0)
+
+	# --- end to end --------------------------------------------------------
+
+	def test_the_rules_score_reaches_the_suggestion(self):
+		self.assertEqual(self.fire(suggestion_score=90), [90.0])
+
+	def test_a_rule_can_be_ranked_above_and_below_a_built_in_signal(self):
+		"""The point of the field: both directions have to be reachable, or the
+		admin has a control that only moves one way."""
+		from crm.agent.signals import NO_NEXT_STEP_SCORE, SLA_BREACH_SCORE
+
+		above = self.fire(title="Urgent", suggestion_score=SLA_BREACH_SCORE + 10)[0]
+		self.assertGreater(above, SLA_BREACH_SCORE)
+
+		frappe.db.delete("CRM Automation Rule")
+		frappe.db.delete("CRM Suggestion", {"signal": ("like", "rule:%")})
+
+		below = self.fire(title="Routine", suggestion_score=NO_NEXT_STEP_SCORE - 10)[0]
+		self.assertLess(below, NO_NEXT_STEP_SCORE)
+
+	def test_the_default_sits_between_a_routine_nudge_and_an_sla_breach(self):
+		"""Unchanged behaviour for anyone who never touches the field."""
+		from crm.agent.signals import NO_NEXT_STEP_SCORE, SLA_BREACH_SCORE
+		from crm.automation import DEFAULT_RULE_SUGGESTION_SCORE
+
+		self.assertLess(NO_NEXT_STEP_SCORE, DEFAULT_RULE_SUGGESTION_SCORE)
+		self.assertLess(DEFAULT_RULE_SUGGESTION_SCORE, SLA_BREACH_SCORE)
+
+
+class RuleScoreBackfillPatchTest(IntegrationTestCase):
+	"""Adding an Int column backfills 0, not the field default.
+
+	So without the patch every pre-existing rule keeps firing and files its
+	suggestions at the bottom of every inbox -- working, invisible, and with
+	nothing on screen to say why.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		frappe.db.delete("CRM Automation Rule")
+
+	def tearDown(self):
+		frappe.db.delete("CRM Automation Rule")
+		super().tearDown()
+
+	def zeroed(self, **overrides):
+		rule = make_rule(action="Create Suggestion", title_template="X {{ doc.name }}", **overrides)
+		# what migrate leaves behind: the column exists and holds 0
+		frappe.db.set_value("CRM Automation Rule", rule.name, "suggestion_score", 0, update_modified=False)
+		return rule.name
+
+	def score(self, name):
+		return frappe.db.get_value("CRM Automation Rule", name, "suggestion_score")
+
+	def test_a_zeroed_suggestion_rule_is_filled_in(self):
+		from crm.automation import DEFAULT_RULE_SUGGESTION_SCORE
+		from crm.patches.v1_0.set_default_rule_suggestion_score import execute
+
+		name = self.zeroed(title="Old suggestion rule")
+		execute()
+		self.assertEqual(self.score(name), DEFAULT_RULE_SUGGESTION_SCORE)
+
+	def test_a_task_rule_is_left_alone(self):
+		"""The field is meaningless on a Create Task rule; writing to it would put
+		a number in a box the admin never sees."""
+		from crm.patches.v1_0.set_default_rule_suggestion_score import execute
+
+		rule = make_rule(title="Old task rule", action="Create Task")
+		frappe.db.set_value("CRM Automation Rule", rule.name, "suggestion_score", 0, update_modified=False)
+		execute()
+		self.assertEqual(self.score(rule.name), 0)
+
+	def test_a_score_somebody_chose_is_not_overwritten(self):
+		from crm.patches.v1_0.set_default_rule_suggestion_score import execute
+
+		rule = make_rule(
+			title="Deliberate", action="Create Suggestion", title_template="X", suggestion_score=25
+		)
+		execute()
+		self.assertEqual(self.score(rule.name), 25)
+
+	def test_running_it_twice_changes_nothing_the_second_time(self):
+		"""Patches re-run on every site that has not recorded them; a second pass
+		must not walk over a score set between the two."""
+		from crm.patches.v1_0.set_default_rule_suggestion_score import execute
+
+		name = self.zeroed(title="Twice")
+		execute()
+		frappe.db.set_value("CRM Automation Rule", name, "suggestion_score", 5, update_modified=False)
+		execute()
+		self.assertEqual(self.score(name), 5)
