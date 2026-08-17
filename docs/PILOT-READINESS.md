@@ -16,6 +16,30 @@ polish · **P4** platform work beyond the pilot.
 
 ## P0 — Security and data integrity
 
+- [x] **Opening the Assistant settings page and pressing Save switched off every
+      proactive suggestion.** The page read its fields with `frappe.client.get_value`,
+      which returns `{}` for a Single nobody has saved — so on a fresh site every field
+      arrived `undefined`, the page drew "Generate suggestions: off" with four blank
+      thresholds *while the job was running happily on its defaults*, and saving wrote
+      that fiction back: every Check and Int the admin had never been shown a value for
+      landed as 0. `signals_enabled` → 0 turned the whole deterministic suggestion
+      engine off, and all four thresholds collapsed to 1 day. An admin configuring a
+      model endpoint had no way to know they had just killed the product's
+      differentiating surface. **This had already happened to the dev site in this
+      container**, which is how it surfaced: five `test_signals` tests were failing
+      locally and passing in CI, because CI never saves those settings.
+      `crm.agent.api.get_settings` now hands the page the *effective* configuration from
+      the same dataclasses the job reads, and the save filters out anything undefined.
+      A patch repairs sites already hit, keyed on the one fingerprint the broken write
+      leaves — all four thresholds at 0, which no filled form produces and which carries
+      no admin intent, since `SignalConfig` already clamps a 0 to one day. 8 tests.
+
+      **Check on the pilot site:** the same save also zeroed `daily_call_budget`, and
+      the code reads `<= 0` as *unlimited* — so the site-wide cap on model spend is off
+      wherever this happened. Deliberately not repaired by the patch: unlike a zero
+      threshold, a zero budget has a defined meaning, and guessing at intent there could
+      re-impose a cap an admin removed on purpose. Worth an explicit look before the
+      pilot points at a paid endpoint.
 - [x] **The Twilio webhooks were authenticated by an identifier, not a secret.**
       `validate_twilio_request` compared the `AccountSid` in the request body against the
       configured one — but an Account SID is not a credential. It appears in the Twilio
