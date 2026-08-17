@@ -48,6 +48,12 @@ DEFAULT_SETTINGS = {
 	),
 	"preview_max_pages": 1,
 	"preview_timeout": 8,
+	# Off by default and separately from the agent tier's own switch. Enabling the
+	# model tier for summaries must not silently start sending crawled third-party
+	# pages to an inference endpoint -- that is a different decision about a
+	# different kind of data, so it is a different checkbox.
+	"model_fallback": 0,
+	"model_fallback_max_chars": 8000,
 }
 
 

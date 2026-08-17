@@ -53,6 +53,28 @@ class ReplyDraft(BaseModel):
 	body: str = Field(min_length=1, max_length=4000)
 
 
+class SiteFacts(BaseModel):
+	"""What a model may read off a crawled website when the rules found nothing.
+
+	Every field is optional and defaults to empty, because "I could not tell" has
+	to be cheaper for the model to say than a guess. A blank field leaves the
+	rule-based result exactly as it was; an invented one would be written to a CRM
+	record as though someone had researched it.
+
+	``industry`` is deliberately a free string here rather than an enum. The
+	allowed set is per-site admin configuration, so it cannot be a Literal, and a
+	schema that cannot express the constraint must not pretend to: the caller
+	validates the answer against the admin's own list and discards anything else.
+	Guided decoding constrains the shape, never the truth.
+	"""
+
+	model_config = ConfigDict(extra="forbid")
+
+	company_name: str = Field(default="", max_length=200)
+	description: str = Field(default="", max_length=1000)
+	industry: str = Field(default="", max_length=100)
+
+
 def json_schema(model: type[BaseModel]) -> dict:
 	"""The schema to send as ``response_format``. Derived, never hand-written.
 

@@ -16,11 +16,14 @@
   "scheduled_reenrichment",
   "reenrich_after_days",
   "reenrich_batch_size",
+  "model_fallback_section",
+  "model_fallback",
+  "model_fallback_max_chars",
   "crawl_tab",
   "max_pages",
   "max_depth",
-  "use_sitemap",
   "request_timeout",
+  "use_sitemap",
   "column_break_crawl",
   "max_download_bytes",
   "retry_count",
@@ -109,6 +112,26 @@
    "label": "Records per sweep",
    "depends_on": "eval:doc.scheduled_reenrichment",
    "description": "Cap per daily run, oldest first. A large backlog is worked through over days rather than crawled at once."
+  },
+  {
+   "fieldname": "model_fallback_section",
+   "fieldtype": "Section Break",
+   "label": "Model Fallback"
+  },
+  {
+   "default": "0",
+   "description": "When the rule-based extractors leave company name, description or industry blank -- typically a JavaScript-rendered site -- ask the local model to read them off the page. Requires the assistant tier to be enabled. This is a separate decision: enabling the assistant sends your own CRM's conversations to your endpoint, and this additionally sends the contents of crawled third-party websites. Values read this way are labelled \"Model\" in the run's provenance, only ever fill blanks, and an industry outside your configured list is discarded.",
+   "fieldname": "model_fallback",
+   "fieldtype": "Check",
+   "label": "Use the model when rules find nothing"
+  },
+  {
+   "default": "8000",
+   "depends_on": "eval:doc.model_fallback",
+   "description": "How much page text to send per run. Larger costs more tokens and can exceed a small model's context.",
+   "fieldname": "model_fallback_max_chars",
+   "fieldtype": "Int",
+   "label": "Max Characters Sent"
   },
   {
    "fieldname": "crawl_tab",
