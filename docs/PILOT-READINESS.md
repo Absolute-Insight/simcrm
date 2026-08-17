@@ -150,11 +150,24 @@ polish · **P4** platform work beyond the pilot.
       it is running when somebody reports a bug. The upgrade runbook is updated to match:
       with a pinned tag, `docker compose pull` alone no longer upgrades anything, and
       saying so is the point.
-- [ ] **The image still builds against Frappe `develop`**, so the framework under it moves
-      even when our tag does not. This is not a one-line pin: `pyproject.toml` requires
-      `>=16.0.0-dev,<=17.0.0-dev` and `server-tests.yml` only ever runs against develop, so
-      pinning means first proving the app on a released frappe — a migration with its own
-      test matrix, not a config edit. **2–3 days.**
+- [x] **The image built against Frappe `develop`**, so the framework moved under us even
+      when our own tag did not. Rather than migrate to a released frappe — which the app
+      cannot take today, since `pyproject.toml` requires `>=16.0.0-dev` — frappe is forked
+      to `Absolute-Insight/frappe` and pinned on a **`vectora`** branch frozen at a
+      known-good develop commit. Every lane now uses it: the image build, server tests,
+      the migration test and the e2e suite. That freezes exactly the pairing the suite has
+      been proving, with no behavioural change, and it advances only when someone decides
+      to move it.
+      Two details worth knowing. `FRAPPE_BRANCH` was also erpnext's branch, so pinning it
+      would have broken that lane — erpnext now has its own variable. And frappe_docker's
+      Containerfile spends `FRAPPE_BRANCH` twice, once as the *builder image tag*
+      (`frappe/build:<branch>`), which upstream publishes only for its own branch names;
+      the builder is a toolchain rather than frappe source, so it is pinned separately.
+- [ ] **The builder toolchain image still tracks `develop`** (`frappe/build:develop`).
+      Smaller exposure than the framework itself — it supplies node/python/wkhtml, not
+      application code — but it is the remaining moving part of the image. **2 h** to pin
+      to a digest. **How to advance frappe:** move `Absolute-Insight/frappe@vectora` to a
+      newer upstream commit, let CI run, and merge only if it is green.
 - [ ] **No test gate on the image build.** `builds.yml` runs on push to `main` regardless
       of CI state. Lower risk now that `develop` is protected and `main` only receives
       fast-forwards of it, but a `workflow_dispatch` build of a red commit is still

@@ -24,7 +24,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FRAPPE_BRANCH: develop
+  # this fork's pinned frappe, not upstream's moving develop
+  FRAPPE_REPO: https://github.com/Absolute-Insight/frappe
+  FRAPPE_BRANCH: vectora
 
 jobs:
   ui-tests:
@@ -109,7 +111,7 @@ jobs:
       - name: Setup Bench
         run: |
           pip install frappe-bench
-          bench init --skip-redis-config-generation --skip-assets --frappe-branch "$FRAPPE_BRANCH" --python "$(which python)" ~/frappe-bench
+          bench init --skip-redis-config-generation --skip-assets --frappe-path "$FRAPPE_REPO" --frappe-branch "$FRAPPE_BRANCH" --python "$(which python)" ~/frappe-bench
           mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL character_set_server = 'utf8mb4'"
           mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL collation_server = 'utf8mb4_unicode_ci'"
 
