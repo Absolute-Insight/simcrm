@@ -70,7 +70,10 @@ class LeadSyncSource(Document):
 			self._sync_leads()
 			return
 
-		frappe.enqueue_doc(self.doctype, self.name, "_sync_leads", queue="long")
+		# after_commit: the worker re-reads this source from the database, so
+		# queueing before the request commits lets it start against the old row
+		# -- or against no row at all, if the request goes on to roll back.
+		frappe.enqueue_doc(self.doctype, self.name, "_sync_leads", queue="long", enqueue_after_commit=True)
 
 	def _sync_leads(self):
 		# Last line of defence: this is what the background jobs and the
