@@ -1,8 +1,11 @@
 app_name = "crm"
 app_title = "Vectora"
-app_publisher = "Frappe Technologies Pvt. Ltd."
+# The publisher of this fork, shown in Desk's installed-apps list and used as the
+# support contact. Inherited files keep their Frappe Technologies copyright
+# headers -- see README.md's "Relationship to Frappe CRM".
+app_publisher = "Absolute Insight"
 app_description = "Vectora — proactive, open-source CRM"
-app_email = "shariq@frappe.io"
+app_email = "absolute.idev@gmail.com"
 app_license = "AGPLv3"
 app_icon_url = "/assets/crm/images/logo.svg"
 app_icon_title = "Vectora"

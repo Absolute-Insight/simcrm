@@ -2060,7 +2060,14 @@ def get_deals_at_risk(
 	)
 
 	return {
-		"title": _("Deals at risk"),
+		# "Critical", not "at risk", because the record badge already uses both
+		# words and means different things by them: 40-69 is "At risk" there and
+		# below 40 is "Critical". This tile counts below 40, so calling it "Deals
+		# at risk" named the badge's *Critical* set -- a manager reading "8 deals
+		# at risk" beside a list of thirty "At risk" badges was being told two
+		# different things. The number is unchanged; only the label was wrong.
+		# The registry key stays `deals_at_risk`: saved dashboards store it.
+		"title": _("Critical deals"),
 		"tooltip": _("Open deals with a health score below {0} ({1})").format(AT_RISK_BELOW, freshness),
 		"value": at_risk,
 		"delta": opened_in_period,
