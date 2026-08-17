@@ -52,8 +52,21 @@ jobs:
 
       - name: Set Image Tag
         # Registry paths must be lowercase; github.repository is not.
+        #
+        # Three tags, and only one of them is stable in the sense of unchanging:
+        #   sha-<short>  immutable, always exactly this commit
+        #   <ref_name>   main, or the release tag — the release tag is immutable
+        #                in practice because the git tag is; :main is not
+        #   stable       a moving pointer to the newest main build
+        #
+        # A deployment that pins :stable cannot say what it is running, and two
+        # `docker compose pull`s a week apart give different systems with no way
+        # to reproduce the earlier one. sha- gives every build a name that will
+        # still mean the same thing later, which is what a customer bug report
+        # needs.
         run: |
           echo "IMAGE_TAG=stable" >> $GITHUB_ENV
+          echo "IMAGE_SHA_TAG=sha-$(git rev-parse --short HEAD)" >> $GITHUB_ENV
           echo "IMAGE_REPO=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
 
       - uses: actions/checkout@v7
@@ -74,6 +87,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: >
             ghcr.io/${{ env.IMAGE_REPO }}:${{ github.ref_name }},
+            ghcr.io/${{ env.IMAGE_REPO }}:${{ env.IMAGE_SHA_TAG }},
             ghcr.io/${{ env.IMAGE_REPO }}:${{ env.IMAGE_TAG }}
           build-args: |
             "FRAPPE_BRANCH=${{ env.FRAPPE_BRANCH }}"

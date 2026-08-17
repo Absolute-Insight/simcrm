@@ -47,11 +47,21 @@ Caddy, nginx with certbot) in front of the `frontend` service and forward to
 
 ## Upgrading
 
+`.env` pins `VECTORA_TAG` to a release, so upgrading is a deliberate edit
+rather than whatever `pull` happens to fetch:
+
 ```bash
+# 1. edit .env: VECTORA_TAG=v3.1.0
 docker compose pull
 docker compose up -d                      # replaces containers on the new image
 docker compose exec backend bench --site all migrate
 ```
+
+**If you skip step 1, nothing upgrades** — `pull` re-fetches the same pinned
+tag and `up -d` finds nothing to replace. That is the intended trade: an
+upgrade you have to ask for, and a `.env` that records what is running when
+somebody reports a bug. (`VECTORA_TAG=stable` restores pull-and-go, at the cost
+of not being able to say what a given host is running.)
 
 Order matters: migrate *after* the new image is up, so patches run on the code
 that shipped them. `merge_duplicate_rep_plan_weeks` and friends are one-shot
