@@ -18,6 +18,7 @@ from unittest import mock
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
+from crm.agent.config import SIGNAL_DEFAULTS, SignalConfig
 from crm.agent.signals import (
 	CLOSE_HORIZON_DAYS,
 	COOLING_MIN_GAP_DAYS,
@@ -42,6 +43,33 @@ from crm.agent.signals import (
 )
 
 NOW = datetime(2026, 8, 14, 12, 0, 0)
+
+
+class PinnedSignalConfig:
+	"""Run the signal job against thresholds this file states, not the site's.
+
+	``run_signals`` returns 0 the moment ``signals_enabled`` is off, so every
+	end-to-end assertion below silently depended on a Single that any admin --
+	or any earlier test in the run -- can flip. Five of them failed on a dev site
+	whose Assistant settings page had been opened once, and passed in CI only
+	because CI never saves those settings. What is under test here is the runner;
+	reading the config has its own coverage in ``test_config`` and
+	``test_settings_endpoint``.
+	"""
+
+	SIGNAL_CONFIG = SignalConfig(
+		signals_enabled=True,
+		idle_deal_days=SIGNAL_DEFAULTS["idle_deal_days"],
+		suggestion_ttl_days=SIGNAL_DEFAULTS["suggestion_ttl_days"],
+		dismiss_cooldown_days=SIGNAL_DEFAULTS["dismiss_cooldown_days"],
+		close_horizon_days=SIGNAL_DEFAULTS["close_horizon_days"],
+	)
+
+	def setUp(self):
+		super().setUp()
+		patcher = mock.patch("crm.agent.signals.get_signal_config", return_value=self.SIGNAL_CONFIG)
+		patcher.start()
+		self.addCleanup(patcher.stop)
 
 
 def deal_row(**overrides):
@@ -370,7 +398,7 @@ class BatchingTest(UnitTestCase):
 		self.assertEqual(list(_batched([])), [])
 
 
-class LatestActivityTest(IntegrationTestCase):
+class LatestActivityTest(PinnedSignalConfig, IntegrationTestCase):
 	"""The input every idle decision rests on, one source at a time.
 
 	The ``comment_type == "Comment"`` carve-out is load-bearing: assignment and
@@ -478,7 +506,7 @@ class LatestActivityTest(IntegrationTestCase):
 		self.assertIn("idle_deal", self._signals_from_a_run())
 
 
-class RunSignalsTest(IntegrationTestCase):
+class RunSignalsTest(PinnedSignalConfig, IntegrationTestCase):
 	"""The runner against the test site: insert, idempotence, expiry, isolation.
 
 	Every assertion is scoped to this suite's own deal. The site is shared and
@@ -557,8 +585,6 @@ class RunSignalsTest(IntegrationTestCase):
 		self.assertIn("close_at_risk", self.signals_for_the_fixture())
 
 	def test_the_job_returns_nothing_when_signals_are_switched_off(self):
-		from crm.agent.config import SignalConfig
-
 		off = SignalConfig(
 			signals_enabled=False,
 			idle_deal_days=7,
