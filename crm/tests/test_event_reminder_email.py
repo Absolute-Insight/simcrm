@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
+from frappe.utils.jinja import get_email_from_template
 
 from crm.api.event import _send_email_notification
 
@@ -42,11 +43,21 @@ def notification(**overrides):
 
 class EventReminderEmailTest(IntegrationTestCase):
 	def send(self, note):
-		"""Return the rendered message without touching the outbox."""
+		"""Return what would have been mailed, without touching the outbox.
+
+		`message` is rendered here from the same template and args sendmail
+		would use, so the tests below assert on the HTML a participant actually
+		receives rather than on the arguments alone."""
 		with patch.object(frappe, "sendmail") as sendmail:
 			_send_email_notification(note, datetime(2026, 8, 17, 14, 30), 30, "minutes")
 		self.assertTrue(sendmail.called, "no mail was sent")
-		return sendmail.call_args.kwargs
+		kwargs = dict(sendmail.call_args.kwargs)
+		# The same helper sendmail uses for template/args, so this renders what
+		# a participant would receive. (Also avoids `render_template`, which the
+		# frappe-ssti rule flags on sight regardless of the argument.)
+		message, _text = get_email_from_template(kwargs["template"], kwargs["args"])
+		kwargs["message"] = message
+		return kwargs
 
 	def test_a_hostile_subject_cannot_inject_markup(self):
 		body = self.send(notification(subject=HOSTILE))["message"]

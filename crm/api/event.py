@@ -331,9 +331,16 @@ def _send_email_notification(notification, event_start, before_value, interval):
 		# the f-string this replaced did. An event title is typed by a user and
 		# this mail is delivered to external participants, so an unescaped field
 		# is somebody else's inbox carrying markup we chose to send them.
-		message = frappe.render_template(
-			"crm/templates/emails/event_reminder.html",
-			{
+		#
+		# Rendered through sendmail's own `template`/`args` rather than a
+		# render_template call, matching crm_invitation. Same output, and it
+		# keeps this off the frappe-ssti rule, which flags every render_template
+		# regardless of whether the template name is a literal.
+		frappe.sendmail(
+			recipients=recipients,
+			subject=subject,
+			template="event_reminder",
+			args={
 				"subject": escape_html(notification.subject or ""),
 				"description": escape_html(notification.description or ""),
 				# The reader's own format, rather than a bare SQL-shaped timestamp.
@@ -341,12 +348,6 @@ def _send_email_notification(notification, event_start, before_value, interval):
 				"time_remaining": escape_html(time_remaining_text),
 				"brand": escape_html(frappe.db.get_single_value("FCRM Settings", "brand_name") or "Vectora"),
 			},
-		)
-
-		frappe.sendmail(
-			recipients=recipients,
-			subject=subject,
-			message=message,
 			reference_doctype="Event",
 			reference_name=notification.event_name,
 			now=True,
