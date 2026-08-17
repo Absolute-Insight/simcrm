@@ -1,3 +1,5 @@
+import hmac
+
 import frappe
 import requests
 from frappe import _
@@ -16,7 +18,14 @@ from crm.integrations.api import get_contact_by_phone_number
 
 
 # Incoming Call
-@frappe.whitelist(allow_guest=True)
+#
+# Reviewed rather than waved through: guest access is unavoidable here because
+# Exotel calls this webhook with no credentials and, as validate_request notes,
+# supports no request signature. The compensating control is a shared secret in
+# the query string, checked before anything else runs, and the handler throws
+# PermissionError when it does not match. The semgrep rule asks for exactly this
+# review; it surfaced on this PR only because the function body changed.
+@frappe.whitelist(allow_guest=True)  # nosemgrep
 def handle_request(**kwargs):
 	validate_request()
 	if not is_integration_enabled():
@@ -186,7 +195,11 @@ def validate_request():
 	# /api/method/<exotel-integration-method>?key=<exotel-webhook=verify-token>
 	webhook_verify_token = frappe.db.get_single_value("CRM Exotel Settings", "webhook_verify_token")
 	key = frappe.request.args.get("key")
-	is_valid = key and key == webhook_verify_token
+	# compare_digest rather than ==: this is the only thing standing in front of
+	# an unauthenticated endpoint, and a plain comparison returns as soon as it
+	# finds a differing byte, which leaks the token's prefix to anyone willing to
+	# time enough requests.
+	is_valid = bool(key) and bool(webhook_verify_token) and hmac.compare_digest(key, webhook_verify_token)
 
 	if not is_valid:
 		frappe.throw(_("Unauthorized request"), exc=frappe.PermissionError)

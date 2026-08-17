@@ -83,3 +83,39 @@ class ExotelRealtimeScopeTest(IntegrationTestCase):
 		calls = self.published(payload)
 		self.assertEqual(calls[0].args[0], "exotel_call")
 		self.assertEqual(calls[0].args[1], payload)
+
+
+class ExotelWebhookAuthTest(IntegrationTestCase):
+	"""`handle_request` is reachable without credentials by necessity — Exotel
+	sends no signature — so the shared secret in the query string is the only
+	thing in front of it."""
+
+	def validate_with(self, key, token="s3cret-token"):
+		from crm.integrations.exotel.handler import validate_request
+
+		with (
+			patch.object(frappe.db, "get_single_value", return_value=token),
+			patch.object(frappe, "request", frappe._dict(args={"key": key})),
+		):
+			validate_request()
+
+	def test_the_right_token_is_accepted(self):
+		self.validate_with("s3cret-token")
+
+	def test_a_wrong_token_is_refused(self):
+		with self.assertRaises(frappe.PermissionError):
+			self.validate_with("not-the-token")
+
+	def test_a_missing_token_is_refused(self):
+		for key in (None, ""):
+			with self.subTest(key=key), self.assertRaises(frappe.PermissionError):
+				self.validate_with(key)
+
+	def test_an_unconfigured_site_refuses_everything(self):
+		"""With no token set, `key == token` would have accepted a blank key and
+		opened the endpoint to anyone. Both sides must be present."""
+		for token in (None, ""):
+			with self.subTest(token=token), self.assertRaises(frappe.PermissionError):
+				self.validate_with("", token=token)
+			with self.subTest(token=token), self.assertRaises(frappe.PermissionError):
+				self.validate_with("anything", token=token)
