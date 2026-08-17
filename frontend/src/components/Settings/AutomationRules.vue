@@ -23,11 +23,27 @@
       </Button>
     </div>
 
-    <div v-if="rules.loading" class="flex flex-1 items-center justify-center">
-      <LoadingIndicator class="size-6" />
-    </div>
+    <!-- The rule list is a table, so it gets the table skeleton rather than a
+         centred spinner: title, what it does, enabled, and the row actions. -->
+    <SkeletonTable
+      v-if="rules.loading"
+      :columns="4"
+      :rows="4"
+      density="compact"
+      class="flex-1"
+      :label="__('Loading automation rules')"
+    />
 
-    <ErrorMessage v-else-if="rules.error" :message="rules.error" />
+    <!-- ErrorState, not frappe-ui's ErrorMessage: that renders the raw string a
+         fetch rejects with, so a dropped connection put the literal words
+         "Failed to fetch" on screen with nothing to do about it. -->
+    <ErrorState
+      v-else-if="rules.error"
+      class="flex-1"
+      :error="rules.error"
+      :title="__('Could not load the automation rules')"
+      :retry="rules.reload"
+    />
 
     <div
       v-else-if="!rules.data?.length"
@@ -220,6 +236,16 @@
         </div>
       </template>
     </Dialog>
+
+    <ConfirmDialog
+      v-model="deleteDialog.show"
+      :title="__('Delete rule')"
+      :message="
+        __('Delete “{0}”? This cannot be undone.', [deleteDialog.rule?.title])
+      "
+      :onConfirm="deleteRule"
+      :onCancel="() => (deleteDialog.show = false)"
+    />
   </div>
 </template>
 
@@ -232,13 +258,15 @@ import {
   Dialog,
   ErrorMessage,
   FormControl,
-  LoadingIndicator,
   Switch,
   call,
   createListResource,
   createResource,
   toast,
 } from 'frappe-ui'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
+import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import { computed, reactive, ref, watch } from 'vue'
 
 /* Labels and values are separate here because the values are persisted on
@@ -396,9 +424,21 @@ async function toggle(rule, enabled) {
   }
 }
 
-async function confirmDelete(rule) {
-  if (!window.confirm(__('Delete “{0}”? This cannot be undone.', [rule.title])))
-    return
+/* Chrome renders window.confirm as "localhost:8080 says…", which reads as an
+   unfinished page rather than a product asking a question -- and it blocks the
+   whole tab while it is open. ConfirmDialog already exists and is what the SLA
+   views use. */
+const deleteDialog = reactive({ show: false, rule: null })
+
+function confirmDelete(rule) {
+  deleteDialog.rule = rule
+  deleteDialog.show = true
+}
+
+async function deleteRule() {
+  const rule = deleteDialog.rule
+  deleteDialog.show = false
+  if (!rule) return
   try {
     await rules.delete.submit(rule.name)
     await rules.reload()

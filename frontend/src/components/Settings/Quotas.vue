@@ -32,11 +32,31 @@
       </div>
     </div>
 
-    <div v-if="grid.loading" class="flex flex-1 items-center justify-center">
-      <LoadingIndicator class="size-6" />
-    </div>
+    <!-- SkeletonTable rather than a centred spinner: this is a rep x month
+         grid, and its docstring already names the quota table as a call site.
+         A spinner in the middle of the pane says "something is happening
+         somewhere"; the skeleton says what shape is coming and stops the
+         layout jumping when it does. 14 columns: the rep, twelve months and
+         the row total. -->
+    <SkeletonTable
+      v-if="grid.loading"
+      :columns="14"
+      :rows="6"
+      density="compact"
+      class="flex-1 px-1"
+      :label="__('Loading sales targets')"
+    />
 
-    <ErrorMessage v-else-if="grid.error" :message="grid.error" />
+    <!-- ErrorState, not frappe-ui's ErrorMessage: that renders the raw string
+         a fetch rejects with, so a dropped connection put the literal words
+         "Failed to fetch" on an admin's screen with nothing to do about it. -->
+    <ErrorState
+      v-else-if="grid.error"
+      class="flex-1"
+      :error="grid.error"
+      :title="__('Could not load the sales targets')"
+      :retry="grid.reload"
+    />
 
     <div
       v-else-if="!rows.length"
@@ -162,14 +182,9 @@
 <script setup>
 import LucideTarget from '~icons/lucide/target'
 import { usersStore } from '@/stores/users'
-import {
-  Button,
-  ErrorMessage,
-  LoadingIndicator,
-  call,
-  createResource,
-  toast,
-} from 'frappe-ui'
+import { Button, call, createResource, toast } from 'frappe-ui'
+import ErrorState from '@/components/ui/ErrorState.vue'
+import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import { computed, ref, watch } from 'vue'
 import { formatCell } from '@/utils/reportExport'
 
