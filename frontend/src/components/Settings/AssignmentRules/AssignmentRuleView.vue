@@ -351,6 +351,7 @@ import { globalStore } from '@/stores/global'
 import { disableSettingModalOutsideClick } from '@/composables/settings'
 import { useUnsavedChangesWarning } from '@/composables/useUnsavedChangesWarning'
 import { convertToConditions, validateConditions } from '@/utils'
+import { reportActionError } from '@/utils/reportActionError'
 
 const isDirty = ref(false)
 const initialData = ref(null)
@@ -693,6 +694,13 @@ const createAssignmentRule = () => {
             doctype: assignmentRuleData.value.documentType,
           })
           toast.success(__('Assignment rule created'))
+        })
+        // The outer resource's onError covers creating the rule, not this
+        // nested fetch of it. Unhandled, a failure here left isLoading true
+        // for good: a spinner that never stops and never says why.
+        .catch((error) => {
+          isLoading.value = false
+          reportActionError(error, __('Could not load the new rule.'))
         })
       updateStep('view', data)
     },

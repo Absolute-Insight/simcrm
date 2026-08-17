@@ -96,6 +96,7 @@ import { usersStore } from '@/stores/users'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { Tooltip, call } from 'frappe-ui'
 import { ref, onMounted } from 'vue'
+import { reportActionError } from '@/utils/reportActionError'
 
 const props = defineProps({
   doc: { type: Object, default: null },
@@ -162,16 +163,25 @@ async function updateAssignees() {
         assign_to: addedAssignees,
         bulk_assign: true,
         re_assign: true,
-      }).then(() => {
-        emit('reload')
       })
+        .then(() => {
+          emit('reload')
+        })
+        .catch((error) =>
+          reportActionError(error, __('Could not update the assignment.')),
+        )
     } else {
       capture('assign_to', { doctype: props.doctype })
+      // No .then at all on this one: the single-record assign was fire and
+      // forget, so a rejected assignment left the avatar showing in the modal
+      // and nothing on the record.
       call('frappe.desk.form.assign_to.add', {
         doctype: props.doctype,
         name: props.doc.name,
         assign_to: addedAssignees,
-      })
+      }).catch((error) =>
+        reportActionError(error, __('Could not update the assignment.')),
+      )
     }
   }
   show.value = false

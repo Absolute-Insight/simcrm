@@ -15,6 +15,7 @@ import { useOnboarding } from '@framework/ui/components/Onboarding'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { call } from 'frappe-ui'
 import { useRoute, useRouter } from 'vue-router'
+import { reportActionError } from '@/utils/reportActionError'
 
 const props = defineProps({
   doctype: { type: String, default: '' },
@@ -64,9 +65,13 @@ function updateTaskStatus(status, task) {
     name: task.name,
     fieldname: 'status',
     value: status,
-  }).then(() => {
-    activities.value.reload()
   })
+    .then(() => {
+      activities.value.reload()
+    })
+    .catch((error) =>
+      reportActionError(error, __('Could not update the task.')),
+    )
 }
 
 // Notes

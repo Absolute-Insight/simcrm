@@ -49,6 +49,7 @@ import { useDebounceFn } from '@vueuse/core'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { Dialog, Badge, call, createResource } from 'frappe-ui'
 import { ref, watch, onMounted, nextTick } from 'vue'
+import { reportActionError } from '@/utils/reportActionError'
 
 const props = defineProps({
   doctype: { type: String, default: 'CRM Lead' },
@@ -119,11 +120,15 @@ function saveChanges() {
       type: 'Grid Row',
       layout: JSON.stringify(_tabs),
     },
-  ).then(() => {
-    loading.value = false
-    show.value = false
-    capture('data_fields_layout_builder', { doctype: _doctype.value })
-    emit('reload')
-  })
+  )
+    .then(() => {
+      loading.value = false
+      show.value = false
+      capture('data_fields_layout_builder', { doctype: _doctype.value })
+      emit('reload')
+    })
+    .catch((error) =>
+      reportActionError(error, __('Could not save the layout.')),
+    )
 }
 </script>

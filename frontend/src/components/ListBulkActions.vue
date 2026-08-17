@@ -39,6 +39,7 @@ import { useTelemetry } from '@framework/ui/telemetry'
 import { call, toast } from 'frappe-ui'
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { reportActionError } from '@/utils/reportActionError'
 
 const props = defineProps({
   doctype: { type: String, default: '' },
@@ -174,11 +175,15 @@ function clearAssignments(selections, unselectAll) {
           call('frappe.desk.form.assign_to.remove_multiple', {
             doctype: props.doctype,
             names: JSON.stringify(Array.from(selections)),
-          }).then(() => {
-            toast.success(__('Assignment Cleared Successfully'))
-            reload(unselectAll)
-            close()
           })
+            .then(() => {
+              toast.success(__('Assignment Cleared Successfully'))
+              reload(unselectAll)
+              close()
+            })
+            .catch((error) =>
+              reportActionError(error, __('Could not clear the assignment.')),
+            )
         },
       },
     ],

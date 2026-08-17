@@ -226,6 +226,7 @@ import { useDoctypeModal } from '@/composables/doctypeModal'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { computed, ref, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { reportActionError } from '@/utils/reportActionError'
 
 const props = defineProps({
   organizationId: { type: String, required: true },
@@ -325,12 +326,16 @@ function beforeFieldChange(data) {
       doctype: 'CRM Organization',
       old_name: props.organizationId,
       new_name: data.organization_name,
-    }).then(() => {
-      router.push({
-        name: 'Organization',
-        params: { organizationId: data.organization_name },
-      })
     })
+      .then(() => {
+        router.push({
+          name: 'Organization',
+          params: { organizationId: data.organization_name },
+        })
+      })
+      .catch((error) =>
+        reportActionError(error, __('Could not rename the organization.')),
+      )
   } else {
     organization.save.submit()
   }
