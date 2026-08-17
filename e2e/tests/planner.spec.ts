@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { createDoc, deleteDoc, getList } from '../helpers'
+import { createDoc, deleteDoc, getList, mondayOfServerDate } from '../helpers'
 
 /**
  * The planner is where "plans linked to actual activity" is authored. Three
@@ -105,13 +105,13 @@ test.describe('Planner items name their record', () => {
 		page,
 		request,
 	}) => {
-		const deal = await createDoc<{ name: string }>(request, 'CRM Deal', {
+		const deal = await createDoc<{ name: string; creation: string }>(request, 'CRM Deal', {
 			organization: orgName,
 			deal_owner: 'Administrator',
 		})
-		const monday = new Date()
-		monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7))
-		const weekStart = monday.toISOString().slice(0, 10)
+		// the deal was just created by the site, so its creation stamp is the
+		// site's own clock — the one the planner's current week is derived from
+		const weekStart = mondayOfServerDate(deal.creation)
 
 		await deleteOwnPlans(request)
 		const plan = await createDoc<{ name: string }>(request, 'CRM Rep Plan', {
