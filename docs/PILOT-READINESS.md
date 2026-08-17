@@ -127,19 +127,27 @@ polish · **P4** platform work beyond the pilot.
       18:30 UTC it wrote a plan into one week and asserted against another.)* **1 day.**
 - [x] **The Playwright suite had never run in CI.** `ui-tests.yml:6` triggers only on
       branch `main-hotfix`, which does not exist. **5 min.**
-- [ ] **The frontend coverage gate cannot fail.** `vitest.config.js:12` scopes coverage to
-      10 hand-picked `src/utils` files, so the 85% patch target in `codecov.yml` passes
-      trivially for any new component. 0 component tests across 358 `.vue` files. **2 h** to
-      widen; component tests are a larger programme.
+- [x] **The frontend coverage gate could not fail.** `vitest.config.js` scoped coverage to
+      10 hand-picked `src/utils` files, so a PR adding an untested util contributed zero
+      lines and the 85% patch target passed trivially. Now the whole pure-logic layer
+      (`src/utils`, `src/composables`). The same 527 lines are covered as before — the
+      denominator went from 556 to 1495, so the honest figure is **35%, not 94%**.
+      Components stay excluded because there are still **0 component tests across 358
+      `.vue` files**; that is the next item, not something to hide by pretending the
+      covered set is the whole app.
 - [ ] **The production image is built against Frappe `develop` and published to a mutable
       tag.** `builds.yml:51,56`. Two `docker compose pull`s a week apart produce materially
       different systems, framework included, with no way to reproduce what a customer is
       running. No test gate on the build. **1 day** + pinning work.
-- [ ] **CI's only build gate compiles against the `@framework/ui` stub.**
-      `frontend-tests.yml:47` runs `yarn build` with no bench present, so
-      `resolveFrameworkUi()` silently falls back to no-ops and reports green. A removed
-      upstream export is invisible until a browser hits it. Make the build *fail* unless
-      `FRAMEWORK_UI_STUB=1` is explicit, and set it in that job. **1 h.**
+- [x] **CI's only build gate compiled against the `@framework/ui` stub.** `yarn build`
+      with no bench fell back to no-ops behind a `console.warn` and reported green — so
+      a bundle where the Data Import page renders nothing and every product event is
+      dropped would ship looking healthy. The resolver now refuses unless
+      `FRAMEWORK_UI_STUB=1` says so deliberately, and CI's job sets it, which records the
+      limitation in the workflow instead of hiding it in a resolver. All three paths
+      verified: real package builds, explicit stub builds, absent bench refuses.
+      *(The gate still does not compile the real integration — that needs a bench in CI,
+      which is a separate item.)*
 - [ ] **The migration test upgrades from upstream `frappe/crm`, not from a previous
       Vectora release.** `migration-test.yml:94`. The fork's own patches never run against
       data a previous fork version produced. **3 h.**

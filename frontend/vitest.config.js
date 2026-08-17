@@ -12,18 +12,13 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'lcov', 'json-summary'],
       reportsDirectory: './coverage',
-      include: [
-        'src/utils/fieldTransforms.js',
-        'src/utils/scriptHelpers.js',
-        'src/utils/expressions.js',
-        'src/utils/renderFieldLayoutDialog.js',
-        'src/utils/describeError.js',
-        'src/utils/skeletonShapes.js',
-        'src/utils/dashboardHome.js',
-        'src/utils/reportExport.js',
-        'src/utils/planner.js',
-        'src/utils/suggestions.js',
-      ],
+      // The whole pure-logic layer, not a hand-picked list. Naming ten files
+      // meant a PR adding an untested util contributed zero lines to the
+      // report, so codecov's 85% patch target passed trivially -- a gate that
+      // cannot fail. Components are still excluded because there are no
+      // component tests yet; that is tracked separately rather than hidden by
+      // pretending the covered set is the whole app.
+      include: ['src/utils/**/*.{js,ts}', 'src/composables/**/*.{js,ts}'],
     },
   },
   resolve: {

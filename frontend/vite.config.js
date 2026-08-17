@@ -205,8 +205,19 @@ function resolveFrameworkUi() {
   }
   const real = candidates.find((p) => fs.existsSync(p))
   if (real) return real
-  console.warn('@framework/ui: no bench sibling found, building with the stub')
-  return stub
+
+  // Falling back silently is how a bundle of no-ops ships looking healthy: the
+  // Data Import page renders nothing, useOnboarding returns zeros at eight call
+  // sites, and every product event is dropped -- none of which fails a build or
+  // a test. A warning in a log nobody reads is not a guard, so refuse instead.
+  // Building deliberately without a bench is still supported; it just has to be
+  // said out loud, which is also what records the intent in CI's workflow file.
+  throw new Error(
+    '@framework/ui: no bench sibling found. Checked:\n' +
+      candidates.map((p) => `  ${p}`).join('\n') +
+      '\nBuild from a bench, or set FRAMEWORK_UI_STUB=1 to build against the ' +
+      'no-op stub on purpose (see src/lib/framework-ui-stub/README.md).',
+  )
 }
 
 async function importFrappeUIPlugin(isDev, config) {

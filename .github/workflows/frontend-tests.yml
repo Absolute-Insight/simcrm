@@ -60,7 +60,14 @@ jobs:
               run: cd frontend && yarn install --frozen-lockfile
 
             - name: Build frontend
-              run: cd frontend && yarn build
+              # There is no bench in this job, so @framework/ui -- frappe's
+              # unpublished UI package -- cannot resolve. Saying so explicitly
+              # is the point: the build used to fall back to the no-op stub with
+              # a console warning and report green, which means this gate has
+              # never once compiled the real integration. It still doesn't, but
+              # now the workflow records that rather than the resolver hiding
+              # it, and a bench-based build fails loudly if the package moves.
+              run: cd frontend && FRAMEWORK_UI_STUB=1 yarn build
 
     test:
         name: Unit Tests & Coverage
