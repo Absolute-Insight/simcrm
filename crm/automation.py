@@ -19,6 +19,30 @@ from crm.agent.signals import clear_suggestions_for, resync_owner
 
 OWNER_FIELD = {"CRM Lead": "lead_owner", "CRM Deal": "deal_owner"}
 
+# Urgency for a rule's suggestion when the rule does not set one. Sits between
+# crm.agent.signals' NO_NEXT_STEP_SCORE (40) and SLA_BREACH_SCORE (80), because
+# an admin-authored rule is a deliberate statement and should outrank a routine
+# nudge -- but a breached SLA is still the more urgent thing. Rules may now say
+# otherwise per rule, which is the point: this is only the default.
+DEFAULT_RULE_SUGGESTION_SCORE = 60.0
+MIN_RULE_SUGGESTION_SCORE = 0.0
+MAX_RULE_SUGGESTION_SCORE = 100.0
+
+
+def rule_suggestion_score(value) -> float:
+	"""The rule's urgency, clamped into the band the inbox sorts on.
+
+	Unset reads as the default rather than as zero: a rule saved before the field
+	existed holds 0, and taking that literally would file every one of their
+	suggestions below everything else without anyone having asked for it. An
+	explicit 0 is still reachable -- the migration patch fills the old rows in, so
+	a 0 that survives it is one somebody typed.
+	"""
+	if value in (None, ""):
+		return DEFAULT_RULE_SUGGESTION_SCORE
+	return max(MIN_RULE_SUGGESTION_SCORE, min(MAX_RULE_SUGGESTION_SCORE, frappe.utils.flt(value)))
+
+
 # Rule templates get `doc` and nothing else -- see render_rule_template below.
 _TEMPLATE_ENV = SandboxedEnvironment(autoescape=False)
 
@@ -47,6 +71,7 @@ def run_automations(doc, method=None):
 			"to_status",
 			"condition",
 			"action",
+			"suggestion_score",
 			"title_template",
 			"description_template",
 			"task_priority",
@@ -191,7 +216,7 @@ def _apply(rule, doc) -> None:
 				"suggested_action": "create_task",
 				"action_payload": frappe.as_json({"title": title}),
 				"status": "Open",
-				"score": 60.0,
+				"score": rule_suggestion_score(rule.suggestion_score),
 			}
 		).insert(ignore_permissions=True)
 
