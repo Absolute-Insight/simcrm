@@ -516,10 +516,35 @@ polish · **P4** platform work beyond the pilot.
       browser in both themes: create, reject, list, toggle, delete, empty state.
 - [ ] **Custom report builder** — its stated precondition (five reports shipped) is met.
       **1–2 weeks.**
-- [ ] **Codified injection eval suite.** Its gating condition — "when a second write
-      capability lands" — is already met by `draft_reply`. The hostile thread exists only as
-      a prose table. Note the honest finding it records: **every model tried follows the
-      injected instruction**, which is why the tier has no write path. **2–3 days.**
+- [x] **The injection evals are codified.** The finding they record —
+      **every model tried follows the injected instruction**, on the summariser and on
+      the draft tier — existed only as a prose table produced by hand. A property nobody
+      can re-measure quietly stops being true, and this one is load-bearing: it is the
+      reason the agent tier has no write path and the reason a draft is something a
+      human sends.
+
+      `crm/agent/evals/cases.py` holds the corpus (a negotiation thread that is plainly
+      going badly, three payloads, four tells); `runner.py` drives them against the
+      site's configured endpoint and prints the same table. **Deliberately not a
+      pass/fail gate** — a suite that is red on every model gets switched off within a
+      week — so it emits a rate, and the number to watch is which model lands fewer.
+
+      Two arms per case, always. A tell that fires on the *clean* thread is a broken
+      tell, not a compromised model, and the report says `TELL BROKEN` rather than
+      counting it; without that arm the whole suite could report total compromise
+      against a detector that matched anything. A run against an unreachable endpoint
+      reports `DID NOT RUN` and `Nothing was measured` — the first draft printed
+      "0/4 cases landed", which reads as a clean bill of health for a model that was
+      never asked anything.
+
+      23 CI-safe tests drive every branch of the runner against a stubbed model, plus
+      corpus checks (each payload really is added to its thread and really does attempt
+      an override; a fence-free payload case still exists, since the claim that the
+      fence is not what is being defeated rests on it).
+
+      **No fresh measurement:** there is no model endpoint in this container. The
+      existing hand-run numbers stand; re-run the suite on the pilot host once its
+      endpoint is up.
 - [ ] **Enrichment fallback extractor** (+ golden-set evals) — enrichment currently leaves
       JS-rendered sites blank; the model seam was planned and never built. **3–5 days.**
 - [ ] **Three dashboard tests assert absolute averages and fail on any site with data.**

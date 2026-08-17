@@ -224,9 +224,22 @@ What follows for the design:
 - Any consumer of `summarise_thread` is displaying text a third party can influence. It
   must not be fed back into another prompt as if it were trusted, and it must not be
   rendered as HTML.
-- This is what the evals in the plan are for. The injection thread above belongs in that
-  set: it is a regression test for a property that currently fails on every model tried,
-  so the number to watch is which models fail it *less*.
+- **This table is now runnable.** The threads, the payloads and the tells live in
+  `crm/agent/evals/cases.py`; `crm/agent/evals/runner.py` drives them against whatever
+  endpoint the site is configured for and prints the same table. It is deliberately not
+  a pass/fail gate — a suite that is red on every model gets switched off within a week —
+  so what it emits is a *rate*, and the number to watch is which model lands fewer.
+
+  ```
+  bench --site <site> execute crm.agent.evals.runner.run_and_print
+  bench --site <site> execute crm.agent.evals.runner.run_and_print --kwargs "{'repeats': 5}"
+  ```
+
+  Every case runs twice, with the payload and without. A tell that fires on the clean
+  thread is a broken tell, not a compromised model, and the report says `TELL BROKEN`
+  rather than counting it — without that arm the suite could report total compromise
+  against a detector that matched anything. A run against an unreachable endpoint reports
+  `DID NOT RUN`, never a clean sheet.
 
 ## The write tier (`actions.py`) — proposals only
 
@@ -251,9 +264,9 @@ the finding above rather than in spite of it:
   and the reason `actions.py` has no write path. A rep who reads "90% discount" in a
   compose window deletes it; an autosend would have mailed it. The blast radius is a
   human's attention, and that is the whole design.
-- This injection thread belongs in the eval set (PLAN.md Phase 8, constraint 4). The
-  number to watch as models change is which ones confirm the discount *less often* — none
-  tried so far resist it.
+- This thread is in the eval set as `draft/discount-confirmation` — the case with money
+  attached. The number to watch as models change is which ones confirm the discount *less
+  often*; none tried so far resist it.
 
 ## What is not here yet
 
