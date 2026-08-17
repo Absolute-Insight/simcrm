@@ -19,10 +19,10 @@ polish · **P4** platform work beyond the pilot.
 | **P0** security / data integrity | 1 | remote email images — deferred by decision, nothing built |
 | **P1** release / CI integrity | 0 | |
 | **P2** completeness (the mandate) | 0 | |
-| **P3** client-facing polish | 10 | |
+| **P3** client-facing polish | 8 | |
 | **P4** beyond the pilot | — | out of scope by definition |
 
-**87 closed, 11 open.** The mandate section is clear: every planned feature is built. What
+**89 closed, 9 open.** The mandate section is clear: every planned feature is built. What
 remains under P0 is one accepted risk with nothing built against it, and the rest is
 polish. Two things still need someone other than me:
 
@@ -924,8 +924,12 @@ polish. Two things still need someone other than me:
 - [ ] **Panel reordering is built and unit-tested but has no UI** — `movePanel` in
       `dashboardHome.js:307` is imported by nothing, and `applyPanelPreference`'s `order`
       branch is unreachable because only `hidden` is ever written. **Decide: wire or delete.**
-- [ ] **~15 more `theme="orange"` Badges across the app** degrade to grey the same way,
-      including the "Not Saved" badge in Settings. **1 h.**
+- [x] **~15 more `theme="orange"` Badges across the app** degrade to grey the same way,
+      including the "Not Saved" badge in Settings. *Fixed:* 14 of them, to `amber`.
+      Badge's valid set is `gray/blue/green/amber/red/violet` and it falls back to grey for
+      anything else — right for a component, invisible as a bug. A vitest guard now reads
+      the enum out of Badge's own `themeClasses` and asserts no `<Badge>` in the app names
+      a theme outside it, so the next typo fails rather than rendering neutral.
 - [x] **The root README is unmodified upstream Frappe CRM.** Rewritten for Vectora, with
       correct install instructions — the old ones told a reader to pull
       `ghcr.io/frappe/crm` and `bench get-app crm`, which installs upstream, not this
@@ -983,9 +987,17 @@ polish. Two things still need someone other than me:
       mutation-checked.
 - [ ] **Skeleton/error states cover only the new surfaces** — legacy list views still use
       frappe-ui defaults despite `EmptyState.vue` documenting the three-state contract. **2–3 d.**
-- [ ] **Dashboard rate limit is tuned as if it were one call per load** — the tile row fires
+- [x] **Dashboard rate limit is tuned as if it were one call per load** — the tile row fires
       5 concurrent `get_chart` calls, re-fired on every filter change, against a 60/min cap.
-      429s on a manager's dashboard mid-demo. **1 h.**
+      429s on a manager's dashboard mid-demo. *Fixed:* both limits are now derived from
+      "how many times may someone open or re-filter the dashboard in a minute" rather than
+      being raw call counts, since the two endpoints cost a different number of calls per
+      view — `get_dashboard` runs its panels server-side, the tile row does not.
+      The failure was worse than an error: the 429 lands on the tiles only, so the panels
+      below keep updating while the numbers above them freeze, and the page still looks
+      like it is working. A guard reads `TILE_CATALOGUE` out of `Dashboard.vue`, so adding
+      a sixth tile without raising the limit fails instead of quietly cutting the number of
+      views a manager gets.
 - [ ] **~30 empty scaffold test classes**, including `crm_form_script`, `crm_fields_layout`
       and `crm_sales_hierarchy` — the doctypes behind the public API and the permission
       model. **Counted by discovery, contributing nothing.**

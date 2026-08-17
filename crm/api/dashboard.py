@@ -12,6 +12,24 @@ from pypika.functions import Function
 from crm.fcrm.doctype.crm_dashboard.crm_dashboard import create_default_manager_dashboard
 from crm.utils import sales_user_only
 
+# Rate limits, expressed as "how many times may someone open or re-filter the
+# dashboard in a minute" rather than as raw call counts -- because the two
+# endpoints do not cost the same number of calls per view.
+#
+# One view is one `get_dashboard` (its panels are all computed server-side
+# inside it) plus one `get_chart` *per tile in the tile row*. Both were set to
+# 60, which reads as generous and is not: it capped the tile row at twelve views
+# a minute, and a manager clicking period -> territory -> rep -> period in a
+# demo reaches that in seconds. The 429 then lands on the tiles only, so the
+# panels below keep updating and the numbers above them freeze -- worse than an
+# error, because the page still looks like it is working.
+DASHBOARD_VIEWS_PER_MINUTE = 60
+# Kept in step with the tile row by test_dashboard_rate_limits, which reads the
+# catalogue out of Dashboard.vue: adding a sixth tile without raising this would
+# quietly cut the number of views a manager gets.
+DASHBOARD_TILE_COUNT = 5
+CHART_CALLS_PER_MINUTE = DASHBOARD_VIEWS_PER_MINUTE * DASHBOARD_TILE_COUNT
+
 
 # Custom function for TIMESTAMPDIFF (MySQL/MariaDB)
 class TimestampDiff(Function):
@@ -172,7 +190,7 @@ def reset_to_default():
 
 @frappe.whitelist()
 @sales_user_only
-@rate_limit(limit=60, seconds=60)
+@rate_limit(limit=DASHBOARD_VIEWS_PER_MINUTE, seconds=60)
 def get_dashboard(
 	from_date: str | None = None,
 	to_date: str | None = None,
@@ -211,7 +229,7 @@ def get_dashboard(
 
 @frappe.whitelist()
 @sales_user_only
-@rate_limit(limit=60, seconds=60)
+@rate_limit(limit=CHART_CALLS_PER_MINUTE, seconds=60)
 def get_chart(
 	name: str,
 	type: str,
