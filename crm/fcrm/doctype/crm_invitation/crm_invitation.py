@@ -39,12 +39,16 @@ class CRMInvitation(Document):
 		if frappe.local.dev_server:
 			print(f"Invite link for {self.email}: {invite_link}")  # nosemgrep
 
-		title = "Vectora"
+		# The site's own brand when an admin set one, which is the whole point of
+		# the Brand settings page. This is the first email a new user receives, so
+		# it is the worst place for the product to call itself something other
+		# than what the rest of their CRM says.
+		title = frappe.db.get_single_value("FCRM Settings", "brand_name") or "Vectora"
 		template = "crm_invitation"
 
 		frappe.sendmail(
 			recipients=self.email,
-			subject=f"You have been invited to join {title}",
+			subject=_("You have been invited to join {0}").format(title),
 			template=template,
 			args={"title": title, "invite_link": invite_link},
 			now=True,

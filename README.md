@@ -1,203 +1,107 @@
 <div align="center" markdown="1">
 
-<a href="https://frappe.io/products/crm">
-    <img src=".github/logo.svg" height="80" alt="Frappe CRM Logo">
-</a>
+<img src="crm/public/images/logo.svg" height="80" alt="Vectora">
 
-<h1>Frappe CRM</h1>
+<h1>Vectora</h1>
 
-**Simplify Sales, Amplify Relationships**
+**A CRM that tells you what needs doing**
 
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/frappe/crm)](https://github.com/frappe/crm/releases)
-
-<div>
-    <picture>
-        <source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/FrappeCRMHeroImage.png">
-        <img width="1402" alt="Frappe CRM Hero Image" src=".github/screenshots/FrappeCRMHeroImage.png">
-    </picture>
-</div>
-
-[Live Demo](https://frappecrm-demo.frappe.cloud/api/method/crm.api.live_demo.login) - [Website](https://frappe.io/crm) - [Documentation](https://docs.frappe.io/crm)
+[Report an issue](https://github.com/Absolute-Insight/simcrm/issues) · [Deployment guide](deploy/README.md) · [Project context](AGENTS.md)
 
 </div>
 
-## Frappe CRM
+## What this is
 
-Frappe CRM is a simple, affordable, open-source CRM tool designed for modern sales teams with unlimited users. Frappe CRM is crafted for providing a great user experience, packed with features for core CRM activities helping you build strong customer relationships while keeping things clean and organised.
+Vectora is a sales CRM built on [Frappe CRM](https://github.com/frappe/crm). It keeps
+everything that makes Frappe CRM good — the lead and deal pages, Kanban, custom views,
+telephony, email — and adds a layer on top that does the noticing for you:
 
-### Motivation
+- **Suggestion inbox.** Deals going quiet, closing dates slipping, follow-ups nobody
+  picked up. Ranked by urgency, each with the reason it was raised. Runs on
+  deterministic signals, no model required.
+- **Deal health.** A per-record score and the factors behind it, on the record itself.
+- **Weekly planner.** Plan a rep's week, then measure what actually happened against it.
+- **Reports and forecasting.** Pipeline, conversion, quota attainment and forecast
+  accuracy, with CSV export and a print view.
+- **Sales hierarchy.** Managers see their own subtree and nobody else's — enforced in
+  the permission layer, not just the UI.
+- **Automation rules.** When a deal reaches a stage, raise a task or a suggestion.
+  Deterministic, and they run with the assistant switched off.
+- **An optional assistant.** Thread summaries and drafted replies against any
+  OpenAI-compatible endpoint, including a model on your own hardware. Off by default;
+  every feature above works without it.
 
-The motivation behind building Frappe CRM stems from the need for a simple, customizable, and open-source solution tailored to modern business needs. Many existing CRMs are either too complex, overly generic, or locked behind steep pricing models that hinder accessibility and flexibility. Frappe CRM was designed to bridge this gap, offering a tool that empowers businesses to manage their customer relationships seamlessly while being easy to adapt to specific workflows. Built on the Frappe framework, it prioritizes usability, extensibility, and affordability, making it an ideal choice for growing teams and organizations looking for a CRM that aligns with their unique processes.
+## Relationship to Frappe CRM
 
-### Key Features
+This is a fork, not a plugin, and most of the code here is Frappe's. Vectora is
+distributed under the **AGPL v3**, the same licence as upstream, and the copyright
+notices on inherited files are Frappe Technologies'.
 
--   **User-Friendly and Flexible:** A simple, intuitive interface that’s easy to navigate and highly customizable, enabling teams to adapt it to their specific processes effortlessly.
--   **All-in-One Lead/Deal Page:** Consolidate all essential actions and details—like activities, comments, notes, tasks, and more—into a single page for a seamless workflow experience.
--   **Kanban View:** Manage leads and deals visually with a drag-and-drop Kanban board, offering clarity and efficiency in tracking progress across stages.
--   **Custom Views:** Design personalized views to organize and display leads and deals using custom filters, sorting, and columns, ensuring quick access to the most relevant information.
+Upstream's documentation at [docs.frappe.io/crm](https://docs.frappe.io/crm) describes
+the inherited CRM accurately and is worth reading. It does not cover anything in the
+list above — those are Vectora's, and their documentation lives in this repository.
 
-    <details>
-    <summary>Screenshots</summary>
+Bugs in Vectora belong on [this repository's tracker](https://github.com/Absolute-Insight/simcrm/issues),
+not upstream's.
 
-    <div>
-        <picture>
-            <source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/LeadList.png">
-            <img width="1402" alt="Lead List" src=".github/screenshots/LeadList.png">
-        </picture>
-    </div>
-    <div>
-        <picture>
-            <source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/LeadPage.png">
-            <img width="1402" alt="Lead Page" src=".github/screenshots/LeadPage.png">
-        </picture>
-    </div>
-    <div>
-        <picture>
-            <source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/EmailTemplate.png">
-            <img width="1402" alt="Email Template" src=".github/screenshots/EmailTemplate.png">
-        </picture>
-    </div>
-    <div>
-        <picture>
-            <source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/CallUI.png">
-            <img width="1402" alt="Call UI" src=".github/screenshots/CallUI.png">
-        </picture>
-    </div>
-    <div>
-        <picture>
-            <source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/CallLog.png">
-            <img width="1402" alt="Call Log" src=".github/screenshots/CallLog.png">
-        </picture>
-    </div>
+## Deploying
 
-    </details>
-
-### Integrations
-
--   **Twilio:** Integrate Twilio to make and receive calls from the CRM. You can also record calls. It is a built-in integration.
--   **Exotel:** Integrate Exotel to make and receive calls via agents mobile phone from the CRM. You can also record calls. It is a built-in integration.
--   **WhatsApp:** Integrate WhatsApp to send and receive messages from the CRM. [Frappe WhatsApp](https://github.com/shridarpatil/frappe_whatsapp) is used for this integration.
--   **ERPNext:** Integrate with [ERPNext](https://erpnext.com) to extend the CRM capabilities to include invoicing, accounting, and more.
-
-### Under the Hood
-
-- [Frappe Framework](https://github.com/frappe/frappe): A full-stack web application framework.
-- [Frappe UI](https://github.com/frappe/frappe-ui): A Vue-based UI library, to provide a modern user interface.
-
-### Compatibility
-This app is compatible with the following versions of Frappe and ERPNext:
-
-| CRM branch            | Stability | Frappe branch        | ERPNext branch       |
-| :-------------------- | :-------- | :------------------- | :------------------- |
-| main - v1.x           | stable    | v15.x & v16.x        | v15.x & v16.x        |
-| develop - future/v2.x | unstable  | develop - future/v17 | develop - future/v17 |
-
-## Getting Started (Production)
-
-### Managed Hosting
-
-Get started with your personal or business site with a few clicks on Frappe Cloud - our official hosting service.
-<div>
-	<a href="https://frappecloud.com/crm/signup" target="_blank">
-		<picture>
-			<source media="(prefers-color-scheme: dark)" srcset="https://frappe.io/files/try-on-fc-white.png">
-			<img src="https://frappe.io/files/try-on-fc-black.png" alt="Try on Frappe Cloud" height="28" />
-		</picture>
-	</a>
-</div>
-
-### Self Hosting
-
-Follow these steps to set up Frappe CRM in production:
-
-**Step 1**: Download the easy install script
+The production stack lives in [`deploy/`](deploy/) — one compose file, the image
+published to `ghcr.io/absolute-insight/simcrm`, and a runbook covering first boot,
+upgrades, backups, and the restore drill you should rehearse before trusting either.
 
 ```bash
-wget https://frappe.io/easy-install.py
+cd deploy
+cp .env.example .env        # SITE_NAME, DB_ROOT_PASSWORD, ADMIN_PASSWORD
+docker compose up -d
+docker compose logs -f create-site
 ```
 
-**Step 2**: Run the deployment command
+Read [deploy/README.md](deploy/README.md) before the first upgrade: reverting the image
+is **not** a rollback once `migrate` has run, and the runbook explains what is.
+
+For the optional local-model profile, hardware guidance, and why the assistant's
+timeout has to clear your proxy's, see the same file.
+
+## Development
+
+Requires a [Frappe bench](https://docs.frappe.io/framework/user/en/installation).
 
 ```bash
-python3 ./easy-install.py deploy \
-    --project=crm_prod_setup \
-    --email=email.example.com \
-    --image=ghcr.io/frappe/crm \
-    --version=stable \
-    --app=crm \
-    --sitename subdomain.domain.tld
+bench get-app crm https://github.com/Absolute-Insight/simcrm
+bench new-site sitename.localhost --install-app crm
+bench browse sitename.localhost --user Administrator
 ```
 
-Replace the following parameters with your values:
+The CRM is served at `sitename.localhost:8000/crm`.
 
--   `email.example.com`: Your email address
--   `subdomain.domain.tld`: Your domain name where CRM will be hosted
+For frontend work, run the Vite dev server against that site — the prebuilt bundle
+under `crm/public/frontend/` is a build artefact and will be stale:
 
-The script will set up a production-ready instance of Frappe CRM with all the necessary configurations in about 5 minutes.
+```bash
+cd apps/crm/frontend
+yarn install
+yarn dev            # then browse http://sitename.localhost:8080
+```
 
-## Getting Started (Development)
+### Before you commit
 
-### Local Setup
+```bash
+cd frontend && yarn test:run          # unit tests
+bench --site <site> run-tests --app crm
+pre-commit run --files <changed files>
+```
 
-1. [Setup Bench](https://docs.frappe.io/framework/user/en/installation).
-1. In the frappe-bench directory, run `bench start` and keep it running.
-1. Open a new terminal session and cd into `frappe-bench` directory and run following commands:
-    ```sh
-    $ bench get-app crm
-    $ bench new-site sitename.localhost --install-app crm
-    $ bench browse sitename.localhost --user Administrator
-    ```
-1. Access the crm page at `sitename.localhost:8000/crm` in your web browser.
+[AGENTS.md](AGENTS.md) is the map of the codebase; [CLAUDE.md](CLAUDE.md) covers how to
+work in it. [docs/PILOT-READINESS.md](docs/PILOT-READINESS.md) tracks what is done and
+what is not, honestly.
 
-**For Frontend Development**
-1. Open a new terminal session and cd into `frappe-bench/apps/crm`, and run the following commands:
-    ```
-    yarn install
-    yarn dev
-    ```
-1. Now, you can access the site on vite dev server at `http://sitename.localhost:8080`
+## Built on
 
-**Note:** You'll find all the code related to Frappe CRM's frontend inside `frappe-bench/apps/crm/frontend`
+- [Frappe CRM](https://github.com/frappe/crm) — the CRM this forks
+- [Frappe Framework](https://github.com/frappe/frappe) — the full-stack framework underneath
+- [Frappe UI](https://github.com/frappe/frappe-ui) — the Vue component library
 
-### Docker
+## Licence
 
-You need Docker, docker-compose and git setup on your machine. Refer [Docker documentation](https://docs.docker.com/). After that, follow below steps:
-
-**Step 1**: Setup folder and download the required files
-
-    mkdir frappe-crm
-    cd frappe-crm
-
-    # Download the docker-compose file
-    wget -O docker-compose.yml https://raw.githubusercontent.com/frappe/crm/develop/docker/docker-compose.yml
-
-    # Download the setup script
-    wget -O init.sh https://raw.githubusercontent.com/frappe/crm/develop/docker/init.sh
-
-**Step 2**: Run the container and daemonize it
-
-    docker compose up -d
-
-**Step 3**: The site [http://crm.localhost:8000/crm](http://crm.localhost:8000/crm) should now be available. The default credentials are:
-
--   Username: Administrator
--   Password: admin
-
-## Learn and connect
-
--   [Telegram Public Group](https://t.me/frappecrm)
--   [Discuss Forum](https://discuss.frappe.io/c/frappe-crm)
--   [Documentation](https://docs.frappe.io/crm)
--   [YouTube](https://www.youtube.com/@frappetech)
--   [X/Twitter](https://x.com/frappetech)
-
-<br>
-<br>
-<div align="center" style="padding-top: 0.75rem;">
-	<a href="https://frappe.io" target="_blank">
-		<picture>
-			<source media="(prefers-color-scheme: dark)" srcset="https://frappe.io/files/Frappe-white.png">
-			<img src="https://frappe.io/files/Frappe-black.png" alt="Frappe Technologies" height="28"/>
-		</picture>
-	</a>
-</div>
+[GNU AGPL v3](LICENSE). © Frappe Technologies Pvt. Ltd. and contributors.

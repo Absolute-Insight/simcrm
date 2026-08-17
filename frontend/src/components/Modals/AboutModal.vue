@@ -28,8 +28,14 @@
           </a>
         </div>
         <hr class="border-t my-3 mx-2" />
+        <!-- Attribution, not decoration: this is AGPLv3 software built on
+             Frappe CRM, and saying so is both a licence obligation and the
+             honest answer to "what is this?". -->
         <p class="text-sm text-ink-gray-6 px-2 mt-2">
           © Frappe Technologies Pvt. Ltd. and contributors
+        </p>
+        <p class="text-sm text-ink-gray-5 px-2 mt-1">
+          {{ __('Built on Frappe CRM. Licensed under the AGPL v3.') }}
         </p>
       </div>
     </template>
@@ -38,38 +44,35 @@
 <script setup>
 import CRMLogo from '@/components/Icons/CRMLogo.vue'
 import GitHubIcon from '@/components/Icons/GitHubIcon.vue'
-import LucideGlobe from '~icons/lucide/globe'
-import LucideHeadset from '~icons/lucide/headset'
 import LucideBug from '~icons/lucide/bug'
 import LucideBookOpen from '~icons/lucide/book-open'
 
 let show = defineModel({ type: Boolean })
 
+/* This dialog carried the Vectora name and logo above five links that all led
+   to Frappe. A bug in Vectora's planner filed on frappe/crm wastes the
+   reporter's time and an upstream maintainer's, and support.frappe.io does not
+   support this product at all — that link promised help that does not exist.
+
+   The documentation link stays pointed upstream on purpose. Most of this CRM
+   *is* Frappe CRM and those pages describe it accurately; swapping them for a
+   Vectora docs site that has not been written would trade a useful link for a
+   dead one. It is labelled for what it covers. */
 let links = [
   {
-    label: __('Website'),
-    url: 'https://frappe.io/crm',
-    icon: LucideGlobe,
-  },
-  {
     label: __('GitHub Repository'),
-    url: 'https://github.com/frappe/crm',
+    url: 'https://github.com/Absolute-Insight/simcrm',
     icon: GitHubIcon,
   },
   {
-    label: __('Documentation'),
+    label: __('Frappe CRM Documentation'),
     url: 'https://docs.frappe.io/crm',
     icon: LucideBookOpen,
   },
   {
     label: __('Report an Issue'),
-    url: 'https://github.com/frappe/crm/issues',
+    url: 'https://github.com/Absolute-Insight/simcrm/issues',
     icon: LucideBug,
-  },
-  {
-    label: __('Contact Support'),
-    url: 'https://support.frappe.io',
-    icon: LucideHeadset,
   },
 ]
 </script>
