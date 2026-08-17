@@ -138,6 +138,14 @@ jobs:
           bench --site crm.test set-config allow_tests true
           bench --site crm.test set-config host_name "http://crm.test:8000"
           # Dummy default-outgoing account so send-email queues without real SMTP.
+          #
+          # smtp_server must NOT be localhost or 127.0.0.1: EmailAccount.validate
+          # opens a live SMTP connection for exactly those two values, nothing
+          # listens on port 25 here, and the insert then throws. `bench console`
+          # exits 0 on a traceback, so that failure was invisible -- the step
+          # went green, the account never existed, and every send returned
+          # HTTP 501 "missing email account" while the test reported only a
+          # poll timeout.
           bench --site crm.test console <<'PY'
           import frappe
           if not frappe.db.exists("Email Account", {"default_outgoing": 1}):
@@ -145,7 +153,7 @@ jobs:
                   "doctype": "Email Account",
                   "email_account_name": "E2E Outgoing",
                   "email_id": "e2e@example.com",
-                  "smtp_server": "localhost",
+                  "smtp_server": "smtp.invalid.test",
                   "smtp_port": 25,
                   "enable_outgoing": 1,
                   "default_outgoing": 1,
@@ -153,6 +161,14 @@ jobs:
               }).insert(ignore_permissions=True)
               frappe.db.commit()
           PY
+
+          # ...so assert it separately, because the block above cannot fail.
+          if ! bench --site crm.test execute frappe.client.get_value \
+               --kwargs "{'doctype':'Email Account','filters':{'default_outgoing':1},'fieldname':'name'}" \
+               | grep -q "E2E Outgoing"; then
+            echo "::error::No default outgoing Email Account. Sending mail will 501 and the email spec will fail on a timeout that says nothing."
+            exit 1
+          fi
 
       - name: Start Frappe Server
         working-directory: /home/runner/frappe-bench
