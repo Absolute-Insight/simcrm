@@ -103,9 +103,20 @@ polish · **P4** platform work beyond the pilot.
       lacked the settled-day guard its sibling in `test_reports.py:83` has, so the one test
       protecting against cross-team leakage cried wolf weekly — and passed for the wrong
       reason on the other six days.
-- [ ] **Nothing gates merges.** `develop` and `main` are both unprotected, `.mergify.yml`
-      has no `check-success` condition, and `codecov.yml:19` sets `if_ci_failed: ignore`.
-      **30 min.**
+- [x] **Nothing gated merges.** `develop` is now protected and requires the three checks
+      that run on *every* PR — Semantic Commits, Semgrep Rules, Pre-commit Checks. The
+      others (`server-tests`, `frontend-tests`) carry `paths-ignore`, so requiring one
+      would leave a docs-only PR waiting forever on a check that will never report.
+      `main` is deliberately left unprotected: the release flow pushes a version-bump
+      commit as `github-actions[bot]`, which is not an admin, so required checks there
+      would break releases. Admins are exempt and no review is required, so the gate
+      catches red merges without blocking a single maintainer.
+      `.mergify.yml` is deleted — inherited from upstream, it auto-closed any PR to
+      `main` whose author was not one of four *upstream* maintainers (so the owner's
+      own), and backported to `main-hotfix`, which does not exist. Mergify is not
+      installed; the config was inert cruft that would misfire the day someone added it.
+      `codecov.yml`'s `if_ci_failed: ignore` reported coverage green exactly when CI had
+      failed; it now errors.
 - [ ] **Two e2e specs fail against a freshly created site; the suite is advisory until
       they are triaged.** `login.spec.ts:12` (the sidebar's Leads link never appears) and
       `email.spec.ts:10` both **pass locally but fail in CI**, whose site is created from
