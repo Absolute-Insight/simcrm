@@ -89,6 +89,7 @@ import LucideArrowUpRight from '~icons/lucide/arrow-up-right'
 import LucideTriangleAlert from '~icons/lucide/alert-triangle'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { deltaTone } from '@/utils/dashboardHome'
+import { formatCell } from '@/utils/reportExport'
 import { Tooltip } from 'frappe-ui'
 import { computed } from 'vue'
 
@@ -118,11 +119,26 @@ const clickable = computed(
   () => Boolean(props.drilldownLabel) && !props.loading && !props.error,
 )
 
+/* Grouped, in the reader's locale — `1,234`, not `1234`. These tiles sit
+   directly above a chart grid that compacts the same magnitudes to `1.2K`, and
+   the delta beside them was already carefully formatted, so the headline number
+   was the one unformatted figure on the page. Nothing is visibly wrong today
+   because every value arrives pre-rounded from the server; the moment that
+   stops, a raw float lands in the largest type on the dashboard.
+
+   Only actual numbers are touched. A tile whose value is already a string has
+   been formatted by its caller — percentages, ratios, "3 of 7" — and
+   reformatting it would undo that. */
 const display = computed(() => {
   if (props.value === null || props.value === undefined || props.value === '') {
     return '—'
   }
-  return `${props.prefix}${props.value}${props.suffix}`
+  const number = typeof props.value === 'number' ? props.value : null
+  const body =
+    number !== null && Number.isFinite(number)
+      ? formatCell(number, 'number')
+      : props.value
+  return `${props.prefix}${body}${props.suffix}`
 })
 
 const tone = computed(() => deltaTone(props.delta, props.negativeIsBetter))

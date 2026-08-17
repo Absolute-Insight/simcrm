@@ -53,7 +53,7 @@
         class="form-control"
         :placeholder="__('Select Range')"
         :button="{
-          label: __(preset),
+          label: presetLabel,
           class:
             '!w-full justify-start [&>span]:mr-auto [&>svg]:text-ink-gray-5',
           variant: 'outline',
@@ -377,6 +377,20 @@ const showDatePicker = ref(false)
 const datePickerRef = ref(null)
 const preset = ref('Last 30 Days')
 const showAddChartModal = ref(false)
+
+/* `__(preset)` looked like translation but could never work: the extractor
+   only sees literals, so "Last 30 Days" was never in the catalogue, and the
+   button stayed English beside a dropdown whose items translate correctly.
+   Rebuilt from the parts, the way Reports.vue already does it. A custom range
+   falls through as-is — it is a formatted date, already localised, and not a
+   phrase anyone translates. */
+const presetLabel = computed(() => {
+  const value = preset.value || ''
+  const lastNDays = /^Last (\d+) Days$/.exec(value)
+  if (lastNDays) return __('Last {0} Days', [lastNDays[1]])
+  if (value === 'Custom Range') return __('Custom Range')
+  return value
+})
 
 const filters = reactive({
   period: getLastXDays(),

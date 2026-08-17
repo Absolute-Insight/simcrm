@@ -106,6 +106,7 @@
                 inputmode="decimal"
                 placeholder="—"
                 :aria-label="`${row.full_name} ${month}`"
+                :title="exactTitle(row.quota?.[month])"
                 @focus="onFocus($event, row, month)"
                 @blur="onBlur($event, row, month)"
                 @keydown.enter="$event.target.blur()"
@@ -113,6 +114,7 @@
               <div
                 v-else
                 class="px-1.5 py-1 text-right text-sm tabular-nums text-ink-gray-7"
+                :title="exactTitle(row.quota?.[month])"
               >
                 {{ displayValue(row, month) || '—' }}
               </div>
@@ -120,7 +122,7 @@
             <td
               class="sticky right-0 z-10 border-b border-l border-outline-gray-1 bg-surface-white px-3 py-1.5 text-right text-sm font-medium tabular-nums text-ink-gray-8"
             >
-              {{ money(rowTotal(row)) }}
+              {{ exactMoney(rowTotal(row)) }}
             </td>
           </tr>
           <tr>
@@ -133,13 +135,14 @@
               v-for="month in grid.data.months"
               :key="month"
               class="px-1.5 py-2 text-right text-sm tabular-nums text-ink-gray-6"
+              :title="exactTitle(columnTotal(month))"
             >
               {{ money(columnTotal(month)) }}
             </td>
             <td
               class="sticky right-0 z-10 border-l border-outline-gray-1 bg-surface-white px-3 py-2 text-right text-sm font-semibold tabular-nums text-ink-gray-8"
             >
-              {{ money(grandTotal) }}
+              {{ exactMoney(grandTotal) }}
             </td>
           </tr>
         </tbody>
@@ -168,6 +171,7 @@ import {
   toast,
 } from 'frappe-ui'
 import { computed, ref, watch } from 'vue'
+import { formatCell } from '@/utils/reportExport'
 
 const { isManager } = usersStore()
 
@@ -194,18 +198,39 @@ const compact = new Intl.NumberFormat(undefined, {
   notation: 'compact',
   maximumFractionDigits: 1,
 })
+
+/* Narrow cells only. `!value` also caught a deliberate zero and drew it as an
+   em dash, so a rep whose target for a month really is nothing was
+   indistinguishable from one whose target was never set. */
 function money(value) {
-  if (!value) return '—'
+  if (value === null || value === undefined || value === '') return '—'
   return compact.format(value)
+}
+
+/* The two sticky total columns have room for the real figure, and these are the
+   numbers a manager reads off the page and repeats. 249,900 and 250,400 both
+   compact to "250K", which is a difference of five hundred disappearing from a
+   sales target. Currency included, matching what the CSV export writes — the
+   two surfaces used to disagree about the same cell. */
+function exactMoney(value) {
+  return formatCell(value, 'currency', grid.data?.currency || '')
+}
+
+/* Every compacted figure carries its exact value as a tooltip, so reading one
+   back no longer requires clicking into the input. */
+function exactTitle(value) {
+  if (value === null || value === undefined || value === '') return ''
+  return exactMoney(value)
 }
 
 function displayValue(row, month) {
   const amount = row.quota?.[month]
-  // Compact, like the row and column totals. Twelve months across a settings
-  // dialog leaves each cell around 40px, and "250,000" clips to "250,0" there --
-  // a target you cannot read back. `onFocus` swaps in the exact digits, so the
-  // full number is one click away and nothing is lost.
-  return amount ? compact.format(amount) : ''
+  // Compact, like the column totals. Twelve months across a settings dialog
+  // leaves each cell around 40px, and "250,000" clips to "250,0" there -- a
+  // target you cannot read back. `onFocus` swaps in the exact digits and the
+  // cell title carries them too, so the full number is never more than a hover
+  // away.
+  return amount === null || amount === undefined ? '' : compact.format(amount)
 }
 
 function rowTotal(row) {
