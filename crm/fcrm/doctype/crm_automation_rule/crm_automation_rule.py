@@ -5,6 +5,8 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+from crm.automation import render_template
+
 
 class CRMAutomationRule(Document):
 	# begin: auto-generated types
@@ -54,10 +56,10 @@ class CRMAutomationRule(Document):
 		"""
 		for fieldname in ("title_template", "description_template"):
 			try:
-				# Compiles against an empty dict to surface syntax errors at save; renders
-				# nothing and touches no record.
-				# nosemgrep: frappe-semgrep-rules.rules.security.frappe-ssti
-				frappe.render_template(self.get(fieldname) or "", {"doc": frappe._dict()})
+				# The same sandboxed renderer the engine uses, so a template that
+				# validates here cannot behave differently when it runs. Compiles
+				# against an empty dict: surfaces syntax errors, touches no record.
+				render_template(self.get(fieldname) or "", frappe._dict())
 			except Exception as e:
 				label = self.meta.get_label(fieldname)
 				frappe.throw(_("Invalid {0}: {1}").format(label, str(e)))

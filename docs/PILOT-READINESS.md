@@ -60,7 +60,7 @@ polish · **P4** platform work beyond the pilot.
       logs every inbound caller's phone number; `:329`, `ExotelCallUI.vue:397,420` log full
       call payloads; `UserMultiSelect.vue:79` is a bare debug leftover. `vite.config.js` has
       no `build:` block, so no `drop_console` — these ship verbatim. **1 h.**
-- [ ] **Sales Manager can author server-rendered Jinja with database-read globals.**
+- [x] **Sales Manager could author server-rendered Jinja with database-read globals.**
       `automation.py:110`. `frappe.render_template` with default globals still exposes
       `frappe.db.sql` and a `get_all` forced to `ignore_permissions=True`. A customer's line
       manager can read arbitrary tables via an automation rule's title template. **2–4 h.**
