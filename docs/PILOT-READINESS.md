@@ -199,9 +199,11 @@ polish · **P4** platform work beyond the pilot.
       there is no `v-html` and must never be one. Degrades like the rest of the tier —
       `disabled` and `unavailable` each get a sentence saying what to do instead. Verified
       in a browser against a live local model, not just compiled.
-- [ ] **`get_dismissal_stats` has no UI.** Same story. It exists so "a threshold reps keep
-      rejecting is visible rather than guessed at" — exactly the pilot's feedback loop.
-      **0.5 day.**
+- [x] **`get_dismissal_stats` had no UI.** Now a panel directly under the thresholds it
+      is evidence for: dismissals by signal, most-rejected first, with the reasons reps
+      typed (rendered as text). The endpoint exists so "a threshold reps keep rejecting is
+      visible rather than guessed at", and putting it beside the knobs is what makes that
+      true. Empty state says what fills it, because on day one of a pilot it *is* empty.
 
 ### Local model support (explicitly mandated)
 - [x] **No local inference service in the deploy stack.** *Verified: the core code already
@@ -211,9 +213,15 @@ polish · **P4** platform work beyond the pilot.
       (127.0.0.1 does not resolve from inside the backend container), keep-alive plus a boot
       warmup for the 9× cold-start penalty, and honest hardware guidance. granite-4.0-h-tiny
       is the verified-good model; MiniCPM5-1B must not ship (returns empty content). **2 days.**
-- [ ] **No Agent settings UI.** 11 configurable fields including every signal threshold,
-      and no pane in Vectora's own Settings — an admin must drop to the raw Frappe desk.
-      For a pilot whose thresholds *will* need tuning, that is real friction. **1 day.**
+- [x] **No Agent settings UI.** Eleven configurable fields, including every signal
+      threshold, with no pane in Vectora's own Settings — an admin had to drop to the raw
+      Frappe desk to tune a pilot's thresholds. Now **Settings → Assistant**, gated on
+      `isAdmin()` rather than `isManager()` because `CRM Agent Settings` grants read and
+      write to System Manager only; showing it to a Sales Manager would be a pane that
+      errors on load. Read and written in one call each — the settings are a Single, and
+      field-by-field writes would leave the tier half-configured if the fourth failed.
+      `api_key` is write-only: a Password field reads back masked, so round-tripping it
+      would save the mask.
 - [ ] **No way to validate an endpoint.** The only way to learn `base_url` is wrong is a rep
       clicking a feature and getting a degraded dialog. Add a test-connection action. **3 h.**
 - [x] **Default `base_url` was `http://localhost:8000/v1` — Frappe's own port.** Enabling the
