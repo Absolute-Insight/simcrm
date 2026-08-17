@@ -9,7 +9,7 @@
          the stored layout is written. -->
     <div v-if="isNarrowGrid && items.length > 0" class="flex flex-col gap-3">
       <div
-        v-for="(item, index) in stackedItems"
+        v-for="item in stackedItems"
         :key="item.key"
         class="flex text-ink-gray-8"
         :style="{ height: `${stackedHeight(item)}px` }"

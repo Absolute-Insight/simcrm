@@ -1,7 +1,7 @@
 <template>
   <Dialog
-    bare
     v-model:open="showSettings"
+    bare
     :size="'5xl'"
     :dismissible="!disableSettingModalOutsideClick"
     @close="activeSettingsPage = ''"
