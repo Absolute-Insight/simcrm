@@ -51,10 +51,20 @@ Caddy, nginx with certbot) in front of the `frontend` service and forward to
 rather than whatever `pull` happens to fetch:
 
 ```bash
+# 0. a backup you could actually restore from — see Rolling back
+docker compose exec backend bench --site all backup --with-files
+
 # 1. edit .env: VECTORA_TAG=v3.1.0
+
+# 2. close the site while the schema and the code disagree
+#    (one site at a time: unlike migrate/backup, this takes no "all")
+docker compose exec backend bench --site <site> set-maintenance-mode on
+
 docker compose pull
 docker compose up -d                      # replaces containers on the new image
 docker compose exec backend bench --site all migrate
+
+docker compose exec backend bench --site <site> set-maintenance-mode off
 ```
 
 **If you skip step 1, nothing upgrades** — `pull` re-fetches the same pinned
@@ -63,9 +73,38 @@ upgrade you have to ask for, and a `.env` that records what is running when
 somebody reports a bug. (`VECTORA_TAG=stable` restores pull-and-go, at the cost
 of not being able to say what a given host is running.)
 
+**Step 2 is not ceremony.** `up -d` starts serving the new code immediately,
+and `migrate` then takes as long as it takes — minutes on a real dataset. In
+that window reps are on new code against an old schema, which is the one
+combination nothing is tested against. Maintenance mode gives them an honest
+"be right back" instead of errors that look like data loss.
+
 Order matters: migrate *after* the new image is up, so patches run on the code
 that shipped them. `merge_duplicate_rep_plan_weeks` and friends are one-shot
 frappe patches and track themselves — re-running migrate is safe.
+
+### Rolling back
+
+**Reverting the image is not a rollback once `migrate` has run.** Patches have
+already changed the schema, and old code does not know about those changes;
+some patches drop or rewrite columns and cannot be undone by running older code
+over them. The only reliable path back is the backup from step 0:
+
+```bash
+# put the old tag back in .env first
+docker compose up -d
+docker compose exec backend bench --site <site> restore --force \
+  /home/frappe/frappe-bench/sites/<site>/private/backups/<file>.sql.gz \
+  --with-public-files <files>.tar --with-private-files <private>.tar
+```
+
+Which means the restore drill in the pilot checklist below is not a nice-to-have:
+it is the rehearsal for the only rollback you have. If step 0's backup has never
+been restored, you do not have a rollback, you have a file.
+
+If `migrate` fails partway, do not roll the image back and carry on — the site
+is between schemas. Read the error (`docker compose logs backend`, and frappe's
+Error Log), fix forward if the cause is obvious, and restore if it is not.
 
 ## Backups
 

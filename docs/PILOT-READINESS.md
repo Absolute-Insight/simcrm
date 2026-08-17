@@ -169,8 +169,15 @@ polish · **P4** platform work beyond the pilot.
       pass while testing nothing. Also drops the inherited `main → version-15` mapping:
       `pyproject.toml` requires frappe `>=16.0.0-dev`, so that lane could only ever have
       been green by never running.
-- [ ] **No rollback path is documented, and upgrades serve new code on an old schema.**
-      `deploy/README.md:48` starts containers before `bench migrate`. **3 h.**
+- [x] **No rollback path was documented, and upgrades served new code on an old schema.**
+      The runbook now takes a backup first, turns maintenance mode on before `up -d` and
+      off after `migrate` — `up -d` starts serving immediately while `migrate` takes
+      minutes on real data, and new-code-on-old-schema is the one combination nothing is
+      tested against. It also says plainly that **reverting the image is not a rollback**
+      once patches have run, so the restore drill in the pilot checklist is the rehearsal
+      for the only rollback that exists. Commands verified against `bench` rather than
+      written from memory: `set-maintenance-mode` takes a single site (no `all`, unlike
+      `migrate`/`backup`), and `--force` belongs to `restore`, not to `bench`.
 
 ## P2 — Completeness (the mandate)
 
