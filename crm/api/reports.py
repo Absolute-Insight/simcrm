@@ -80,6 +80,42 @@ def _forecast_vs_actual(from_date, to_date, user):
 	]
 
 
+def _pipeline_by_segment(from_date, to_date, user):
+	"""Open pipeline sliced two ways at once: industry, then company size.
+
+	One report rather than two because the interesting question is the pair --
+	"we win mid-market fintech and lose enterprise fintech" is invisible in either
+	dimension alone. Rows are the cross-product that actually has deals in it, so
+	an empty combination never takes up a line.
+	"""
+	from crm.api.dashboard import get_deals_by_company_size, get_deals_by_industry
+
+	# Reuse the charts' own aggregates so the report and the dashboard cannot
+	# disagree about the same number -- the one-source-of-numbers rule.
+	industries = get_deals_by_industry(from_date, to_date, user)["data"]
+	sizes = get_deals_by_company_size(from_date, to_date, user)["data"]
+
+	rows = [
+		{
+			"segment": _("Industry"),
+			"value_of": row.get("industry") or _("Unset"),
+			"deals": row.get("deals") or 0,
+			"value": row.get("value") or 0,
+		}
+		for row in industries
+	]
+	rows += [
+		{
+			"segment": _("Company size"),
+			"value_of": row.get("company_size") or _("Unset"),
+			"deals": row.get("deals") or 0,
+			"value": row.get("value") or 0,
+		}
+		for row in sizes
+	]
+	return rows
+
+
 def _quota_attainment_by_rep(from_date, to_date, user):
 	from crm.api.dashboard import quota_in_period, visible_reps, won_value_in_period
 
@@ -180,6 +216,17 @@ REPORTS = {
 			{"key": "actual", "label": "Actual", "type": "currency"},
 		],
 		"get_rows": _forecast_vs_actual,
+	},
+	"pipeline_by_segment": {
+		"title": "Pipeline by segment",
+		"description": "Deal count and value per industry and per company size",
+		"columns": [
+			{"key": "segment", "label": "Segment", "type": "text"},
+			{"key": "value_of", "label": "Value", "type": "text"},
+			{"key": "deals", "label": "Deals", "type": "number"},
+			{"key": "value", "label": "Deal value", "type": "currency"},
+		],
+		"get_rows": _pipeline_by_segment,
 	},
 	"quota_attainment_by_rep": {
 		"title": "Quota attainment by rep",

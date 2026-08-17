@@ -271,7 +271,7 @@
    "fieldname": "no_of_employees",
    "fieldtype": "Select",
    "label": "No. of Employees",
-   "options": "1-10\n11-50\n51-200\n201-500\n501-1000\n1000+"
+   "options": "\n1-10\n11-50\n51-200\n201-500\n501-1000\n1000+"
   },
   {
    "fieldname": "job_title",
