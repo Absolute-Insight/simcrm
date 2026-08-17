@@ -47,12 +47,18 @@ def validate(doc, method):
 
 
 def on_update(doc, method):
+	# Addressed to the record's own room rather than the whole site. This is a
+	# "reload this thread" ping and only clients looking at that lead or deal
+	# can act on it; unscoped, it told every logged-in session which records
+	# were receiving WhatsApp messages and woke all of them to do nothing.
 	frappe.publish_realtime(
 		"whatsapp_message",
 		{
 			"reference_doctype": doc.reference_doctype,
 			"reference_name": doc.reference_name,
 		},
+		doctype=doc.reference_doctype,
+		docname=doc.reference_name,
 	)
 
 	notify_agent(doc)

@@ -629,7 +629,14 @@ def create_customer_from_deal(doc, erpnext_crm_settings):
 
 	if customer_name:
 		frappe.db.set_value("CRM Deal", doc.name, "erpnext_customer", customer_name)
-		frappe.publish_realtime("crm_customer_created")
+		# To the person whose save created the customer, not to everyone. This
+		# raises a "Customer Created Successfully" toast, and unscoped it fired
+		# on every open Deal page on the site — a success message for an action
+		# the reader did not take, about a deal they may not be looking at.
+		#
+		# The user room rather than the deal's: Deal.vue listens for this but
+		# never emits `doc_subscribe`, so a doc-room publish would reach nobody.
+		frappe.publish_realtime("crm_customer_created", user=frappe.session.user)
 
 	return customer_name
 

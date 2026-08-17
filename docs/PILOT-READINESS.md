@@ -16,6 +16,28 @@ polish · **P4** platform work beyond the pilot.
 
 ## P0 — Security and data integrity
 
+- [x] **Three more unscoped realtime broadcasts, found by the same full scan.**
+      `exotel/handler.py` published Exotel's raw passthru payload site-wide from an
+      `allow_guest` webhook — `CallFrom`, the **customer's phone number**, delivered to
+      every logged-in rep's browser for every call. `ExotelCallUI` filters on `AgentEmail`
+      before showing the popup, but that decision happens after the data has crossed the
+      wire. Now addressed to the agent, resolved from the call log, `AgentEmail`, or the
+      `&agent=` the outgoing status-callback URL already carries; when none can be
+      resolved it publishes nothing and logs, because silence beats broadcasting a
+      customer's number. `whatsapp.py` now targets the record's room (the only component
+      that listens, `Activities.vue`, is also the only one that `doc_subscribe`s), and
+      `crm_customer_created` targets the acting user — Deal.vue listens for it but never
+      subscribes to a doc room, so a doc-room publish would have reached nobody. 6 tests;
+      no Exotel account here, so they exercise the addressing decision directly.
+- [ ] **Triage the remaining 25 semgrep findings, then make the full scan a scheduled
+      job.** CI diff-scans, so nothing already in the tree can trip it — which is why two
+      P0 leaks sat there. A full run reports 12 `frappe-manual-commit`, 8
+      `guest-whitelisted-method`, 3 `frappe-setuser`, 1 `override-doctype-class`, 1
+      `frappe-enqueue-without-after-commit`. These are "audit this" advisories rather than
+      confirmed bugs, and each needs a verdict recorded. **Deliberately not adding the
+      scheduled job first:** born red against 25 untriaged findings it would be ignored
+      within a week, which is worse than not having it. **1 day.**
+
 - [x] **Event reminders were broadcast to every user on the site.**
       `event.py`'s `_send_system_notification` called `publish_realtime` with no `room`,
       `user` or `doctype`, which frappe resolves to `get_site_room()` — its own comment on
