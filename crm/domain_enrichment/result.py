@@ -28,6 +28,11 @@ class Method:
 	TEXT_HEURISTIC = "Text Heuristic"
 	KEYWORD_CLASSIFIER = "Keyword Classifier"
 	SOCIAL_RULE = "Social Rule"
+	# Read off the page by the model tier because no rule could. Distinct from
+	# every label above on purpose: those name a mechanism that either matched or
+	# did not, and this one names an inference. A reviewer deciding how much to
+	# trust a value should be able to see that difference at a glance.
+	MODEL = "Model"
 
 
 @dataclass

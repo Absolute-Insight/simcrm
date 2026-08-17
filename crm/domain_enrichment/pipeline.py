@@ -16,11 +16,19 @@ from __future__ import annotations
 from dataclasses import replace
 from urllib.parse import urlparse
 
-from . import extractors
+from . import extractors, model_fallback
 from .config import EnrichmentConfig, get_config
 from .crawler import crawl, probe_about_pages
 from .http import build_session
 from .result import EnrichmentResult, Field, Method
+
+# Said on the run rather than left to the provenance labels alone. A reviewer
+# scanning notes should not have to open each field to discover that some of this
+# was inferred rather than found.
+MODEL_FALLBACK_NOTE = (
+	"Read by the model tier because no rule matched: {fields}. "
+	"Inferred from the page rather than extracted from it -- worth a glance before use."
+)
 
 # A preview only needs the document <head> (JSON-LD / OG / meta), which sits near the
 # top -- cap the download well below the full run's max_download_bytes.
@@ -190,6 +198,15 @@ def run(website: str, cfg: EnrichmentConfig = None, progress=None) -> Enrichment
 		industry, confidence = extractors.classify_industry(pages, company, cfg.rules("Industry"))
 		result.industry = Field(industry, website, Method.KEYWORD_CLASSIFIER) if industry else Field()
 		result.industry_confidence = confidence
+
+		# 5b. Whatever the rules could not read, ask the model -- if the admin has
+		# switched that on. Blanks only, never a second opinion on a rule's answer,
+		# and it cannot raise: a fallback that breaks the run it was meant to
+		# rescue is worse than the blank fields it set out to fill.
+		if model_fallback.available(cfg):
+			filled = model_fallback.fill_gaps(result, pages, cfg)
+			if filled:
+				result.notes.append(MODEL_FALLBACK_NOTE.format(fields=", ".join(sorted(filled))))
 
 		# 6 + 7. Done (saving handled by the caller in Phase 4).
 		emit(5)

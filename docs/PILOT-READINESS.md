@@ -707,8 +707,35 @@ polish · **P4** platform work beyond the pilot.
       **No fresh measurement:** there is no model endpoint in this container. The
       existing hand-run numbers stand; re-run the suite on the pilot host once its
       endpoint is up.
-- [ ] **Enrichment fallback extractor** (+ golden-set evals) — enrichment currently leaves
-      JS-rendered sites blank; the model seam was planned and never built. **3–5 days.**
+- [x] **Enrichment fallback extractor** (+ golden-set evals). `model_fallback.py` asks the
+      local model for the fields the rules could not read, off by default and behind its
+      own switch — enabling the assistant tier is consent to send your own conversations
+      to your endpoint, not consent to send it the contents of other people's websites.
+      The three constraints are the feature; the extraction is the easy part:
+      - **Fills blanks only.** A rule fired by admin config outranks an inference, so a
+        field the rules answered is never sent and never overwritten.
+      - **Industry is a choice, not an answer.** `mapper` auto-creates missing Link
+        masters, so an invented industry does not fail loudly — it silently adds a row to
+        the site's `CRM Industry` list. The model picks from the admin's own list and the
+        answer is re-checked against it server-side. Guided decoding constrains shape,
+        never truth.
+      - **The page is hostile text** — HTML from a stranger's web server, chosen by
+        whoever typed the website in. Fenced, markers neutralised, and the reply treated
+        as data.
+      Values arrive labelled `Method.MODEL` so a reviewer can tell inference from
+      extraction. Both guards mutation-checked. Every degraded path lands on the blanks
+      the rules produced.
+      **The golden set is scored as a confusion matrix, not a hit rate.** "Fills more
+      fields" is the wrong thing to optimise: a model that answers everything fills every
+      field and fills some with fiction. Half the cases are *abstention* cases where the
+      right answer is blank. `missed` is the failure this feature is allowed to have;
+      `wrong` and `hallucinated` are the ones that write falsehoods onto a record.
+      Two bugs found by reading the report rather than trusting green tests: the scorer
+      counted every *correct* description as an invention (a case wanting a description
+      carries `description_must_mention`, not a sentence, and the absent key read as
+      "expect blank"), and the field-selection condition ignored `name`, so any case
+      wanting a description was scored on all three fields. The unit test that should
+      have caught the first passed `expected="x"` — a shape no real case has.
 - [x] **Three dashboard tests assert absolute averages and fail on any site with data.**
       ~~`test_dashboard.py:158,224,588` hardcode `89285.71` and friends.~~ **Stale — the
       rewrite this entry describes went on to cover these three too, and the entry was

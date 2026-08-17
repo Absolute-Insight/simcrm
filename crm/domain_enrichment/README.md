@@ -279,6 +279,44 @@ write back to the Organization. The field-writing reuses `mapper.apply_to_docume
   **intentionally removed** — the per-worker Chromium memory footprint isn't worth it
   for a fallback. (The implementation is preserved locally in the gitignored
   `CHROMIUM_FALLBACK.local.md` if it ever needs to be reintroduced.)
+
+  **`model_fallback.py` is the other route to the same fields** — off by default.
+  With *Use the model when rules find nothing* ticked (and the assistant tier
+  enabled), whatever text the crawl did retrieve is sent to the local model and it
+  is asked for the blanks. Two switches on purpose: enabling the assistant is
+  consent to send your own conversations to your endpoint, not consent to send it
+  the contents of other people's websites.
+
+  Three constraints, each guarding a specific way this goes wrong:
+
+  | Constraint | Why |
+  |---|---|
+  | Fills blanks only, never overwrites | A rule fired by admin config outranks an inference. A field the rules answered is not even sent. |
+  | Industry is picked from the admin's own list and re-checked server-side | `mapper` auto-creates missing Link masters, so an invented industry does not fail — it silently adds a row to `CRM Industry`. Guided decoding constrains shape, never truth. |
+  | The page is fenced and fence markers in it are neutralised | The input is HTML from a stranger's web server. It is the sharpest injection surface in the product. |
+
+  Values arrive labelled `Method.MODEL` ("Model") so a reviewer can tell an
+  inference from an extraction, and the run carries a note naming the fields.
+  Every degraded path — tier off, endpoint down, malformed reply — lands on the
+  blanks the rules already produced; nothing here may raise into the pipeline.
+
+- **Measuring the fallback.** `crm/domain_enrichment/evals/` is a golden set scored
+  as a confusion matrix rather than a hit rate, because "fills more fields" is the
+  wrong thing to optimise — a model that answers everything fills every field and
+  fills some with fiction. Half the cases are **abstention cases** where the right
+  answer is to leave the field empty.
+
+  `missed` (wanted a value, got none) is the failure this feature is allowed to
+  have; `wrong` and `hallucinated` are the ones that write falsehoods onto a record,
+  and they are reported separately for that reason. A run needs a real endpoint:
+
+  ```bash
+  bench --site <site> execute crm.domain_enrichment.evals.runner.run_and_print
+  ```
+
+  With no endpoint the report says `Nothing was measured` and stops — every field
+  would come back blank, every abstention case would score `abstained`, and a
+  summary line would show a model abstaining flawlessly while having made no calls.
 - **Logo vs image.** The `logo` is the company's **link icon** (`extract_logo`): the
   best declared `<link rel=icon>` — scalable SVG > largest raster / apple-touch — with
   `/favicon.ico` as the fallback. It's the crisp, square brand mark suited to an avatar.
