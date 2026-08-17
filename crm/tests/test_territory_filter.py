@@ -71,19 +71,16 @@ class TerritoryFixture:
 		# status a chart reads, with the dates the date-based aggregates group on.
 		cls.won_status = frappe.db.get_value("CRM Deal Status", {"type": "Won"}, "name")
 		cls.lost_status = frappe.db.get_value("CRM Deal Status", {"type": "Lost"}, "name")
-		# CI's site has no CRM Lost Reason rows, and a Lost deal without a reason
-		# fails validation -- so this passed locally and failed there. Take one if
-		# the site has any, make one if it does not.
-		reasons = frappe.get_all("CRM Lost Reason", limit=1, pluck="name")
+		# A Lost deal needs a reason, and the reason cannot be borrowed from the
+		# site: sampling the first CRM Lost Reason row picked "Not interested"
+		# locally and "Other" in CI, and "Other" additionally demands lost_notes.
+		# So the fixture owns its reason and depends on no site data.
 		cls.lost_reason = (
-			reasons[0]
-			if reasons
-			else (
-				frappe.get_doc({"doctype": "CRM Lost Reason", "lost_reason": "Territory Filter Reason"})
-				.insert(ignore_permissions=True)
-				.name
-			)
+			frappe.get_doc({"doctype": "CRM Lost Reason", "lost_reason": "Territory Filter Reason"})
+			.insert(ignore_permissions=True, ignore_if_duplicate=True)
+			.name
 		)
+		cls.created.append(("CRM Lost Reason", cls.lost_reason))
 		closing = frappe.utils.add_days(frappe.utils.nowdate(), 10)
 
 		# Counts *and* dates differ, because several charts answer with an average
@@ -141,7 +138,9 @@ class TerritoryFixture:
 
 	@classmethod
 	def tearDownClass(cls):
-		for doctype, name in cls.created:
+		# Reversed, so a row is gone before whatever it depends on: the lost
+		# reason is registered before the deals that link to it.
+		for doctype, name in reversed(cls.created):
 			frappe.delete_doc(doctype, name, force=True, ignore_missing=True)
 		super().tearDownClass()
 
