@@ -83,7 +83,10 @@ const numberCharts = [
     label: __('Avg Time to Close a Deal'),
     value: 'average_time_to_close_a_deal',
   },
-  { label: __('Deals at Risk'), value: 'deals_at_risk' },
+  // "Critical" matches the record badge's band for the same scores; see the
+  // note on get_deals_at_risk. The value stays `deals_at_risk` — saved
+  // dashboards store it.
+  { label: __('Critical deals'), value: 'deals_at_risk' },
 ]
 
 const axisChart = ref('sales_trend')

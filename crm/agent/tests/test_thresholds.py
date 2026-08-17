@@ -75,18 +75,41 @@ class CrossLanguageThresholdTest(UnitTestCase):
 
 	def test_the_at_risk_boundary_is_the_same_number_on_both_sides(self):
 		"""``AT_RISK_BELOW`` gates the dashboard tile; ``HEALTH_AT_RISK`` gates the
-		badge on the record. Same boundary, so it must move on both sides at once.
-
-		This pins the *boundary* only, and deliberately does not bless what either
-		side calls the bands it divides -- they do not currently agree. The tile
-		counts ``score < 40`` and calls that "Deals at risk"; the badge calls
-		40-69 "At risk" and reserves "Critical" for ``< 40``. So the tile's
-		population is exactly the badge's *Critical* set, and a deal the record
-		page badges "At risk" is not in the tile at all. Reconciling the two
-		changes either a label or a number a manager reads, so it is written up
-		in docs/PILOT-READINESS.md rather than decided here.
-		"""
+		badge on the record. Same boundary, so it must move on both sides at once."""
 		self.assertEqual(js_const("HEALTH_AT_RISK"), float(AT_RISK_BELOW))
+
+
+class BandVocabularyTest(UnitTestCase):
+	"""The tile and the badge have to mean the same thing by the same word.
+
+	They did not. The tile counted ``score < 40`` and called it "Deals at risk",
+	while the badge calls 40-69 "At risk" and reserves "Critical" for ``< 40`` --
+	so the tile's population was exactly the badge's *Critical* set, and a manager
+	reading "8 deals at risk" beside thirty "At risk" badges was told two
+	different things by one word. The tile is now "Critical deals". The number it
+	shows never changed; only the label was wrong.
+	"""
+
+	def test_the_tile_uses_the_badge_word_for_the_band_it_counts(self):
+		from crm.api.dashboard import get_deals_at_risk
+
+		title = get_deals_at_risk()["title"]
+		self.assertIn("Critical", title)
+		self.assertNotIn("at risk", title.casefold())
+
+	def test_the_badge_still_reserves_critical_for_the_band_the_tile_counts(self):
+		"""The other half. If the JS ever renamed its ``< 40`` band, the tile's
+		title would be borrowing a word that no longer means that."""
+		source = SUGGESTIONS_JS.read_text()
+		critical = re.search(r"key: 'critical',\s*\n\s*label: __\('([^']+)'\)", source)
+		self.assertIsNotNone(critical, "the critical band is no longer shaped as expected")
+		self.assertEqual(critical.group(1), "Critical")
+
+	def test_the_middle_band_is_the_one_called_at_risk(self):
+		source = SUGGESTIONS_JS.read_text()
+		at_risk = re.search(r"key: 'at_risk',\s*\n\s*label: __\('([^']+)'\)", source)
+		self.assertIsNotNone(at_risk, "the at-risk band is no longer shaped as expected")
+		self.assertEqual(at_risk.group(1), "At risk")
 
 	def test_the_parser_finds_a_constant_that_is_really_there(self):
 		"""The guard above passes vacuously if the regex silently matches nothing,
