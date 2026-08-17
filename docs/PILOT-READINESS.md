@@ -19,10 +19,10 @@ polish · **P4** platform work beyond the pilot.
 | **P0** security / data integrity | 1 | remote email images — deferred by decision, nothing built |
 | **P1** release / CI integrity | 0 | |
 | **P2** completeness (the mandate) | 0 | |
-| **P3** client-facing polish | 6 | |
+| **P3** client-facing polish | 5 | |
 | **P4** beyond the pilot | — | out of scope by definition |
 
-**91 closed, 7 open.** The mandate section is clear: every planned feature is built. What
+**92 closed, 6 open.** The mandate section is clear: every planned feature is built. What
 remains under P0 is one accepted risk with nothing built against it, and the rest is
 polish. Two things still need someone other than me:
 
@@ -921,9 +921,16 @@ polish. Two things still need someone other than me:
       verified by saving a rule and reading back `document_type: "CRM Deal"` under a
       summary that reads "Deal · …". Applies to, When, Then and Priority are all translated
       now; the status list is left alone because those are user-created records.
-- [ ] **The Dashboard chart grid is a fixed 20 columns**, so between roughly 640 and
+- [x] **The Dashboard chart grid is a fixed 20 columns**, so between roughly 640 and
       1000px — where the desktop layout is active and Dashboard *is* in the nav — a number
-      card gets ~80px and truncates to nothing. **0.5 day.**
+      card gets ~80px and truncates to nothing. *Fixed:* below 1000px the panels stack
+      full-width in reading order (y then x, so two panels on one row keep their order)
+      and each keeps its own height — flattening them would trade a width problem for a
+      height one. Measured at 800px: panels went from ~140px slivers to 486px.
+      The **Edit** button now gates on the same breakpoint rather than the phone one. It
+      was still offered at 800px, where the grid it drags is not rendered, so it appeared
+      to do nothing — the exact broken mode its own comment warned about, one breakpoint
+      further out. Wide layout re-checked at 1440px and unchanged.
 - [x] **The Reports rail claims to be a tablist but implements none of it** — no
       `aria-controls`, no `tabpanel`, no roving tabindex, no arrow keys. Either implement
       the pattern or drop the roles and let it be a nav of buttons. *Implemented* — it is a

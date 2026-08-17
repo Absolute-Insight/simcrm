@@ -1,11 +1,29 @@
 <template>
   <div class="flex-1 overflow-y-auto p-3">
+    <!-- Below WIDE_GRID_BREAKPOINT_PX the twenty-column grid stops dividing
+         into readable columns: a panel laid out four wide gets a fifth of the
+         viewport, ~140px at 700px, and a number card truncates to nothing.
+         Stacked full-width in layout order instead — the same way every other
+         grid in the app degrades. Editing stays on the wide layout only; there
+         is nothing to drag when everything is one column, and dragging is how
+         the stored layout is written. -->
+    <div v-if="isNarrowGrid && items.length > 0" class="flex flex-col gap-3">
+      <div
+        v-for="(item, index) in stackedItems"
+        :key="item.key"
+        class="flex text-ink-gray-8"
+        :style="{ height: `${stackedHeight(item)}px` }"
+      >
+        <DashboardItem :index="item.index" :item="items[item.index]" />
+      </div>
+    </div>
+
     <GridLayout
-      v-if="items.length > 0"
+      v-else-if="items.length > 0"
       class="h-fit w-full"
       :class="[editing ? 'mb-[20rem] !select-none' : '']"
       :cols="20"
-      :rowHeight="42"
+      :rowHeight="ROW_HEIGHT"
       :disabled="!editing"
       :modelValue="items.map((item) => item.layout)"
       @update:modelValue="
@@ -53,10 +71,35 @@
 </template>
 <script setup>
 import GridLayout from '@/components/Dashboard/GridLayout.vue'
+import DashboardItem from '@/components/Dashboard/DashboardItem.vue'
+import { isNarrowGrid } from '@/composables/settings'
+import { computed } from 'vue'
+
+const ROW_HEIGHT = 42
 
 defineProps({
   editing: { type: Boolean, default: false },
 })
 
 const items = defineModel({ type: Array, default: () => [] })
+
+/* Reading order, which is what the stored layout means once the columns are
+   gone: top to bottom, then left to right. Sorting by `y` alone would leave two
+   panels on the same row in whatever order the array happened to hold them. */
+const stackedItems = computed(() =>
+  items.value
+    .map((item, index) => ({
+      index,
+      key: item.layout?.i ?? `${item.name ?? 'panel'}-${index}`,
+      y: item.layout?.y ?? 0,
+      x: item.layout?.x ?? 0,
+      h: item.layout?.h ?? 3,
+    }))
+    .sort((a, b) => a.y - b.y || a.x - b.x),
+)
+
+/* Keep each panel's own height. A chart laid out three rows tall is three rows
+   tall because that is what it needs to be legible; flattening every panel to
+   one height would trade a width problem for a height one. */
+const stackedHeight = (item) => item.h * ROW_HEIGHT
 </script>
