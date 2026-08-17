@@ -52,6 +52,7 @@
       <template v-else>
         <button
           v-for="r in reports.data || []"
+          :id="tabId(r.name)"
           :key="r.name"
           class="v-rail rounded-4 px-2.5 py-2 text-left text-base"
           :class="
@@ -62,7 +63,10 @@
           role="tab"
           :data-state="r.name === active ? 'active' : 'inactive'"
           :aria-selected="r.name === active"
+          :aria-controls="PANEL_ID"
+          :tabindex="r.name === active ? 0 : -1"
           @click="active = r.name"
+          @keydown="onTabKeydown"
         >
           {{ r.title }}
         </button>
@@ -70,6 +74,7 @@
              were worth answering; this one is a blank sheet. -->
         <div class="my-1 border-t border-outline-gray-1" />
         <button
+          :id="tabId(BUILDER)"
           class="v-rail rounded-4 px-2.5 py-2 text-left text-base"
           :class="
             isBuilder
@@ -79,7 +84,10 @@
           role="tab"
           :data-state="isBuilder ? 'active' : 'inactive'"
           :aria-selected="isBuilder"
+          :aria-controls="PANEL_ID"
+          :tabindex="isBuilder ? 0 : -1"
           @click="active = BUILDER"
+          @keydown="onTabKeydown"
         >
           {{ __('Build a report') }}
         </button>
@@ -87,7 +95,10 @@
     </nav>
 
     <div
-      id="report-print-area"
+      :id="PANEL_ID"
+      role="tabpanel"
+      :aria-labelledby="tabId(active)"
+      tabindex="0"
       class="flex min-w-0 flex-1 flex-col overflow-hidden"
     >
       <div
@@ -465,6 +476,46 @@ const listEmpty = computed(
    sentinel cannot collide with a registry key — those are Python identifiers. */
 const BUILDER = '__builder__'
 const isBuilder = computed(() => active.value === BUILDER)
+
+/* The rail declared role="tablist" and role="tab" and implemented none of the
+   rest of the pattern: no aria-controls, no tabpanel, no roving tabindex, no
+   arrow keys. A screen reader was told "tab 3 of 7" and then found seven
+   separate tab stops leading nowhere named. Announcing a pattern you have not
+   built is worse than plain buttons, because it sets an expectation the
+   keyboard then fails.
+
+   PANEL_ID is the id the print stylesheet already selects -- reusing it keeps
+   one id on that element rather than adding a second for the ARIA reference. */
+const PANEL_ID = 'report-print-area'
+const tabId = (name) => `report-tab-${name}`
+
+/* Tab order as rendered: the registry's reports, then the builder. */
+const tabNames = computed(() => [
+  ...(reports.data || []).map((r) => r.name),
+  BUILDER,
+])
+
+/* Arrow keys move *and* select, which is the expected behaviour for a tablist
+   whose panels are already loaded -- ARIA calls it automatic activation, and it
+   is what the reports rail wants: arrowing down should show the next report,
+   not merely outline it. Home/End jump the ends. */
+function onTabKeydown(event) {
+  const names = tabNames.value
+  const keys = {
+    ArrowDown: (i) => (i + 1) % names.length,
+    ArrowUp: (i) => (i - 1 + names.length) % names.length,
+    Home: () => 0,
+    End: () => names.length - 1,
+  }
+  const move = keys[event.key]
+  if (!move || !names.length) return
+  event.preventDefault()
+  const next = names[move(names.indexOf(active.value))]
+  active.value = next
+  // After the tabindex swap has rendered, or focus lands on an element that is
+  // still tabindex="-1" and the browser drops it.
+  nextTick(() => document.getElementById(tabId(next))?.focus())
+}
 
 const builderOptions = createResource({
   url: 'crm.api.report_builder.get_builder_options',

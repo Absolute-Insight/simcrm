@@ -19,10 +19,10 @@ polish · **P4** platform work beyond the pilot.
 | **P0** security / data integrity | 1 | remote email images — deferred by decision, nothing built |
 | **P1** release / CI integrity | 0 | |
 | **P2** completeness (the mandate) | 0 | |
-| **P3** client-facing polish | 7 | |
+| **P3** client-facing polish | 6 | |
 | **P4** beyond the pilot | — | out of scope by definition |
 
-**90 closed, 8 open.** The mandate section is clear: every planned feature is built. What
+**91 closed, 7 open.** The mandate section is clear: every planned feature is built. What
 remains under P0 is one accepted risk with nothing built against it, and the rest is
 polish. Two things still need someone other than me:
 
@@ -924,9 +924,17 @@ polish. Two things still need someone other than me:
 - [ ] **The Dashboard chart grid is a fixed 20 columns**, so between roughly 640 and
       1000px — where the desktop layout is active and Dashboard *is* in the nav — a number
       card gets ~80px and truncates to nothing. **0.5 day.**
-- [ ] **The Reports rail claims to be a tablist but implements none of it** — no
+- [x] **The Reports rail claims to be a tablist but implements none of it** — no
       `aria-controls`, no `tabpanel`, no roving tabindex, no arrow keys. Either implement
-      the pattern or drop the roles and let it be a nav of buttons. **1–3 h.**
+      the pattern or drop the roles and let it be a nav of buttons. *Implemented* — it is a
+      tab pattern in fact, so announcing one and then failing the keyboard was the wrong
+      half to drop. Ids and `aria-controls` on every tab, `role="tabpanel"` +
+      `aria-labelledby` on the pane (reusing the id the print stylesheet already selects),
+      roving tabindex, and Up/Down/Home/End with automatic activation — arrowing down
+      should *show* the next report, not merely outline it.
+      Verified in the browser: exactly one tab stop, `aria-controls` resolves to the panel
+      and the panel's label resolves back, and End jumps to the builder with selection and
+      URL following.
 - [ ] **Panel reordering is built and unit-tested but has no UI** — `movePanel` in
       `dashboardHome.js:307` is imported by nothing, and `applyPanelPreference`'s `order`
       branch is unreachable because only `hidden` is ever written. **Decide: wire or delete.**
