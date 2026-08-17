@@ -38,6 +38,24 @@ Then browse `http://<host>:8080` (or your `HTTP_PUBLISH_PORT`) — the CRM is at
 `create-site` is idempotent: it skips itself when the site directory already
 exists, so `docker compose up -d` is always safe to re-run.
 
+**Demo data is not seeded.** A new site starts with `setup_complete = 0`, so
+opening the desk UI — which the scheduler-watching step below sends you to —
+prompts Frappe's setup wizard, and finishing it used to seed eleven fake leads,
+seven fake deals and three fake users into your production CRM. The proactive
+tier then treats them as real: signals score them and the weekly forecast
+snapshot folds their value into the site total, which cannot be corrected
+afterwards because a snapshot records what was believed on a date. Seeding is
+now opt-in:
+
+```bash
+docker compose exec backend bench --site <site> set-config crm_seed_demo_data 1
+```
+
+Clearing it afterwards (**Clear Demo Data** in the sidebar) now also removes the
+suggestions, rep plans and forecast rows derived from it, including the site
+and team aggregates taken while it existed — those counted fiction and cannot
+be recomputed. Per-rep history for real reps is untouched.
+
 ## TLS
 
 This stack does not terminate TLS. Put your standard reverse proxy (Traefik,
