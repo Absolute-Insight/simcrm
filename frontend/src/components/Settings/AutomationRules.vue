@@ -144,7 +144,7 @@
                 v-model="draft.task_priority"
                 type="select"
                 :label="__('Priority')"
-                :options="['Low', 'Medium', 'High']"
+                :options="priorities"
               />
             </div>
 
@@ -223,9 +223,34 @@ import {
 } from 'frappe-ui'
 import { computed, reactive, ref, watch } from 'vue'
 
-const documentTypes = ['CRM Deal', 'CRM Lead']
-const triggers = ['Created', 'Status Changed']
-const actions = ['Create Task', 'Create Suggestion']
+/* Labels and values are separate here because the values are persisted on
+   CRM Automation Rule and the labels are read by people. "CRM Deal" is the
+   doctype's internal name; every other surface in the product calls it a Deal,
+   and this dialog was the one place leaking the schema at the user. The value
+   sent to the server is unchanged.
+
+   Built as computeds so a language change re-resolves them, and so the
+   extractor sees each string inside a literal __(). */
+const documentTypes = computed(() => [
+  { label: __('Deal'), value: 'CRM Deal' },
+  { label: __('Lead'), value: 'CRM Lead' },
+])
+const documentTypeLabel = (value) =>
+  documentTypes.value.find((option) => option.value === value)?.label || value
+
+const triggers = computed(() => [
+  { label: __('Created'), value: 'Created' },
+  { label: __('Status Changed'), value: 'Status Changed' },
+])
+const actions = computed(() => [
+  { label: __('Create Task'), value: 'Create Task' },
+  { label: __('Create Suggestion'), value: 'Create Suggestion' },
+])
+const priorities = computed(() => [
+  { label: __('Low'), value: 'Low' },
+  { label: __('Medium'), value: 'Medium' },
+  { label: __('High'), value: 'High' },
+])
 
 const EMPTY = {
   name: null,
@@ -303,7 +328,7 @@ function describe(rule) {
     rule.action === 'Create Task'
       ? __('create a task')
       : __('raise a suggestion')
-  return `${rule.document_type} · ${when} → ${what}`
+  return `${documentTypeLabel(rule.document_type)} · ${when} → ${what}`
 }
 
 function openEditor(rule) {

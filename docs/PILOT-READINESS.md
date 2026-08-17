@@ -444,24 +444,31 @@ polish · **P4** platform work beyond the pilot.
       transport failure renders the literal string "Failed to fetch" with no retry.
       `SkeletonTable`'s own docstring names the quota table as a call site it does not have.
       **30 min each.**
-- [ ] **The Sales Targets grid never shows an exact figure or a currency.** Every cell,
-      including the wide sticky Year and Team totals, goes through compact notation —
-      249,900 and 250,400 both read `250K`, and a target of zero reads `—`. The only exact
-      digits appear inside a focused input. CSV export formats the same money properly, so
-      the two surfaces disagree. **1 h.**
-- [ ] **Headline stat tiles print raw integers** (`1234`, not `1,234`) directly above a
-      chart grid that compacts the same magnitudes to `1.2K`. The delta beside them *is*
-      carefully formatted. No wrong numbers today — every value is pre-rounded server-side —
-      but the panels bypass the `formatCell` the Reports page uses for identical columns, so
-      they will drift the moment the backend stops rounding. **1 h.**
-- [ ] **Dates are hardcoded to `en-US`** in `utils/dashboard.ts:24`, and the range
-      connector `" to "` is untranslated. **30 min.**
-- [ ] **The dashboard range button stays English** — `__(preset)` on a runtime string the
-      extractor never sees, while the dropdown items beside it translate correctly.
-      `Reports.vue:293` already has the fix; back-port it. **20 min.**
-- [ ] **Automation Rules shows internal doctype names** — "CRM Deal" / "CRM Lead" in the
-      dropdown and at the head of every rule summary, where the rest of the product says
-      "Deal" / "Lead". Five option sets are untranslated. **30 min.**
+- [x] **The Sales Targets grid never shows an exact figure or a currency.** The wide
+      sticky Year and Team-total columns now render the real figure with its currency via
+      the same `formatCell` the CSV export uses, so the two surfaces agree. Month cells
+      stay compact — twelve of them across a settings dialog leaves ~40px each and
+      "250,000" clips to "250,0" there — but every compacted cell now carries the exact
+      amount as a tooltip, so reading one back no longer means clicking into it. A target
+      of zero reads as zero rather than `—`: `!value` could not tell a deliberate zero from
+      an unset month. Verified with 249,900 and 250,400 side by side.
+- [x] **Headline stat tiles print raw integers** (`1234`, not `1,234`). Now grouped in the
+      reader's locale through the same `formatCell` the Reports page uses. Only actual
+      numbers are touched — a tile whose value is already a string was formatted by its
+      caller (percentages, "3 of 7"), and reformatting would undo that.
+- [x] **Dates are hardcoded to `en-US`** in `utils/dashboard.ts`, and the range connector
+      `" to "` is untranslated. Now the reader's locale (`undefined`, as `reportExport.js`
+      already does for its `Intl` formatters) and `__('{0} to {1}', …)`.
+- [x] **The dashboard range button stays English** — `__(preset)` on a runtime string the
+      extractor never sees. Rebuilt from its parts as `Reports.vue` already does, so the
+      button matches the dropdown beside it. A custom range falls through untouched: it is
+      a formatted date, already localised, and not a phrase anyone translates.
+- [x] **Automation Rules shows internal doctype names** — "CRM Deal" / "CRM Lead" in the
+      dropdown and at the head of every rule summary. Labels are now separate from values,
+      so the schema stops leaking at the user while the persisted value is untouched:
+      verified by saving a rule and reading back `document_type: "CRM Deal"` under a
+      summary that reads "Deal · …". Applies to, When, Then and Priority are all translated
+      now; the status list is left alone because those are user-created records.
 - [ ] **The Dashboard chart grid is a fixed 20 columns**, so between roughly 640 and
       1000px — where the desktop layout is active and Dashboard *is* in the nav — a number
       card gets ~80px and truncates to nothing. **0.5 day.**
