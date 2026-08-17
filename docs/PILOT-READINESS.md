@@ -658,17 +658,41 @@ polish · **P4** platform work beyond the pilot.
       endpoint is up.
 - [ ] **Enrichment fallback extractor** (+ golden-set evals) — enrichment currently leaves
       JS-rendered sites blank; the model seam was planned and never built. **3–5 days.**
-- [ ] **Three dashboard tests assert absolute averages and fail on any site with data.**
-      `test_dashboard.py:158,224,588` hardcode `89285.71` and friends. The file's own header
-      explains why that cannot hold — `make_test_records` commits its fixtures instead of
-      rolling them back — and most of the file was rewritten to compute expectations
-      independently; these three were missed. Green in CI on a fresh site, red on any
-      long-lived one, which is the wrong way round for a regression test. Found while
-      verifying the forecast work; confirmed pre-existing against a clean tree. **1 h.**
-- [ ] **Duplicated thresholds.** `AT_RISK_BELOW = 40` (`predict.py:44`) and
-      `HEALTH_AT_RISK = 40` (`suggestions.js:36`) are independent; the tile count and the
-      record badges drift apart if either moves. `CLOSE_HORIZON_DAYS` has the same split —
-      widening the horizon in Settings moves the suggestion but not the health factor. **3 h.**
+- [x] **Three dashboard tests assert absolute averages and fail on any site with data.**
+      ~~`test_dashboard.py:158,224,588` hardcode `89285.71` and friends.~~ **Stale — the
+      rewrite this entry describes went on to cover these three too, and the entry was
+      never updated.** Verified rather than assumed: all 40 tests pass against this
+      container's site, which holds 1140 deals and 1225 leads against a 35-lead fixture —
+      the "long-lived site" condition the entry says turns them red. The two surviving
+      literals (`89285.71`, `109482.76`) are asserted against
+      `crm_deal/test_records.json` — the fixture *definition*, a file that cannot drift —
+      which is exactly what the file header prescribes. Mutation-checked: adding 1 to one
+      Won fixture value fails the guard, so it is a real assertion and not a vacuous one.
+- [x] **Duplicated thresholds.** Five copies, not two. `signals.py` restated all four of
+      `SIGNAL_DEFAULTS`' thresholds as module constants and `predict.py` kept a fifth copy
+      of `CLOSE_HORIZON_DAYS`; the constants now derive from `SIGNAL_DEFAULTS`, and
+      `predict` imports the one in `signals`.
+      The `CLOSE_HORIZON_DAYS` split was the live bug: `find_close_date_at_risk` took the
+      admin's `cfg.close_horizon_days` while the `slip_risk` health factor used the
+      hardcoded 14, so widening the horizon in Settings moved the nudge and left the score
+      alone. `score_deal` now takes `close_horizon_days` as a parameter — it stays pure, so
+      its tests still need no site — and both callers pass the configured value. Verified
+      against the running site: at 14 a deal due in 20 days does not fire `slip_risk`; at
+      30 it does.
+      New guards in `crm/agent/tests/test_thresholds.py`, both mutation-checked: the module
+      constants must equal `SIGNAL_DEFAULTS`, and `HEALTH_AT_RISK` in `suggestions.js` is
+      *parsed out of the file* and must equal `AT_RISK_BELOW` — a second copy of the number
+      in the test would have been the very thing being guarded against.
+- [ ] **"At risk" names two different populations.** Found while unifying the constants
+      above, and not fixed there because it is a product decision rather than a drift. The
+      dashboard tile counts `health_score < 40` and calls it *Deals at risk*; the record
+      badge calls 40–69 *At risk* and reserves *Critical* for `< 40`. So the tile's
+      population is exactly the badge's **Critical** set, and a deal the record page badges
+      "At risk" is not in the tile at all. A manager reading "8 deals at risk" beside a list
+      of thirty "At risk" badges is being told two different things. Fixing it means either
+      renaming the tile to *Critical deals* (a label change) or counting `< 70` (a number
+      change, and a large jump) — **needs a call on which.** The boundary itself is now
+      pinned across both languages, so whichever way it goes, the two sides move together.
 - [ ] **Six inline scoring literals order every rep's queue** (`signals.py:140,167,200,265,
       327,375`, `automation.py:182`) — against the convention `predict.py:21` states
       explicitly. An admin cannot make a critical automation rule outrank a routine nudge. **3 h.**

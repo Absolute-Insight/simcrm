@@ -31,12 +31,16 @@ from itertools import pairwise
 
 import frappe
 
-from crm.agent.config import get_signal_config
+from crm.agent.config import SIGNAL_DEFAULTS, get_signal_config
 
-IDLE_DEAL_DAYS = 7
-DISMISS_COOLDOWN_DAYS = 14
-SUGGESTION_TTL_DAYS = 14
-CLOSE_HORIZON_DAYS = 14
+# These are the keyword defaults for the pure finders below, and they must be the
+# same numbers an admin sees in Settings -- so they are read from SIGNAL_DEFAULTS
+# rather than restated. Restating them meant a default changed in one place and
+# not the other, with nothing to say the two had parted.
+IDLE_DEAL_DAYS = SIGNAL_DEFAULTS["idle_deal_days"]
+DISMISS_COOLDOWN_DAYS = SIGNAL_DEFAULTS["dismiss_cooldown_days"]
+SUGGESTION_TTL_DAYS = SIGNAL_DEFAULTS["suggestion_ttl_days"]
+CLOSE_HORIZON_DAYS = SIGNAL_DEFAULTS["close_horizon_days"]
 
 # An expiry is nobody's decision, so the signal is allowed back -- but not on the
 # next hourly run, or the job would expire and re-create the same row forever.

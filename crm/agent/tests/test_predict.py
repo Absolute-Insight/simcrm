@@ -132,6 +132,28 @@ class ForwardLookingFactorTest(UnitTestCase):
 		slipping = scored(days_to_close=2)["score"]
 		self.assertLess(slipping, safe)
 
+	def test_the_horizon_is_the_callers_to_set(self):
+		"""The admin's ``close_horizon_days`` has to reach the health factor.
+
+		It reached the suggestion and stopped there: ``find_close_date_at_risk``
+		took the configured value while this factor used a module constant, so
+		widening the horizon in Settings moved the nudge and left the score
+		alone -- two features disagreeing about when a deal is due soon.
+		"""
+		far = CLOSE_HORIZON_DAYS + 10
+		self.assertNotIn("slip_risk", self.keys(days_to_close=far))
+
+		widened = score_deal({**HEALTHY, "days_to_close": far}, close_horizon_days=far + 1)
+		self.assertIn("slip_risk", [f["key"] for f in widened["factors"]])
+
+	def test_a_narrowed_horizon_stops_the_factor_firing(self):
+		"""The other direction, so the parameter is not merely being accepted."""
+		near = 5
+		self.assertIn("slip_risk", self.keys(days_to_close=near))
+
+		narrowed = score_deal({**HEALTHY, "days_to_close": near}, close_horizon_days=near - 1)
+		self.assertNotIn("slip_risk", [f["key"] for f in narrowed["factors"]])
+
 
 class GetDealHealthTest(IntegrationTestCase):
 	"""Feature extraction against real documents.

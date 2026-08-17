@@ -31,11 +31,11 @@ from datetime import timedelta
 
 import frappe
 
-from crm.agent.signals import EARLY_STAGE_PROBABILITY, cadence_ratio
+from crm.agent.config import get_signal_config
+from crm.agent.signals import CLOSE_HORIZON_DAYS, EARLY_STAGE_PROBABILITY, cadence_ratio
 
 IDLE_GRACE_DAYS = 3
 STAGE_GRACE_DAYS = 21
-CLOSE_HORIZON_DAYS = 14
 # Below this multiple of the stage's historical median, a deal is moving normally.
 SLOW_STAGE_RATIO = 1.5
 # Below this multiple of the deal's own median contact gap, so is its cadence.
@@ -63,13 +63,17 @@ MIN_STAGE_SAMPLES = 5
 STAGE_SAMPLE_LIMIT = 500
 
 
-def score_deal(features: dict) -> dict:
+def score_deal(features: dict, close_horizon_days: int = CLOSE_HORIZON_DAYS) -> dict:
 	"""Score 0-100 with factor attribution.
 
 	Expected feature keys (missing/None values are treated as unknown and
 	never punished): ``idle_days``, ``days_in_stage``, ``stage``,
 	``stage_median_days``, ``stage_probability``, ``days_to_close`` (negative =
 	past due), ``cadence_ratio``, ``has_open_task``, ``inbound_ratio``.
+
+	``close_horizon_days`` is a parameter rather than a config read because this
+	function is pure and its tests run without a site. Callers that have the
+	admin's setting pass it; the default only applies when nobody has an opinion.
 	"""
 	factors = []
 
@@ -125,7 +129,7 @@ def score_deal(features: dict) -> dict:
 	stage_probability = features.get("stage_probability")
 	if (
 		days_to_close is not None
-		and 0 <= days_to_close <= CLOSE_HORIZON_DAYS
+		and 0 <= days_to_close <= close_horizon_days
 		and stage_probability is not None
 		and stage_probability < EARLY_STAGE_PROBABILITY
 	):
@@ -263,7 +267,8 @@ def get_deal_health(name: str) -> dict:
 			"cadence_ratio": measured[0] if measured else None,
 			"has_open_task": has_open_task,
 			"inbound_ratio": inbound_ratio,
-		}
+		},
+		close_horizon_days=get_signal_config().close_horizon_days,
 	)
 
 
