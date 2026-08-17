@@ -797,11 +797,20 @@ def remove_linked_doc_reference(items: str | list, remove_contact: bool = False,
 	if isinstance(items, str):
 		items = frappe.parse_json(items)
 
+	# Report what happened rather than "success". Items are skipped for three
+	# ordinary reasons -- malformed entry, no write permission, gone or invalid --
+	# and the caller used to be told the same thing either way, so a modal closed
+	# and a list reloaded over records that are all still there.
+	unlinked: list[str] = []
+	skipped: list[dict] = []
+
 	for item in items:
 		if not item.get("doctype") or not item.get("docname"):
+			skipped.append({"docname": item.get("docname"), "reason": "invalid"})
 			continue
 
 		if not frappe.has_permission(item["doctype"], "write", item["docname"]):
+			skipped.append({"docname": item["docname"], "reason": "no_permission"})
 			continue
 
 		try:
@@ -812,11 +821,13 @@ def remove_linked_doc_reference(items: str | list, remove_contact: bool = False,
 
 			if delete:
 				frappe.delete_doc(item["doctype"], item["docname"])
-		except (frappe.DoesNotExistError, frappe.ValidationError):
-			# Skip if document doesn't exist or has validation errors
+		except (frappe.DoesNotExistError, frappe.ValidationError) as exc:
+			skipped.append({"docname": item["docname"], "reason": str(exc)[:200]})
 			continue
 
-	return "success"
+		unlinked.append(item["docname"])
+
+	return {"unlinked": unlinked, "skipped": skipped}
 
 
 @frappe.whitelist()
@@ -857,8 +868,13 @@ def delete_bulk_docs(doctype: str, items: str | list, delete_linked: bool = Fals
 		except Exception as e:
 			frappe.log_error(f"Error processing linked docs for {doctype} {doc}: {e!s}", "Bulk Delete Error")
 
+	# Over ten, frappe does the delete in a worker. Saying "success" for that was
+	# the same word used for "these are gone", so a rep watched a list reload with
+	# every record still on it and no reason given. `queued` lets the caller say
+	# "deleting in the background" instead of implying it is already done.
 	if len(items) > 10:
 		frappe.enqueue("frappe.desk.reportview.delete_bulk", doctype=doctype, items=items)
-	else:
-		delete_bulk(doctype, items)
-	return "success"
+		return {"queued": True, "count": len(items)}
+
+	delete_bulk(doctype, items)
+	return {"queued": False, "count": len(items)}

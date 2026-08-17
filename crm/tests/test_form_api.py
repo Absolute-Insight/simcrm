@@ -344,3 +344,44 @@ class TestFormAPI(IntegrationTestCase):
 			F.list_forms()
 		with self.assertRaises(frappe.PermissionError):
 			F.save_form(name=None, form={"title": "X", "route": "nope", "document_type": "CRM Lead"})
+
+
+class TestBulkDeleteReportsWhatItDid(IntegrationTestCase):
+	"""delete_bulk_docs used to answer "success" to two different questions.
+
+	Over ten records frappe hands the delete to a worker, so nothing is gone when
+	the call returns — and the caller was told the same word as for a completed
+	delete. A rep watched the list reload with every record still on it and no
+	reason given.
+	"""
+
+	def make_orgs(self, count: int) -> list[str]:
+		names = []
+		for index in range(count):
+			org = frappe.get_doc(
+				{"doctype": "CRM Organization", "organization_name": f"Bulk Delete Probe {index}"}
+			).insert(ignore_permissions=True)
+			names.append(org.name)
+			self.addCleanup(
+				lambda n=org.name: frappe.db.exists("CRM Organization", n)
+				and frappe.delete_doc("CRM Organization", n, force=True, ignore_permissions=True)
+			)
+		return names
+
+	def test_a_small_batch_reports_that_it_is_done(self):
+		from crm.api.doc import delete_bulk_docs
+
+		names = self.make_orgs(2)
+		result = delete_bulk_docs("CRM Organization", names)
+
+		self.assertFalse(result["queued"])
+		self.assertEqual(result["count"], 2)
+
+	def test_a_large_batch_says_it_was_queued_rather_than_done(self):
+		from crm.api.doc import delete_bulk_docs
+
+		names = self.make_orgs(11)
+		result = delete_bulk_docs("CRM Organization", names)
+
+		self.assertTrue(result["queued"], "over ten goes to a worker and must say so")
+		self.assertEqual(result["count"], 11)

@@ -90,7 +90,8 @@
 </template>
 
 <script setup>
-import { call } from 'frappe-ui'
+import { describeError } from '@/utils/describeError'
+import { call, toast } from 'frappe-ui'
 import { ref } from 'vue'
 
 const show = defineModel({ type: Boolean })
@@ -129,18 +130,30 @@ const confirmUnlink = () => {
   }
 }
 
-const deleteDocs = () => {
-  call('crm.api.doc.delete_bulk_docs', {
-    items: props.items,
-    doctype: props.doctype,
-    delete_linked: confirmDeleteInfo.value.delete,
-  }).then(() => {
+const deleteDocs = async () => {
+  try {
+    // Over ten records frappe deletes in a worker, so the list will not have
+    // caught up by the time this returns. Saying "deleted" then is how a rep
+    // ends up staring at rows that are supposedly gone.
+    const result = await call('crm.api.doc.delete_bulk_docs', {
+      items: props.items,
+      doctype: props.doctype,
+      delete_linked: confirmDeleteInfo.value.delete,
+    })
+    if (result?.queued) {
+      toast.success(__('Deleting {0} in the background', [result.count]))
+    } else {
+      toast.success(__('Deleted {0}', [result?.count ?? props.items.length]))
+    }
+  } catch (error) {
+    toast.error(describeError(error).message || __('Could not delete.'))
+  } finally {
     confirmDeleteInfo.value = {
       show: false,
       title: '',
     }
     show.value = false
     props.reload()
-  })
+  }
 }
 </script>
