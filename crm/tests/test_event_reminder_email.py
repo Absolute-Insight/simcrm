@@ -109,3 +109,62 @@ class EventReminderEmailTest(IntegrationTestCase):
 		with patch.object(frappe.db, "get_single_value", return_value="Northwind Sales"):
 			body = self.send(notification())["message"]
 		self.assertIn("Northwind Sales", body)
+
+
+class EventRealtimeScopeTest(IntegrationTestCase):
+	"""The in-app reminder used to go to `get_site_room()` -- frappe's own
+	"broadcasted to all Desk users" branch -- carrying the event subject,
+	description and the attendees' email addresses."""
+
+	def setUp(self):
+		super().setUp()
+		# With no participants on the notification row the code falls back to
+		# reading the Event, so there has to be one to read.
+		event = frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "Quarterly review",
+				"starts_on": "2026-08-17 14:30:00",
+				"event_type": "Private",
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "Event", event.name, force=True)
+		self.event_name = event.name
+
+	def published(self, note):
+		from crm.api.event import _send_system_notification
+
+		note.event_name = self.event_name
+		with patch.object(frappe, "publish_realtime") as publish:
+			_send_system_notification(note)
+		return publish.call_args_list
+
+	def test_it_is_addressed_to_the_people_the_event_concerns(self):
+		calls = self.published(
+			notification(owner="owner@crmtest.test", event_participants=["guest@example.test"])
+		)
+		self.assertEqual(
+			sorted(call.kwargs["user"] for call in calls),
+			["guest@example.test", "owner@crmtest.test"],
+		)
+
+	def test_no_call_is_left_unaddressed(self):
+		"""A single publish without `user`, `room` or `doctype` is the whole bug:
+		it reaches every connected session on the site."""
+		for call in self.published(notification()):
+			self.assertTrue(
+				call.kwargs.get("user") or call.kwargs.get("room") or call.kwargs.get("doctype"),
+				f"unscoped publish_realtime: {call}",
+			)
+
+	def test_the_payload_still_reaches_its_audience(self):
+		calls = self.published(notification(owner="owner@crmtest.test", event_participants=[]))
+		self.assertEqual(len(calls), 1)
+		self.assertEqual(calls[0].args[0], "event_notification")
+		self.assertEqual(calls[0].args[1]["subject"], "Quarterly review")
+
+	def test_the_administrator_keeps_their_own_reminder(self):
+		"""The email path drops Administrator; the popup must not, or an admin
+		who owns an event silently stops being reminded of it."""
+		calls = self.published(notification(owner="Administrator", event_participants=[]))
+		self.assertEqual([call.kwargs["user"] for call in calls], ["Administrator"])
