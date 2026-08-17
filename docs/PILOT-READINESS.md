@@ -135,10 +135,21 @@ polish · **P4** platform work beyond the pilot.
       Components stay excluded because there are still **0 component tests across 358
       `.vue` files**; that is the next item, not something to hide by pretending the
       covered set is the whole app.
-- [ ] **The production image is built against Frappe `develop` and published to a mutable
-      tag.** `builds.yml:51,56`. Two `docker compose pull`s a week apart produce materially
-      different systems, framework included, with no way to reproduce what a customer is
-      running. No test gate on the build. **1 day** + pinning work.
+- [x] **The production image was published only to mutable tags.** Every build now also
+      publishes `sha-<short>`, which is immutable and always means exactly one commit, and
+      `.env.example` defaults to a release tag instead of `stable` — so a host can say what
+      it is running when somebody reports a bug. The upgrade runbook is updated to match:
+      with a pinned tag, `docker compose pull` alone no longer upgrades anything, and
+      saying so is the point.
+- [ ] **The image still builds against Frappe `develop`**, so the framework under it moves
+      even when our tag does not. This is not a one-line pin: `pyproject.toml` requires
+      `>=16.0.0-dev,<=17.0.0-dev` and `server-tests.yml` only ever runs against develop, so
+      pinning means first proving the app on a released frappe — a migration with its own
+      test matrix, not a config edit. **2–3 days.**
+- [ ] **No test gate on the image build.** `builds.yml` runs on push to `main` regardless
+      of CI state. Lower risk now that `develop` is protected and `main` only receives
+      fast-forwards of it, but a `workflow_dispatch` build of a red commit is still
+      publishable. **3 h.**
 - [x] **CI's only build gate compiled against the `@framework/ui` stub.** `yarn build`
       with no bench fell back to no-ops behind a `console.warn` and reported green — so
       a bundle where the Data Import page renders nothing and every product event is
