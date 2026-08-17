@@ -693,9 +693,25 @@ polish · **P4** platform work beyond the pilot.
       renaming the tile to *Critical deals* (a label change) or counting `< 70` (a number
       change, and a large jump) — **needs a call on which.** The boundary itself is now
       pinned across both languages, so whichever way it goes, the two sides move together.
-- [ ] **Six inline scoring literals order every rep's queue** (`signals.py:140,167,200,265,
-      327,375`, `automation.py:182`) — against the convention `predict.py:21` states
-      explicitly. An admin cannot make a critical automation rule outrank a routine nudge. **3 h.**
+- [x] **Six inline scoring literals order every rep's queue.** All six in `signals.py` are
+      now named constants in one block at the top of the file, with the bands written down
+      — flat scores are a judgement about the signal, graduated ones rise with the evidence,
+      and every one is capped so no signal can monopolise the top of an inbox by growing
+      without bound. This is what `predict.py:21` already required of itself.
+      The second half was the real gap: `automation.py` wrote `60.0` for every rule, so an
+      admin could not float a critical rule above a routine nudge. `CRM Automation Rule`
+      gains a **Suggestion Urgency** field (0–100, shown only for `Create Suggestion`,
+      exposed in the settings UI — the desk form is not reachable for these admins). The
+      default stays 60, which sits deliberately between `NO_NEXT_STEP_SCORE` (40) and
+      `SLA_BREACH_SCORE` (80), and a test pins that ordering rather than leaving it to a
+      comment.
+      Two failure modes closed on the way: an out-of-band value is clamped instead of
+      obeyed, since the inbox sorts on it and a typo of 10000 would pin one rule to the top
+      of every rep's list forever; and because adding an Int column backfills existing rows
+      with **0 rather than the field default**, a patch fills in rules that predate the
+      field. Without it every pre-existing rule would have kept firing while filing its
+      suggestions below everything else — working, invisible, unexplained. The patch is
+      idempotent, skips `Create Task` rules, and leaves a score somebody chose alone.
 
 ## P3 — Client-facing polish
 
