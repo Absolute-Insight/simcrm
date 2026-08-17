@@ -486,9 +486,35 @@ polish · **P4** platform work beyond the pilot.
       the "Sync Now" button and the `enabled` checkbox, and hiding the settings tab.
       Six tests in `test_lead_sync_source.py` pin the switch. **The underlying pagination
       bug is untouched** — the work below still stands whenever Facebook lead ads matter.
-- [ ] **Facebook lead sync pagination** — follow `paging.next` in `fetch_leads()` and
-      advance `last_synced_at` only to the newest lead actually imported, then flip the
-      default in `crm/lead_syncing/__init__.py`. **1 day.**
+- [x] **Facebook lead sync no longer drops leads.** Two bugs holding hands:
+      `fetch_leads()` asked for a page of 100000, ignored the paging cursor Graph
+      answered with, and `sync()` then moved the watermark to `now()` regardless. Either
+      alone is survivable; together, a form with more new leads than fit one page handed
+      back a partial batch and the rest were marked synced without ever being asked for
+      — not queued, not retried, not logged, and the run reported success. Silent in
+      exactly the case that matters: a campaign doing well enough to overflow a page.
+
+      `fetch_leads()` is now a generator that follows `paging.next` to the end, and the
+      watermark advances only as far as a lead the run actually handled — so a failure on
+      page four leaves pages one to three imported and the mark sitting exactly there.
+      Two details worth naming: the cursor is a URL out of a response body **carrying the
+      page access token**, so its host is checked before every hop; and the mark is set
+      one second *behind* the newest lead, because `time_created` is second-granular and
+      the filter is strictly greater — a lead created in the same second as the last one
+      seen would otherwise never be asked for. The deliberate one-second overlap is
+      absorbed by an id-based `already_imported` check that skips silently, so it cannot
+      bury the real duplicates in the failure log.
+
+      Also found: creating a Lead Sync Source calls Facebook from `before_insert`, so the
+      existing suite was making live outbound requests. Patched off in the tests.
+
+      15 tests, Graph stubbed. Mutation-checked — restoring either original bug fails
+      them (3 tests and 1 test respectively).
+
+      **The connector stays switched off.** The reason it was disabled is fixed, but
+      none of this has run against a live Facebook account, and the gate's message now
+      says that rather than describing a bug that no longer exists. Flipping
+      `crm_enable_lead_syncing` is a decision for whoever has an account to point at it.
 - [x] **Scheduled re-enrichment.** Enrichment had two triggers — the button and
       record creation — so data captured once was never refreshed; a pilot running for
       months would be reading whatever a company's website said the day the record was
