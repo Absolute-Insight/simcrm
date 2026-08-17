@@ -51,7 +51,15 @@
           setCalendarDate,
         }"
       >
-        <div class="my-4 mx-5 flex justify-between">
+        <!-- Wraps rather than clips. Everything here was on one unwrapped row:
+             at 390px the date picker, three nav buttons, the view select and
+             the user picker need roughly 490px between them, and the overflow
+             simply went off the edge -- including the view switcher, so the
+             one control that could have escaped the week grid was the one
+             cut off. -->
+        <div
+          class="my-4 mx-3 flex flex-wrap items-center justify-between gap-2 sm:mx-5 sm:flex-nowrap"
+        >
           <!-- left side  -->
           <!-- Month Year -->
           <div class="flex items-center">
@@ -72,7 +80,13 @@
           </div>
           <!-- right side -->
           <!-- actions buttons for calendar -->
-          <div class="flex gap-x-1">
+          <!-- Wrapping is phone-only on purpose. `flex-wrap` stops items
+               shrinking to fit, so leaving it on at desktop widths pushed the
+               view select and the user picker onto their own rows where the
+               original single row had been fine. -->
+          <div
+            class="flex flex-wrap items-center gap-x-1 gap-y-2 sm:flex-nowrap"
+          >
             <!-- Increment and Decrement Button -->
 
             <Button
@@ -101,7 +115,7 @@
                 { label: __('Week'), value: 'Week' },
                 { label: __('Month'), value: 'Month' },
               ]"
-              :placeholder="__('Operator')"
+              :placeholder="__('View')"
               @update:modelValue="updateActiveView($event)"
             />
 
@@ -172,6 +186,7 @@ import { usersStore } from '@/stores/users'
 import { globalStore } from '@/stores/global'
 import { getSettings } from '@/stores/settings'
 import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
+import { isMobileView } from '@/composables/settings'
 import {
   createListResource,
   dayjs,
@@ -201,7 +216,13 @@ const modeMap = {
 }
 
 const defaultMode = computed(() => {
-  return modeMap[settings.value?.default_calendar_view] || 'Week'
+  const preferred = modeMap[settings.value?.default_calendar_view] || 'Week'
+  /* Week puts seven day-columns in 390px, which is not a view of anything.
+     Day and Month both survive the width, so only the one that does not is
+     substituted -- overriding a preference that still works would be taking a
+     decision that is not ours. The view switcher is still there either way. */
+  if (isMobileView.value && preferred === 'Week') return 'Day'
+  return preferred
 })
 
 const calendar = ref(null)
