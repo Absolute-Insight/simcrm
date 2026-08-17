@@ -64,6 +64,61 @@
       :retry="reloadHealth"
     />
 
+    <!-- Thread summary. On demand rather than on load: it costs a model call
+         per press, it is rate limited per user and capped by a daily budget,
+         and most record visits do not want one.
+
+         Everything the model produced is rendered as text. It is written from
+         a thread a counterparty contributed to, so it is attacker-influenced
+         input -- feats/agent/README.md records that every model tested follows
+         instructions embedded in an email. There is no v-html here and there
+         must never be one. -->
+    <div class="flex flex-col gap-2">
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-sm text-ink-gray-5">{{ __('Thread summary') }}</span>
+        <Button
+          :label="summary ? __('Summarise again') : __('Summarise thread')"
+          :loading="summarising"
+          size="sm"
+          variant="subtle"
+          @click="summariseThread"
+        />
+      </div>
+
+      <p v-if="summaryNotice" class="text-sm leading-5 text-ink-gray-6">
+        {{ summaryNotice }}
+      </p>
+
+      <template v-if="summary">
+        <p class="text-sm leading-5 text-ink-gray-7">{{ summary.summary }}</p>
+
+        <span v-if="sentiment" class="text-sm text-ink-gray-6">
+          {{ sentiment }}
+        </span>
+
+        <ul
+          v-if="summary.next_steps?.length"
+          class="flex list-disc flex-col gap-1 pl-4"
+        >
+          <li
+            v-for="(step, index) in summary.next_steps"
+            :key="index"
+            class="text-sm leading-5 text-ink-gray-6"
+          >
+            {{ step }}
+          </li>
+        </ul>
+
+        <span class="text-xs text-ink-gray-5">
+          {{
+            __(
+              'Written by the assistant from the emails on this record. Check it against the thread before acting on it.',
+            )
+          }}
+        </span>
+      </template>
+    </div>
+
     <div v-if="suggestionsLoading" class="flex flex-col gap-2">
       <Skeleton
         shape="text"
@@ -126,7 +181,7 @@
 <script setup>
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
-import { createResource } from 'frappe-ui'
+import { Button, call, createResource } from 'frappe-ui'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { suggestionsStore } from '@/stores/suggestions'
 import { globalStore } from '@/stores/global'
@@ -134,6 +189,9 @@ import {
   acceptLabel,
   healthBand,
   healthMeterPercent,
+  isSummaryUsable,
+  sentimentLabel,
+  summaryStatusMessage,
 } from '@/utils/suggestions'
 
 const props = defineProps({
@@ -145,6 +203,42 @@ const { acceptSuggestion, dismissSuggestion } = suggestionsStore()
 const { $socket } = globalStore()
 
 const busy = ref('')
+
+const summary = ref(null)
+const summarising = ref(false)
+const summaryNotice = ref('')
+
+const sentiment = computed(() => sentimentLabel(summary.value?.sentiment))
+
+/* Degrades the way the rest of the agent tier does: a status, never an
+   exception, and a sentence saying what to do instead. The endpoint returns
+   `disabled` when the tier is off and `unavailable` when the model could not
+   be reached or produced nothing schema-valid; neither is an error the rep
+   caused, and the emails are still on the page either way. */
+async function summariseThread() {
+  summarising.value = true
+  summaryNotice.value = ''
+  try {
+    const result = await call('crm.agent.api.summarise_thread', {
+      reference_doctype: props.doctype,
+      reference_name: props.docname,
+    })
+    if (isSummaryUsable(result)) {
+      summary.value = result.summary
+    } else {
+      summary.value = null
+      summaryNotice.value =
+        summaryStatusMessage(result?.status) ||
+        __('There was nothing on this record to summarise yet.')
+    }
+  } catch {
+    // rate limit, budget, permission: all the same to a reader
+    summary.value = null
+    summaryNotice.value = summaryStatusMessage('unavailable')
+  } finally {
+    summarising.value = false
+  }
+}
 
 const recordSuggestions = createResource({
   url: 'crm.api.suggestions.get_suggestions',

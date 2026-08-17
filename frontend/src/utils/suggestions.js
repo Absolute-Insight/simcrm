@@ -296,6 +296,43 @@ export function draftStatusMessage(status) {
   return ''
 }
 
+/** What to tell the rep when the agent tier could not summarise the thread.
+
+    Same shape as draftStatusMessage: name the state, then say what to do
+    instead. A feature that is switched off should read as absent, not broken,
+    and either way the thread is still there to read. */
+export function summaryStatusMessage(status) {
+  if (status === 'disabled') {
+    return __(
+      'The assistant is switched off, so there is no summary. The emails below are the thread.',
+    )
+  }
+  if (status === 'unavailable') {
+    return __(
+      'The assistant could not be reached, so there is no summary. The emails below are the thread, or try again later.',
+    )
+  }
+  return ''
+}
+
+export function isSummaryUsable(result) {
+  return result?.status === 'ok' && Boolean(result.summary?.summary)
+}
+
+/** Sentiment as a word the reader can act on, never a bare enum.
+
+    The model returns positive/neutral/negative. Anything else -- a model that
+    invents a fourth value despite the schema -- falls back to no label rather
+    than printing a raw token at a rep. */
+export function sentimentLabel(sentiment) {
+  const labels = {
+    positive: __('Reads positive'),
+    neutral: __('Reads neutral'),
+    negative: __('Reads negative'),
+  }
+  return labels[String(sentiment || '').toLowerCase()] || ''
+}
+
 export function isDraftUsable(result) {
   return result?.status === 'ok' && Boolean(result.draft)
 }

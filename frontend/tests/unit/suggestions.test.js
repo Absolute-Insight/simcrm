@@ -10,6 +10,9 @@ import {
   displayReferenceLabel,
   shortRecordId,
   draftStatusMessage,
+  summaryStatusMessage,
+  isSummaryUsable,
+  sentimentLabel,
   fieldUpdateSpec,
   formatLocalDatetime,
   healthBand,
@@ -433,5 +436,38 @@ describe('fieldUpdateSpec', () => {
   it('refuses rather than degrading when no field is named', () => {
     expect(fieldUpdateSpec({})).toBeNull()
     expect(fieldUpdateSpec(null)).toBeNull()
+  })
+})
+
+describe('thread summary', () => {
+  it('names the state and says what to do instead', () => {
+    expect(summaryStatusMessage('disabled')).toMatch(/switched off/)
+    expect(summaryStatusMessage('unavailable')).toMatch(/could not be reached/)
+    // a status with nothing useful to say says nothing, rather than inventing
+    expect(summaryStatusMessage('ok')).toBe('')
+    expect(summaryStatusMessage(undefined)).toBe('')
+  })
+
+  it('only calls a summary usable when there is prose in it', () => {
+    expect(
+      isSummaryUsable({ status: 'ok', summary: { summary: 'text' } }),
+    ).toBe(true)
+    // ok with an empty body is the shape a model returning nothing produces;
+    // rendering it would show the rep a blank panel that claims to be a summary
+    expect(isSummaryUsable({ status: 'ok', summary: { summary: '' } })).toBe(
+      false,
+    )
+    expect(isSummaryUsable({ status: 'ok' })).toBe(false)
+    expect(isSummaryUsable({ status: 'unavailable' })).toBe(false)
+    expect(isSummaryUsable(null)).toBe(false)
+  })
+
+  it('turns sentiment into a word, and refuses to print an unknown token', () => {
+    expect(sentimentLabel('negative')).toMatch(/negative/i)
+    expect(sentimentLabel('POSITIVE')).toMatch(/positive/i)
+    // the schema constrains this, but a model that invents a fourth value must
+    // not put a raw token in front of a rep
+    expect(sentimentLabel('furious')).toBe('')
+    expect(sentimentLabel(null)).toBe('')
   })
 })
