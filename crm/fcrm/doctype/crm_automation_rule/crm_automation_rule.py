@@ -5,7 +5,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from crm.automation import render_template
+from crm.automation import render_rule_template
 
 
 class CRMAutomationRule(Document):
@@ -59,7 +59,7 @@ class CRMAutomationRule(Document):
 				# The same sandboxed renderer the engine uses, so a template that
 				# validates here cannot behave differently when it runs. Compiles
 				# against an empty dict: surfaces syntax errors, touches no record.
-				render_template(self.get(fieldname) or "", frappe._dict())
+				render_rule_template(self.get(fieldname) or "", frappe._dict())
 			except Exception as e:
 				label = self.meta.get_label(fieldname)
 				frappe.throw(_("Invalid {0}: {1}").format(label, str(e)))

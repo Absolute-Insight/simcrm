@@ -19,7 +19,7 @@ from crm.agent.signals import clear_suggestions_for, resync_owner
 
 OWNER_FIELD = {"CRM Lead": "lead_owner", "CRM Deal": "deal_owner"}
 
-# Rule templates get `doc` and nothing else -- see render_template below.
+# Rule templates get `doc` and nothing else -- see render_rule_template below.
 _TEMPLATE_ENV = SandboxedEnvironment(autoescape=False)
 
 
@@ -111,7 +111,7 @@ def _status_label(doc) -> str | None:
 	return doc.status
 
 
-def render_template(template, doc_dict) -> str:
+def render_rule_template(template, doc_dict) -> str:
 	"""Render a rule template with ``doc`` in scope and nothing else.
 
 	``frappe.render_template`` hands the template frappe's global helpers, and
@@ -138,8 +138,8 @@ def render_template(template, doc_dict) -> str:
 def _apply(rule, doc) -> None:
 	doc_dict = doc.as_dict()
 	owner = doc.get(OWNER_FIELD.get(doc.doctype)) if rule.assign_to_owner else None
-	title = render_template(rule.title_template, doc_dict) or rule.name
-	description = render_template(rule.description_template, doc_dict)
+	title = render_rule_template(rule.title_template, doc_dict) or rule.name
+	description = render_rule_template(rule.description_template, doc_dict)
 
 	if rule.action == "Create Task":
 		# status flapping must not stack duplicate tasks for the same record

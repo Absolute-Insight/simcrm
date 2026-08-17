@@ -318,25 +318,27 @@ class AutomationTemplateSandboxTest(IntegrationTestCase):
 		raises rather than quietly rendering nothing."""
 		from jinja2.exceptions import UndefinedError
 
-		from crm.automation import render_template
+		from crm.automation import render_rule_template
 
 		with self.assertRaises(UndefinedError):
-			render_template("{{ frappe.db.sql('select 1') }}", frappe._dict())
+			render_rule_template("{{ frappe.db.sql('select 1') }}", frappe._dict())
 
 	def test_a_template_cannot_reach_get_all(self):
 		from jinja2.exceptions import UndefinedError
 
-		from crm.automation import render_template
+		from crm.automation import render_rule_template
 
 		with self.assertRaises(UndefinedError):
-			render_template("{{ frappe.get_all('User', pluck='name') }}", frappe._dict())
+			render_rule_template("{{ frappe.get_all('User', pluck='name') }}", frappe._dict())
 
 	def test_doc_fields_still_render(self):
 		"""The restriction must not cost the feature anything: every template in
 		this app is {{ doc.field }}, which is what it is for."""
-		from crm.automation import render_template
+		from crm.automation import render_rule_template
 
-		rendered = render_template("Follow up with {{ doc.organization }}", frappe._dict(organization="Acme"))
+		rendered = render_rule_template(
+			"Follow up with {{ doc.organization }}", frappe._dict(organization="Acme")
+		)
 		self.assertEqual(rendered, "Follow up with Acme")
 
 	def test_a_rule_reaching_for_frappe_is_refused_at_save(self):
