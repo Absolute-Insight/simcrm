@@ -131,7 +131,8 @@
 </template>
 
 <script setup>
-import { createResource, call } from 'frappe-ui'
+import { describeError } from '@/utils/describeError'
+import { createResource, call, toast } from 'frappe-ui'
 import { useRouter } from 'vue-router'
 import { computed, ref } from 'vue'
 
@@ -200,17 +201,35 @@ const unlinkLinkedDoc = (doc) => {
     }))
   }
 
+  // The endpoint skips items the user cannot write and items that fail
+  // validation, and used to report that identically to having done the work --
+  // so the modal closed over records that are all still linked.
   call('crm.api.doc.remove_linked_doc_reference', {
     items: selectedDocs,
     remove_contact: props.doctype == 'Contact',
     delete: doc.delete,
-  }).then(() => {
-    linkedDocsResource.reload()
-    confirmDeleteInfo.value = {
-      show: false,
-      title: '',
-    }
   })
+    .then((result) => {
+      const skipped = result?.skipped?.length || 0
+      if (skipped) {
+        toast.error(
+          __('{0} of {1} could not be removed', [
+            skipped,
+            (result?.unlinked?.length || 0) + skipped,
+          ]),
+        )
+      }
+    })
+    .catch((error) => {
+      toast.error(describeError(error).message || __('Could not remove.'))
+    })
+    .finally(() => {
+      linkedDocsResource.reload()
+      confirmDeleteInfo.value = {
+        show: false,
+        title: '',
+      }
+    })
 }
 
 const confirmDelete = () => {

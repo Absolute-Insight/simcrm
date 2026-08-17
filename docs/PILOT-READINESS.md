@@ -249,10 +249,14 @@ polish · **P4** platform work beyond the pilot.
       new Vectora surface uses the `ErrorState`/`describeError` primitives; *no* inherited
       surface does — assignment, quick entry, inline edit, saved views, bulk actions. Reps
       spend most of the day in the inherited ones. **1 day.**
-- [ ] **Two endpoints return `"success"` when they did nothing.**
-      `doc.py:771,798` skip items the user cannot write, skip validation failures, and
-      enqueue when >10 — then return success unconditionally. The modal closes, the list
-      reloads, the records are still there. **3 h.**
+- [x] **Two endpoints returned `"success"` when they did nothing.** `remove_linked_doc_
+      reference` skips items the user cannot write and items that fail validation;
+      `delete_bulk_docs` hands anything over ten records to a worker. Both answered
+      `"success"` to every one of those, so the modal closed, the list reloaded, and the
+      records were still there with no reason given. They now return what happened —
+      `{unlinked, skipped}` and `{queued, count}` — and both modals report it, including
+      the honest "deleting in the background" for the queued case. Tested: over ten says
+      queued, under ten says done.
 - [ ] **Form Script `onValidate` failures abort the save with no feedback at all.**
       `document.js:95` catches and returns; the thorough `onError` handler 30 lines above is
       bypassed. This is the failure mode Form Script authors will hit most. **2 h.**
