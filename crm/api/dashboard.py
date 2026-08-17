@@ -1861,6 +1861,7 @@ def _at_risk_deals(to_date: str | None = None, user: str | None = None) -> list[
 	than on its own page. ``test_the_tile_and_the_deal_page_score_a_deal_alike``
 	pins the two together.
 	"""
+	from crm.agent.config import get_signal_config
 	from crm.agent.predict import _stage_median_days, score_deal
 	from crm.agent.signals import (
 		CADENCE_WINDOW_DAYS,
@@ -1923,6 +1924,9 @@ def _at_risk_deals(to_date: str | None = None, user: str | None = None) -> list[
 		else {}
 	)
 	medians = {stage: _stage_median_days(stage) for stage in stages}
+	# Read once, not per deal: the whole batch must be scored against one horizon,
+	# and this is the same setting the suggestion job uses.
+	close_horizon_days = get_signal_config().close_horizon_days
 
 	scored = []
 	for deal in deals:
@@ -1947,7 +1951,8 @@ def _at_risk_deals(to_date: str | None = None, user: str | None = None) -> list[
 				"cadence_ratio": measured[0] if measured else None,
 				"has_open_task": deal.name in with_tasks,
 				"inbound_ratio": inbound.get(deal.name),
-			}
+			},
+			close_horizon_days=close_horizon_days,
 		)
 		scored.append({"name": deal.name, "creation": deal.creation, **verdict})
 	return scored
