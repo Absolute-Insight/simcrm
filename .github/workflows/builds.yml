@@ -41,14 +41,18 @@ jobs:
         # pointed at upstream frappe/crm, so the image this workflow published
         # would have contained none of this fork's code.
         #
-        # FRAPPE_BRANCH is develop because that is the only combination the
-        # test suite runs against (see server-tests.yml: develop tracks frappe
-        # develop). Shipping the app on frappe version-15 would ship a pairing
-        # no test has ever exercised.
+        # Frappe comes from this fork's pinned `vectora` branch, not upstream's
+        # develop. Upstream develop moves, so two builds a week apart shipped
+        # different framework code with no way to reproduce the earlier one --
+        # the question a customer bug report actually asks. `vectora` is frozen
+        # at a known-good develop commit and advanced deliberately, which keeps
+        # the exact pairing the test suite runs against (server-tests.yml also
+        # builds against vectora).
         run: |
           export APPS_JSON='[{"url": "https://github.com/'"$GITHUB_REPOSITORY"'","branch": "'"$GITHUB_REF_NAME"'"}]'
           echo "APPS_JSON_BASE64=$(echo $APPS_JSON | base64 -w 0)" >> $GITHUB_ENV
-          echo "FRAPPE_BRANCH=develop" >> $GITHUB_ENV
+          echo "FRAPPE_PATH=https://github.com/Absolute-Insight/frappe" >> $GITHUB_ENV
+          echo "FRAPPE_BRANCH=vectora" >> $GITHUB_ENV
 
       - name: Set Image Tag
         # Registry paths must be lowercase; github.repository is not.
@@ -78,6 +82,20 @@ jobs:
       # pushed two single-arch images to the SAME tags, so whichever job
       # finished last won and the other architecture pulled an image it could
       # not exec.
+      # frappe_docker's Containerfile spends FRAPPE_BRANCH twice: once to clone
+      # frappe, and once as the tag of the builder base image
+      # (frappe/build:${FRAPPE_BRANCH}). Upstream publishes that image for its
+      # own branch names only, so a build arg of `vectora` would look for a tag
+      # that does not exist. The builder is a toolchain -- node, python, wkhtml
+      # -- not frappe source, so it is pinned separately here and the source
+      # branch is passed on its own. (The toolchain image still moves; that is a
+      # smaller exposure than the framework, and is noted in the checklist.)
+      - name: Decouple the builder image from the frappe source branch
+        run: |
+          sed -i 's|^FROM ${FRAPPE_IMAGE_PREFIX}/build:${FRAPPE_BRANCH} AS builder|FROM ${FRAPPE_IMAGE_PREFIX}/build:develop AS builder|' \
+            builds/images/layered/Containerfile
+          grep -n 'AS builder' builds/images/layered/Containerfile
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -91,4 +109,5 @@ jobs:
             ghcr.io/${{ env.IMAGE_REPO }}:${{ env.IMAGE_TAG }}
           build-args: |
             "FRAPPE_BRANCH=${{ env.FRAPPE_BRANCH }}"
+            "FRAPPE_PATH=${{ env.FRAPPE_PATH }}"
             "APPS_JSON_BASE64=${{ env.APPS_JSON_BASE64 }}"

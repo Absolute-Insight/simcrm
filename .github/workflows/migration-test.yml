@@ -50,13 +50,14 @@ jobs:
             - name: Resolve frappe branch for base
               id: frappe
               run: |
-                  # Always develop. The inherited mapping sent the main lane to
+                  # Always this fork's pinned frappe branch. The inherited mapping sent
+                  # the main lane to
                   # frappe version-15, but this fork cannot run there at all --
                   # pyproject requires frappe >=16.0.0-dev, and server-tests.yml
                   # and builds.yml both use develop. Installing a Vectora release
                   # on version-15 would fail at the dependency solver, so the
                   # main lane was only ever green by never running.
-                  echo "branch=develop" >> "$GITHUB_OUTPUT"
+                  echo "branch=vectora" >> "$GITHUB_OUTPUT"
 
             - name: Setup Python
               uses: actions/setup-python@v7
@@ -87,7 +88,7 @@ jobs:
             - name: Init bench with frappe
               run: |
                   pip install frappe-bench
-                  git clone "https://github.com/frappe/frappe" --branch "${{ steps.frappe.outputs.branch }}" --depth 1 ~/frappe
+                  git clone "https://github.com/Absolute-Insight/frappe" --branch "${{ steps.frappe.outputs.branch }}" --depth 1 ~/frappe
                   bench init --skip-assets --frappe-path ~/frappe --python "$(which python)" "$BENCH_PATH"
 
             - name: Install CRM at base branch
