@@ -179,11 +179,21 @@ def _resolve_validated_ip(hostname: str, port: int) -> str:
 	if not ips:
 		frappe.throw(_("Invalid recording URL"), frappe.ValidationError)
 
+	# One definition of "is this address safe to connect to", shared with the
+	# enrichment crawler. This used to be an inline `not is_global` check, and
+	# the two drifted: the enrichment helper documents that is_global does NOT
+	# cover multicast and rejects it explicitly, while this path did not. A
+	# duplicated security check is a check that will disagree with itself.
+	from crm.domain_enrichment.http import _is_blocked_ip
+
 	for ip in ips:
-		if not ipaddress.ip_address(ip).is_global:
+		if _is_blocked_ip(ip):
 			frappe.throw(_("Recording URL is not allowed"), frappe.ValidationError)
 
-	return ips[0]
+	# IPv4 first where both families resolve, matching the enrichment helper:
+	# a host with an unreachable AAAA would otherwise fail on a v4-only network
+	# even though a working A record was right there.
+	return sorted(ips, key=lambda ip: ipaddress.ip_address(ip).version)[0]
 
 
 class _PinnedIPAdapter(requests.adapters.HTTPAdapter):
@@ -211,8 +221,11 @@ class _PinnedIPAdapter(requests.adapters.HTTPAdapter):
 
 
 def _safe_get(url: str, auth, headers: dict):
-	# TODO: this SSRF-safe fetch (host validation + IP pinning) will likely need to be shared
-	# with domain enrichment; until that feature ships, this local helper is the interim workaround.
+	# The IP classification is shared with domain_enrichment.http (see
+	# _validated_host). The surrounding fetch stays separate on purpose: the
+	# enrichment guard is built around that feature's allow/block domain lists
+	# and its SSRFError type, neither of which a Twilio recording URL has any
+	# use for. What had to converge was the safety check, not the plumbing.
 	parsed = urlparse(url)
 	if parsed.scheme not in ("http", "https") or not parsed.hostname:
 		frappe.throw(_("Invalid recording URL"), frappe.ValidationError)
