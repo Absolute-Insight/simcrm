@@ -53,6 +53,7 @@ import LucideNetwork from '~icons/lucide/network'
 import LucideTarget from '~icons/lucide/target'
 import LucideWorkflow from '~icons/lucide/workflow'
 import LucideSparkles from '~icons/lucide/sparkles'
+import LucideMailCheck from '~icons/lucide/mail-check'
 import MonitorCogIcon from '~icons/lucide/monitor-cog'
 import LucideTextCursorInput from '~icons/lucide/text-cursor-input'
 import SlidersIcon from '@/components/Icons/SlidersIcon.vue'
@@ -70,6 +71,7 @@ import Hierarchy from '@/components/Settings/Hierarchy/Hierarchy.vue'
 import Quotas from '@/components/Settings/Quotas.vue'
 import AutomationRules from '@/components/Settings/AutomationRules.vue'
 import AssistantSettings from '@/components/Settings/AssistantSettings.vue'
+import ReportDigests from '@/components/Settings/ReportDigests.vue'
 import InviteUserPage from '@/components/Settings/InviteUserPage.vue'
 import ProfilePage from '@/components/Settings/Profile/ProfilePage.vue'
 import PreferencesSettings from '@/components/Settings/PreferencesSettings.vue'
@@ -230,6 +232,11 @@ const tabs = computed(() => {
           // so showing this to a Sales Manager would be a pane that errors on
           // load. isManager() includes them; isAdmin() is the right gate.
           condition: () => isAdmin(),
+        },
+        {
+          label: __('Report Digests'),
+          icon: markRaw(h(LucideMailCheck)),
+          component: markRaw(ReportDigests),
         },
         {
           label: __('Forms'),

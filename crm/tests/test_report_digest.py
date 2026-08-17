@@ -16,6 +16,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
+from crm.api.reports import REPORTS, get_report
 from crm.fcrm.doctype.crm_report_digest import crm_report_digest
 from crm.fcrm.doctype.crm_report_digest.crm_report_digest import _render_digest, send_due_digests
 
@@ -200,6 +201,47 @@ class ReportDigestTest(IntegrationTestCase):
 		with patch.object(crm_report_digest.frappe, "sendmail", side_effect=explode_once):
 			self.assertEqual(send_due_digests(), 1)
 		self.assertEqual(len(calls), 2)
+
+
+class SchedulableReportsTest(IntegrationTestCase):
+	"""Every report the site publishes must be schedulable, and only those.
+
+	The Select field and ``REPORTS`` are two lists of the same thing, and they
+	had already drifted: ``quota_attainment_by_rep`` shipped as a report and was
+	never added to the Select, so the one report a sales manager most wants
+	mailed to them could not be scheduled at all. Nothing failed -- the field
+	simply did not offer it.
+	"""
+
+	def options(self) -> list[str]:
+		field = frappe.get_meta("CRM Report Digest").get_field("report")
+		return [option for option in (field.options or "").split("\n") if option]
+
+	def test_the_select_offers_exactly_the_published_reports(self):
+		self.assertEqual(sorted(self.options()), sorted(REPORTS))
+
+	def test_every_option_actually_renders(self):
+		for name in self.options():
+			with self.subTest(report=name):
+				report = get_report(name, "2026-01-01", "2026-01-31")
+				self.assertIn("columns", report)
+				_render_digest(report, "2026-01-01", "2026-01-31")
+
+	def test_a_digest_naming_a_report_the_site_does_not_publish_is_refused(self):
+		"""The send loop skips an unknown key silently, so a typo would cost a
+		digest that never arrives and never complains."""
+		doc = frappe.get_doc(
+			{
+				"doctype": "CRM Report Digest",
+				"report": "pipeline_by_stage",
+				"frequency": "Daily",
+				"enabled": 1,
+				"recipients": RECIPIENT,
+			}
+		)
+		doc.report = "a_report_that_was_withdrawn"
+		with self.assertRaises(frappe.ValidationError):
+			doc.insert(ignore_permissions=True)
 
 
 class RenderDigestTest(UnitTestCase):

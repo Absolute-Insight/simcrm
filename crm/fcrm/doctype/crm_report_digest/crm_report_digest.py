@@ -23,14 +23,35 @@ class CRMReportDigest(Document):
 		name: DF.Int | None
 		recipients: DF.SmallText
 		report: DF.Literal[
-			"pipeline_by_stage", "funnel_conversion", "plan_adherence_by_rep", "forecast_vs_actual"
+			"pipeline_by_stage",
+			"funnel_conversion",
+			"plan_adherence_by_rep",
+			"forecast_vs_actual",
+			"quota_attainment_by_rep",
 		]
 	# end: auto-generated types
 
 	def validate(self):
+		self.validate_report()
 		for email in self.recipient_list():
 			validate_email_address(email, throw=True)
 			self.validate_internal_user(email)
+
+	def validate_report(self) -> None:
+		"""The Select and the report registry are two lists that must not drift.
+
+		They already had: ``quota_attainment_by_rep`` shipped as a report and was
+		never added here, so the one report a sales manager most wants mailed to
+		them could not be scheduled at all. The send loop skips an unknown key
+		silently -- correct, since a report can be withdrawn while a digest row
+		still names it -- which means a mismatch costs a digest that quietly
+		never arrives. Refuse it at save instead. ``test_report_digest`` asserts
+		the two lists are equal, so the drift cannot reach a site either.
+		"""
+		from crm.api.reports import REPORTS
+
+		if self.report and self.report not in REPORTS:
+			frappe.throw(_("{0} is not a report this site publishes.").format(self.report))
 
 	def validate_internal_user(self, email: str) -> None:
 		"""A digest carries deal values, so it may only go to someone who could

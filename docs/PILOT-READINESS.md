@@ -492,9 +492,28 @@ polish · **P4** platform work beyond the pilot.
 - [ ] **Scheduled re-enrichment** — documented as "future feature, not implemented". **2 d.**
 - [ ] **Territory/segment analytics** — one territory chart exists; no segment dimension
       anywhere, no territory filter on dashboard or reports. **3–5 days.**
-- [ ] **`quota_attainment_by_rep` cannot be scheduled** — the digest doctype hardcodes four
-      of the five registry reports. **1 h.**
-- [ ] **Report Digest has no admin UI** — desk-only. **1–2 days.**
+- [x] **`quota_attainment_by_rep` could not be scheduled.** The digest doctype's Select
+      hardcoded four of the five registry reports, so the one report a sales manager most
+      wants mailed to them was simply not on offer — and nothing failed to say so. Added,
+      and the drift is now impossible to repeat: a test asserts the Select's options equal
+      `REPORTS` exactly, another renders every option through the digest template, and
+      `validate()` refuses a digest naming a report the site does not publish (the send
+      loop skips an unknown key silently, which is right for a withdrawn report but would
+      turn a typo into a digest that never arrives and never complains). The
+      options-vs-registry test fails against the pre-fix tree, which is how it was
+      checked. 12 tests.
+- [x] **Report Digests now have an admin UI.** They were desk-only, so a pilot customer
+      could not schedule one without a Frappe Desk login — a shipped feature that was, in
+      practice, not reachable. `Settings → Automation & Rules → Report Digests`: list with
+      an enable toggle, create/edit dialog, delete behind `ConfirmDialog`. The report
+      dropdown is populated from `crm.api.reports.list_reports`, the same endpoint the
+      Reports page uses, so a report added to the registry appears here without this
+      component being touched. Uses `Skeleton`/`ErrorState` and `actionErrorMessage`
+      rather than a bare spinner, and deliberately does *not* add a third
+      `window.confirm`. The server's own validation message is what surfaces on a bad
+      recipient — "stranger@example.com is not an enabled user of this site" names the
+      address to fix, which a generic fallback would not. Verified end to end in the
+      browser in both themes: create, reject, list, toggle, delete, empty state.
 - [ ] **Custom report builder** — its stated precondition (five reports shipped) is met.
       **1–2 weeks.**
 - [ ] **Codified injection eval suite.** Its gating condition — "when a second write
