@@ -1,8 +1,11 @@
-# import frappe
-from frappe.email.doctype.email_template.email_template import EmailTemplate
+"""Mixed into the Email Template controller by extend_doctype_class (see hooks.py).
+
+A mixin rather than a subclass on purpose: it only adds the CRM list view's
+column set, and mixins stack where a controller override does not.
+"""
 
 
-class CustomEmailTemplate(EmailTemplate):
+class EmailTemplateListView:
 	@staticmethod
 	def default_list_data():
 		columns = [

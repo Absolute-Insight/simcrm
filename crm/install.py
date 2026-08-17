@@ -36,7 +36,9 @@ def after_install(force=False):
 	add_assignment_rule_property_setters()
 	seed_default_rules_and_mappings()
 	ensure_agent_role()
-	frappe.db.commit()
+	# install/migrate runs outside a request, so nothing else will commit the
+	# fixtures created above.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 
 def add_default_lead_statuses():

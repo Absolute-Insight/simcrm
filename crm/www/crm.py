@@ -17,7 +17,10 @@ def get_context():
 	if not check_app_permission():
 		frappe.throw(_("You do not have permission to access Vectora"), frappe.PermissionError)
 
-	frappe.db.commit()
+	# Inherited from upstream. Nothing above writes (check_app_permission only
+	# reads roles and modules), so this closes the read transaction before the
+	# boot build rather than persisting anything.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	context = frappe._dict()
 	context.boot = get_boot()
 	if frappe.session.user != "Guest":
@@ -25,7 +28,10 @@ def get_context():
 	return context
 
 
-@frappe.whitelist(methods=["POST"], allow_guest=True)
+# Guest access is required -- the vite dev server runs on its own origin and
+# fetches boot before a session cookie exists. Refuses outright unless
+# developer_mode is on in site config, which it is not in production.
+@frappe.whitelist(methods=["POST"], allow_guest=True)  # nosemgrep: guest-whitelisted-method
 def get_context_for_dev():
 	if not frappe.conf.developer_mode:
 		frappe.throw(_("This method is only meant for developer mode"))

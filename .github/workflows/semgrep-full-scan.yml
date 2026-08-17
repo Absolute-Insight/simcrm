@@ -1,0 +1,68 @@
+name: Semgrep Full Scan
+
+# The `semgrep` job in linters.yml runs `semgrep ci`, which on a pull request is
+# a *diff* scan against the merge base. That is the right thing for a PR gate --
+# it only reports what the PR introduced -- but it means findings that predate a
+# branch are invisible. Three separate P0s sat in this repo undetected for that
+# reason: an unauthenticated Twilio webhook, a hidden list column that stayed
+# visible, and a guest endpoint nobody had justified.
+#
+# This job scans the whole tree instead, so nothing hides behind "it was already
+# there". It is green as of the commit that added it: every finding is either
+# fixed or carries an inline `# nosemgrep: <rule>` with the reason next to it. If
+# it goes red, something new arrived -- treat it as a real finding, not noise.
+
+on:
+    schedule:
+        # Mondays, 04:17 UTC. Off the hour so it is not queued behind everyone
+        # else's cron.
+        - cron: "17 4 * * 1"
+    workflow_dispatch:
+    push:
+        branches:
+            - develop
+            - main
+        paths:
+            - "**.py"
+            - ".github/workflows/semgrep-full-scan.yml"
+
+permissions:
+    contents: read
+
+jobs:
+    full-scan:
+        name: Full Tree
+        runs-on: ubuntu-latest
+
+        env:
+            PIP_DISABLE_PIP_VERSION_CHECK: "1"
+            PYTHONDONTWRITEBYTECODE: "1"
+
+        steps:
+            - uses: actions/checkout@v7
+
+            - name: Set up Python
+              uses: actions/setup-python@v7
+              with:
+                  python-version: "3.14"
+                  cache: pip
+
+            - name: Install Semgrep
+              run: pip install --upgrade semgrep
+
+            - name: Download Semgrep rules
+              run: git clone --depth 1 https://github.com/frappe/semgrep-rules.git frappe-semgrep-rules
+
+            # `scan`, not `ci` -- `ci` diffs against the merge base and would
+            # reproduce exactly the blind spot this job exists to cover.
+            # --error turns findings into a non-zero exit.
+            - name: Run Semgrep over the whole tree
+              run: |
+                  semgrep scan \
+                    --config ./frappe-semgrep-rules/rules \
+                    --config r/python.lang.correctness \
+                    --exclude frappe-bench \
+                    --exclude node_modules \
+                    --error \
+                    --metrics off \
+                    .

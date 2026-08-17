@@ -49,22 +49,39 @@ polish · **P4** platform work beyond the pilot.
       `crm_customer_created` targets the acting user — Deal.vue listens for it but never
       subscribes to a doc room, so a doc-room publish would have reached nobody. 6 tests;
       no Exotel account here, so they exercise the addressing decision directly.
-- [ ] **Finish triaging the semgrep findings, then make the full scan a scheduled job.**
-      The 7 `guest-whitelisted-method` findings are now reviewed: `get_translations`,
-      `oauth_providers` and `accept_invitation` must be guest-reachable and expose nothing
-      sensitive (`oauth_providers` decrypts a client secret only as an existence check and
-      never returns it); `get_context_for_dev` is behind `developer_mode`;
-      `live_demo.login` no-ops unless `demo_username`/`demo_password` are set in site
-      config — **worth knowing that setting those on a production site is an auth bypass
-      by design**; the two Twilio and one Exotel webhooks are fixed above. Remaining: 12
-      `frappe-manual-commit`, 3 `frappe-setuser`, 1 `override-doctype-class`, 1
-      `frappe-enqueue-without-after-commit`. CI diff-scans, so nothing already in the tree can trip it — which is why two
-      P0 leaks sat there. A full run reports 12 `frappe-manual-commit`, 8
-      `guest-whitelisted-method`, 3 `frappe-setuser`, 1 `override-doctype-class`, 1
-      `frappe-enqueue-without-after-commit`. These are "audit this" advisories rather than
-      confirmed bugs, and each needs a verdict recorded. **Deliberately not adding the
-      scheduled job first:** born red against 25 untriaged findings it would be ignored
-      within a week, which is worse than not having it. **1 day.**
+- [x] **Semgrep triage finished; the full scan is now a scheduled job.**
+      CI's `semgrep ci` is a *diff* scan against the merge base, so nothing already in the
+      tree can trip it — which is why several P0s sat there undetected. Every finding from
+      a full local run now has a verdict, recorded inline next to the code rather than in
+      a spreadsheet nobody opens.
+
+      **Fixed rather than suppressed:** the hidden-column bug below; `override-doctype-class`
+      (Contact and Email Template moved from `override_doctype_class` to
+      `extend_doctype_class` — they only add the CRM list view's column set, and mixins
+      stack where a controller override does not, so another app overriding Contact can no
+      longer silently take the CRM's columns away; 3 tests);
+      `frappe-enqueue-without-after-commit` on "Sync Now" (the worker re-reads the source
+      from the database, so queueing before the request commits let it start against the
+      old row, or none at all if the request rolled back).
+
+      **Accepted with a reason on the line:** 7 `frappe-manual-commit` — install/migrate
+      running outside a request, webhook audit trails that must survive the handler's own
+      rollback, and call logs Twilio's follow-up webhooks look up by `CallSid` before this
+      request has even responded. 2 `frappe-setuser` in `crm_form.py`, both halves of a
+      snapshot/restore that only ever narrows privileges. 6
+      `guest-whitelisted-method`: `get_translations`, `oauth_providers` and
+      `accept_invitation` must be guest-reachable and expose nothing sensitive
+      (`oauth_providers` decrypts a client secret only as an existence check and never
+      returns it); `get_context_for_dev` is behind `developer_mode`; the two Twilio
+      webhooks are authenticated by signature as of the item above. `live_demo.login`
+      no-ops unless `demo_username`/`demo_password` are set in site config — **setting
+      those on a production site is an authentication bypass by design**, now stated at
+      the endpoint itself.
+
+      `.github/workflows/semgrep-full-scan.yml` runs `semgrep scan` (not `ci`) over the
+      whole tree weekly, on dispatch, and on every push to develop/main. **It is green at
+      the commit that added it** — which was the precondition for adding it at all: born
+      red against 25 untriaged findings it would have been ignored within a week.
 
 - [x] **Event reminders were broadcast to every user on the site.**
       `event.py`'s `_send_system_notification` called `publish_realtime` with no `room`,
@@ -178,6 +195,16 @@ polish · **P4** platform work beyond the pilot.
 
 ## P1 — Release and CI integrity
 
+- [x] **A hidden list column that followed another hidden one stayed visible.**
+      `crm/api/doc.py` dropped hidden columns with `columns.remove(column)` from inside
+      `for column in columns`. Removing from the list being iterated moves every later
+      element down one, so the loop skipped the next: with two hidden columns adjacent in
+      a saved view, the second was never examined. A field an admin had hidden kept its
+      place in the list view and kept being fetched. Only triggers on a customised site —
+      stock CRM Lead has exactly one hidden field — which is why it survived. Rebuilt as
+      a new list; `rows` is unchanged, so what the query fetches is untouched. 4 tests,
+      the regression one failing against the old code. Found by the full semgrep run
+      below, not by CI.
 - [x] **The plan-adherence scoping test failed every Monday.** `test_metrics.py:593`
       lacked the settled-day guard its sibling in `test_reports.py:83` has, so the one test
       protecting against cross-team leakage cried wolf weekly — and passed for the wrong

@@ -80,10 +80,14 @@ def handle_request(**kwargs):
 		request_log.error = frappe.get_traceback()
 		frappe.db.rollback()
 		frappe.log_error(title="Error while creating/updating call record")
-		frappe.db.commit()
+		# The rollback above discarded the half-written call log; this keeps the
+		# error log, which is the only record that the webhook arrived at all.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	finally:
 		request_log.save(ignore_permissions=True)
-		frappe.db.commit()
+		# The request log is the audit trail for an inbound webhook and has to
+		# survive whichever way the block above exited, rollback included.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 
 # Outgoing Call
@@ -239,7 +243,10 @@ def create_call_log(
 	link(contact_number, call_log)
 
 	call_log.save(ignore_permissions=True)
-	frappe.db.commit()
+	# The realtime push and the reps' browsers both go looking for this row
+	# immediately; it has to be visible to other connections before the webhook
+	# request finishes.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	return call_log
 
 

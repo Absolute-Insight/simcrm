@@ -155,11 +155,16 @@ has_permission = {
 
 # DocType Class
 # ---------------
-# Override standard doctype classes
-
-override_doctype_class = {
-	"Contact": "crm.overrides.contact.CustomContact",
-	"Email Template": "crm.overrides.email_template.CustomEmailTemplate",
+# Mix extra methods into standard doctype classes.
+#
+# These two add one static method each -- the column set the CRM list view
+# should draw for Contact and Email Template. They used to be
+# override_doctype_class, which *replaces* the framework controller: only one
+# app can hold that per DocType, so installing anything else that overrides
+# Contact would have silently taken the CRM's columns away. Mixins stack.
+extend_doctype_class = {
+	"Contact": ["crm.overrides.contact.ContactListView"],
+	"Email Template": ["crm.overrides.email_template.EmailTemplateListView"],
 }
 
 # Document Events

@@ -14,10 +14,19 @@ SYNC_DOCTYPES = ("Item", "User Permission", "DocShare")
 
 class TestSyncHookWiring(FrappeTestCase):
 	def test_sync_doctypes_not_class_overridden(self):
-		from crm.hooks import override_doctype_class
+		"""Their sync must stay in doc_events, not creep back into the class.
 
-		for doctype in SYNC_DOCTYPES:
-			self.assertNotIn(doctype, override_doctype_class)
+		Reads the hooks module rather than importing a name from it: the app no
+		longer declares override_doctype_class at all (Contact and Email Template
+		moved to extend_doctype_class), and an import that raises ImportError the
+		day a hook is renamed is a test that breaks instead of reporting.
+		"""
+		import crm.hooks
+
+		for hook in ("override_doctype_class", "extend_doctype_class"):
+			declared = getattr(crm.hooks, hook, {}) or {}
+			for doctype in SYNC_DOCTYPES:
+				self.assertNotIn(doctype, declared, f"{doctype} is in {hook}")
 
 	def test_doc_event_handlers_are_importable(self):
 		from crm.hooks import doc_events

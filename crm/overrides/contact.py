@@ -1,8 +1,11 @@
-# import frappe
-from frappe.contacts.doctype.contact.contact import Contact
+"""Mixed into the Contact controller by extend_doctype_class (see hooks.py).
+
+A mixin rather than a subclass on purpose: it only adds the CRM list view's
+column set, and mixins stack where a controller override does not.
+"""
 
 
-class CustomContact(Contact):
+class ContactListView:
 	@staticmethod
 	def default_list_data():
 		columns = [

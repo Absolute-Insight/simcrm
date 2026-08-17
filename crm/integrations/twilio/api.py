@@ -165,7 +165,10 @@ def create_call_log(call_details: TwilioCallDetails):
 	link(contact_number, call_log)
 
 	call_log.save(ignore_permissions=True)
-	frappe.db.commit()
+	# Twilio's follow-up webhooks look this row up by CallSid and can arrive
+	# before the response to this one is even written, so it has to be committed
+	# here rather than at end of request.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	return call_log
 
 
@@ -208,7 +211,10 @@ def get_twilio_settings():
 	return frappe.get_single("CRM Twilio Settings")
 
 
-@frappe.whitelist(allow_guest=True)
+# Guest access is required -- Twilio posts here with no session. Authenticity
+# comes from the X-Twilio-Signature check in validate_twilio_request(), which
+# is the only part of the request an attacker cannot forge.
+@frappe.whitelist(allow_guest=True)  # nosemgrep: guest-whitelisted-method
 def update_recording_info(**kwargs):
 	args = frappe._dict(kwargs)
 	validate_twilio_request(args)
@@ -227,7 +233,10 @@ def update_recording_info(**kwargs):
 		raise exc
 
 
-@frappe.whitelist(allow_guest=True)
+# Guest access is required -- Twilio posts here with no session. Authenticity
+# comes from the X-Twilio-Signature check in validate_twilio_request(), which
+# is the only part of the request an attacker cannot forge.
+@frappe.whitelist(allow_guest=True)  # nosemgrep: guest-whitelisted-method
 def update_call_status_info(**kwargs):
 	args = frappe._dict(kwargs)
 	validate_twilio_request(args)
