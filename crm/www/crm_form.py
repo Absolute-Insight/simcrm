@@ -117,10 +117,12 @@ def _link_field_options(doctype: str) -> list[dict]:
 		saved_sid = frappe.session.sid
 		saved_data = frappe.session.data
 		try:
-			frappe.set_user("Guest")  # nosemgrep — session fully restored in finally
+			frappe.set_user("Guest")  # nosemgrep: frappe-setuser -- restored in finally
 			rows = _query()
 		finally:
-			frappe.set_user(current_user)
+			# The restore, back to the user the request arrived as: it can only
+			# narrow privileges, never widen them.
+			frappe.set_user(current_user)  # nosemgrep: frappe-setuser
 			# set_user() clobbers sid (→ username) and wipes data; put the real ones
 			# back so the request doesn't persist a corrupted session (see #logout).
 			frappe.session.sid = saved_sid

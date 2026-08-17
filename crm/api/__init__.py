@@ -9,7 +9,10 @@ from frappe.utils import cstr, split_emails, validate_email_address
 from crm.utils import is_frappe_version
 
 
-@frappe.whitelist(allow_guest=True)
+# Guest access is required -- the login screen is rendered before there is a
+# session, and it needs its strings. Returns the site's translation dictionary
+# and nothing about the site's data.
+@frappe.whitelist(allow_guest=True)  # nosemgrep: guest-whitelisted-method
 def get_translations():
 	if frappe.session.user != "Guest":
 		language = frappe.db.get_value("User", frappe.session.user, "language")
@@ -76,7 +79,10 @@ def check_app_permission():
 	return False
 
 
-@frappe.whitelist(allow_guest=True)
+# Guest access is required -- accepting an invitation is how a user first gets an
+# account, so by definition there is no session yet. The key is the credential;
+# the rate limit below is what stops it being guessed.
+@frappe.whitelist(allow_guest=True)  # nosemgrep: guest-whitelisted-method
 @rate_limit(limit=10, seconds=60 * 60)
 def accept_invitation(key: str | None = None):
 	if not key:

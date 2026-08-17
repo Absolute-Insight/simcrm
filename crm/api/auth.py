@@ -1,7 +1,11 @@
 import frappe
 
 
-@frappe.whitelist(allow_guest=True)
+# Guest access is required -- the login screen has to know which "Sign in with..."
+# buttons to draw before anyone is signed in. The client secret is decrypted only
+# to skip half-configured providers; it is never part of the response, which
+# carries the provider name, the public authorize URL and an icon.
+@frappe.whitelist(allow_guest=True)  # nosemgrep: guest-whitelisted-method
 def oauth_providers():
 	from frappe.utils.html_utils import get_icon_html
 	from frappe.utils.oauth import get_oauth2_authorize_url, get_oauth_keys
