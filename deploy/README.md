@@ -156,6 +156,16 @@ off the host; a backup on the machine it protects is a copy, not a backup.
   you actually run. Either way a slow model occupies a worker for its whole
   duration: size the pool before pointing this at something big.
 
+  This is now enforced rather than merely advised: **CRM Agent Settings** refuses
+  a `timeout` above 59. If you raise `PROXY_READ_TIMEOUT`, tell the backend so it
+  can raise its own limit to match —
+  `bench --site <site> set-config crm_proxy_read_timeout <seconds>`.
+- **Check the endpoint before enabling the tier.** **Settings → Assistant → Test
+  connection** sends one real request and checks the reply follows the schema.
+  It works with the assistant switched off, and it is the fastest way to tell a
+  wrong `base_url` from a model that cannot do structured output — those look
+  identical to a rep, and have different fixes.
+
 ## Lead syncing is off
 
 The Facebook lead-ads connector ships disabled and its settings tab is hidden.

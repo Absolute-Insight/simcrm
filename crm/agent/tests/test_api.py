@@ -132,3 +132,95 @@ class DailyBudgetTest(IntegrationTestCase):
 		self.assertFalse(api_mod._budget_spent(tiny))
 		self.assertFalse(api_mod._budget_spent(tiny))
 		self.assertTrue(api_mod._budget_spent(tiny))
+
+
+class TestConnectionTest(IntegrationTestCase):
+	"""Until this endpoint existed, the only way to discover a wrong ``base_url``
+	was a rep clicking a feature and getting a degraded dialog -- the failure
+	reached a user before the admin who caused it."""
+
+	def test_a_working_endpoint_reports_the_model_and_how_long_it_took(self):
+		from crm.agent.schemas import ConnectionProbe
+
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod.client, "complete", return_value=ConnectionProbe(ok=True)),
+		):
+			result = api_mod.test_connection()
+
+		self.assertTrue(result["ok"])
+		self.assertEqual(result["kind"], "ok")
+		self.assertEqual(result["model"], ENABLED.model)
+		# The number matters as much as the verdict: it is what the timeout has
+		# to clear, and a cold model can take ten times a warm one.
+		self.assertIn("latency_ms", result)
+
+	def test_an_unreachable_endpoint_is_reported_not_raised(self):
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(
+				api_mod.client, "complete", side_effect=AgentUnavailable("http://x/v1: refused")
+			),
+		):
+			result = api_mod.test_connection()
+
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["kind"], "unreachable")
+		self.assertIn("refused", result["message"])
+
+	def test_a_model_that_will_not_follow_the_schema_is_a_distinct_failure(self):
+		"""Reaching the host proves nothing about guided decoding, and the two
+		problems have different fixes -- one is the URL, the other the model."""
+		from crm.agent.errors import SchemaMismatch
+
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod.client, "complete", side_effect=SchemaMismatch("not JSON")),
+		):
+			result = api_mod.test_connection()
+
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["kind"], "schema")
+
+	def test_it_runs_with_the_tier_switched_off(self):
+		"""An endpoint has to be provable *before* it is turned on for reps."""
+		from crm.agent.schemas import ConnectionProbe
+
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=DISABLED),
+			mock.patch.object(api_mod.client, "complete", return_value=ConnectionProbe(ok=True)) as complete,
+		):
+			result = api_mod.test_connection()
+
+		self.assertTrue(result["ok"])
+		complete.assert_called_once()
+
+	def test_the_api_key_never_appears_in_the_result(self):
+		keyed = AgentConfig(
+			enabled=True,
+			base_url="http://x/v1",
+			model="m",
+			timeout=5,
+			max_tokens=64,
+			api_key="sk-do-not-leak",
+		)
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=keyed),
+			mock.patch.object(api_mod.client, "complete", side_effect=AgentUnavailable("http://x/v1: boom")),
+		):
+			result = api_mod.test_connection()
+
+		self.assertNotIn("sk-do-not-leak", str(result))
+
+	def test_a_non_admin_cannot_probe_the_endpoint(self):
+		"""It makes the server issue an outbound request carrying the API key."""
+		email = "agent-probe-nonadmin@crmtest.test"
+		if not frappe.db.exists("User", email):
+			frappe.get_doc(
+				{"doctype": "User", "email": email, "first_name": "Probe", "send_welcome_email": 0}
+			).insert(ignore_permissions=True).add_roles("Sales User")
+
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(email)
+		with self.assertRaises(frappe.PermissionError):
+			api_mod.test_connection()

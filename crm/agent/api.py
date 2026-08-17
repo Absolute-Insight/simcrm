@@ -11,6 +11,8 @@ point which triggers an outbound fetch is rate-limited per user.
 
 from __future__ import annotations
 
+import time
+
 import frappe
 from frappe.rate_limiter import rate_limit
 
@@ -18,13 +20,17 @@ from crm.agent import actions, client, tools
 from crm.agent.config import get_config
 from crm.agent.context import build_thread_messages
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
-from crm.agent.schemas import ThreadSummary
+from crm.agent.schemas import ConnectionProbe, ThreadSummary
 
 # Per-user, per-minute cap, matching ``domain_enrichment.api.ENRICH_RATE_LIMIT``.
 # One call holds a worker for up to ``timeout`` x ``client.MAX_ATTEMPTS`` -- 60 seconds
 # at the shipped defaults -- so without a cap a single authenticated user can occupy
 # the whole worker pool from a loop. 10/min is far above any real human burst.
 SUMMARISE_RATE_LIMIT = 10
+
+# Tighter than the feature endpoints: this is an admin pressing a button, not a
+# rep working, and each press costs a full model call against someone's endpoint.
+TEST_CONNECTION_RATE_LIMIT = 6
 
 BUDGET_CACHE_KEY = "crm_agent_daily_calls"
 
@@ -110,3 +116,67 @@ def draft_reply(reference_doctype: str, reference_name: str) -> dict:
 		return {"status": "unavailable"}
 
 	return {"status": "ok", "draft": draft.model_dump()}
+
+
+@frappe.whitelist()
+@rate_limit(limit=TEST_CONNECTION_RATE_LIMIT, seconds=60)
+def test_connection() -> dict:
+	"""Try the configured endpoint once and report exactly what happened.
+
+	Until this existed the only way to learn that ``base_url`` was wrong was a rep
+	clicking Summarise and getting a degraded dialog -- a failure that reaches a
+	user before it reaches the admin who caused it.
+
+	Runs the *real* path (:func:`client.complete` with a schema) rather than a
+	bare HTTP ping, because reaching the host proves nothing about whether guided
+	decoding works there, and that is the interesting failure.
+
+	Deliberately works with ``enabled`` off, so an endpoint can be proved before
+	it is switched on for reps. Reads the saved settings rather than anything the
+	caller supplies: ``base_url`` is the target of a server-side POST carrying the
+	API key, so accepting one over the wire would be an SSRF with credential
+	replay, and the doctype's own validation is the only thing standing in front
+	of it.
+	"""
+	frappe.only_for("System Manager", True)
+
+	cfg = get_config()
+	started = time.monotonic()
+	try:
+		client.complete(
+			cfg,
+			ConnectionProbe,
+			[{"role": "user", "content": 'Reply with exactly {"ok": true}'}],
+		)
+	except AgentUnavailable as exc:
+		# str(exc) is "<base_url>: <requests error>" -- no headers, so no key.
+		return {
+			"ok": False,
+			"kind": "unreachable",
+			"base_url": cfg.base_url,
+			"model": cfg.model,
+			"message": frappe._("Could not reach the endpoint: {0}").format(exc),
+		}
+	except SchemaMismatch as exc:
+		return {
+			"ok": False,
+			"kind": "schema",
+			"base_url": cfg.base_url,
+			"model": cfg.model,
+			"message": frappe._(
+				"The endpoint answered but would not follow the response schema: {0}."
+				" Check that {1} exists there and supports JSON schema output."
+			).format(exc, cfg.model),
+		}
+
+	elapsed = time.monotonic() - started
+	return {
+		"ok": True,
+		"kind": "ok",
+		"base_url": cfg.base_url,
+		"model": cfg.model,
+		"latency_ms": round(elapsed * 1000),
+		# A cold model can take ten times a warm one, so the number matters as
+		# much as the verdict -- it is what the timeout has to clear.
+		"message": frappe._("{0} answered in {1}s with a valid reply.").format(cfg.model, f"{elapsed:.1f}"),
+	}
