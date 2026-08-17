@@ -308,8 +308,24 @@ def run(
 		date_field=date_field,
 	)
 	dim, mea = DIMENSIONS[dimension], MEASURES[measure]
+	scope_label = {
+		"open": _("open pipeline"),
+		"won": _("closed-won deals"),
+		"lost": _("closed-lost deals"),
+		"all": _("all deals"),
+	}[status_scope]
 	return {
 		"title": _("{0} by {1}").format(_(mea.label), _(dim.label).lower()),
+		# Says what was actually asked, in the same slot the built-in reports use
+		# for theirs. A built report has no author to explain it, so it has to
+		# describe itself or the CSV and the printed sheet arrive unlabelled.
+		"description": _("{0}, over {1}.").format(_(mea.description).rstrip("."), scope_label)
+		if mea.description
+		else _("Over {0}.").format(scope_label),
+		# The built-in registry marks a snapshot report period:false so the page
+		# hides the date picker and the printed sheet says "As at today" instead
+		# of a range it did not apply. A built report needs to say the same.
+		"period": bool(date_field),
 		"columns": [
 			{"key": "label", "label": _(dim.label), "type": "text"},
 			{"key": "value", "label": _(mea.label), "type": mea.type},

@@ -429,6 +429,28 @@ class ResultShapeTest(BuilderFixture, IntegrationTestCase):
 		self.assertIn("Industry", result["columns"][0]["label"])
 		self.assertIn("by industry", result["title"])
 
+	def test_a_snapshot_says_it_has_no_period(self):
+		"""The page hides the date picker on ``period: false`` and the printed
+		sheet says "As at today" rather than a range it never applied."""
+		self.assertFalse(run(dimension="stage", measure="deals", status_scope="open")["period"])
+
+	def test_a_periodic_report_says_it_has_one(self):
+		result = run(
+			dimension="stage",
+			measure="deals",
+			status_scope="all",
+			date_field="creation",
+			from_date=self.from_date,
+			to_date=self.to_date,
+		)
+		self.assertTrue(result["period"])
+
+	def test_it_describes_itself(self):
+		"""A built report has no author to explain it, so the CSV and the printed
+		sheet would otherwise arrive unlabelled."""
+		result = run(dimension="industry", measure="won_value", status_scope="won")
+		self.assertIn("won", result["description"])
+
 	def test_a_currency_measure_declares_itself_as_currency(self):
 		result = run(dimension="industry", measure="expected_value", status_scope="all")
 		self.assertEqual(result["columns"][1]["type"], "currency")
