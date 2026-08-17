@@ -478,7 +478,18 @@ polish · **P4** platform work beyond the pilot.
       turn a typo into a digest that never arrives and never complains). The
       options-vs-registry test fails against the pre-fix tree, which is how it was
       checked. 12 tests.
-- [ ] **Report Digest has no admin UI** — desk-only. **1–2 days.**
+- [x] **Report Digests now have an admin UI.** They were desk-only, so a pilot customer
+      could not schedule one without a Frappe Desk login — a shipped feature that was, in
+      practice, not reachable. `Settings → Automation & Rules → Report Digests`: list with
+      an enable toggle, create/edit dialog, delete behind `ConfirmDialog`. The report
+      dropdown is populated from `crm.api.reports.list_reports`, the same endpoint the
+      Reports page uses, so a report added to the registry appears here without this
+      component being touched. Uses `Skeleton`/`ErrorState` and `actionErrorMessage`
+      rather than a bare spinner, and deliberately does *not* add a third
+      `window.confirm`. The server's own validation message is what surfaces on a bad
+      recipient — "stranger@example.com is not an enabled user of this site" names the
+      address to fix, which a generic fallback would not. Verified end to end in the
+      browser in both themes: create, reject, list, toggle, delete, empty state.
 - [ ] **Custom report builder** — its stated precondition (five reports shipped) is met.
       **1–2 weeks.**
 - [ ] **Codified injection eval suite.** Its gating condition — "when a second write
