@@ -4,7 +4,7 @@
       v-if="item.type == 'number_chart'"
       class="v-number-card flex h-full w-full rounded-4 shadow overflow-hidden cursor-pointer"
     >
-      <Tooltip :text="__(item.data.tooltip)">
+      <Tooltip :text="unfilteredNote || __(item.data.tooltip)">
         <NumberChart
           v-if="item.data"
           :key="index"
@@ -22,15 +22,17 @@
     </div>
     <div
       v-else-if="item.type == 'axis_chart'"
-      class="h-full w-full rounded-5 bg-surface-base shadow"
+      class="relative h-full w-full rounded-5 bg-surface-base shadow"
     >
+      <p v-if="unfilteredNote" :class="noteClass">{{ unfilteredNote }}</p>
       <p v-if="blankReason" :class="blankClass">{{ blankReason }}</p>
       <AxisChart v-else-if="item.data" :config="themed" />
     </div>
     <div
       v-else-if="item.type == 'donut_chart'"
-      class="h-full w-full rounded-5 bg-surface-base shadow overflow-hidden"
+      class="relative h-full w-full rounded-5 bg-surface-base shadow overflow-hidden"
     >
+      <p v-if="unfilteredNote" :class="noteClass">{{ unfilteredNote }}</p>
       <p v-if="blankReason" :class="blankClass">{{ blankReason }}</p>
       <DonutChart v-else-if="item.data" :config="themed" />
     </div>
@@ -64,4 +66,19 @@ const themed = computed(() => withVectoraTheme(props.item.data))
 const blankReason = computed(() => props.item.data?.emptyState || '')
 const blankClass =
   'flex h-full w-full items-center justify-center p-6 text-center text-sm text-ink-gray-5'
+
+/* A territory filter that quietly does not reach a chart is worse than no
+   filter: quota attainment is per rep and rep plans have no territory, so those
+   keep answering for the whole company. The server says which charts it reached
+   (`territory_filtered`), and the ones it did not say so on their face rather
+   than sitting silently beside filtered neighbours looking equally scoped. */
+const unfilteredNote = computed(() => {
+  const data = props.item.data
+  if (!data?.territory || data.territory_filtered) return ''
+  return __('Not filtered by {0} — this figure covers everyone.', [
+    data.territory,
+  ])
+})
+const noteClass =
+  'absolute right-3 top-2 z-10 max-w-[70%] truncate text-xs text-ink-orange-9'
 </script>
