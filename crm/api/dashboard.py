@@ -54,14 +54,28 @@ def belongs_to(table, user: str, doctype: str):
 	list immediately beside it, which is precisely the two-answers-to-one-question
 	failure the one-source-of-numbers rule exists to prevent.
 	"""
+	return belongs_to_any(table, [user], doctype)
+
+
+def belongs_to_any(table, users: list[str], doctype: str):
+	""":func:`belongs_to` for a set of reps — "belongs to anyone in this team".
+
+	Same definition of belonging, so a team total is exactly the union of its
+	members' tiles and never a differently-shaped number. A deal owned by one
+	member and assigned to another is counted once: this is a criterion on the
+	deal row, not a sum over per-rep totals, which is why the team aggregate
+	cannot be recovered by adding the rep ones up.
+	"""
 	owner_field = {"CRM Deal": "deal_owner", "CRM Lead": "lead_owner"}[doctype]
 	Todo = frappe.qb.DocType("ToDo").as_("_belongs_todo")
 	assigned = table.name.isin(
 		frappe.qb.from_(Todo)
 		.select(Todo.reference_name)
-		.where((Todo.reference_type == doctype) & (Todo.status != "Cancelled") & (Todo.allocated_to == user))
+		.where(
+			(Todo.reference_type == doctype) & (Todo.status != "Cancelled") & (Todo.allocated_to.isin(users))
+		)
 	)
-	return (table[owner_field] == user) | assigned
+	return (table[owner_field].isin(users)) | assigned
 
 
 def pin_user(user: str | None) -> str | None:
@@ -769,8 +783,16 @@ def forecast_window(from_date: str | None, to_date: str | None) -> tuple[str, st
 	return from_date, to_date
 
 
-def forecast_by_month(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def forecast_by_month(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	users: list[str] | None = None,
+):
 	"""Probability-weighted open pipeline per month of expected closure.
+
+	``users`` narrows to a team the way ``user`` narrows to a rep; it is what
+	:func:`take_forecast_snapshot` uses to record a manager's subtree.
 
 	Won and Lost deals are excluded: a Lost deal contributes nothing to a
 	forecast, and a Won one is no longer a prediction — it shows up in
@@ -799,11 +821,18 @@ def forecast_by_month(from_date: str | None = None, to_date: str | None = None, 
 	)
 	if user:
 		query = query.where(belongs_to(Deal, user, "CRM Deal"))
+	elif users is not None:
+		query = query.where(belongs_to_any(Deal, users, "CRM Deal"))
 
 	return {row["month"]: float(row["forecasted"] or 0) for row in scope_deals(query).run(as_dict=True)}
 
 
-def actual_by_month(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def actual_by_month(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	users: list[str] | None = None,
+):
 	"""Closed-won revenue per month it actually closed in.
 
 	Grouped on ``closed_date``, never on the date the deal was once expected to
@@ -825,11 +854,20 @@ def actual_by_month(from_date: str | None = None, to_date: str | None = None, us
 	)
 	if user:
 		query = query.where(belongs_to(Deal, user, "CRM Deal"))
+	elif users is not None:
+		# `is not None`, not truthiness: an empty team must return nothing, not
+		# fall through to the unscoped site total.
+		query = query.where(belongs_to_any(Deal, users, "CRM Deal"))
 
 	return {row["month"]: float(row["actual"] or 0) for row in scope_deals(query).run(as_dict=True)}
 
 
-def get_forecasted_revenue(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_forecasted_revenue(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	users: list[str] | None = None,
+):
 	"""
 	Get forecasted revenue for the dashboard.
 	[
@@ -845,8 +883,8 @@ def get_forecasted_revenue(from_date: str | None = None, to_date: str | None = N
 	``actual`` is ``None`` only for months still in the future; a settled month
 	with nothing closed reports 0, which is a fact rather than a gap.
 	"""
-	forecast = forecast_by_month(from_date, to_date, user)
-	actual = actual_by_month(from_date, to_date, user)
+	forecast = forecast_by_month(from_date, to_date, user, users)
+	actual = actual_by_month(from_date, to_date, user, users)
 
 	this_month = str(get_first_day(nowdate()))[:7]
 	result = []
@@ -1731,31 +1769,65 @@ def get_deals_at_risk(from_date: str | None = None, to_date: str | None = None, 
 	}
 
 
+def forecast_snapshot_scopes() -> list[tuple[str, str, dict]]:
+	"""Every (scope, user, filter kwargs) combination a snapshot run records.
+
+	Three scopes, because each answers a question the others cannot:
+
+	* ``Site`` — everyone, the number a company-wide manager reads.
+	* ``Team`` — one manager's subtree, for every hierarchy node that has
+	  descendants. Not derivable from the rep rows: a deal owned by one member
+	  and assigned to another would be counted twice by summing them, and a
+	  deal that changes hands moves between rep rows retroactively while the
+	  team total stays put. Recording it is the only way to have it.
+	* ``Rep`` — a single owner, for anyone who owns deals.
+
+	A manager who owns deals themselves appears in both ``Team`` and ``Rep``,
+	which is why ``scope`` exists rather than the user field alone carrying the
+	meaning.
+	"""
+	from crm.permissions.org_hierarchy import _team_mem_query
+
+	scopes: list[tuple[str, str, dict]] = [("Site", "", {})]
+
+	# Nested set: a node with no descendants has rgt == lft + 1. Read in one
+	# query rather than probing each user, so this stays flat as teams grow.
+	nodes = frappe.get_all(
+		"CRM Sales Hierarchy", filters={"user": ("is", "set")}, fields=["user", "lft", "rgt"]
+	)
+	for node in sorted(nodes, key=lambda n: n.user):
+		if node.rgt - node.lft > 1:
+			members = _team_mem_query(node.user).run(pluck=True) or []
+			scopes.append(("Team", node.user, {"users": sorted({node.user, *members})}))
+
+	owners = frappe.get_all(
+		"CRM Deal", filters={"deal_owner": ("is", "set")}, pluck="deal_owner", distinct=True
+	)
+	scopes += [("Rep", rep, {"user": rep}) for rep in sorted(owners)]
+	return scopes
+
+
 def take_forecast_snapshot():
 	"""
 	Weekly scheduler entry: persist today's probability-weighted forecast per
 	month, so forecast accuracy is measurable against what actually closed.
 
-	One row per (snapshot day, month, rep) plus a site-wide row with an empty
-	``user`` — accuracy is only useful per rep once you want to know whose
-	forecast to trust, and the aggregate cannot be recovered by summing the rep
-	rows once deals change hands. A rerun on the same day updates in place.
+	One row per (snapshot day, month, scope, user) — see
+	:func:`forecast_snapshot_scopes` for why all three scopes are written
+	rather than derived. A rerun on the same day updates in place.
 	"""
 	today = nowdate()
 	from_date, to_date = frappe.utils.add_months(today, -1), frappe.utils.add_months(today, 6)
 
-	owners = frappe.get_all(
-		"CRM Deal", filters={"deal_owner": ("is", "set")}, pluck="deal_owner", distinct=True
-	)
 	written = 0
-	for rep in [None, *sorted(owners)]:
-		for row in get_forecasted_revenue(from_date, to_date, rep)["data"]:
+	for scope, who, kwargs in forecast_snapshot_scopes():
+		for row in get_forecasted_revenue(from_date, to_date, **kwargs)["data"]:
 			month = row["month"][:7]
 			values = {
 				"forecasted": row["forecasted"] or 0,
 				"actual_at_snapshot": row["actual"] or 0,
 			}
-			key = {"snapshot_date": today, "month": month, "user": rep or ""}
+			key = {"snapshot_date": today, "month": month, "scope": scope, "user": who}
 			existing = frappe.db.exists("CRM Forecast Snapshot", key)
 			if existing:
 				frappe.db.set_value("CRM Forecast Snapshot", existing, values)
@@ -1863,6 +1935,27 @@ def get_quota_attainment(from_date: str | None = None, to_date: str | None = Non
 	}
 
 
+def forecast_accuracy_scope(user: str | None) -> tuple[str, str, list[str] | None]:
+	"""Which snapshot series the caller is entitled to: ``(scope, user, members)``.
+
+	``members`` is the rep list a Team row covers, so ``actual`` can be
+	recomputed live over the same population; ``None`` means unrestricted.
+
+	The gap this closes: the series was chosen by ``user`` alone, so a manager
+	— who reaches here with ``user`` unset — read the row with an empty user,
+	which is the *site* aggregate. For a manager over the whole company that is
+	right. For an in-tree manager it is somebody else's revenue on their
+	dashboard, and not the number they were asking for either.
+	"""
+	if user:
+		return "Rep", user, [user]
+
+	reps = visible_reps()
+	if reps is None:
+		return "Site", "", None
+	return "Team", frappe.session.user, reps
+
+
 def forecast_accuracy_rows(user: str | None = None) -> list[dict]:
 	"""What each month was forecast to be, against what it turned out to be.
 
@@ -1872,12 +1965,13 @@ def forecast_accuracy_rows(user: str | None = None) -> list[dict]:
 	month keeps converging on the truth after the snapshots for it stop;
 	``actual_at_snapshot`` stays on the row as the record of what was known then.
 
-	Rows are scoped to one rep's snapshots, or to the site-wide aggregate when
-	``user`` is empty (:func:`take_forecast_snapshot` writes both).
+	The series is picked by :func:`forecast_accuracy_scope`, never by ``user``
+	alone.
 	"""
+	scope, who, members = forecast_accuracy_scope(user)
 	snapshots = frappe.get_all(
 		"CRM Forecast Snapshot",
-		filters={"user": user or ""},
+		filters={"scope": scope, "user": who},
 		fields=["snapshot_date", "month", "forecasted", "actual_at_snapshot"],
 		order_by="month asc, snapshot_date asc",
 	)
@@ -1896,7 +1990,15 @@ def forecast_accuracy_rows(user: str | None = None) -> list[dict]:
 		return []
 
 	months = sorted(e["month"] for e in rows)
-	actual = actual_by_month(f"{months[0]}-01", str(get_last_day(f"{months[-1]}-01")), user)
+	# Live actuals over the same population the snapshot covered -- a Team row
+	# has to be re-measured across the subtree, not against one manager's own
+	# deals, or forecast and actual would be two different questions.
+	actual = actual_by_month(
+		f"{months[0]}-01",
+		str(get_last_day(f"{months[-1]}-01")),
+		user=who if scope == "Rep" else None,
+		users=members if scope == "Team" else None,
+	)
 	for entry in rows:
 		entry["actual"] = round(actual.get(entry["month"], 0), 2)
 	return sorted(rows, key=lambda e: e["month"])
@@ -1906,10 +2008,11 @@ def get_forecast_accuracy(from_date: str | None = None, to_date: str | None = No
 	"""
 	Forecast vs what actually happened, per month, as an axis chart.
 
-	Scoped to ``user`` when one is given — the chart dispatcher pins that to the
-	session user for a plain Sales User, so a rep sees their own accuracy and
-	only a manager sees the org-wide series.
+	Scoped by :func:`forecast_accuracy_scope`: a rep sees their own accuracy, a
+	manager over the whole company sees the site series, and an in-tree manager
+	sees their own team's — never the company's.
 	"""
+	scope, _who, _members = forecast_accuracy_scope(user)
 	rows = forecast_accuracy_rows(user)
 
 	payload = {
@@ -1933,8 +2036,19 @@ def get_forecast_accuracy(from_date: str | None = None, to_date: str | None = No
 		],
 	}
 	if not rows:
-		payload["emptyState"] = forecast_empty_state() or _(
-			"No forecast snapshots yet — accuracy appears once a month has been forecast and closed"
+		# Team series start empty on every existing site: snapshots were only
+		# ever written per rep and site-wide, so there is no team history to
+		# backfill -- a stored forecast is what was believed on a past date and
+		# cannot be reconstructed afterwards. Say so, rather than showing the
+		# generic "no snapshots yet" and leaving a manager to wonder whether
+		# forecasting is broken.
+		payload["emptyState"] = forecast_empty_state() or (
+			_(
+				"Your team's forecast accuracy starts building from the next weekly"
+				" snapshot — the first month closes before this chart can compare anything"
+			)
+			if scope == "Team"
+			else _("No forecast snapshots yet — accuracy appears once a month has been forecast and closed")
 		)
 	return payload
 

@@ -36,3 +36,4 @@ crm.patches.v1_0.reorder_address_quick_entry_layout
 crm.patches.v1_0.add_vectora_dashboard_widgets
 crm.patches.v1_0.clear_contaminated_forecast_snapshots
 crm.patches.v1_0.remove_duplicated_grid_tiles
+crm.patches.v1_0.set_scope_on_forecast_snapshots

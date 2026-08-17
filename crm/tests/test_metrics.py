@@ -675,3 +675,118 @@ class ScopedMetricsTest(IntegrationTestCase):
 		self.assertEqual(pin_user(REP), REP)
 		with self.assertRaises(frappe.PermissionError):
 			pin_user(OUTSIDER)
+
+
+class ForecastScopeTest(ScopedMetricsTest):
+	"""Forecast accuracy reads a stored series, so scoping it is a separate
+	question from scoping a live aggregate: the row has to have been *written*
+	at the right scope weeks earlier, and picking the wrong stored row shows a
+	manager a number that is not merely unscoped but about other people."""
+
+	def make_deal(self, owner: str, value: float) -> str:
+		"""The inherited helper leaves ``expected_closure_date`` unset, and every
+		forecast query keys on it — so those deals are invisible to a forecast
+		and a snapshot over them writes no rows at all."""
+		name = super().make_deal(owner, value)
+		frappe.db.set_value(
+			"CRM Deal", name, "expected_closure_date", frappe.utils.get_last_day(frappe.utils.nowdate())
+		)
+		return name
+
+	def snapshot_rows(self, **filters) -> list[dict]:
+		return frappe.get_all(
+			"CRM Forecast Snapshot",
+			filters=filters,
+			fields=["scope", "user", "month", "forecasted"],
+		)
+
+	def take_snapshot(self):
+		from crm.api.dashboard import take_forecast_snapshot
+
+		frappe.set_user("Administrator")
+		take_forecast_snapshot()
+		self.addCleanup(frappe.db.delete, "CRM Forecast Snapshot", {"snapshot_date": frappe.utils.nowdate()})
+
+	def test_a_team_row_is_written_for_a_manager_with_reports(self):
+		self.make_deal(REP, 10_000)
+		self.take_snapshot()
+
+		team = self.snapshot_rows(scope="Team", user=MANAGER)
+		self.assertTrue(team, "no Team row was recorded for a manager with a subtree")
+		self.assertTrue(any(row.forecasted for row in team))
+
+	def test_no_team_row_is_written_for_a_leaf(self):
+		"""A rep with no reports is not a team. Writing one would double every
+		leaf's numbers into a scope that means something else."""
+		self.make_deal(REP, 10_000)
+		self.take_snapshot()
+
+		self.assertEqual(self.snapshot_rows(scope="Team", user=REP), [])
+
+	def test_a_team_row_covers_the_subtree_and_stops_there(self):
+		self.make_deal(REP, 10_000)
+		self.make_deal(OUTSIDER, 90_000)
+		self.take_snapshot()
+
+		month = frappe.utils.nowdate()[:7]
+		team = self.snapshot_rows(scope="Team", user=MANAGER, month=month)
+		site = self.snapshot_rows(scope="Site", user="", month=month)
+		self.assertEqual(len(team), 1)
+		# The manager's own subtree only -- the outsider's 90k is in Site.
+		self.assertEqual(team[0].forecasted, 10_000)
+		self.assertEqual(site[0].forecasted, 100_000)
+
+	def test_a_manager_and_their_own_deals_get_separate_rows(self):
+		"""A manager who sells is both a team and a rep, and the two numbers are
+		different. The user field alone could not tell them apart, which is why
+		scope exists."""
+		self.make_deal(MANAGER, 5_000)
+		self.make_deal(REP, 10_000)
+		self.take_snapshot()
+
+		month = frappe.utils.nowdate()[:7]
+		team = self.snapshot_rows(scope="Team", user=MANAGER, month=month)
+		own = self.snapshot_rows(scope="Rep", user=MANAGER, month=month)
+		self.assertEqual(team[0].forecasted, 15_000)
+		self.assertEqual(own[0].forecasted, 5_000)
+
+	def test_an_in_tree_manager_reads_their_team_series_not_the_site_one(self):
+		"""The leak this closes: with no explicit user the reader fell through to
+		the row with an empty user, which is the whole company."""
+		from crm.api.dashboard import forecast_accuracy_scope
+
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(MANAGER)
+		scope, who, members = forecast_accuracy_scope(None)
+		self.assertEqual(scope, "Team")
+		self.assertEqual(who, MANAGER)
+		self.assertIn(REP, members)
+		self.assertNotIn(OUTSIDER, members)
+
+	def test_a_company_wide_manager_still_reads_the_site_series(self):
+		from crm.api.dashboard import forecast_accuracy_scope
+
+		frappe.set_user("Administrator")
+		self.assertEqual(forecast_accuracy_scope(None), ("Site", "", None))
+
+	def test_a_named_rep_reads_that_reps_series(self):
+		from crm.api.dashboard import forecast_accuracy_scope
+
+		self.assertEqual(forecast_accuracy_scope(REP), ("Rep", REP, [REP]))
+
+	def test_an_empty_team_series_says_why_it_is_empty(self):
+		"""Existing sites have no team history and none can be invented, so the
+		chart has to explain itself rather than look broken."""
+		from crm.api.dashboard import get_forecast_accuracy
+
+		# Forecasting off is a different, more useful message and takes
+		# precedence, so it has to be on for this one to say anything.
+		was_on = frappe.db.get_single_value("FCRM Settings", "enable_forecasting")
+		frappe.db.set_single_value("FCRM Settings", "enable_forecasting", 1)
+		self.addCleanup(frappe.db.set_single_value, "FCRM Settings", "enable_forecasting", was_on or 0)
+
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(MANAGER)
+		payload = get_forecast_accuracy()
+		self.assertEqual(payload["data"], [])
+		self.assertIn("team", payload["emptyState"].lower())
