@@ -480,17 +480,37 @@ polish · **P4** platform work beyond the pilot.
       branch is unreachable because only `hidden` is ever written. **Decide: wire or delete.**
 - [ ] **~15 more `theme="orange"` Badges across the app** degrade to grey the same way,
       including the "Not Saved" badge in Settings. **1 h.**
-- [ ] **The root README is unmodified upstream Frappe CRM** — Frappe logo, `<h1>Frappe
-      CRM</h1>`, a badge pointing at `frappe/crm`, and a live-demo link to
-      frappecrm-demo.frappe.cloud. The repo is public and will be shown to clients as
-      Vectora. `pyproject.toml` and `hooks.py` carry upstream metadata too. **2 h.**
-- [ ] **Vendor URL drift** — `AboutModal.vue:51` and five other places link to frappe.io,
-      github.com/frappe/crm and support.frappe.io. The most visible rebrand leak. **1 h.**
-- [ ] **Invitation email ignores the brand variable it is handed** — the controller passes
-      `title="Vectora"`, the template hardcodes it and never uses `{{ title }}`. First email
-      every new user receives. **30 min.**
+- [x] **The root README is unmodified upstream Frappe CRM.** Rewritten for Vectora, with
+      correct install instructions — the old ones told a reader to pull
+      `ghcr.io/frappe/crm` and `bench get-app crm`, which installs upstream, not this
+      fork. Upstream attribution is prominent rather than removed: this is an AGPL fork,
+      most of the code is Frappe's, and the README says so, links there, and keeps the
+      framework credits. Upstream screenshots dropped rather than relabelled — they show
+      Frappe CRM's chrome and captioning them Vectora would be a lie.
+- [x] **Vendor URL drift** — `AboutModal` showed the Vectora name and logo above five
+      links that all led to Frappe. Repository and issue links now point at this fork: a
+      Vectora planner bug filed on `frappe/crm` wastes the reporter's time and a
+      maintainer's, and `support.frappe.io` promised help for a product Frappe does not
+      support, so that link is gone rather than redirected. **The feature-documentation
+      links stay pointed upstream on purpose** — I checked each one resolves and describes
+      the inherited behaviour accurately (including Sales Hierarchy, which I had assumed
+      was Vectora-only and is not). Swapping a working reference for a Vectora docs site
+      that has not been written would be a downgrade; the link is relabelled for what it
+      covers instead.
+- [x] **Invitation email ignores the brand variable it is handed.** The template now uses
+      `{{ title }}`, and the controller sources it from **FCRM Settings `brand_name`**
+      rather than a literal — wiring the dead variable to a hardcoded string would have
+      fixed nothing. A site branded "Northwind Sales" now invites people to Northwind
+      Sales; unbranded sites still say Vectora. Subject line translated too. Verified by
+      rendering the template both ways.
 - [ ] **Event reminder email is untranslated and interpolates user content into HTML
       unescaped** (`event.py:326`), in Bootstrap blue rather than the Vectora palette. **2 h.**
+- [ ] **Package metadata still names an upstream maintainer personally.** `pyproject.toml`
+      `authors` and `hooks.py` `app_publisher` / `app_email` carry Frappe Technologies and
+      `shariq@frappe.io`, so a Vectora bug report routed from app metadata reaches someone
+      who does not maintain it. Left deliberately: changing `authors` would misattribute
+      code Frappe wrote, and I have no address to substitute. **Needs a maintainer
+      decision on the fork's contact identity**, then 15 min.
 - [ ] **~126 unwrapped English strings across 33 components**, worst on the Activities
       empty states (every Lead/Deal/Contact timeline) and ~45 filter operator labels. **1 day.**
 - [ ] **Twilio callback URL built by substring-matching `":8"`** — copy-pasted in two files;

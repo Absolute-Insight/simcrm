@@ -1,4 +1,7 @@
-<p>You have been invited to join Vectora</p>
+{# `title` is the site's configured brand name. It was passed in and then
+   ignored in favour of a hardcoded product name, so an admin who rebranded
+   their CRM still sent invitations under ours. #}
+<p>{{ _("You have been invited to join {0}").format(title) }}</p>
 <p>
-	<a class="btn btn-primary" href="{{ invite_link }}">Accept Invitation</a>
+	<a class="btn btn-primary" href="{{ invite_link }}">{{ _("Accept Invitation") }}</a>
 </p>
