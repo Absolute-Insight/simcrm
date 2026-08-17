@@ -52,6 +52,7 @@ import LucideLayoutDashboard from '~icons/lucide/layout-dashboard'
 import LucideNetwork from '~icons/lucide/network'
 import LucideTarget from '~icons/lucide/target'
 import LucideWorkflow from '~icons/lucide/workflow'
+import LucideSparkles from '~icons/lucide/sparkles'
 import MonitorCogIcon from '~icons/lucide/monitor-cog'
 import LucideTextCursorInput from '~icons/lucide/text-cursor-input'
 import SlidersIcon from '@/components/Icons/SlidersIcon.vue'
@@ -68,6 +69,7 @@ import Users from '@/components/Settings/Users.vue'
 import Hierarchy from '@/components/Settings/Hierarchy/Hierarchy.vue'
 import Quotas from '@/components/Settings/Quotas.vue'
 import AutomationRules from '@/components/Settings/AutomationRules.vue'
+import AssistantSettings from '@/components/Settings/AssistantSettings.vue'
 import InviteUserPage from '@/components/Settings/InviteUserPage.vue'
 import ProfilePage from '@/components/Settings/Profile/ProfilePage.vue'
 import PreferencesSettings from '@/components/Settings/PreferencesSettings.vue'
@@ -98,7 +100,7 @@ import AssignmentRulePage from './AssignmentRules/AssignmentRulePage.vue'
 import ShieldCheck from '~icons/lucide/shield-check'
 import SlaConfig from './Sla/SlaConfig.vue'
 
-const { isManager, getUser } = usersStore()
+const { isManager, isAdmin, getUser } = usersStore()
 
 const user = computed(() => getUser() || {})
 
@@ -218,6 +220,15 @@ const tabs = computed(() => {
           label: __('Automation Rules'),
           icon: markRaw(h(LucideWorkflow)),
           component: markRaw(AutomationRules),
+        },
+        {
+          label: __('Assistant'),
+          icon: markRaw(h(LucideSparkles)),
+          component: markRaw(AssistantSettings),
+          // CRM Agent Settings grants read and write to System Manager only,
+          // so showing this to a Sales Manager would be a pane that errors on
+          // load. isManager() includes them; isAdmin() is the right gate.
+          condition: () => isAdmin(),
         },
         {
           label: __('Forms'),
