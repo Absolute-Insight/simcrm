@@ -256,10 +256,16 @@ import { computed, reactive, ref, watch } from 'vue'
 import { describeError } from '@/utils/describeError'
 
 /* Every field on CRM Agent Settings that an operator has a reason to change.
-   Read as one call and written as one call: the settings are a Single, and
-   saving them field by field would leave the tier half-configured if the
-   fourth write failed. api_key is deliberately absent — a Password field
-   reads back masked, so round-tripping it would write the mask. */
+   Written as one call: the settings are a Single, and saving them field by
+   field would leave the tier half-configured if the fourth write failed.
+   api_key is deliberately absent — a Password field reads back masked, so
+   round-tripping it would write the mask.
+
+   Read through crm.agent.api.get_settings rather than frappe.client.get_value,
+   which returns {} for a Single nobody has saved yet. That left every field
+   here undefined, so the page showed "signals off" with four blank thresholds
+   while the job was running on its defaults — and saving wrote that fiction
+   back, zeroing the lot. */
 const FIELDS = [
   'enabled',
   'base_url',
@@ -283,11 +289,7 @@ const testResult = ref(null)
 let saved = {}
 
 const settings = createResource({
-  url: 'frappe.client.get_value',
-  makeParams: () => ({
-    doctype: 'CRM Agent Settings',
-    fieldname: JSON.stringify(FIELDS),
-  }),
+  url: 'crm.agent.api.get_settings',
   auto: true,
   onSuccess: (data) => {
     saved = { ...(data || {}) }
@@ -353,7 +355,14 @@ async function save() {
   saveNotice.value = ''
   testResult.value = null
   try {
-    const payload = Object.fromEntries(FIELDS.map((f) => [f, draft[f]]))
+    /* Never send a field we have no value for. set_value writes undefined to a
+       Check or an Int as 0, so one field missing from the read is enough to
+       switch signals off behind the admin's back. */
+    const payload = Object.fromEntries(
+      FIELDS.filter((f) => draft[f] !== undefined && draft[f] !== null).map(
+        (f) => [f, draft[f]],
+      ),
+    )
     if (apiKey.value) payload.api_key = apiKey.value
     await call('frappe.client.set_value', {
       doctype: 'CRM Agent Settings',
