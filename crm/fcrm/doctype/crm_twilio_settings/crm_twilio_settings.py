@@ -126,6 +126,12 @@ class CRMTwilioSettings(Document):
 
 
 def get_public_url(path: str | None = None):
-	from frappe.utils import get_url
+	"""Re-exported so existing callers keep working.
 
-	return get_url().split(":8", 1)[0] + path
+	This was a second, byte-identical copy of the function in
+	``crm.integrations.twilio.utils`` -- including its bug, which therefore had
+	to be found and fixed twice. One definition now, imported here.
+	"""
+	from crm.integrations.twilio.utils import get_public_url as _get_public_url
+
+	return _get_public_url(path)
