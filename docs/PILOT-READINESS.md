@@ -35,6 +35,17 @@ polish · **P4** platform work beyond the pilot.
       manager at 90% attainment sees ~30% — and `quota_attainment` is a curated tile, the
       first number on the manager dashboard. `forecast_accuracy_rows` (`:1850`) has the same
       shape. **1–2 h.**
+- [x] **Forecast accuracy showed an in-tree manager the whole company's series.** The
+      deferred half of the item above (decision, 2026-08-17). Snapshots were written per
+      rep and site-wide only, and the reader picked a series by `user` alone — so a
+      manager, who arrives with `user` unset, read the row with an empty user: the site
+      aggregate. `CRM Forecast Snapshot` now carries a `scope` (`Rep`/`Team`/`Site`), the
+      weekly job records a `Team` row for every hierarchy node with descendants, and the
+      reader resolves scope from the caller. Team history cannot be backfilled — summing
+      rep rows double-counts a deal owned by one member and assigned to another, and
+      reflects today's ownership rather than the snapshot date's — so existing sites start
+      accumulating from the next weekly run and the chart says so instead of looking
+      broken. 8 tests in `test_metrics.py`.
 - [x] **The `user=` parameter was trusted for anyone holding Sales Manager.**
       `dashboard.py:112,149`; `reports.py:104,227`. Only a *plain* Sales User is pinned to
       themselves. Combined with the item above, an in-tree manager can read another team's
@@ -303,6 +314,13 @@ polish · **P4** platform work beyond the pilot.
       injected instruction**, which is why the tier has no write path. **2–3 days.**
 - [ ] **Enrichment fallback extractor** (+ golden-set evals) — enrichment currently leaves
       JS-rendered sites blank; the model seam was planned and never built. **3–5 days.**
+- [ ] **Three dashboard tests assert absolute averages and fail on any site with data.**
+      `test_dashboard.py:158,224,588` hardcode `89285.71` and friends. The file's own header
+      explains why that cannot hold — `make_test_records` commits its fixtures instead of
+      rolling them back — and most of the file was rewritten to compute expectations
+      independently; these three were missed. Green in CI on a fresh site, red on any
+      long-lived one, which is the wrong way round for a regression test. Found while
+      verifying the forecast work; confirmed pre-existing against a clean tree. **1 h.**
 - [ ] **Duplicated thresholds.** `AT_RISK_BELOW = 40` (`predict.py:44`) and
       `HEALTH_AT_RISK = 40` (`suggestions.js:36`) are independent; the tile count and the
       record badges drift apart if either moves. `CLOSE_HORIZON_DAYS` has the same split —
