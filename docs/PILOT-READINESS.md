@@ -181,15 +181,29 @@ polish · **P4** platform work beyond the pilot.
       Containerfile spends `FRAPPE_BRANCH` twice, once as the *builder image tag*
       (`frappe/build:<branch>`), which upstream publishes only for its own branch names;
       the builder is a toolchain rather than frappe source, so it is pinned separately.
-- [ ] **The builder toolchain image still tracks `develop`** (`frappe/build:develop`).
-      Smaller exposure than the framework itself — it supplies node/python/wkhtml, not
-      application code — but it is the remaining moving part of the image. **2 h** to pin
-      to a digest. **How to advance frappe:** move `Absolute-Insight/frappe@vectora` to a
-      newer upstream commit, let CI run, and merge only if it is green.
-- [ ] **No test gate on the image build.** `builds.yml` runs on push to `main` regardless
-      of CI state. Lower risk now that `develop` is protected and `main` only receives
-      fast-forwards of it, but a `workflow_dispatch` build of a red commit is still
-      publishable. **3 h.**
+- [x] **The builder toolchain image still tracked `develop`** (`frappe/build:develop`).
+      Now pinned by digest, along with `frappe/base` — and pinning that second image was
+      not housekeeping: the Containerfile derives **both** of its bases from
+      `FRAPPE_BRANCH`, the earlier fix rewrote only the `builder` line, and
+      `frappe/base:vectora` does not exist, so the next release build would have died on
+      a manifest-not-found error far from its cause. Caught by reading the upstream file
+      rather than by CI, because `builds.yml` runs only on push to `main`. The step now
+      **asserts** no `FROM` still resolves through `FRAPPE_BRANCH`, so a stage upstream
+      adds tomorrow fails loudly here instead of silently. Both digests verified to be
+      multi-arch indexes (amd64 + arm64) — pinning a per-architecture manifest would have
+      broken the arm64 half. **How to advance frappe:** move
+      `Absolute-Insight/frappe@vectora` to a newer upstream commit, let CI run, merge only
+      if green. **How to advance the toolchain:**
+      `docker buildx imagetools inspect frappe/build:develop --format '{{.Manifest.Digest}}'`.
+- [x] **No test gate on the image build.** `builds.yml` runs on push to `main` and on any
+      tag, neither of which runs the suite, so a `workflow_dispatch` of a red commit was
+      publishable outright. A `guard` job now blocks the build until the commit's checks
+      are green: it fails on any failed check and refuses a commit with no test run at
+      all, waiting rather than reading once because a tag build can start before the
+      main-push checks have finished. Decision logic unit-tested across seven states.
+      *Partial by construction:* it can only require checks that actually run on `main`
+      (today, the e2e suite) — the `pull_request`-only workflows are absent on that SHA.
+      Making it total means running the full suite on `main` too. **2 h.**
 - [x] **CI's only build gate compiled against the `@framework/ui` stub.** `yarn build`
       with no bench fell back to no-ops behind a `console.warn` and reported green — so
       a bundle where the Data Import page renders nothing and every product event is

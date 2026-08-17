@@ -12,10 +12,84 @@ on:
 permissions:
   contents: read
   packages: write
+  checks: read
+
+env:
+  # frappe_docker's Containerfile derives BOTH of its base images from
+  # FRAPPE_BRANCH, and upstream publishes them only for its own branch names --
+  # so a source branch of `vectora` resolved to frappe/build:vectora and
+  # frappe/base:vectora, neither of which exists. They are a toolchain (node,
+  # python, wkhtmltopdf) and a runtime base, not frappe application code, so
+  # they are pinned here independently of the source branch.
+  #
+  # By digest, not by tag: `develop` is a moving pointer, so two builds a week
+  # apart could ship different toolchains under the same image tag with no way
+  # to reproduce the earlier one. Refresh deliberately with:
+  #   docker buildx imagetools inspect frappe/build:develop --format '{{.Manifest.Digest}}'
+  # Both are multi-arch indexes covering linux/amd64 and linux/arm64; pinning a
+  # per-architecture manifest instead would break the arm64 half of the build.
+  FRAPPE_BUILD_IMAGE: frappe/build@sha256:9d6f54db5635f8c5c10911112dfdeaf29b18c9cfe062f89731d2c591f3730d60
+  FRAPPE_BASE_IMAGE: frappe/base@sha256:aa470cd87c680914a03c295f443b366bd1930a4f3c4965c18eef427b78db332d
 
 jobs:
+  guard:
+    name: Require green checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # This workflow publishes the image customers run, and it fires on push
+      # to main and on any tag -- neither of which runs the test suite. A
+      # workflow_dispatch of a red commit was publishable outright. So: refuse
+      # to build a commit whose checks are absent or failing.
+      #
+      # Checks are keyed by commit SHA, so a tag build sees the runs from when
+      # that same commit was pushed to main. They may still be in flight when
+      # the tag lands, which is why this waits rather than reading once.
+      - name: Wait for this commit's checks to pass
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          # Must actually run on a push to main. Test workflows that trigger
+          # only on pull_request are absent here and cannot be required.
+          REQUIRED: Playwright E2E Tests
+        run: |
+          set -euo pipefail
+          deadline=$(( $(date +%s) + 40 * 60 ))
+
+          while :; do
+            # Exclude this workflow's own jobs, or it would wait on itself.
+            runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?per_page=100" \
+              --jq '.check_runs[]
+                    | select(.name != "Require green checks" and .name != "Build")
+                    | [.name, .status, (.conclusion // "pending")] | @tsv')
+
+            if bad=$(printf '%s\n' "$runs" | awk -F'\t' '
+                  $3 ~ /^(failure|cancelled|timed_out|action_required|stale)$/ { print $1 " (" $3 ")" }'
+                ) && [ -n "$bad" ]; then
+              echo "::error::Refusing to publish: these checks did not pass on $SHA"
+              printf '%s\n' "$bad"
+              exit 1
+            fi
+
+            if printf '%s\n' "$runs" | grep -qP "^\Q$REQUIRED\E\tcompleted\tsuccess$"; then
+              echo "Required check '$REQUIRED' passed on $SHA."
+              printf '%s\n' "$runs"
+              exit 0
+            fi
+
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::Timed out waiting for '$REQUIRED' on $SHA. Checks seen:"
+              printf '%s\n' "${runs:-<none>}"
+              echo "::error::A commit with no test run is not publishable."
+              exit 1
+            fi
+            echo "Waiting for '$REQUIRED' on $SHA ..."
+            sleep 30
+          done
+
   build:
     name: Build
+    needs: guard
 
     runs-on: ubuntu-latest
 
@@ -82,19 +156,31 @@ jobs:
       # pushed two single-arch images to the SAME tags, so whichever job
       # finished last won and the other architecture pulled an image it could
       # not exec.
-      # frappe_docker's Containerfile spends FRAPPE_BRANCH twice: once to clone
-      # frappe, and once as the tag of the builder base image
-      # (frappe/build:${FRAPPE_BRANCH}). Upstream publishes that image for its
-      # own branch names only, so a build arg of `vectora` would look for a tag
-      # that does not exist. The builder is a toolchain -- node, python, wkhtml
-      # -- not frappe source, so it is pinned separately here and the source
-      # branch is passed on its own. (The toolchain image still moves; that is a
-      # smaller exposure than the framework, and is noted in the checklist.)
-      - name: Decouple the builder image from the frappe source branch
+      # Point both base images at pinned digests instead of at the source
+      # branch. See the FRAPPE_*_IMAGE comment at the top for why.
+      - name: Decouple the base images from the frappe source branch
         run: |
-          sed -i 's|^FROM ${FRAPPE_IMAGE_PREFIX}/build:${FRAPPE_BRANCH} AS builder|FROM ${FRAPPE_IMAGE_PREFIX}/build:develop AS builder|' \
-            builds/images/layered/Containerfile
-          grep -n 'AS builder' builds/images/layered/Containerfile
+          set -euo pipefail
+          file=builds/images/layered/Containerfile
+
+          sed -i "s|^FROM \${FRAPPE_IMAGE_PREFIX}/build:\${FRAPPE_BRANCH} AS builder|FROM ${FRAPPE_BUILD_IMAGE} AS builder|" "$file"
+          sed -i "s|^FROM \${FRAPPE_IMAGE_PREFIX}/base:\${FRAPPE_BRANCH} AS backend|FROM ${FRAPPE_BASE_IMAGE} AS backend|" "$file"
+
+          # Assert rather than trust the sed. This is checked-out upstream code
+          # that changes without notice: the `base` stage was missed when only
+          # the `builder` line was rewritten, and because frappe/base:vectora
+          # does not exist the next release build would have failed on a
+          # manifest-not-found error far from its cause. Any FROM still
+          # resolving through FRAPPE_BRANCH -- including a stage upstream adds
+          # tomorrow -- stops the build here, where the message is legible.
+          if grep -nE '^FROM .*\$\{FRAPPE_BRANCH\}' "$file"; then
+            echo "::error::A FROM line above still resolves through FRAPPE_BRANCH."
+            echo "::error::Upstream publishes those images only for its own branch"
+            echo "::error::names, so this would look for a tag that does not exist."
+            echo "::error::Pin the new stage in the env block at the top of this workflow."
+            exit 1
+          fi
+          grep -nE '^FROM ' "$file"
 
       - name: Build and push
         uses: docker/build-push-action@v7
