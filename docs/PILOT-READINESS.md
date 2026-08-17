@@ -16,6 +16,17 @@ polish · **P4** platform work beyond the pilot.
 
 ## P0 — Security and data integrity
 
+- [x] **Event reminders were broadcast to every user on the site.**
+      `event.py`'s `_send_system_notification` called `publish_realtime` with no `room`,
+      `user` or `doctype`, which frappe resolves to `get_site_room()` — its own comment on
+      that branch reads "This will be broadcasted to all Desk users". The payload carries
+      the event's subject, description, owner and the participants' **email addresses**,
+      so every logged-in rep got a popup for meetings they had nothing to do with, naming
+      who was attending. Now one user room per recipient, sharing a single
+      `_notification_audience` with the email path so the two channels cannot disagree
+      about who an event concerns. **Found by running semgrep's full rule set locally —
+      CI only diff-scans, so a pre-existing line like this can never trip it.** 4 tests.
+
 - [x] **Auth bypass: `remove_assignments` took `ignore_permissions` from the client.**
       `crm/api/doc.py:591`. Whitelisted arguments arrive from the request, and `set_status`
       skips its permission check entirely when set — so any authenticated user could

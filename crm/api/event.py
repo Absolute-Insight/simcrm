@@ -298,29 +298,42 @@ def _split_participant_emails(participant_emails_csv):
 	return [email.strip() for email in participant_emails_csv.split(",") if email and email.strip()]
 
 
+def _notification_audience(notification) -> set[str]:
+	"""Everyone a given event concerns: its owner and its participants.
+
+	One definition, used by both channels, so the set of people an event
+	reminder reaches cannot differ between the email and the in-app popup.
+	"""
+	audience = set()
+
+	if notification.owner:
+		audience.add(notification.owner)
+
+	participant_emails = notification.get("event_participants") or []
+	if participant_emails:
+		audience.update(participant_emails)
+	else:
+		event_doc = frappe.get_doc("Event", notification.event_name)
+		for participant in event_doc.get("event_participants", []):
+			email = getattr(participant, "email", None)
+			if email:
+				audience.add(email)
+
+	return {email for email in audience if email}
+
+
 def _send_email_notification(notification, event_start, before_value, interval):
 	"""Send email notification for an event"""
 
 	try:
-		recipients = set()
 		# Plain text: the subject line is not HTML, so escaping it here would put
 		# literal &amp; in front of the reader.
 		subject = _("Event reminder: {0}").format(notification.subject)
 
-		if notification.owner and notification.owner != "Administrator":
-			recipients.add(notification.owner)
-
-		participant_emails = notification.get("event_participants") or []
-		if participant_emails:
-			recipients.update(participant_emails)
-		else:
-			event_doc = frappe.get_doc("Event", notification.event_name)
-			for participant in event_doc.get("event_participants", []):
-				email = getattr(participant, "email", None)
-				if email:
-					recipients.add(email)
-
-		recipients = [email for email in recipients if email]
+		recipients = _notification_audience(notification)
+		# Long-standing behaviour: the Administrator account is not emailed.
+		recipients.discard("Administrator")
+		recipients = sorted(recipients)
 
 		if not recipients:
 			return
@@ -375,5 +388,17 @@ def _format_time_remaining(before_value, interval):
 
 
 def _send_system_notification(notification):
-	"""Send system notification for an event"""
-	frappe.publish_realtime("event_notification", notification)
+	"""Push the in-app reminder to the people the event concerns.
+
+	`publish_realtime` with no room, user or doctype falls through to
+	`get_site_room()` — frappe's own comment on that branch reads "This will be
+	broadcasted to all Desk users". The payload carries the event's subject,
+	description, owner and the participants' email addresses, so every logged-in
+	rep was shown a popup for meetings they had nothing to do with, naming who
+	was attending. Scoped to one user room per recipient instead.
+
+	Unlike the email, the Administrator is not filtered out: if they own the
+	event, the reminder is theirs to see.
+	"""
+	for user in sorted(_notification_audience(notification)):
+		frappe.publish_realtime("event_notification", notification, user=user)
