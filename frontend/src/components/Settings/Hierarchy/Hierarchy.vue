@@ -155,8 +155,8 @@
       </div>
     </Teleport>
     <Dialog
-      bare
       v-model:open="showAddDialog"
+      bare
       :title="__('Add Users')"
       :actions="[
         {
@@ -177,7 +177,7 @@
         />
       </template>
     </Dialog>
-    <Dialog bare v-model:open="showRemoveDialog" :size="'md'">
+    <Dialog v-model:open="showRemoveDialog" bare :size="'md'">
       <template #default>
         <div class="bg-surface-elevation-2 px-4 pb-6 pt-5 sm:px-6">
           <div class="mb-4 flex items-center justify-between">

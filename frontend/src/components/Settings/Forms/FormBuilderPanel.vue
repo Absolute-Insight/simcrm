@@ -561,8 +561,8 @@
                     class="flex flex-col gap-4"
                   >
                     <div
-                      v-show="fieldVisible(f)"
                       v-for="f in col"
+                      v-show="fieldVisible(f)"
                       :key="f.fieldname"
                     >
                       <div

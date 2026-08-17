@@ -11,12 +11,15 @@
           :iconLeft="LucideRefreshCcw"
           @click="reloadAll"
         />
-        <!-- Reading the dashboard works on a phone; rearranging it does not.
-             Editing is a drag-and-drop grid sized in 20 columns, which at
-             390px is neither draggable by thumb nor legible. Offering the
-             button anyway would be offering a broken mode. -->
+        <!-- Reading the dashboard works at any width; rearranging it does not.
+             Editing is a drag-and-drop grid sized in 20 columns, and below
+             WIDE_GRID_BREAKPOINT_PX the panels are stacked instead -- there is
+             nothing to drag, and dragging is how the stored layout is written.
+             Gated on that breakpoint rather than the phone one: at 800px the
+             button used to appear and do nothing visible, which is the broken
+             mode this comment already warned about. -->
         <Button
-          v-if="!editing && showChartGrid && !isMobileView"
+          v-if="!editing && showChartGrid && !isNarrowGrid"
           :label="__('Edit')"
           :iconLeft="LucidePenLine"
           @click="enableEditing"
@@ -354,7 +357,7 @@ import ViewBreadcrumbs from '@/components/ViewBreadcrumbs.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import Link from '@/components/Controls/Link.vue'
 import { usersStore } from '@/stores/users'
-import { isMobileView } from '@/composables/settings'
+import { isNarrowGrid } from '@/composables/settings'
 import { copy } from '@/utils'
 import { describeError } from '@/utils/describeError'
 import {

@@ -10,26 +10,44 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
  * `matchMedia` stub and then imports a fresh copy via `resetModules`.
  */
 
+/**
+ * The module registers one query per breakpoint (mobile, and the dashboard's
+ * wide-grid width), so the stub keys them by media string. A single shared
+ * query object would pool every breakpoint's listeners together and make
+ * "subscribes once" unmeasurable.
+ */
 function installMatchMedia({ matches, modern = true }) {
-  const listeners = []
-  const query = {
-    matches,
-    media: '(max-width: 767px)',
-    ...(modern
-      ? { addEventListener: (_event, fn) => listeners.push(fn) }
-      : { addListener: (fn) => listeners.push(fn) }),
-    removeEventListener: () => {},
-    removeListener: () => {},
+  const queries = new Map()
+  const listenersFor = new Map()
+
+  window.matchMedia = (media) => {
+    if (!queries.has(media)) {
+      const listeners = []
+      listenersFor.set(media, listeners)
+      queries.set(media, {
+        matches,
+        media,
+        ...(modern
+          ? { addEventListener: (_event, fn) => listeners.push(fn) }
+          : { addListener: (fn) => listeners.push(fn) }),
+        removeEventListener: () => {},
+        removeListener: () => {},
+      })
+    }
+    return queries.get(media)
   }
-  window.matchMedia = () => query
+
   return {
-    query,
-    // what the browser does when the breakpoint is crossed
+    // what the browser does when a breakpoint is crossed
     cross(nowMatches) {
-      query.matches = nowMatches
-      listeners.forEach((fn) => fn({ matches: nowMatches }))
+      for (const [media, query] of queries) {
+        query.matches = nowMatches
+        listenersFor.get(media).forEach((fn) => fn({ matches: nowMatches }))
+      }
     },
-    listenerCount: () => listeners.length,
+    // listeners on the mobile query specifically, not pooled across breakpoints
+    listenerCount: () => (listenersFor.get('(max-width: 767px)') || []).length,
+    queryCount: () => queries.size,
   }
 }
 
@@ -75,6 +93,24 @@ describe('isMobileView', () => {
     void isMobileView.value
     void isMobileView.value
     expect(media.listenerCount()).toBe(1)
+  })
+
+  it('registers one query per breakpoint, not one shared one', async () => {
+    const media = installMatchMedia({ matches: false })
+    const { isMobileView, isNarrowGrid } = await freshModule()
+    void isMobileView.value
+    void isNarrowGrid.value
+    expect(media.queryCount()).toBe(2)
+  })
+
+  it('tracks the dashboard grid width separately from mobile', async () => {
+    // 700px is the case the grid fix is about: past the mobile breakpoint, but
+    // still too narrow for twenty columns to divide into readable ones.
+    const media = installMatchMedia({ matches: false })
+    const { isNarrowGrid } = await freshModule()
+    expect(isNarrowGrid.value).toBe(false)
+    media.cross(true)
+    expect(isNarrowGrid.value).toBe(true)
   })
 
   it('falls back to addListener where addEventListener is absent', async () => {

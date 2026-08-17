@@ -42,7 +42,13 @@ repos:
       hooks:
           - id: eslint
             name: eslint
-            entry: bash -c 'cd frontend && eslint --fix src/**/*.{js,ts,vue}'
+            # `eslint --fix src`, not a `src/**/*` glob: bash expands `**` as a
+            # single `*` unless globstar is set, so the old entry linted only the
+            # files exactly two levels under src -- 72 of 362 .vue files. Every
+            # component in src/components/<Area>/ was skipped locally and first
+            # checked in CI, which is the wrong way round for a pre-commit hook.
+            # eslint does its own recursion, and this is what CI runs.
+            entry: bash -c 'cd frontend && eslint --fix src'
             language: node
             files: ^frontend/.*\.(js|ts|vue)$
             pass_filenames: false
