@@ -338,6 +338,7 @@ def get_data(
 			columns = _list.default_list_data().get("columns")
 
 		# check if rows has all keys from columns if not add them
+		visible_columns = []
 		for column in columns:
 			if column.get("key") not in rows:
 				rows.append(column.get("key"))
@@ -346,10 +347,18 @@ def get_data(
 			if column.get("key") == "_liked_by" and column.get("width") == "10rem":
 				column["width"] = "50px"
 
-			# remove column if column.hidden is True
+			# Drop the column if the field is hidden. Built as a new list rather
+			# than removed in place: removing from the list being iterated moves
+			# every later element down one and the loop skips the next, so a
+			# hidden column that happened to follow another hidden one was never
+			# examined and stayed in the view.
 			column_meta = meta.get_field(column.get("key"))
 			if column_meta and column_meta.get("hidden"):
-				columns.remove(column)
+				continue
+
+			visible_columns.append(column)
+
+		columns = visible_columns
 
 		# check if rows has group_by_field if not add it
 		if group_by_field and group_by_field not in rows:
