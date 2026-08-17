@@ -26,19 +26,19 @@ from frappe.rate_limiter import rate_limit
 from crm.utils import sales_user_only
 
 
-def _pipeline_by_stage(from_date, to_date, user):
+def _pipeline_by_stage(from_date, to_date, user, territory=None):
 	from crm.api.dashboard import pipeline_by_stage
 
-	rows = pipeline_by_stage(user=user)
+	rows = pipeline_by_stage(user=user, territory=territory)
 	for row in rows:
 		row.pop("status_type", None)
 	return rows
 
 
-def _funnel_conversion(from_date, to_date, user):
+def _funnel_conversion(from_date, to_date, user, territory=None):
 	from crm.api.dashboard import get_funnel_conversion
 
-	data = get_funnel_conversion(from_date, to_date, user)["data"]
+	data = get_funnel_conversion(from_date, to_date, user, territory)["data"]
 	rows = []
 	first = data[0]["count"] if data and data[0]["count"] else 0
 	for entry in data:
@@ -60,16 +60,16 @@ def _rep_display(rows: list[dict]) -> list[dict]:
 	return rows
 
 
-def _plan_adherence_by_rep(from_date, to_date, user):
+def _plan_adherence_by_rep(from_date, to_date, user, territory=None):
 	from crm.api.dashboard import plan_adherence
 
 	return _rep_display(plan_adherence(from_date, to_date, user, group_by_user=True))
 
 
-def _forecast_vs_actual(from_date, to_date, user):
+def _forecast_vs_actual(from_date, to_date, user, territory=None):
 	from crm.api.dashboard import get_forecasted_revenue
 
-	data = get_forecasted_revenue(from_date, to_date, user)["data"]
+	data = get_forecasted_revenue(from_date, to_date, user, territory=territory)["data"]
 	return [
 		{
 			"month": (row.get("month") or "")[:7],
@@ -80,7 +80,7 @@ def _forecast_vs_actual(from_date, to_date, user):
 	]
 
 
-def _pipeline_by_segment(from_date, to_date, user):
+def _pipeline_by_segment(from_date, to_date, user, territory=None):
 	"""Open pipeline sliced two ways at once: industry, then company size.
 
 	One report rather than two because the interesting question is the pair --
@@ -92,8 +92,8 @@ def _pipeline_by_segment(from_date, to_date, user):
 
 	# Reuse the charts' own aggregates so the report and the dashboard cannot
 	# disagree about the same number -- the one-source-of-numbers rule.
-	industries = get_deals_by_industry(from_date, to_date, user)["data"]
-	sizes = get_deals_by_company_size(from_date, to_date, user)["data"]
+	industries = get_deals_by_industry(from_date, to_date, user, territory)["data"]
+	sizes = get_deals_by_company_size(from_date, to_date, user, territory)["data"]
 
 	rows = [
 		{
@@ -116,7 +116,7 @@ def _pipeline_by_segment(from_date, to_date, user):
 	return rows
 
 
-def _quota_attainment_by_rep(from_date, to_date, user):
+def _quota_attainment_by_rep(from_date, to_date, user, territory=None):
 	from crm.api.dashboard import quota_in_period, visible_reps, won_value_in_period
 
 	reps = set(frappe.get_all("CRM Quota", pluck="user", distinct=True))
@@ -243,6 +243,13 @@ REPORTS = {
 }
 
 
+# The report-side twin of ``dashboard.TERRITORY_BLIND``, and for the same
+# reasons: a rep plan has no territory, and quota is per rep per month so
+# filtering only the closed-won side would divide one region's revenue by the
+# global target. Reported rather than silently ignored.
+TERRITORY_BLIND = frozenset({"plan_adherence_by_rep", "quota_attainment_by_rep"})
+
+
 def _translated_columns(report: dict) -> list[dict]:
 	return [{**column, "label": _(column["label"])} for column in report["columns"]]
 
@@ -264,7 +271,13 @@ def list_reports():
 @frappe.whitelist()
 @sales_user_only
 @rate_limit(limit=60, seconds=60)
-def get_report(name: str, from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_report(
+	name: str,
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	if name not in REPORTS:
 		frappe.throw(_("Unknown report: {0}").format(name))
 	if not from_date or not to_date:
@@ -286,5 +299,7 @@ def get_report(name: str, from_date: str | None = None, to_date: str | None = No
 		"description": _(report["description"]),
 		"period": report.get("period", True),
 		"columns": _translated_columns(report),
-		"rows": report["get_rows"](str(from_date), str(to_date), user),
+		"rows": report["get_rows"](str(from_date), str(to_date), user, territory),
+		"territory": territory or None,
+		"territory_filtered": bool(territory) and name not in TERRITORY_BLIND,
 	}

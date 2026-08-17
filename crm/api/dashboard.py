@@ -19,6 +19,37 @@ class TimestampDiff(Function):
 		super().__init__("TIMESTAMPDIFF", unit, start, end, **kwargs)
 
 
+# Charts that cannot honour a territory, and why. A filter that quietly did not
+# apply would put one region's revenue beside the whole company's quota with
+# nothing to say so -- worse than no filter at all, so the ones that cannot are
+# named here and the response tells the client.
+#
+#   plan_adherence    rep plans have no territory; a plan is a rep's week
+#   quota_attainment  quotas are per rep per month. Filtering only the actual
+#                     side would divide one region's revenue by the global
+#                     quota, which is not a smaller attainment -- it is a wrong
+#                     one.
+#   forecast_accuracy CRM Forecast Snapshot stores a total per scope. There is
+#                     no territory dimension to slice, and inventing one after
+#                     the fact would mean re-snapshotting history.
+TERRITORY_BLIND = frozenset({"plan_adherence", "quota_attainment", "forecast_accuracy"})
+
+
+def in_territory(table, territory: str | None):
+	"""Criterion for "this record belongs to that territory", or ``None``.
+
+	Both CRM Lead and CRM Deal carry ``territory``, so the same helper serves
+	either table.
+	"""
+	return table.territory == territory if territory else None
+
+
+def apply_territory(query, table, territory: str | None):
+	"""Narrow ``query`` to ``territory`` when one is set. A no-op otherwise."""
+	cond = in_territory(table, territory)
+	return query.where(cond) if cond is not None else query
+
+
 def scope_deals(query):
 	"""Narrow a deal aggregate to the deals the caller may actually read.
 
@@ -142,7 +173,12 @@ def reset_to_default():
 @frappe.whitelist()
 @sales_user_only
 @rate_limit(limit=60, seconds=60)
-def get_dashboard(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_dashboard(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Get the dashboard data for the CRM dashboard.
 	"""
@@ -168,7 +204,7 @@ def get_dashboard(from_date: str | None = None, to_date: str | None = None, user
 
 	for l in layout:
 		chart = CHARTS.get(l["name"])
-		l["data"] = chart(from_date=from_date, to_date=to_date, user=user) if chart else None
+		l["data"] = _run_chart(l["name"], chart, from_date, to_date, user, territory) if chart else None
 
 	return layout
 
@@ -177,7 +213,12 @@ def get_dashboard(from_date: str | None = None, to_date: str | None = None, user
 @sales_user_only
 @rate_limit(limit=60, seconds=60)
 def get_chart(
-	name: str, type: str, from_date: str | None = None, to_date: str | None = None, user: str | None = None
+	name: str,
+	type: str,
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
 ):
 	"""
 	Get number chart data for the dashboard.
@@ -191,10 +232,30 @@ def get_chart(
 	chart = CHARTS.get(name)
 	if not chart:
 		return {"error": _("Invalid chart name")}
-	return chart(from_date=from_date, to_date=to_date, user=user)
+	return _run_chart(name, chart, from_date, to_date, user, territory)
 
 
-def get_total_leads(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def _run_chart(name, chart, from_date, to_date, user, territory):
+	"""Call one chart and stamp whether the territory filter actually reached it.
+
+	The stamp is the point. Three charts cannot honour a territory (see
+	TERRITORY_BLIND) and a filter that silently skipped them would show one
+	region's pipeline beside the whole company's quota attainment, both looking
+	equally authoritative. ``territory_filtered`` lets the client say so.
+	"""
+	result = chart(from_date=from_date, to_date=to_date, user=user, territory=territory)
+	if isinstance(result, dict):
+		result["territory"] = territory or None
+		result["territory_filtered"] = bool(territory) and name not in TERRITORY_BLIND
+	return result
+
+
+def get_total_leads(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Get lead count for the dashboard.
 	"""
@@ -223,6 +284,7 @@ def get_total_leads(from_date: str | None = None, to_date: str | None = None, us
 		Count(Case().when(prev_cond, Lead.name).else_(None)).as_("prev_month_leads"),
 	)
 
+	query = apply_territory(query, Lead, territory)
 	query = scope_leads(query)
 
 	result = query.run(as_dict=True)
@@ -243,7 +305,12 @@ def get_total_leads(from_date: str | None = None, to_date: str | None = None, us
 	}
 
 
-def get_ongoing_deals(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_ongoing_deals(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Get ongoing deal count for the dashboard, and also calculate average deal value for ongoing deals.
 	"""
@@ -284,6 +351,7 @@ def get_ongoing_deals(from_date: str | None = None, to_date: str | None = None, 
 		)
 	)
 
+	query = apply_territory(query, Deal, territory)
 	query = scope_deals(query)
 
 	result = query.run(as_dict=True)
@@ -305,7 +373,10 @@ def get_ongoing_deals(from_date: str | None = None, to_date: str | None = None, 
 
 
 def get_average_ongoing_deal_value(
-	from_date: str | None = None, to_date: str | None = None, user: str | None = None
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
 ):
 	"""
 	Get ongoing deal count for the dashboard, and also calculate average deal value for ongoing deals.
@@ -350,6 +421,7 @@ def get_average_ongoing_deal_value(
 		)
 	)
 
+	query = apply_territory(query, Deal, territory)
 	query = scope_deals(query)
 
 	result = query.run(as_dict=True)
@@ -368,7 +440,12 @@ def get_average_ongoing_deal_value(
 	}
 
 
-def get_won_deals(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_won_deals(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Get won deal count for the dashboard, and also calculate average deal value for won deals.
 	"""
@@ -405,6 +482,7 @@ def get_won_deals(from_date: str | None = None, to_date: str | None = None, user
 		)
 	)
 
+	query = apply_territory(query, Deal, territory)
 	query = scope_deals(query)
 
 	result = query.run(as_dict=True)
@@ -426,7 +504,10 @@ def get_won_deals(from_date: str | None = None, to_date: str | None = None, user
 
 
 def get_average_won_deal_value(
-	from_date: str | None = None, to_date: str | None = None, user: str | None = None
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
 ):
 	"""
 	Get won deal count for the dashboard, and also calculate average deal value for won deals.
@@ -467,6 +548,7 @@ def get_average_won_deal_value(
 		)
 	)
 
+	query = apply_territory(query, Deal, territory)
 	query = scope_deals(query)
 
 	result = query.run(as_dict=True)
@@ -485,7 +567,12 @@ def get_average_won_deal_value(
 	}
 
 
-def get_average_deal_value(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_average_deal_value(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Get average deal value for the dashboard.
 	"""
@@ -523,6 +610,7 @@ def get_average_deal_value(from_date: str | None = None, to_date: str | None = N
 		)
 	)
 
+	query = apply_territory(query, Deal, territory)
 	query = scope_deals(query)
 
 	result = query.run(as_dict=True)
@@ -542,7 +630,10 @@ def get_average_deal_value(from_date: str | None = None, to_date: str | None = N
 
 
 def get_average_time_to_close_a_lead(
-	from_date: str | None = None, to_date: str | None = None, user: str | None = None
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
 ):
 	"""
 	Get average time to close deals for the dashboard.
@@ -589,6 +680,7 @@ def get_average_time_to_close_a_lead(
 		)
 	)
 
+	query = apply_territory(query, Deal, territory)
 	query = scope_deals(query)
 
 	result = query.run(as_dict=True)
@@ -609,7 +701,10 @@ def get_average_time_to_close_a_lead(
 
 
 def get_average_time_to_close_a_deal(
-	from_date: str | None = None, to_date: str | None = None, user: str | None = None
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
 ):
 	"""
 	Get average time to close deals for the dashboard.
@@ -654,6 +749,7 @@ def get_average_time_to_close_a_deal(
 		)
 	)
 
+	query = apply_territory(query, Deal, territory)
 	query = scope_deals(query)
 
 	result = query.run(as_dict=True)
@@ -673,7 +769,12 @@ def get_average_time_to_close_a_deal(
 	}
 
 
-def get_sales_trend(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_sales_trend(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Get sales trend data for the dashboard.
 	[
@@ -705,6 +806,7 @@ def get_sales_trend(from_date: str | None = None, to_date: str | None = None, us
 	if user:
 		leads_query = leads_query.where(belongs_to(Lead, user, "CRM Lead"))
 
+	leads_query = apply_territory(leads_query, Lead, territory)
 	leads_query = scope_leads(leads_query).groupby(Date(Lead.creation))
 
 	# Build deals query
@@ -724,6 +826,7 @@ def get_sales_trend(from_date: str | None = None, to_date: str | None = None, us
 	if user:
 		deals_query = deals_query.where(belongs_to(Deal, user, "CRM Deal"))
 
+	deals_query = apply_territory(deals_query, Deal, territory)
 	deals_query = scope_deals(deals_query).groupby(Date(Deal.creation))
 
 	# Combine with UNION ALL and aggregate by date
@@ -791,6 +894,7 @@ def forecast_by_month(
 	to_date: str | None = None,
 	user: str | None = None,
 	users: list[str] | None = None,
+	territory: str | None = None,
 ):
 	"""Probability-weighted open pipeline per month of expected closure.
 
@@ -827,6 +931,7 @@ def forecast_by_month(
 	elif users is not None:
 		query = query.where(belongs_to_any(Deal, users, "CRM Deal"))
 
+	query = apply_territory(query, Deal, territory)
 	return {row["month"]: float(row["forecasted"] or 0) for row in scope_deals(query).run(as_dict=True)}
 
 
@@ -835,6 +940,7 @@ def actual_by_month(
 	to_date: str | None = None,
 	user: str | None = None,
 	users: list[str] | None = None,
+	territory: str | None = None,
 ):
 	"""Closed-won revenue per month it actually closed in.
 
@@ -862,6 +968,7 @@ def actual_by_month(
 		# fall through to the unscoped site total.
 		query = query.where(belongs_to_any(Deal, users, "CRM Deal"))
 
+	query = apply_territory(query, Deal, territory)
 	return {row["month"]: float(row["actual"] or 0) for row in scope_deals(query).run(as_dict=True)}
 
 
@@ -870,6 +977,7 @@ def get_forecasted_revenue(
 	to_date: str | None = None,
 	user: str | None = None,
 	users: list[str] | None = None,
+	territory: str | None = None,
 ):
 	"""
 	Get forecasted revenue for the dashboard.
@@ -886,8 +994,8 @@ def get_forecasted_revenue(
 	``actual`` is ``None`` only for months still in the future; a settled month
 	with nothing closed reports 0, which is a fact rather than a gap.
 	"""
-	forecast = forecast_by_month(from_date, to_date, user, users)
-	actual = actual_by_month(from_date, to_date, user, users)
+	forecast = forecast_by_month(from_date, to_date, user, users, territory)
+	actual = actual_by_month(from_date, to_date, user, users, territory)
 
 	this_month = str(get_first_day(nowdate()))[:7]
 	result = []
@@ -937,7 +1045,12 @@ def forecast_empty_state() -> str | None:
 	return _("Forecasting is off — turn it on in Settings and set expected value and close date on deals")
 
 
-def get_funnel_conversion(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_funnel_conversion(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Get funnel conversion data for the dashboard.
 	[
@@ -971,6 +1084,7 @@ def get_funnel_conversion(from_date: str | None = None, to_date: str | None = No
 	if user:
 		query = query.where(belongs_to(CRMLead, user, "CRM Lead"))
 
+	query = apply_territory(query, CRMLead, territory)
 	total_leads = scope_leads(query).run(as_dict=True)
 	total_leads_count = total_leads[0].count if total_leads else 0
 
@@ -1010,6 +1124,7 @@ def pipeline_by_stage(
 	user: str | None = None,
 	status_types: tuple[str, ...] = ("Open", "Ongoing"),
 	date_field: str | None = None,
+	territory: str | None = None,
 ):
 	"""Deals, expected value and weighted expected value per stage — one aggregate.
 
@@ -1048,6 +1163,7 @@ def pipeline_by_stage(
 	if user:
 		query = query.where(belongs_to(Deal, user, "CRM Deal"))
 
+	query = apply_territory(query, Deal, territory)
 	rows = scope_deals(query).run(as_dict=True)
 	for row in rows:
 		row.pop("position", None)
@@ -1057,7 +1173,10 @@ def pipeline_by_stage(
 
 
 def get_deals_by_stage_axis(
-	from_date: str | None = None, to_date: str | None = None, user: str | None = None
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
 ):
 	"""
 	Get deal data by stage for the dashboard.
@@ -1077,6 +1196,7 @@ def get_deals_by_stage_axis(
 		user,
 		status_types=("Open", "Ongoing", "On Hold", "Won"),
 		date_field="creation",
+		territory=territory,
 	)
 	result = sorted(({**row, "count": row["deals"]} for row in rows), key=lambda r: r["count"], reverse=True)
 
@@ -1096,7 +1216,10 @@ def get_deals_by_stage_axis(
 
 
 def get_deals_by_stage_donut(
-	from_date: str | None = None, to_date: str | None = None, user: str | None = None
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
 ):
 	"""
 	Get deal data by stage for the dashboard.
@@ -1127,6 +1250,7 @@ def get_deals_by_stage_donut(
 	if user:
 		query = query.where(belongs_to(CRMDeal, user, "CRM Deal"))
 
+	query = apply_territory(query, CRMDeal, territory)
 	query = scope_deals(query)
 
 	result = query.run(as_dict=True)
@@ -1140,7 +1264,12 @@ def get_deals_by_stage_donut(
 	}
 
 
-def get_lost_deal_reasons(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_lost_deal_reasons(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Get lost deal reasons for the dashboard.
 	[
@@ -1171,6 +1300,7 @@ def get_lost_deal_reasons(from_date: str | None = None, to_date: str | None = No
 	if user:
 		query = query.where(belongs_to(CRMDeal, user, "CRM Deal"))
 
+	query = apply_territory(query, CRMDeal, territory)
 	query = scope_deals(query)
 
 	result = query.run(as_dict=True)
@@ -1193,7 +1323,12 @@ def get_lost_deal_reasons(from_date: str | None = None, to_date: str | None = No
 	}
 
 
-def get_leads_by_source(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_leads_by_source(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Get lead data by source for the dashboard.
 	[
@@ -1220,6 +1355,7 @@ def get_leads_by_source(from_date: str | None = None, to_date: str | None = None
 	if user:
 		query = query.where(belongs_to(CRMLead, user, "CRM Lead"))
 
+	query = apply_territory(query, CRMLead, territory)
 	query = scope_leads(query)
 
 	result = query.run(as_dict=True)
@@ -1233,7 +1369,12 @@ def get_leads_by_source(from_date: str | None = None, to_date: str | None = None
 	}
 
 
-def get_deals_by_source(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_deals_by_source(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Get deal data by source for the dashboard.
 	[
@@ -1260,6 +1401,7 @@ def get_deals_by_source(from_date: str | None = None, to_date: str | None = None
 	if user:
 		query = query.where(belongs_to(CRMDeal, user, "CRM Deal"))
 
+	query = apply_territory(query, CRMDeal, territory)
 	query = scope_deals(query)
 
 	result = query.run(as_dict=True)
@@ -1273,7 +1415,12 @@ def get_deals_by_source(from_date: str | None = None, to_date: str | None = None
 	}
 
 
-def get_deals_by_territory(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_deals_by_territory(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Get deal data by territory for the dashboard.
 	[
@@ -1307,6 +1454,7 @@ def get_deals_by_territory(from_date: str | None = None, to_date: str | None = N
 	if user:
 		query = query.where(belongs_to(CRMDeal, user, "CRM Deal"))
 
+	query = apply_territory(query, CRMDeal, territory)
 	query = scope_deals(query)
 
 	result = query.run(as_dict=True)
@@ -1343,7 +1491,12 @@ def company_size_bands() -> list[str]:
 	return [option.strip() for option in (field.options or "").split("\n") if option.strip()]
 
 
-def get_deals_by_industry(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_deals_by_industry(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""Deal count and value per industry -- the vertical view of the pipeline.
 
 	The territory chart answers "where"; this answers "who we sell to", which is
@@ -1373,6 +1526,7 @@ def get_deals_by_industry(from_date: str | None = None, to_date: str | None = No
 	if user:
 		query = query.where(belongs_to(CRMDeal, user, "CRM Deal"))
 
+	query = apply_territory(query, CRMDeal, territory)
 	query = scope_deals(query)
 
 	return {
@@ -1390,7 +1544,10 @@ def get_deals_by_industry(from_date: str | None = None, to_date: str | None = No
 
 
 def get_deals_by_company_size(
-	from_date: str | None = None, to_date: str | None = None, user: str | None = None
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
 ):
 	"""Deal count and value per employee band -- SMB against enterprise.
 
@@ -1429,6 +1586,7 @@ def get_deals_by_company_size(
 	if user:
 		query = query.where(belongs_to(CRMDeal, user, "CRM Deal"))
 
+	query = apply_territory(query, CRMDeal, territory)
 	query = scope_deals(query)
 
 	rows = query.run(as_dict=True) or []
@@ -1452,7 +1610,10 @@ def get_deals_by_company_size(
 
 
 def get_deals_by_salesperson(
-	from_date: str | None = None, to_date: str | None = None, user: str | None = None
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
 ):
 	"""
 	Get deal data by salesperson for the dashboard.
@@ -1490,6 +1651,7 @@ def get_deals_by_salesperson(
 	if user:
 		query = query.where(belongs_to(CRMDeal, user, "CRM Deal"))
 
+	query = apply_territory(query, CRMDeal, territory)
 	query = scope_deals(query)
 
 	result = query.run(as_dict=True)
@@ -1658,7 +1820,12 @@ def plan_adherence(
 	return rows
 
 
-def get_plan_adherence(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_plan_adherence(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Plan adherence: share of planned activities in the period that were done.
 
@@ -1827,7 +1994,12 @@ def _inbound_ratio(deal_names: list[str]) -> dict:
 	return {row["deal"]: row["inbound"] / row["total"] for row in rows if row["total"]}
 
 
-def get_deals_at_risk(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_deals_at_risk(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Open deals whose health score is below 40 — scored by the same explainable
 	heuristic the deal pages show (idle time, stage stagnation, missing next
@@ -1863,6 +2035,7 @@ def get_deals_at_risk(from_date: str | None = None, to_date: str | None = None, 
 			query = query.where(Deal.creation <= f"{to_date} 23:59:59")
 		if user:
 			query = query.where(belongs_to(Deal, user, "CRM Deal"))
+		query = apply_territory(query, Deal, territory)
 		query = scope_deals(query)
 		if extra is not None:
 			query = query.where(extra)
@@ -2026,7 +2199,12 @@ def won_value_in_period(from_date: str, to_date: str, user: str | None = None) -
 	return float(scope_deals(query).run()[0][0] or 0)
 
 
-def get_quota_attainment(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_quota_attainment(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Closed-won revenue against quota for the period.
 
@@ -2125,7 +2303,12 @@ def forecast_accuracy_rows(user: str | None = None) -> list[dict]:
 	return sorted(rows, key=lambda e: e["month"])
 
 
-def get_forecast_accuracy(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def get_forecast_accuracy(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""
 	Forecast vs what actually happened, per month, as an axis chart.
 
