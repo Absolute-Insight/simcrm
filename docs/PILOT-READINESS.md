@@ -676,8 +676,33 @@ polish · **P4** platform work beyond the pilot.
       recipient — "stranger@example.com is not an enabled user of this site" names the
       address to fix, which a generic fallback would not. Verified end to end in the
       browser in both themes: create, reject, list, toggle, delete, empty state.
-- [ ] **Custom report builder** — its stated precondition (five reports shipped) is met.
-      **1–2 weeks.**
+- [x] **Custom report builder.** Seven dimensions × five measures × four status scopes,
+      as a rail entry on the Reports page rather than a page of its own — it returns the
+      same payload shape as a built-in, so the table, CSV, print sheet, territory note and
+      stale-payload guard are reused rather than rebuilt.
+      **Scope read, stated because PLAN.md's entry is one line.** "Custom report builder
+      UI", precondition "the five built-in reports have proven the metrics layer" — read
+      as a dimension × measure builder over that layer rather than saved filter presets.
+      The larger reading, which subsumes the smaller one if it was wrong.
+      **How the one-source-of-numbers rule is actually kept.** `reports.py` forbids
+      building a second aggregate, and a generic builder is one by construction — so the
+      rule is held by measurement instead of by architecture: `ConformanceTest` asserts the
+      builder produces identical numbers to `pipeline_by_stage`, `get_deals_by_source`,
+      `get_deals_by_territory` and `get_deals_by_industry` for every pair they both
+      compute. Mutation-checked. Each comparison matches its built-in's own semantics —
+      the stage report is a periodless snapshot, the source and territory charts count
+      deals *created* in a period across all statuses — because a suite comparing two
+      different questions would pass while proving nothing.
+      Confirmed in the browser as well as in tests: stage × deals returns 605/360, the same
+      figures the built-in pipeline report shows on this site.
+      **A test that passed for the wrong reason, again.** Deleting `scope_deals` — the
+      permission guard, and the most security-sensitive line in the module — left all 29
+      tests green, because a plain Sales User is pinned by `pin_user` and `belongs_to` does
+      the filtering instead. The case that exercises it is an in-hierarchy Sales Manager,
+      who is pinned to nobody. Found by mutation, not by reading.
+      Dimension, measure, status scope **and the date column** are each validated against a
+      closed registry before reaching a query, because all four become SQL. A realised
+      measure refuses an open scope rather than switching it silently.
 - [x] **The injection evals are codified.** The finding they record —
       **every model tried follows the injected instruction**, on the summariser and on
       the draft tier — existed only as a prose table produced by hand. A property nobody
