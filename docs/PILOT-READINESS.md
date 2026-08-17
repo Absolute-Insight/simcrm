@@ -468,8 +468,16 @@ polish · **P4** platform work beyond the pilot.
 - [ ] **Scheduled re-enrichment** — documented as "future feature, not implemented". **2 d.**
 - [ ] **Territory/segment analytics** — one territory chart exists; no segment dimension
       anywhere, no territory filter on dashboard or reports. **3–5 days.**
-- [ ] **`quota_attainment_by_rep` cannot be scheduled** — the digest doctype hardcodes four
-      of the five registry reports. **1 h.**
+- [x] **`quota_attainment_by_rep` could not be scheduled.** The digest doctype's Select
+      hardcoded four of the five registry reports, so the one report a sales manager most
+      wants mailed to them was simply not on offer — and nothing failed to say so. Added,
+      and the drift is now impossible to repeat: a test asserts the Select's options equal
+      `REPORTS` exactly, another renders every option through the digest template, and
+      `validate()` refuses a digest naming a report the site does not publish (the send
+      loop skips an unknown key silently, which is right for a withdrawn report but would
+      turn a typo into a digest that never arrives and never complains). The
+      options-vs-registry test fails against the pre-fix tree, which is how it was
+      checked. 12 tests.
 - [ ] **Report Digest has no admin UI** — desk-only. **1–2 days.**
 - [ ] **Custom report builder** — its stated precondition (five reports shipped) is met.
       **1–2 weeks.**
