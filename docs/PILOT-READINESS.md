@@ -345,12 +345,25 @@ polish · **P4** platform work beyond the pilot.
       `{unlinked, skipped}` and `{queued, count}` — and both modals report it, including
       the honest "deleting in the background" for the queued case. Tested: over ten says
       queued, under ten says done.
-- [ ] **Form Script `onValidate` failures abort the save with no feedback at all.**
-      `document.js:95` catches and returns; the thorough `onError` handler 30 lines above is
-      bypassed. This is the failure mode Form Script authors will hit most. **2 h.**
-- [ ] **File-upload promise can hang forever.** `filesUploaderHandler.ts:75` parses a 403
-      body as JSON unguarded; an HTML error page throws inside the handler and the promise
-      never settles. **1 h.**
+- [x] **Form Script `onValidate` failures abort the save with no feedback at all.**
+      `document.js` caught and returned with only a `console.error`. The guide states the
+      contract outright — "Throw a `new Error` (or call `throwError`) to block the save —
+      the error message is shown as a toast automatically" — and only `throwError`
+      delivered it, because it toasts on its way out. A plain `new Error`, *the idiom that
+      sentence lists first*, left the rep pressing a save button that did nothing. The
+      documentation described behaviour the code did not have. Now reported via
+      `validationErrorMessage`; `throwError` marks its error so the message is not shown
+      twice. Deliberately does **not** fire the script's `onError` hook: SPEC.md scopes
+      that to "when a save fails", and a validation block means the save never started.
+      Verified in a browser with a real Form Script: plain throw toasts, `throwError`
+      toasts exactly once, and both still block the write.
+- [x] **File-upload promise can hang forever.** `filesUploaderHandler.ts` parsed a 403 body
+      as JSON unguarded, and Frappe answers 403 with an HTML sign-in page often enough that
+      this was not an edge case. The throw escaped `onreadystatechange` without reaching
+      `reject`, so the promise never settled — spinner forever, no error, for the life of
+      the tab. A second unguarded parse of `error.exc` could do the same on any status.
+      Both guarded, `reject` now unconditional, and the 413 branch keeps its own sentence
+      rather than echoing nginx's HTML. 9 tests.
 
 ### Feature gaps
 - [x] **Facebook lead sync drops paginated leads permanently.** `facebook.py:73`

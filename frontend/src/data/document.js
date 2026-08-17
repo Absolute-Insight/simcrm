@@ -5,6 +5,7 @@ import { useAttachments } from '@/composables/useAttachments'
 import { showSettings, activeSettingsPage } from '@/composables/settings'
 import { runSequentially, parseAssignees, sanitizeText } from '@/utils'
 import { findMissingMandatory } from '@/utils/fieldTransforms'
+import { validationErrorMessage } from '@/utils/formScriptErrors'
 import { createDocumentResource, createResource, toast } from 'frappe-ui'
 import { ref, reactive, getCurrentInstance } from 'vue'
 
@@ -99,6 +100,16 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
         try {
           await triggerOnValidate()
         } catch (err) {
+          /* Blocking the save was correct; saying nothing was not. The Form
+             Script guide promises a thrown error is "shown as a toast
+             automatically", and only throwError delivered that — a plain
+             `new Error`, the idiom the docs list first, left the rep pressing
+             a save button that did nothing. */
+          const message = validationErrorMessage(
+            err,
+            __('This could not be saved.'),
+          )
+          if (message) toast.error(message)
           console.error(err)
           return
         }
