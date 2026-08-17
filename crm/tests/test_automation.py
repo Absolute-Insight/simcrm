@@ -303,3 +303,46 @@ class SuggestionOwnershipTest(IntegrationTestCase):
 		)
 		frappe.delete_doc("CRM Deal", deal.name)
 		self.assertFalse(frappe.db.exists("CRM Suggestion", name))
+
+
+class AutomationTemplateSandboxTest(IntegrationTestCase):
+	"""Rule templates are authored by Sales Managers, so they get `doc` only.
+
+	frappe.render_template hands a template the framework's globals, which still
+	include frappe.db.sql and a get_all forced to ignore_permissions -- turning a
+	title template into an arbitrary database read for a customer's line manager.
+	"""
+
+	def test_a_template_cannot_reach_the_database(self):
+		"""`frappe` is not merely neutered in the context, it is absent -- so this
+		raises rather than quietly rendering nothing."""
+		from jinja2.exceptions import UndefinedError
+
+		from crm.automation import render_rule_template
+
+		with self.assertRaises(UndefinedError):
+			render_rule_template("{{ frappe.db.sql('select 1') }}", frappe._dict())
+
+	def test_a_template_cannot_reach_get_all(self):
+		from jinja2.exceptions import UndefinedError
+
+		from crm.automation import render_rule_template
+
+		with self.assertRaises(UndefinedError):
+			render_rule_template("{{ frappe.get_all('User', pluck='name') }}", frappe._dict())
+
+	def test_doc_fields_still_render(self):
+		"""The restriction must not cost the feature anything: every template in
+		this app is {{ doc.field }}, which is what it is for."""
+		from crm.automation import render_rule_template
+
+		rendered = render_rule_template(
+			"Follow up with {{ doc.organization }}", frappe._dict(organization="Acme")
+		)
+		self.assertEqual(rendered, "Follow up with Acme")
+
+	def test_a_rule_reaching_for_frappe_is_refused_at_save(self):
+		"""Because validation shares the renderer, the author is told at save
+		time instead of the rule failing silently on somebody's deal later."""
+		with self.assertRaises(frappe.ValidationError):
+			make_rule(title="Exfiltrate", title_template="{{ frappe.db.sql('select 1') }}")

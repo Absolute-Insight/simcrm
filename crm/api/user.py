@@ -141,6 +141,20 @@ def remove_crm_roles_from_user(user: str):
 			_("User {0} cannot be removed as it has a Role Profile assigned to it.").format(user)
 		)
 
+	# Refuse before touching anything. The node delete at the end of this
+	# function is what fails when a manager still has reports, and by then the
+	# stripped roles have already been saved -- the admin gets a 500 and a user
+	# who is half-offboarded. update_role() below already guards this case; this
+	# path did not. Same question, asked before the first write instead of after
+	# the last one.
+	node_name = frappe.db.get_value("CRM Sales Hierarchy", {"user": user}, "name")
+	if node_name and frappe.db.exists("CRM Sales Hierarchy", {"reports_to": node_name}):
+		frappe.throw(
+			_("{0} still has people reporting to them. Move their reports to another manager first.").format(
+				user
+			)
+		)
+
 	if "Sales User" in roles:
 		remove_roles(user_doc, "Sales User")
 	if "Sales Manager" in roles:
@@ -151,7 +165,6 @@ def remove_crm_roles_from_user(user: str):
 
 	user_doc.save(ignore_permissions=True)
 
-	node_name = frappe.db.get_value("CRM Sales Hierarchy", {"user": user}, "name")
 	if node_name:
 		frappe.delete_doc("CRM Sales Hierarchy", node_name, ignore_permissions=True)
 

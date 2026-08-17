@@ -13,10 +13,14 @@ failures are logged, not raised.
 from __future__ import annotations
 
 import frappe
+from jinja2.sandbox import SandboxedEnvironment
 
 from crm.agent.signals import clear_suggestions_for, resync_owner
 
 OWNER_FIELD = {"CRM Lead": "lead_owner", "CRM Deal": "deal_owner"}
+
+# Rule templates get `doc` and nothing else -- see render_rule_template below.
+_TEMPLATE_ENV = SandboxedEnvironment(autoescape=False)
 
 
 def run_automations(doc, method=None):
@@ -107,27 +111,35 @@ def _status_label(doc) -> str | None:
 	return doc.status
 
 
-def _render(template, doc_dict) -> str:
-	"""Render against a plain dict, never the live Document.
+def render_rule_template(template, doc_dict) -> str:
+	"""Render a rule template with ``doc`` in scope and nothing else.
 
-	Measured on this frappe version, the Jinja sandbox already refuses
-	``doc.delete()``, ``doc.save()`` and ``doc.db_set()`` on a live Document, so
-	this is defence in depth rather than the only thing standing in the way. It
-	is still worth doing: it matches the condition path, which passes
-	``as_dict()`` too, and it means a future sandbox regression cannot turn a
-	template field into a write primitive.
+	``frappe.render_template`` hands the template frappe's global helpers, and
+	those still include ``frappe.db.sql`` and a ``get_all`` forced to
+	``ignore_permissions=True``. Rule authoring is granted to **Sales Manager** —
+	a customer's line manager — so that made a title template an arbitrary
+	database read: put the query in the title, read the answer off the task it
+	creates. The framework's ``check_safe_sql_query`` only rejects non-SELECT,
+	which is exactly the wrong half for a read.
+
+	A plain sandboxed environment with a one-key context closes it. Nothing is
+	lost: every template in this app is ``{{ doc.field }}``, which is what the
+	feature is for. Autoescape stays off because these render into a task's
+	title and description, which are plain-text fields — turning it on would
+	start writing &amp; into people's task titles.
+
+	The dict rather than the live Document is kept from the previous version:
+	the Jinja sandbox already refuses ``doc.save()`` and friends, but a future
+	sandbox regression should not be able to turn a template into a write.
 	"""
-	# Authored by a Sales Manager, validated at save, rendered against a plain
-	# dict rather than the live Document.
-	# nosemgrep: frappe-semgrep-rules.rules.security.frappe-ssti
-	return frappe.render_template(template or "", {"doc": doc_dict})
+	return _TEMPLATE_ENV.from_string(template or "").render(doc=doc_dict)
 
 
 def _apply(rule, doc) -> None:
 	doc_dict = doc.as_dict()
 	owner = doc.get(OWNER_FIELD.get(doc.doctype)) if rule.assign_to_owner else None
-	title = _render(rule.title_template, doc_dict) or rule.name
-	description = _render(rule.description_template, doc_dict)
+	title = render_rule_template(rule.title_template, doc_dict) or rule.name
+	description = render_rule_template(rule.description_template, doc_dict)
 
 	if rule.action == "Create Task":
 		# status flapping must not stack duplicate tasks for the same record
