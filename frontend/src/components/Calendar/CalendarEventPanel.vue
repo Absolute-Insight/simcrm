@@ -594,6 +594,7 @@ import {
 } from 'frappe-ui/experimental'
 import { ref, computed, watch, h, inject } from 'vue'
 import { useRouter } from 'vue-router'
+import { actionErrorMessage } from '@/utils/reportActionError'
 
 const props = defineProps({
   mode: { type: String, default: 'details' },
@@ -876,7 +877,14 @@ function updateAttendingStatus(attendee, status) {
       sync()
     })
     .catch((err) => {
-      error.value = err.messages[0] || __('Failed to update attending status')
+      /* This handler used to read `err.messages[0]` unguarded, so any rejection
+         without a `messages` array — a 500, a dropped connection — threw a
+         TypeError of its own *inside* the catch. The reporter became a second
+         silent failure, which is the one thing a catch block must not be. */
+      error.value = actionErrorMessage(
+        err,
+        __('Could not update your response.'),
+      )
       toast.error(error.value)
     })
 }

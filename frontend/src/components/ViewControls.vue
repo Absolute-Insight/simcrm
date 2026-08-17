@@ -349,6 +349,7 @@ import { isMobileView } from '@/composables/settings'
 import Draggable from 'vuedraggable'
 import _ from 'lodash'
 import ImportIcon from '~icons/lucide/import'
+import { reportActionError } from '@/utils/reportActionError'
 
 const props = defineProps({
   doctype: { type: String, required: true },
@@ -997,10 +998,12 @@ function persistCustomView() {
   view.value.doctype = props.doctype
   call('crm.fcrm.doctype.crm_view_settings.crm_view_settings.update', {
     view: view.value,
-  }).then(() => {
-    reloadView()
-    viewUpdated.value = false
   })
+    .then(() => {
+      reloadView()
+      viewUpdated.value = false
+    })
+    .catch((error) => reportActionError(error, __('Could not save the view.')))
 }
 
 function updateKanbanSettings(data) {
@@ -1078,27 +1081,29 @@ function createOrUpdateStandardView() {
     {
       view: view.value,
     },
-  ).then(() => {
-    reloadView()
-    view.value = {
-      label: view.value.label,
-      type: view.value.type || 'list',
-      icon: view.value.icon,
-      name: view.value.name,
-      filters: defaultParams.value.filters,
-      order_by: defaultParams.value.order_by,
-      group_by_field: defaultParams.value.view?.group_by_field,
-      column_field: defaultParams.value.column_field,
-      title_field: defaultParams.value.title_field,
-      kanban_columns: defaultParams.value.kanban_columns,
-      kanban_fields: defaultParams.value.kanban_fields,
-      columns: defaultParams.value.columns,
-      rows: defaultParams.value.rows,
-      route_name: route.name,
-      load_default_columns: view.value.load_default_columns,
-    }
-    viewUpdated.value = false
-  })
+  )
+    .then(() => {
+      reloadView()
+      view.value = {
+        label: view.value.label,
+        type: view.value.type || 'list',
+        icon: view.value.icon,
+        name: view.value.name,
+        filters: defaultParams.value.filters,
+        order_by: defaultParams.value.order_by,
+        group_by_field: defaultParams.value.view?.group_by_field,
+        column_field: defaultParams.value.column_field,
+        title_field: defaultParams.value.title_field,
+        kanban_columns: defaultParams.value.kanban_columns,
+        kanban_fields: defaultParams.value.kanban_fields,
+        columns: defaultParams.value.columns,
+        rows: defaultParams.value.rows,
+        route_name: route.name,
+        load_default_columns: view.value.load_default_columns,
+      }
+      viewUpdated.value = false
+    })
+    .catch((error) => reportActionError(error, __('Could not save the view.')))
 }
 
 function updatePageLength(value, loadMore = false) {
@@ -1241,10 +1246,14 @@ function setAsDefault(v) {
     name: v.name,
     type: v.type,
     doctype: v.dt,
-  }).then(() => {
-    reloadView()
-    list.value.reload()
   })
+    .then(() => {
+      reloadView()
+      list.value.reload()
+    })
+    .catch((error) =>
+      reportActionError(error, __('Could not set the default view.')),
+    )
 }
 
 function duplicateView(v, close) {
@@ -1266,32 +1275,42 @@ function publicView(v) {
   call('crm.fcrm.doctype.crm_view_settings.crm_view_settings.public', {
     name: v.name,
     value: !v.public,
-  }).then(() => {
-    v.public = !v.public
-    reloadView()
-    list.value.reload()
   })
+    .then(() => {
+      v.public = !v.public
+      reloadView()
+      list.value.reload()
+    })
+    .catch((error) =>
+      reportActionError(error, __('Could not change who can see this view.')),
+    )
 }
 
 function pinView(v) {
   call('crm.fcrm.doctype.crm_view_settings.crm_view_settings.pin', {
     name: v.name,
     value: !v.pinned,
-  }).then(() => {
-    v.pinned = !v.pinned
-    reloadView()
-    list.value.reload()
   })
+    .then(() => {
+      v.pinned = !v.pinned
+      reloadView()
+      list.value.reload()
+    })
+    .catch((error) => reportActionError(error, __('Could not pin the view.')))
 }
 
 function deleteView(v, close) {
   call('crm.fcrm.doctype.crm_view_settings.crm_view_settings.delete', {
     name: v.name,
-  }).then(() => {
-    router.push({ name: route.name, params: { viewType: 'list' } })
-    reloadView()
-    list.value.reload()
   })
+    .then(() => {
+      router.push({ name: route.name, params: { viewType: 'list' } })
+      reloadView()
+      list.value.reload()
+    })
+    .catch((error) =>
+      reportActionError(error, __('Could not delete the view.')),
+    )
   close()
 }
 
@@ -1301,11 +1320,15 @@ function fetchAndUpdateKanbanColumns(v) {
     {
       name: v.name,
     },
-  ).then((columns) => {
-    list.value.params.kanban_columns = columns
-    view.value.kanban_columns = columns
-    list.value.reload()
-  })
+  )
+    .then((columns) => {
+      list.value.params.kanban_columns = columns
+      view.value.kanban_columns = columns
+      list.value.reload()
+    })
+    .catch((error) =>
+      reportActionError(error, __('Could not refresh the Kanban columns.')),
+    )
 }
 
 function cancelChanges() {

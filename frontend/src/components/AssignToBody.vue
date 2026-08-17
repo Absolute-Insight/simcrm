@@ -77,6 +77,7 @@ import { usersStore } from '@/stores/users'
 import { Tooltip, Switch, createResource } from 'frappe-ui'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { ref, watch } from 'vue'
+import { reportActionError } from '@/utils/reportActionError'
 
 const props = defineProps({
   doctype: { type: String, default: '' },
@@ -162,20 +163,33 @@ async function updateAssignees() {
     )
     .map((assignee) => assignee.name)
 
-  if (props.onUpdate) {
-    props.onUpdate(
-      addedAssignees,
-      removedAssignees,
-      addAssignees,
-      removeAssignees,
-    )
-  } else {
-    if (removedAssignees.length) {
-      await removeAssignees.submit(removedAssignees)
+  /* The list is edited locally before anything is sent, so a rejected request
+     used to leave the avatar sitting on the record for an assignment that was
+     never made -- a wrong answer, not just a missing message. The rejection
+     itself went nowhere: `addAssignees.submit()` was not awaited, and neither
+     resource declared an onError, so a 403 reached the console and stopped. */
+  const previous = [...oldAssignees.value]
+  try {
+    if (props.onUpdate) {
+      await props.onUpdate(
+        addedAssignees,
+        removedAssignees,
+        addAssignees,
+        removeAssignees,
+      )
+    } else {
+      if (removedAssignees.length) {
+        await removeAssignees.submit(removedAssignees)
+      }
+      if (addedAssignees.length) {
+        await addAssignees.submit(addedAssignees)
+      }
     }
-    if (addedAssignees.length) {
-      addAssignees.submit(addedAssignees)
-    }
+  } catch (err) {
+    // `err`, not `error`: there is an `error` ref in this scope and shadowing
+    // it here would read as if the catch were setting it.
+    assignees.value = previous
+    reportActionError(err, __('Could not update the assignment.'))
   }
 }
 

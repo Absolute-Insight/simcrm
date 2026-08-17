@@ -48,6 +48,7 @@ import {
 // parked in experimental for v1 (frappe-ui migration doc)
 import { TextEditor } from 'frappe-ui/experimental'
 import { ref, computed, onMounted, h } from 'vue'
+import { reportActionError } from '@/utils/reportActionError'
 
 const typeCheck = ['Check']
 const typeLink = ['Link', 'Dynamic Link']
@@ -115,19 +116,23 @@ function updateValues() {
         [field.value.fieldname]: fieldVal || null,
       },
     },
-  ).then(() => {
-    field.value = {
-      label: '',
-      fieldtype: '',
-      fieldname: '',
-      options: '',
-    }
-    newValue.value = ''
-    loading.value = false
-    show.value = false
-    capture('bulk_update', { doctype: props.doctype })
-    emit('reload')
-  })
+  )
+    .then(() => {
+      field.value = {
+        label: '',
+        fieldtype: '',
+        fieldname: '',
+        options: '',
+      }
+      newValue.value = ''
+      loading.value = false
+      show.value = false
+      capture('bulk_update', { doctype: props.doctype })
+      emit('reload')
+    })
+    .catch((error) =>
+      reportActionError(error, __('Could not update the records.')),
+    )
 }
 
 function changeField(f) {

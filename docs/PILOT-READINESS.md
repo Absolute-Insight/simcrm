@@ -317,10 +317,26 @@ polish · **P4** platform work beyond the pilot.
       390px and clips its own toolbar. Needs a day view as the mobile default. **1 day.**
 
 ### Error handling on inherited surfaces
-- [ ] **19 `call().then()` sites with no rejection handler.** The split is precise: every
-      new Vectora surface uses the `ErrorState`/`describeError` primitives; *no* inherited
-      surface does — assignment, quick entry, inline edit, saved views, bulk actions. Reps
-      spend most of the day in the inherited ones. **1 day.**
+- [x] **19 `call().then()` sites with no rejection handler.** Every new Vectora surface
+      uses the `ErrorState`/`describeError` primitives; no inherited surface did —
+      assignment, quick entry, inline edit, saved views, bulk actions, and reps spend most
+      of the day in those. Now 20 handlers via `actionErrorMessage`, the action-shaped
+      counterpart to `ErrorState`: the server's own sentence wins, falling back to copy
+      chosen by `kind`, and it never claims the change was not made — a dropped connection
+      can still have reached the server, and that reassurance would send a rep to redo
+      saved work. 10 unit tests.
+      **The count was three too high and one category short.** `DeleteLinkedDocModal`,
+      `CallLogDetailModal`, `Users` and `FilesUploader` already had handlers. But grepping
+      for `.then(` missed resources submitted without an `onError` — found only by forcing
+      a real 403 in a browser, where the record-page **assign** failed with nothing but a
+      console line. That one was worse than silent: the assignee list is edited
+      optimistically, so a rejected assign left the avatar on the record showing an
+      assignment that never happened. It now rolls back and reports. `CalendarEventPanel`'s
+      existing handler read `err.messages[0]` unguarded and threw a second error inside the
+      catch on any rejection without that array.
+- [ ] **Resources submitted with no `onError` are a second, unenumerated category.**
+      `AssignToBody` was found by accident; nothing has swept `createResource` call sites
+      the way this pass swept `.then(`. **4 h** to enumerate and triage.
 - [x] **Two endpoints returned `"success"` when they did nothing.** `remove_linked_doc_
       reference` skips items the user cannot write and items that fail validation;
       `delete_bulk_docs` hands anything over ten records to a worker. Both answered
