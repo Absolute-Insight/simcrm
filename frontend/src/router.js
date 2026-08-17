@@ -31,6 +31,13 @@ const routes = [
     name: 'Notifications',
     component: () => import('@/pages/MobileNotification.vue'),
   },
+  // The desktop equivalent is a slide-over off the sidebar, which has nowhere
+  // to live on a phone -- so, as with Notifications, mobile gets a route.
+  {
+    path: '/suggestions',
+    name: 'Suggestions',
+    component: () => import('@/pages/MobileSuggestions.vue'),
+  },
   {
     path: '/dashboard',
     name: 'Dashboard',

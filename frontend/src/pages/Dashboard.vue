@@ -11,8 +11,12 @@
           :iconLeft="LucideRefreshCcw"
           @click="reloadAll"
         />
+        <!-- Reading the dashboard works on a phone; rearranging it does not.
+             Editing is a drag-and-drop grid sized in 20 columns, which at
+             390px is neither draggable by thumb nor legible. Offering the
+             button anyway would be offering a broken mode. -->
         <Button
-          v-if="!editing && showChartGrid"
+          v-if="!editing && showChartGrid && !isMobileView"
           :label="__('Edit')"
           :iconLeft="LucidePenLine"
           @click="enableEditing"
@@ -332,6 +336,7 @@ import ViewBreadcrumbs from '@/components/ViewBreadcrumbs.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import Link from '@/components/Controls/Link.vue'
 import { usersStore } from '@/stores/users'
+import { isMobileView } from '@/composables/settings'
 import { copy } from '@/utils'
 import { describeError } from '@/utils/describeError'
 import {
