@@ -106,16 +106,14 @@ polish · **P4** platform work beyond the pilot.
 - [ ] **Nothing gates merges.** `develop` and `main` are both unprotected, `.mergify.yml`
       has no `check-success` condition, and `codecov.yml:19` sets `if_ci_failed: ignore`.
       **30 min.**
-- [ ] **Three e2e specs fail; the suite runs but is advisory until they are triaged.**
-      First real run: **15/18**. `planner.spec.ts:104` fails on a clean `develop`
-      locally too, so it predates all of this — an item created for the current week
-      does not appear on the planner, and the deriving-the-week-from-the-runner's-clock
-      theory did **not** hold up when tested, so it needs a real diagnosis rather than a
-      guess. `login.spec.ts:12` (the sidebar's Leads link never appears) and
-      `email.spec.ts:10` both **pass locally but fail against a freshly created site** —
-      which is worth understanding on its own terms, because a fresh site is exactly what
-      the pilot will be. Remove `continue-on-error` from `ui-tests.yml` once these are
-      closed. **1–2 days.**
+- [ ] **Two e2e specs fail against a freshly created site; the suite is advisory until
+      they are triaged.** `login.spec.ts:12` (the sidebar's Leads link never appears) and
+      `email.spec.ts:10` both **pass locally but fail in CI**, whose site is created from
+      scratch each run — worth understanding on its own terms, because a fresh site is
+      exactly what the pilot will be. Remove `continue-on-error` from `ui-tests.yml` once
+      they are closed. *(The third failure, `planner.spec.ts:104`, is fixed: it derived its
+      week from the runner's UTC clock while the site runs IST, so every Sunday after
+      18:30 UTC it wrote a plan into one week and asserted against another.)* **1 day.**
 - [x] **The Playwright suite had never run in CI.** `ui-tests.yml:6` triggers only on
       branch `main-hotfix`, which does not exist. **5 min.**
 - [ ] **The frontend coverage gate cannot fail.** `vitest.config.js:12` scopes coverage to
