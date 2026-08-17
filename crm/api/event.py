@@ -17,7 +17,8 @@ reminders even if users don't configure them individually.
 from datetime import datetime, timedelta
 
 import frappe
-from frappe.utils import add_to_date, now_datetime
+from frappe import _
+from frappe.utils import add_to_date, escape_html, format_datetime, now_datetime
 
 
 def trigger_offset_event_notifications():
@@ -302,7 +303,9 @@ def _send_email_notification(notification, event_start, before_value, interval):
 
 	try:
 		recipients = set()
-		subject = f"Event Reminder: {notification.subject}"
+		# Plain text: the subject line is not HTML, so escaping it here would put
+		# literal &amp; in front of the reader.
+		subject = _("Event reminder: {0}").format(notification.subject)
 
 		if notification.owner and notification.owner != "Administrator":
 			recipients.add(notification.owner)
@@ -323,19 +326,22 @@ def _send_email_notification(notification, event_start, before_value, interval):
 			return
 		time_remaining_text = _format_time_remaining(before_value, interval)
 
-		message = f"""
-		<div style="font-family: Arial, sans-serif; max-width: 600px;">
-			<h2 style="color: #333;">Event Reminder</h2>
-			<p>This is a reminder for your upcoming event:</p>
-			<div style="background-color: #f8f9fa; padding: 15px; border-left: 4px solid #007bff; margin: 20px 0;">
-				<h3 style="margin: 0; color: #007bff;">{notification.subject}</h3>
-				{f'<p style="margin: 10px 0; color: #666;">{notification.description}</p>' if notification.description else ""}
-				<p style="margin: 5px 0;"><strong>Start Time:</strong> {event_start.strftime("%Y-%m-%d %H:%M:%S")}</p>
-				<p style="margin: 5px 0;"><strong>Time Remaining:</strong> {time_remaining_text}</p>
-			</div>
-			<p style="color: #666; font-size: 12px;">This is an automated reminder from your calendar system.</p>
-		</div>
-		"""
+		# Escaped here, not in the template: frappe's Jinja environment runs with
+		# autoescape off, so `{{ subject }}` there would emit raw HTML exactly as
+		# the f-string this replaced did. An event title is typed by a user and
+		# this mail is delivered to external participants, so an unescaped field
+		# is somebody else's inbox carrying markup we chose to send them.
+		message = frappe.render_template(
+			"crm/templates/emails/event_reminder.html",
+			{
+				"subject": escape_html(notification.subject or ""),
+				"description": escape_html(notification.description or ""),
+				# The reader's own format, rather than a bare SQL-shaped timestamp.
+				"start_time": escape_html(format_datetime(event_start)),
+				"time_remaining": escape_html(time_remaining_text),
+				"brand": escape_html(frappe.db.get_single_value("FCRM Settings", "brand_name") or "Vectora"),
+			},
+		)
 
 		frappe.sendmail(
 			recipients=recipients,

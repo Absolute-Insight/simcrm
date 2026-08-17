@@ -503,8 +503,17 @@ polish · **P4** platform work beyond the pilot.
       fixed nothing. A site branded "Northwind Sales" now invites people to Northwind
       Sales; unbranded sites still say Vectora. Subject line translated too. Verified by
       rendering the template both ways.
-- [ ] **Event reminder email is untranslated and interpolates user content into HTML
-      unescaped** (`event.py:326`), in Bootstrap blue rather than the Vectora palette. **2 h.**
+- [x] **Event reminder email is untranslated and interpolates user content into HTML
+      unescaped** (`event.py:326`), in Bootstrap blue rather than the Vectora palette.
+      **Moving it to a template would have looked like the fix and changed nothing:**
+      frappe's Jinja environment runs with `autoescape = False` (verified against
+      `frappe.get_jenv()`), so `{{ subject }}` in a file emits raw HTML exactly as the
+      f-string did. The escaping is explicit in Python, the template says so, and 7 tests
+      pin it — a comment cannot fail CI. The interesting attack is not a script tag, which
+      mail clients drop, but closing our markup and appending a plausible reset-password
+      link in a message sent to *external* participants. Strings translated, palette
+      corrected, timestamp now through `format_datetime` rather than a hardcoded
+      `strftime`, and the footer names the site's brand.
 - [ ] **Package metadata still names an upstream maintainer personally.** `pyproject.toml`
       `authors` and `hooks.py` `app_publisher` / `app_email` carry Frappe Technologies and
       `shariq@frappe.io`, so a Vectora bug report routed from app metadata reaches someone
