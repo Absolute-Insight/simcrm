@@ -12,6 +12,28 @@ each names the file, the concrete failure, and the effort. Check items off as th
 **P1** blocks a *trustworthy* pilot · **P2** completeness mandate · **P3** client-facing
 polish · **P4** platform work beyond the pilot.
 
+## Where it stands (2026-08-17)
+
+| | open | note |
+|---|---|---|
+| **P0** security / data integrity | 1 | remote email images — deferred by decision, nothing built |
+| **P1** release / CI integrity | 0 | |
+| **P2** completeness (the mandate) | 0 | |
+| **P3** client-facing polish | 12 | |
+| **P4** beyond the pilot | — | out of scope by definition |
+
+**85 closed, 13 open.** The mandate section is clear: every planned feature is built. What
+remains under P0 is one accepted risk with nothing built against it, and the rest is
+polish. Two things still need someone other than me:
+
+- the **pilot-only verifications** listed at the foot of this file — Twilio call
+  recording, the Facebook connector and the injection/enrichment evals all need an
+  account or a model endpoint this container does not have, so they are untested rather
+  than working;
+- the **read-only `onError` sweep** (~92 resources), moved to P3 deliberately: those
+  degrade to an empty control rather than a false statement, and wiring 92 handlers
+  would have been motion rather than progress.
+
 ---
 
 ## P0 — Security and data integrity
@@ -197,6 +219,10 @@ polish · **P4** platform work beyond the pilot.
       sender gets a read receipt on every rep who opens their mail. Blocking them is
       normal mail-client behaviour but needs a "load images" affordance to not look
       broken, so it was left out of the sandbox fix rather than smuggled in. **1 day.**
+      **Deferred by decision, not oversight** — raised with the maintainer and the call was
+      to leave it as-is for the pilot. It stays open rather than closed because nothing has
+      been built: the read receipt still fires. Worth revisiting before a client whose
+      counterparties they would rather not tip off.
 - [x] **Demo data contaminates forecast history irreversibly.** `hooks.py:97` seeded demo
       data on desk setup-wizard completion. A fresh site starts `setup_complete = 0`
       (verified against frappe's System Settings default), so any operator who opens desk
@@ -439,7 +465,9 @@ polish · **P4** platform work beyond the pilot.
       where one row had been fine. Wrapping is now `sm:flex-nowrap` — phone-only.
       Also fixed in passing: the view select's placeholder read `Operator`, a copy-paste
       leftover from a filter control.
-- [ ] **`isMobileView` never re-evaluates.** `computed(() => window.innerWidth < 768)`
+- [x] **`isMobileView` never re-evaluates.** *Fixed:* a `matchMedia` listener, guarded
+      for its own absence and for Safari < 14's `addListener`-only form. 7 tests;
+      mutation-checked (the old implementation fails 4 of them). Original entry: `computed(() => window.innerWidth < 768)`
       over a non-reactive source: it caches on first read and nothing invalidates it, so
       rotating a phone or resizing a window does not change it. Used in ~10 components
       (`ViewControls`, `CustomActions`, `DataFields`, `MobileLead`, and now the calendar's
@@ -786,7 +814,11 @@ polish · **P4** platform work beyond the pilot.
       constants must equal `SIGNAL_DEFAULTS`, and `HEALTH_AT_RISK` in `suggestions.js` is
       *parsed out of the file* and must equal `AT_RISK_BELOW` — a second copy of the number
       in the test would have been the very thing being guarded against.
-- [ ] **"At risk" names two different populations.** Found while unifying the constants
+- [x] **"At risk" names two different populations.** *Fixed:* the tile is now
+      "Critical deals", matching the badge's word for the band it counts. Renamed rather
+      than recounted -- changing it to count `< 70` would move a number managers may
+      already be using, while the label moves nothing and makes it true. Guarded in both
+      directions. Original entry: Found while unifying the constants
       above, and not fixed there because it is a product decision rather than a drift. The
       dashboard tile counts `health_score < 40` and calls it *Deals at risk*; the record
       badge calls 40–69 *At risk* and reserves *Critical* for `< 40`. So the tile's
@@ -924,7 +956,12 @@ polish · **P4** platform work beyond the pilot.
       link in a message sent to *external* participants. Strings translated, palette
       corrected, timestamp now through `format_datetime` rather than a hardcoded
       `strftime`, and the footer names the site's brand.
-- [ ] **Package metadata still names an upstream maintainer personally.** `pyproject.toml`
+- [x] **Package metadata still names an upstream maintainer personally.** *Fixed:* set
+      to the identity this repository already publishes under in its own commit history
+      (`Absolute Insight` / `absolute.idev@gmail.com`) rather than anything invented. Not
+      an attribution change -- per-file Frappe copyright headers stay, as the AGPL requires
+      and as README's "Relationship to Frappe CRM" states. **Say so if either should
+      differ; it is two lines.** Original entry: `pyproject.toml`
       `authors` and `hooks.py` `app_publisher` / `app_email` carry Frappe Technologies and
       `shariq@frappe.io`, so a Vectora bug report routed from app metadata reaches someone
       who does not maintain it. Left deliberately: changing `authors` would misattribute
