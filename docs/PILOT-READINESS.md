@@ -425,8 +425,30 @@ polish · **P4** platform work beyond the pilot.
       and mobile gets a route and a page, following the Notifications precedent. Dashboard
       *editing* stays desktop-only — it is a 20-column drag grid, undraggable by thumb.
       Calendar stays gated on evidence: seven day-columns and a clipped toolbar at 390px.
-- [ ] **Calendar is unusable at phone width** — the week view puts seven day-columns in
-      390px and clips its own toolbar. Needs a day view as the mobile default. **1 day.**
+- [x] **Calendar is unusable at phone width.** Confirmed in the browser at 390px before
+      touching it: seven day-columns with "Sat 22" running off the edge, Mon 17's date
+      badge colliding with its own label, and the toolbar overflowing so the user picker
+      was sliced in half — *including the view switcher*, so the one control that could
+      have escaped the week grid was among the things cut off.
+      Day is now the mobile default, but only in place of Week. Day and Month both survive
+      the width, and substituting a preference that still works would be taking a decision
+      that is not ours. The toolbar wraps instead of clipping.
+      **The first attempt regressed the desktop**, which is why this was checked in a
+      browser at both widths rather than reasoned about: `flex-wrap` stops flex items
+      shrinking, so at 1440px the view select and user picker jumped onto their own rows
+      where one row had been fine. Wrapping is now `sm:flex-nowrap` — phone-only.
+      Also fixed in passing: the view select's placeholder read `Operator`, a copy-paste
+      leftover from a filter control.
+- [ ] **`isMobileView` never re-evaluates.** `computed(() => window.innerWidth < 768)`
+      over a non-reactive source: it caches on first read and nothing invalidates it, so
+      rotating a phone or resizing a window does not change it. Used in ~10 components
+      (`ViewControls`, `CustomActions`, `DataFields`, `MobileLead`, and now the calendar's
+      default view). Nobody has hit it because the value is read at mount and a phone
+      rarely changes class mid-session, but every one of those `v-if`s is written as if it
+      were live. The calendar's *layout* deliberately uses CSS breakpoints instead, which
+      are correct by construction. Making it a real resize listener is a small change with
+      a wide blast radius — every consumer would start reacting to resize, which is what
+      they already appear to say. **P3, 2 h + a pass over the consumers.**
 
 ### Error handling on inherited surfaces
 - [x] **19 `call().then()` sites with no rejection handler.** Every new Vectora surface
