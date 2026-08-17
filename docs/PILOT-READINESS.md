@@ -19,10 +19,10 @@ polish · **P4** platform work beyond the pilot.
 | **P0** security / data integrity | 1 | remote email images — deferred by decision, nothing built |
 | **P1** release / CI integrity | 0 | |
 | **P2** completeness (the mandate) | 0 | |
-| **P3** client-facing polish | 8 | |
+| **P3** client-facing polish | 7 | |
 | **P4** beyond the pilot | — | out of scope by definition |
 
-**89 closed, 9 open.** The mandate section is clear: every planned feature is built. What
+**90 closed, 8 open.** The mandate section is clear: every planned feature is built. What
 remains under P0 is one accepted risk with nothing built against it, and the rest is
 polish. Two things still need someone other than me:
 
@@ -880,16 +880,22 @@ polish. Two things still need someone other than me:
       always visible -- an `ErrorState` with retry and an `EmptyState`. Both are guarded on
       `isBuilder`, because a failed registry fetch is no reason to stop the report builder
       working.
-- [ ] **Native `window.confirm()` on two Vectora surfaces** — `Planner.vue:561` (fires on
-      every week arrow and rep switch while dirty) and `AutomationRules.vue:346`. Chrome
-      renders these as `localhost:8080 says…`, which reads as unfinished. `ui/ConfirmDialog`
-      already exists and is used elsewhere. **AutomationRules trivial; Planner ~0.5 day**
-      (the route guard must return a promise).
-- [ ] **Sales Targets and Automation Rules are the only Vectora surfaces with no
+- [ ] **Native `window.confirm()` on one Vectora surface** — `Planner.vue:561`, which fires on
+      every week arrow and rep switch while dirty. Chrome renders it as
+      `localhost:8080 says…`, which reads as unfinished, and it blocks the tab while open.
+      **AutomationRules is done** — it now uses `ui/ConfirmDialog` like the SLA views.
+      Planner is the remaining one and is the harder half (~0.5 day): its route guard must
+      return a promise, so the dialog cannot simply replace the call.
+- [x] **Sales Targets and Automation Rules are the only Vectora surfaces with no
       loading/error primitives** — a bare spinner and frappe-ui's `ErrorMessage`, which on a
       transport failure renders the literal string "Failed to fetch" with no retry.
       `SkeletonTable`'s own docstring names the quota table as a call site it does not have.
-      **30 min each.**
+      *Fixed:* both now use `SkeletonTable` (14 columns for the rep x month grid, 4 for the
+      rule list) and `ErrorState` with retry. `ErrorMessage` survives only where the string
+      is one we set ourselves -- the rule dialog's validation -- rather than whatever a
+      fetch rejected with.
+      Both verified in the browser on the success path; the transport-failure path was not
+      forced, so it rests on `ErrorState` being proven on the other surfaces.
 - [x] **The Sales Targets grid never shows an exact figure or a currency.** The wide
       sticky Year and Team-total columns now render the real figure with its currency via
       the same `formatCell` the CSV export uses, so the two surfaces agree. Month cells
