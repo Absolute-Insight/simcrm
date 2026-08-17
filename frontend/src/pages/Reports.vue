@@ -66,6 +66,23 @@
         >
           {{ r.title }}
         </button>
+        <!-- Separated and last: the five above are questions somebody decided
+             were worth answering; this one is a blank sheet. -->
+        <div class="my-1 border-t border-outline-gray-1" />
+        <button
+          class="v-rail rounded-4 px-2.5 py-2 text-left text-base"
+          :class="
+            isBuilder
+              ? 'bg-surface-elevation-3 text-ink-gray-9 shadow-sm'
+              : 'text-ink-gray-6 hover:bg-surface-gray-2'
+          "
+          role="tab"
+          :data-state="isBuilder ? 'active' : 'inactive'"
+          :aria-selected="isBuilder"
+          @click="active = BUILDER"
+        >
+          {{ __('Build a report') }}
+        </button>
       </template>
     </nav>
 
@@ -83,6 +100,37 @@
           :options="reportOptions"
           :aria-label="__('Report')"
         />
+
+        <!-- The builder's own controls. Ordered as the sentence they compose:
+             measure, by dimension, over scope, on period. -->
+        <template v-if="isBuilder">
+          <Select
+            v-model="measure"
+            class="w-52"
+            :options="asOptions(builderOptions.data?.measures)"
+            :aria-label="__('Measure')"
+          />
+          <span class="text-sm text-ink-gray-5">{{ __('by') }}</span>
+          <Select
+            v-model="dimension"
+            class="w-44"
+            :options="asOptions(builderOptions.data?.dimensions)"
+            :aria-label="__('Dimension')"
+          />
+          <Select
+            v-model="statusScope"
+            class="w-40"
+            :options="asOptions(builderOptions.data?.status_scopes)"
+            :disabled="Boolean(measureNeedsScope)"
+            :aria-label="__('Deals included')"
+          />
+          <Select
+            v-model="dateBasis"
+            class="w-52"
+            :options="dateBasisOptions"
+            :aria-label="__('Period applies to')"
+          />
+        </template>
 
         <!-- Same preset dropdown + user Link as the Dashboard filter bar, so
              the two analytics surfaces are filtered the same way. -->
@@ -191,11 +239,11 @@
       </div>
 
       <ErrorState
-        v-if="report.error"
+        v-if="source.error"
         class="flex-1"
-        :error="report.error"
+        :error="source.error"
         :title="__('Could not load this report')"
-        :retry="report.reload"
+        :retry="source.reload"
       />
 
       <div v-else-if="!showing" class="flex-1 overflow-auto px-3 py-4 sm:px-5">
@@ -369,13 +417,60 @@ const reports = createResource({
     // The registry owns which reports exist and which one is first; a
     // hardcoded default here would silently break when it is reordered.
     if (!data?.length) return
+    // ...but the builder is not in the registry, so a link straight to it would
+    // otherwise be bounced back to the first built-in the moment the list loads.
+    if (active.value === BUILDER) return
     if (!data.some((r) => r.name === active.value)) active.value = data[0].name
   },
 })
 
-const reportOptions = computed(() =>
-  (reports.data || []).map((r) => ({ label: r.title, value: r.name })),
+/* The builder is a rail entry rather than a page of its own: it produces the
+   same {title, columns, rows} shape, so the table, CSV, print sheet, territory
+   note and stale-payload guard below are all reused rather than rebuilt. The
+   sentinel cannot collide with a registry key — those are Python identifiers. */
+const BUILDER = '__builder__'
+const isBuilder = computed(() => active.value === BUILDER)
+
+const builderOptions = createResource({
+  url: 'crm.api.report_builder.get_builder_options',
+  initialData: { dimensions: [], measures: [], status_scopes: [] },
+  auto: true,
+})
+
+const dimension = ref(String(route.query.dimension || 'stage'))
+const measure = ref(String(route.query.measure || 'deals'))
+const statusScope = ref(String(route.query.scope || 'open'))
+/* Which column a period applies to, or none. Explicit rather than inferred
+   from the scope: "won deals created this month" and "deals won this month"
+   are different questions and the page should not quietly pick one. */
+const dateBasis = ref(String(route.query.basis || 'none'))
+
+const measureNeedsScope = computed(
+  () =>
+    (builderOptions.data?.measures || []).find((m) => m.key === measure.value)
+      ?.requires_scope || '',
 )
+
+/* A realised measure is only meaningful over won deals, and the server refuses
+   the mismatch rather than switching it silently. Moving the picker here keeps
+   the two in step so the refusal is never something the user has to discover. */
+watch(measureNeedsScope, (required) => {
+  if (required) statusScope.value = required
+})
+
+const asOptions = (rows) =>
+  (rows || []).map((r) => ({ label: r.label, value: r.key }))
+
+const dateBasisOptions = computed(() => [
+  { label: __('No period (as it stands now)'), value: 'none' },
+  { label: __('Created in period'), value: 'creation' },
+  { label: __('Closed in period'), value: 'closed_date' },
+])
+
+const reportOptions = computed(() => [
+  ...(reports.data || []).map((r) => ({ label: r.title, value: r.name })),
+  { label: __('Build a report'), value: BUILDER },
+])
 
 const activeReport = computed(() =>
   (reports.data || []).find((r) => r.name === active.value),
@@ -384,7 +479,11 @@ const activeReport = computed(() =>
 /* pipeline_by_stage is a snapshot of the pipeline as it stands, not of a
    window, so the registry marks it period:false and the picker goes away
    rather than offering a control that changes nothing. */
-const showPeriodFilter = computed(() => activeReport.value?.period !== false)
+const showPeriodFilter = computed(() =>
+  isBuilder.value
+    ? dateBasis.value !== 'none'
+    : activeReport.value?.period !== false,
+)
 
 const requestKey = computed(() =>
   [
@@ -393,6 +492,12 @@ const requestKey = computed(() =>
     toDate.value,
     scopeUser.value,
     scopeTerritory.value,
+    // Without these the guard below would serve the previous combination's rows
+    // under a newly chosen dimension -- the exact failure it exists to prevent.
+    isBuilder.value ? dimension.value : '',
+    isBuilder.value ? measure.value : '',
+    isBuilder.value ? statusScope.value : '',
+    isBuilder.value ? dateBasis.value : '',
   ].join('|'),
 )
 const loadedKey = ref('')
@@ -412,11 +517,36 @@ const report = createResource({
   },
 })
 
+/* A second resource rather than a switched url on the first: they take
+   different parameters, and a makeParams that branched would send a dimension
+   to the built-in endpoint on the render between the two. */
+const builtReport = createResource({
+  url: 'crm.api.report_builder.run',
+  makeParams: () => ({
+    dimension: dimension.value,
+    measure: measure.value,
+    status_scope: statusScope.value,
+    date_field: dateBasis.value === 'none' ? null : dateBasis.value,
+    from_date: dateBasis.value === 'none' ? null : fromDate.value,
+    to_date: dateBasis.value === 'none' ? null : toDate.value,
+    user: scopeUser.value || null,
+    territory: scopeTerritory.value || null,
+  }),
+  auto: false,
+  onSuccess() {
+    loadedKey.value = requestKey.value
+  },
+})
+
+const source = computed(() => (isBuilder.value ? builtReport : report))
+
 /* The payload only stands for the selection that produced it. Rendering
    `report.data` directly is what let a failed or in-flight reload keep the
    previous report's rows on screen under a newly chosen report or period. */
 const showing = computed(() =>
-  loadedKey.value && loadedKey.value === requestKey.value ? report.data : null,
+  loadedKey.value && loadedKey.value === requestKey.value
+    ? source.value.data
+    : null,
 )
 
 const hasRows = computed(() => Boolean(showing.value?.rows?.length))
@@ -434,7 +564,7 @@ const unfilteredNote = computed(() => {
 
 /* Keep the loading table the shape of the answer where we already know it —
    the previous payload's columns are the closest guess available. */
-const skeletonColumns = computed(() => report.data?.columns?.length || 4)
+const skeletonColumns = computed(() => source.value.data?.columns?.length || 4)
 
 const baseCurrency = computed(
   () => settings.value?.currency || window.sysdefaults?.currency || 'USD',
@@ -443,28 +573,47 @@ const baseCurrency = computed(
 watch(
   requestKey,
   () => {
-    if (active.value) report.fetch()
+    if (active.value) source.value.fetch()
   },
   { immediate: true },
 )
 
 /* Deep-linkable state. `replace` rather than `push`: changing a filter is not
    a place in history to go back to, but the URL still has to be bookmarkable. */
-watch([active, dateRange, scopeUser, scopeTerritory, showPeriodFilter], () => {
-  const query = {
-    report: active.value || undefined,
-    range: showPeriodFilter.value ? dateRange.value || undefined : undefined,
-    user: scopeUser.value || undefined,
-    territory: scopeTerritory.value || undefined,
-  }
-  /* Written straight to history rather than through router.replace: App.vue
+watch(
+  [
+    active,
+    dateRange,
+    scopeUser,
+    scopeTerritory,
+    showPeriodFilter,
+    dimension,
+    measure,
+    statusScope,
+    dateBasis,
+  ],
+  () => {
+    const query = {
+      report: active.value || undefined,
+      range: showPeriodFilter.value ? dateRange.value || undefined : undefined,
+      user: scopeUser.value || undefined,
+      territory: scopeTerritory.value || undefined,
+      // A built report is only bookmarkable if its four choices travel too --
+      // otherwise the link reopens the builder on whatever the defaults are.
+      dimension: isBuilder.value ? dimension.value : undefined,
+      measure: isBuilder.value ? measure.value : undefined,
+      scope: isBuilder.value ? statusScope.value : undefined,
+      basis: isBuilder.value ? dateBasis.value : undefined,
+    }
+    /* Written straight to history rather than through router.replace: App.vue
      keys the router-view on the full path, so a query change there would tear
      the page down and refetch everything on every filter interaction. */
-  const href = router.resolve({ name: 'Reports', query }).href
-  if (href !== window.location.pathname + window.location.search) {
-    window.history.replaceState(window.history.state, '', href)
-  }
-})
+    const href = router.resolve({ name: 'Reports', query }).href
+    if (href !== window.location.pathname + window.location.search) {
+      window.history.replaceState(window.history.state, '', href)
+    }
+  },
+)
 
 function exportCsv() {
   const data = showing.value
