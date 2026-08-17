@@ -18,7 +18,14 @@ from __future__ import annotations
 import frappe
 from frappe.utils.telemetry import capture
 
-from .config import _setting, auto_enrich_enabled_for, get_config, get_settings
+from .config import (
+	ENABLE_FLAG_BY_DOCTYPE,
+	_setting,
+	auto_enrich_enabled_for,
+	enrichment_enabled_for,
+	get_config,
+	get_settings,
+)
 from .mapper import apply_to_document
 from .pipeline import PROGRESS_STEPS
 from .pipeline import run as run_pipeline
@@ -156,6 +163,80 @@ def auto_enrich_on_create(doc, method=None):
 		frappe.log_error(title="Domain Enrichment: auto_enrich_on_create failed")
 
 
+def stale_records(doctype: str, cutoff, limit: int) -> list[str]:
+	"""Records of ``doctype`` whose most recent run started before ``cutoff``.
+
+	Oldest first, so a backlog is worked through in order instead of the sweep
+	re-picking the same records every night.
+
+	Deliberately joins against run history rather than scanning the doctype: a
+	record that has *never* been enriched is not stale, it is untouched, and
+	sweeping those in would mean ticking one checkbox crawls every website in the
+	CRM that night. Never-enriched records are what the Enrich button and
+	``auto_enrich`` are for.
+
+	The latest run counts whatever its status -- a site that fails to crawl is
+	retried on the same cadence as everything else, not every single night.
+	"""
+	from frappe.query_builder.functions import Max
+
+	Run = frappe.qb.DocType("CRM Enrichment Run")
+	last_started = Max(Run.started_on)
+	rows = (
+		frappe.qb.from_(Run)
+		.select(Run.reference_name)
+		.where(Run.reference_doctype == doctype)
+		.groupby(Run.reference_name)
+		.having(last_started < cutoff)
+		.orderby(last_started)
+		.limit(limit)
+	).run()
+	return [row[0] for row in rows]
+
+
+def reenrich_stale_records() -> int:
+	"""Daily sweep: re-enqueue enrichment for records whose data has gone stale.
+
+	Returns how many were enqueued. Off unless an admin turns
+	``scheduled_reenrichment`` on -- crawling other people's websites on a timer is
+	not something to start doing by default.
+
+	Enqueues through the same ``enqueue_enrichment`` as the manual and auto paths,
+	so the per-document ``job_id`` and ``deduplicate`` mean a record a rep is
+	already enriching by hand is not run twice.
+	"""
+	s = get_settings()
+	if not (_setting(s, "enabled") and _setting(s, "scheduled_reenrichment")):
+		return 0
+
+	days = max(1, int(_setting(s, "reenrich_after_days")))
+	batch = max(1, int(_setting(s, "reenrich_batch_size")))
+	cutoff = frappe.utils.add_days(frappe.utils.now_datetime(), -days)
+
+	queued = 0
+	for doctype in ENABLE_FLAG_BY_DOCTYPE:
+		if queued >= batch or not enrichment_enabled_for(doctype):
+			continue
+
+		for name in stale_records(doctype, cutoff, batch - queued):
+			website = (frappe.db.get_value(doctype, name, "website") or "").strip()
+			if not website:
+				# deleted, or its website has been cleared since the last run
+				continue
+			try:
+				enqueue_enrichment(doctype, name, website, user="Administrator", trigger="scheduled")
+				queued += 1
+			except Exception:
+				# one unqueueable record must not cost the rest of the sweep
+				frappe.log_error(title=f"Domain Enrichment: could not queue {doctype} {name}")
+
+	if queued:
+		frappe.logger("crm.enrichment").info(
+			f"Scheduled re-enrichment queued {queued} record(s) stale for more than {days} days"
+		)
+	return queued
+
+
 def run_enrichment(
 	reference_doctype: str,
 	reference_name: str,
@@ -173,19 +254,22 @@ def run_enrichment(
 	user = user or frappe.session.user
 	started_on = frappe.utils.now_datetime()
 
+	# Nobody is waiting on a scheduled sweep. Publishing anyway would put a
+	# progress stream for records they never asked about into whichever session
+	# happens to be the job's user -- and publishing to no user at all is a
+	# site-wide broadcast, which is worse. So the events are simply not sent.
+	audience = None if trigger == "scheduled" else user
+
+	def _notify(**kwargs):
+		if audience:
+			_publish(reference_doctype, reference_name, user=audience, **kwargs)
+
 	def progress(step_index, message=""):
-		_publish(
-			reference_doctype,
-			reference_name,
-			status="running",
-			message=message,
-			step=step_index,
-			user=user,
-		)
+		_notify(status="running", message=message, step=step_index)
 
 	try:
 		cfg = get_config()
-		_publish(reference_doctype, reference_name, status="running", message="Starting", step=0, user=user)
+		_notify(status="running", message="Starting", step=0)
 
 		result = run_pipeline(website, cfg=cfg, progress=progress)
 
@@ -204,9 +288,7 @@ def run_enrichment(
 			started_on=started_on,
 		)
 
-		_publish(
-			reference_doctype,
-			reference_name,
+		_notify(
 			status="completed",
 			message="Completed",
 			step=TOTAL_STEPS - 1,
@@ -215,7 +297,6 @@ def run_enrichment(
 				"notes": result.notes,
 				**result.flat(),
 			},
-			user=user,
 		)
 		capture(
 			"enrichment_run_completed",
@@ -246,13 +327,10 @@ def run_enrichment(
 			)
 		except Exception:
 			frappe.log_error(title="Domain Enrichment: could not write Failed run")
-		_publish(
-			reference_doctype,
-			reference_name,
+		_notify(
 			status="error",
 			message=frappe._("Enrichment failed. Check the error log."),
 			step=0,
-			user=user,
 		)
 		capture(
 			"enrichment_run_completed",

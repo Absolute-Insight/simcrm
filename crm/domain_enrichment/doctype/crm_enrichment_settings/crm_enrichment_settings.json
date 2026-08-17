@@ -13,6 +13,9 @@
   "enable_organization",
   "automation_section",
   "auto_enrich",
+  "scheduled_reenrichment",
+  "reenrich_after_days",
+  "reenrich_batch_size",
   "crawl_tab",
   "max_pages",
   "max_depth",
@@ -83,6 +86,29 @@
    "fieldname": "auto_enrich",
    "fieldtype": "Check",
    "label": "Auto-enrich new Organizations"
+  },
+  {
+   "fieldname": "scheduled_reenrichment",
+   "fieldtype": "Check",
+   "default": "0",
+   "label": "Re-enrich stale records",
+   "description": "Daily sweep. Only records that have been enriched before are re-run — enabling this never crawls your whole database."
+  },
+  {
+   "fieldname": "reenrich_after_days",
+   "fieldtype": "Int",
+   "default": "90",
+   "label": "Re-enrich after (days)",
+   "depends_on": "eval:doc.scheduled_reenrichment",
+   "description": "Age of the most recent run, successful or not, before a record is due again."
+  },
+  {
+   "fieldname": "reenrich_batch_size",
+   "fieldtype": "Int",
+   "default": "25",
+   "label": "Records per sweep",
+   "depends_on": "eval:doc.scheduled_reenrichment",
+   "description": "Cap per daily run, oldest first. A large backlog is worked through over days rather than crawled at once."
   },
   {
    "fieldname": "crawl_tab",
