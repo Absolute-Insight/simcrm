@@ -16,7 +16,8 @@ test.describe('Login', () => {
 			process.env.FRAPPE_PASSWORD || 'admin',
 		)
 
-		await expect(page).toHaveURL(/\/crm/)
+		// the path, not the URL: the CI host is crm.test (see LoginPage.login)
+		await expect(page).toHaveURL((url) => url.pathname.startsWith('/crm'))
 		// The CRM shell renders its primary navigation once booted.
 		await expect(
 			page.getByRole('link', { name: 'Leads' }).first(),

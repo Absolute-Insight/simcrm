@@ -47,9 +47,25 @@ export class LeadPage {
 		const editor = this.page.locator('[contenteditable="true"]').last()
 		await editor.click()
 		await editor.fill(body)
+		// Watch the send itself rather than clicking and walking away. Without
+		// this, a send that failed and a send that was merely slow produce the
+		// same symptom: the caller's poll for the Communication timing out with
+		// nothing to say about why.
+		const sent = this.page.waitForResponse(
+			(response) =>
+				response.url().includes('communication.email.make') &&
+				response.request().method() === 'POST',
+			{ timeout: 30000 },
+		)
 		// The label carries a platform-dependent shortcut hint, e.g. "Send (⌘⏎)".
 		// Anchored both ends so it can't match "Send an Email" / "Send Template".
 		await this.page.getByRole('button', { name: /^Send(\s*\(.*\))?$/ }).click()
+
+		const response = await sent
+		if (!response.ok()) {
+			const detail = (await response.text().catch(() => '')).slice(0, 500)
+			throw new Error(`Send failed: HTTP ${response.status()} — ${detail}`)
+		}
 	}
 
 	/** Switch to a named tab in the activity area (Activity, Emails, ...). */

@@ -117,14 +117,23 @@ polish · **P4** platform work beyond the pilot.
       installed; the config was inert cruft that would misfire the day someone added it.
       `codecov.yml`'s `if_ci_failed: ignore` reported coverage green exactly when CI had
       failed; it now errors.
-- [ ] **Two e2e specs fail against a freshly created site; the suite is advisory until
-      they are triaged.** `login.spec.ts:12` (the sidebar's Leads link never appears) and
-      `email.spec.ts:10` both **pass locally but fail in CI**, whose site is created from
-      scratch each run — worth understanding on its own terms, because a fresh site is
-      exactly what the pilot will be. Remove `continue-on-error` from `ui-tests.yml` once
-      they are closed. *(The third failure, `planner.spec.ts:104`, is fixed: it derived its
-      week from the runner's UTC clock while the site runs IST, so every Sunday after
-      18:30 UTC it wrote a plan into one week and asserted against another.)* **1 day.**
+- [x] **The e2e suite is green in CI and now blocks.** 18/18, and `continue-on-error`
+      is gone. Three stacked faults, each hiding the next, none of them reproducible
+      locally:
+      **(1)** CI serves the site at `crm.test`, and the login spec waited on `/\/crm/`,
+      which matches the `//crm` in that *host* — so the wait returned instantly on the
+      login page. On `localhost` the same regex is accidentally correct.
+      **(2)** The workflow's Email Account was never created: `bench console` is an
+      interactive REPL, a piped multi-line block is echoed as continuation lines and
+      never runs, and console exits 0 regardless — so the setup step went green with no
+      account, and every send returned 501. (`smtp_server: localhost` would have been
+      the next failure, since that value makes frappe open a live SMTP connection.)
+      **(3)** CI built only the crm app's assets. The login page is served by *frappe*
+      and its submit handler is in frappe's bundles, so clicking Sign In did nothing at
+      all — no request, no error. A dev bench has those assets already, which is why no
+      local run could ever reproduce it.
+      Each was found only after making the layer *report* rather than guessing at a fix:
+      an assertion on the setup, and response observers on login and send.
 - [x] **The Playwright suite had never run in CI.** `ui-tests.yml:6` triggers only on
       branch `main-hotfix`, which does not exist. **5 min.**
 - [x] **The frontend coverage gate could not fail.** `vitest.config.js` scoped coverage to
