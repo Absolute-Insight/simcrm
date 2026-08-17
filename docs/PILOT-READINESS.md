@@ -301,10 +301,20 @@ polish · **P4** platform work beyond the pilot.
       unbounding the limit.
 
 ### Mobile parity
-- [ ] **A rep on a phone gets none of Vectora's three differentiating surfaces.**
-      Suggestions, Planner and Reports are all gated `!mobile` (`AppSidebar.vue:180,300-313`).
-      Per-record suggestions do work on mobile. The Planner week grid is the expensive part.
-      **3–5 days.**
+- [x] **A rep on a phone gets none of Vectora's three differentiating surfaces.**
+      Suggestions, Planner and Reports were all gated `!mobile` in `AppSidebar.vue`.
+      **The estimate was wrong, and checking beat guessing:** the pages were already
+      responsive — verified at 390px, the dashboard stacks its tiles, the planner falls
+      back from a week grid to a day list, the reports table scrolls in its own
+      container. They were routed and rendering, just absent from the one menu a mobile
+      rep has, so the fix was un-gating three links rather than the "expensive" grid
+      rewrite this item predicted. Suggestions needed real work: the desktop slide-over
+      is 400px hung off the sidebar, so the list was extracted to `SuggestionsList.vue`
+      and mobile gets a route and a page, following the Notifications precedent. Dashboard
+      *editing* stays desktop-only — it is a 20-column drag grid, undraggable by thumb.
+      Calendar stays gated on evidence: seven day-columns and a clipped toolbar at 390px.
+- [ ] **Calendar is unusable at phone width** — the week view puts seven day-columns in
+      390px and clips its own toolbar. Needs a day view as the mobile default. **1 day.**
 
 ### Error handling on inherited surfaces
 - [ ] **19 `call().then()` sites with no rejection handler.** The split is precise: every

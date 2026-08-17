@@ -50,12 +50,16 @@
             </template>
           </SidebarItem>
 
+          <!-- On mobile this routes to a page, exactly as Notifications above
+               does; on desktop it toggles the slide-over. The inbox is the
+               proactive surface, so a rep on a phone not having it at all was
+               the largest hole in mobile parity. -->
           <SidebarItem
-            v-if="!mobile"
             id="suggestions-btn"
             :label="__('Suggestions')"
-            :active="suggestionsVisible"
-            @click="toggleSuggestionsPanel"
+            :to="mobile ? { name: 'Suggestions' } : undefined"
+            :active="mobile ? activeItem === 'Suggestions' : suggestionsVisible"
+            @click="onSuggestionsClick"
           >
             <template #prefix>
               <span class="relative grid size-4 place-items-center">
@@ -293,23 +297,27 @@ const isFCSite = ref(window.is_fc_site)
 const isDemoSite = ref(window.is_demo_site)
 
 const links = [
+  // Dashboard, Planner and Reports are the surfaces Vectora is *for*, and they
+  // were unreachable on a phone -- routed and rendering, just absent from the
+  // one menu a mobile rep has. Each was checked at 390px: the dashboard stacks
+  // its tiles, the planner falls back from a week grid to a day list, and the
+  // reports table scrolls inside its own container. Calendar stays hidden
+  // below because it genuinely does not fit -- seven day-columns and a clipped
+  // toolbar.
   {
     label: 'Dashboard',
     icon: DashboardIcon,
     to: 'Dashboard',
-    condition: () => !props.mobile,
   },
   {
     label: 'Planner',
     icon: PlannerIcon,
     to: 'Planner',
-    condition: () => !props.mobile,
   },
   {
     label: 'Reports',
     icon: ReportsIcon,
     to: 'Reports',
-    condition: () => !props.mobile,
   },
   {
     label: 'Leads',
@@ -468,6 +476,14 @@ function onNotificationsClick(event) {
     selectItem(event, 'Notifications')
   } else {
     toggleNotificationPanel()
+  }
+}
+
+function onSuggestionsClick(event) {
+  if (props.mobile) {
+    selectItem(event, 'Suggestions')
+  } else {
+    toggleSuggestionsPanel()
   }
 }
 
