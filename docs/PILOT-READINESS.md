@@ -117,14 +117,18 @@ polish · **P4** platform work beyond the pilot.
       installed; the config was inert cruft that would misfire the day someone added it.
       `codecov.yml`'s `if_ci_failed: ignore` reported coverage green exactly when CI had
       failed; it now errors.
-- [ ] **Two e2e specs fail against a freshly created site; the suite is advisory until
-      they are triaged.** `login.spec.ts:12` (the sidebar's Leads link never appears) and
-      `email.spec.ts:10` both **pass locally but fail in CI**, whose site is created from
-      scratch each run — worth understanding on its own terms, because a fresh site is
-      exactly what the pilot will be. Remove `continue-on-error` from `ui-tests.yml` once
-      they are closed. *(The third failure, `planner.spec.ts:104`, is fixed: it derived its
-      week from the runner's UTC clock while the site runs IST, so every Sunday after
-      18:30 UTC it wrote a plan into one week and asserted against another.)* **1 day.**
+- [ ] **Two e2e specs fail in CI only — first fix attempt in flight.** The earlier
+      "fresh site" reading was **wrong**. `login.spec.ts` fails because CI serves the
+      site at `http://crm.test:8000` and the test waited on `/\/crm/`, which matches the
+      `//crm` in that *host* — so the wait returned instantly on the login page and the
+      test looked for app chrome that was not there. Locally, on `localhost:8080`, the
+      same regex is accidentally correct, which is the whole reason it only ever failed
+      in CI. Both matches now compare `url.pathname`.
+      `email.spec.ts` is not diagnosed yet: the send is fire-and-forget, so a failed
+      send and a slow one both surface as the caller's poll timing out with nothing to
+      say. `sendEmail` now waits on the `communication.email.make` response and throws
+      with its status and body, which either removes a race or produces a real error to
+      read. Remove `continue-on-error` from `ui-tests.yml` once CI is green.
 - [x] **The Playwright suite had never run in CI.** `ui-tests.yml:6` triggers only on
       branch `main-hotfix`, which does not exist. **5 min.**
 - [x] **The frontend coverage gate could not fail.** `vitest.config.js` scoped coverage to
