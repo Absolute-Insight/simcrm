@@ -19,10 +19,10 @@ polish · **P4** platform work beyond the pilot.
 | **P0** security / data integrity | 1 | remote email images — deferred by decision, nothing built |
 | **P1** release / CI integrity | 0 | |
 | **P2** completeness (the mandate) | 0 | |
-| **P3** client-facing polish | 12 | |
+| **P3** client-facing polish | 10 | |
 | **P4** beyond the pilot | — | out of scope by definition |
 
-**85 closed, 13 open.** The mandate section is clear: every planned feature is built. What
+**87 closed, 11 open.** The mandate section is clear: every planned feature is built. What
 remains under P0 is one accepted risk with nothing built against it, and the rest is
 polish. Two things still need someone other than me:
 
@@ -871,11 +871,15 @@ polish. Two things still need someone other than me:
       scrollable. Every other filter bar in the app already wrapped.
 - [x] **SECURITY.md declared the shipping version unsupported** — the table said 2.x while
       `__version__` is 3.0.0, so a researcher would read 3.x as out of scope.
-- [ ] **Reports shows a shimmering skeleton forever when the report list fails or is
+- [x] **Reports shows a shimmering skeleton forever when the report list fails or is
       empty.** `Reports.vue:337` only sets `active` inside `onSuccess`, and returns early on
       an empty list, so the fetch watcher never runs and the pane falls to a
       never-resolving `SkeletonTable`. Below 640px the rail carrying the `ErrorState` is
-      hidden, so there is **no error message anywhere on screen**. **1 h.**
+      hidden, so there is **no error message anywhere on screen**. *Fixed:* the list
+      failing and the list being empty are now their own states in the main pane, which is
+      always visible -- an `ErrorState` with retry and an `EmptyState`. Both are guarded on
+      `isBuilder`, because a failed registry fetch is no reason to stop the report builder
+      working.
 - [ ] **Native `window.confirm()` on two Vectora surfaces** — `Planner.vue:561` (fires on
       every week arrow and rep switch while dirty) and `AutomationRules.vue:346`. Chrome
       renders these as `localhost:8080 says…`, which reads as unfinished. `ui/ConfirmDialog`
@@ -969,8 +973,14 @@ polish. Two things still need someone other than me:
       decision on the fork's contact identity**, then 15 min.
 - [ ] **~126 unwrapped English strings across 33 components**, worst on the Activities
       empty states (every Lead/Deal/Contact timeline) and ~45 filter operator labels. **1 day.**
-- [ ] **Twilio callback URL built by substring-matching `":8"`** — copy-pasted in two files;
-      a site on `:8443` silently loses its port. **30 min.**
+- [x] **Twilio callback URL built by substring-matching `":8"`** — copy-pasted in two files;
+      a site on `:8443` silently loses its port. *Fixed:* parsed properly, and only a
+      recognised bench port (8000/8080/9000) is dropped -- `get_url()` already honours
+      `host_name`, and an admin who set that has told us their public address. The old code
+      did not even strip 9000, since it only matched `:8`. It also did `str + None`, so
+      calling it with no path -- as the signature invites -- raised. One definition now,
+      re-exported where the copy was: the bug had to be found twice. 9 tests,
+      mutation-checked.
 - [ ] **Skeleton/error states cover only the new surfaces** — legacy list views still use
       frappe-ui defaults despite `EmptyState.vue` documenting the three-state contract. **2–3 d.**
 - [ ] **Dashboard rate limit is tuned as if it were one call per load** — the tile row fires
