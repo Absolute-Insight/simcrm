@@ -94,6 +94,7 @@ import {
   disableSettingModalOutsideClick,
 } from '@/composables/settings'
 import { isWhatsappInstalled } from '@/composables/whatsapp'
+import { leadSyncingEnabled } from '@/composables/leadSyncing'
 import { Dialog, Avatar, SidebarItem } from 'frappe-ui'
 import { ref, markRaw, computed, watch, h } from 'vue'
 import AssignmentRulePage from './AssignmentRules/AssignmentRulePage.vue'
@@ -273,7 +274,7 @@ const tabs = computed(() => {
           label: __('Lead Syncing'),
           icon: 'refresh-cw',
           component: markRaw(LeadSyncSourcePage),
-          condition: () => isManager(),
+          condition: () => leadSyncingEnabled.value && isManager(),
         },
       ],
     },
