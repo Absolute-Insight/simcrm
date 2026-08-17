@@ -1,0 +1,27 @@
+{#
+	Every value interpolated here is escaped by the caller before it arrives.
+
+	That is not belt-and-braces: frappe's Jinja environment runs with
+	`autoescape = False` (verified against `frappe.get_jenv()`), so `{{ subject }}`
+	in this file emits raw HTML exactly as the f-string it replaced did. An event
+	title is user-entered and this mail goes to external participants, so an
+	unescaped field here is a phishing vector in somebody else's inbox.
+
+	If you add a field, escape it in `_send_email_notification` — the template
+	will not do it for you.
+#}
+<div style="font-family: Arial, Helvetica, sans-serif; max-width: 600px; color: #0e0e1f;">
+	<h2 style="color: #0e0e1f; margin: 0 0 12px;">{{ _("Event reminder") }}</h2>
+	<p style="margin: 0 0 16px;">{{ _("A reminder for your upcoming event:") }}</p>
+	<div style="background-color: #ececf8; padding: 16px; border-left: 4px solid #5b5fe8; margin: 0 0 20px;">
+		<h3 style="margin: 0; color: #3c3caf;">{{ subject }}</h3>
+		{% if description %}
+		<p style="margin: 10px 0; color: #282870;">{{ description }}</p>
+		{% endif %}
+		<p style="margin: 5px 0;"><strong>{{ _("Starts") }}:</strong> {{ start_time }}</p>
+		<p style="margin: 5px 0;"><strong>{{ _("Time remaining") }}:</strong> {{ time_remaining }}</p>
+	</div>
+	<p style="color: #5b5fe8; font-size: 12px; margin: 0;">
+		{{ _("This is an automated reminder from {0}.").format(brand) }}
+	</p>
+</div>
