@@ -2,6 +2,8 @@ import json
 
 import frappe
 from frappe import _
+from frappe.utils.password import get_decrypted_password
+from twilio.request_validator import RequestValidator
 from twilio.twiml.voice_response import VoiceResponse
 from werkzeug.wrappers import Response
 
@@ -10,10 +12,50 @@ from crm.integrations.api import get_contact_by_phone_number
 from .twilio_handler import IncomingCall, Twilio, TwilioCallDetails
 
 
+def validate_twilio_signature():
+	"""Verify the X-Twilio-Signature header, which is what actually authenticates.
+
+	Twilio signs the request URL plus the sorted POST parameters with the
+	account's auth token. That header is the only part of a webhook an attacker
+	cannot produce, and nothing here was checking it.
+
+	Behind TLS termination the scheme in the reconstructed URL can be http while
+	Twilio signed https, which fails a signature that is in fact correct — so the
+	forwarded scheme is tried as well before rejecting. Both branches are tested.
+	"""
+	auth_token = get_decrypted_password(
+		"CRM Twilio Settings", "CRM Twilio Settings", "auth_token", raise_exception=False
+	)
+	if not auth_token:
+		frappe.throw(_("Twilio auth token is not configured"), frappe.PermissionError)
+
+	request = frappe.request
+	signature = request.headers.get("X-Twilio-Signature", "")
+	params = request.form.to_dict() if request.form else {}
+	validator = RequestValidator(auth_token)
+
+	candidates = [request.url]
+	forwarded_proto = request.headers.get("X-Forwarded-Proto")
+	if forwarded_proto and "://" in request.url:
+		candidates.append(f"{forwarded_proto}://{request.url.split('://', 1)[1]}")
+
+	if any(validator.validate(url, params, signature) for url in candidates):
+		return
+
+	frappe.throw(_("Invalid Twilio signature"), frappe.PermissionError)
+
+
 def validate_twilio_request(args, require_application_sid: bool = False):
 	twilio = Twilio.connect()
 	if not twilio:
 		frappe.throw(_("Twilio configuration is missing"), frappe.PermissionError)
+
+	# The signature first: everything below it compares identifiers, not secrets.
+	# An AccountSid appears in the Twilio console, in dashboard URLs and in every
+	# webhook body, so on its own it authenticated nothing — anyone holding one
+	# could POST here and rewrite a call log's recording_url to point a rep at
+	# audio of their choosing.
+	validate_twilio_signature()
 
 	account_sid = frappe.utils.cstr(args.get("AccountSid"))
 	if not account_sid or account_sid != frappe.utils.cstr(twilio.account_sid):
@@ -51,7 +93,9 @@ def generate_access_token():
 	return {"token": frappe.safe_decode(token)}
 
 
-# webhook authenticity is enforced by validate_twilio_request(); guest access itself is unchanged
+# Guest access is required -- Twilio posts here with no session. Authenticity
+# comes from the X-Twilio-Signature check in validate_twilio_request(), which
+# is the only part of the request an attacker cannot forge.
 @frappe.whitelist(allow_guest=True)  # nosemgrep: guest-whitelisted-method
 def voice(**kwargs):
 	"""This is a webhook called by twilio to get instructions when the voice call request comes to twilio server."""
@@ -84,7 +128,9 @@ def voice(**kwargs):
 	return Response(resp.to_xml(), mimetype="text/xml")
 
 
-# webhook authenticity is enforced by validate_twilio_request(); guest access itself is unchanged
+# Guest access is required -- Twilio posts here with no session. Authenticity
+# comes from the X-Twilio-Signature check in validate_twilio_request(), which
+# is the only part of the request an attacker cannot forge.
 @frappe.whitelist(allow_guest=True)  # nosemgrep: guest-whitelisted-method
 def twilio_incoming_call_handler(**kwargs):
 	args = frappe._dict(kwargs)

@@ -16,6 +16,26 @@ polish · **P4** platform work beyond the pilot.
 
 ## P0 — Security and data integrity
 
+- [x] **The Twilio webhooks were authenticated by an identifier, not a secret.**
+      `validate_twilio_request` compared the `AccountSid` in the request body against the
+      configured one — but an Account SID is not a credential. It appears in the Twilio
+      console, in dashboard URLs, and in the body of every webhook Twilio sends. Anyone
+      holding one could POST to `update_recording_info` and rewrite a call log's
+      `recording_url` to point a rep at audio of their choosing, or drive
+      `update_call_status_info` to rewrite statuses. Twilio's real authentication is the
+      `X-Twilio-Signature` HMAC, and nothing checked it. Now verified before the identifier
+      comparisons, which are kept as defence in depth. The two in-tree comments claiming
+      "webhook authenticity is enforced by validate_twilio_request()" were describing
+      something the function did not do; corrected. **Not verified against live Twilio —
+      confirm call recording and status updates still arrive during the pilot.** 7 tests
+      sign requests for real (`RequestValidator` is deterministic), including the forged
+      Account-SID case and the TLS-termination case that would otherwise reject genuine
+      webhooks behind a proxy.
+- [x] **Exotel's webhook token check was not constant-time**, on the one comparison
+      standing in front of an unauthenticated endpoint. Now `hmac.compare_digest`, with
+      both sides required non-empty so an unconfigured site cannot be talked into
+      accepting a blank key. 4 tests.
+
 - [x] **Three more unscoped realtime broadcasts, found by the same full scan.**
       `exotel/handler.py` published Exotel's raw passthru payload site-wide from an
       `allow_guest` webhook — `CallFrom`, the **customer's phone number**, delivered to
@@ -29,8 +49,16 @@ polish · **P4** platform work beyond the pilot.
       `crm_customer_created` targets the acting user — Deal.vue listens for it but never
       subscribes to a doc room, so a doc-room publish would have reached nobody. 6 tests;
       no Exotel account here, so they exercise the addressing decision directly.
-- [ ] **Triage the remaining 25 semgrep findings, then make the full scan a scheduled
-      job.** CI diff-scans, so nothing already in the tree can trip it — which is why two
+- [ ] **Finish triaging the semgrep findings, then make the full scan a scheduled job.**
+      The 7 `guest-whitelisted-method` findings are now reviewed: `get_translations`,
+      `oauth_providers` and `accept_invitation` must be guest-reachable and expose nothing
+      sensitive (`oauth_providers` decrypts a client secret only as an existence check and
+      never returns it); `get_context_for_dev` is behind `developer_mode`;
+      `live_demo.login` no-ops unless `demo_username`/`demo_password` are set in site
+      config — **worth knowing that setting those on a production site is an auth bypass
+      by design**; the two Twilio and one Exotel webhooks are fixed above. Remaining: 12
+      `frappe-manual-commit`, 3 `frappe-setuser`, 1 `override-doctype-class`, 1
+      `frappe-enqueue-without-after-commit`. CI diff-scans, so nothing already in the tree can trip it — which is why two
       P0 leaks sat there. A full run reports 12 `frappe-manual-commit`, 8
       `guest-whitelisted-method`, 3 `frappe-setuser`, 1 `override-doctype-class`, 1
       `frappe-enqueue-without-after-commit`. These are "audit this" advisories rather than

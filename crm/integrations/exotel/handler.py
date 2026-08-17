@@ -25,7 +25,7 @@ from crm.integrations.api import get_contact_by_phone_number
 # the query string, checked before anything else runs, and the handler throws
 # PermissionError when it does not match. The semgrep rule asks for exactly this
 # review; it surfaced on this PR only because the function body changed.
-@frappe.whitelist(allow_guest=True)  # nosemgrep
+@frappe.whitelist(allow_guest=True)  # nosemgrep: guest-whitelisted-method
 def handle_request(**kwargs):
 	validate_request()
 	if not is_integration_enabled():
