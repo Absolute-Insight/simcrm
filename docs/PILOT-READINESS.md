@@ -117,18 +117,23 @@ polish · **P4** platform work beyond the pilot.
       installed; the config was inert cruft that would misfire the day someone added it.
       `codecov.yml`'s `if_ci_failed: ignore` reported coverage green exactly when CI had
       failed; it now errors.
-- [ ] **Two e2e specs fail in CI only — first fix attempt in flight.** The earlier
-      "fresh site" reading was **wrong**. `login.spec.ts` fails because CI serves the
-      site at `http://crm.test:8000` and the test waited on `/\/crm/`, which matches the
-      `//crm` in that *host* — so the wait returned instantly on the login page and the
-      test looked for app chrome that was not there. Locally, on `localhost:8080`, the
-      same regex is accidentally correct, which is the whole reason it only ever failed
-      in CI. Both matches now compare `url.pathname`.
-      `email.spec.ts` is not diagnosed yet: the send is fire-and-forget, so a failed
-      send and a slow one both surface as the caller's poll timing out with nothing to
-      say. `sendEmail` now waits on the `communication.email.make` response and throws
-      with its status and body, which either removes a race or produces a real error to
-      read. Remove `continue-on-error` from `ui-tests.yml` once CI is green.
+- [x] **The e2e suite is green in CI and now blocks.** 18/18, and `continue-on-error`
+      is gone. Three stacked faults, each hiding the next, none of them reproducible
+      locally:
+      **(1)** CI serves the site at `crm.test`, and the login spec waited on `/\/crm/`,
+      which matches the `//crm` in that *host* — so the wait returned instantly on the
+      login page. On `localhost` the same regex is accidentally correct.
+      **(2)** The workflow's Email Account was never created: `bench console` is an
+      interactive REPL, a piped multi-line block is echoed as continuation lines and
+      never runs, and console exits 0 regardless — so the setup step went green with no
+      account, and every send returned 501. (`smtp_server: localhost` would have been
+      the next failure, since that value makes frappe open a live SMTP connection.)
+      **(3)** CI built only the crm app's assets. The login page is served by *frappe*
+      and its submit handler is in frappe's bundles, so clicking Sign In did nothing at
+      all — no request, no error. A dev bench has those assets already, which is why no
+      local run could ever reproduce it.
+      Each was found only after making the layer *report* rather than guessing at a fix:
+      an assertion on the setup, and response observers on login and send.
 - [x] **The Playwright suite had never run in CI.** `ui-tests.yml:6` triggers only on
       branch `main-hotfix`, which does not exist. **5 min.**
 - [x] **The frontend coverage gate could not fail.** `vitest.config.js` scoped coverage to
