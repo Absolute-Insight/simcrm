@@ -1,5 +1,6 @@
 import json
 import os
+from typing import ClassVar
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -127,3 +128,205 @@ class TestDemoData(IntegrationTestCase):
 		self.assertIsNone(frappe.db.get_default(DEMO_CALL_LOGS_KEY))
 		self.assertIsNone(frappe.db.get_default(DEMO_ACTIVITIES_KEY))
 		self.assertIsNone(frappe.db.get_default(DEMO_DEALS_KEY))
+
+
+class TestDemoSeedGate(IntegrationTestCase):
+	"""The setup wizard fires on production sites too, and `deploy/README.md`
+	sends operators to it."""
+
+	def test_the_wizard_hook_seeds_nothing_by_default(self):
+		from unittest.mock import patch
+
+		from crm.demo import api
+
+		with patch.object(api, "create_demo_data") as create:
+			api.seed_demo_data_if_enabled()
+		create.assert_not_called()
+
+	def test_the_wizard_hook_seeds_when_the_site_asks_for_it(self):
+		from unittest.mock import patch
+
+		from crm.demo import api
+
+		with (
+			patch.dict(frappe.conf, {api.DEMO_SEED_CONFIG_KEY: 1}),
+			patch.object(api, "create_demo_data") as create,
+		):
+			api.seed_demo_data_if_enabled()
+		create.assert_called_once()
+
+	def test_an_explicit_call_still_seeds_regardless_of_the_flag(self):
+		"""The gate belongs to the hook, not the function -- `bench execute
+		crm.demo.api.create_demo_data` has to do what it says."""
+		import inspect
+
+		from crm.demo import api
+
+		self.assertNotIn(api.DEMO_SEED_CONFIG_KEY, inspect.getsource(api.create_demo_data))
+
+
+class TestDerivedDemoCleanup(IntegrationTestCase):
+	"""Clearing demo data used to remove only what `crm/demo/` created. The
+	proactive tier reads those records and writes its own, so the conclusions
+	outlived the evidence."""
+
+	DEMO_USERS: ClassVar[list[str]] = ["derived.demo1@crmtest.test", "derived.demo2@crmtest.test"]
+	REAL_USER = "derived.real@crmtest.test"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		for email in (*self.DEMO_USERS, self.REAL_USER):
+			if not frappe.db.exists("User", email):
+				frappe.get_doc(
+					{
+						"doctype": "User",
+						"email": email,
+						"first_name": email.split("@")[0],
+						"send_welcome_email": 0,
+					}
+				).insert(ignore_permissions=True)
+
+		# CRM Suggestion validates its dynamic link, so the deals it points at
+		# have to be real ones.
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Derived Cleanup Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		status = frappe.get_all("CRM Deal Status", filters={"type": "Open"}, pluck="name")
+		if not status:
+			self.skipTest("site has no Open deal status")
+		self.demo_deal = self.make_deal(org, status[0], self.DEMO_USERS[0])
+		self.real_deal = self.make_deal(org, status[0], self.REAL_USER)
+
+	def make_deal(self, org: str, status: str, owner: str) -> str:
+		deal = frappe.get_doc(
+			{
+				"doctype": "CRM Deal",
+				"organization": org,
+				"deal_owner": owner,
+				"status": status,
+				"expected_deal_value": 1000,
+				"probability": 50,
+				"exchange_rate": 1,
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(
+			lambda n=deal.name: frappe.db.exists("CRM Deal", n)
+			and frappe.delete_doc("CRM Deal", n, force=True)
+		)
+		return deal.name
+
+	def make_snapshot(self, scope: str, user: str, date: str, month: str = "2026-08"):
+		doc = frappe.get_doc(
+			{
+				"doctype": "CRM Forecast Snapshot",
+				"snapshot_date": date,
+				"month": month,
+				"scope": scope,
+				"user": user,
+				"forecasted": 1000,
+				"actual_at_snapshot": 0,
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Forecast Snapshot", doc.name, force=True)
+		return doc.name
+
+	def make_suggestion(self, user: str, reference: str):
+		# reference_doctype is mandatory: a suggestion always points at something.
+		doc = frappe.get_doc(
+			{
+				"doctype": "CRM Suggestion",
+				"signal": "idle_deal",
+				"title": "demo residue",
+				"user": user,
+				"reference_doctype": "CRM Deal",
+				"reference_docname": reference,
+				"status": "Open",
+				"score": 1,
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(
+			lambda n=doc.name: frappe.db.exists("CRM Suggestion", n)
+			and frappe.delete_doc("CRM Suggestion", n, force=True)
+		)
+		return doc.name
+
+	def clear(self, created_at: str | None = None):
+		from crm.demo.api import DEMO_CREATED_AT_KEY, delete_derived_demo_records
+
+		previous = frappe.db.get_default(DEMO_CREATED_AT_KEY)
+		frappe.db.set_default(DEMO_CREATED_AT_KEY, created_at)
+		self.addCleanup(frappe.db.set_default, DEMO_CREATED_AT_KEY, previous)
+		return delete_derived_demo_records([], {"deals": [self.demo_deal]}, self.DEMO_USERS)
+
+	def test_a_suggestion_about_a_demo_deal_is_removed(self):
+		name = self.make_suggestion(self.REAL_USER, reference=self.demo_deal)
+		self.clear()
+		self.assertFalse(frappe.db.exists("CRM Suggestion", name))
+
+	def test_a_suggestion_for_a_demo_rep_is_removed(self):
+		"""Matching only on the reference leaves these behind: a demo user also
+		collects suggestions about records that outlive them."""
+		# Deliberately about a record that is *not* demo, so only the user matches.
+		name = self.make_suggestion(self.DEMO_USERS[0], reference=self.real_deal)
+		self.clear()
+		self.assertFalse(frappe.db.exists("CRM Suggestion", name))
+
+	def test_a_real_suggestion_survives(self):
+		name = self.make_suggestion(self.REAL_USER, reference=self.real_deal)
+		self.clear()
+		self.assertTrue(frappe.db.exists("CRM Suggestion", name))
+
+	def test_a_demo_rep_plan_and_its_items_are_removed(self):
+		plan = frappe.get_doc(
+			{
+				"doctype": "CRM Rep Plan",
+				"user": self.DEMO_USERS[0],
+				"week_start": "2026-08-17",
+				"items": [{"activity_type": "Call", "planned_date": "2026-08-18"}],
+			}
+		).insert(ignore_permissions=True)
+		item = plan.items[0].name
+
+		self.clear()
+		self.assertFalse(frappe.db.exists("CRM Rep Plan", plan.name))
+		# delete_doc, not db.delete -- a bare row delete orphans the child table.
+		self.assertFalse(frappe.db.exists("CRM Rep Plan Item", item))
+
+	def test_demo_rep_snapshots_are_removed(self):
+		name = self.make_snapshot("Rep", self.DEMO_USERS[0], "2026-08-10")
+		self.clear()
+		self.assertFalse(frappe.db.exists("CRM Forecast Snapshot", name))
+
+	def test_a_real_reps_snapshot_survives(self):
+		"""A demo deal belongs to a demo user, so it never entered a real rep's
+		row -- their accuracy history is not collateral."""
+		name = self.make_snapshot("Rep", self.REAL_USER, "2026-08-10")
+		self.clear()
+		self.assertTrue(frappe.db.exists("CRM Forecast Snapshot", name))
+
+	def test_aggregates_taken_while_demo_data_existed_are_removed(self):
+		"""These counted demo deals into a site or team total and cannot be
+		recomputed -- the forecast is what was believed on that date."""
+		site = self.make_snapshot("Site", "", "2026-08-12")
+		team = self.make_snapshot("Team", self.REAL_USER, "2026-08-12")
+		self.clear(created_at="2026-08-11 09:00:00")
+		self.assertFalse(frappe.db.exists("CRM Forecast Snapshot", site))
+		self.assertFalse(frappe.db.exists("CRM Forecast Snapshot", team))
+
+	def test_aggregates_from_before_the_demo_data_survive(self):
+		name = self.make_snapshot("Site", "", "2026-08-01")
+		self.clear(created_at="2026-08-11 09:00:00")
+		self.assertTrue(frappe.db.exists("CRM Forecast Snapshot", name))
+
+	def test_without_a_recorded_date_every_aggregate_goes(self):
+		"""A site seeded before the timestamp was tracked cannot distinguish a
+		clean aggregate from a contaminated one, and a wrong stored total is
+		worse than a missing one."""
+		site = self.make_snapshot("Site", "", "2026-08-01")
+		rep = self.make_snapshot("Rep", self.REAL_USER, "2026-08-01")
+		self.clear(created_at=None)
+		self.assertFalse(frappe.db.exists("CRM Forecast Snapshot", site))
+		self.assertTrue(frappe.db.exists("CRM Forecast Snapshot", rep))

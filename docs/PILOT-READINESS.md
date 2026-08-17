@@ -95,12 +95,19 @@ polish · **P4** platform work beyond the pilot.
       sender gets a read receipt on every rep who opens their mail. Blocking them is
       normal mail-client behaviour but needs a "load images" affordance to not look
       broken, so it was left out of the sandbox fix rather than smuggled in. **1 day.**
-- [ ] **Demo data contaminates forecast history irreversibly.** `hooks.py:97` seeds demo
-      data on desk setup-wizard completion — which `deploy/README.md:107` sends operators
-      to. `crm/demo/` never cleans `CRM Suggestion`, `CRM Forecast Snapshot` or
-      `CRM Rep Plan`, so hourly signals and weekly snapshots run against fake deals and
-      three fake users, and "Clear Demo Data" leaves immutable snapshots behind forever.
-      One patch for contaminated snapshots has already shipped once. **3 h.**
+- [x] **Demo data contaminates forecast history irreversibly.** `hooks.py:97` seeded demo
+      data on desk setup-wizard completion. A fresh site starts `setup_complete = 0`
+      (verified against frappe's System Settings default), so any operator who opens desk
+      on a production deployment is prompted for that wizard. `crm/demo/` never cleaned
+      `CRM Suggestion`, `CRM Forecast Snapshot` or `CRM Rep Plan`, so hourly signals and
+      weekly snapshots ran against fake deals and three fake users, and "Clear Demo Data"
+      left immutable snapshots behind forever. One patch for contaminated snapshots had
+      already shipped once. *Seeding is now opt-in via `crm_seed_demo_data`, gated at the
+      hook so an explicit `bench execute` still works; the clear path removes derived
+      suggestions, rep plans and forecast rows, and drops the Site/Team aggregates taken
+      while demo data existed — those counted fiction and cannot be recomputed. Rows from
+      before the seed, and real reps' Rep rows, survive. 12 tests; verified end-to-end by
+      seeding, running the tier and clearing.*
 - [x] **Two SSRF guards had diverged.** `integrations/api.py:183` (call-recording fetch)
       lacks the explicit multicast reject that `domain_enrichment/http.py:83` documents as
       necessary. The TODO at `integrations/api.py:213` says to share the helper "until
