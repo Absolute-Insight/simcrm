@@ -15,7 +15,10 @@ coverage:
         base: auto
         branches:
           - develop
-        if_ci_failed: ignore
+        # `ignore` reported this status green whenever CI failed, which is the
+        # one moment the number is least trustworthy. A coverage gate that
+        # cannot fail is decoration.
+        if_ci_failed: error
         only_pulls: true
 
 comment:
