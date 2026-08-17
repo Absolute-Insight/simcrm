@@ -1,7 +1,12 @@
 [project]
 name = "crm"
+# Who publishes *this* package. Not an attribution change: the per-file copyright
+# notices on inherited code stay Frappe Technologies', which is what the AGPL
+# requires and what README.md already says. This field said Frappe's maintainer,
+# which pointed bug reports and support mail at people who do not maintain this
+# fork.
 authors = [
-    { name = "Frappe Technologies Pvt. Ltd.", email = "shariq@frappe.io"}
+    { name = "Absolute Insight", email = "absolute.idev@gmail.com"}
 ]
 description = "Vectora — a proactive CRM built on Frappe CRM"
 requires-python = ">=3.10"
