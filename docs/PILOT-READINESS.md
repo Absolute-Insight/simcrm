@@ -543,19 +543,40 @@ polish · **P4** platform work beyond the pilot.
       stored `1-10` may be a real answer or an unanswered one. Read the earliest months
       of a company-size chart with that in mind on any site that predates the upgrade.
 
-- [ ] **Territory filter on dashboard and reports.** Still open, and larger than it looks.
-      The obvious seam is `scope_deals`/`scope_leads`, which every chart calls — except
-      it isn't: `plan_adherence`, `quota_attainment`, `forecasted_revenue`,
-      `forecast_accuracy` and `deals_by_stage_axis` do not go through it. A filter hung
-      there would apply to 17 of 22 charts **silently**, putting EMEA revenue next to
-      global quota attainment with nothing to say so — worse than no filter.
+- [x] **Territory filter on dashboard and reports.** A manager could not scope either
+      analytics surface to a region. Now they can, and — the part that took the design —
+      the three charts and two reports that *cannot* say so on their face.
 
-      Three of those five cannot honour a territory at all: quotas are per rep per month,
-      rep plans have no territory, and `CRM Forecast Snapshot` has no territory dimension
-      to slice (it would need re-snapshotting per territory). So the design has to be an
-      explicit parameter threaded into every chart signature, plus a visible marker on
-      the charts that cannot apply it. **2–3 days**, and it needs the "not filtered"
-      affordance designed rather than assumed.
+      The obvious seam was `scope_deals`/`scope_leads`, which every chart calls. Except
+      five don't: `plan_adherence`, `quota_attainment`, `forecasted_revenue`,
+      `forecast_accuracy` and `deals_by_stage_axis`. A filter hung there would have
+      applied to 19 charts of 24 **silently**, putting one region's pipeline beside the
+      whole company's quota attainment with both looking equally scoped.
+
+      So `territory` is an explicit parameter on every chart, every report and the three
+      shared helpers they delegate to. Three charts (`plan_adherence`,
+      `quota_attainment`, `forecast_accuracy`) and two reports (`plan_adherence_by_rep`,
+      `quota_attainment_by_rep`) genuinely cannot slice by it — rep plans have no
+      territory, quota is per rep per month so filtering only the closed-won side would
+      divide one region's revenue by the global target, and `CRM Forecast Snapshot` has
+      no territory dimension without re-snapshotting history. They are named in
+      `TERRITORY_BLIND`, return `territory_filtered: false`, and the UI prints
+      **"Not filtered by <territory>"** on the tile, the chart and the report.
+
+      **The test that makes the exception list worth anything:**
+      `test_every_chart_that_claims_to_filter_actually_filters` runs every non-blind
+      chart against two territories holding deliberately different data and fails if any
+      returns the same answer for both. A chart can accept the parameter, advertise
+      `territory_filtered: true` and drop it on the floor with nothing visible from
+      outside — that is the only thing standing in front of it. Its twin does the same
+      for reports. Building the fixture was most of the work: the first version compared
+      only the `data` key and so passed every number tile silently, and equal-sized
+      samples made several averages agree by coincidence.
+
+      Verified in the browser: filtering to a territory took Open deals 675 → 21 and Won
+      deals 256 → 13, while Plan adherence and Quota attainment kept their figures and
+      said why. Mutation-checked by making one chart ignore the parameter — the test
+      names it. 15 tests.
 - [x] **`quota_attainment_by_rep` could not be scheduled.** The digest doctype's Select
       hardcoded four of the five registry reports, so the one report a sales manager most
       wants mailed to them was simply not on offer — and nothing failed to say so. Added,

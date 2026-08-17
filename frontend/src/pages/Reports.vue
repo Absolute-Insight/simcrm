@@ -150,9 +150,35 @@
           </template>
         </Link>
 
+        <Link
+          v-if="isManager() || isAdmin()"
+          class="form-control w-48"
+          variant="outline"
+          :value="scopeTerritory"
+          doctype="CRM Territory"
+          :placeholder="__('All territories')"
+          @change="(v) => (scopeTerritory = v || '')"
+        >
+          <template #prefix>
+            <LucideMapPin class="mr-2 size-4 text-ink-gray-5" />
+          </template>
+        </Link>
+
         <div v-if="showing" class="ml-auto text-sm text-ink-gray-5">
           {{ __('{0} rows', [showing.rows.length]) }}
         </div>
+      </div>
+
+      <!-- Two reports cannot slice by territory: a rep plan has no territory,
+           and quota is per rep per month, so filtering only the closed-won side
+           would divide one region's revenue by the global target. They keep
+           answering for the whole company and say so, rather than showing a
+           global figure under a heading naming one region. -->
+      <div
+        v-if="unfilteredNote"
+        class="px-5 pb-2 text-sm text-ink-orange-9 print:hidden"
+      >
+        {{ unfilteredNote }}
       </div>
 
       <!-- Print-only masthead: the on-screen filter bar is hidden on paper, so
@@ -277,6 +303,7 @@ const DEFAULT_PRESET_DAYS = 30
 
 const active = ref(String(route.query.report || ''))
 const scopeUser = ref(String(route.query.user || ''))
+const scopeTerritory = ref(String(route.query.territory || ''))
 const dateRange = ref(
   String(route.query.range || '') || getLastXDays(DEFAULT_PRESET_DAYS),
 )
@@ -360,7 +387,13 @@ const activeReport = computed(() =>
 const showPeriodFilter = computed(() => activeReport.value?.period !== false)
 
 const requestKey = computed(() =>
-  [active.value, fromDate.value, toDate.value, scopeUser.value].join('|'),
+  [
+    active.value,
+    fromDate.value,
+    toDate.value,
+    scopeUser.value,
+    scopeTerritory.value,
+  ].join('|'),
 )
 const loadedKey = ref('')
 
@@ -371,6 +404,7 @@ const report = createResource({
     from_date: fromDate.value,
     to_date: toDate.value,
     user: scopeUser.value || null,
+    territory: scopeTerritory.value || null,
   }),
   auto: false,
   onSuccess() {
@@ -386,6 +420,17 @@ const showing = computed(() =>
 )
 
 const hasRows = computed(() => Boolean(showing.value?.rows?.length))
+
+/* The server says whether the territory filter actually reached this report.
+   Two of them cannot honour one, and a table of global numbers sitting under a
+   picker that names a region is the "two answers to one question" failure. */
+const unfilteredNote = computed(() => {
+  const data = showing.value
+  if (!data?.territory || data.territory_filtered) return ''
+  return __('Not filtered by {0} — this report covers everyone.', [
+    data.territory,
+  ])
+})
 
 /* Keep the loading table the shape of the answer where we already know it —
    the previous payload's columns are the closest guess available. */
@@ -405,11 +450,12 @@ watch(
 
 /* Deep-linkable state. `replace` rather than `push`: changing a filter is not
    a place in history to go back to, but the URL still has to be bookmarkable. */
-watch([active, dateRange, scopeUser, showPeriodFilter], () => {
+watch([active, dateRange, scopeUser, scopeTerritory, showPeriodFilter], () => {
   const query = {
     report: active.value || undefined,
     range: showPeriodFilter.value ? dateRange.value || undefined : undefined,
     user: scopeUser.value || undefined,
+    territory: scopeTerritory.value || undefined,
   }
   /* Written straight to history rather than through router.replace: App.vue
      keys the router-view on the full path, so a query change there would tear

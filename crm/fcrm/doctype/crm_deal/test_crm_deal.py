@@ -354,7 +354,10 @@ class TestCRMDeal(IntegrationTestCase):
 			frappe.get_doc({"doctype": "CRM Deal Status", "name": "Lost", "type": "Lost"}).insert()
 
 		if not frappe.db.exists("CRM Lost Reason", "Other"):
-			frappe.get_doc({"doctype": "CRM Lost Reason", "reason": "Other"}).insert()
+			# the field is lost_reason, and it is both mandatory and the autoname
+			# source -- "reason" here would have raised MandatoryError. The branch
+			# never runs today only because install.py seeds "Other".
+			frappe.get_doc({"doctype": "CRM Lost Reason", "lost_reason": "Other"}).insert()
 
 		deal = create_test_deal(organization="Lost Notes Org")
 		deal.status = "Lost"

@@ -119,6 +119,23 @@
           </Tooltip>
         </template>
       </Link>
+      <!-- Three charts cannot slice by territory (quotas and rep plans are per
+           rep, forecast snapshots store a total). They stay on screen and say so
+           rather than disappearing or, worse, showing global numbers under a
+           heading naming one region. -->
+      <Link
+        v-if="isAdmin() || isManager()"
+        class="form-control w-48"
+        variant="outline"
+        :value="filters.territory"
+        doctype="CRM Territory"
+        :placeholder="__('All territories')"
+        @change="(v) => updateFilter('territory', v)"
+      >
+        <template #prefix>
+          <LucideMapPin class="mr-2 size-4 text-ink-gray-5" />
+        </template>
+      </Link>
     </div>
 
     <div class="w-full flex-1 overflow-y-auto px-5 pb-6">
@@ -141,6 +158,7 @@
           :error="tile.resource.error"
           :retry="() => tile.resource.reload()"
           :drilldown-label="drilldownLabelFor(tile)"
+          :unfiltered-note="unfilteredNoteFor(tile.resource.data)"
           @drill="drillInto(tile.name, drilldownContext)"
         />
       </div>
@@ -395,6 +413,7 @@ const presetLabel = computed(() => {
 const filters = reactive({
   period: getLastXDays(),
   user: null,
+  territory: null,
 })
 
 const fromDate = computed(() => parseDateRange(filters.period)[0] || null)
@@ -407,6 +426,7 @@ const showChartGrid = computed(() => isTeamView.value)
 // rep chosen they are reading the team's. A rep only ever reads their own, and
 // the server pins that regardless of what is sent.
 const scopeUser = computed(() => filters.user || null)
+const scopeTerritory = computed(() => filters.territory || null)
 
 function chartResource(name: string) {
   return createResource({
@@ -417,6 +437,7 @@ function chartResource(name: string) {
       from_date: fromDate.value,
       to_date: toDate.value,
       user: scopeUser.value,
+      territory: scopeTerritory.value,
     }),
     auto: true,
   })
@@ -446,6 +467,17 @@ const drilldownContext = computed(() => ({
   fromDate: fromDate.value,
   toDate: toDate.value,
 }))
+
+/* The server says which charts its territory filter actually reached. The ones
+   it did not have to say so: a tile silently answering for the whole company,
+   sitting beside tiles that are scoped to one region, is the "two answers to
+   one question" failure with no way to tell which is which. */
+function unfilteredNoteFor(
+  data: { territory?: string; territory_filtered?: boolean } | undefined,
+) {
+  if (!data?.territory || data.territory_filtered) return ''
+  return __('Not filtered by {0}', [data.territory])
+}
 
 function drilldownLabelFor(tile: { name: string; label: string }) {
   return canDrillInto(tile.name, drilldownContext.value)
@@ -502,6 +534,7 @@ function reportResource(name: string) {
       from_date: fromDate.value,
       to_date: toDate.value,
       user: scopeUser.value,
+      territory: scopeTerritory.value,
     }),
     auto: isTeamView.value,
   })
@@ -677,6 +710,7 @@ const dashboardItems = createResource({
       from_date: fromDate.value,
       to_date: toDate.value,
       user: filters.user,
+      territory: scopeTerritory.value,
     }
   },
   auto: true,

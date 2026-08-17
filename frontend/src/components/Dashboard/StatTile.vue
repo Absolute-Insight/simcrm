@@ -80,6 +80,12 @@
         {{ deltaDisplay }}
       </span>
       <span v-if="hint" class="w-full text-sm text-ink-gray-5">{{ hint }}</span>
+      <!-- Not the hint: a hint explains the number, this says the number is not
+           the one the filter asked for. Styled apart so it cannot be skimmed as
+           supporting detail. -->
+      <span v-if="unfilteredNote" class="w-full text-sm text-ink-orange-9">
+        {{ unfilteredNote }}
+      </span>
     </div>
   </component>
 </template>
@@ -102,6 +108,11 @@ const props = defineProps({
   suffix: { type: String, default: '' },
   // A second line under the number — "3 of 7 done", "vs 120,000 quota".
   hint: { type: String, default: '' },
+  // Set when a filter is active that this tile cannot honour. Quota attainment
+  // is per rep and rep plans have no territory, so both keep answering for the
+  // whole company; saying nothing would leave them looking scoped like their
+  // neighbours.
+  unfilteredNote: { type: String, default: '' },
   tooltip: { type: String, default: '' },
   delta: { type: [Number, String], default: 0 },
   deltaSuffix: { type: String, default: '' },
