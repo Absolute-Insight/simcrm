@@ -610,7 +610,28 @@ def remove_assignments(doctype: str, name: str, assignees: str | list):
 
 @frappe.whitelist()
 def get_assigned_users(doctype: str, name: str | int, default_assigned_to: str | None = None):
-	assigned_users = frappe.get_all(
+	"""Who is assigned to a record — for a caller who may read that record.
+
+	``assigned_users`` reads ToDo through ``frappe.get_all``, which does not
+	check permissions, and ToDo carries no CRM permission condition of its own.
+	Whitelisted, that let any authenticated user name any record and learn who
+	works it, walking the org chart one document at a time. Authority for the
+	assignee list comes from the record: if you may read it, you may see who is
+	on it.
+
+	The unguarded :func:`assigned_users` stays available to server-side callers
+	that legitimately need the list outside a session — notifying assignees of
+	an inbound WhatsApp message is not the requester's read.
+	"""
+	if not frappe.has_permission(doctype, "read", doc=name):
+		frappe.throw(_("Not permitted to read {0} {1}").format(doctype, name), frappe.PermissionError)
+
+	return assigned_users(doctype, name, default_assigned_to)
+
+
+def assigned_users(doctype: str, name: str | int, default_assigned_to: str | None = None):
+	"""The raw assignee list, with no permission check. Server-side callers only."""
+	allocated = frappe.get_all(
 		"ToDo",
 		fields=["allocated_to"],
 		filters={
@@ -621,7 +642,7 @@ def get_assigned_users(doctype: str, name: str | int, default_assigned_to: str |
 		pluck="allocated_to",
 	)
 
-	users = list(set(assigned_users))
+	users = list(set(allocated))
 
 	# if users is empty, add default_assigned_to
 	if not users and default_assigned_to:

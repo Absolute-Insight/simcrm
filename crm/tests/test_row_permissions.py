@@ -136,3 +136,24 @@ class RowPermissionTest(IntegrationTestCase):
 		self.assertIn(
 			str(self.bobs_plan.name), [str(n) for n in frappe.get_list("CRM Rep Plan", pluck="name")]
 		)
+
+	# --- assignees ------------------------------------------------------
+
+	def test_a_rep_cannot_enumerate_assignees_of_a_deal_they_cannot_read(self):
+		"""get_assigned_users reads ToDo through frappe.get_all, which does not
+		check permissions, and ToDo carries no CRM permission condition. Named
+		over HTTP that let anyone walk the org chart one record at a time:
+		point at a deal, learn who works it."""
+		from crm.api.doc import get_assigned_users
+
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(ALICE)
+		with self.assertRaises(frappe.PermissionError):
+			get_assigned_users("CRM Deal", self.deal.name)
+
+	def test_the_owner_still_reads_their_own_deals_assignees(self):
+		from crm.api.doc import get_assigned_users
+
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(BOB)
+		self.assertIsInstance(get_assigned_users("CRM Deal", self.deal.name), list)
