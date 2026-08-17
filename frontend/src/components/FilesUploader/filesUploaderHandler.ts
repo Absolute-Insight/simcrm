@@ -17,6 +17,43 @@ declare global {
   }
 }
 
+/**
+ * JSON.parse that returns the raw text instead of throwing.
+ *
+ * Frappe answers a 403 with an HTML sign-in page often enough that parsing it
+ * blind is not an edge case, and a throw inside `onreadystatechange` does not
+ * reject anything — it escapes the handler and leaves the upload promise
+ * pending for the life of the tab. The spinner never stops and no error is
+ * ever shown.
+ */
+export function safeJsonParse(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
+  }
+}
+
+/**
+ * What a non-200 upload response means: the error to reject with, and whether
+ * it counts against the handler's `failed` flag.
+ *
+ * 403 deliberately does not set `failed` — that is the pre-existing behaviour
+ * and it is what lets a re-auth retry proceed.
+ */
+export function parseUploadFailure(
+  status: number,
+  responseText: string,
+): { error: unknown; failed: boolean } {
+  if (status === 413) {
+    return {
+      error: 'Size exceeds the maximum allowed file size.',
+      failed: true,
+    }
+  }
+  return { error: safeJsonParse(responseText), failed: status !== 403 }
+}
+
 class FilesUploadHandler {
   listeners: { [event: string]: ((...args: unknown[]) => void)[] }
   failed: boolean
@@ -60,35 +97,26 @@ class FilesUploadHandler {
         reject()
       })
       xhr.onreadystatechange = () => {
-        if (xhr.readyState == XMLHttpRequest.DONE) {
-          let error: unknown
-          if (xhr.status === 200) {
-            let r: unknown
-            try {
-              r = JSON.parse(xhr.responseText)
-            } catch {
-              r = xhr.responseText
-            }
-            const out = (r as { message?: unknown })?.message || r
-            resolve(out)
-          } else if (xhr.status === 403) {
-            error = JSON.parse(xhr.responseText)
-          } else if (xhr.status === 413) {
-            this.failed = true
-            error = 'Size exceeds the maximum allowed file size.'
-          } else {
-            this.failed = true
-            try {
-              error = JSON.parse(xhr.responseText)
-            } catch {
-              // pass
-            }
-          }
-          if (error && (error as { exc?: string }).exc) {
-            console.error(JSON.parse((error as { exc: string }).exc)[0])
-          }
-          reject(error)
+        if (xhr.readyState !== XMLHttpRequest.DONE) return
+
+        if (xhr.status === 200) {
+          const body = safeJsonParse(xhr.responseText)
+          resolve((body as { message?: unknown })?.message ?? body)
+          return
         }
+
+        const { error, failed } = parseUploadFailure(
+          xhr.status,
+          xhr.responseText,
+        )
+        if (failed) this.failed = true
+
+        const exc = (error as { exc?: unknown })?.exc
+        if (typeof exc === 'string') {
+          const frames = safeJsonParse(exc)
+          console.error(Array.isArray(frames) ? frames[0] : exc)
+        }
+        reject(error)
       }
 
       xhr.open('POST', '/api/method/upload_file', true)

@@ -75,8 +75,14 @@ export function getScript(doctype, view = 'Form') {
     helpers.formDialog = renderFieldLayoutDialog
 
     helpers.throwError = (message) => {
-      toast.error(message || __('An error occurred'))
-      throw new Error(message || __('An error occurred'))
+      const error = new Error(message || __('An error occurred'))
+      /* Marked because the save path now reports a thrown onValidate error
+         itself. This helper keeps its own toast — it is also called from field
+         hooks, where nothing catches — so without the mark an author using
+         throwError inside onValidate would see the same sentence twice. */
+      error.__reported = true
+      toast.error(error.message)
+      throw error
     }
 
     let scriptDefs = doctypeScripts[doctype]
