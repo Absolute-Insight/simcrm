@@ -79,3 +79,51 @@ class BaseUrlValidationTest(IntegrationTestCase):
 	def test_a_url_with_no_host_is_refused(self):
 		with self.assertRaises(frappe.ValidationError):
 			self.save_url("localhost:8000/v1")
+
+
+class TimeoutValidationTest(IntegrationTestCase):
+	"""A call retries once, so it holds a web worker for up to twice the timeout.
+	Past the proxy's read timeout the rep sees a failed request while the worker
+	keeps working -- and nothing in the CRM says why."""
+
+	def save_timeout(self, seconds):
+		settings = frappe.get_doc("CRM Agent Settings")
+		self.addCleanup(frappe.db.rollback)
+		settings.timeout = seconds
+		settings.save()
+
+	def test_the_shipped_default_fits(self):
+		self.save_timeout(30)
+
+	def test_the_largest_safe_value_is_accepted(self):
+		# 59 x 2 = 118 < 120.
+		self.save_timeout(59)
+
+	def test_one_second_over_is_refused(self):
+		# 60 x 2 = 120, which is not *under* the proxy's 120.
+		with self.assertRaises(frappe.ValidationError):
+			self.save_timeout(60)
+
+	def test_the_value_an_admin_would_pick_for_a_reasoning_model_is_refused(self):
+		with self.assertRaises(frappe.ValidationError) as caught:
+			self.save_timeout(300)
+		# The message has to carry the number to use and the knob that raises it,
+		# or the only way forward is reading the source.
+		message = str(caught.exception)
+		self.assertIn("59", message)
+		self.assertIn("crm_proxy_read_timeout", message)
+
+	def test_a_deployment_that_raised_its_proxy_timeout_may_raise_this(self):
+		from unittest.mock import patch
+
+		with patch.dict(frappe.conf, {"crm_proxy_read_timeout": 600}):
+			self.save_timeout(299)
+
+	def test_an_uninterpretable_proxy_setting_falls_back_to_the_shipped_one(self):
+		"""Site config is hand-edited. A typo there must not silently unbound the
+		limit -- that would be worse than the value it is meant to police."""
+		from unittest.mock import patch
+
+		with patch.dict(frappe.conf, {"crm_proxy_read_timeout": "soon"}):
+			with self.assertRaises(frappe.ValidationError):
+				self.save_timeout(300)

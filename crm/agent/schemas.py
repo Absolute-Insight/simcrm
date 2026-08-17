@@ -30,6 +30,20 @@ class ThreadSummary(BaseModel):
 	sentiment: Literal["positive", "neutral", "negative"] = "neutral"
 
 
+class ConnectionProbe(BaseModel):
+	"""The smallest reply that proves an endpoint is actually usable.
+
+	Deliberately schema-constrained rather than a bare ping: reaching the host
+	says nothing about whether guided decoding works there, and that is the
+	failure this test exists to find. MiniCPM5-1B, for one, connects fine and
+	returns empty content.
+	"""
+
+	model_config = ConfigDict(extra="forbid")
+
+	ok: bool
+
+
 class ReplyDraft(BaseModel):
 	"""A reply the rep can edit and send. A draft, never a sent message."""
 

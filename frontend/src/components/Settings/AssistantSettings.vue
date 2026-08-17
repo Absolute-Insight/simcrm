@@ -81,6 +81,35 @@
             "
           />
         </div>
+
+        <!-- Tests the *saved* settings: base_url is the target of a server-side
+             POST carrying the API key, so the endpoint reads it from the
+             database rather than accepting one over the wire. -->
+        <div class="flex flex-wrap items-center gap-3">
+          <Button
+            :label="__('Test connection')"
+            :loading="testing"
+            :disabled="dirty"
+            @click="testConnection"
+          />
+          <span v-if="dirty" class="text-sm text-ink-gray-5">
+            {{ __('Save your changes first — this tests the saved endpoint.') }}
+          </span>
+          <span
+            v-else-if="testResult"
+            class="text-sm"
+            :class="testResult.ok ? 'text-ink-green-9' : 'text-ink-red-9'"
+          >
+            {{ testResult.message }}
+          </span>
+        </div>
+        <p class="text-p-sm text-ink-gray-5">
+          {{
+            __(
+              'Sends one real request and checks the reply follows the schema. Reaching the endpoint is not enough — a model that cannot do structured output connects fine and returns nothing usable. Works with the assistant switched off.',
+            )
+          }}
+        </p>
       </section>
 
       <!-- Signals: deliberately on the same page, and deliberately separate.
@@ -249,6 +278,8 @@ const draft = reactive({})
 const apiKey = ref('')
 const saving = ref(false)
 const saveNotice = ref('')
+const testing = ref(false)
+const testResult = ref(null)
 let saved = {}
 
 const settings = createResource({
@@ -297,9 +328,30 @@ watch(
   },
 )
 
+async function testConnection() {
+  testing.value = true
+  testResult.value = null
+  try {
+    testResult.value = await call('crm.agent.api.test_connection')
+  } catch (error) {
+    /* A rejection here is the call itself failing — permission, rate limit, a
+       worker timeout. The endpoint reports a *reachability* failure as a normal
+       result, so these are different problems and must not read alike. */
+    testResult.value = {
+      ok: false,
+      message:
+        describeError(error).message ||
+        __('Could not run the test. Try again in a moment.'),
+    }
+  } finally {
+    testing.value = false
+  }
+}
+
 async function save() {
   saving.value = true
   saveNotice.value = ''
+  testResult.value = null
   try {
     const payload = Object.fromEntries(FIELDS.map((f) => [f, draft[f]]))
     if (apiKey.value) payload.api_key = apiKey.value

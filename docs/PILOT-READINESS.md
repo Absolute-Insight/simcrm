@@ -276,12 +276,29 @@ polish · **P4** platform work beyond the pilot.
       field-by-field writes would leave the tier half-configured if the fourth failed.
       `api_key` is write-only: a Password field reads back masked, so round-tripping it
       would save the mask.
-- [ ] **No way to validate an endpoint.** The only way to learn `base_url` is wrong is a rep
-      clicking a feature and getting a degraded dialog. Add a test-connection action. **3 h.**
+- [x] **No way to validate an endpoint.** The only way to learn `base_url` was wrong was a
+      rep clicking a feature and getting a degraded dialog — the failure reached a user
+      before the admin who caused it. **Settings → Assistant → Test connection** now runs
+      the real `client.complete()` path with a schema rather than a bare HTTP ping,
+      because reaching the host proves nothing about guided decoding and that is the
+      interesting failure: `MiniCPM5-1B` connects fine and returns empty content. Three
+      outcomes are distinguished — reachable/schema/unreachable — since the fixes differ
+      (the URL vs the model). Works with the tier off, so an endpoint can be proved before
+      reps see it. Reads the *saved* settings, never a caller-supplied URL: that would be
+      an SSRF with credential replay. System Manager only, rate-limited to 6/min, and the
+      API key cannot appear in the result (asserted). Verified against stub endpoints for
+      all four outcomes plus in-browser for the pass and fail renders.
 - [x] **Default `base_url` was `http://localhost:8000/v1` — Frappe's own port.** Enabling the
       tier without editing it makes the CRM POST to itself and fail opaquely. **15 min.**
-- [ ] **Nothing enforces `timeout × 2 < PROXY_READ_TIMEOUT`.** Documented in both runbooks
-      now, but an admin can still set 300 and discover it in production. Clamp it. **1 h.**
+- [x] **Nothing enforces `timeout × 2 < PROXY_READ_TIMEOUT`.** An admin could set 300 and
+      discover it in production: nginx hangs up at 120 while the worker runs on for
+      another 480 s, and nothing in the CRM explains the failed request. Now refused at
+      save, against `crm_proxy_read_timeout` (default 120, matching the shipped stack) —
+      *refused* rather than silently clamped, because a form showing a number the system
+      is not using is the same dishonesty as the failure it prevents. The message names
+      both the largest usable value and the config key that raises it. An
+      uninterpretable site-config value falls back to the shipped default rather than
+      unbounding the limit.
 
 ### Mobile parity
 - [ ] **A rep on a phone gets none of Vectora's three differentiating surfaces.**
