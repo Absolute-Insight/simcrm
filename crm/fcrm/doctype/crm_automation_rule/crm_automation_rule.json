@@ -20,6 +20,7 @@
   "description_template",
   "column_break_action",
   "task_priority",
+  "suggestion_score",
   "due_in_days",
   "assign_to_owner"
  ],
@@ -119,6 +120,14 @@
    "fieldtype": "Select",
    "label": "Task Priority",
    "options": "Low\nMedium\nHigh"
+  },
+  {
+   "default": "60",
+   "depends_on": "eval:doc.action == 'Create Suggestion'",
+   "description": "0-100. The suggestion inbox is ordered by this, so a higher number puts this rule's suggestions above routine nudges. For reference: a deal with no next step scores 40, a breached first-response SLA scores 80.",
+   "fieldname": "suggestion_score",
+   "fieldtype": "Int",
+   "label": "Suggestion Urgency"
   },
   {
    "depends_on": "eval:doc.action == 'Create Task'",

@@ -75,6 +75,38 @@ COMMIT_EVERY = 200
 MAX_NEW_PER_RUN = 5000
 PURGE_AFTER_DAYS = 90
 
+# Suggestion urgency, 0-100. The inbox is ordered by this number, so between them
+# these decide what every rep looks at first -- which makes them the tuning
+# surface, and predict.py's rule applies here too: a tuning surface nobody can
+# find is not one. They were literals inside the emitted dicts, six of them,
+# where changing the relative order of two signals meant reading six functions.
+#
+# Flat scores are a judgement about the signal itself; the graduated ones rise
+# with the evidence, and every one of them is capped, so no single signal can
+# monopolise the top of the inbox by growing without bound.
+IDLE_SCORE_PER_DAY = 10.0
+IDLE_SCORE_CAP = 100.0
+
+NO_NEXT_STEP_SCORE = 40.0
+
+SLA_BREACH_SCORE = 80.0
+
+# Rises as the close date approaches: the nearer the date, the less time is left
+# to act on it.
+CLOSE_RISK_SCORE_BASE = 50.0
+CLOSE_RISK_SCORE_PER_DAY_CLOSER = 3.0
+CLOSE_RISK_SCORE_CAP = 95.0
+
+COOLING_SCORE_BASE = 30.0
+COOLING_SCORE_PER_RATIO = 10.0
+COOLING_SCORE_CAP = 75.0
+
+# Base plus lateness, so a plan item missed by a week outranks one missed
+# yesterday, but never outranks an SLA breach.
+PLAN_MISSED_SCORE_BASE = 55.0
+PLAN_MISSED_SCORE_PER_DAY_LATE = 2.0
+PLAN_MISSED_LATENESS_CAP = 20.0
+
 ACTIVITY_TO_ACTION = {"Call": "schedule_call", "Email": "send_reply", "Meeting": "create_task"}
 
 
@@ -141,7 +173,7 @@ def find_idle_deals(
 						"value": elapsed,
 					}
 				],
-				"score": min(100.0, elapsed * 10.0),
+				"score": min(IDLE_SCORE_CAP, elapsed * IDLE_SCORE_PER_DAY),
 			}
 		)
 	return out
@@ -168,7 +200,7 @@ def find_missing_next_step(rows: list[dict], open_tasks: set[str]) -> list[dict]
 					{"key": "has_open_task", "label": "No open task", "value": False},
 					{"key": "has_next_step", "label": "No next step recorded", "value": False},
 				],
-				"score": 40.0,
+				"score": NO_NEXT_STEP_SCORE,
 			}
 		)
 	return out
@@ -201,7 +233,7 @@ def find_sla_breached_leads(rows: list[dict], now: datetime) -> list[dict]:
 						"value": row.get("sla_status"),
 					}
 				],
-				"score": 80.0,
+				"score": SLA_BREACH_SCORE,
 			}
 		)
 	return out
@@ -266,7 +298,10 @@ def find_close_date_at_risk(
 					},
 					{"key": "has_open_task", "label": "Nothing scheduled", "value": False},
 				],
-				"score": min(95.0, 50.0 + (horizon_days - days_to_close) * 3.0),
+				"score": min(
+					CLOSE_RISK_SCORE_CAP,
+					CLOSE_RISK_SCORE_BASE + (horizon_days - days_to_close) * CLOSE_RISK_SCORE_PER_DAY_CLOSER,
+				),
 			}
 		)
 	return out
@@ -328,7 +363,7 @@ def find_cooling_deals(
 						"value": round(ratio, 2),
 					},
 				],
-				"score": min(75.0, 30.0 + ratio * 10.0),
+				"score": min(COOLING_SCORE_CAP, COOLING_SCORE_BASE + ratio * COOLING_SCORE_PER_RATIO),
 			}
 		)
 	return out
@@ -376,7 +411,8 @@ def find_stale_plan_items(rows: list[dict], now: datetime) -> list[dict]:
 					},
 					{"key": "days_late", "label": f"{late} days past the planned date", "value": late},
 				],
-				"score": 55.0 + min(20.0, (late or 0) * 2.0),
+				"score": PLAN_MISSED_SCORE_BASE
+				+ min(PLAN_MISSED_LATENESS_CAP, (late or 0) * PLAN_MISSED_SCORE_PER_DAY_LATE),
 			}
 		)
 	return out

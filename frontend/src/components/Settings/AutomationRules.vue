@@ -146,6 +146,24 @@
                 :label="__('Priority')"
                 :options="priorities"
               />
+              <!-- The suggestion inbox is ordered by this, so without it every
+                   rule's suggestion sat at the same urgency as every other and
+                   an admin had no way to float a critical one. Description
+                   names two built-in scores, because a 0-100 box with no
+                   reference points is a number nobody can choose well. -->
+              <FormControl
+                v-if="draft.action === 'Create Suggestion'"
+                v-model.number="draft.suggestion_score"
+                type="number"
+                min="0"
+                max="100"
+                :label="__('Urgency')"
+                :description="
+                  __(
+                    '0-100, highest first. No next step scores 40; a breached SLA scores 80.',
+                  )
+                "
+              />
             </div>
 
             <FormControl
@@ -264,6 +282,7 @@ const EMPTY = {
   title_template: '',
   description_template: '',
   task_priority: 'Medium',
+  suggestion_score: 60,
   due_in_days: 2,
   assign_to_owner: 1,
 }
@@ -282,6 +301,7 @@ const rules = createListResource({
     'title_template',
     'description_template',
     'task_priority',
+    'suggestion_score',
     'due_in_days',
     'assign_to_owner',
   ],
