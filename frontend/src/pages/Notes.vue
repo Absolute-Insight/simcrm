@@ -24,8 +24,36 @@
     }"
   />
   <div class="flex-1 overflow-y-auto">
+    <!-- The EmptyState below used to be chained to the footer's v-if, which
+         made "No Notes yet" the answer to a *failed* fetch as well as an empty
+         one -- telling the user their CRM is empty when it is actually broken,
+         which is exactly what EmptyState's own docstring warns against. Error
+         and loading are their own branches now, and the empty case is last. -->
+    <ErrorState
+      v-if="notes.error"
+      :error="notes.error"
+      :title="__('Could not load notes')"
+      :retry="() => notes.reload()"
+    />
+    <!-- Cards, not a table, so the skeleton is card-shaped: h-56 and the same
+         grid as the real one, so nothing moves when the notes arrive. -->
     <div
-      v-if="notes.data?.data?.length"
+      v-else-if="!notes.data"
+      class="grid grid-cols-1 gap-2 px-3 pb-2 sm:grid-cols-4 sm:gap-4 sm:px-5 sm:pb-3"
+      role="status"
+      aria-busy="true"
+      :aria-label="__('Loading notes')"
+    >
+      <Skeleton
+        v-for="n in 8"
+        :key="n"
+        shape="block"
+        height="14rem"
+        rounded="12px"
+      />
+    </div>
+    <div
+      v-else-if="notes.data?.data?.length"
       class="grid grid-cols-1 gap-2 px-3 pb-2 sm:grid-cols-4 sm:gap-4 sm:px-5 sm:pb-3"
     >
       <div
@@ -82,6 +110,7 @@
         </div>
       </div>
     </div>
+    <EmptyState v-else name="Notes" :icon="NoteIcon" />
   </div>
   <ListFooter
     v-if="notes.data?.data?.length"
@@ -93,7 +122,6 @@
     }"
     @loadMore="() => loadMore++"
   />
-  <EmptyState v-else name="Notes" :icon="NoteIcon" />
 </template>
 
 <script setup>
@@ -104,6 +132,8 @@ import NoteIcon from '@/components/Icons/NoteIcon.vue'
 import ViewControls from '@/components/ViewControls.vue'
 import { useDoctypeModal } from '@/composables/doctypeModal'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
+import Skeleton from '@/components/ui/Skeleton.vue'
 import { usersStore } from '@/stores/users'
 import { timeAgo, formatDate } from '@/utils'
 import { useOnboarding } from '@framework/ui/components/Onboarding'

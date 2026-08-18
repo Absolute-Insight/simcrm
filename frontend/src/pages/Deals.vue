@@ -27,8 +27,26 @@
       allowedViews: ['list', 'group_by', 'kanban'],
     }"
   />
+  <!-- Loading and failure had no branch at all: the chain went straight from
+       "has data" to EmptyState, so a list still fetching and a list whose
+       fetch failed both rendered nothing. A blank page reads as an empty CRM,
+       not as a slow or a broken one. These come first so they cover the kanban
+       view too. -->
+  <ErrorState
+    v-if="deals.error"
+    :error="deals.error"
+    :title="__('Could not load deals')"
+    :retry="() => deals.reload()"
+  />
+  <SkeletonTable
+    v-else-if="!deals.data"
+    class="px-5 pt-3"
+    :columns="columns.length || 6"
+    :rows="10"
+    :label="__('Loading deals')"
+  />
   <KanbanView
-    v-if="route.params.viewType == 'kanban'"
+    v-else-if="route.params.viewType == 'kanban'"
     v-model="deals"
     :options="{
       getRoute: (row) => ({
@@ -255,6 +273,8 @@ import DealsIcon from '@/components/Icons/DealsIcon.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import DealsListView from '@/components/ListViews/DealsListView.vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
+import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import KanbanView from '@/components/Kanban/KanbanView.vue'
 import DealModal from '@/components/Modals/DealModal.vue'
 import ViewControls from '@/components/ViewControls.vue'
