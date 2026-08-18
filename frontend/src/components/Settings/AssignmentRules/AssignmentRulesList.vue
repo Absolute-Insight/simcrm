@@ -5,6 +5,16 @@
   >
     <LoadingIndicator class="w-4" />
   </div>
+  <!-- `data?.length === 0` is only reached when a fetch has produced an empty
+       array, but the v-else below then renders a bare table with no rows and no
+       explanation on failure. Neither says the list did not load. -->
+  <ErrorState
+    v-else-if="assignmentRulesList.error"
+    compact
+    :error="assignmentRulesList.error"
+    :title="__('Could not load assignment rules')"
+    :retry="() => assignmentRulesList.reload()"
+  />
   <EmptyState
     v-else-if="assignmentRulesList.data?.length === 0"
     :title="__('No Assignment Rules Found')"
@@ -34,6 +44,7 @@
 import SettingsIcon2 from '@/components/Icons/SettingsIcon2.vue'
 import AssignmentRuleListItem from './AssignmentRuleListItem.vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
 import { LoadingIndicator } from 'frappe-ui'
 import { inject, h } from 'vue'
 

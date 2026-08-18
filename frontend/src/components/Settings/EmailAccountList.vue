@@ -44,7 +44,16 @@
         />
       </div>
     </div>
-    <!-- fallback if no email accounts -->
+    <!-- The bare v-else answered a failed fetch with "no email accounts yet",
+         which in Settings reads as "your mail is not configured" -- an alarming
+         and untrue thing to tell an admin whose list simply did not load. -->
+    <ErrorState
+      v-else-if="emailAccounts.error"
+      compact
+      :error="emailAccounts.error"
+      :title="__('Could not load email accounts')"
+      :retry="() => emailAccounts.reload()"
+    />
     <EmptyState
       v-else
       name="Email Accounts"
@@ -59,6 +68,7 @@ import Email2Icon from '@/components/Icons/Email2Icon.vue'
 import EmptyState from '../ListViews/EmptyState.vue'
 import EmailAccountCard from './EmailAccountCard.vue'
 import { createListResource } from 'frappe-ui'
+import ErrorState from '@/components/ui/ErrorState.vue'
 
 const emit = defineEmits(['update:step'])
 

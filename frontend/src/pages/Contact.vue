@@ -150,7 +150,16 @@
           :columns="columns"
           :options="{ selectable: false, showTooltip: false }"
         />
-        <EmptyState v-if="!rows.length" :icon="tab.icon" name="Deals" />
+        <!-- `v-if="!rows.length"` is true on a failed fetch too, so a contact
+             whose deals did not load looked like a contact with no deals. -->
+        <ErrorState
+          v-else-if="deals.error"
+          compact
+          :error="deals.error"
+          :title="__('Could not load deals')"
+          :retry="() => deals.reload()"
+        />
+        <EmptyState v-else :icon="tab.icon" name="Deals" />
       </template>
     </Tabs>
   </div>
@@ -207,6 +216,7 @@ import { useTelemetry } from '@framework/ui/telemetry'
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
 
 const { brand } = getSettings()
 const { makeCall, $dialog, $socket } = globalStore()

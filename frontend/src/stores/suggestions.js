@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { call, createResource, toast } from 'frappe-ui'
+import { neverLoaded } from '@/utils/resourceState'
 import { computed, reactive, ref } from 'vue'
 import { formatCompactNumber } from '@/utils/numberFormat.js'
 import { renderFieldLayoutDialog } from '@/utils/renderFieldLayoutDialog'
@@ -41,6 +42,13 @@ export const openSuggestionsCount = computed(() => {
   const count = openCount.data || 0
   return count ? formatCompactNumber(count) : 0
 })
+
+/* A count that never loaded is not a count of zero. `initialData` is 0 and
+   frappe-ui leaves it there when the first fetch fails, so the badge above
+   collapses to 0, the sidebar hides it, and the inbox reads as empty -- the
+   product telling a rep there is nothing waiting when it never managed to ask.
+   See utils/resourceState. */
+export const openCountUnavailable = computed(() => neverLoaded(openCount))
 
 /**
  * Resolved human names for the records suggestions point at, keyed

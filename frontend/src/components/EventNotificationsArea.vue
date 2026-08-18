@@ -76,6 +76,16 @@
     </template>
   </div>
 
+  <!-- A bare v-else made "there are none" the answer to a failed fetch as
+       well as an empty one. Failure gets its own branch; the empty case stays
+       last. -->
+  <ErrorState
+    v-else-if="eventsResource.error"
+    compact
+    :error="eventsResource.error"
+    :title="__('Could not load events')"
+    :retry="() => eventsResource.reload()"
+  />
   <EmptyState
     v-else
     :title="__('No Upcoming Events')"
@@ -87,6 +97,7 @@
 <script setup>
 import MultipleAvatar from '@/components/MultipleAvatar.vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
 import EventIcon from '@/components/Icons/EventIcon.vue'
 import { useEventNotifications } from '@/data/notifications'
 import { notificationsStore } from '@/stores/notifications'
@@ -96,7 +107,7 @@ import { useRouter } from 'vue-router'
 
 const router = useRouter()
 
-const { events } = useEventNotifications()
+const { events, eventsResource } = useEventNotifications()
 const { toggle } = notificationsStore()
 
 function handleEventClick(e) {
