@@ -111,10 +111,21 @@ over them. The only reliable path back is the backup from step 0:
 ```bash
 # put the old tag back in .env first
 docker compose up -d
-docker compose exec backend bench --site <site> restore --force \
+docker compose exec -T backend bench --site <site> restore --force \
+  --db-root-password "$DB_ROOT_PASSWORD" \
   /home/frappe/frappe-bench/sites/<site>/private/backups/<file>.sql.gz \
   --with-public-files <files>.tar --with-private-files <private>.tar
 ```
+
+`--db-root-password` is not optional and this command used to omit it. `restore`
+drops and recreates the database, which the site's own credentials may not do, so
+without the flag `bench` **prompts** for the MySQL root password — and the
+`backend` service does not carry `DB_ROOT_PASSWORD` in its environment (only `db`
+gets it, from `.env`), so nothing fills the prompt in for you. Under a plain
+`docker compose exec` there is no TTY either, so the rollback hangs at the one
+moment you cannot afford it. Take the value from `.env` on the host, where compose
+already reads it. Verified by running the restore both ways against a real
+backup.
 
 Which means the restore drill in the pilot checklist below is not a nice-to-have:
 it is the rehearsal for the only rollback you have. If step 0's backup has never
@@ -242,6 +253,15 @@ earns trust, not before.
 
 1. **Restore drill first.** Take a backup, restore it to a scratch site, log
    in. A backup you have never restored is a hope, not a plan.
+   *Rehearsed on a dev bench (2026-08-18), and it is what found the missing
+   `--db-root-password` above.* Backup of a 1,716-deal site produced a 998 KiB
+   dump in under a second; restoring it to a fresh scratch site brought back
+   every count exactly — deals 1716, leads 1855, suggestions 378, contacts 183 —
+   and Administrator could log in and read real records through the API,
+   including a Vectora endpoint (`get_open_count` → 378). What that does **not**
+   cover: it ran `bench` directly rather than through `docker compose exec`, so
+   the compose wrapper and the volume layout are still unrehearsed. Do the drill
+   again on the real stack before the pilot takes real data.
 2. **Agent tier off, digests off.** Deterministic automation (assignment, SLA,
    automation rules) works with the agent disabled by design — you lose only
    the model-drafted content. Enable `CRM Report Digest` records only after
