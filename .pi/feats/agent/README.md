@@ -270,5 +270,14 @@ the finding above rather than in spite of it:
 
 ## What is not here yet
 
-MCP transport, the enrichment fallback extractor, and the assistant tier. Plans live in
-`docs/superpowers/plans/`.
+MCP transport and the assistant tier.
+
+The enrichment fallback extractor used to be listed here and is now built —
+`crm/domain_enrichment/model_fallback.py`, with tests and a golden-set eval runner
+under `crm/domain_enrichment/evals/`.
+
+Neither of the remaining two has a written plan. This section used to say plans
+"live in `docs/superpowers/plans/`"; that directory holds the six phase plans that
+were executed, and the only trace of these two is the roadmap table at the foot of
+`2026-08-12-crm-agent-foundation.md` (rows 2 and 5), which names them without
+specifying them.

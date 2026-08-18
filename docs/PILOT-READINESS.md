@@ -1194,18 +1194,26 @@ It was never repo drift. Corrected in this container only.
 This entry had also gone stale itself, quoting "actual 359" against a suite that had since
 grown to 420: a count written into prose is a claim with a short shelf life, which is why
 `AGENTS.md` now points the reader at `yarn test:run` rather than restating a number.
-**Checked and found to be wrong, so removed rather than carried forward:** the list said
-`docs/superpowers/plans/` was never written (it holds six plan files, including the
-phase-8 one), and that `summarise_thread` and `get_dismissal_stats` are presented as
-user-facing while "neither is reachable" — both are `@frappe.whitelist()` *and* called
-from the frontend (`RecordSuggestions.vue:222`, `AssistantSettings.vue:301`), and
-`get_dismissal_stats` answers over HTTP. `summarise_thread` having no UI was itself closed
-earlier in this file. A drift list that is not re-checked becomes drift.
+**Checked and found to be wrong:** the entry claiming `summarise_thread` and
+`get_dismissal_stats` are documented as user-facing while "neither is reachable". Both are
+`@frappe.whitelist()` *and* called from the frontend (`RecordSuggestions.vue:222`,
+`AssistantSettings.vue:301`), and `get_dismissal_stats` answers over HTTP.
+`summarise_thread` having no UI was itself closed earlier in this file. Removed.
 
-**Still open:** `feats/agent/README.md` cites "PLAN.md Phase 8, constraint 4" — Phase 8's
-constraints moved to ARCHIVE when the phase completed, per the docs convention, so the
-citation points at the wrong file; ARCHIVE's two deferred Phase 7 items never made it into
-PLAN.md's backlog.
+**Checked, dismissed, and that dismissal was wrong — now fixed properly.** The entry about
+`docs/superpowers/plans/` was first read as "does the directory exist?", which it does, and
+struck off on that basis. The claim was actually about plans for *three named things*, and
+none of the six files there is one: the only trace is a roadmap table inside
+`2026-08-12-crm-agent-foundation.md` naming them. Worse, one of the three — the enrichment
+fallback extractor — has since been **built** (`crm/domain_enrichment/model_fallback.py`,
+with tests and evals) while `feats/agent/README.md` still listed it as absent. That file
+now says what is actually missing and where the plans actually are not.
+Three passes for one entry, each failing differently. A drift list that is not re-checked
+becomes drift; a re-check that answers an easier question than the one asked is no better.
+
+**Still open:** ARCHIVE's two deferred Phase 7 items never made it into PLAN.md's backlog.
+(The "PLAN.md Phase 8, constraint 4" citation this list also carried no longer exists in
+`feats/agent/README.md` — searched, not there. Struck off.)
 
 **Also corrected while here:** PLAN.md still listed the forecast-accuracy widget as
 remaining Phase 10 work. It was registered in `AddChartModal` and closed in P2 above; the
