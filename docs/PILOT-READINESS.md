@@ -19,12 +19,16 @@ polish · **P4** platform work beyond the pilot.
 | **P0** security / data integrity | 1 | remote email images — deferred by decision, nothing built |
 | **P1** release / CI integrity | 0 | |
 | **P2** completeness (the mandate) | 0 | |
-| **P3** client-facing polish | 1 | |
+| **P3** client-facing polish | 0 | |
 | **P4** beyond the pilot | — | out of scope by definition |
 
-**96 closed, 2 open.** The mandate section is clear: every planned feature is built. What
-remains under P0 is one accepted risk with nothing built against it, and the rest is
-polish. Two things still need someone other than me:
+**97 closed, 1 open.** Every planned feature is built, and the polish list is now empty.
+The single open item is the P0 that was **deferred by an explicit decision** — remote
+images in inbound email — so nothing is built against it by choice rather than by
+omission.
+
+That is the end of what can be closed from inside this container. Two things still need
+someone other than me:
 
 - the **pilot-only verifications** listed at the foot of this file — Twilio call
   recording, the Facebook connector and the injection/enrichment evals all need an
@@ -963,9 +967,27 @@ polish. Two things still need someone other than me:
       Verified in the browser: exactly one tab stop, `aria-controls` resolves to the panel
       and the panel's label resolves back, and End jumps to the builder with selection and
       URL following.
-- [ ] **Panel reordering is built and unit-tested but has no UI** — `movePanel` in
+- [x] **Panel reordering is built and unit-tested but has no UI** — `movePanel` in
       `dashboardHome.js:307` is imported by nothing, and `applyPanelPreference`'s `order`
-      branch is unreachable because only `hidden` is ever written. **Decide: wire or delete.**
+      branch is unreachable because only `hidden` is ever written.
+      *Wired, not deleted:* the mandate is that the pilot ships every planned feature, and
+      this one was already built and tested — it just had no way in.
+      Two chevrons per panel header, beside the existing Hide, disabled at the ends.
+      Arrows rather than drag: the panel grid collapses to one column on a phone, so a drag
+      target would move under the pointer between breakpoints, and arrows are keyboard-
+      reachable without a drag-and-drop fallback. Each is labelled with its panel's name —
+      "Move Quota attainment earlier" — since a screen reader listing six identical
+      "Move up" buttons tells the user nothing.
+      The join between the two existing functions turned out to be the part worth writing
+      carefully, so it is a pure function of its own, `reorderVisiblePanel`, with 6 tests.
+      It has to satisfy two requirements that pull against each other: the move must be
+      between *visible* neighbours, because swapping with a hidden panel leaves the screen
+      unchanged and the button looks broken; and the stored order must still cover the whole
+      catalogue, because seeding it from the visible panels alone would drop every hidden
+      panel to the unranked tail, so unhiding one later would not put it back.
+      Verified in the browser: reorder, persistence across a reload, both ends disabled,
+      and the awkward case — reorder while a panel is hidden, then unhide it and find it
+      still in its stored position.
 - [x] **~15 more `theme="orange"` Badges across the app** degrade to grey the same way,
       including the "Not Saved" badge in Settings. *Fixed:* 14 of them, to `amber`.
       Badge's valid set is `gray/blue/green/amber/red/violet` and it falls back to grey for

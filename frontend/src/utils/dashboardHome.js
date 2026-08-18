@@ -312,3 +312,36 @@ export function movePanel(ids, id, direction) {
   order.splice(to, 0, order.splice(from, 1)[0])
   return order
 }
+
+/**
+ * The order to store after the user moves a visible panel one slot.
+ *
+ * Two things have to be true at once, and they pull in opposite directions.
+ *
+ * The move is between *visible* neighbours: if the panel below is hidden,
+ * swapping with it would leave the screen unchanged and the button would look
+ * broken.
+ *
+ * The stored order still covers the whole catalogue. Seeding it from the
+ * visible panels alone would drop every hidden panel to the unranked tail the
+ * first time anyone reordered anything, so unhiding one later would not put it
+ * back where it was.
+ *
+ * So: pick the neighbour among what is on screen, then move to *that panel's*
+ * index in the full order — which may be more than one slot.
+ *
+ * Returns the existing order unchanged when the move has nowhere to go, so the
+ * caller can assign the result unconditionally.
+ */
+export function reorderVisiblePanel(catalogue, preference, id, direction) {
+  const full = applyPanelPreference(catalogue, {
+    order: preference?.order,
+  }).map((panel) => panel.id)
+  const visible = applyPanelPreference(catalogue, preference).map((p) => p.id)
+
+  const from = visible.indexOf(id)
+  const target = visible[from + direction]
+  if (from < 0 || target === undefined) return full
+
+  return movePanel(full, id, full.indexOf(target) - full.indexOf(id))
+}

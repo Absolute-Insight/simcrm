@@ -168,7 +168,7 @@
 
       <div class="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">
         <PanelCard
-          v-for="panel in visiblePanels"
+          v-for="(panel, panelIndex) in visiblePanels"
           :key="panel.id"
           :title="panel.title"
           :subtitle="panel.subtitle"
@@ -180,7 +180,31 @@
           :empty-description="panel.emptyDescription"
           :empty-icon="panel.emptyIcon"
         >
+          <!-- Arrows rather than drag: the panels are a responsive grid that
+               becomes one column on a phone, so a drag target would move under
+               the pointer between breakpoints. Two buttons work the same at
+               every width and are reachable from the keyboard without a
+               drag-and-drop fallback. Labelled per panel, since "Move up" on
+               its own says nothing when a screen reader lists all of them. -->
           <template #actions>
+            <Button
+              variant="ghost"
+              icon="lucide-chevron-up"
+              size="sm"
+              :aria-label="__('Move {0} earlier', [panel.title])"
+              :disabled="panelIndex === 0"
+              class="opacity-0 transition focus-visible:opacity-100 group-hover/panel:opacity-100"
+              @click="reorderPanel(panel.id, -1)"
+            />
+            <Button
+              variant="ghost"
+              icon="lucide-chevron-down"
+              size="sm"
+              :aria-label="__('Move {0} later', [panel.title])"
+              :disabled="panelIndex === visiblePanels.length - 1"
+              class="opacity-0 transition focus-visible:opacity-100 group-hover/panel:opacity-100"
+              @click="reorderPanel(panel.id, 1)"
+            />
             <Button
               variant="ghost"
               :label="__('Hide')"
@@ -366,6 +390,7 @@ import {
   groupRisksByRecord,
   mondayOf,
   planBreakdown,
+  reorderVisiblePanel,
   riskReason,
   toISODate,
 } from '@/utils/dashboardHome'
@@ -661,6 +686,19 @@ function hidePanel(id: string) {
 function showPanel(id: string) {
   const hidden = (preference.value.hidden || []).filter((h: string) => h !== id)
   preference.value = { ...preference.value, hidden }
+  savePreference()
+}
+
+function reorderPanel(id: string, direction: number) {
+  preference.value = {
+    ...preference.value,
+    order: reorderVisiblePanel(
+      PANEL_CATALOGUE.value,
+      preference.value,
+      id,
+      direction,
+    ),
+  }
   savePreference()
 }
 
