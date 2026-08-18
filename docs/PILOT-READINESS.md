@@ -19,10 +19,10 @@ polish · **P4** platform work beyond the pilot.
 | **P0** security / data integrity | 1 | remote email images — deferred by decision, nothing built |
 | **P1** release / CI integrity | 0 | |
 | **P2** completeness (the mandate) | 0 | |
-| **P3** client-facing polish | 2 | |
+| **P3** client-facing polish | 1 | |
 | **P4** beyond the pilot | — | out of scope by definition |
 
-**95 closed, 3 open.** The mandate section is clear: every planned feature is built. What
+**96 closed, 2 open.** The mandate section is clear: every planned feature is built. What
 remains under P0 is one accepted risk with nothing built against it, and the rest is
 polish. Two things still need someone other than me:
 
@@ -1079,9 +1079,31 @@ polish. Two things still need someone other than me:
       like it is working. A guard reads `TILE_CATALOGUE` out of `Dashboard.vue`, so adding
       a sixth tile without raising the limit fails instead of quietly cutting the number of
       views a manager gets.
-- [ ] **~30 empty scaffold test classes**, including `crm_form_script`, `crm_fields_layout`
+- [x] **~30 empty scaffold test classes**, including `crm_form_script`, `crm_fields_layout`
       and `crm_sales_hierarchy` — the doctypes behind the public API and the permission
       model. **Counted by discovery, contributing nothing.**
+      *Resolved, and this entry was partly wrong.* The real count is 22, and
+      `crm_sales_hierarchy` is **not** among them — it has 97 lines of its own tests plus a
+      232-line permission suite in `test_org_hierarchy.py`. This item was stale.
+      Of the remaining 22, the two named ones were the only scaffolds standing over
+      untested behaviour that is ours rather than Frappe's, and both are the public
+      scripting API that `CLAUDE.md` calls out. Both are now real suites:
+      `test_crm_form_script.py` (11 tests) pins the contract that `get_form_script` **changes
+      the shape of its return value with the row count** — a bare string for one, a list for
+      several, `None` for none — and the standard-script guard.
+      `test_crm_fields_layout.py` (10 tests) covers `handle_perm_level_restrictions`, which
+      is what stops a permlevel'd field reaching the browser at all, and the permission gate
+      on `save_fields_layout`.
+      The other 20 are `bench new-doctype` boilerplate over master doctypes — `CRM Industry`,
+      `CRM Lead Source`, `CRM Deal Status` and the like — where a test would exercise
+      Frappe's framework rather than any code of ours. They are left as the upstream
+      scaffolding they are; deleting them only invites `bench` to regenerate them.
+      **Two traps caught by mutation testing, both of the "passes for the wrong reason"
+      kind.** The form-script guard exempts `frappe.flags.in_test`, so a test that merely
+      calls `save()` passes whether or not the guard exists — each test clears the flag
+      first. And the first version of the `save_fields_layout` permission test passed with
+      the gate deleted, because `doc.save()` refuses a Sales User too; it was asserting
+      Frappe's behaviour, not ours. A second test now pins our own refusal by its message.
 
 ## P4 — Platform work beyond the pilot
 
