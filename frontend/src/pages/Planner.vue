@@ -336,6 +336,18 @@
     </div>
   </div>
 
+  <!-- No count in the message: "1 unsaved changes" is the kind of thing __()
+       cannot pluralise, and the header badge behind the dialog already has the
+       number. -->
+  <ConfirmDialog
+    v-model="discardOpen"
+    :title="__('Discard unsaved changes?')"
+    :message="__('Your unsaved changes to this week\'s plan will be lost.')"
+    :confirmLabel="__('Discard changes')"
+    :cancelLabel="__('Keep editing')"
+    :onConfirm="() => answerDiscard(true)"
+  />
+
   <!-- Keyboard moves change nothing visible where the focus is, so they are
        announced instead. -->
   <span class="sr-only" role="status" aria-live="polite">{{
@@ -350,11 +362,13 @@ import LucideMail from '~icons/lucide/mail'
 import LucidePhone from '~icons/lucide/phone'
 import LucideSparkles from '~icons/lucide/sparkles'
 import LucideUserCheck from '~icons/lucide/user-check'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import ViewBreadcrumbs from '@/components/ViewBreadcrumbs.vue'
+import { useConfirmGate } from '@/composables/confirmGate'
 import { describeError } from '@/utils/describeError'
 import { renderFieldLayoutDialog } from '@/utils/renderFieldLayoutDialog'
 import {
@@ -556,32 +570,46 @@ function errorText(error) {
 
 // -- navigation guards ------------------------------------------------------
 
-function confirmDiscard() {
+/* Chrome renders window.confirm as "localhost:8080 says…", which reads as an
+   unfinished page rather than a product asking a question, and it freezes the
+   tab while it is open. The gate is a promise instead, which is what lets the
+   route guard below wait on a real dialog. */
+const {
+  open: discardOpen,
+  ask: askDiscard,
+  answer: answerDiscard,
+} = useConfirmGate()
+
+async function confirmDiscard() {
   if (!dirty.value) return true
-  return window.confirm(__('You have unsaved plan changes. Discard them?'))
+  return askDiscard()
 }
 
-function shiftWeek(days) {
-  if (!confirmDiscard()) return
+async function shiftWeek(days) {
+  if (!(await confirmDiscard())) return
   weekStart.value = addDays(weekStart.value, days)
   plan.reload()
 }
 
-function goToCurrentWeek() {
-  if (!confirmDiscard()) return
+async function goToCurrentWeek() {
+  if (!(await confirmDiscard())) return
   weekStart.value = mondayOf(today.value)
   plan.reload()
 }
 
-function goToWeekOf(item) {
-  if (!confirmDiscard()) return
+async function goToWeekOf(item) {
+  if (!(await confirmDiscard())) return
   weekStart.value = mondayOf(item.planned_date)
   plan.reload()
 }
 
-function requestUser(name) {
+async function requestUser(name) {
   if (name === planUser.value) return
-  if (!confirmDiscard()) return
+  /* Nothing to put back if this is declined: the select is bound to `planUser`
+     one-way and frappe-ui's Select is controlled, so the trigger keeps showing
+     the rep whose plan is loaded until this function moves it. Verified against
+     the real component -- a native <select> would need the value restored. */
+  if (!(await confirmDiscard())) return
   planUser.value = name
   plan.reload()
 }
@@ -595,7 +623,20 @@ function warnOnUnload(event) {
 
 onMounted(() => window.addEventListener('beforeunload', warnOnUnload))
 onBeforeUnmount(() => window.removeEventListener('beforeunload', warnOnUnload))
-onBeforeRouteLeave(() => confirmDiscard())
+/* vue-router awaits a guard that returns a promise, so this resolves only once
+   the dialog is answered; false cancels the navigation.
+
+   The buffer is dropped on the way out because a leave guard can run more than
+   once for what the user experienced as one click: router.js redirects every
+   list route to its default view (/deals/view -> /deals/view/list), and a
+   redirect abandons the navigation and starts a new one, which re-runs the
+   leave guards. Asking twice is what that looked like -- the old
+   window.confirm did it too. Discarding is also just what the button said. */
+onBeforeRouteLeave(async () => {
+  if (!(await confirmDiscard())) return false
+  localItems.list = server.items.map(withUid)
+  return true
+})
 
 // -- presentation -----------------------------------------------------------
 
@@ -960,8 +1001,8 @@ async function savePlan() {
   }
 }
 
-function reloadAfterConflict() {
-  if (!confirmDiscard()) return
+async function reloadAfterConflict() {
+  if (!(await confirmDiscard())) return
   stale.value = false
   plan.reload()
 }
