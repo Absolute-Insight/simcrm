@@ -291,7 +291,7 @@ yarn test          # watch mode
 yarn test:run      # single run (CI)
 ```
 
-**Current state**: 6 test files · 118 tests · ~250ms
+**Current state**: 21 test files · 420 tests · well under a second
 
 ### Test files
 
