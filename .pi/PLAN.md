@@ -85,9 +85,11 @@ Two tracks. The **product track** delivers the new direction; the **platform tra
 
 ### Remaining
 
-- [ ] Forecast-accuracy widget on the dashboard — the endpoint and the chart shape exist;
-      register it once a few weeks of snapshots have accumulated, so it does not ship
-      showing one point.
+- [x] Forecast-accuracy widget on the dashboard — registered in `AddChartModal`, so a
+      manager can add it. The "wait for snapshots" caution here was answered by giving the
+      chart an `emptyState` instead: it says it is waiting rather than drawing one point.
+      Verified: `get_chart?name=forecast_accuracy` returns its axis config with `data: []`
+      on a site with no snapshots yet.
 - [ ] Territory/segment analytics (backlog) — the metrics layer can carry it now that
       quota shape is settled.
 
