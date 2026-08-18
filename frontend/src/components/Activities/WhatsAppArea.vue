@@ -256,7 +256,7 @@ const replyMode = ref(false)
 function messageOptions(message) {
   return [
     {
-      label: 'Reply',
+      label: __('Reply'),
       onClick: () => {
         replyMode.value = true
         reply.value = {

@@ -251,7 +251,7 @@ export function validateSlaData(key, skipConditionCheck = false) {
             } catch {
               // If time parsing fails, mark as invalid
               invalidTimeRanges.push(
-                __(`{0} (Invalid time format)`, [day.workday]),
+                __('{0} (Invalid time format)', [day.workday]),
               )
             }
           }

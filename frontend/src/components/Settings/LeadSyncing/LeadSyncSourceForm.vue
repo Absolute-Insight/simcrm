@@ -111,14 +111,14 @@
             <Link
               v-if="!isLocal"
               v-model="syncSource.facebook_page"
-              label="Facebook Page"
+              :label="__('Facebook Page')"
               doctype="Facebook Page"
             />
 
             <Link
               v-if="!isLocal && syncSource.facebook_page"
               v-model="syncSource.facebook_lead_form"
-              label="Lead Form"
+              :label="__('Lead Form')"
               doctype="Facebook Lead Form"
               :filters="{
                 page: syncSource.facebook_page,

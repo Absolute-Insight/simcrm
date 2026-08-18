@@ -698,8 +698,8 @@ const props = defineProps({ name: { type: String, required: true } })
 const emit = defineEmits(['back', 'saved'])
 
 const targetOptions = [
-  { label: 'Lead', value: 'CRM Lead' },
-  { label: 'Deal', value: 'CRM Deal' },
+  { label: __('Lead'), value: 'CRM Lead' },
+  { label: __('Deal'), value: 'CRM Deal' },
 ]
 const docLabel = (dt) => targetOptions.find((o) => o.value === dt)?.label || dt
 

@@ -78,8 +78,8 @@
 
   <EmptyState
     v-else
-    title="No Upcoming Events"
-    description="You have no events scheduled"
+    :title="__('No Upcoming Events')"
+    :description="__('You have no events scheduled')"
     :icon="EventIcon"
     width="lg"
   />

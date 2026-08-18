@@ -1,5 +1,5 @@
 import { createResource } from 'frappe-ui'
-import { noValueFieldTypes, standardFieldsMeta } from '@/utils/model.js'
+import { noValueFieldTypes, getStandardFieldsMeta } from '@/utils/model.js'
 import { formatCurrency, formatNumber } from '@/utils/numberFormat.js'
 import { computed, reactive } from 'vue'
 
@@ -122,7 +122,7 @@ export function getMeta(doctype) {
         }) || []
 
     if (withStandardFields) {
-      fieldsMeta = fieldsMeta.concat(standardFieldsMeta)
+      fieldsMeta = fieldsMeta.concat(getStandardFieldsMeta())
     }
 
     return fieldsMeta || []
