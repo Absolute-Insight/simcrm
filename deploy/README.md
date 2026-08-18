@@ -97,6 +97,19 @@ that window reps are on new code against an old schema, which is the one
 combination nothing is tested against. Maintenance mode gives them an honest
 "be right back" instead of errors that look like data loss.
 
+*Rehearsed (2026-08-18), and worth being exact about what that did and did not
+prove.* `migrate` was run against a scratch site restored from a real
+1,716-deal backup. It completed without error, every record count survived
+unchanged, and the site still logged in and served Vectora endpoints afterwards
+— so schema sync, doctype and customization updates, and the orphan sweep are
+all known to survive production-shaped data.
+
+It did **not** exercise the patches. A restored database carries the origin's
+`Patch Log`, so all 33 entries in `crm/patches.txt` were already recorded and
+`migrate` skipped every one. Patches applying cleanly on a *fresh* site is still
+only covered by CI. Nor did this go through `docker compose exec`, so the
+container swap in steps 1–2 remains unrehearsed.
+
 Order matters: migrate *after* the new image is up, so patches run on the code
 that shipped them. `merge_duplicate_rep_plan_weeks` and friends are one-shot
 frappe patches and track themselves — re-running migrate is safe.
