@@ -35,13 +35,22 @@ someone other than me:
   account or a model endpoint this container does not have, so they are untested rather
   than working;
 - the **read-only `onError` sweep**. The real figure is **126** resources without an
-  `onError`, not ~92. More importantly, the reason given for deprioritising them — *"those
-  degrade to an empty control rather than a false statement"* — **was wrong**, and the
-  entry below records the eight places where it was wrong and now fixes them. What is left
-  after that is resources whose failure genuinely does degrade to an empty control (a
-  dropdown with no options, a filter with nothing to pick), and those stay deprioritised on
-  the same reasoning — but now on a claim that has actually been checked rather than
-  asserted.
+  `onError`, not ~92, and the reason given for deprioritising them — *"those degrade to an
+  empty control rather than a false statement"* — **was wrong**. The entry below fixes the
+  eight places where it was wrong.
+  Being precise about what has and has not been checked, so this does not become the next
+  unverified claim:
+  **Swept exhaustively, two classes.** Every count-gated badge (2 — both lied, both fixed)
+  and every component rendering `<EmptyState>` (25 scanned, 6 with no error branch — all
+  fixed).
+  **Checked and found to be a different failure, one class.** Settings panes bound to a
+  `createDocumentResource` — `GeneralSettings`, `DashboardSettings` — fail by *crashing*,
+  not by lying: frappe-ui's `documentResource.onError` sets `doc = null` and the templates
+  dereference `settings.doc.x`. Loud rather than silent, and upstream code. Worth knowing;
+  not the same danger.
+  **Not exhaustively classified: the remaining ~118.** They are mostly option lists, link
+  searches and submit-only resources, where an empty control really is the failure mode —
+  but that is an expectation, not a finding, and it should be read as one.
 
 ---
 
