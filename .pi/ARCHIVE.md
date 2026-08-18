@@ -210,8 +210,13 @@ Three patterns were considered:
 
 ### Deferred to backlog
 
-- Discoverable keyboard-shortcut sheet (feature work, not styling)
-- Skeleton-loading redesign (frappe-ui defaults inherit the new tokens)
+- Discoverable keyboard-shortcut sheet (feature work, not styling) — still open, and
+  tracked in [docs/PILOT-READINESS.md](../docs/PILOT-READINESS.md)'s P4 list rather than
+  in PLAN.md.
+- ~~Skeleton-loading redesign~~ — **delivered.** `ui/Skeleton.vue` and
+  `ui/SkeletonTable.vue` now back the loading state on 19 components, so this is no longer
+  "frappe-ui defaults inherit the new tokens"; it is a real three-state contract
+  (loading / failed / empty) that `ui/EmptyState.vue` documents.
 
 ---
 
