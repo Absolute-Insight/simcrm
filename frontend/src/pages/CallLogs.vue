@@ -24,8 +24,25 @@
     v-model:updatedPageCount="updatedPageCount"
     doctype="CRM Call Log"
   />
+  <!-- Loading and failure had no branch at all: the chain went straight from
+       "has data" to EmptyState, so a list still fetching and a list whose
+       fetch failed both rendered nothing. A blank page reads as an empty CRM,
+       not as a slow or a broken one. -->
+  <ErrorState
+    v-if="callLogs.error"
+    :error="callLogs.error"
+    :title="__('Could not load call logs')"
+    :retry="() => callLogs.reload()"
+  />
+  <SkeletonTable
+    v-else-if="!callLogs.data"
+    class="px-5 pt-3"
+    :columns="columns.length || 6"
+    :rows="10"
+    :label="__('Loading call logs')"
+  />
   <CallLogsListView
-    v-if="callLogs.data && rows.length"
+    v-else-if="callLogs.data && rows.length"
     ref="callLogsListView"
     v-model="callLogs.data.page_length_count"
     v-model:list="callLogs"
@@ -67,6 +84,8 @@ import LayoutHeader from '@/components/LayoutHeader.vue'
 import ViewControls from '@/components/ViewControls.vue'
 import CallLogsListView from '@/components/ListViews/CallLogsListView.vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
+import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import CallLogDetailModal from '@/components/Modals/CallLogDetailModal.vue'
 import { useDoctypeModal } from '@/composables/doctypeModal'
 import { getCallLogDetail } from '@/utils/callLog'

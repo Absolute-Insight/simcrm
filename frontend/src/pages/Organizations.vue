@@ -24,8 +24,25 @@
     v-model:updatedPageCount="updatedPageCount"
     doctype="CRM Organization"
   />
+  <!-- Loading and failure had no branch at all: the chain went straight from
+       "has data" to EmptyState, so a list still fetching and a list whose
+       fetch failed both rendered nothing. A blank page reads as an empty CRM,
+       not as a slow or a broken one. -->
+  <ErrorState
+    v-if="organizations.error"
+    :error="organizations.error"
+    :title="__('Could not load organizations')"
+    :retry="() => organizations.reload()"
+  />
+  <SkeletonTable
+    v-else-if="!organizations.data"
+    class="px-5 pt-3"
+    :columns="columns.length || 6"
+    :rows="10"
+    :label="__('Loading organizations')"
+  />
   <OrganizationsListView
-    v-if="organizations.data && rows.length"
+    v-else-if="organizations.data && rows.length"
     ref="organizationsListView"
     v-model="organizations.data.page_length_count"
     v-model:list="organizations"

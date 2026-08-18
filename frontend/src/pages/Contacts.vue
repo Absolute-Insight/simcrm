@@ -24,8 +24,25 @@
     v-model:updatedPageCount="updatedPageCount"
     doctype="Contact"
   />
+  <!-- Loading and failure had no branch at all: the chain went straight from
+       "has data" to EmptyState, so a list still fetching and a list whose
+       fetch failed both rendered nothing. A blank page reads as an empty CRM,
+       not as a slow or a broken one. -->
+  <ErrorState
+    v-if="contacts.error"
+    :error="contacts.error"
+    :title="__('Could not load contacts')"
+    :retry="() => contacts.reload()"
+  />
+  <SkeletonTable
+    v-else-if="!contacts.data"
+    class="px-5 pt-3"
+    :columns="columns.length || 6"
+    :rows="10"
+    :label="__('Loading contacts')"
+  />
   <ContactsListView
-    v-if="contacts.data && rows.length"
+    v-else-if="contacts.data && rows.length"
     ref="contactsListView"
     v-model="contacts.data.page_length_count"
     v-model:list="contacts"
@@ -67,6 +84,8 @@ import LayoutHeader from '@/components/LayoutHeader.vue'
 import ContactModal from '@/components/Modals/ContactModal.vue'
 import ContactsListView from '@/components/ListViews/ContactsListView.vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
+import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import ViewControls from '@/components/ViewControls.vue'
 import { getMeta } from '@/stores/meta'
 import { organizationsStore } from '@/stores/organizations.js'

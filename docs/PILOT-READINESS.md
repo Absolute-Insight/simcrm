@@ -19,10 +19,10 @@ polish · **P4** platform work beyond the pilot.
 | **P0** security / data integrity | 1 | remote email images — deferred by decision, nothing built |
 | **P1** release / CI integrity | 0 | |
 | **P2** completeness (the mandate) | 0 | |
-| **P3** client-facing polish | 3 | |
+| **P3** client-facing polish | 2 | |
 | **P4** beyond the pilot | — | out of scope by definition |
 
-**94 closed, 4 open.** The mandate section is clear: every planned feature is built. What
+**95 closed, 3 open.** The mandate section is clear: every planned feature is built. What
 remains under P0 is one accepted risk with nothing built against it, and the rest is
 polish. Two things still need someone other than me:
 
@@ -1051,8 +1051,23 @@ polish. Two things still need someone other than me:
       calling it with no path -- as the signature invites -- raised. One definition now,
       re-exported where the copy was: the bug had to be found twice. 9 tests,
       mutation-checked.
-- [ ] **Skeleton/error states cover only the new surfaces** — legacy list views still use
-      frappe-ui defaults despite `EmptyState.vue` documenting the three-state contract. **2–3 d.**
+- [x] **Skeleton/error states cover only the new surfaces** — legacy list views still use
+      frappe-ui defaults despite `EmptyState.vue` documenting the three-state contract.
+      *Fixed:* all seven (Leads, Deals, Tasks, Contacts, Organizations, Call Logs, Notes).
+      They were worse than "frappe-ui defaults": the branch chain went straight from *has
+      data* to `EmptyState`, so **a list still fetching and a list whose fetch failed both
+      rendered nothing at all** — a blank page under a working filter bar, which reads as
+      an empty CRM rather than a slow or a broken one. Notes was worse again: its
+      `EmptyState` was chained to the *footer's* `v-if`, so a failed fetch answered
+      "No Notes yet" — telling the user their CRM is empty when it is actually broken,
+      the exact thing `EmptyState`'s own docstring warns against.
+      Error and loading are now their own branches and come first, so they cover the kanban
+      view too. `SkeletonTable` for the six table lists; Notes gets card-shaped skeletons in
+      its real grid, since a table skeleton over a card layout would shift on arrival.
+      Verified per page in the browser by driving the live resource through all four states
+      — loading, failed, empty, loaded — confirming they are mutually exclusive, that the
+      failure state never claims the list is empty, that "Try again" recovers, and that the
+      kanban view still renders after its `v-if` became a `v-else-if`.
 - [x] **Dashboard rate limit is tuned as if it were one call per load** — the tile row fires
       5 concurrent `get_chart` calls, re-fired on every filter change, against a 60/min cap.
       429s on a manager's dashboard mid-demo. *Fixed:* both limits are now derived from
