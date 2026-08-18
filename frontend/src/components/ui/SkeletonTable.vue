@@ -1,5 +1,7 @@
 <!--
-  SkeletonTable — the loading state for the report, quota and planner tables.
+  SkeletonTable — the loading state for tables: the report and quota grids, the
+  seven list views, and the settings tables. Not the planner, whose week is a
+  grid of cards and uses plain <Skeleton>.
 
   Reach for it instead of a bare <Skeleton> whenever the thing loading is a
   table: it lays out a real <table> with the same chrome and density as the

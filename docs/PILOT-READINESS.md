@@ -1185,11 +1185,20 @@ keyboard-shortcut sheet.
 
 ## Documentation drift found along the way
 
-Fix these when touching the surrounding docs, not as a work item of their own: `SPEC.md`
-and `AGENTS.md` claim 118 tests (actual 359) and CLAUDE.md says coverage spans four utils
-files (actual ten); `feats/agent/README.md` says plans for MCP/enrichment-fallback/assistant
+Fix these when touching the surrounding docs, not as a work item of their own.
+**Done:** `SPEC.md` and `AGENTS.md` claimed 118 tests — both corrected to 420 across 21
+files. The same list named `CLAUDE.md` for saying coverage is scoped to four utils files;
+it does say that, and it is wrong (coverage spans the whole pure-logic layer now), but
+`CLAUDE.md` is **gitignored** (`.gitignore:27`) and therefore not something a PR can fix.
+It was never repo drift. Corrected in this container only.
+This entry had also gone stale itself, quoting "actual 359" against a suite that had since
+grown to 420: a count written into prose is a claim with a short shelf life, which is why
+`AGENTS.md` now points the reader at `yarn test:run` rather than restating a number.
+**Still open:** `feats/agent/README.md` says plans for MCP/enrichment-fallback/assistant
 "live in docs/superpowers/plans/" — they were never written; the same file cites "PLAN.md
 Phase 8, constraint 4", which was deleted; `feats/suggestions/README.md` presents
 `summarise_thread` and `get_dismissal_stats` as user-facing when neither is reachable;
-ARCHIVE's two deferred Phase 7 items never made it into PLAN.md's backlog;
-`SkeletonTable.vue` names quota and planner tables as callers that don't import it.
+ARCHIVE's two deferred Phase 7 items never made it into PLAN.md's backlog.
+`SkeletonTable.vue`'s docstring was also on this list and is now fixed — quota *does*
+import it these days, and so do the seven list views; only the planner never did, and its
+week is a card grid rather than a table.
