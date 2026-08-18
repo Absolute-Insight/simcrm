@@ -1211,9 +1211,22 @@ now says what is actually missing and where the plans actually are not.
 Three passes for one entry, each failing differently. A drift list that is not re-checked
 becomes drift; a re-check that answers an easier question than the one asked is no better.
 
-**Still open:** ARCHIVE's two deferred Phase 7 items never made it into PLAN.md's backlog.
+**Nothing still open.** The last entry — ARCHIVE's two deferred Phase 7 items never
+reaching PLAN.md's backlog — resolved on inspection rather than by being copied across.
+The skeleton-loading redesign is **done**: `ui/Skeleton.vue` and `ui/SkeletonTable.vue`
+back 19 components now, so it did not belong in a backlog at all. The keyboard-shortcut
+sheet is genuinely still open, but it is not lost — it sits in the P4 list above. ARCHIVE
+now says both of those things instead of listing them as pending work.
 (The "PLAN.md Phase 8, constraint 4" citation this list also carried no longer exists in
 `feats/agent/README.md` — searched, not there. Struck off.)
+
+Worth keeping the tally, since it is the argument for re-checking rather than trusting.
+This list carried **seven** entries. Exactly **one** was still accurate as written — that
+plans for MCP/enrichment-fallback/assistant were never written — and it is the one I struck
+off wrongly on the first pass. Of the rest: two were simply false (the Phase 8 citation is
+not in the file; both "unreachable" endpoints are called from the frontend), three had gone
+stale as the code moved under them (the test count, the coverage scope, `SkeletonTable`'s
+caller list), and one named a file that is gitignored, so no PR could ever have fixed it.
 
 **Also corrected while here:** PLAN.md still listed the forecast-accuracy widget as
 remaining Phase 10 work. It was registered in `AddChartModal` and closed in P2 above; the
