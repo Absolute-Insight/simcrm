@@ -117,7 +117,12 @@ const coordinateSummary = computed(() => {
       return `${latStr}, ${lngStr}`
     }
     const count = features.length
-    return __(`{0} ${count === 1 ? 'feature' : 'features'}`, [count])
+    /* Both forms spelled out rather than interpolated into the key: the old
+       version built "{0} feature" or "{0} features" at runtime, so neither
+       string appears in the source for an extractor to find. */
+    return count === 1
+      ? __('{0} feature', [count])
+      : __('{0} features', [count])
   } catch {
     return __('Invalid GeoJSON')
   }

@@ -39,7 +39,7 @@
         <TextEditor
           editor-class="prose-sm min-h-28 max-w-full border rounded-b-6 border-t-0 p-2 border-outline-elevation-2"
           :content="user.doc.email_signature"
-          placeholder="Type something..."
+          :placeholder="__('Type something...')"
           :bubbleMenu="true"
           :fixed-menu="true"
           @change="(val) => (user.doc.email_signature = val)"

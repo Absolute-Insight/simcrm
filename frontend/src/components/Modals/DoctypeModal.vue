@@ -4,11 +4,16 @@
       <div class="bg-surface-elevation-2 px-4 pb-6 pt-5 sm:px-6">
         <div class="mb-5 flex items-center justify-between">
           <div class="flex gap-2 items-center">
+            <!-- `__('Edit ' + name)` translated a string built at runtime, so
+                 the key was "Edit Note", "Edit Call Log" and so on -- keys no
+                 extractor can see, because none of them appear in the source.
+                 A placeholder makes "Edit {0}" the one visible key, and the
+                 name is translated on its own. -->
             <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">
               {{
                 editMode
-                  ? __('Edit ' + (doctypeTitle || doctype))
-                  : __('Create ' + (doctypeTitle || doctype))
+                  ? __('Edit {0}', [__(doctypeTitle || doctype)])
+                  : __('Create {0}', [__(doctypeTitle || doctype)])
               }}
             </h3>
           </div>

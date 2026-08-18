@@ -19,10 +19,10 @@ polish · **P4** platform work beyond the pilot.
 | **P0** security / data integrity | 1 | remote email images — deferred by decision, nothing built |
 | **P1** release / CI integrity | 0 | |
 | **P2** completeness (the mandate) | 0 | |
-| **P3** client-facing polish | 4 | |
+| **P3** client-facing polish | 3 | |
 | **P4** beyond the pilot | — | out of scope by definition |
 
-**93 closed, 5 open.** The mandate section is clear: every planned feature is built. What
+**94 closed, 4 open.** The mandate section is clear: every planned feature is built. What
 remains under P0 is one accepted risk with nothing built against it, and the rest is
 polish. Two things still need someone other than me:
 
@@ -1017,8 +1017,32 @@ polish. Two things still need someone other than me:
       who does not maintain it. Left deliberately: changing `authors` would misattribute
       code Frappe wrote, and I have no address to substitute. **Needs a maintainer
       decision on the fork's contact identity**, then 15 min.
-- [ ] **~126 unwrapped English strings across 33 components**, worst on the Activities
-      empty states (every Lead/Deal/Contact timeline) and ~45 filter operator labels. **1 day.**
+- [x] **~126 unwrapped English strings across 33 components**, worst on the Activities
+      empty states (every Lead/Deal/Contact timeline) and ~45 filter operator labels.
+      *Fixed:* 138 strings wrapped across 32 files — the 44 filter operator labels in
+      `CFCondition.vue`, the 18 Activities empty-state titles and descriptions, weekday and
+      priority option lists, and 16 template attributes that were unbound literals
+      (`title="No SLA Policies Found"` → `:title="__('...')"`).
+      The count was inflated: **AppSidebar's 11 nav labels, and the tab labels in
+      SLASection, AssignmentSchedule, ERPNextSettings, Contact and Organization, were
+      already translated at their render site** (`__(link.label)`), so wrapping them again
+      would have double-translated. Deliberately left alone: brand names (Twilio, Exotel,
+      Facebook, the four FX providers), the `ACXXXX…` format placeholders, a JSDoc example
+      and commented-out code.
+      **Two real bugs found doing it, neither of them a missing `__()`:**
+      `SlaHolidays.vue:271` used `day.label` as the value it stored in `workday`, so once
+      the labels became translatable a Spanish rep would have written "Lunes" into a Select
+      the server has no such option for. Now `.value`, which is what it always meant.
+      `DoctypeModal.vue:10` did `__('Edit ' + doctypeTitle)` — translate-a-string-built-at-
+      runtime, so the keys were "Edit Note", "Edit Call Log" and so on, none of which appear
+      in the source for an extractor to find. Now `__('Edit {0}', [__(name)])`.
+      `GeolocationControl` had the same defect with a plural; both forms are spelled out.
+      `getStandardFieldsMeta()` is a function now, not a const: `__` is installed on window
+      during app creation, after every module in the import graph has been evaluated, so a
+      module-scope `__()` would have run before the function existed.
+      Verified in the browser — filter operators, Activities empty states, SLA work days
+      (added a row, confirmed the stored value is still `Saturday`), assignment rule
+      priorities and the Create Note modal. Zero console errors.
 - [x] **Twilio callback URL built by substring-matching `":8"`** — copy-pasted in two files;
       a site on `:8443` silently loses its port. *Fixed:* parsed properly, and only a
       recognised bench port (8000/8080/9000) is dropped -- `get_url()` already honours
