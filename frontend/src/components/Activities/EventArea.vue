@@ -68,6 +68,16 @@
       </div>
     </div>
   </div>
+  <!-- A bare v-else made "there are none" the answer to a failed fetch as
+       well as an empty one. Failure gets its own branch; the empty case stays
+       last. -->
+  <ErrorState
+    v-else-if="eventsResource.error"
+    compact
+    :error="eventsResource.error"
+    :title="__('Could not load events')"
+    :retry="() => eventsResource.reload()"
+  />
   <EmptyState
     v-else
     :title="__('No Events Scheduled')"
@@ -83,6 +93,7 @@ import EmptyState from '@/components/ListViews/EmptyState.vue'
 import CalendarIcon from '@/components/Icons/CalendarIcon.vue'
 import MultipleAvatar from '@/components/MultipleAvatar.vue'
 import { useEvent, showEventModal, activeEvent } from '@/composables/event'
+import ErrorState from '@/components/ui/ErrorState.vue'
 import TimelineTimestamp from '@/components/Activities/TimelineTimestamp.vue'
 import { Avatar } from 'frappe-ui'
 
@@ -96,7 +107,7 @@ function showEvent(e = {}) {
   activeEvent.value = e
 }
 
-const { events, startEndTime, startDate } = useEvent({
+const { events, eventsResource, startEndTime, startDate } = useEvent({
   doctype: props.doctype,
   docname: props.docname,
 })

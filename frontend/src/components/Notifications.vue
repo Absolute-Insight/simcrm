@@ -73,6 +73,18 @@
             </div>
           </RouterLink>
         </div>
+        <!-- "You have no new notifications" was the answer to a failed fetch
+             as well as an empty one, because the EmptyState was a bare v-else.
+             The panel then agreed with the sidebar badge, which hides itself on
+             the same failure, so both surfaces told the rep the same untruth at
+             once. Failure is its own branch now. -->
+        <ErrorState
+          v-else-if="notifications.error"
+          compact
+          :error="notifications.error"
+          :title="__('Could not load notifications')"
+          :retry="() => notifications.reload()"
+        />
         <EmptyState
           v-else
           :title="__('No New Notifications')"
@@ -94,6 +106,7 @@ import MarkAsDoneIcon from '@/components/Icons/MarkAsDoneIcon.vue'
 import NotificationsIcon from '@/components/Icons/NotificationsIcon.vue'
 import EventNotificationsArea from '@/components/EventNotificationsArea.vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
 import UserAvatar from '@/components/UserAvatar.vue'
 import {
   visible,

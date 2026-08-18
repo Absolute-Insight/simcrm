@@ -41,8 +41,23 @@
               </span>
             </template>
             <template #suffix>
+              <!-- A badge that hides itself cannot tell "nothing waiting"
+                 apart from "never managed to ask", and on this sidebar the
+                 second one reads as the first. An en dash plus a tooltip says
+                 the count is unknown without claiming a number.
+                 The collapsed 6px dot below has no third state to offer, so it
+                 stays keyed on a count we actually have rather than asserting
+                 presence we cannot verify. -->
+              <Tooltip
+                v-if="unreadCountUnavailable"
+                :text="
+                  __('Unread count unavailable — could not reach the server')
+                "
+              >
+                <Badge class="mr-2" label="–" variant="subtle" />
+              </Tooltip>
               <Badge
-                v-if="unreadNotificationsCount"
+                v-else-if="unreadNotificationsCount"
                 class="mr-2"
                 :label="unreadNotificationsCount"
                 variant="subtle"
@@ -71,8 +86,18 @@
               </span>
             </template>
             <template #suffix>
+              <Tooltip
+                v-if="openCountUnavailable"
+                :text="
+                  __(
+                    'Suggestion count unavailable — could not reach the server',
+                  )
+                "
+              >
+                <Badge class="mr-2" label="–" variant="subtle" />
+              </Tooltip>
               <Badge
-                v-if="openSuggestionsCount"
+                v-else-if="openSuggestionsCount"
                 class="mr-2"
                 :label="openSuggestionsCount"
                 variant="subtle"
@@ -237,12 +262,14 @@ import Notifications from '@/components/Notifications.vue'
 import Suggestions from '@/components/Suggestions.vue'
 import {
   suggestionsStore,
+  openCountUnavailable,
   openSuggestionsCount,
   suggestionsVisible,
 } from '@/stores/suggestions'
 import Settings from '@/components/Settings/Settings.vue'
 import { viewsStore } from '@/stores/views'
 import {
+  unreadCountUnavailable,
   unreadNotificationsCount,
   notificationsStore,
   visible as notificationsVisible,

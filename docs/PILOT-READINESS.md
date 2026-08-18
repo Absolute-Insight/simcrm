@@ -22,7 +22,7 @@ polish · **P4** platform work beyond the pilot.
 | **P3** client-facing polish | 0 | |
 | **P4** beyond the pilot | — | out of scope by definition |
 
-**97 closed, 1 open.** Every planned feature is built, and the polish list is now empty.
+**98 closed, 1 open.** Every planned feature is built, and the polish list is now empty.
 The single open item is the P0 that was **deferred by an explicit decision** — remote
 images in inbound email — so nothing is built against it by choice rather than by
 omission.
@@ -34,9 +34,14 @@ someone other than me:
   recording, the Facebook connector and the injection/enrichment evals all need an
   account or a model endpoint this container does not have, so they are untested rather
   than working;
-- the **read-only `onError` sweep** (~92 resources), moved to P3 deliberately: those
-  degrade to an empty control rather than a false statement, and wiring 92 handlers
-  would have been motion rather than progress.
+- the **read-only `onError` sweep**. The real figure is **126** resources without an
+  `onError`, not ~92. More importantly, the reason given for deprioritising them — *"those
+  degrade to an empty control rather than a false statement"* — **was wrong**, and the
+  entry below records the eight places where it was wrong and now fixes them. What is left
+  after that is resources whose failure genuinely does degrade to an empty control (a
+  dropdown with no options, a filter with nothing to pick), and those stay deprioritised on
+  the same reasoning — but now on a claim that has actually been checked rather than
+  asserted.
 
 ---
 
@@ -1073,6 +1078,31 @@ someone other than me:
       calling it with no path -- as the signature invites -- raised. One definition now,
       re-exported where the copy was: the bug had to be found twice. 9 tests,
       mutation-checked.
+- [x] **Eight surfaces told the user "there is nothing here" when the fetch had failed.**
+      Found by testing the claim above rather than trusting it. Two shapes:
+      **The two sidebar badges silently read as zero.** `openCount` and `notifications`
+      carry `initialData` of `0` and `[]`, frappe-ui leaves that in place when the *first*
+      fetch fails, the count computes to 0 and the badge hides itself. A rep opening
+      Vectora while the endpoint is down sees a sidebar identical to a clean inbox — on a
+      product whose whole proposition is proactive signals, that is the product telling
+      them there is no work waiting when it never managed to ask. Measured: healthy sidebar
+      reads `Suggestions 378`; with `get_open_count` returning 500 it reads `Suggestions`
+      and nothing else, with no error anywhere on screen.
+      **Six components answered a failed fetch with an empty state** — a bare `v-else`
+      under `<EmptyState>`: the notifications panel ("You have no new notifications", which
+      agreed with the hidden badge so both surfaces lied at once), both event panels,
+      the email-account list ("no email accounts", which in Settings reads as *your mail is
+      not configured*), the assignment-rule list, and a contact's Deals tab.
+      *Fixed:* the badges show `–` with a tooltip instead of hiding, and the six get a real
+      `ErrorState` with retry. The rule that decides it is a pure, tested function,
+      `utils/resourceState.neverLoaded`, because the distinction is not obvious: frappe-ui
+      restores `previousData` on a **failed reload**, so a count that has loaded once keeps
+      its last good value — covering that with "unavailable" would be its own small lie.
+      7 unit tests, mutation-checked.
+      Verified headless against a live site by failing individual endpoints: cold-start
+      failure shows `–`, a genuine zero still hides the badge, a failed reload keeps `378`,
+      the two badges fail independently, and six healthy surfaces show no false alarm.
+
 - [x] **Skeleton/error states cover only the new surfaces** — legacy list views still use
       frappe-ui defaults despite `EmptyState.vue` documenting the three-state contract.
       *Fixed:* all seven (Leads, Deals, Tasks, Contacts, Organizations, Call Logs, Notes).
