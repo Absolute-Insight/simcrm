@@ -7,6 +7,7 @@ import {
   groupRisksByRecord,
   mondayOf,
   movePanel,
+  reorderVisiblePanel,
   planBreakdown,
   riskReason,
   standardViewPayload,
@@ -400,5 +401,71 @@ describe('movePanel', () => {
 
   it('leaves an unknown id alone', () => {
     expect(movePanel(['a', 'b'], 'zzz', 1)).toEqual(['a', 'b'])
+  })
+})
+
+describe('reorderVisiblePanel', () => {
+  const catalogue = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }]
+
+  it('moves a panel one slot when nothing is hidden', () => {
+    expect(reorderVisiblePanel(catalogue, {}, 'b', 1)).toEqual([
+      'a',
+      'c',
+      'b',
+      'd',
+    ])
+  })
+
+  /* The reason this is not just movePanel: 'c' is hidden, so moving 'b' down
+     has to land it past 'c' and below 'd'. Swapping with the next entry in the
+     list would put 'b' after a panel nobody can see, and the screen would not
+     change -- a button that looks broken. */
+  it('moves past a hidden neighbour to the next visible one', () => {
+    const order = reorderVisiblePanel(catalogue, { hidden: ['c'] }, 'b', 1)
+    expect(order.filter((id) => id !== 'c')).toEqual(['a', 'd', 'b'])
+  })
+
+  /* And the reason it is not computed from the visible panels alone: a hidden
+     panel that fell off the stored order would come back at the end rather
+     than where it was. */
+  it('keeps hidden panels in the stored order', () => {
+    const order = reorderVisiblePanel(catalogue, { hidden: ['c'] }, 'b', 1)
+    expect(order).toContain('c')
+    expect(order).toHaveLength(4)
+  })
+
+  it('returns the current order unchanged at either end', () => {
+    expect(reorderVisiblePanel(catalogue, {}, 'a', -1)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+    ])
+    expect(reorderVisiblePanel(catalogue, {}, 'd', 1)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+    ])
+  })
+
+  it('ignores a panel that is not visible', () => {
+    expect(reorderVisiblePanel(catalogue, { hidden: ['b'] }, 'b', 1)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+    ])
+  })
+
+  it('builds on an order already stored', () => {
+    const once = reorderVisiblePanel(catalogue, {}, 'a', 1)
+    expect(once).toEqual(['b', 'a', 'c', 'd'])
+    expect(reorderVisiblePanel(catalogue, { order: once }, 'a', 1)).toEqual([
+      'b',
+      'c',
+      'a',
+      'd',
+    ])
   })
 })
