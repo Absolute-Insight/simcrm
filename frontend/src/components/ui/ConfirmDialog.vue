@@ -8,10 +8,10 @@
     <p class="text-p-base text-ink-gray-7">{{ message }}</p>
     <template #actions="{ close }">
       <div class="flex justify-end gap-2">
-        <Button :label="__('Cancel')" @click="cancel(close)" />
+        <Button :label="cancelLabel || __('Cancel')" @click="cancel(close)" />
         <Button
           variant="solid"
-          :label="__('Confirm')"
+          :label="confirmLabel || __('Confirm')"
           :loading="loading"
           @click="confirm(close)"
         />
@@ -27,6 +27,12 @@ const props = defineProps({
   modelValue: { type: Boolean, default: false },
   title: { type: String, default: '' },
   message: { type: String, default: '' },
+  /* "Cancel/Confirm" is fine for a question phrased as one, and ambiguous for a
+     destructive choice -- next to "discard your changes?", Cancel could cancel
+     either the discard or the changes. Optional, so the three call sites that
+     read well already are untouched. */
+  confirmLabel: { type: String, default: '' },
+  cancelLabel: { type: String, default: '' },
   onConfirm: { type: Function, default: null },
   onCancel: { type: Function, default: null },
 })

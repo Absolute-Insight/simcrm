@@ -12,17 +12,17 @@ each names the file, the concrete failure, and the effort. Check items off as th
 **P1** blocks a *trustworthy* pilot · **P2** completeness mandate · **P3** client-facing
 polish · **P4** platform work beyond the pilot.
 
-## Where it stands (2026-08-17)
+## Where it stands (2026-08-18)
 
 | | open | note |
 |---|---|---|
 | **P0** security / data integrity | 1 | remote email images — deferred by decision, nothing built |
 | **P1** release / CI integrity | 0 | |
 | **P2** completeness (the mandate) | 0 | |
-| **P3** client-facing polish | 5 | |
+| **P3** client-facing polish | 4 | |
 | **P4** beyond the pilot | — | out of scope by definition |
 
-**92 closed, 6 open.** The mandate section is clear: every planned feature is built. What
+**93 closed, 5 open.** The mandate section is clear: every planned feature is built. What
 remains under P0 is one accepted risk with nothing built against it, and the rest is
 polish. Two things still need someone other than me:
 
@@ -880,12 +880,33 @@ polish. Two things still need someone other than me:
       always visible -- an `ErrorState` with retry and an `EmptyState`. Both are guarded on
       `isBuilder`, because a failed registry fetch is no reason to stop the report builder
       working.
-- [ ] **Native `window.confirm()` on one Vectora surface** — `Planner.vue:561`, which fires on
+- [x] **Native `window.confirm()` on one Vectora surface** — `Planner.vue:561`, which fires on
       every week arrow and rep switch while dirty. Chrome renders it as
       `localhost:8080 says…`, which reads as unfinished, and it blocks the tab while open.
       **AutomationRules is done** — it now uses `ui/ConfirmDialog` like the SLA views.
-      Planner is the remaining one and is the harder half (~0.5 day): its route guard must
-      return a promise, so the dialog cannot simply replace the call.
+      Planner was the remaining one and the harder half: its route guard must return a
+      promise, so the dialog could not simply replace the call.
+      *Fixed:* `composables/confirmGate.js` — a confirmation the caller can `await`, which
+      `onBeforeRouteLeave` returns directly. The trap it exists to close is a promise that
+      never settles: a dialog closes by Escape and by backdrop click without any button
+      handler running, and an unresolved guard promise does not look like a stuck dialog,
+      it looks like a page you cannot navigate away from with nothing on screen to say
+      why. So `open` is writable and any close that is not an explicit confirm answers no.
+      8 unit tests, each mutation-checked.
+      Verified in the browser on every path: week arrow, rep switch, conflict reload,
+      route leave, and browser Back — confirm, cancel, and Escape on each, with the buffer
+      checked afterwards.
+      **Found while testing:** the leave guard runs *twice* per click on Leads/Deals/
+      Contacts/Organizations/Notes/Tasks/Call Logs. `router.js:241` redirects those routes
+      to their default view, and a redirect abandons the navigation and starts a new one,
+      re-running the leave guards — so the user was asked twice. Pre-existing; the old
+      `window.confirm` prompted twice too. The guard now drops the buffer once the user
+      confirms, which is what "Discard changes" says it does and makes the second run a
+      no-op.
+      `ui/ConfirmDialog` gained optional `confirmLabel`/`cancelLabel` (defaults unchanged,
+      other three call sites untouched): "Cancel" next to "discard your changes?" could
+      cancel either the discard or the changes. Planner reads "Keep editing" /
+      "Discard changes".
 - [x] **Sales Targets and Automation Rules are the only Vectora surfaces with no
       loading/error primitives** — a bare spinner and frappe-ui's `ErrorMessage`, which on a
       transport failure renders the literal string "Failed to fetch" with no retry.
