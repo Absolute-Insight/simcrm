@@ -124,21 +124,41 @@ over them. The only reliable path back is the backup from step 0:
 ```bash
 # put the old tag back in .env first
 docker compose up -d
+# stop here if the password is unset or empty -- see below for why
+: "${DB_ROOT_PASSWORD:?set it in .env before restoring}"
+
 docker compose exec -T backend bench --site <site> restore --force \
-  --db-root-password "$DB_ROOT_PASSWORD" \
+  --db-root-username root --db-root-password "$DB_ROOT_PASSWORD" \
   /home/frappe/frappe-bench/sites/<site>/private/backups/<file>.sql.gz \
   --with-public-files <files>.tar --with-private-files <private>.tar
 ```
 
-`--db-root-password` is not optional and this command used to omit it. `restore`
-drops and recreates the database, which the site's own credentials may not do, so
-without the flag `bench` **prompts** for the MySQL root password — and the
-`backend` service does not carry `DB_ROOT_PASSWORD` in its environment (only `db`
-gets it, from `.env`), so nothing fills the prompt in for you. Under a plain
-`docker compose exec` there is no TTY either, so the rollback hangs at the one
-moment you cannot afford it. Take the value from `.env` on the host, where compose
-already reads it. Verified by running the restore both ways against a real
-backup.
+**Both root flags are load-bearing, for different reasons.** `restore` drops and
+recreates the database, which the site's own credentials may not be allowed to
+do, so it opens a second connection as the MySQL superuser. Frappe resolves those
+credentials in `get_root_connection` (`frappe/database/mariadb/setup_db.py`), and
+neither flag carries a click default: an omitted flag arrives as `None`, not as
+`"root"`.
+
+`--db-root-password` has no terminal guard. Omit it — or let `DB_ROOT_PASSWORD`
+expand empty, which looks identical from inside — and the lookup falls through to
+`getpass()`, which with the `-T` above has no terminal to read and raises a bare
+`EOFError`. Not "password missing"; a traceback, at the one moment you cannot
+afford to decode one. Hence the guard line above, which catches unset and empty
+alike and does not `exit` — so pasting it into a live shell cannot close it. The `backend` service does not
+carry `DB_ROOT_PASSWORD` in its environment (only `db` gets it, from `.env`), so
+nothing fills it in for you — take the value from `.env` on the host, where
+compose already reads it.
+
+`--db-root-username` is guarded by `sys.__stdin__.isatty()`, so it behaves in two
+ways and only one of them is visible here. With `-T` there is no TTY, the guard
+short-circuits, and it resolves to `root` silently. Run the same command *without*
+`-T` — at a shell, which is where you will be during an incident — and it stops on
+`Enter mysql super user [root]:`, a prompt nothing in this runbook predicted.
+Passing it explicitly makes the command behave the same either way.
+
+Verified by running the restore both ways against a real backup, and by
+exercising both credential paths with stdin redirected.
 
 Which means the restore drill in the pilot checklist below is not a nice-to-have:
 it is the rehearsal for the only rollback you have. If step 0's backup has never
@@ -274,7 +294,9 @@ earns trust, not before.
    including a Vectora endpoint (`get_open_count` → 378). What that does **not**
    cover: it ran `bench` directly rather than through `docker compose exec`, so
    the compose wrapper and the volume layout are still unrehearsed. Do the drill
-   again on the real stack before the pilot takes real data.
+   again on the real stack before the pilot takes real data. Tearing the scratch
+   site down afterwards is what surfaced the `--db-root-username` prompt above —
+   the drill keeps paying out at every stage, including the cleanup.
 2. **Agent tier off, digests off.** Deterministic automation (assignment, SLA,
    automation rules) works with the agent disabled by design — you lose only
    the model-drafted content. Enable `CRM Report Digest` records only after
