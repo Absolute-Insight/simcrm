@@ -344,6 +344,58 @@ continue to work. New syntax is additive.
 | Codified injection eval suite | Assert-on-refusal-rate across models. The hostile thread is a documented standing eval; codify it when a second write capability lands |
 | Territory/segment analytics | Metrics layer extension; unblocked now that quota shape is settled |
 | Forecast-accuracy widget | Endpoint and chart shape exist; register once snapshots have accumulated |
+| Block remote images in inbound email | Post-v1 by decision. Scoped and de-risked already — see below, the mechanism is one CSP token |
+
+
+### Block remote images in inbound email (post-v1)
+
+Deferred out of the pilot by decision, twice. Logged here with the scoping already
+done so nobody re-derives it: **the blocking mechanism is one token**, and the
+obvious version of that token is wrong.
+
+`EmailContent.vue` already renders inbound mail in a sandboxed `srcdoc` iframe
+carrying its own `<meta>` CSP. Today it says `img-src http: https: data: cid:`.
+The fix is:
+
+```
+img-src 'self' data:
+```
+
+Four things were verified in a browser against that exact config, each with a
+same-origin control to prove the probe was live:
+
+- **A `<meta>` CSP *is* enforced inside `srcdoc`.** Permissive control loaded;
+  restricted sibling reported `FAILED: csp` with no request leaving the browser.
+- **`'self'` resolves to the parent origin** in a `srcdoc` document with
+  `sandbox="allow-same-origin"`. This is the part that matters: frappe rewrites
+  `cid:` to a same-origin `/files/…` URL at receive time
+  (`frappe/email/receive.py:751`), so inline logos and signatures arrive as
+  same-origin paths. `img-src data: cid:` — the obvious directive — would have
+  blocked every one of them, and `cid:` in the current CSP is dead weight that
+  never reaches the browser.
+- **One directive covers every evasion route.** `<img src>`, CSS
+  `background-image`, `srcset`, and `<picture><source>` were each blocked by
+  `img-src` alone. No DOM rewriting or per-element scrubbing is needed.
+
+So the work is not the block, it is the affordance — mail that is one large
+remote image renders as a blank box, which reads as a bug rather than a policy:
+
+| task | note | est. |
+|---|---|---|
+| CSP token, drop the dead `cid:` | the actual block | 15 min |
+| `hasRemoteImages()` in `src/utils/` + unit tests | so the banner does not cry wolf; must catch `srcset`, `<picture>`, `background-image`, protocol-relative `//host` | 1–1.5 h |
+| `htmlContent` → `computed` | it is a plain `const` evaluated once at setup, so the toggle cannot re-render. Fixes a latent bug for free: `props.content` changes never re-render today | 30 min |
+| banner + "Load images" | `__()`; orange not amber, `-9` ink step; both themes | 1.5–2 h |
+| browser verification | real remote-image email, both themes | 1 h |
+
+**≈ half a day.** Blast radius is one component with one caller
+(`EmailArea.vue:64`), tightening one token in a control that already shipped.
+
+Deliberately **out** of that estimate: "always load images from this sender"
+needs a persistence store, an endpoint, settings UI and a trust model (2–3 days);
+a server-side image proxy hides the rep's IP but still confirms the open, so it
+buys less than it costs. Ship the session-only toggle.
+
 
 ---
 
