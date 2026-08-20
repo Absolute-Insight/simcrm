@@ -25,6 +25,7 @@ from frappe.tests import IntegrationTestCase
 
 from crm.api.dashboard import (
 	CHARTS,
+	blank_label,
 	company_size_bands,
 	get_deals_by_company_size,
 	get_deals_by_industry,
@@ -119,8 +120,8 @@ class SegmentAnalyticsTest(IntegrationTestCase):
 		order = [
 			row["company_size"] for row in get_deals_by_company_size(self.from_date, self.to_date)["data"]
 		]
-		self.assertIn("Empty", order)
-		self.assertEqual(order[-1], "Empty")
+		self.assertIn(blank_label(), order)
+		self.assertEqual(order[-1], blank_label())
 
 	def test_an_unset_company_size_is_labelled_rather_than_blank(self):
 		"""A stored empty string is not NULL, so IfNull alone leaves a nameless bar."""
