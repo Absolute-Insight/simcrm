@@ -194,6 +194,7 @@ import {
   Tooltip,
   call,
   toast,
+  usePageMeta,
 } from 'frappe-ui'
 // the calendar family is parked in experimental for v1 (frappe-ui migration doc)
 import {
@@ -647,4 +648,9 @@ async function ensureParticipantContacts(participants) {
   }
   return updated
 }
+
+// Every other nav surface titles itself -- list views through ViewControls,
+// Dashboard/Planner/Reports directly -- so Calendar was the one tab and history
+// entry reading the bare app name.
+usePageMeta(() => ({ title: __('Calendar') }))
 </script>
