@@ -173,7 +173,9 @@ jobs:
         # builds against vectora).
         run: |
           export APPS_JSON='[{"url": "https://github.com/'"$GITHUB_REPOSITORY"'","branch": "'"$GITHUB_REF_NAME"'"}]'
-          echo "APPS_JSON_BASE64=$(echo $APPS_JSON | base64 -w 0)" >> $GITHUB_ENV
+          # Passed to the build as a secret, not a build-arg -- see the
+          # `secrets:` block below for why that distinction was load-bearing.
+          echo "APPS_JSON=$APPS_JSON" >> $GITHUB_ENV
           echo "FRAPPE_PATH=https://github.com/Absolute-Insight/frappe" >> $GITHUB_ENV
           echo "FRAPPE_BRANCH=vectora" >> $GITHUB_ENV
 
@@ -245,4 +247,42 @@ jobs:
           build-args: |
             "FRAPPE_BRANCH=${{ env.FRAPPE_BRANCH }}"
             "FRAPPE_PATH=${{ env.FRAPPE_PATH }}"
-            "APPS_JSON_BASE64=${{ env.APPS_JSON_BASE64 }}"
+          # The app list reaches the build as a SECRET, because that is what the
+          # Containerfile reads:
+          #
+          #   RUN --mount=type=secret,id=apps_json,target=/opt/frappe/apps.json
+          #     if [ -f /opt/frappe/apps.json ] && [ -s /opt/frappe/apps.json ]
+          #       export APP_INSTALL_ARGS="--apps_path=/opt/frappe/apps.json"
+          #     bench init ${APP_INSTALL_ARGS} ...
+          #
+          # This was an APPS_JSON_BASE64 build-arg, which upstream stopped
+          # reading when it moved to a secret mount. Nothing errored: the arg
+          # was accepted and ignored, apps.json was never created, the guard
+          # fell through with APP_INSTALL_ARGS empty, and `bench init` built a
+          # bench containing frappe and nothing else. Every image published so
+          # far -- v2.0.0 through v3.1.4, and :stable -- ships without the CRM
+          # app, which is why `create-site --install-app crm` has never been
+          # got past. Confirmed by listing the published layers: the whole
+          # `frappe-bench/apps/` tree is `frappe/` alone.
+          #
+          # Raw JSON, not base64: bench reads the mounted file directly.
+          secrets: |
+            apps_json=${{ env.APPS_JSON }}
+
+      # The bug above was invisible for five releases because a build that
+      # installs no apps still succeeds -- it just produces a frappe bench with
+      # nothing in it. Nothing downstream noticed, because nobody had booted the
+      # image. So assert the one property that makes this image worth
+      # publishing, against the artifact that was actually pushed.
+      - name: Refuse an image that does not contain the app
+        run: |
+          set -euo pipefail
+          ref="ghcr.io/${{ env.IMAGE_REPO }}:${{ env.IMAGE_SHA_TAG }}"
+          apps=$(docker run --rm --entrypoint sh "$ref" -c 'ls apps/' | tr -d '\r')
+          echo "apps in image: $(echo "$apps" | tr '\n' ' ')"
+          if ! echo "$apps" | grep -qx crm; then
+            echo "::error::$ref contains no 'crm' app -- bench init installed frappe only."
+            echo "::error::Check that apps.json reaches the build as the 'apps_json' secret."
+            exit 1
+          fi
+          echo "$ref contains the crm app."
