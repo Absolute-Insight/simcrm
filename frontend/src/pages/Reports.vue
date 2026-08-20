@@ -293,6 +293,20 @@
           {{ showing.description }}
         </p>
 
+        <!-- Why the numbers below look the way they do, when the server knows.
+             Zeroed forward-looking columns beside real realised revenue read as
+             a broken report rather than a setting that is off, so this says
+             which setting. Orange, not amber: no amber step clears AA on a
+             light surface. Kept in print, because a printed report with
+             unexplained zeroes outlives the screen it was read on. -->
+        <p
+          v-if="showing.notice"
+          class="mb-3 flex items-start gap-2 rounded bg-surface-orange-1 px-3 py-2 text-sm text-ink-orange-9"
+        >
+          <LucideInfo class="mt-0.5 size-4 shrink-0" />
+          <span>{{ showing.notice }}</span>
+        </p>
+
         <EmptyState
           v-if="!showing.rows.length"
           icon="lucide-bar-chart-2"

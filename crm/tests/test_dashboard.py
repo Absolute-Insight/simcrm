@@ -8,6 +8,7 @@ from frappe.tests.utils import make_test_records
 from frappe.utils import add_days, get_first_day, get_last_day, nowdate
 
 from crm.api.dashboard import (
+	blank_label,
 	get_average_deal_value,
 	get_average_ongoing_deal_value,
 	get_average_time_to_close_a_deal,
@@ -17,6 +18,7 @@ from crm.api.dashboard import (
 	get_chart,
 	get_dashboard,
 	get_deal_status_change_counts,
+	get_deals_by_industry,
 	get_deals_by_salesperson,
 	get_deals_by_source,
 	get_deals_by_stage_axis,
@@ -797,3 +799,72 @@ class TestDashboard(IntegrationTestCase):
 			self.assertIn("name", item)
 			# Validate name is not empty
 			self.assertTrue(item["name"])
+
+
+class TestBlankGroupingLabels(IntegrationTestCase):
+	"""Rows whose grouping dimension is not set must still be named.
+
+	Every chart here groups by an optional field. They used to disagree about
+	the blank bucket: five charts hard-coded the literal "Empty" across six
+	call sites, and deals-by-salesperson had no final fallback at all -- it
+	dropped to ``deal_owner``, itself null for an unowned deal, so the label
+	came out null and the bar rendered nameless.
+	"""
+
+	ORG = "Blank Label Co"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		self.from_date = add_days(nowdate(), -3)
+		self.to_date = add_days(nowdate(), 1)
+		if not frappe.db.exists("CRM Organization", self.ORG):
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": self.ORG}).insert(
+				ignore_permissions=True
+			)
+
+	def make_deal(self, **kwargs):
+		doc = frappe.get_doc(
+			{"doctype": "CRM Deal", "organization": self.ORG, "deal_value": 1000, **kwargs}
+		).insert(ignore_permissions=True)
+		return doc
+
+	def test_an_unowned_deal_is_labelled_not_left_nameless(self):
+		"""The regression: a null deal_owner produced a bar with no label."""
+		self.make_deal(deal_owner=None)
+
+		rows = get_deals_by_salesperson(self.from_date, self.to_date)["data"]
+
+		labels = [row["salesperson"] for row in rows]
+		self.assertTrue(rows, "expected at least the deal just created")
+		for label in labels:
+			self.assertIsNotNone(label, f"a nameless bar: {rows}")
+			self.assertNotEqual(str(label).strip(), "")
+		self.assertIn(blank_label(), labels)
+
+	def test_an_owned_deal_still_shows_its_owner(self):
+		"""The control: the fallback must not swallow real names."""
+		self.make_deal(deal_owner="Administrator")
+
+		rows = get_deals_by_salesperson(self.from_date, self.to_date)["data"]
+
+		self.assertIn("Administrator", [row["salesperson"] for row in rows])
+
+	def test_blank_dimensions_agree_on_one_label(self):
+		"""The point of the shared helper: no chart invents its own word."""
+		self.make_deal(deal_owner=None, territory=None, industry=None, source=None)
+
+		charts = {
+			"territory": (get_deals_by_territory, "territory"),
+			"industry": (get_deals_by_industry, "industry"),
+			"source": (get_deals_by_source, "source"),
+			"salesperson": (get_deals_by_salesperson, "salesperson"),
+		}
+		for name, (fn, key) in charts.items():
+			with self.subTest(chart=name):
+				labels = [row[key] for row in fn(self.from_date, self.to_date)["data"]]
+				self.assertNotIn("Empty", labels, f"{name} still uses the old literal")
+
+	def test_the_label_is_translated_per_call(self):
+		"""Not frozen at import: a module is evaluated once per worker."""
+		self.assertEqual(blank_label(), frappe._("Unassigned"))

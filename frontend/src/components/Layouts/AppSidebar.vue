@@ -498,6 +498,15 @@ watch(
   () => (activeItem.value = currentRouteKey()),
 )
 
+// The optimistic highlight above has to be taken back when the navigation it
+// predicted does not happen. A route guard that returns false -- the Planner's
+// unsaved-changes prompt, answered with "Keep editing" -- leaves route.name
+// untouched, so the watcher never fires and the sidebar goes on pointing at a
+// page the user is not on. afterEach's third argument is that failure.
+router.afterEach((to, from, failure) => {
+  if (failure) activeItem.value = currentRouteKey()
+})
+
 function onNotificationsClick(event) {
   if (props.mobile) {
     selectItem(event, 'Notifications')

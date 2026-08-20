@@ -242,6 +242,12 @@ router.beforeEach(async (to, from, next) => {
     }
   } else if (!isLoggedIn) {
     window.location.href = '/login?redirect-to=/crm'
+    // Leaving the SPA entirely, but this guard still has to answer: vue-router
+    // declares `next` in its signature, so returning without calling it logs
+    // "Invalid navigation guard" and rejects the navigation with an error
+    // nothing handles. next(false) aborts the in-app route cleanly while the
+    // browser goes to /login.
+    next(false)
   } else if (to.matched.length === 0) {
     next({ name: 'Invalid Page' })
   } else if (['Deal', 'Lead'].includes(to.name) && !to.hash) {

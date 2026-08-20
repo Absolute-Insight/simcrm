@@ -53,6 +53,28 @@ class TimestampDiff(Function):
 TERRITORY_BLIND = frozenset({"plan_adherence", "quota_attainment", "forecast_accuracy"})
 
 
+def blank_label() -> str:
+	"""The bucket label for rows whose grouping dimension is not set.
+
+	Every chart that groups by an optional field needs one, and they used to
+	disagree: source, territory, industry and company size each hard-coded the
+	literal ``"Empty"``, while deals-by-salesperson fell back to
+	``deal_owner`` -- which is itself null for an unowned deal, so the label
+	came out null and the bar rendered with no name at all. On a seeded site
+	that was 41% of the pipeline showing as an anonymous column on a chart
+	whose whole point is naming who owns what.
+
+	One label, in one place, so those cannot drift apart again. "Unassigned"
+	rather than "Empty" because a reader of a sales chart is being told nobody
+	owns these, not that a database column is null.
+
+	Called per request, never at import: a module is evaluated once per worker,
+	so a module-level ``_()`` would freeze this to the language of whoever made
+	the first request.
+	"""
+	return _("Unassigned")
+
+
 def in_territory(table, territory: str | None):
 	"""Criterion for "this record belongs to that territory", or ``None``.
 
@@ -1364,7 +1386,7 @@ def get_leads_by_source(
 
 	query = (
 		frappe.qb.from_(CRMLead)
-		.select(IfNull(CRMLead.source, "Empty").as_("source"), Count("*").as_("count"))
+		.select(IfNull(CRMLead.source, blank_label()).as_("source"), Count("*").as_("count"))
 		.where(Date(CRMLead.creation).between(from_date, to_date))
 		.groupby(CRMLead.source)
 		.orderby(Count("*"), order=frappe.qb.desc)
@@ -1410,7 +1432,7 @@ def get_deals_by_source(
 
 	query = (
 		frappe.qb.from_(CRMDeal)
-		.select(IfNull(CRMDeal.source, "Empty").as_("source"), Count("*").as_("count"))
+		.select(IfNull(CRMDeal.source, blank_label()).as_("source"), Count("*").as_("count"))
 		.where(Date(CRMDeal.creation).between(from_date, to_date))
 		.groupby(CRMDeal.source)
 		.orderby(Count("*"), order=frappe.qb.desc)
@@ -1457,7 +1479,7 @@ def get_deals_by_territory(
 	query = (
 		frappe.qb.from_(CRMDeal)
 		.select(
-			IfNull(CRMDeal.territory, "Empty").as_("territory"),
+			IfNull(CRMDeal.territory, blank_label()).as_("territory"),
 			Count("*").as_("deals"),
 			Sum(Coalesce(CRMDeal.deal_value, 0) * IfNull(CRMDeal.exchange_rate, 1)).as_("value"),
 		)
@@ -1531,7 +1553,7 @@ def get_deals_by_industry(
 	query = (
 		frappe.qb.from_(CRMDeal)
 		.select(
-			IfNull(CRMDeal.industry, "Empty").as_("industry"),
+			IfNull(CRMDeal.industry, blank_label()).as_("industry"),
 			Count("*").as_("deals"),
 			value.as_("value"),
 		)
@@ -1592,7 +1614,7 @@ def get_deals_by_company_size(
 	query = (
 		frappe.qb.from_(CRMDeal)
 		.select(
-			IfNull(CRMDeal.no_of_employees, "Empty").as_("company_size"),
+			IfNull(CRMDeal.no_of_employees, blank_label()).as_("company_size"),
 			Count("*").as_("deals"),
 			value.as_("value"),
 		)
@@ -1611,7 +1633,7 @@ def get_deals_by_company_size(
 	# An empty string is a stored "no answer" and IfNull cannot see it.
 	for row in rows:
 		if not row.get("company_size"):
-			row["company_size"] = "Empty"
+			row["company_size"] = blank_label()
 
 	return {
 		"data": rows,
@@ -1654,7 +1676,7 @@ def get_deals_by_salesperson(
 		.left_join(User)
 		.on(User.name == CRMDeal.deal_owner)
 		.select(
-			IfNull(User.full_name, CRMDeal.deal_owner).as_("salesperson"),
+			IfNull(IfNull(User.full_name, CRMDeal.deal_owner), blank_label()).as_("salesperson"),
 			Count("*").as_("deals"),
 			Sum(Coalesce(CRMDeal.deal_value, 0) * IfNull(CRMDeal.exchange_rate, 1)).as_("value"),
 		)
