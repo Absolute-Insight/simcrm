@@ -5,6 +5,71 @@ import fs from 'node:fs'
 import path from 'path'
 import { VitePWA } from 'vite-plugin-pwa'
 
+/**
+ * Ship the fonts the built CSS actually asks for.
+ *
+ * Tailwind 4's postcss plugin resolves `@import` itself, so vite never sees
+ * `@fontsource-variable/space-grotesk` or frappe-ui's inter.css as modules --
+ * it neither rewrites their `url()`s nor emits the woff2 they point at. The
+ * built CSS keeps the source-relative paths (`./files/…woff2`,
+ * `Inter.var.woff2?v=3.19`) and every one of them 404s. Both brand typefaces
+ * fall back to `-apple-system`, in production only: the dev server serves them
+ * straight out of node_modules, so nothing looks wrong until the image is
+ * built. Under Tailwind 3 vite handled those imports and this did not arise.
+ *
+ * The copy list is read back out of the emitted CSS rather than written here,
+ * so adding a subset or bumping frappe-ui cannot silently drop a file again.
+ * Anything it cannot resolve fails the build, because a font that 404s is not
+ * worth discovering from a screenshot.
+ */
+function shipFontsReferencedByCss({ searchRoots }) {
+  return {
+    name: 'ship-fonts-referenced-by-css',
+    apply: 'build',
+    writeBundle(options, bundle) {
+      const outDir = options.dir
+      const wanted = new Map()
+
+      for (const [fileName, chunk] of Object.entries(bundle)) {
+        if (!fileName.endsWith('.css') || chunk.type !== 'asset') continue
+        const css = String(chunk.source)
+        for (const match of css.matchAll(
+          /url\(\s*['"]?([^'")?]+\.woff2?)(?:\?[^'")]*)?['"]?\s*\)/g,
+        )) {
+          const ref = match[1]
+          if (/^(https?:)?\/\//.test(ref) || ref.startsWith('data:')) continue
+          // Resolve relative to the CSS file, which is where the browser will.
+          const dest = path.normalize(path.join(path.dirname(fileName), ref))
+          if (!wanted.has(dest)) wanted.set(dest, path.basename(ref))
+        }
+      }
+
+      const missing = []
+      for (const [dest, basename] of wanted) {
+        const target = path.join(outDir, dest)
+        if (fs.existsSync(target)) continue
+        const found = searchRoots
+          .map((root) => path.join(root, basename))
+          .find((candidate) => fs.existsSync(candidate))
+        if (!found) {
+          missing.push(dest)
+          continue
+        }
+        fs.mkdirSync(path.dirname(target), { recursive: true })
+        fs.copyFileSync(found, target)
+      }
+
+      if (missing.length) {
+        this.error(
+          'These fonts are referenced by the built CSS but no source was found:\n  ' +
+            missing.join('\n  ') +
+            '\nAdd its directory to shipFontsReferencedByCss({ searchRoots }).',
+        )
+      }
+    },
+  }
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(async ({ mode }) => {
   const isDev = mode === 'development'
@@ -12,6 +77,22 @@ export default defineConfig(async ({ mode }) => {
     plugins: [
       vue(),
       vueJsx(),
+      // Both layouts the repo builds in: frappe-ui resolves through
+      // node_modules inside a bench, and as a sibling checkout from the
+      // working tree. Roots that do not exist are simply never matched.
+      shipFontsReferencedByCss({
+        searchRoots: [
+          path.resolve(
+            import.meta.dirname,
+            'node_modules/@fontsource-variable/space-grotesk/files',
+          ),
+          path.resolve(
+            import.meta.dirname,
+            'node_modules/frappe-ui/src/fonts/Inter',
+          ),
+          path.resolve(import.meta.dirname, '../frappe-ui/src/fonts/Inter'),
+        ],
+      }),
       VitePWA({
         registerType: 'autoUpdate',
         workbox: {
