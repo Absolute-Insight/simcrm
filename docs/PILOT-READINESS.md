@@ -16,16 +16,20 @@ polish · **P4** platform work beyond the pilot.
 
 | | open | note |
 |---|---|---|
-| **P0** security / data integrity | 1 | remote email images — deferred by decision, nothing built |
+| **P0** security / data integrity | 0 | remote email images moved to the post-v1 backlog by decision — scoped, not built |
 | **P1** release / CI integrity | 0 | |
 | **P2** completeness (the mandate) | 0 | |
 | **P3** client-facing polish | 0 | |
 | **P4** beyond the pilot | — | out of scope by definition |
 
-**98 closed, 1 open.** Every planned feature is built, and the polish list is now empty.
-The single open item is the P0 that was **deferred by an explicit decision** — remote
-images in inbound email — so nothing is built against it by choice rather than by
-omission.
+**98 closed, 0 open in pilot scope.** Every planned feature is built and the polish list
+is empty. The one remaining P0 — remote images in inbound email — was **deferred by
+explicit decision and has now been scheduled for after v1**, so it is tracked in
+`.pi/PLAN.md` (Deferred / Backlog) rather than counted here. Nothing is built against
+it, by choice rather than by omission: **the read receipt still fires.** It is scoped
+and de-risked, not started — the mechanism turns out to be a single CSP token, and the
+notes there record which token, and why the obvious one would have broken every inline
+logo.
 
 That is the end of what can be closed from inside this container. Two things still need
 someone other than me:
@@ -233,13 +237,17 @@ someone other than me:
       sanitises Text Editor fields with nh3 — but there is no defence in depth and no CSP
       anywhere in the app, and remote content loads automatically, giving external senders
       read receipts on every rep who opens their mail. **2 h.**
-- [ ] **Remote images in inbound email still load automatically**, so an external
+- [~] **Remote images in inbound email still load automatically**, so an external
       sender gets a read receipt on every rep who opens their mail. Blocking them is
       normal mail-client behaviour but needs a "load images" affordance to not look
-      broken, so it was left out of the sandbox fix rather than smuggled in. **1 day.**
-      **Deferred by decision, not oversight** — raised with the maintainer and the call was
-      to leave it as-is for the pilot. It stays open rather than closed because nothing has
-      been built: the read receipt still fires. Worth revisiting before a client whose
+      broken, so it was left out of the sandbox fix rather than smuggled in.
+      **Deferred by decision twice, not oversight**, and now **scheduled for after v1** —
+      moved to `.pi/PLAN.md` (Deferred / Backlog), where the scoping is recorded: the
+      block is one CSP token (`img-src 'self' data:`), verified in a browser against
+      `<img>`, `srcset`, `<picture>` and CSS `background-image`, and `'self'` is
+      load-bearing because frappe rewrites `cid:` to a same-origin `/files/` URL, so the
+      obvious directive would have blocked every inline logo. **≈ half a day**, mostly the
+      affordance. Not started: the read receipt still fires. Revisit before a client whose
       counterparties they would rather not tip off.
 - [x] **Demo data contaminates forecast history irreversibly.** `hooks.py:97` seeded demo
       data on desk setup-wizard completion. A fresh site starts `setup_complete = 0`
