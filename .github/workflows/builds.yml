@@ -91,13 +91,29 @@ jobs:
 
           while :; do
             # Exclude this workflow's own jobs, or it would wait on itself.
+            #
+            # One row per check NAME, keeping the newest run -- which is what
+            # GitHub's own required-checks UI shows, and it matters here. The
+            # test workflows set `cancel-in-progress: true`, so any second push
+            # to a ref supersedes the first and leaves a `cancelled` run behind
+            # on that commit forever. Reading every run flat, a superseded
+            # attempt vetoed the release permanently: re-dispatching could not
+            # help, because the cancelled row never goes away. Two pushes in
+            # quick succession were enough to make a commit unpublishable.
             runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?per_page=100" \
-              --jq '.check_runs[]
-                    | select(.name != "Require green checks" and .name != "Build")
-                    | [.name, .status, (.conclusion // "pending")] | @tsv')
+              --jq '[ .check_runs[]
+                      | select(.name != "Require green checks" and .name != "Build") ]
+                    | group_by(.name)
+                    | map( sort_by(.started_at, (.id|tostring)) | last )
+                    | .[] | [.name, .status, (.conclusion // "pending")] | @tsv')
 
+            # `cancelled` is deliberately absent from this list. A cancelled
+            # newest run is not a failed test, it is no verdict -- so fall
+            # through and keep waiting rather than refusing. If nothing ever
+            # replaces it the deadline below still refuses, which is the right
+            # answer for a commit with no evidence, reached the honest way.
             if bad=$(printf '%s\n' "$runs" | awk -F'\t' '
-                  $3 ~ /^(failure|cancelled|timed_out|action_required|stale)$/ { print $1 " (" $3 ")" }'
+                  $3 ~ /^(failure|timed_out|action_required|stale)$/ { print $1 " (" $3 ")" }'
                 ) && [ -n "$bad" ]; then
               echo "::error::Refusing to publish: these checks did not pass on $SHA"
               printf '%s\n' "$bad"
