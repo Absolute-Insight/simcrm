@@ -80,6 +80,25 @@ def _forecast_vs_actual(from_date, to_date, user, territory=None):
 	]
 
 
+def _forecast_notice(from_date, to_date, user, territory=None):
+	"""Why the forward-looking money columns are all zero, when they are.
+
+	``expected_deal_value`` is only mandatory while FCRM Settings
+	``enable_forecasting`` is on, and it ships off -- so on a site that has
+	never turned it on, every forward-looking column sums to nothing while the
+	realised ones show real revenue. "Forecasted $0 / Actual $71,500,000" in
+	one row does not read as a setting being off, it reads as broken.
+
+	The dashboard already says so: ``forecast_empty_state`` exists for exactly
+	this and is documented for exactly this ("a blank chart beside tiles
+	showing real money reads as a bug"). Reports simply never asked it. Same
+	helper, so the two surfaces cannot start explaining it differently.
+	"""
+	from crm.api.dashboard import forecast_empty_state
+
+	return forecast_empty_state()
+
+
 def _pipeline_by_segment(from_date, to_date, user, territory=None):
 	"""Open pipeline sliced two ways at once: industry, then company size.
 
@@ -184,6 +203,7 @@ REPORTS = {
 			},
 		],
 		"get_rows": _pipeline_by_stage,
+		"get_notice": _forecast_notice,
 	},
 	"funnel_conversion": {
 		"title": "Funnel conversion",
@@ -216,6 +236,7 @@ REPORTS = {
 			{"key": "actual", "label": "Actual", "type": "currency"},
 		],
 		"get_rows": _forecast_vs_actual,
+		"get_notice": _forecast_notice,
 	},
 	"pipeline_by_segment": {
 		"title": "Pipeline by segment",
@@ -300,6 +321,14 @@ def get_report(
 		"period": report.get("period", True),
 		"columns": _translated_columns(report),
 		"rows": report["get_rows"](str(from_date), str(to_date), user, territory),
+		# Optional, and None for most reports: a line explaining why the numbers
+		# below are the shape they are, when we know. Already-translated, since
+		# the producer builds it per request.
+		"notice": (
+			report["get_notice"](str(from_date), str(to_date), user, territory)
+			if report.get("get_notice")
+			else None
+		),
 		"territory": territory or None,
 		"territory_filtered": bool(territory) and name not in TERRITORY_BLIND,
 	}

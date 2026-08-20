@@ -145,3 +145,67 @@ class ReportsTest(IntegrationTestCase):
 		out = get_report("plan_adherence_by_rep", today, today, user=None)
 		for row in out["rows"]:
 			self.assertEqual(row["user"], USER)
+
+
+class TestForecastNotice(IntegrationTestCase):
+	"""Why the forward-looking money columns read zero, said out loud.
+
+	``expected_deal_value`` is only mandatory while FCRM Settings
+	``enable_forecasting`` is on, and it ships off -- so those columns sum to
+	nothing beside realised columns showing real revenue. "Forecasted $0 /
+	Actual $71,500,000" in one row reads as a broken report, not a setting.
+	The dashboard already explained it; reports never asked.
+	"""
+
+	FORWARD_LOOKING = ("pipeline_by_stage", "forecast_vs_actual")
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		self.previous = frappe.db.get_single_value("FCRM Settings", "enable_forecasting")
+
+	def tearDown(self):
+		frappe.db.set_single_value("FCRM Settings", "enable_forecasting", self.previous or 0)
+		super().tearDown()
+
+	def today(self):
+		return str(frappe.utils.nowdate())
+
+	def test_forecasting_off_explains_the_zeroes(self):
+		frappe.db.set_single_value("FCRM Settings", "enable_forecasting", 0)
+		for name in self.FORWARD_LOOKING:
+			with self.subTest(report=name):
+				notice = get_report(name, self.today(), self.today())["notice"]
+				self.assertTrue(notice, f"{name} reports zeroes with no explanation")
+				self.assertIn("forecasting", notice.lower())
+
+	def test_forecasting_on_says_nothing(self):
+		"""The control. A notice that never clears is wallpaper, not a message."""
+		frappe.db.set_single_value("FCRM Settings", "enable_forecasting", 1)
+		for name in self.FORWARD_LOOKING:
+			with self.subTest(report=name):
+				self.assertIsNone(get_report(name, self.today(), self.today())["notice"])
+
+	def test_reports_with_realised_money_do_not_claim_a_forecast_problem(self):
+		"""Funnel counts and plan adherence have no forward-looking column."""
+		frappe.db.set_single_value("FCRM Settings", "enable_forecasting", 0)
+		for name in ("funnel_conversion", "plan_adherence_by_rep"):
+			with self.subTest(report=name):
+				self.assertIsNone(get_report(name, self.today(), self.today())["notice"])
+
+	def test_every_report_carries_the_key(self):
+		"""The frontend reads it unconditionally, so it must always be present."""
+		frappe.db.set_single_value("FCRM Settings", "enable_forecasting", 0)
+		for name in REPORTS:
+			with self.subTest(report=name):
+				self.assertIn("notice", get_report(name, self.today(), self.today()))
+
+	def test_the_notice_matches_the_dashboard_word_for_word(self):
+		"""One explanation, so the two surfaces cannot start diverging."""
+		from crm.api.dashboard import forecast_empty_state
+
+		frappe.db.set_single_value("FCRM Settings", "enable_forecasting", 0)
+		self.assertEqual(
+			get_report("forecast_vs_actual", self.today(), self.today())["notice"],
+			forecast_empty_state(),
+		)
