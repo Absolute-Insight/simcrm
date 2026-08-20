@@ -56,6 +56,70 @@ suggestions, rep plans and forecast rows derived from it, including the site
 and team aggregates taken while it existed — those counted fiction and cannot
 be recomputed. Per-rep history for real reps is untouched.
 
+## Rehearsing on localhost
+
+The restore drill in the checklist below ran `bench` directly, so **the compose
+wrapper and the volume layout are the two things it did not cover**. A localhost
+run exercises exactly those, against the real image, before a server is
+involved. It is the cheapest way to turn "authored and reviewed" into "booted".
+
+**Run it from the host, not from the dev container.** The dev container has no
+Docker daemon and no `/var/run/docker.sock`, so `docker compose` is not merely
+missing a binary there — there is nothing for it to talk to.
+
+```bash
+cd deploy
+cp .env.example .env        # then apply the four localhost-specific values below
+docker compose up -d
+docker compose logs -f create-site     # one-shot; wait for it to finish
+```
+
+Four values differ from a server deployment, and three of them will bite:
+
+| Value | Server | Localhost | Why |
+|---|---|---|---|
+| `SITE_NAME` | real domain | `vectora.localhost` | browsers resolve `*.localhost` to loopback (RFC 6761). The Host header you browse with does not have to match: `frontend` sets `FRAPPE_SITE_NAME_HEADER` to `SITE_NAME`, so nginx names the site to the backend explicitly |
+| `HTTP_PUBLISH_PORT` | 8080 | **8090** | the dev container already serves vite on 8080 and bench on 8000. Publishing on 8080 collides with whichever claimed the host port first, and the symptom is a page from the wrong server rather than a bind error |
+| `VECTORA_TAG` | a release | `develop` | see below — `:stable` is not what you want to rehearse |
+| TLS | required | none | the site is loopback-only; the TLS section below does not apply |
+
+Then browse `http://localhost:8090/crm` and log in as `Administrator` with
+`ADMIN_PASSWORD`.
+
+### The image is the part people get wrong
+
+`:stable` is a moving pointer to the newest **main** build, and main is the last
+release. So a localhost rehearsal pinned to `:stable` rehearses the last
+release, not the code you are about to ship — which is the opposite of the
+point. Publish the current branch first:
+
+```bash
+gh workflow run builds.yml --ref develop
+```
+
+That produces three tags: `:develop`, `:sha-<short>`, and — because the tag is
+hard-coded in the workflow — **`:stable` as well**. Know that before you run it:
+a develop dispatch moves `:stable` off main, so `:stable` stops meaning "newest
+main build" until the next release build restores it. If that matters to
+something else pointing at `:stable`, cut the release instead and rehearse the
+release tag.
+
+The build guard requires this commit's **Playwright E2E Tests** check to be
+green, and that suite runs on pushes to `develop` as well as `main`, so a
+develop dispatch satisfies it without a release. A dispatch of a commit whose
+checks are absent or red is refused rather than published.
+
+### What a localhost run does and does not prove
+
+It proves the image boots, `create-site` completes, the volume layout is right,
+nginx routes to the backend and the socket, the workers and scheduler come up,
+and — with `--profile local-model` — that ollama pulls and answers. That is the
+whole unrehearsed half of the deployment.
+
+It does not prove anything about TLS, DNS, real mail delivery, or performance
+under a real dataset, and a loopback site cannot receive an inbound webhook.
+Those stay open until a real host runs it.
+
 ## TLS
 
 This stack does not terminate TLS. Put your standard reverse proxy (Traefik,
@@ -163,6 +227,35 @@ exercising both credential paths with stdin redirected.
 Which means the restore drill in the pilot checklist below is not a nice-to-have:
 it is the rehearsal for the only rollback you have. If step 0's backup has never
 been restored, you do not have a rollback, you have a file.
+
+**What a restore does and does not carry.** `restore` takes the SQL dump and,
+optionally, the two file tars — nothing else. It never reads the
+`site_config_backup.json` that `bench backup` writes beside the dump (see the
+option list at `frappe/commands/site.py:164`), so a site's *configuration* does
+not travel with its data. That is worth knowing in both directions:
+
+- A dev site's unsafe flags — the bench in this repo's dev container carries
+  `ignore_csrf: 1`, `developer_mode: 1`, `allow_tests: 1`, `mute_emails: 1` —
+  **do not** follow a backup into this stack. `create-site` gives frappe's
+  defaults, which are the safe ones, and a restore leaves them alone. Copying a
+  site *directory* in by hand is a different matter, because that is the file
+  itself.
+- Neither does anything else you configured. A restore onto a fresh site does
+  not reinstate the agent endpoint, mail settings, or anything else that lives
+  in site config rather than in the database.
+
+Either way, check it after any restore whose origin you are not certain of:
+
+```bash
+docker compose exec -T backend cat sites/${SITE_NAME}/site_config.json
+```
+
+**Treat the backup files themselves as secrets.** `copy_site_config` is a
+verbatim copy of `site_config.json` (`frappe/utils/backups.py:382`), so the
+`site_config_backup.json` sitting beside every dump carries that site's
+`db_password` and `encryption_key` in plaintext. The encryption key is what
+decrypts stored passwords, so a leaked backup directory is not only a data
+disclosure.
 
 If `migrate` fails partway, do not roll the image back and carry on — the site
 is between schemas. Read the error (`docker compose logs backend`, and frappe's
