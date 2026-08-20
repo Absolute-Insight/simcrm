@@ -45,6 +45,21 @@ jobs:
       # Checks are keyed by commit SHA, so a tag build sees the runs from when
       # that same commit was pushed to main. They may still be in flight when
       # the tag lands, which is why this waits rather than reading once.
+      #
+      # A release tag is the exception, and it is not a corner case -- it is
+      # every release. semantic-release commits the version bump itself and
+      # tags *that* commit, pushing it with the workflow's GITHUB_TOKEN. Pushes
+      # made with that token deliberately do not trigger workflows, so the test
+      # suites never run on a bump commit and never will: waiting on it is
+      # waiting for something nothing will produce. Before this step resolved
+      # the parent, `builds.yml --ref vX.Y.Z` sat for the full 40 minutes and
+      # then refused the release it was dispatched to publish. (v3.0.0 built
+      # only because it predates this guard by a day.)
+      #
+      # A bump commit is safe to inherit from because of what it contains: one
+      # sed of the version string in crm/__init__.py. The step verifies exactly
+      # that -- subject and file list both -- and refuses to walk the parent of
+      # anything else, so this cannot become a way to publish untested code.
       - name: Wait for this commit's checks to pass
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -54,6 +69,24 @@ jobs:
           REQUIRED: Playwright E2E Tests
         run: |
           set -euo pipefail
+
+          # Resolve which commit's checks stand for this build. One API call,
+          # read through gh's own --jq so this needs no jq on the runner.
+          meta=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA" --jq '
+            [ (.commit.message | split("\n")[0]),
+              ([.files[]?.filename] | sort | join(",")),
+              (.parents[0].sha // "") ] | @tsv')
+          IFS=$'\t' read -r subject files parent <<<"$meta"
+
+          if [ "$files" = "crm/__init__.py" ] \
+             && printf '%s' "$subject" | grep -q '^chore(release):' \
+             && [ -n "$parent" ]; then
+            echo "$SHA is a release version bump ($subject)."
+            echo "It touches only crm/__init__.py, and a token-pushed commit never"
+            echo "gets its own test runs -- inheriting checks from parent $parent."
+            SHA="$parent"
+          fi
+
           deadline=$(( $(date +%s) + 40 * 60 ))
 
           while :; do
