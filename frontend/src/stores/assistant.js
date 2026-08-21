@@ -11,6 +11,7 @@
  * checked against the real article catalogue.
  */
 import { call } from 'frappe-ui'
+import { plainTextAnswer } from '@/utils/assistantText'
 import { ref } from 'vue'
 
 export const assistantVisible = ref(false)
@@ -74,7 +75,7 @@ export async function askAssistant(question) {
     if (result?.status === 'ok') {
       assistantMessages.value.push({
         role: 'assistant',
-        content: result.answer,
+        content: plainTextAnswer(result.answer),
         relatedArticles: result.related_articles || [],
       })
     } else {
