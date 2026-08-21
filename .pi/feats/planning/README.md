@@ -65,7 +65,11 @@ run reached rather than a state the item is stuck in. Items older than
 ## Scheduling
 
 `crm.rep_planning.match_actuals` — daily. Per-plan savepoint isolation and a
-commit per plan (skipped under test), so one bad plan cannot abort the run.
+commit per plan (skipped under test), so one bad plan cannot abort the run; a
+plan's claims on records are merged into the run's `claimed` set only when it
+succeeds. Every rep's activity over the whole horizon is fetched once per
+source (`_actuals_by_user`, four queries a run) and sliced per plan, so the
+query count does not grow with the number of plans.
 
 ## Permissions
 

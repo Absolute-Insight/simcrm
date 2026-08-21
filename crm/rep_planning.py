@@ -136,13 +136,16 @@ def _rank(item: dict, actual: dict, when: date) -> tuple[int, int, str]:
 
 
 def _query_source(
-	kind: str, user: str, window: tuple[date, date] | None, names: list | None = None
+	kind: str, users: list[str] | str, window: tuple[date, date] | None, names: list | None = None
 ) -> list[dict]:
-	"""Activity of one kind belonging to ``user``, as actual rows the matcher reads.
+	"""Activity of one kind belonging to any of ``users``, as actual rows the matcher reads.
 
-	``window`` restricts to a plan week; pass None to ask only whether given
-	records still qualify at all.
+	``window`` restricts to a date range; pass None to ask only whether given
+	records still qualify at all. Each row carries ``users``: which of the
+	requested reps it belongs to (a call has both a caller and a receiver).
 	"""
+	if isinstance(users, str):
+		users = [users]
 	source = ACTUAL_SOURCES[kind]
 	doctype = source["doctype"]
 	table = frappe.qb.DocType(doctype)
@@ -159,11 +162,12 @@ def _query_source(
 		when.as_("happened_at"),
 		table.reference_doctype,
 		table[reference_field].as_("reference_docname"),
+		*(table[field].as_(f"_user_{field}") for field in source["user_fields"]),
 	)
 
 	user_match = None
 	for field in source["user_fields"]:
-		match = table[field] == user
+		match = table[field].isin(users)
 		user_match = match if user_match is None else user_match | match
 	query = query.where(user_match)
 
@@ -179,6 +183,7 @@ def _query_source(
 		start, end = window
 		query = query.where(when >= start).where(when < end + timedelta(days=1))
 
+	wanted = set(users)
 	return [
 		{
 			"doctype": doctype,
@@ -187,30 +192,68 @@ def _query_source(
 			"when": row.happened_at,
 			"reference_doctype": row.reference_doctype,
 			"reference_docname": row.reference_docname,
+			"users": sorted(
+				{row[f"_user_{field}"] for field in source["user_fields"] if row[f"_user_{field}"] in wanted}
+			),
 		}
 		for row in query.run(as_dict=True)
 	]
 
 
-def _actuals_for(user: str, start: date, end: date) -> list[dict]:
-	"""Every activity the user logged inside [start, end], across all kinds."""
-	out: list[dict] = []
+def _actuals_by_user(users: list[str], start: date, end: date) -> dict[str, list[dict]]:
+	"""Every activity any of ``users`` logged inside [start, end], bucketed per rep.
+
+	One query per source for the whole run, not four per plan: the matcher
+	re-derives every plan in the horizon daily, so at fifty reps the per-plan
+	version was several hundred round trips for a few thousand rows.
+	"""
+	out: dict[str, list[dict]] = {user: [] for user in users}
+	if not users:
+		return out
 	for kind in ACTUAL_SOURCES:
-		out += _query_source(kind, user, (start, end))
+		for actual in _query_source(kind, users, (start, end)):
+			for user in actual["users"]:
+				out[user].append(actual)
 	return out
 
 
-def _fulfilment_holds(item: dict, user: str, start: date, end: date) -> bool:
+def _actuals_for(user: str, start: date, end: date) -> list[dict]:
+	"""Every activity the user logged inside [start, end], across all kinds."""
+	return _actuals_by_user([user], start, end)[user]
+
+
+def _fulfilment_holds(
+	item: dict, user: str, start: date, end: date, actuals: list[dict] | None = None
+) -> bool:
 	"""Does the record recorded against a Done item still fulfil it?
 
 	Deleting the call, reopening the task or cancelling the meeting takes the
 	fulfilment with it — Done is a statement about a record, not a flag.
+
+	``actuals`` is the rep's activity over the whole run's window, already
+	fetched; it answers the question without a query. A Task holds regardless
+	of when it was last touched (``when_is_activity_time`` is False), which is
+	fine to read from the window too: ``modified`` only ever moves forward, and
+	a task matched into a week inside the horizon was touched inside it.
 	"""
 	source = ACTUAL_SOURCES.get(item["activity_type"])
 	if not source or not item["fulfilled_by"] or item["fulfilled_by_doctype"] != source["doctype"]:
 		return False
+	if actuals is not None:
+		for actual in actuals:
+			if actual["doctype"] != source["doctype"] or str(actual["name"]) != str(item["fulfilled_by"]):
+				continue
+			if not source["when_is_activity_time"]:
+				return True
+			if start <= _day_of(actual["when"]) <= end:
+				return True
+		return False
 	window = (start, end) if source["when_is_activity_time"] else None
 	return bool(_query_source(item["activity_type"], user, window, names=[item["fulfilled_by"]]))
+
+
+def _day_of(when) -> date:
+	return when.date() if hasattr(when, "date") else when
 
 
 def _claimed_actuals(horizon: date) -> dict[tuple[str, str], str]:
@@ -236,7 +279,13 @@ def _claimed_actuals(horizon: date) -> dict[tuple[str, str], str]:
 
 
 def _match_plan(plan: dict, today: date, claimed: dict[tuple[str, str], str]) -> int:
-	"""Re-derive one plan's fulfilment. Returns how many items newly went Done."""
+	"""Re-derive one plan's fulfilment. Returns how many items newly went Done.
+
+	``plan.actuals``, when the caller set it, is the rep's activity over the
+	whole run already in memory (see :func:`_actuals_by_user`); the plan's week
+	is sliced out of it. Without it the week is queried here, so the function
+	still stands alone.
+	"""
 	items = frappe.get_all(
 		"CRM Rep Plan Item",
 		filters={"parent": plan.name, "parenttype": "CRM Rep Plan"},
@@ -262,18 +311,19 @@ def _match_plan(plan: dict, today: date, claimed: dict[tuple[str, str], str]) ->
 	end = start + timedelta(days=6)
 	before = {row.name: (row.status, row.fulfilled_by_doctype, row.fulfilled_by) for row in items}
 
+	prefetched = plan.get("actuals")
 	for row in items:
-		if row.status == "Done" and _fulfilment_holds(row, plan.user, start, end):
+		if row.status == "Done" and _fulfilment_holds(row, plan.user, start, end, prefetched):
 			continue
 		if claimed.get((row.fulfilled_by_doctype, str(row.fulfilled_by))) == row.name:
 			del claimed[(row.fulfilled_by_doctype, str(row.fulfilled_by))]
 		row.update({"status": "Planned", "fulfilled_by_doctype": None, "fulfilled_by": None})
 
-	actuals = [
-		actual
-		for actual in _actuals_for(plan.user, start, end)
-		if (actual["doctype"], str(actual["name"])) not in claimed
-	]
+	if prefetched is not None:
+		week = [actual for actual in prefetched if start <= _day_of(actual["when"]) <= end]
+	else:
+		week = _actuals_for(plan.user, start, end)
+	actuals = [actual for actual in week if (actual["doctype"], str(actual["name"])) not in claimed]
 	by_name = {row.name: row for row in items}
 	for item_name, actual in match_items(items, actuals).items():
 		by_name[item_name].update(
@@ -346,19 +396,33 @@ def match_actuals() -> int:
 		order_by="week_start asc, name asc",
 	)
 
+	# every rep's activity across every week the run will visit, fetched once
+	# and sliced per plan rather than queried four times per plan
+	actuals_by_user: dict[str, list[dict]] = {}
+	if plans:
+		last_week_end = max(frappe.utils.getdate(plan.week_start) for plan in plans) + timedelta(days=6)
+		actuals_by_user = _actuals_by_user(
+			sorted({plan.user for plan in plans}), horizon, max(today, last_week_end)
+		)
+
 	claimed = _claimed_actuals(horizon)
 	fulfilled = 0
 	for plan in plans:
+		plan.actuals = actuals_by_user.get(plan.user, [])
+		# the plan works on a copy: a claim it records and then rolls back must
+		# not stay claimed for every plan after it
+		attempt = dict(claimed)
 		savepoint = f"match_plan_{plan.name}"
 		frappe.db.savepoint(savepoint)
 		try:
-			fulfilled += _match_plan(plan, today, claimed)
+			fulfilled += _match_plan(plan, today, attempt)
 		except Exception:
 			# a deleted user or a dangling link on one rep's week must not discard
 			# every rep the job already matched
 			frappe.db.rollback(save_point=savepoint)
 			frappe.log_error(title=f"match_actuals failed for plan {plan.name}")
 		else:
+			claimed = attempt
 			# tests run inside one transaction that is rolled back afterwards
 			if not frappe.in_test:
 				frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit

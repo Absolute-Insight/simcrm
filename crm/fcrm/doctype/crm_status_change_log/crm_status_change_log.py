@@ -83,3 +83,11 @@ def add_status_change_log(doc):
 			"log_owner": frappe.session.user,
 		},
 	)
+
+
+def on_doctype_update():
+	"""``_stage_median_days`` reads this child table by (parenttype, from): the
+	stage a deal left. ``from`` is a reserved word, so it is quoted by hand and
+	the index is named explicitly -- ``add_index`` would otherwise put the
+	backticks in the name."""
+	frappe.db.add_index("CRM Status Change Log", ["parenttype", "`from`"], index_name="parenttype_from_index")

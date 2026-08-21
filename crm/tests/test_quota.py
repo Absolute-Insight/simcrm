@@ -17,7 +17,13 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from crm.api import quota as quota_api
-from crm.api.dashboard import get_quota_attainment, quota_in_period, won_value_in_period
+from crm.api.dashboard import (
+	get_quota_attainment,
+	quota_by_user,
+	quota_in_period,
+	won_value_by_user,
+	won_value_in_period,
+)
 from crm.api.reports import get_report
 
 USER = "quota-rep@crmtest.test"
@@ -140,6 +146,48 @@ class QuotaTest(IntegrationTestCase):
 
 		frappe.delete_doc("CRM Deal", deal.name, force=True)
 
+	def test_the_grouped_reads_agree_with_the_per_rep_ones(self):
+		"""The report and the grid read every rep in one query; the tile reads
+		one rep. Same rows, same pro-rating, same belonging -- including a deal
+		assigned to a rep who does not own it, which counts for both of them."""
+		won_status = frappe.get_all("CRM Deal Status", filters={"type": "Won"}, pluck="name")
+		if not won_status:
+			self.skipTest("site has no Won deal status")
+		self.make_quota("2026-03-01", 30_000)
+		self.make_quota("2026-04-01", 10_000, user=OTHER)
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Quota Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		deal = frappe.get_doc(
+			{
+				"doctype": "CRM Deal",
+				"organization": org,
+				"deal_owner": USER,
+				"status": won_status[0],
+				"deal_value": 8_000,
+				"exchange_rate": 1,
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True)
+		frappe.db.set_value("CRM Deal", deal.name, "closed_date", "2026-03-20", update_modified=False)
+		from frappe.desk.form.assign_to import add as assign
+
+		assign({"assign_to": [OTHER], "doctype": "CRM Deal", "name": deal.name})
+
+		period = ("2026-03-10", "2026-04-15")
+		self.assertEqual(
+			won_value_by_user([USER, OTHER], *period),
+			{USER: won_value_in_period(*period, USER), OTHER: won_value_in_period(*period, OTHER)},
+		)
+		self.assertEqual(won_value_by_user([USER, OTHER], *period)[OTHER], 8_000)
+		self.assertEqual(
+			quota_by_user([USER, OTHER], *period),
+			{USER: quota_in_period(*period, USER), OTHER: quota_in_period(*period, OTHER)},
+		)
+		self.assertEqual(won_value_by_user([], *period), {})
+
 	def test_the_report_and_the_tile_agree(self):
 		"""One source of numbers: the report row must equal the dashboard tile."""
 		self.make_quota("2026-03-01", 40_000)
@@ -181,6 +229,18 @@ class QuotaGridApiTest(IntegrationTestCase):
 		rows = frappe.get_all("CRM Quota", filters={"user": USER}, pluck="amount")
 		self.assertEqual(len(rows), 12)
 		self.assertTrue(all(amount == 10_000 for amount in rows))
+
+	def test_copy_forward_is_capped_at_the_rest_of_a_year(self):
+		quota_api.set_quota(USER, "2026-01-01", 10_000)
+		self.assertEqual(quota_api.copy_quota_forward(USER, "2026-01-01", 500), {"copied": 11})
+		self.assertEqual(frappe.db.count("CRM Quota", {"user": USER}), 12)
+		self.assertEqual(quota_api.copy_quota_forward(USER, "2026-01-01", -3), {"copied": 0})
+
+	def test_a_disabled_user_is_not_a_sales_user(self):
+		self.assertIn(OTHER, quota_api._sales_users())
+		frappe.db.set_value("User", OTHER, "enabled", 0)
+		self.addCleanup(frappe.db.set_value, "User", OTHER, "enabled", 1)
+		self.assertNotIn(OTHER, quota_api._sales_users())
 
 	def test_copy_forward_without_a_source_month_explains_itself(self):
 		with self.assertRaises(frappe.ValidationError):

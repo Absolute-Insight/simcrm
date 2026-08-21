@@ -282,3 +282,11 @@ def create_lead_from_call_log(call_log: str | dict, lead_details: str | dict | N
 	call_doc.save()
 
 	return lead.name
+
+
+def on_doctype_update():
+	"""Indexes for the per-record activity feed and for the planner's per-rep
+	call matching, which reads by caller or receiver over a week of start_time."""
+	frappe.db.add_index("CRM Call Log", ["reference_doctype", "reference_docname"])
+	frappe.db.add_index("CRM Call Log", ["caller", "start_time"])
+	frappe.db.add_index("CRM Call Log", ["receiver", "start_time"])

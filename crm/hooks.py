@@ -248,9 +248,6 @@ scheduler_events = {
 	"hourly": [
 		"crm.api.event.trigger_hourly_event_notifications",
 		"crm.agent.signals.run_signals",
-		# writes CRM Deal.health_score, which the at-risk tile counts rather than
-		# re-deriving on every dashboard load
-		"crm.agent.predict.score_open_deals",
 	],
 	"daily": [
 		"crm.api.event.trigger_daily_event_notifications",
@@ -271,7 +268,13 @@ scheduler_events = {
 		# record it queues is a crawl of somebody else's website
 		"crm.domain_enrichment.tasks.reenrich_stale_records",
 	],
-	"hourly_long": ["crm.lead_syncing.background_sync.sync_leads_from_sources_hourly"],
+	"hourly_long": [
+		"crm.lead_syncing.background_sync.sync_leads_from_sources_hourly",
+		# writes CRM Deal.health_score, which the at-risk tile counts rather than
+		# re-deriving on every dashboard load. Long queue: it is feature
+		# extraction over every open deal, and must not hold up the short one
+		"crm.agent.predict.score_open_deals",
+	],
 	"monthly_long": ["crm.lead_syncing.background_sync.sync_leads_from_sources_monthly"],
 	"cron": {
 		"*/5 * * * *": ["crm.lead_syncing.background_sync.sync_leads_from_sources_5_minutes"],
@@ -359,6 +362,13 @@ after_migrate = [
 	"crm.agent.install.ensure_agent_role",
 	"crm.install.add_default_scripts",
 	"crm.install.add_web_form_custom_fields",
+	# on_doctype_update only fires when a doctype's JSON changes; these add
+	# indexes (idempotently) to tables whose JSON did not, so an upgraded site
+	# gets them without a patch
+	"crm.fcrm.doctype.crm_task.crm_task.on_doctype_update",
+	"crm.fcrm.doctype.crm_call_log.crm_call_log.on_doctype_update",
+	"crm.fcrm.doctype.crm_status_change_log.crm_status_change_log.on_doctype_update",
+	"crm.fcrm.doctype.crm_forecast_snapshot.crm_forecast_snapshot.on_doctype_update",
 ]
 
 standard_dropdown_items = [

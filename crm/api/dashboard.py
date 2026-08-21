@@ -10,7 +10,7 @@ from frappe.utils import add_days, date_diff, flt, get_first_day, get_last_day, 
 from pypika.functions import Function
 
 from crm.fcrm.doctype.crm_dashboard.crm_dashboard import create_default_manager_dashboard
-from crm.utils import sales_user_only
+from crm.utils import sales_user_only, user_rate_limited
 
 # Rate limits, expressed as "how many times may someone open or re-filter the
 # dashboard in a minute" rather than as raw call counts -- because the two
@@ -35,6 +35,19 @@ DASHBOARD_TILE_COUNT = 6
 # for tiles + 2 so neither role's view can starve the tile row.
 REP_TREND_CHART_COUNT = 2
 CHART_CALLS_PER_MINUTE = DASHBOARD_VIEWS_PER_MINUTE * (DASHBOARD_TILE_COUNT + REP_TREND_CHART_COUNT)
+
+# The second layer, keyed on the session user rather than the request IP (see
+# crm.utils.user_rate_limited): twice the IP budget, since one account behind
+# an office NAT shares the IP bucket with every colleague and must not be the
+# stricter of the two, but still a bound on what a single account can do.
+USER_DASHBOARD_VIEWS_PER_MINUTE = DASHBOARD_VIEWS_PER_MINUTE * 2
+USER_CHART_CALLS_PER_MINUTE = CHART_CALLS_PER_MINUTE * 2
+
+
+def check_user_rate(scope: str, limit: int) -> None:
+	"""Raise the same error frappe's IP limiter does once the user is over ``limit``/minute."""
+	if user_rate_limited(scope, limit):
+		frappe.throw(_("Too many requests; try again in a minute."), frappe.TooManyRequestsError)
 
 
 # Custom function for TIMESTAMPDIFF (MySQL/MariaDB)
@@ -228,6 +241,7 @@ def get_dashboard(
 	"""
 	Get the dashboard data for the CRM dashboard.
 	"""
+	check_user_rate("dashboard", USER_DASHBOARD_VIEWS_PER_MINUTE)
 
 	if not from_date or not to_date:
 		from_date = frappe.utils.get_first_day(from_date or frappe.utils.nowdate())
@@ -269,6 +283,7 @@ def get_chart(
 	"""
 	Get number chart data for the dashboard.
 	"""
+	check_user_rate("chart", USER_CHART_CALLS_PER_MINUTE)
 	if not from_date or not to_date:
 		from_date = frappe.utils.get_first_day(from_date or frappe.utils.nowdate())
 		to_date = frappe.utils.get_last_day(to_date or frappe.utils.nowdate())
@@ -1828,7 +1843,7 @@ def plan_adherence(
 
 	Returns one row per rep when ``group_by_user``, otherwise a single total row.
 	"""
-	cutoff = min(str(to_date), add_days(nowdate(), -1))
+	cutoff = min(getdate(to_date), getdate(add_days(nowdate(), -1)))
 
 	PlanItem = DocType("CRM Rep Plan Item")
 	Plan = DocType("CRM Rep Plan")
@@ -1938,8 +1953,17 @@ def _at_risk_deals(to_date: str | None = None, user: str | None = None) -> list[
 		"CRM Deal",
 		filters=filters,
 		fields=["name", "creation", "expected_closure_date", "status"],
-		limit_page_length=0,
+		order_by="modified desc",
+		limit_page_length=AT_RISK_ROW_CEILING,
 	)
+	if len(deals) >= AT_RISK_ROW_CEILING:
+		# a hard stop, not a page: scoring is feature extraction over every open
+		# deal, and a site this size needs the ceiling raised deliberately rather
+		# than the hourly job quietly eating a worker
+		frappe.logger("crm").warning(
+			f"_at_risk_deals: open deals hit the {AT_RISK_ROW_CEILING} row ceiling; "
+			"the remainder was not scored"
+		)
 	names = [d.name for d in deals]
 
 	now = frappe.utils.now_datetime()
@@ -2002,6 +2026,10 @@ def _at_risk_deals(to_date: str | None = None, user: str | None = None) -> list[
 		)
 		scored.append({"name": deal.name, "creation": deal.creation, **verdict})
 	return scored
+
+
+# the most open deals _at_risk_deals will score in one pass
+AT_RISK_ROW_CEILING = 20000
 
 
 def _chunks(items: list, size: int):
@@ -2173,20 +2201,51 @@ def take_forecast_snapshot():
 
 	written = 0
 	for scope, who, kwargs in forecast_snapshot_scopes():
-		for row in get_forecasted_revenue(from_date, to_date, **kwargs)["data"]:
-			month = row["month"][:7]
-			values = {
-				"forecasted": row["forecasted"] or 0,
-				"actual_at_snapshot": row["actual"] or 0,
-			}
-			key = {"snapshot_date": today, "month": month, "scope": scope, "user": who}
-			existing = frappe.db.exists("CRM Forecast Snapshot", key)
-			if existing:
-				frappe.db.set_value("CRM Forecast Snapshot", existing, values)
-			else:
-				frappe.get_doc({"doctype": "CRM Forecast Snapshot", **key, **values}).insert(
-					ignore_permissions=True
-				)
+		# one scope per savepoint, one commit per scope: a rep whose User was
+		# deleted mid-week, or a forecast that raises, costs that scope's rows
+		# and nothing else -- the same isolation run_signals gives each insert
+		savepoint = f"forecast_snapshot_{scope}"
+		frappe.db.savepoint(savepoint)
+		try:
+			written += _write_forecast_snapshot(scope, who, kwargs, today, from_date, to_date)
+		except Exception:
+			frappe.db.rollback(save_point=savepoint)
+			frappe.log_error(
+				title=f"take_forecast_snapshot failed for {scope} {who or 'site'}".strip(),
+				message=frappe.get_traceback(),
+			)
+		else:
+			if not frappe.flags.in_test:
+				frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit
+	return written
+
+
+def _write_forecast_snapshot(scope, who, kwargs, today, from_date, to_date) -> int:
+	"""Upsert one scope's rows for ``today``. Returns how many were written."""
+	written = 0
+	for row in get_forecasted_revenue(from_date, to_date, **kwargs)["data"]:
+		month = row["month"][:7]
+		values = {
+			"forecasted": row["forecasted"] or 0,
+			"actual_at_snapshot": row["actual"] or 0,
+		}
+		# `user` is '' rather than NULL for Site and Team rows on purpose: the
+		# unique (snapshot_date, month, scope, user) index cannot dedupe NULLs
+		key = {"snapshot_date": today, "month": month, "scope": scope, "user": who or ""}
+		existing = frappe.db.exists("CRM Forecast Snapshot", key)
+		if existing:
+			frappe.db.set_value("CRM Forecast Snapshot", existing, values)
+			written += 1
+			continue
+		try:
+			frappe.get_doc({"doctype": "CRM Forecast Snapshot", **key, **values}).insert(
+				ignore_permissions=True
+			)
+		except frappe.UniqueValidationError:
+			# two workers snapshotting the same day raced on the same key; the
+			# row exists, and the other writer's values are as fresh as ours
+			frappe.clear_last_message()
+		else:
 			written += 1
 	return written
 
@@ -2220,41 +2279,130 @@ def quota_in_period(from_date: str, to_date: str, user: str | None = None) -> fl
 		if reps is not None:
 			filters["user"] = ("in", reps)
 	rows = frappe.get_all("CRM Quota", filters=filters, fields=["amount", "period_start"])
+	return sum(_prorated_quota(row, from_date, to_date) for row in rows)
 
-	total = 0.0
+
+def _prorated_quota(row, from_date, to_date) -> float:
+	"""One monthly quota row's share of ``[from_date, to_date]``, by covered days."""
+	month_start = getdate(row.period_start)
+	month_end = get_last_day(month_start)
+	covered_from = max(month_start, from_date)
+	covered_to = min(month_end, to_date)
+	if covered_to < covered_from:
+		return 0.0
+	days_in_month = date_diff(month_end, month_start) + 1
+	covered_days = date_diff(covered_to, covered_from) + 1
+	return (row.amount or 0) * covered_days / days_in_month
+
+
+def quota_by_user(users: list[str], from_date: str, to_date: str) -> dict[str, float]:
+	"""``quota_in_period`` for every rep in ``users`` in one query: ``{user: quota}``.
+
+	The caller has already decided who it may read (``visible_reps`` or an
+	explicit rep), so no scoping happens here -- it is a grouped read over the
+	same rows and the same pro-rating as the single-rep function.
+	"""
+	users = sorted({u for u in users if u})
+	totals: dict[str, float] = dict.fromkeys(users, 0.0)
+	if not users:
+		return totals
+	from_date, to_date = getdate(from_date), getdate(to_date)
+	if to_date < from_date:
+		return totals
+
+	rows = frappe.get_all(
+		"CRM Quota",
+		filters={
+			"user": ("in", users),
+			"period_start": ("between", [get_first_day(from_date), get_last_day(to_date)]),
+		},
+		fields=["user", "amount", "period_start"],
+	)
 	for row in rows:
-		month_start = getdate(row.period_start)
-		month_end = get_last_day(month_start)
-		covered_from = max(month_start, from_date)
-		covered_to = min(month_end, to_date)
-		if covered_to < covered_from:
-			continue
-		days_in_month = date_diff(month_end, month_start) + 1
-		covered_days = date_diff(covered_to, covered_from) + 1
-		total += (row.amount or 0) * covered_days / days_in_month
-	return total
+		totals[row.user] += _prorated_quota(row, from_date, to_date)
+	return totals
 
 
 def won_value_in_period(from_date: str, to_date: str, user: str | None = None) -> float:
 	"""Closed-won revenue in the period, normalised to the base currency."""
 	Deal = DocType("CRM Deal")
-	Status = DocType("CRM Deal Status")
 
-	cond = (
-		(Deal.closed_date >= from_date)
-		& (Deal.closed_date < frappe.utils.add_days(to_date, 1))
-		& (Status.type == "Won")
-	)
+	# the period and status live in WHERE, not inside a CASE: a conditional
+	# sum over an unfiltered join scanned every deal on the site per call
+	query = _won_deals_query(from_date, to_date).select(Sum(Deal.deal_value * IfNull(Deal.exchange_rate, 1)))
 	if user:
-		cond = cond & belongs_to(Deal, user, "CRM Deal")
+		query = query.where(belongs_to(Deal, user, "CRM Deal"))
+	return float(scope_deals(query).run()[0][0] or 0)
 
-	query = (
+
+def _won_deals_query(from_date: str, to_date: str):
+	"""Closed-won deals whose ``closed_date`` falls in ``[from_date, to_date]``, unselected."""
+	Deal = DocType("CRM Deal")
+	Status = DocType("CRM Deal Status")
+	return (
 		frappe.qb.from_(Deal)
 		.join(Status)
 		.on(Deal.status == Status.name)
-		.select(Sum(Case().when(cond, Deal.deal_value * IfNull(Deal.exchange_rate, 1)).else_(0)))
+		.where(
+			(Deal.closed_date >= from_date)
+			& (Deal.closed_date < frappe.utils.add_days(to_date, 1))
+			& (Status.type == "Won")
+		)
 	)
-	return float(scope_deals(query).run()[0][0] or 0)
+
+
+def won_value_by_user(users: list[str], from_date: str, to_date: str) -> dict[str, float]:
+	"""``won_value_in_period`` for every rep in ``users`` at once: ``{user: value}``.
+
+	Same definition of belonging as the single-rep function -- owned by the rep
+	or assigned to them by an open ToDo -- so a grid built from this and a tile
+	built from :func:`won_value_in_period` agree to the cent. Two queries
+	instead of one per rep: the won deals in the period, then the assignments
+	on them. A deal is attributed once per rep it belongs to, exactly as the
+	per-rep criterion would count it, so a deal owned by one rep and assigned
+	to another appears under both, as it does on both their tiles.
+	"""
+	users = sorted({u for u in users if u})
+	totals: dict[str, float] = dict.fromkeys(users, 0.0)
+	if not users:
+		return totals
+
+	Deal = DocType("CRM Deal")
+	query = (
+		_won_deals_query(from_date, to_date)
+		.select(Deal.name, Deal.deal_owner, (Deal.deal_value * IfNull(Deal.exchange_rate, 1)).as_("value"))
+		.where(belongs_to_any(Deal, users, "CRM Deal"))
+	)
+	deals = scope_deals(query).run(as_dict=True)
+	if not deals:
+		return totals
+
+	value_of = {row.name: flt(row.value) for row in deals}
+	belongs: dict[str, set] = {u: set() for u in users}
+	for row in deals:
+		if row.deal_owner in belongs:
+			belongs[row.deal_owner].add(row.name)
+
+	Todo = DocType("ToDo")
+	for batch in _chunks(list(value_of), 1000):
+		assigned = (
+			frappe.qb.from_(Todo)
+			.select(Todo.reference_name, Todo.allocated_to)
+			.where(
+				(Todo.reference_type == "CRM Deal")
+				& (Todo.status != "Cancelled")
+				& Todo.allocated_to.isin(users)
+				& Todo.reference_name.isin(batch)
+			)
+			.run(as_dict=True)
+		)
+		for row in assigned:
+			if row.allocated_to in belongs and row.reference_name in value_of:
+				belongs[row.allocated_to].add(row.reference_name)
+
+	for user, names in belongs.items():
+		totals[user] = float(sum(value_of[name] for name in names))
+	return totals
 
 
 def get_quota_attainment(

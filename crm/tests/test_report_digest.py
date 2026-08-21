@@ -132,6 +132,15 @@ class ReportDigestTest(IntegrationTestCase):
 		with self.assertRaises(frappe.exceptions.InvalidEmailAddressError):
 			self.make_digest(recipients="not-an-email")
 
+	def test_a_digest_is_not_a_mailing_list(self):
+		"""Every recipient is a full report render under their own session; the
+		count is refused before any address is validated."""
+		from crm.fcrm.doctype.crm_report_digest.crm_report_digest import MAX_RECIPIENTS
+
+		too_many = ", ".join(f"rep{i}@crmtest.test" for i in range(MAX_RECIPIENTS + 1))
+		with self.assertRaisesRegex(frappe.ValidationError, "at most"):
+			self.make_digest(recipients=too_many)
+
 	def test_an_outside_address_cannot_be_mailed_deal_values(self):
 		with self.assertRaises(frappe.ValidationError):
 			self.make_digest(recipients="stranger@example.com")

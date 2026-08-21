@@ -8,6 +8,10 @@ from frappe.utils import escape_html, validate_email_address
 
 CRM_ROLES = ("Sales User", "Sales Manager", "System Manager")
 
+# each recipient is a full report render under their own session plus an email;
+# a digest is a team's worth of people, not a mailing list
+MAX_RECIPIENTS = 50
+
 
 class CRMReportDigest(Document):
 	# begin: auto-generated types
@@ -34,7 +38,14 @@ class CRMReportDigest(Document):
 
 	def validate(self):
 		self.validate_report()
-		for email in self.recipient_list():
+		recipients = self.recipient_list()
+		if len(recipients) > MAX_RECIPIENTS:
+			frappe.throw(
+				_("A digest can have at most {0} recipients; this one has {1}.").format(
+					MAX_RECIPIENTS, len(recipients)
+				)
+			)
+		for email in recipients:
 			validate_email_address(email, throw=True)
 			self.validate_internal_user(email)
 
