@@ -13,7 +13,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import emailContentStyles from './emailContent.css?inline'
 
 const props = defineProps({
@@ -136,27 +136,62 @@ const htmlContent = `
 </html>
 `
 
+/* The frame's document is an island: it gets its own copy of the theme rather
+   than inheriting one. Copying it once on load was not enough -- switching
+   theme with mail on screen left every frame on the old value, so light-theme
+   prose (near-black) sat on the dark app surface at 1.10:1 until a reload.
+   Mirroring on every change is what keeps the two documents in step. */
+let themeObserver = null
+
+function mirrorTheme(frameHtml) {
+  if (!frameHtml) return
+  const theme = document.documentElement.getAttribute('data-theme')
+  if (theme) frameHtml.setAttribute('data-theme', theme)
+  else frameHtml.removeAttribute('data-theme')
+}
+
 watch(iframeRef, (iframe) => {
+  themeObserver?.disconnect()
+  themeObserver = null
   if (iframe) {
     iframe.onload = () => {
       const emailContent =
         iframe.contentWindow.document.querySelector('.email-content')
       let parent = emailContent.closest('html')
 
-      let theme = document.documentElement.getAttribute('data-theme')
-      parent.setAttribute('data-theme', theme)
+      mirrorTheme(parent)
 
-      iframe.style.height = parent.offsetHeight + 1 + 'px'
+      const resize = () => {
+        iframe.style.height = parent.offsetHeight + 1 + 'px'
+      }
+      resize()
+
+      /* `data-theme` is the attribute frappe-ui writes on <html>; watching the
+         attribute rather than the composable keeps this working for every path
+         that sets it -- the toggle, another tab, or the OS under 'system'. */
+      themeObserver = new MutationObserver(() => {
+        mirrorTheme(parent)
+        /* A theme change can reflow the content (fonts, borders), so the frame
+           has to be re-measured or it keeps a stale height. */
+        resize()
+      })
+      themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['data-theme'],
+      })
 
       let replyCollapsers = emailContent.querySelectorAll('.replyCollapser')
       if (replyCollapsers.length) {
         replyCollapsers.forEach((replyCollapser) => {
-          replyCollapser.addEventListener('change', () => {
-            iframe.style.height = parent.offsetHeight + 1 + 'px'
-          })
+          replyCollapser.addEventListener('change', resize)
         })
       }
     }
   }
+})
+
+onBeforeUnmount(() => {
+  themeObserver?.disconnect()
+  themeObserver = null
 })
 </script>
