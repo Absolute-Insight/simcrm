@@ -1,5 +1,5 @@
 <template>
-  <div class="flex h-full flex-col gap-4">
+  <div class="flex h-full flex-col gap-4 p-8">
     <div class="flex items-start justify-between gap-4">
       <div class="flex flex-col gap-1">
         <h2 class="v-title text-ink-gray-8">
