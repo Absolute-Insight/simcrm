@@ -21,6 +21,7 @@ they run as evaluated strings in the browser.
 | Proactive signals, scoring, suggestion inbox | [feats/suggestions/README.md](./.pi/feats/suggestions/README.md) |
 | Rep planning and plan-vs-actual matching | [feats/planning/README.md](./.pi/feats/planning/README.md) |
 | Analytics, forecasting, quota, reports, digests | [feats/reporting/README.md](./.pi/feats/reporting/README.md) |
+| In-app help center & assistant chat | [feats/help/README.md](./.pi/feats/help/README.md) |
 | Deploying to a server (compose stack, upgrades, backups) | [deploy/README.md](./deploy/README.md) |
 
 ---
@@ -73,6 +74,8 @@ they run as evaluated strings in the browser.
 | `frontend/src/pages/Dashboard.vue` | Role-aware dashboard (rep home / manager view) |
 | `frontend/src/components/Settings/Quotas.vue` | Sales targets: rep × month grid |
 | `frontend/src/components/Settings/AutomationRules.vue` | Automation rule admin |
+| `frontend/src/components/Modals/HelpCenterModal.vue` | In-app help center (articles from `crm/help/`) |
+| `frontend/src/components/Assistant.vue` | Global assistant chat panel (`crm.agent.api.ask_assistant`) |
 
 ### Design system
 | File | Role |

@@ -268,9 +268,19 @@ the finding above rather than in spite of it:
   attached. The number to watch as models change is which ones confirm the discount *less
   often*; none tried so far resist it.
 
+## The assistant tier (`ask_assistant`)
+
+Built 2026-08-21 — see [../help/README.md](../help/README.md). A chat endpoint
+grounded exclusively on the in-app help articles (`crm/agent/knowledge.py`,
+pure and in the layering map). It deliberately reads **no CRM records**: its
+whole knowledge is the shipped manual, so there is no thread for hostile
+content to inject through, which is why it needed no new entry in the
+injection table above. If it ever grows record reads, it joins that table
+first.
+
 ## What is not here yet
 
-MCP transport and the assistant tier.
+MCP transport.
 
 The enrichment fallback extractor used to be listed here and is now built —
 `crm/domain_enrichment/model_fallback.py`, with tests and a golden-set eval runner
