@@ -194,6 +194,7 @@ class ERPNextCRMSettings(Document):
 
 	@frappe.whitelist()
 	def reset_erpnext_form_script(self):
+		frappe.only_for(["System Manager", "Sales Manager"], True)
 		try:
 			if frappe.db.exists("CRM Form Script", "Create Quotation from CRM Deal"):
 				script = get_crm_form_script()
@@ -206,6 +207,7 @@ class ERPNextCRMSettings(Document):
 
 	@frappe.whitelist()
 	def get_external_companies(self):
+		frappe.only_for(["System Manager", "Sales Manager"], True)
 		if not self.erpnext_site_url or not self.api_key or not self.api_secret:
 			return []
 		client = get_erpnext_site_client(self)
@@ -217,6 +219,7 @@ class ERPNextCRMSettings(Document):
 
 	@frappe.whitelist()
 	def run_product_sync(self):
+		frappe.only_for(["System Manager", "Sales Manager"], True)
 		if not self.enabled or self.is_erpnext_in_different_site:
 			frappe.throw(_("ERPNext integration must be enabled on the same site"))
 		from crm.fcrm.doctype.crm_product.reconcile_job import enqueue_reconciliation
@@ -347,6 +350,7 @@ def get_local_customer(crm_deal: str):
 
 @frappe.whitelist()
 def get_customer_link(crm_deal: str):
+	frappe.has_permission("CRM Deal", "read", doc=crm_deal, throw=True)
 	erpnext_crm_settings = _get_enabled_settings()
 
 	if not erpnext_crm_settings.is_erpnext_in_different_site:
@@ -373,6 +377,7 @@ def get_customer_link(crm_deal: str):
 
 @frappe.whitelist()
 def get_quotation_url(crm_deal: str, organization: str | None = None):
+	frappe.has_permission("CRM Deal", "write", doc=crm_deal, throw=True)
 	erpnext_crm_settings = _get_enabled_settings()
 
 	contact = get_primary_contact(crm_deal)
@@ -447,6 +452,7 @@ def create_prospect_in_remote_site(crm_deal, erpnext_crm_settings):
 def prefill_quotation_items(crm_deal: str):
 	if not frappe.db.exists("CRM Deal", crm_deal):
 		return []
+	frappe.has_permission("CRM Deal", "read", doc=crm_deal, throw=True)
 	deal = frappe.get_doc("CRM Deal", crm_deal)
 	items = []
 	for row in deal.products:

@@ -5,7 +5,7 @@ import requests
 from frappe import _
 from frappe.integrations.utils import create_request_log
 
-from crm.integrations.api import get_contact_by_phone_number
+from crm.integrations.api import lookup_contact_by_phone_number
 
 # Endpoints for webhook
 
@@ -123,6 +123,8 @@ def make_a_call(to_number: str, from_number: str | None = None, caller_id: str |
 	try:
 		response = requests.post(
 			endpoint,
+			auth=get_exotel_auth(),
+			timeout=(5, 30),
 			data={
 				"From": from_number,
 				"To": to_number,
@@ -135,8 +137,16 @@ def make_a_call(to_number: str, from_number: str | None = None, caller_id: str |
 		)
 		response.raise_for_status()
 	except requests.exceptions.HTTPError:
-		if exc := response.json().get("RestException"):
+		try:
+			exc = response.json().get("RestException")
+		except ValueError:
+			exc = None
+		if exc:
 			frappe.throw(exc.get("Message"), title=_("Exotel Exception"))
+		frappe.log_error(title="Exotel call request failed", message=response.text)
+		frappe.throw(
+			_("Could not place the call through Exotel. Check the error log."), title=_("Exotel Exception")
+		)
 	else:
 		res = response.json()
 		call_payload = res.get("Call", {})
@@ -162,11 +172,15 @@ def make_a_call(to_number: str, from_number: str | None = None, caller_id: str |
 	return call_details
 
 
+def get_exotel_auth():
+	"""Basic-auth tuple for Exotel's API; credentials never go into the URL."""
+	settings = get_exotel_settings()
+	return (settings.api_key, settings.get_password("api_token"))
+
+
 def get_exotel_endpoint(action=None, version="v1"):
 	settings = get_exotel_settings()
-	return "https://{api_key}:{api_token}@{subdomain}/{version}/Accounts/{sid}/{action}".format(
-		api_key=settings.api_key,
-		api_token=settings.get_password("api_token"),
+	return "https://{subdomain}/{version}/Accounts/{sid}/{action}".format(
 		subdomain=settings.subdomain,
 		version=version,
 		sid=settings.account_sid,
@@ -176,7 +190,7 @@ def get_exotel_endpoint(action=None, version="v1"):
 
 def get_all_exophones():
 	endpoint = get_exotel_endpoint("IncomingPhoneNumbers", "v2_beta")
-	response = requests.get(endpoint)
+	response = requests.get(endpoint, auth=get_exotel_auth(), timeout=(5, 30))
 	return [phone.get("friendly_name") for phone in response.json().get("incoming_phone_numbers", [])]
 
 
@@ -251,7 +265,7 @@ def create_call_log(
 
 
 def link(contact_number, call_log):
-	contact = get_contact_by_phone_number(contact_number)
+	contact = lookup_contact_by_phone_number(contact_number)
 	if contact.get("name"):
 		doctype = "Contact"
 		docname = contact.get("name")

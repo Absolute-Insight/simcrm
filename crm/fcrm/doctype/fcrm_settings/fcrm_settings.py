@@ -24,7 +24,7 @@ class FCRMSettings(Document):
 
 		from crm.fcrm.doctype.crm_dropdown_item.crm_dropdown_item import CRMDropdownItem
 
-		access_key: DF.Data | None
+		access_key: DF.Password | None
 		all_day_event_notifications: DF.Table[EventNotifications]
 		auto_mark_replied_on_response: DF.Check
 		auto_reopen_on_new_communication: DF.Check
@@ -45,10 +45,12 @@ class FCRMSettings(Document):
 
 	@frappe.whitelist()
 	def restore_defaults(self, force: bool = False):
+		frappe.only_for("System Manager", True)
 		after_install(force)
 
 	@frappe.whitelist()
 	def restore_demo_data(self):
+		frappe.only_for(["Sales Manager", "System Manager"], True)
 		create_demo_data()
 
 	def validate(self):

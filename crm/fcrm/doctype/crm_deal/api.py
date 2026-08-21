@@ -3,6 +3,7 @@ import frappe
 
 @frappe.whitelist()
 def get_deal_contacts(name: str):
+	frappe.has_permission("CRM Deal", "read", doc=name, throw=True)
 	contacts = frappe.get_all(
 		"CRM Contacts",
 		filters={"parenttype": "CRM Deal", "parent": name},

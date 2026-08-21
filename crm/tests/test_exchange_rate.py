@@ -28,6 +28,7 @@ def _mock_settings(provider: str, access_key: str = "") -> MagicMock:
 	settings = MagicMock()
 	settings.service_provider = provider
 	settings.access_key = access_key
+	settings.get_password.return_value = access_key
 	return settings
 
 

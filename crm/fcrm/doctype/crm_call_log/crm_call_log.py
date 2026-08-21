@@ -5,7 +5,7 @@ import frappe
 from frappe import _, generate_hash
 from frappe.model.document import Document
 
-from crm.integrations.api import get_contact_by_phone_number
+from crm.integrations.api import lookup_contact_by_phone_number
 from crm.utils import seconds_to_duration
 
 
@@ -152,7 +152,7 @@ def parse_call_log(call):
 	call["_duration"] = seconds_to_duration(call.get("duration"))
 	if call.get("type") == "Incoming":
 		call["activity_type"] = "incoming_call"
-		contact = get_contact_by_phone_number(call.get("from"))
+		contact = lookup_contact_by_phone_number(call.get("from"))
 		receiver = (
 			frappe.db.get_values("User", call.get("receiver"), ["full_name", "user_image"])[0]
 			if call.get("receiver")
@@ -168,7 +168,7 @@ def parse_call_log(call):
 		}
 	elif call.get("type") == "Outgoing":
 		call["activity_type"] = "outgoing_call"
-		contact = get_contact_by_phone_number(call.get("to"))
+		contact = lookup_contact_by_phone_number(call.get("to"))
 		caller = (
 			frappe.db.get_values("User", call.get("caller"), ["full_name", "user_image"])[0]
 			if call.get("caller")
@@ -188,33 +188,20 @@ def parse_call_log(call):
 
 @frappe.whitelist()
 def get_call_log(name: str):
-	call = frappe.get_cached_doc(
-		"CRM Call Log",
-		name,
-		fields=[
-			"name",
-			"caller",
-			"receiver",
-			"duration",
-			"type",
-			"status",
-			"from",
-			"to",
-			"note",
-			"recording_url",
-			"recording_url_path",
-			"reference_doctype",
-			"reference_docname",
-			"creation",
-		],
-	).as_dict()
+	call_doc = frappe.get_cached_doc("CRM Call Log", name)
+	call_doc.check_permission("read")
+	call = call_doc.as_dict()
 
 	call = parse_call_log(call)
 
 	notes = []
 	tasks = []
 
-	if call.get("note"):
+	def readable(doctype, docname):
+		# Linked notes and tasks are omitted, not fatal, when the caller can't read them.
+		return frappe.has_permission(doctype, "read", doc=docname)
+
+	if call.get("note") and readable("FCRM Note", call.get("note")):
 		note = frappe.get_cached_doc("FCRM Note", call.get("note")).as_dict()
 		notes.append(note)
 
@@ -227,11 +214,13 @@ def get_call_log(name: str):
 	if call.get("links"):
 		for link in call.get("links"):
 			if link.get("link_doctype") == "CRM Task":
-				task = frappe.get_cached_doc("CRM Task", link.get("link_name")).as_dict()
-				tasks.append(task)
+				if readable("CRM Task", link.get("link_name")):
+					task = frappe.get_cached_doc("CRM Task", link.get("link_name")).as_dict()
+					tasks.append(task)
 			elif link.get("link_doctype") == "FCRM Note":
-				note = frappe.get_cached_doc("FCRM Note", link.get("link_name")).as_dict()
-				notes.append(note)
+				if readable("FCRM Note", link.get("link_name")):
+					note = frappe.get_cached_doc("FCRM Note", link.get("link_name")).as_dict()
+					notes.append(note)
 			elif link.get("link_doctype") == "CRM Lead":
 				call["_lead"] = link.get("link_name")
 			elif link.get("link_doctype") == "CRM Deal":

@@ -32,6 +32,8 @@ class CRMProducts(Document):
 
 @frappe.whitelist()
 def get_product_rate_details(product_code: str, deal: str | None = None) -> dict:
+	if deal:
+		frappe.has_permission("CRM Deal", "read", doc=deal, throw=True)
 	product = (
 		frappe.db.get_value("CRM Product", product_code, ["product_name", "standard_rate"], as_dict=True)
 		or {}

@@ -206,6 +206,7 @@ def get_quick_filters(doctype: str, cached: bool = True):
 
 @frappe.whitelist()
 def update_quick_filters(quick_filters: str, old_filters: str, doctype: str):
+	frappe.only_for(["Sales Manager", "System Manager"], True)
 	quick_filters = json.loads(quick_filters)
 	old_filters = json.loads(old_filters)
 
@@ -714,6 +715,7 @@ def get_linked_docs_of_document(doctype: str, docname: str):
 		doc = frappe.get_doc(doctype, docname)
 	except frappe.DoesNotExistError:
 		return []
+	doc.check_permission("read")
 
 	linked_docs = get_linked_docs(doc)
 	dynamic_linked_docs = get_dynamic_linked_docs(doc)
@@ -729,6 +731,9 @@ def get_linked_docs_of_document(doctype: str, docname: str):
 		try:
 			data = frappe.get_doc(doc["reference_doctype"], doc["reference_docname"])
 		except (frappe.DoesNotExistError, frappe.ValidationError):
+			continue
+
+		if not frappe.has_permission(data.doctype, "read", doc=data):
 			continue
 
 		title = data.get("title")

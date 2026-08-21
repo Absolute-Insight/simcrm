@@ -3,6 +3,7 @@ import frappe
 
 @frappe.whitelist()
 def get_assignment_rules_list():
+	frappe.has_permission("Assignment Rule", "read", throw=True)
 	assignment_rules = []
 	for docname in frappe.get_all(
 		"Assignment Rule", filters={"document_type": ["in", ["CRM Lead", "CRM Deal"]]}

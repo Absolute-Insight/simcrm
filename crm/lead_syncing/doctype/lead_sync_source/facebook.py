@@ -240,6 +240,7 @@ class FacebookSyncSource:
 
 @frappe.whitelist()
 def fetch_and_store_pages_from_facebook(access_token: str) -> list[dict]:
+	frappe.only_for(["System Manager", "Sales Manager"], True)
 	if not access_token:
 		frappe.throw(frappe._("Access token is required"))
 
@@ -318,6 +319,7 @@ def create_facebook_lead_form_in_db(form: dict, page_id: str) -> None:
 
 @frappe.whitelist()
 def get_pages_with_forms() -> list[dict]:
+	frappe.only_for(["System Manager", "Sales Manager"], True)
 	pages = frappe.db.get_all("Facebook Page", fields=["id", "name"])
 	for page in pages:
 		forms = frappe.db.get_all("Facebook Lead Form", filters={"page": page["id"]}, fields=["id", "name"])

@@ -120,7 +120,7 @@
   {
    "depends_on": "eval:doc.service_provider == 'exchangerate.host';",
    "fieldname": "access_key",
-   "fieldtype": "Data",
+   "fieldtype": "Password",
    "label": "Access Key",
    "mandatory_depends_on": "eval:doc.service_provider == 'exchangerate.host';"
   },
