@@ -78,6 +78,34 @@ class ShippedArticlesTest(UnitTestCase):
 		first[0]["content"] = "vandalised"
 		self.assertNotEqual(load_articles()[0]["content"], "vandalised")
 
+	def test_articles_are_parsed_once_per_process(self):
+		from unittest import mock
+
+		from crm import help as help_mod
+
+		help_mod._load_articles_once.cache_clear()
+		self.addCleanup(help_mod._load_articles_once.cache_clear)
+		with mock.patch.object(help_mod, "parse_article", wraps=help_mod.parse_article) as parse:
+			load_articles()
+			first_count = parse.call_count
+			load_articles()
+		self.assertGreater(first_count, 0)
+		self.assertEqual(parse.call_count, first_count)
+
+	def test_a_malformed_article_is_a_clear_error_from_the_endpoint(self):
+		from unittest import mock
+
+		import frappe
+
+		from crm.api import help as help_api
+
+		with mock.patch.object(
+			help_api, "load_articles", side_effect=ValueError("help article 'x': empty body")
+		):
+			with self.assertRaises(frappe.ValidationError) as caught:
+				get_articles()
+		self.assertIn("empty body", str(caught.exception))
+
 	def test_the_endpoint_wraps_articles_with_the_category_order(self):
 		payload = get_articles()
 		self.assertEqual(payload["categories"], CATEGORY_ORDER)

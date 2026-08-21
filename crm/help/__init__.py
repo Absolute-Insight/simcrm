@@ -20,6 +20,8 @@ them. Editing an article updates both surfaces.
 
 from __future__ import annotations
 
+import copy
+import functools
 from pathlib import Path
 
 ARTICLES_DIR = Path(__file__).parent / "articles"
@@ -41,10 +43,16 @@ REQUIRED_KEYS = ("title", "category", "order")
 def load_articles() -> list[dict]:
 	"""Every article, parsed and sorted by (category order, article order).
 
-	Returns fresh dicts on every call so a caller mutating its copy cannot
-	poison another surface. Sixteen small files per request is cheaper than a
-	cache-invalidation story.
+	Parsed once per process -- the files ship with the code, so they change
+	when the code does and a restart is the invalidation. Returns a deep copy
+	on every call so a caller mutating its copy cannot poison another surface:
+	the help center and the assistant both read this, on every request.
 	"""
+	return copy.deepcopy(_load_articles_once())
+
+
+@functools.lru_cache(maxsize=1)
+def _load_articles_once() -> list[dict]:
 	articles = [
 		parse_article(path.stem, path.read_text(encoding="utf-8"))
 		for path in sorted(ARTICLES_DIR.glob("*.md"))

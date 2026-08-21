@@ -23,4 +23,11 @@ def get_articles() -> dict:
 	Any authenticated user may read the manual; there is nothing here that is
 	not visible in the UI it documents.
 	"""
-	return {"categories": CATEGORY_ORDER, "articles": load_articles()}
+	try:
+		articles = load_articles()
+	except ValueError as exc:
+		# a malformed shipped article is a bug in the release, not a 500 to
+		# decode from a traceback; ``crm.help`` itself stays frappe-free
+		frappe.log_error(title="CRM help article failed to parse", message=str(exc))
+		frappe.throw(frappe._("The help center could not load its articles: {0}").format(exc))
+	return {"categories": CATEGORY_ORDER, "articles": articles}

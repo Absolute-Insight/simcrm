@@ -21,7 +21,7 @@ ENABLED = AgentConfig(enabled=True, base_url="http://x/v1", model="m", timeout=5
 
 
 def no_budget_check():
-	return mock.patch.object(api_mod, "_budget_spent", return_value=False)
+	return mock.patch.object(api_mod, "_throttled", return_value=False)
 
 
 class FlagTest(IntegrationTestCase):

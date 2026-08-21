@@ -59,7 +59,10 @@ One open suggestion per `(signal, reference)`. A dismissed or accepted signal is
 suppressed for a cooldown; **the cooldown stretches for a repeat dismisser**, up
 to `MAX_COOLDOWN_MULTIPLIER`. Expired rows get their own shorter cooldown so the
 job cannot expire and immediately re-create the same row. `purge_old_suggestions`
-sweeps daily, keeping anything a plan item still links to.
+sweeps daily — expired, dismissed *and accepted* rows past `PURGE_AFTER_DAYS` —
+keeping anything a plan item still links to. Suggestions raised by an automation
+rule carry the same `expires_on` (`suggestion_ttl_days`) and the same 140-char title
+clip as the hourly signals.
 
 Dismissal reasons are readable through `get_dismissal_stats`, so a threshold that
 reps keep rejecting is visible rather than guessed at.
@@ -69,7 +72,7 @@ reps keep rejecting is visible rather than guessed at.
 | Endpoint | Purpose |
 |---|---|
 | `crm.api.suggestions.get_suggestions(reference_doctype?, reference_docname?)` | Open suggestions, owner-scoped; a reference narrows to one record and is permission-checked against that record |
-| `crm.api.suggestions.get_open_count()` | Badge count, scoped identically |
+| `crm.api.suggestions.get_open_count()` | Badge count, scoped identically (through `get_list`, so the doctype's permission query applies — a hierarchy-scoped manager is badged with their subtree, not the site) |
 | `crm.api.suggestions.get_dismissal_stats(user?)` | Dismissals per signal, with reasons |
 | `crm.api.suggestions.accept(name)` / `dismiss(name, reason?)` | Flip status only — the record an acceptance leads to is created client-side behind the confirm dialog |
 | `crm.agent.api.summarise_thread(...)` / `draft_reply(...)` | Model tier, rate-limited, degrade cleanly when disabled |
@@ -89,7 +92,10 @@ Ownership is enforced twice on purpose: in the endpoints (which save with
 `ignore_permissions` because the state machine is theirs) and on the doctype via
 `get_permission_query_conditions` + `has_permission`, because
 `frappe.client.get_list` is a second door into the same table. `crm/tests/test_row_permissions.py`
-knocks on that second door specifically.
+knocks on that second door specifically. `accept`/`dismiss` use the doctype's own
+`has_permission` (hierarchy-aware via `visible_users()`) rather than a flat "is a
+manager" test, so an orphaned suggestion — whose record is gone and therefore skips
+the record-access check — cannot be cleared by a manager outside its subtree.
 
 ## Configuration
 

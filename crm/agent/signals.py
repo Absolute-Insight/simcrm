@@ -749,9 +749,11 @@ def run_signals() -> int:
 			if created % COMMIT_EVERY == 0 and not frappe.flags.in_test:
 				frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit
 
+	# queued before the final commit: ``after_commit=True`` rides on the next
+	# commit, and after this one there is no next
+	publish_new_suggestions(notify)
 	if created and not frappe.flags.in_test:
 		frappe.db.commit()  # nosemgrep: frappe-semgrep-rules.rules.frappe-manual-commit
-	publish_new_suggestions(notify)
 	return created
 
 
@@ -800,13 +802,15 @@ def _insert_suggestion(candidate: dict, expires_on: datetime) -> bool:
 def purge_old_suggestions(limit: int = 5000) -> int:
 	"""Daily scheduler entry: settled suggestions stop being evidence eventually.
 
+	Settled means expired, dismissed *or accepted*: an accepted row has done its
+	job once the rep acted on it, and keeping it forever only grows the table.
 	Rows a rep plan item still points at are kept whatever their age -- deleting
 	one would leave the planner with a dangling link to explain.
 	"""
 	cutoff = frappe.utils.add_days(frappe.utils.now_datetime(), -PURGE_AFTER_DAYS)
 	names = frappe.get_all(
 		"CRM Suggestion",
-		filters={"status": ("in", ("Expired", "Dismissed")), "modified": ("<", cutoff)},
+		filters={"status": ("in", ("Expired", "Dismissed", "Accepted")), "modified": ("<", cutoff)},
 		pluck="name",
 		limit=limit,
 	)

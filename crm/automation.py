@@ -12,10 +12,13 @@ failures are logged, not raised.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import frappe
 from jinja2.sandbox import SandboxedEnvironment
 
-from crm.agent.signals import clear_suggestions_for, resync_owner
+from crm.agent.config import get_signal_config
+from crm.agent.signals import TITLE_MAX_LENGTH, clear_suggestions_for, resync_owner
 
 OWNER_FIELD = {"CRM Lead": "lead_owner", "CRM Deal": "deal_owner"}
 
@@ -163,7 +166,9 @@ def render_rule_template(template, doc_dict) -> str:
 def _apply(rule, doc) -> None:
 	doc_dict = doc.as_dict()
 	owner = doc.get(OWNER_FIELD.get(doc.doctype)) if rule.assign_to_owner else None
-	title = render_rule_template(rule.title_template, doc_dict) or rule.name
+	# CRM Suggestion.title and CRM Task.title are Data(140); a template that
+	# interpolates an organization name can overflow that and raise out of the save
+	title = (render_rule_template(rule.title_template, doc_dict) or rule.name)[:TITLE_MAX_LENGTH]
 	description = render_rule_template(rule.description_template, doc_dict)
 
 	if rule.action == "Create Task":
@@ -217,6 +222,10 @@ def _apply(rule, doc) -> None:
 				"action_payload": frappe.as_json({"title": title}),
 				"status": "Open",
 				"score": rule_suggestion_score(rule.suggestion_score),
+				# the same TTL the hourly signals use, or a rule's row never expires
+				# and sits in the inbox until someone clears it by hand
+				"expires_on": frappe.utils.now_datetime()
+				+ timedelta(days=get_signal_config().suggestion_ttl_days),
 			}
 		).insert(ignore_permissions=True)
 
