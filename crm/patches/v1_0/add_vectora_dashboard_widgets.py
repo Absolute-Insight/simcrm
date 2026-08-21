@@ -19,33 +19,48 @@ import frappe
 # plan_adherence and quota_attainment, which became curated tiles in a later
 # commit; sites upgraded in between show both, and remove_duplicated_grid_tiles
 # cleans that up. test_metrics guards the intersection so it cannot drift again.
-WIDGETS = [
-	{
-		"name": "deals_at_risk",
-		"type": "number_chart",
-		"tooltip": "Open deals with a health score below 40",
-		"layout": {"x": 12, "y": 2, "w": 4, "h": 3, "i": "deals_at_risk"},
-	},
-]
+#
+# Now empty: its one remaining widget, deals_at_risk, became a curated tile too
+# (and remove_duplicated_grid_tiles runs a second time to lift the grid copy).
+# The module stays because the patch entry has run on real sites and because
+# merge_widgets is the shared mechanism newer widget patches reuse.
+WIDGETS = []
 
 
-def execute():
+def merge_widgets(widgets: list[dict]) -> None:
+	"""Add ``widgets`` to every saved layout that does not already carry them."""
 	for name in frappe.get_all("CRM Dashboard", pluck="name"):
 		layout = json.loads(frappe.db.get_value("CRM Dashboard", name, "layout") or "[]")
 		present = {widget.get("name") for widget in layout}
-		missing = [widget for widget in WIDGETS if widget["name"] not in present]
+		missing = [widget for widget in widgets if widget["name"] not in present]
 		if not missing:
 			continue
 
-		# stack the new tiles below everything the layout already places, so a
-		# rearranged dashboard never has a tile dropped on top of another
+		# stack the new widgets below everything the layout already places, so a
+		# rearranged dashboard never has one dropped on top of another. Rows are
+		# filled by each widget's own width (the first version assumed 4-wide
+		# tiles, which would overlap anything wider), wrapping at the grid's 20
+		# columns.
 		bottom = max(
 			(w.get("layout", {}).get("y", 0) + w.get("layout", {}).get("h", 0) for w in layout), default=0
 		)
-		for offset, widget in enumerate(missing):
+		x = 0
+		row_height = 0
+		for widget in missing:
 			widget = json.loads(json.dumps(widget))
+			width = widget["layout"].get("w", 4)
+			if x + width > 20:
+				x = 0
+				bottom += row_height
+				row_height = 0
+			widget["layout"]["x"] = x
 			widget["layout"]["y"] = bottom
-			widget["layout"]["x"] = offset * 4 % 20
+			x += width
+			row_height = max(row_height, widget["layout"].get("h", 3))
 			layout.append(widget)
 
 		frappe.db.set_value("CRM Dashboard", name, "layout", json.dumps(layout))
+
+
+def execute():
+	merge_widgets(WIDGETS)

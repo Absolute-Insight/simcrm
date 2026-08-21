@@ -27,8 +27,14 @@ DASHBOARD_VIEWS_PER_MINUTE = 60
 # Kept in step with the tile row by test_dashboard_rate_limits, which reads the
 # catalogue out of Dashboard.vue: adding a sixth tile without raising this would
 # quietly cut the number of views a manager gets.
-DASHBOARD_TILE_COUNT = 5
-CHART_CALLS_PER_MINUTE = DASHBOARD_VIEWS_PER_MINUTE * DASHBOARD_TILE_COUNT
+DASHBOARD_TILE_COUNT = 6
+# The rep home also draws two axis charts through get_chart (its "Your trends"
+# strip renders sales_trend and funnel_conversion outside the manager grid), so
+# a rep view fans out to one call fewer than tiles+charts suggests -- reps skip
+# the total_leads tile -- and the worst case per view is tiles + 2 - 1. Budget
+# for tiles + 2 so neither role's view can starve the tile row.
+REP_TREND_CHART_COUNT = 2
+CHART_CALLS_PER_MINUTE = DASHBOARD_VIEWS_PER_MINUTE * (DASHBOARD_TILE_COUNT + REP_TREND_CHART_COUNT)
 
 
 # Custom function for TIMESTAMPDIFF (MySQL/MariaDB)

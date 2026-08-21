@@ -153,7 +153,8 @@
           :value="tile.resource.data?.value"
           :prefix="tile.resource.data?.prefix || ''"
           :suffix="tile.resource.data?.suffix || ''"
-          :tooltip="tile.resource.data?.tooltip || ''"
+          :hint="tile.showHint ? tile.resource.data?.tooltip || '' : ''"
+          :tooltip="tile.showHint ? '' : tile.resource.data?.tooltip || ''"
           :delta="tile.resource.data?.delta ?? 0"
           :delta-suffix="tile.resource.data?.deltaSuffix || ''"
           :negative-is-better="!!tile.resource.data?.negativeIsBetter"
@@ -286,7 +287,8 @@
 
           <!-- Manager panels are report rows, rendered as a compact table so
                the number in the panel and the number in the report are the
-               same number. -->
+               same number. Rows are per rep unless the panel says otherwise
+               via its own rowLabel. -->
           <table v-else class="w-full text-base">
             <tbody>
               <tr
@@ -295,7 +297,7 @@
                 class="border-b border-outline-gray-1 last:border-b-0"
               >
                 <td class="py-1.5 pr-2 text-ink-gray-7">
-                  {{ repName(row.user) }}
+                  {{ panel.rowLabel ? panel.rowLabel(row) : repName(row.user) }}
                 </td>
                 <td
                   class="py-1.5 text-right tabular-nums text-ink-gray-8"
@@ -320,6 +322,38 @@
           @click="showPanel(panel.id)"
         />
       </div>
+
+      <!-- Reps get a read-only chart strip: the same charts, from the same
+           endpoint, that managers place in their grid — scoped to the rep's
+           own records by the server. Before this a plain Sales User saw no
+           chart at all. -->
+      <template v-if="!isTeamView">
+        <h2 class="v-title-sm mt-6 text-ink-gray-8">{{ __('Your trends') }}</h2>
+        <div class="mt-2 grid grid-cols-1 gap-3 xl:grid-cols-2">
+          <div
+            v-for="chart in repCharts"
+            :key="chart.name"
+            class="h-72 overflow-hidden rounded-6 border border-outline-gray-1"
+          >
+            <SkeletonTable
+              v-if="chart.resource.loading"
+              :rows="4"
+              :columns="2"
+            />
+            <ErrorState
+              v-else-if="chart.resource.error"
+              compact
+              :error="chart.resource.error"
+              :retry="() => chart.resource.reload()"
+            />
+            <DashboardItem
+              v-else-if="chart.resource.data"
+              :index="0"
+              :item="{ type: 'axis_chart', data: chart.resource.data }"
+            />
+          </div>
+        </div>
+      </template>
 
       <template v-if="showChartGrid">
         <h2 class="v-title-sm mt-6 text-ink-gray-8">{{ __('Charts') }}</h2>
@@ -367,6 +401,7 @@
  * invisible behind a stale saved order.
  */
 import AddChartModal from '@/components/Dashboard/AddChartModal.vue'
+import DashboardItem from '@/components/Dashboard/DashboardItem.vue'
 import LucideRefreshCcw from '~icons/lucide/refresh-ccw'
 import LucideUndo2 from '~icons/lucide/undo-2'
 import LucidePenLine from '~icons/lucide/pen-line'
@@ -381,7 +416,9 @@ import ViewBreadcrumbs from '@/components/ViewBreadcrumbs.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import Link from '@/components/Controls/Link.vue'
 import { usersStore } from '@/stores/users'
+import { getSettings } from '@/stores/settings'
 import { isNarrowGrid } from '@/composables/settings'
+import { formatCell } from '@/utils/reportExport'
 import { copy } from '@/utils'
 import { describeError } from '@/utils/describeError'
 import {
@@ -415,7 +452,12 @@ import { ref, reactive, computed, provide } from 'vue'
 import { useRouter } from 'vue-router'
 
 const { users, getUser, isManager, isAdmin } = usersStore()
+const { settings } = getSettings()
 const router = useRouter()
+
+const baseCurrency = computed(
+  () => settings.value?.currency || window.sysdefaults?.currency || 'USD',
+)
 const { drillInto, canDrillInto } = useDrilldown()
 
 const editing = ref(false)
@@ -471,12 +513,29 @@ function chartResource(name: string) {
   })
 }
 
+/* `showHint` renders the server's explanation as the tile's second line
+   instead of hover-only: "R 12,000 of R 50,000 closed-won against quota" is
+   the difference between a percentage and an answer, and a hover tooltip is
+   an affordance nobody finds on a stat card. */
 const TILE_CATALOGUE = [
   { name: 'total_leads', label: __('Leads'), teamOnly: true },
   { name: 'ongoing_deals', label: __('Open deals'), teamOnly: false },
   { name: 'won_deals', label: __('Won deals'), teamOnly: false },
-  { name: 'plan_adherence', label: __('Plan adherence'), teamOnly: false },
-  { name: 'quota_attainment', label: __('Quota attainment'), teamOnly: false },
+  // Reps see this too now: the count sits directly above the "Needs your
+  // attention" panel that lists the deals behind it.
+  { name: 'deals_at_risk', label: __('Critical deals'), teamOnly: false },
+  {
+    name: 'plan_adherence',
+    label: __('Plan adherence'),
+    teamOnly: false,
+    showHint: true,
+  },
+  {
+    name: 'quota_attainment',
+    label: __('Quota attainment'),
+    teamOnly: false,
+    showHint: true,
+  },
 ]
 
 const tileResources = Object.fromEntries(
@@ -570,6 +629,33 @@ function reportResource(name: string) {
 
 const teamAdherence = reportResource('plan_adherence_by_rep')
 const teamQuota = reportResource('quota_attainment_by_rep')
+const teamPipeline = reportResource('pipeline_by_stage')
+
+/* The rep chart strip. Same endpoint as the manager grid's charts; the server
+   pins a plain Sales User to their own records, so these are personal trends
+   without a separate aggregate existing anywhere. */
+function repChartResource(name: string) {
+  return createResource({
+    url: 'crm.api.dashboard.get_chart',
+    makeParams: () => ({
+      name,
+      type: 'axis_chart',
+      from_date: fromDate.value,
+      to_date: toDate.value,
+      user: scopeUser.value,
+      territory: scopeTerritory.value,
+    }),
+    auto: !isTeamView.value,
+  })
+}
+
+const repCharts = [
+  { name: 'sales_trend', resource: repChartResource('sales_trend') },
+  {
+    name: 'funnel_conversion',
+    resource: repChartResource('funnel_conversion'),
+  },
+]
 
 function repName(user: string) {
   return getUser(user)?.full_name || user
@@ -626,6 +712,23 @@ const PANEL_CATALOGUE = computed(() => {
       rows: computed(() => teamAdherence.data?.rows || []),
       cell: (row) => `${row.adherence}%`,
       tone: (row) => (row.adherence < 60 ? 'text-ink-orange-9' : ''),
+    },
+    {
+      id: 'pipeline',
+      title: __('Pipeline by stage'),
+      subtitle: __('Open deals right now — count and expected value'),
+      loading: computed(() => teamPipeline.loading),
+      error: computed(() => teamPipeline.error),
+      retry: () => teamPipeline.reload(),
+      empty: computed(
+        () => !teamPipeline.loading && !(teamPipeline.data?.rows || []).length,
+      ),
+      emptyTitle: __('No open deals'),
+      emptyDescription: __('The pipeline appears here as deals are created.'),
+      rows: computed(() => teamPipeline.data?.rows || []),
+      rowLabel: (row) => row.stage,
+      cell: (row) =>
+        `${row.deals} · ${formatCell(row.total_value, 'currency', baseCurrency.value)}`,
     },
     {
       id: 'quota',
@@ -715,8 +818,10 @@ function reloadAll() {
   if (isTeamView.value) {
     teamAdherence.reload()
     teamQuota.reload()
+    teamPipeline.reload()
   } else {
     myPlan.reload()
+    repCharts.forEach((chart) => chart.resource.reload())
   }
 }
 

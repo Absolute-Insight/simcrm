@@ -16,6 +16,12 @@ Only the grid copy goes. The tile row keeps rendering the metric, so nothing
 disappears from the page — the duplicate does. Removing it is safe because
 nothing else could have put it there: the Add Chart picker has never offered
 either metric, so the widget patch is its only possible origin.
+
+Run #2 (patches.txt suffix): ``deals_at_risk`` joined the curated tile row, and
+the picker stopped offering the number cards the tile row carries. This time a
+manager *could* have added the removed card through the picker — but the tile
+row now shows the same number for every role, so lifting the grid copy still
+removes only the duplicate, never the metric.
 """
 
 import json

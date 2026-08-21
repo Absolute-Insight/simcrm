@@ -68,11 +68,13 @@ const chartTypes = [
 ]
 
 const numberChart = ref('')
+// Metrics the curated tile row already shows (CURATED_TILE_METRICS in
+// crm_dashboard.py) are deliberately not offered here: the picker adding them
+// back to the grid is how the same number ends up answered twice on one page.
+// Saved layouts that still carry one keep rendering — this list only gates
+// what can be newly added.
 const numberCharts = [
-  { label: __('Total Leads'), value: 'total_leads' },
-  { label: __('Ongoing Deals'), value: 'ongoing_deals' },
   { label: __('Avg Ongoing Deal Value'), value: 'average_ongoing_deal_value' },
-  { label: __('Won Deals'), value: 'won_deals' },
   { label: __('Avg Won Deal Value'), value: 'average_won_deal_value' },
   { label: __('Avg Deal Value'), value: 'average_deal_value' },
   {
@@ -83,10 +85,6 @@ const numberCharts = [
     label: __('Avg Time to Close a Deal'),
     value: 'average_time_to_close_a_deal',
   },
-  // "Critical" matches the record badge's band for the same scores; see the
-  // note on get_deals_at_risk. The value stays `deals_at_risk` — saved
-  // dashboards store it.
-  { label: __('Critical deals'), value: 'deals_at_risk' },
 ]
 
 const axisChart = ref('sales_trend')
