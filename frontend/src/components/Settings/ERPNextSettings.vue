@@ -9,7 +9,7 @@
           {{ __('ERPNext Settings') }}
         </h2>
         <Tooltip text="View documentation">
-          <a href="https://docs.frappe.io/crm/erpnext" target="_blank">
+          <a href="/crm/help/integrations" target="_blank">
             <lucide-circle-question-mark class="h-4 w-4 text-ink-gray-6" />
           </a>
         </Tooltip>

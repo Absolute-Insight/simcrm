@@ -65,8 +65,8 @@ let links = [
     icon: GitHubIcon,
   },
   {
-    label: __('Frappe CRM Documentation'),
-    url: 'https://docs.frappe.io/crm',
+    label: __('Vectora help centre'),
+    url: '/crm/help',
     icon: LucideBookOpen,
   },
   {
