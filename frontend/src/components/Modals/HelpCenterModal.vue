@@ -9,11 +9,14 @@
             {{ __('Help center') }}
           </div>
           <div class="px-2 pb-2">
+            <!-- No debounce, deliberately: the search is client-side over a
+                 dozen small articles, and a debounced emit races the click on
+                 a result — the blur's delayed emit lands after openResult()
+                 clears the box and puts the stale query back. -->
             <TextInput
               v-model="search"
               type="text"
               :placeholder="__('Search the manual')"
-              :debounce="150"
             >
               <template #prefix>
                 <LucideSearch class="size-4 text-ink-gray-5" />
