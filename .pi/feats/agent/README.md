@@ -13,7 +13,7 @@ Local-inference features for the CRM. Disabled by default — turn on in
 | `client.py` | OpenAI-compatible call, one validation retry, `AgentUnavailable` on failure |
 | `tools.py` | The capability layer — permission-checked reads only |
 | `api.py` | Whitelisted endpoints; returns `ok` / `disabled` / `unavailable` |
-| `install.py` | Idempotent `CRM Agent` role, run from `after_install` + `after_migrate` |
+| `install.py` | Idempotent `CRM Agent` role (`after_install` + `after_migrate`), and the endpoint seed (`after_install` only) |
 
 Import direction is one-way: `errors` ← `config`/`schemas`/`context` ← `client` ←
 `tools`/`api`. No module imports one to its right.
@@ -60,6 +60,26 @@ Import direction is one-way: `errors` ← `config`/`schemas`/`context` ← `clie
   Every unit test passed because none of their content had been through the database.
 - `api_key` is optional. Set it only if the inference server was started with one; blank
   means no `Authorization` header is sent.
+
+## Seeding the endpoint from the environment
+
+`apply_endpoint_defaults` reads `VECTORA_AGENT_BASE_URL`, `VECTORA_AGENT_MODEL` and
+`VECTORA_AGENT_ENABLED` and writes them into the Single. The compose stack passes them
+to `create-site`; the shipped `base_url` is `localhost`, which is right for a bench on a
+laptop and wrong inside a network where the inference server is a sibling container — so
+the `local-model` profile pulled several GB of weights that no code path could reach.
+
+**`after_install` only, never `after_migrate`.** This writes the admin's own settings. A
+value re-applied on every upgrade would revert an endpoint or model they had changed in
+the UI, with nothing on screen to say why it moved back. An unset variable is skipped
+rather than written as an empty string, so half a configuration cannot wipe the other
+half. Anything but a recognised yes leaves `enabled` off — a stray value must not read as
+consent to contact a model.
+
+`enabled` is seeded at all because in a stack whose inference server is a sibling
+container the usual reason to ship the tier off — don't send customer email to a third
+party unasked — does not apply. The doctype default stays `0` for a plain
+`bench install-app crm`, where there is no endpoint to talk to.
 
 ## Editing the Settings doctype
 

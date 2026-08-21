@@ -73,6 +73,9 @@ they run as evaluated strings in the browser.
 | `frontend/src/pages/Dashboard.vue` | Role-aware dashboard (rep home / manager view) |
 | `frontend/src/components/Settings/Quotas.vue` | Sales targets: rep × month grid |
 | `frontend/src/components/Settings/AutomationRules.vue` | Automation rule admin |
+| `frontend/src/pages/Help.vue` | Vectora's own help centre at `/crm/help/<slug>` |
+| `frontend/src/help/manifest.js` | The one list of help sections and articles — the page's rail and the sidebar panel both read it |
+| `frontend/src/help/content/*.md` | The articles, bundled into the Help route's chunk |
 
 ### Design system
 | File | Role |
