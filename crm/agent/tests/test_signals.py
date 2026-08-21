@@ -26,11 +26,13 @@ from crm.agent.signals import (
 	EARLY_STAGE_PROBABILITY,
 	EXPIRY_COOLDOWN_DAYS,
 	IDLE_DEAL_DAYS,
+	MAX_OPEN_PER_USER,
 	TITLE_MAX_LENGTH,
 	_batched,
 	_latest_activity,
 	_sla_lead_rows,
 	cadence_ratio,
+	cap_per_user,
 	dedupe,
 	find_close_date_at_risk,
 	find_cooling_deals,
@@ -40,6 +42,7 @@ from crm.agent.signals import (
 	find_stale_plan_items,
 	purge_old_suggestions,
 	run_signals,
+	trim_open_over_cap,
 )
 
 NOW = datetime(2026, 8, 14, 12, 0, 0)
@@ -55,6 +58,14 @@ class PinnedSignalConfig:
 	because CI never saves those settings. What is under test here is the runner;
 	reading the config has its own coverage in ``test_config`` and
 	``test_settings_endpoint``.
+
+	``max_open_per_user`` is pinned out of the way rather than to its default.
+	It is the one threshold measured against rows this suite did not write --
+	every open suggestion on the site counts towards it -- so at its real value
+	a shared site that has been running the hourly job decides whether the
+	runner is allowed to create anything, and these assertions turn into a
+	report on the fixture data. The cap has its own suites below, each with its
+	own rep and its own ceiling.
 	"""
 
 	SIGNAL_CONFIG = SignalConfig(
@@ -63,6 +74,7 @@ class PinnedSignalConfig:
 		suggestion_ttl_days=SIGNAL_DEFAULTS["suggestion_ttl_days"],
 		dismiss_cooldown_days=SIGNAL_DEFAULTS["dismiss_cooldown_days"],
 		close_horizon_days=SIGNAL_DEFAULTS["close_horizon_days"],
+		max_open_per_user=1_000_000,
 	)
 
 	def setUp(self):
@@ -770,3 +782,223 @@ class SlaLeadRowsTest(IntegrationTestCase):
 		name = self.make_lead()
 		frappe.db.set_value("CRM Lead", name, "converted", 1)
 		self.assertNotIn(name, self.names())
+
+
+class CapPerUserTest(UnitTestCase):
+	"""The ranking that keeps an inbox a worklist.
+
+	``no_next_step`` fires on every open deal with no task, so on an imported
+	pipeline the candidate list is the pipeline. The cap is what stops that
+	reaching the database, and the ordering is what stops the surviving rows
+	changing every hour.
+	"""
+
+	def candidates(self, n, user="rep@example.com", score=40.0, signal="no_next_step"):
+		return [
+			{
+				"signal": signal,
+				"reference_doctype": "CRM Deal",
+				"reference_docname": f"CRM-DEAL-{i:03d}",
+				"user": user,
+				"score": score,
+			}
+			for i in range(n)
+		]
+
+	def test_a_short_list_is_untouched(self):
+		rows = self.candidates(3)
+		self.assertEqual(len(cap_per_user(rows, {}, 30)), 3)
+
+	def test_the_cap_is_the_ceiling(self):
+		self.assertEqual(len(cap_per_user(self.candidates(500), {}, 30)), 30)
+
+	def test_what_a_rep_already_holds_counts_against_the_cap(self):
+		out = cap_per_user(self.candidates(500), {"rep@example.com": 28}, 30)
+		self.assertEqual(len(out), 2)
+
+	def test_a_full_inbox_gets_nothing_new(self):
+		self.assertEqual(cap_per_user(self.candidates(500), {"rep@example.com": 30}, 30), [])
+
+	def test_an_overflowing_inbox_does_not_go_negative(self):
+		self.assertEqual(cap_per_user(self.candidates(5), {"rep@example.com": 900}, 30), [])
+
+	def test_each_rep_gets_their_own_ceiling(self):
+		rows = self.candidates(50, user="a@example.com") + self.candidates(50, user="b@example.com")
+		out = cap_per_user(rows, {"a@example.com": 4}, 5)
+		self.assertEqual(sum(1 for r in out if r["user"] == "a@example.com"), 1)
+		self.assertEqual(sum(1 for r in out if r["user"] == "b@example.com"), 5)
+
+	def test_unowned_candidates_share_one_bucket(self):
+		rows = self.candidates(10, user=None) + self.candidates(10, user="")
+		self.assertEqual(len(cap_per_user(rows, {}, 5)), 5)
+
+	def test_the_highest_scoring_candidates_survive(self):
+		rows = [
+			{"signal": "idle_deal", "reference_docname": "D1", "user": "r", "score": 10.0},
+			{"signal": "sla_breach", "reference_docname": "D2", "user": "r", "score": 80.0},
+			{"signal": "no_next_step", "reference_docname": "D3", "user": "r", "score": 40.0},
+		]
+		self.assertEqual([r["reference_docname"] for r in cap_per_user(rows, {}, 2)], ["D2", "D3"])
+
+	def test_equal_scores_are_broken_the_same_way_every_run(self):
+		"""``no_next_step`` gives every candidate 40, so score alone is not an order.
+
+		Without a tie-break the surviving rows would be whichever the deal query
+		returned first, and a rep working their inbox would watch it reshuffle
+		on the hour.
+		"""
+		rows = self.candidates(20)
+		first = cap_per_user(rows, {}, 5)
+		shuffled = list(reversed(rows))
+		self.assertEqual(first, cap_per_user(shuffled, {}, 5))
+
+	def test_a_missing_score_is_not_a_crash(self):
+		rows = [{"signal": "idle_deal", "reference_docname": "D1", "user": "r"}]
+		self.assertEqual(len(cap_per_user(rows, {}, 5)), 1)
+
+
+CAP_REP = "cap-rep@crmtest.test"
+
+
+class TrimOverCapTest(IntegrationTestCase):
+	"""Bringing a queue that is already over the ceiling back under it.
+
+	``cap_per_user`` only governs rows about to be written. A site that ran
+	before the cap existed -- which is every site that has run at all -- keeps
+	its backlog until something expires it, and that is this.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		if not frappe.db.exists("User", CAP_REP):
+			frappe.get_doc(
+				{"doctype": "User", "email": CAP_REP, "first_name": "Cap Rep", "send_welcome_email": 0}
+			).insert(ignore_permissions=True).add_roles("Sales User")
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Cap Test Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		self.deal = frappe.get_doc({"doctype": "CRM Deal", "organization": org}).insert().name
+		self.addCleanup(frappe.delete_doc, "CRM Deal", self.deal, force=True, ignore_missing=True)
+		self.addCleanup(frappe.db.delete, "CRM Suggestion", {"user": CAP_REP})
+
+	def make(self, score, status="Open"):
+		return (
+			frappe.get_doc(
+				{
+					"doctype": "CRM Suggestion",
+					"signal": "no_next_step",
+					"title": f"Cap fixture {score}",
+					"reference_doctype": "CRM Deal",
+					"reference_docname": self.deal,
+					"user": CAP_REP,
+					"status": status,
+					"score": score,
+				}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
+
+	def open_names(self):
+		return set(
+			frappe.get_all("CRM Suggestion", filters={"user": CAP_REP, "status": "Open"}, pluck="name")
+		)
+
+	def test_a_queue_under_the_cap_is_left_alone(self):
+		kept = {self.make(10), self.make(20)}
+		trim_open_over_cap(frappe.utils.now_datetime(), 5)
+		self.assertEqual(self.open_names(), kept)
+
+	def test_the_lowest_scoring_rows_are_the_ones_expired(self):
+		low, mid, high = self.make(10), self.make(50), self.make(90)
+		trim_open_over_cap(frappe.utils.now_datetime(), 2)
+		self.assertEqual(self.open_names(), {mid, high})
+		self.assertEqual(frappe.db.get_value("CRM Suggestion", low, "status"), "Expired")
+
+	def test_trimming_twice_expires_nothing_the_second_time(self):
+		for score in (10, 20, 30, 40):
+			self.make(score)
+		now = frappe.utils.now_datetime()
+		self.assertEqual(trim_open_over_cap(now, 2), 2)
+		survivors = self.open_names()
+		self.assertEqual(trim_open_over_cap(now, 2), 0)
+		self.assertEqual(self.open_names(), survivors)
+
+	def test_the_survivors_do_not_change_between_runs(self):
+		"""Every ``no_next_step`` row carries the same score, so the tie-break
+		is the whole ordering. If it were unstable the trim would expire a
+		different pair each hour and the inbox would churn."""
+		for _ in range(6):
+			self.make(40)
+		now = frappe.utils.now_datetime()
+		trim_open_over_cap(now, 3)
+		first = self.open_names()
+		# reopening them all puts the queue back over the cap with the same rows
+		frappe.db.set_value("CRM Suggestion", {"user": CAP_REP}, "status", "Open", update_modified=False)
+		trim_open_over_cap(now, 3)
+		self.assertEqual(self.open_names(), first)
+
+	def test_an_expired_row_does_not_count_towards_the_cap(self):
+		self.make(10, status="Expired")
+		self.make(20, status="Expired")
+		kept = {self.make(30)}
+		trim_open_over_cap(frappe.utils.now_datetime(), 1)
+		self.assertEqual(self.open_names(), kept)
+
+	def test_the_default_cap_is_the_one_an_admin_sees(self):
+		self.assertEqual(MAX_OPEN_PER_USER, SIGNAL_DEFAULTS["max_open_per_user"])
+
+
+class RunSignalsRespectsTheCapTest(PinnedSignalConfig, IntegrationTestCase):
+	"""End to end: three eligible deals, a ceiling of one, one row written.
+
+	The pure test proves the ranking and the trim test proves the cleanup; this
+	is the wiring between them -- that ``run_signals`` reads the cap from the
+	config at all, and reads each rep's remaining room after expiring rather
+	than before.
+	"""
+
+	SIGNAL_CONFIG = SignalConfig(
+		signals_enabled=True,
+		idle_deal_days=SIGNAL_DEFAULTS["idle_deal_days"],
+		suggestion_ttl_days=SIGNAL_DEFAULTS["suggestion_ttl_days"],
+		dismiss_cooldown_days=SIGNAL_DEFAULTS["dismiss_cooldown_days"],
+		close_horizon_days=SIGNAL_DEFAULTS["close_horizon_days"],
+		max_open_per_user=1,
+	)
+
+	def setUp(self):
+		super().setUp()
+		if not frappe.db.exists("User", CAP_REP):
+			frappe.get_doc(
+				{"doctype": "User", "email": CAP_REP, "first_name": "Cap Rep", "send_welcome_email": 0}
+			).insert(ignore_permissions=True).add_roles("Sales User")
+		frappe.db.delete("CRM Suggestion", {"user": CAP_REP})
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Cap Run Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		# fresh deals: old enough for no_next_step, too new for idle_deal, so the
+		# candidate count is exactly the number of deals
+		self.deals = [
+			frappe.get_doc({"doctype": "CRM Deal", "organization": org, "deal_owner": CAP_REP}).insert().name
+			for _ in range(3)
+		]
+		for name in self.deals:
+			self.addCleanup(frappe.delete_doc, "CRM Deal", name, force=True, ignore_missing=True)
+		self.addCleanup(frappe.db.delete, "CRM Suggestion", {"user": CAP_REP})
+
+	def open_for_rep(self):
+		return frappe.get_all("CRM Suggestion", filters={"user": CAP_REP, "status": "Open"}, pluck="signal")
+
+	def test_three_eligible_deals_produce_one_suggestion(self):
+		run_signals()
+		self.assertEqual(self.open_for_rep(), ["no_next_step"])
+
+	def test_a_second_run_does_not_top_the_inbox_back_up(self):
+		run_signals()
+		run_signals()
+		self.assertEqual(len(self.open_for_rep()), 1)

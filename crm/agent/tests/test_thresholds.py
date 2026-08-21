@@ -28,6 +28,7 @@ from crm.agent.signals import (
 	CLOSE_HORIZON_DAYS,
 	DISMISS_COOLDOWN_DAYS,
 	IDLE_DEAL_DAYS,
+	MAX_OPEN_PER_USER,
 	SUGGESTION_TTL_DAYS,
 )
 
@@ -59,6 +60,7 @@ class SignalDefaultsTest(UnitTestCase):
 				"dismiss_cooldown_days": DISMISS_COOLDOWN_DAYS,
 				"suggestion_ttl_days": SUGGESTION_TTL_DAYS,
 				"close_horizon_days": CLOSE_HORIZON_DAYS,
+				"max_open_per_user": MAX_OPEN_PER_USER,
 			},
 			{key: SIGNAL_DEFAULTS[key] for key in SIGNAL_DEFAULTS if key != "signals_enabled"},
 		)
