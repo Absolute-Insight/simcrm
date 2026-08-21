@@ -105,6 +105,21 @@
             </template>
           </SidebarItem>
 
+          <!-- Desktop-only for now, like the panels below: on a phone the
+               slide-over has nowhere to slide from. The help center covers
+               the same questions on mobile. -->
+          <SidebarItem
+            v-if="!mobile"
+            id="assistant-btn"
+            :label="__('Assistant')"
+            :active="assistantVisible"
+            @click="toggleAssistant"
+          >
+            <template #prefix>
+              <SparkleIcon class="size-4 text-ink-gray-7" />
+            </template>
+          </SidebarItem>
+
           <CollapsibleSection
             v-for="section in allViews"
             :key="section.name"
@@ -182,11 +197,7 @@
               <BrushCleaningIcon class="size-4" />
             </template>
           </SidebarItem>
-          <SidebarItem
-            v-if="isOnboardingStepsCompleted"
-            :label="__('Help')"
-            @click="toggleHelpModal"
-          >
+          <SidebarItem :label="__('Help')" @click="() => openHelpCenter()">
             <template #prefix>
               <HelpIcon class="size-4 text-ink-gray-7" />
             </template>
@@ -207,21 +218,23 @@
     </Sidebar>
     <Notifications v-if="!mobile" />
     <Suggestions v-if="!mobile" />
+    <Assistant v-if="!mobile" />
   </div>
 
   <template v-if="!mobile">
     <Settings />
+    <!-- Onboarding steps only. The help center itself is in-app now
+         (HelpCenterModal via stores/help), so this modal no longer carries
+         links to externally hosted articles. -->
     <HelpModal
       v-if="showHelpModal"
       v-model="showHelpModal"
-      v-model:articles="articles"
       :logo="CRMLogo"
       :title="__('Vectora')"
       :afterSkip="(step) => capture('onboarding_step_skipped_' + step)"
       :afterSkipAll="() => capture('onboarding_steps_skipped')"
       :afterReset="(step) => capture('onboarding_step_reset_' + step)"
       :afterResetAll="() => capture('onboarding_steps_reset')"
-      docsLink="https://docs.frappe.io/crm"
     />
     <IntermediateStepModal
       v-model="showIntermediateModal"
@@ -260,6 +273,9 @@ import NotificationsIcon from '@/components/Icons/NotificationsIcon.vue'
 import HelpIcon from '@/components/Icons/HelpIcon.vue'
 import Notifications from '@/components/Notifications.vue'
 import Suggestions from '@/components/Suggestions.vue'
+import Assistant from '@/components/Assistant.vue'
+import SparkleIcon from '@/components/Icons/SparkleIcon.vue'
+import { assistantVisible, toggleAssistant } from '@/stores/assistant'
 import {
   suggestionsStore,
   openCountUnavailable,
@@ -294,6 +310,7 @@ import {
   minimize,
   IntermediateStepModal,
 } from '@framework/ui/components/Onboarding'
+import { openHelpCenter } from '@/stores/help'
 import { useTelemetry } from '@framework/ui/telemetry'
 import router from '@/router'
 import { useStorage } from '@vueuse/core'
@@ -523,11 +540,6 @@ function onSuggestionsClick(event) {
   }
 }
 
-function toggleHelpModal() {
-  showHelpModal.value = minimize.value ? true : !showHelpModal.value
-  minimize.value = !showHelpModal.value
-}
-
 // onboarding
 const { user } = sessionStore()
 const { users, isManager } = usersStore()
@@ -748,94 +760,4 @@ onMounted(async () => {
 
   setUp(filteredSteps)
 })
-
-// help center
-const articles = ref([
-  {
-    title: __('Introduction'),
-    opened: false,
-    subArticles: [
-      { name: 'introduction', title: __('Introduction') },
-      { name: 'setting-up', title: __('Setting Up') },
-    ],
-  },
-  {
-    title: __('Settings'),
-    opened: false,
-    subArticles: [
-      { name: 'profile', title: __('Profile') },
-      { name: 'custom-branding', title: __('Custom Branding') },
-      { name: 'home-actions', title: __('Home Actions') },
-      { name: 'invite-users', title: __('Invite Users') },
-    ],
-  },
-  {
-    title: __('Masters'),
-    opened: false,
-    subArticles: [
-      { name: 'lead', title: __('Lead') },
-      { name: 'deal', title: __('Deal') },
-      { name: 'contact', title: __('Contact') },
-      { name: 'organization', title: __('Organization') },
-      { name: 'note', title: __('Note') },
-      { name: 'task', title: __('Task') },
-      { name: 'call-log', title: __('Call Log') },
-      { name: 'email-template', title: __('Email Template') },
-    ],
-  },
-  {
-    title: __('Capturing Leads'),
-    opened: false,
-    subArticles: [{ name: 'web-form', title: __('Web Form') }],
-  },
-  {
-    title: __('Views'),
-    opened: false,
-    subArticles: [
-      { name: 'view', title: __('Saved View') },
-      { name: 'public-view', title: __('Public View') },
-      { name: 'pinned-view', title: __('Pinned View') },
-    ],
-  },
-  {
-    title: __('Other Features'),
-    opened: false,
-    subArticles: [
-      { name: 'email-communication', title: __('Email Communication') },
-      { name: 'comment', title: __('Comment') },
-      { name: 'data', title: __('Data') },
-      { name: 'service-level-agreement', title: __('Service Level Agreement') },
-      { name: 'assignment-rule', title: __('Assignment Rule') },
-      { name: 'notification', title: __('Notification') },
-    ],
-  },
-  {
-    title: __('Customization'),
-    opened: false,
-    subArticles: [
-      { name: 'custom-fields', title: __('Custom Fields') },
-      { name: 'custom-actions', title: __('Custom Actions') },
-      { name: 'custom-statuses', title: __('Custom Statuses') },
-      { name: 'custom-list-actions', title: __('Custom List Actions') },
-      { name: 'quick-entry-layout', title: __('Quick Entry Layout') },
-    ],
-  },
-  {
-    title: __('Integration'),
-    opened: false,
-    subArticles: [
-      { name: 'twilio', title: __('Twilio') },
-      { name: 'exotel', title: __('Exotel') },
-      { name: 'whatsapp', title: __('WhatsApp') },
-      { name: 'erpnext', title: __('ERPNext') },
-    ],
-  },
-  {
-    title: __('Vectora mobile'),
-    opened: false,
-    subArticles: [
-      { name: 'mobile-app-installation', title: __('Mobile App Installation') },
-    ],
-  },
-])
 </script>
