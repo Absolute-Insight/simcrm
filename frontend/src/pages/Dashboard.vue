@@ -346,6 +346,21 @@
               :error="chart.resource.error"
               :retry="() => chart.resource.reload()"
             />
+            <!-- A trend with nothing in it draws as bare axes, which reads as
+                 a broken widget. Say what it is instead. Server-provided
+                 emptyState payloads still render through DashboardItem. -->
+            <div
+              v-else-if="axisChartEmpty(chart.resource.data)"
+              class="relative h-full"
+            >
+              <EmptyState
+                icon="line-chart"
+                :title="__('Nothing here yet')"
+                :description="chart.emptyDescription"
+                top="15%"
+                width="lg"
+              />
+            </div>
             <DashboardItem
               v-else-if="chart.resource.data"
               :index="0"
@@ -402,6 +417,7 @@
  */
 import AddChartModal from '@/components/Dashboard/AddChartModal.vue'
 import DashboardItem from '@/components/Dashboard/DashboardItem.vue'
+import EmptyState from '@/components/ListViews/EmptyState.vue'
 import LucideRefreshCcw from '~icons/lucide/refresh-ccw'
 import LucideUndo2 from '~icons/lucide/undo-2'
 import LucidePenLine from '~icons/lucide/pen-line'
@@ -424,6 +440,7 @@ import { describeError } from '@/utils/describeError'
 import {
   adherencePercent,
   applyPanelPreference,
+  axisChartEmpty,
   groupRisksByRecord,
   mondayOf,
   planBreakdown,
@@ -650,10 +667,19 @@ function repChartResource(name: string) {
 }
 
 const repCharts = [
-  { name: 'sales_trend', resource: repChartResource('sales_trend') },
+  {
+    name: 'sales_trend',
+    resource: repChartResource('sales_trend'),
+    emptyDescription: __(
+      'Your leads, deals and wins chart here as you log them.',
+    ),
+  },
   {
     name: 'funnel_conversion',
     resource: repChartResource('funnel_conversion'),
+    emptyDescription: __(
+      'Conversion through the funnel appears once records move in this period.',
+    ),
   },
 ]
 

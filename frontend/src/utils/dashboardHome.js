@@ -345,3 +345,25 @@ export function reorderVisiblePanel(catalogue, preference, id, direction) {
 
   return movePanel(full, id, full.indexOf(target) - full.indexOf(id))
 }
+
+/**
+ * Whether an axis-chart payload has anything worth drawing.
+ *
+ * Two shapes of "nothing" arrive from the metrics layer: no rows at all
+ * (sales_trend for a rep with no records) and rows whose every numeric value
+ * is zero (funnel_conversion always returns its stage skeleton). Both draw as
+ * bare axes — a plot that reads as a broken widget rather than an empty one —
+ * so the rep chart strip renders an EmptyState instead. The server's own
+ * `emptyState` (forecasting off, no snapshots) still wins where it exists;
+ * this only covers the payloads that never set one.
+ */
+export function axisChartEmpty(chartData) {
+  if (chartData?.emptyState) return false
+  const rows = chartData?.data || []
+  if (!rows.length) return true
+  return !rows.some((row) =>
+    Object.values(row).some(
+      (value) => typeof value === 'number' && value !== 0,
+    ),
+  )
+}

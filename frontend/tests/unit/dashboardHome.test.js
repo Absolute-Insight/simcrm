@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   adherencePercent,
+  axisChartEmpty,
   applyPanelPreference,
   deltaTone,
   drilldownFor,
@@ -467,5 +468,41 @@ describe('reorderVisiblePanel', () => {
       'a',
       'd',
     ])
+  })
+})
+
+describe('axisChartEmpty', () => {
+  it('empty when there are no rows', () => {
+    expect(axisChartEmpty({ data: [] })).toBe(true)
+    expect(axisChartEmpty({})).toBe(true)
+    expect(axisChartEmpty(undefined)).toBe(true)
+  })
+
+  it('empty when every numeric value is zero (funnel skeleton)', () => {
+    expect(
+      axisChartEmpty({
+        data: [
+          { stage: 'Leads', count: 0 },
+          { stage: 'Lost', count: 0 },
+        ],
+      }),
+    ).toBe(true)
+  })
+
+  it('not empty once any series value is non-zero', () => {
+    expect(
+      axisChartEmpty({
+        data: [
+          { date: '2026-08-01', leads: 0, deals: 0 },
+          { date: '2026-08-02', leads: 3, deals: 0 },
+        ],
+      }),
+    ).toBe(false)
+  })
+
+  it('defers to a server-provided emptyState', () => {
+    expect(axisChartEmpty({ emptyState: 'Forecasting is off', data: [] })).toBe(
+      false,
+    )
   })
 })
