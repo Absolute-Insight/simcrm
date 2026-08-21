@@ -6,7 +6,8 @@
 # Frappe app in containers will recognise every service here:
 #
 #   configurator  one-shot: points the bench at db/redis (idempotent)
-#   create-site   one-shot: creates the site on first boot, skips after
+#   create-site   one-shot: creates the site on first boot, skips after;
+#                 enables the scheduler every run (idempotent)
 #   backend       gunicorn (the image's default command)
 #   frontend      nginx serving built assets, proxying /api and /socket.io
 #   websocket     socketio server (realtime: suggestion inbox pushes)
@@ -15,19 +16,28 @@
 #                 and the daily digest live here; without it the proactive
 #                 tier is silent
 #
+# Every long-running service waits for create-site to complete, so a fresh
+# `docker compose up -d` serves nothing until the site exists, and every
+# service carries a memory/cpu ceiling sized for the 4 GB host README.md
+# describes. Raise them together if the host is bigger.
+#
 # Copy .env.example to .env, set the secrets, then: docker compose up -d
 # See README.md in this directory for first boot, upgrades and backups.
 
 name: vectora
 
 x-app: &app
-  image: ${VECTORA_IMAGE:-ghcr.io/absolute-insight/simcrm}:${VECTORA_TAG:-stable}
+  # No default tag on purpose: a stack that silently tracks `:stable` cannot
+  # say what it is running. Pin a release in .env.
+  image: ${VECTORA_IMAGE:-ghcr.io/absolute-insight/simcrm}:${VECTORA_TAG:?set VECTORA_TAG in .env (a release tag, e.g. v3.0.0)}
   restart: unless-stopped
   volumes:
     - sites:/home/frappe/frappe-bench/sites
     - logs:/home/frappe/frappe-bench/logs
   depends_on:
     configurator:
+      condition: service_completed_successfully
+    create-site:
       condition: service_completed_successfully
 
 services:
@@ -47,16 +57,43 @@ services:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
     volumes:
       - db-data:/var/lib/mysql
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.5"
 
   redis-cache:
     image: redis:6.2-alpine
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
 
   redis-queue:
     image: redis:6.2-alpine
     restart: unless-stopped
     volumes:
       - redis-queue-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
 
   configurator:
     <<: *app
@@ -65,9 +102,9 @@ services:
       db:
         condition: service_healthy
       redis-cache:
-        condition: service_started
+        condition: service_healthy
       redis-queue:
-        condition: service_started
+        condition: service_healthy
     entrypoint: ["bash", "-c"]
     command:
       - >
@@ -77,32 +114,87 @@ services:
         bench set-config -g redis_queue "redis://redis-queue:6379";
         bench set-config -g redis_socketio "redis://redis-queue:6379";
         bench set-config -gp socketio_port 9000;
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
 
   create-site:
     <<: *app
     restart: on-failure
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+    # Secrets reach the shell through the environment, not the command line:
+    # `docker compose config` and `docker inspect` print the command verbatim,
+    # and the environment is at least not in the process table of the host.
+    environment:
+      DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
     entrypoint: ["bash", "-c"]
+    # `bench new-site` writes enable_scheduler=0 into the new site's config, so
+    # without the enable-scheduler step every cron job in crm/hooks.py -- the
+    # hourly signal run, deal-health scoring, the digest -- is silent and
+    # nothing logs an error. It runs on every boot, outside the skip branch,
+    # because it is idempotent and a site restored from a backup carries
+    # whatever the origin had.
     command:
-      - >
-        wait-for-it -t 120 db:3306;
-        wait-for-it -t 120 redis-cache:6379;
-        wait-for-it -t 120 redis-queue:6379;
+      - |
+        set -e
+        wait-for-it -t 120 db:3306
+        wait-for-it -t 120 redis-cache:6379
+        wait-for-it -t 120 redis-queue:6379
         if [ -d "sites/${SITE_NAME}" ]; then
-          echo "Site ${SITE_NAME} already exists — skipping create";
-          exit 0;
-        fi;
-        bench new-site "${SITE_NAME}"
-        --mariadb-user-host-login-scope='%'
-        --db-root-password="${DB_ROOT_PASSWORD}"
-        --admin-password="${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}"
-        --install-app crm;
+          echo "Site ${SITE_NAME} already exists — skipping create"
+        else
+          bench new-site "${SITE_NAME}" \
+            --mariadb-user-host-login-scope='%' \
+            --db-root-password="$$DB_ROOT_PASSWORD" \
+            --admin-password="$$ADMIN_PASSWORD" \
+            --install-app crm
+        fi
+        bench --site "${SITE_NAME}" enable-scheduler
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.5"
 
   backend:
     <<: *app
+    healthcheck:
+      # The Host header names the site: without it frappe has no site to
+      # answer for and returns 404 even when gunicorn is perfectly healthy.
+      test:
+        [
+          "CMD-SHELL",
+          'curl -fsS -H "Host: ${SITE_NAME}" http://localhost:8000/api/method/ping || exit 1',
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "2"
 
   websocket:
     <<: *app
     command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
 
   frontend:
     <<: *app
@@ -116,20 +208,55 @@ services:
       UPSTREAM_REAL_IP_RECURSIVE: "off"
       PROXY_READ_TIMEOUT: 120
       CLIENT_MAX_BODY_SIZE: 50m
+    # Loopback by default: the README's TLS section puts a reverse proxy on the
+    # same host in front of this. Set HTTP_BIND_ADDRESS=0.0.0.0 in .env only
+    # when something on another machine must reach this port directly.
     ports:
-      - "${HTTP_PUBLISH_PORT:-8080}:8080"
+      - "${HTTP_BIND_ADDRESS:-127.0.0.1}:${HTTP_PUBLISH_PORT:-8080}:8080"
+    healthcheck:
+      # Through nginx to the backend, so a green check means routing works,
+      # not only that nginx is listening.
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS -o /dev/null http://localhost:8080/api/method/ping || exit 1",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.5"
 
   queue-short:
     <<: *app
     command: ["bench", "worker", "--queue", "short,default"]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1"
 
   queue-long:
     <<: *app
     command: ["bench", "worker", "--queue", "long,default,short"]
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+          cpus: "1"
 
   scheduler:
     <<: *app
     command: ["bench", "schedule"]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
 
   # --- Local model, opt-in ----------------------------------------------------
   # docker compose --profile local-model up -d
@@ -140,6 +267,15 @@ services:
   # shape rather than something each operator reinvents. Without the profile
   # these two services are not created at all and the stack is unchanged.
   #
+  # No memory ceiling here on purpose: the model's working set is the weights,
+  # and a limit below them is an OOM-kill mid-answer. The README is explicit
+  # that the 4 GB host running the rest of this stack cannot also host a model.
+  # On a bigger host, size it to the model -- e.g. for granite-4.0-h-tiny Q4:
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 6g
+  #         cpus: "4"
   # GPU: add a device reservation to `ollama` if the host has one --
   #   deploy:
   #     resources:

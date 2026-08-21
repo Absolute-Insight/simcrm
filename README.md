@@ -52,10 +52,14 @@ upgrades, backups, and the restore drill you should rehearse before trusting eit
 
 ```bash
 cd deploy
-cp .env.example .env        # SITE_NAME, DB_ROOT_PASSWORD, ADMIN_PASSWORD
+cp .env.example .env        # VECTORA_TAG, SITE_NAME, DB_ROOT_PASSWORD, ADMIN_PASSWORD
 docker compose up -d
 docker compose logs -f create-site
+docker compose exec backend bench --site <site> doctor   # scheduler enabled, workers online
 ```
+
+The stack publishes its HTTP port on loopback only; the runbook's TLS section
+covers putting a reverse proxy in front of it.
 
 Read [deploy/README.md](deploy/README.md) before the first upgrade: reverting the image
 is **not** a rollback once `migrate` has run, and the runbook explains what is.

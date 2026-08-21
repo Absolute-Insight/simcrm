@@ -64,9 +64,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ github.sha }}
-          # Must actually run on a push to main. Test workflows that trigger
-          # only on pull_request are absent here and cannot be required.
-          REQUIRED: Playwright E2E Tests
+          # Every one of these must actually run on a push to main -- a
+          # workflow that triggers only on pull_request is absent here and
+          # cannot be required. One check name per line, exactly as it appears
+          # in the checks UI. "Server Tests" is the fixed-name wrap-up job in
+          # server-tests.yml, not the matrix legs, whose names vary by branch.
+          REQUIRED: |
+            Playwright E2E Tests
+            Server Tests
+            Unit Tests & Coverage
         run: |
           set -euo pipefail
 
@@ -120,19 +126,31 @@ jobs:
               exit 1
             fi
 
-            if printf '%s\n' "$runs" | grep -qP "^\Q$REQUIRED\E\tcompleted\tsuccess$"; then
-              echo "Required check '$REQUIRED' passed on $SHA."
+            # Every required name must have a newest run that completed
+            # successfully; the first one that has not keeps us waiting.
+            missing=""
+            while IFS= read -r name; do
+              [ -n "$name" ] || continue
+              if ! printf '%s\n' "$runs" | grep -qP "^\Q$name\E\tcompleted\tsuccess$"; then
+                missing="$name"
+                break
+              fi
+            done <<<"$REQUIRED"
+
+            if [ -z "$missing" ]; then
+              echo "All required checks passed on $SHA:"
+              printf '%s\n' "$REQUIRED" | sed '/^$/d; s/^/  /'
               printf '%s\n' "$runs"
               exit 0
             fi
 
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "::error::Timed out waiting for '$REQUIRED' on $SHA. Checks seen:"
+              echo "::error::Timed out waiting for '$missing' on $SHA. Checks seen:"
               printf '%s\n' "${runs:-<none>}"
               echo "::error::A commit with no test run is not publishable."
               exit 1
             fi
-            echo "Waiting for '$REQUIRED' on $SHA ..."
+            echo "Waiting for '$missing' on $SHA ..."
             sleep 30
           done
 
@@ -141,19 +159,29 @@ jobs:
     needs: guard
 
     runs-on: ubuntu-latest
+    # A multi-arch build under QEMU is long; the default 360 is longer than
+    # anything useful. Builds of the same ref queue rather than cancel, so a
+    # release tag build is never killed by a main push landing behind it.
+    timeout-minutes: 90
+    concurrency:
+      group: builds-${{ github.ref }}
+      cancel-in-progress: false
 
+    # Third-party actions are pinned to commit SHAs: a moving major tag is a
+    # supply-chain write into the job that holds the packages:write token.
+    # The trailing comment is the release the SHA was resolved from.
     steps:
       - name: Checkout Entire Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -193,12 +221,25 @@ jobs:
         # to reproduce the earlier one. sha- gives every build a name that will
         # still mean the same thing later, which is what a customer bug report
         # needs.
+        #
+        # :stable is written only by a build of main or of a release tag
+        # (v*), which is always cut from main. It used to be written by every
+        # build, so a `gh workflow run builds.yml --ref develop` -- the
+        # documented way to rehearse -- silently pointed "newest main" at a
+        # develop commit. Any other ref gets the two immutable-ish tags only.
         run: |
-          echo "IMAGE_TAG=stable" >> $GITHUB_ENV
-          echo "IMAGE_SHA_TAG=sha-$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          sha_tag="sha-$(git rev-parse --short HEAD)"
+          tags="$repo:$GITHUB_REF_NAME,$repo:$sha_tag"
+          case "$GITHUB_REF" in
+            refs/heads/main|refs/tags/v*) tags="$tags,$repo:stable" ;;
+          esac
+          echo "IMAGE_TAGS=$tags" >> $GITHUB_ENV
+          echo "IMAGE_SHA_TAG=$sha_tag" >> $GITHUB_ENV
           echo "IMAGE_REPO=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+          echo "tags: $tags"
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: frappe/frappe_docker
           path: builds
@@ -234,16 +275,13 @@ jobs:
           grep -nE '^FROM ' "$file"
 
       - name: Build and push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           push: true
           context: builds
           file: builds/images/layered/Containerfile
           platforms: linux/amd64,linux/arm64
-          tags: >
-            ghcr.io/${{ env.IMAGE_REPO }}:${{ github.ref_name }},
-            ghcr.io/${{ env.IMAGE_REPO }}:${{ env.IMAGE_SHA_TAG }},
-            ghcr.io/${{ env.IMAGE_REPO }}:${{ env.IMAGE_TAG }}
+          tags: ${{ env.IMAGE_TAGS }}
           build-args: |
             "FRAPPE_BRANCH=${{ env.FRAPPE_BRANCH }}"
             "FRAPPE_PATH=${{ env.FRAPPE_PATH }}"

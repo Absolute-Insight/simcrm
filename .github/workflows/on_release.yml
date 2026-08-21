@@ -17,13 +17,15 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     steps:
+      # Pinned to commit SHAs: this job holds a contents:write token, and a
+      # moving major tag is a write into it. Trailing comment = resolved release.
       - name: Checkout Entire Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
       - name: Setup dependencies

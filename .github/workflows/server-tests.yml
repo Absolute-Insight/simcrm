@@ -1,6 +1,15 @@
 name: Server
 
 on:
+    # On push as well as pull_request: builds.yml publishes the image customers
+    # run from a push to main, and its guard can only require checks that
+    # exist on that commit. A pull_request-only suite is invisible there. No
+    # paths-ignore on push -- the guard needs the check present on every
+    # commit it might publish, not only on commits that touched Python.
+    push:
+        branches:
+            - main
+            - develop
     pull_request:
         paths-ignore:
             - "**.css"
@@ -17,7 +26,9 @@ env:
     CRM_BRANCH: ${{ github.base_ref || github.ref_name }}
 
 concurrency:
-    group: develop-crm-${{ github.event.number }}
+    # event.number is empty on push, so without the fallback every push to
+    # every branch shared one group and cancelled the run before it.
+    group: develop-crm-${{ github.event.number || github.ref }}
     cancel-in-progress: true
 
 jobs:
@@ -88,6 +99,25 @@ jobs:
               with:
                   artifact-name: coverage-${{ matrix.frappe-branch }}
                   coverage-path: /home/runner/frappe-bench/sites/coverage.xml
+
+    # One check with a fixed name, whatever the matrix resolved to. The matrix
+    # job is called "Tests (frappe vectora)" on develop and "Tests (frappe
+    # version-15)" / "(frappe version-16)" on main, so builds.yml's guard could
+    # not name a single check to wait for; it names this one. `always()` so it
+    # still reports when a matrix leg fails -- a skipped job is no verdict,
+    # and the guard treats absence as unpublishable.
+    server-tests:
+        name: Server Tests
+        needs: test
+        if: always()
+        runs-on: ubuntu-latest
+        steps:
+            - name: Report the matrix result
+              env:
+                  RESULT: ${{ needs.test.result }}
+              run: |
+                  echo "matrix result: $RESULT"
+                  [ "$RESULT" = "success" ]
 
     coverage:
         name: Coverage Wrap Up

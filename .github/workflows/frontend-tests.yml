@@ -1,6 +1,13 @@
 name: Frontend
 
 on:
+    # On push as well as pull_request, so builds.yml's guard can require the
+    # unit-test check on the commit it publishes. No paths-ignore on push: the
+    # check has to exist on every publishable commit. See server-tests.yml.
+    push:
+        branches:
+            - main
+            - develop
     pull_request:
         paths-ignore:
             - "**.md"
