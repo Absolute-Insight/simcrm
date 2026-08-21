@@ -53,6 +53,14 @@ const routes = [
     name: 'Reports',
     component: () => import('@/pages/Reports.vue'),
   },
+  // Vectora's own help centre, so a pilot on a private network has the manual
+  // and the help panel has somewhere of ours to send people. The slug is
+  // optional: /help lands on the first article.
+  {
+    path: '/help/:slug?',
+    name: 'Help',
+    component: () => import('@/pages/Help.vue'),
+  },
   {
     alias: '/leads',
     path: '/leads/view/:viewType?',

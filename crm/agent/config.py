@@ -41,6 +41,7 @@ SIGNAL_DEFAULTS = {
 	"suggestion_ttl_days": 14,
 	"dismiss_cooldown_days": 14,
 	"close_horizon_days": 14,
+	"max_open_per_user": 30,
 }
 
 
@@ -102,9 +103,11 @@ class AgentConfig:
 class SignalConfig:
 	"""Admin-tunable thresholds for the deterministic signal job.
 
-	Every count is clamped to at least one day: a zero threshold read from a
+	Every count is clamped to at least one: a zero threshold read from a
 	half-filled Single would make the hourly job emit a suggestion for every
 	record on the site, which is worse than any value an admin meant to type.
+	The same clamp keeps a zero ``max_open_per_user`` from silencing the tier
+	outright -- both ends of the range are a mistake, not a setting.
 	"""
 
 	signals_enabled: bool
@@ -112,13 +115,14 @@ class SignalConfig:
 	suggestion_ttl_days: int
 	dismiss_cooldown_days: int
 	close_horizon_days: int
+	max_open_per_user: int = SIGNAL_DEFAULTS["max_open_per_user"]
 
 	@classmethod
 	def from_settings(cls, settings: dict) -> SignalConfig:
 		supplied = {k: v for k, v in (settings or {}).items() if v not in (None, "")}
 		merged = {**SIGNAL_DEFAULTS, **supplied}
 
-		def to_days(field):
+		def to_count(field):
 			try:
 				value = int(merged[field])
 			except (ValueError, TypeError):
@@ -134,10 +138,11 @@ class SignalConfig:
 
 		return cls(
 			signals_enabled=signals_enabled,
-			idle_deal_days=to_days("idle_deal_days"),
-			suggestion_ttl_days=to_days("suggestion_ttl_days"),
-			dismiss_cooldown_days=to_days("dismiss_cooldown_days"),
-			close_horizon_days=to_days("close_horizon_days"),
+			idle_deal_days=to_count("idle_deal_days"),
+			suggestion_ttl_days=to_count("suggestion_ttl_days"),
+			dismiss_cooldown_days=to_count("dismiss_cooldown_days"),
+			close_horizon_days=to_count("close_horizon_days"),
+			max_open_per_user=to_count("max_open_per_user"),
 		)
 
 

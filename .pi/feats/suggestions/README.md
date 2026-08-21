@@ -64,6 +64,30 @@ sweeps daily, keeping anything a plan item still links to.
 Dismissal reasons are readable through `get_dismissal_stats`, so a threshold that
 reps keep rejecting is visible rather than guessed at.
 
+## The per-rep ceiling
+
+Dedupe bounds a *record*, not a *queue*. `no_next_step` fires on every open deal
+with no task, so on an imported pipeline the candidate list is the pipeline: a
+1,844-deal dev site produced 1,174 of them, against an inbox that renders 50
+rows. The rest were written, counted in the badge, and unreadable by anyone.
+
+`max_open_per_user` (default 30) is the ceiling. Two functions enforce it:
+
+- `cap_per_user` ranks candidates by score and keeps only what fits in each
+  rep's remaining room, so rows that would not fit are never stored. A rep with
+  a full inbox gets nothing new until they work it down.
+- `trim_open_over_cap` expires the lowest-ranked rows for a queue already over —
+  every site that ran before the cap existed, and any site whose admin lowers it.
+
+Ordering is score, then oldest, then name. Score alone is not an ordering: every
+`no_next_step` candidate carries the same 40, so without the tie-break the
+survivors would be whichever rows the deal query returned first and the inbox
+would reshuffle on the hour. `creation` and `name` never move, so the same rows
+survive every run.
+
+Unowned candidates share one bucket. Nobody's queue is still a queue, and a
+manager reading the unscoped list should not be handed the whole backlog.
+
 ## Endpoints
 
 | Endpoint | Purpose |
@@ -94,7 +118,8 @@ knocks on that second door specifically.
 ## Configuration
 
 `CRM Agent Settings` → Signals section: `signals_enabled`, `idle_deal_days`,
-`close_horizon_days`, `suggestion_ttl_days`, `dismiss_cooldown_days`.
+`close_horizon_days`, `suggestion_ttl_days`, `dismiss_cooldown_days`,
+`max_open_per_user`.
 
 ## Key files
 

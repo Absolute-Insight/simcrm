@@ -221,7 +221,7 @@
       :afterSkipAll="() => capture('onboarding_steps_skipped')"
       :afterReset="(step) => capture('onboarding_step_reset_' + step)"
       :afterResetAll="() => capture('onboarding_steps_reset')"
-      docsLink="https://docs.frappe.io/crm"
+      docsLink="/crm/help"
     />
     <IntermediateStepModal
       v-model="showIntermediateModal"
@@ -295,6 +295,7 @@ import {
   IntermediateStepModal,
 } from '@framework/ui/components/Onboarding'
 import { useTelemetry } from '@framework/ui/telemetry'
+import { helpPanelArticles } from '@/help/manifest'
 import router from '@/router'
 import { useStorage } from '@vueuse/core'
 import { useDemoData } from '@/composables/demoData'
@@ -749,93 +750,11 @@ onMounted(async () => {
   setUp(filteredSteps)
 })
 
-// help center
-const articles = ref([
-  {
-    title: __('Introduction'),
-    opened: false,
-    subArticles: [
-      { name: 'introduction', title: __('Introduction') },
-      { name: 'setting-up', title: __('Setting Up') },
-    ],
-  },
-  {
-    title: __('Settings'),
-    opened: false,
-    subArticles: [
-      { name: 'profile', title: __('Profile') },
-      { name: 'custom-branding', title: __('Custom Branding') },
-      { name: 'home-actions', title: __('Home Actions') },
-      { name: 'invite-users', title: __('Invite Users') },
-    ],
-  },
-  {
-    title: __('Masters'),
-    opened: false,
-    subArticles: [
-      { name: 'lead', title: __('Lead') },
-      { name: 'deal', title: __('Deal') },
-      { name: 'contact', title: __('Contact') },
-      { name: 'organization', title: __('Organization') },
-      { name: 'note', title: __('Note') },
-      { name: 'task', title: __('Task') },
-      { name: 'call-log', title: __('Call Log') },
-      { name: 'email-template', title: __('Email Template') },
-    ],
-  },
-  {
-    title: __('Capturing Leads'),
-    opened: false,
-    subArticles: [{ name: 'web-form', title: __('Web Form') }],
-  },
-  {
-    title: __('Views'),
-    opened: false,
-    subArticles: [
-      { name: 'view', title: __('Saved View') },
-      { name: 'public-view', title: __('Public View') },
-      { name: 'pinned-view', title: __('Pinned View') },
-    ],
-  },
-  {
-    title: __('Other Features'),
-    opened: false,
-    subArticles: [
-      { name: 'email-communication', title: __('Email Communication') },
-      { name: 'comment', title: __('Comment') },
-      { name: 'data', title: __('Data') },
-      { name: 'service-level-agreement', title: __('Service Level Agreement') },
-      { name: 'assignment-rule', title: __('Assignment Rule') },
-      { name: 'notification', title: __('Notification') },
-    ],
-  },
-  {
-    title: __('Customization'),
-    opened: false,
-    subArticles: [
-      { name: 'custom-fields', title: __('Custom Fields') },
-      { name: 'custom-actions', title: __('Custom Actions') },
-      { name: 'custom-statuses', title: __('Custom Statuses') },
-      { name: 'custom-list-actions', title: __('Custom List Actions') },
-      { name: 'quick-entry-layout', title: __('Quick Entry Layout') },
-    ],
-  },
-  {
-    title: __('Integration'),
-    opened: false,
-    subArticles: [
-      { name: 'twilio', title: __('Twilio') },
-      { name: 'exotel', title: __('Exotel') },
-      { name: 'whatsapp', title: __('WhatsApp') },
-      { name: 'erpnext', title: __('ERPNext') },
-    ],
-  },
-  {
-    title: __('Vectora mobile'),
-    opened: false,
-    subArticles: [
-      { name: 'mobile-app-installation', title: __('Mobile App Installation') },
-    ],
-  },
-])
+/* The help centre's own list, read from the one place it is written down.
+   This was thirty-four hardcoded links to docs.frappe.io -- another product's
+   documentation, describing features this one renamed and missing every
+   feature it added. `HelpModal` is frappe's component and opens
+   `${docsLink}/${name}`, so pointing docsLink at /crm/help is all it takes for
+   those links to land inside this product. */
+const articles = ref(helpPanelArticles(__))
 </script>

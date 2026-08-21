@@ -152,7 +152,7 @@
               }}
               <a
                 class="font-medium underline"
-                href="https://docs.frappe.io/crm/assignment-rule"
+                href="/crm/help/automation-rules"
                 target="_blank"
                 >{{ __('Learn about conditions') }}</a
               >
@@ -232,7 +232,7 @@
               }}
               <a
                 class="font-medium underline"
-                href="https://docs.frappe.io/crm/assignment-rule"
+                href="/crm/help/automation-rules"
                 target="_blank"
                 >{{ __('Learn about conditions') }}</a
               >

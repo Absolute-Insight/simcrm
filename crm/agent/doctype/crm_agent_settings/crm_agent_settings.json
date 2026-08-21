@@ -20,7 +20,8 @@
   "close_horizon_days",
   "column_break_signals",
   "suggestion_ttl_days",
-  "dismiss_cooldown_days"
+  "dismiss_cooldown_days",
+  "max_open_per_user"
  ],
  "fields": [
   {
@@ -122,12 +123,19 @@
    "fieldname": "dismiss_cooldown_days",
    "fieldtype": "Int",
    "label": "Dismiss Cooldown Days"
+  },
+  {
+   "default": "30",
+   "description": "Most open suggestions one rep may hold at once. The hourly job keeps the highest-scoring ones and expires the rest, so the inbox stays a worklist rather than a backlog.",
+   "fieldname": "max_open_per_user",
+   "fieldtype": "Int",
+   "label": "Max Open Per User"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-16 23:00:00.000000",
+ "modified": "2026-08-21 08:45:00.000000",
  "modified_by": "Administrator",
  "module": "Agent",
  "name": "CRM Agent Settings",
