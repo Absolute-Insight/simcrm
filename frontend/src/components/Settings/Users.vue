@@ -297,8 +297,14 @@ function removeUser(user) {
 }
 
 onMounted(() => {
-  if (searchRef.value) {
-    searchRef.value.el.focus()
-  }
+  /* Optional all the way down. The guard used to check `searchRef.value` and
+     then dereference `.el`, which frappe-ui's TextInput does not reliably
+     expose -- so this threw inside `onMounted`, and an uncaught throw there
+     aborts Vue's scheduler flush. The visible symptom was the whole Settings
+     dialog freezing: clicking any other pane set `activeSettingsPage` but
+     nothing repainted, so Users stayed on screen until the dialog was
+     reopened. Only sites with more than ten users hit it, because the search
+     input this refers to is itself rendered behind that condition. */
+  searchRef.value?.el?.focus?.()
 })
 </script>
