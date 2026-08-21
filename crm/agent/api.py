@@ -16,11 +16,12 @@ import time
 import frappe
 from frappe.rate_limiter import rate_limit
 
-from crm.agent import actions, client, tools
+from crm.agent import actions, client, knowledge, tools
 from crm.agent.config import get_config, get_signal_config
 from crm.agent.context import build_thread_messages
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
-from crm.agent.schemas import ConnectionProbe, ThreadSummary
+from crm.agent.schemas import AssistantAnswer, ConnectionProbe, ThreadSummary
+from crm.help import load_articles
 
 # Per-user, per-minute cap, matching ``domain_enrichment.api.ENRICH_RATE_LIMIT``.
 # One call holds a worker for up to ``timeout`` x ``client.MAX_ATTEMPTS`` -- 60 seconds
@@ -31,6 +32,10 @@ SUMMARISE_RATE_LIMIT = 10
 # Tighter than the feature endpoints: this is an admin pressing a button, not a
 # rep working, and each press costs a full model call against someone's endpoint.
 TEST_CONNECTION_RATE_LIMIT = 6
+
+# The longest question the assistant accepts. Anything past this is a paste,
+# not a question, and a paste belongs in the record it came from.
+ASSISTANT_QUESTION_MAX_CHARS = 2000
 
 BUDGET_CACHE_KEY = "crm_agent_daily_calls"
 
@@ -116,6 +121,60 @@ def draft_reply(reference_doctype: str, reference_name: str) -> dict:
 		return {"status": "unavailable"}
 
 	return {"status": "ok", "draft": draft.model_dump()}
+
+
+@frappe.whitelist()
+@rate_limit(limit=SUMMARISE_RATE_LIMIT, seconds=60)
+def ask_assistant(question: str, history: str | list | None = None) -> dict:
+	"""Answer a question about the product, grounded on the help articles.
+
+	Returns ``{"status": "ok", "answer": str, "related_articles": [...]}`` or a
+	bare degrade status. The chat tier reads no CRM records at all: its whole
+	knowledge is the shipped manual, so there is nothing here for a hostile
+	record or email to inject through, and nothing the answer can leak that the
+	help center does not already show every user.
+	"""
+	question = (question or "").strip()
+	if not question:
+		frappe.throw(frappe._("Ask a question."), frappe.ValidationError)
+	question = question[:ASSISTANT_QUESTION_MAX_CHARS]
+
+	cfg = get_config()
+	if not cfg.enabled:
+		return {"status": "disabled"}
+	if _budget_spent(cfg):
+		return {"status": "unavailable"}
+
+	articles = load_articles()
+	selected = knowledge.select_articles(question, articles)
+	messages = knowledge.build_assistant_messages(question, selected, _parse_history(history))
+
+	try:
+		reply = client.complete(cfg, AssistantAnswer, messages)
+	except (AgentUnavailable, SchemaMismatch) as exc:
+		frappe.log_error(title="CRM assistant answer failed", message=str(exc))
+		return {"status": "unavailable"}
+
+	# The model cites articles by name; only names that actually exist survive,
+	# so an invented citation cannot become a dead link in the help center.
+	known = {article["name"] for article in articles}
+	related = [name for name in reply.related_articles if name in known]
+	return {"status": "ok", "answer": reply.answer, "related_articles": related}
+
+
+def _parse_history(history) -> list[dict]:
+	"""Whatever the wire delivered into a list of turns, dropping anything odd.
+
+	``frappe.parse_json`` handles the string form a whitelisted arg arrives in;
+	knowledge then keeps only well-shaped turns, so this only has to guarantee
+	"a list or nothing".
+	"""
+	if isinstance(history, str):
+		try:
+			history = frappe.parse_json(history)
+		except ValueError:
+			return []
+	return history if isinstance(history, list) else []
 
 
 @frappe.whitelist()

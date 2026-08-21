@@ -26,12 +26,16 @@ ALLOWED_SIBLING_IMPORTS = {
 	"config": set(),
 	"schemas": {"errors"},
 	"context": set(),
+	# knowledge grounds the chat assistant on the help articles. Pure like
+	# context: it takes articles as plain dicts and builds messages; loading
+	# them (crm.help, itself frappe-free) is the caller's job.
+	"knowledge": set(),
 	"client": {"config", "errors", "schemas"},
 	"tools": set(),
 	# actions is the write-tier proposal layer: drafts only. It may reach the
 	# client but never frappe (test_actions enforces the frappe ban on top).
 	"actions": {"client", "config", "context", "schemas"},
-	"api": {"actions", "client", "config", "context", "errors", "schemas", "tools"},
+	"api": {"actions", "client", "config", "context", "errors", "knowledge", "schemas", "tools"},
 	"install": set(),
 	# The deterministic tier: signals and predict must work with the agent
 	# disabled, so neither may import client (or anything that knows a model
@@ -80,7 +84,7 @@ class LayeringTest(UnitTestCase):
 	def test_the_pure_layers_import_no_frappe(self):
 		"""``context`` and ``errors`` stay importable with no site at all -- that is what
 		makes the prompt builder and the exception types usable from any tier later."""
-		for module in ("errors", "context"):
+		for module in ("errors", "context", "knowledge"):
 			with self.subTest(module=module):
 				source = Path(frappe.get_app_path("crm", "agent", f"{module}.py")).read_text()
 				imported = set()
