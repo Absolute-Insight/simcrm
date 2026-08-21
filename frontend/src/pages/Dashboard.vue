@@ -289,25 +289,40 @@
                the number in the panel and the number in the report are the
                same number. Rows are per rep unless the panel says otherwise
                via its own rowLabel. -->
-          <table v-else class="w-full text-base">
-            <tbody>
-              <tr
-                v-for="(row, i) in panel.rows.value"
-                :key="i"
-                class="border-b border-outline-gray-1 last:border-b-0"
-              >
-                <td class="py-1.5 pr-2 text-ink-gray-7">
-                  {{ panel.rowLabel ? panel.rowLabel(row) : repName(row.user) }}
-                </td>
-                <td
-                  class="py-1.5 text-right tabular-nums text-ink-gray-8"
-                  :class="panel.tone?.(row)"
+          <div v-else>
+            <!-- The report's own notice, when it has one — "forecasting is
+                 off" is why a pipeline's expected value reads 0, and a panel
+                 that shows the zero without the reason reads as broken. Same
+                 string the Reports page shows, from the same helper. -->
+            <p
+              v-if="panel.note?.value"
+              class="mb-3 flex items-start gap-2 rounded bg-surface-orange-1 px-3 py-2 text-sm text-ink-orange-9"
+            >
+              <LucideInfo class="mt-0.5 size-4 shrink-0" />
+              <span>{{ panel.note.value }}</span>
+            </p>
+            <table class="w-full text-base">
+              <tbody>
+                <tr
+                  v-for="(row, i) in panel.rows.value"
+                  :key="i"
+                  class="border-b border-outline-gray-1 last:border-b-0"
                 >
-                  {{ panel.cell(row) }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                  <td class="py-1.5 pr-2 text-ink-gray-7">
+                    {{
+                      panel.rowLabel ? panel.rowLabel(row) : repName(row.user)
+                    }}
+                  </td>
+                  <td
+                    class="py-1.5 text-right tabular-nums text-ink-gray-8"
+                    :class="panel.tone?.(row)"
+                  >
+                    {{ panel.cell(row) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </PanelCard>
       </div>
 
@@ -421,6 +436,7 @@ import EmptyState from '@/components/ListViews/EmptyState.vue'
 import LucideRefreshCcw from '~icons/lucide/refresh-ccw'
 import LucideUndo2 from '~icons/lucide/undo-2'
 import LucidePenLine from '~icons/lucide/pen-line'
+import LucideInfo from '~icons/lucide/info'
 import DashboardGrid from '@/components/Dashboard/DashboardGrid.vue'
 import PanelCard from '@/components/Dashboard/PanelCard.vue'
 import StatTile from '@/components/Dashboard/StatTile.vue'
@@ -753,8 +769,13 @@ const PANEL_CATALOGUE = computed(() => {
       emptyDescription: __('The pipeline appears here as deals are created.'),
       rows: computed(() => teamPipeline.data?.rows || []),
       rowLabel: (row) => row.stage,
+      note: computed(() => teamPipeline.data?.notice || ''),
+      // With forecasting off every expected value is 0 by construction; the
+      // note above the table says so, and the cell stops repeating "$0".
       cell: (row) =>
-        `${row.deals} · ${formatCell(row.total_value, 'currency', baseCurrency.value)}`,
+        teamPipeline.data?.notice
+          ? `${row.deals}`
+          : `${row.deals} · ${formatCell(row.total_value, 'currency', baseCurrency.value)}`,
     },
     {
       id: 'quota',
