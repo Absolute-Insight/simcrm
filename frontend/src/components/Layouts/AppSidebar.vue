@@ -211,12 +211,13 @@
 
   <template v-if="!mobile">
     <Settings />
-    <!-- Onboarding steps only. The help center itself is in-app now
-         (HelpCenterModal via stores/help), so this modal no longer carries
-         links to externally hosted articles. -->
-    <HelpModal
+    <!-- The getting-started checklist. Rendered in-repo (OnboardingPanel)
+         over the framework's step state, so it sits clear of page headers and
+         its help link opens the in-app help center. -->
+    <!-- v-if matters: useOnboarding() hands back the step list as it stands
+         when called, and the steps are registered in onMounted. -->
+    <OnboardingPanel
       v-if="showHelpModal"
-      v-model="showHelpModal"
       :logo="CRMLogo"
       :title="__('Vectora')"
       :afterSkip="(step) => capture('onboarding_step_skipped_' + step)"
@@ -289,8 +290,8 @@ import { useBroadcast } from '@/composables/useBroadcast.js'
 import { call, Sidebar, SidebarItem, SidebarLabel, Tooltip } from 'frappe-ui'
 import { SignupBanner } from '@framework/ui/components/SignupBanner'
 import { TrialBanner } from '@framework/ui/components/TrialBanner'
+import OnboardingPanel from '@/components/OnboardingPanel.vue'
 import {
-  HelpModal,
   GettingStartedBanner,
   useOnboarding,
   showHelpModal,
