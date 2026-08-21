@@ -16,7 +16,10 @@
       class="border-r border-outline-gray-1"
     >
       <div class="flex h-full flex-col p-2">
-        <UserDropdown :isCollapsed="isCollapsed" />
+        <SidebarBrand
+          :isCollapsed="isCollapsed"
+          @toggle="isSidebarCollapsed = !isSidebarCollapsed"
+        />
 
         <!-- overflow-y-auto forces overflow-x to clip too, which would slice the
              active row's shadow. Widen the scroll box to the sidebar edges and
@@ -197,22 +200,7 @@
               <BrushCleaningIcon class="size-4" />
             </template>
           </SidebarItem>
-          <SidebarItem :label="__('Help')" @click="() => openHelpCenter()">
-            <template #prefix>
-              <HelpIcon class="size-4 text-ink-gray-7" />
-            </template>
-          </SidebarItem>
-          <SidebarItem
-            :label="isCollapsed ? __('Expand') : __('Collapse')"
-            @click="isSidebarCollapsed = !isSidebarCollapsed"
-          >
-            <template #prefix>
-              <CollapseSidebar
-                class="size-4 text-ink-gray-7 duration-300 ease-in-out"
-                :class="{ '[transform:rotateY(180deg)]': isCollapsed }"
-              />
-            </template>
-          </SidebarItem>
+          <SidebarUser :isCollapsed="isCollapsed" />
         </div>
       </div>
     </Sidebar>
@@ -258,7 +246,8 @@ import StepsIcon from '@/components/Icons/StepsIcon.vue'
 import CollapsibleSection from '@/components/CollapsibleSection.vue'
 import Icon from '@/components/Icon.vue'
 import PinIcon from '@/components/Icons/PinIcon.vue'
-import UserDropdown from '@/components/UserDropdown.vue'
+import SidebarBrand from '@/components/Layouts/SidebarBrand.vue'
+import SidebarUser from '@/components/Layouts/SidebarUser.vue'
 import SquareAsterisk from '@/components/Icons/SquareAsterisk.vue'
 import LeadsIcon from '@/components/Icons/LeadsIcon.vue'
 import DealsIcon from '@/components/Icons/DealsIcon.vue'
@@ -268,9 +257,7 @@ import NoteIcon from '@/components/Icons/NoteIcon.vue'
 import TaskIcon from '@/components/Icons/TaskIcon.vue'
 import CalendarIcon from '@/components/Icons/CalendarIcon.vue'
 import PhoneIcon from '@/components/Icons/PhoneIcon.vue'
-import CollapseSidebar from '@/components/Icons/CollapseSidebar.vue'
 import NotificationsIcon from '@/components/Icons/NotificationsIcon.vue'
-import HelpIcon from '@/components/Icons/HelpIcon.vue'
 import Notifications from '@/components/Notifications.vue'
 import Suggestions from '@/components/Suggestions.vue'
 import Assistant from '@/components/Assistant.vue'
@@ -310,7 +297,6 @@ import {
   minimize,
   IntermediateStepModal,
 } from '@framework/ui/components/Onboarding'
-import { openHelpCenter } from '@/stores/help'
 import { useTelemetry } from '@framework/ui/telemetry'
 import router from '@/router'
 import { useStorage } from '@vueuse/core'
