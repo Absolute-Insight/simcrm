@@ -54,15 +54,17 @@
             v-if="editing"
             class="flex absolute right-0 top-0 bg-surface-gray-9 rounded-4 cursor-pointer opacity-0 group-hover:opacity-100"
           >
-            <div
+            <button
+              type="button"
               class="rounded-4 p-1 hover:bg-surface-gray-8"
+              :aria-label="__('Remove this chart')"
               @click="items.splice(index, 1)"
             >
               <span
                 class="lucide-trash-2 size-3 text-ink-base"
                 aria-hidden="true"
               />
-            </div>
+            </button>
           </div>
         </div>
       </template>

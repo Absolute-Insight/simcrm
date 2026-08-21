@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { call, createResource, toast } from 'frappe-ui'
 import { neverLoaded } from '@/utils/resourceState'
+import { quiet } from '@/utils/quiet'
 import { computed, reactive, ref } from 'vue'
 import { formatCompactNumber } from '@/utils/numberFormat.js'
 import { renderFieldLayoutDialog } from '@/utils/renderFieldLayoutDialog'
@@ -94,13 +95,6 @@ async function resolveReferenceLabels(rows) {
       }
     }),
   )
-}
-
-/* A failed resource rejects as well as setting `.error` (frappe-ui's
-   handleError rethrows), so every reload here is awaited defensively — an
-   inbox that cannot refresh must not also produce an unhandled rejection. */
-function quiet(promise) {
-  return Promise.resolve(promise).catch(() => {})
 }
 
 /**

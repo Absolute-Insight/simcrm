@@ -325,7 +325,7 @@ const deals = createResource({
 })
 
 const rows = computed(() => {
-  if (!deals.data || deals.data == []) return []
+  if (!deals.data?.length) return []
 
   return deals.data.map((row) => getDealRowObject(row))
 })

@@ -103,8 +103,9 @@
             <h1 class="font-display text-2xl-semibold text-ink-gray-9">
               {{ shownArticle.title }}
             </h1>
-            <!-- The markdown ships with the app, but it still goes through the
-                 same sanitizer as every other v-html in the codebase. -->
+            <!-- The markdown ships with the app, but it still goes through
+                 sanitizeHTML like every other v-html in the codebase. -->
+            <!-- eslint-disable-next-line vue/no-v-html -->
             <div class="mt-4" v-html="shownArticleHtml" />
           </article>
         </div>

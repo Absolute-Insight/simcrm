@@ -115,11 +115,7 @@ watch(
   isAnyEnabled,
   () =>
     nextTick(() => {
-      for (const {
-        key,
-        label,
-        ref: integrationRef,
-      } of enabledIntegrations.value) {
+      for (const { label, ref: integrationRef } of enabledIntegrations.value) {
         integrationRef.value.setup()
         callMedium.value = label
       }

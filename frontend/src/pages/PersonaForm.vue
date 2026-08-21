@@ -39,7 +39,7 @@ const leaveHome = async () => {
   })
   try {
     await Promise.all([persist, fade])
-  } catch (e) {
+  } catch {
     await fade
   }
   router.push({ name: 'Home' })

@@ -211,7 +211,7 @@ router.beforeEach(async (to, from, next) => {
       if (await shouldCapturePersona()) {
         return next({ name: 'Onboarding' })
       }
-    } catch (error) {
+    } catch {
       // fail open
     }
   }

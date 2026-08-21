@@ -1,6 +1,10 @@
 import { onMounted, onUnmounted } from 'vue'
 
 const STORAGE_KEY = 'app_broadcasts'
+/* `on` registers a wrapper that unpacks `detail`, so `off` has to find that
+   wrapper again — passing the caller's handler to removeEventListener removed
+   nothing and every remount stacked another listener. */
+const wrappers = new Map()
 const bus = {
   send(event, payload) {
     window.dispatchEvent(new CustomEvent(event, { detail: payload }))
@@ -10,10 +14,15 @@ const bus = {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(broadcasts))
   },
   on(event, handler) {
-    window.addEventListener(event, (e) => handler(e.detail))
+    const wrapper = (e) => handler(e.detail)
+    wrappers.set(handler, wrapper)
+    window.addEventListener(event, wrapper)
   },
   off(event, handler) {
-    window.removeEventListener(event, handler)
+    const wrapper = wrappers.get(handler)
+    if (!wrapper) return
+    wrappers.delete(handler)
+    window.removeEventListener(event, wrapper)
   },
 }
 
@@ -43,3 +52,6 @@ export function useBroadcast() {
 
   return { on, send: bus.send }
 }
+
+/* The bus itself, for tests and for code outside a component setup. */
+export { bus as broadcastBus }

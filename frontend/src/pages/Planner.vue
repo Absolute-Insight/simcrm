@@ -370,6 +370,7 @@ import Skeleton from '@/components/ui/Skeleton.vue'
 import ViewBreadcrumbs from '@/components/ViewBreadcrumbs.vue'
 import { useConfirmGate } from '@/composables/confirmGate'
 import { describeError } from '@/utils/describeError'
+import { quiet } from '@/utils/quiet'
 import { renderFieldLayoutDialog } from '@/utils/renderFieldLayoutDialog'
 import {
   EDITABLE_ITEM_FIELDS,
@@ -588,19 +589,19 @@ async function confirmDiscard() {
 async function shiftWeek(days) {
   if (!(await confirmDiscard())) return
   weekStart.value = addDays(weekStart.value, days)
-  plan.reload()
+  quiet(plan.reload())
 }
 
 async function goToCurrentWeek() {
   if (!(await confirmDiscard())) return
   weekStart.value = mondayOf(today.value)
-  plan.reload()
+  quiet(plan.reload())
 }
 
 async function goToWeekOf(item) {
   if (!(await confirmDiscard())) return
   weekStart.value = mondayOf(item.planned_date)
-  plan.reload()
+  quiet(plan.reload())
 }
 
 async function requestUser(name) {
@@ -611,7 +612,7 @@ async function requestUser(name) {
      the real component -- a native <select> would need the value restored. */
   if (!(await confirmDiscard())) return
   planUser.value = name
-  plan.reload()
+  quiet(plan.reload())
 }
 
 function warnOnUnload(event) {
@@ -1004,7 +1005,7 @@ async function savePlan() {
 async function reloadAfterConflict() {
   if (!(await confirmDiscard())) return
   stale.value = false
-  plan.reload()
+  quiet(plan.reload())
 }
 
 usePageMeta(() => ({ title: __('Planner') }))

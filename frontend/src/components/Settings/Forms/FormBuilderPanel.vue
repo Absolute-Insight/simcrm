@@ -196,13 +196,13 @@
                               (e) => addFieldToColumn(col, e)
                             "
                           >
-                            <template #trigger="{ open, setOpen }">
+                            <template #trigger="{ open: isOpen, setOpen }">
                               <Button
                                 class="!h-8 w-full !bg-surface-elevation-2"
                                 variant="outline"
                                 :label="__('Add Field')"
                                 icon-left="lucide-plus"
-                                @click="openFieldPicker(open, setOpen)"
+                                @click="openFieldPicker(isOpen, setOpen)"
                               />
                             </template>
                           </Combobox>

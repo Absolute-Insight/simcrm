@@ -267,6 +267,8 @@ import {
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import SkeletonTable from '@/components/ui/SkeletonTable.vue'
+import { describeError } from '@/utils/describeError'
+import { quiet } from '@/utils/quiet'
 import { computed, reactive, ref, watch } from 'vue'
 
 /* Labels and values are separate here because the values are persisted on
@@ -357,7 +359,7 @@ const statuses = createResource({
 
 watch(
   () => draft.document_type,
-  () => editorOpen.value && statuses.reload(),
+  () => editorOpen.value && quiet(statuses.reload()),
 )
 
 const statusOptions = computed(() => [
@@ -383,7 +385,7 @@ function openEditor(rule) {
   Object.assign(draft, rule ? { ...EMPTY, ...rule } : { ...EMPTY })
   saveError.value = ''
   editorOpen.value = true
-  statuses.reload()
+  quiet(statuses.reload())
 }
 
 async function save() {
@@ -404,7 +406,8 @@ async function save() {
     editorOpen.value = false
     toast.success(__('Rule saved'))
   } catch (error) {
-    saveError.value = error.messages?.[0] || error.message
+    saveError.value =
+      describeError(error).message || __('The rule could not be saved.')
   } finally {
     saving.value = false
   }

@@ -233,9 +233,10 @@
                   </span>
                 </span>
                 <Badge
-                  :label="urgencyBand(row.score)?.label || ''"
+                  v-if="urgencyBand(row.score)"
+                  :label="urgencyBand(row.score).label"
                   variant="subtle"
-                  :theme="row.score >= 70 ? 'red' : 'amber'"
+                  :theme="riskBadgeTheme(urgencyBand(row.score).key)"
                 />
               </button>
             </li>
@@ -453,6 +454,7 @@ import { isNarrowGrid } from '@/composables/settings'
 import { formatCell } from '@/utils/reportExport'
 import { copy } from '@/utils'
 import { describeError } from '@/utils/describeError'
+import { quiet } from '@/utils/quiet'
 import {
   adherencePercent,
   applyPanelPreference,
@@ -531,7 +533,7 @@ const showChartGrid = computed(() => isTeamView.value)
 const scopeUser = computed(() => filters.user || null)
 const scopeTerritory = computed(() => filters.territory || null)
 
-function chartResource(name: string) {
+function chartResource(name: string, teamOnly = false) {
   return createResource({
     url: 'crm.api.dashboard.get_chart',
     makeParams: () => ({
@@ -542,7 +544,9 @@ function chartResource(name: string) {
       user: scopeUser.value,
       territory: scopeTerritory.value,
     }),
-    auto: true,
+    // A team-only tile is never rendered for a rep, so it never fetches for
+    // one either — same gate as reportResource below.
+    auto: !teamOnly || isTeamView.value,
   })
 }
 
@@ -572,7 +576,7 @@ const TILE_CATALOGUE = [
 ]
 
 const tileResources = Object.fromEntries(
-  TILE_CATALOGUE.map((t) => [t.name, chartResource(t.name)]),
+  TILE_CATALOGUE.map((t) => [t.name, chartResource(t.name, t.teamOnly)]),
 )
 
 const tiles = computed(() =>
@@ -630,10 +634,18 @@ function openRecord(row: { doctype: string; docname: string }) {
 
 const today = computed(() => toISODate(new Date()))
 
+/* Badge's warning theme is still named `amber` in frappe-ui; the band itself
+   decides the cut-off (URGENCY_HIGH in utils/suggestions), not this page. */
+function riskBadgeTheme(band: string) {
+  return band === 'high' ? 'red' : 'amber'
+}
+
 const myPlan = createResource({
   url: 'crm.api.rep_plan.get_plan',
   makeParams: () => ({ week_start: mondayOf(new Date()) }),
-  auto: true,
+  // Only the rep home renders today's plan; the team view reloads what it
+  // shows through reloadAll, the same way reportResource gates on the role.
+  auto: !isTeamView.value,
 })
 
 const todayItems = computed(() =>
@@ -859,16 +871,16 @@ function updateFilter(key: string, value: unknown, callback?: () => void) {
 }
 
 function reloadAll() {
-  dashboardItems.reload()
-  Object.values(tileResources).forEach((r) => r.reload())
-  suggestions.reload()
+  quiet(dashboardItems.reload())
+  Object.values(tileResources).forEach((r) => quiet(r.reload()))
+  quiet(suggestions.reload())
   if (isTeamView.value) {
-    teamAdherence.reload()
-    teamQuota.reload()
-    teamPipeline.reload()
+    quiet(teamAdherence.reload())
+    quiet(teamQuota.reload())
+    quiet(teamPipeline.reload())
   } else {
-    myPlan.reload()
-    repCharts.forEach((chart) => chart.resource.reload())
+    quiet(myPlan.reload())
+    repCharts.forEach((chart) => quiet(chart.resource.reload()))
   }
 }
 

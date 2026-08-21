@@ -13,7 +13,7 @@
   </div>
 </template>
 <script setup>
-import { ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 
 const props = defineProps({
   defaultWidth: { type: Number, default: 352 },
@@ -28,18 +28,25 @@ const sidebarWidth = ref(props.defaultWidth)
 
 function startResize() {
   document.addEventListener('mousemove', resize)
-  document.addEventListener('mouseup', () => {
-    document.body.classList.remove('select-none')
-    document.body.classList.remove('cursor-col-resize')
-    document.querySelectorAll('.select-text1').forEach((el) => {
-      el.classList.remove('select-text1')
-      el.classList.add('select-text')
-    })
-    localStorage.setItem('sidebarWidth', sidebarWidth.value)
-    sidebarResizing.value = false
-    document.removeEventListener('mousemove', resize)
-  })
+  // Named and `once`: the anonymous listener this used to add on every
+  // mousedown was never removed, so each drag left one more behind.
+  document.addEventListener('mouseup', stopResize, { once: true })
 }
+function stopResize() {
+  document.body.classList.remove('select-none')
+  document.body.classList.remove('cursor-col-resize')
+  document.querySelectorAll('.select-text1').forEach((el) => {
+    el.classList.remove('select-text1')
+    el.classList.add('select-text')
+  })
+  localStorage.setItem('sidebarWidth', sidebarWidth.value)
+  sidebarResizing.value = false
+  document.removeEventListener('mousemove', resize)
+}
+onBeforeUnmount(() => {
+  document.removeEventListener('mousemove', resize)
+  document.removeEventListener('mouseup', stopResize)
+})
 function resize(e) {
   sidebarResizing.value = true
   document.body.classList.add('select-none')

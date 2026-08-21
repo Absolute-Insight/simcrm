@@ -187,6 +187,7 @@ import ErrorState from '@/components/ui/ErrorState.vue'
 import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import { computed, ref, watch } from 'vue'
 import { formatCell } from '@/utils/reportExport'
+import { quiet } from '@/utils/quiet'
 
 const { isManager } = usersStore()
 
@@ -199,7 +200,7 @@ const grid = createResource({
   auto: true,
 })
 
-watch(year, () => grid.reload())
+watch(year, () => quiet(grid.reload()))
 
 const rows = computed(() => grid.data?.rows || [])
 

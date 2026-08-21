@@ -116,6 +116,7 @@ import {
 import { useEventNotificationAlert } from '@/data/notifications'
 import { globalStore } from '@/stores/global'
 import { timeAgo, sanitizeHTML } from '@/utils'
+import { quiet } from '@/utils/quiet'
 import { onClickOutside } from '@vueuse/core'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { TabButtons } from 'frappe-ui'
@@ -154,14 +155,23 @@ function markAllAsRead() {
   mark_as_read.reload()
 }
 
+/* Passed to `off` by reference: a bare `off('crm_notification')` would drop
+   every listener on the event, not only this component's. */
+function onCrmNotification() {
+  quiet(notifications.reload())
+}
+function onEventNotification(data) {
+  handleEventNotification(data)
+}
+
 onBeforeUnmount(() => {
-  $socket.off('crm_notification')
-  $socket.off('event_notification')
+  $socket.off('crm_notification', onCrmNotification)
+  $socket.off('event_notification', onEventNotification)
 })
 
 onMounted(() => {
-  $socket.on('crm_notification', () => notifications.reload())
-  $socket.on('event_notification', (data) => handleEventNotification(data))
+  $socket.on('crm_notification', onCrmNotification)
+  $socket.on('event_notification', onEventNotification)
 })
 
 function getRoute(notification) {

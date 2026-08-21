@@ -36,7 +36,12 @@ export default [
       'vue/attribute-hyphenation': 'off',
       'vue/v-on-event-hyphenation': 'off',
       '@typescript-eslint/no-explicit-any': 'warn',
-      '@typescript-eslint/no-unused-vars': 'warn',
+      // `{ description, ...rest }` is how a field is dropped from an object;
+      // the pulled-out name is the point, not a leftover.
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { ignoreRestSiblings: true },
+      ],
       'no-undef': 'error',
       // The telephony components shipped every inbound caller's phone number
       // and the full call payload to the browser console of every rep's

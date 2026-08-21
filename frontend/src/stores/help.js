@@ -4,6 +4,7 @@
  * shell surfaces use (see composables/modals.js, stores/suggestions.js).
  */
 import { createResource } from 'frappe-ui'
+import { quiet } from '@/utils/quiet'
 import { ref } from 'vue'
 
 export const helpCenterVisible = ref(false)
@@ -26,6 +27,6 @@ export function openHelpCenter(articleName = null) {
   activeHelpArticle.value = articleName
   helpCenterVisible.value = true
   if (!helpContent.fetched && !helpContent.loading) {
-    helpContent.fetch()
+    quiet(helpContent.fetch())
   }
 }

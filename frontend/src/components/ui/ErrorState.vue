@@ -197,7 +197,15 @@ async function runRetry() {
   retrying.value = true
   try {
     emit('retry')
-    await props.retry?.()
+    /* A bare `:retry="() => resource.reload()"` rejects on a second failure
+       (frappe-ui's handleError rethrows after onError). The resource already
+       holds `.error` and re-renders this state, so swallowing here is what
+       stops the click from also producing an unhandled rejection. */
+    try {
+      await props.retry?.()
+    } catch {
+      /* reported through the resource's own .error */
+    }
   } finally {
     retrying.value = false
   }

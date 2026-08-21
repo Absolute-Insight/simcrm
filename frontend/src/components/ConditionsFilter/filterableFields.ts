@@ -7,7 +7,7 @@ export const filterableFields = createResource({
       .filter((field) => !field.fieldname.startsWith('_'))
       // `description` renders as a second line in the dropdown, which has no
       // max width, so a long one stretches the whole list.
-      .map(({ description, ...field }) => {
+      .map(({ description: _description, ...field }) => {
         return {
           label: field.label,
           value: field.fieldname,

@@ -105,7 +105,7 @@ export const usersStore = defineStore('crm-users', () => {
       for (const u of normalizeUsers(records || [])) {
         usersByName[u.name] = { ...usersByName[u.name], ...u }
       }
-    } catch (e) {
+    } catch {
       // best-effort — the synthesized stub remains on failure
     }
   }
