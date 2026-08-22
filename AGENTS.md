@@ -23,6 +23,7 @@ they run as evaluated strings in the browser.
 | Analytics, forecasting, quota, reports, digests | [feats/reporting/README.md](./.pi/feats/reporting/README.md) |
 | In-app help center & assistant chat | [feats/help/README.md](./.pi/feats/help/README.md) |
 | Deploying to a server (compose stack, upgrades, backups) | [deploy/README.md](./deploy/README.md) |
+| Cutting a release (versioning, the image build, what is not automatic) | [docs/RELEASING.md](./docs/RELEASING.md) |
 
 ---
 

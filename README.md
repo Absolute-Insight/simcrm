@@ -101,7 +101,8 @@ work in it. [docs/PILOT-READINESS.md](docs/PILOT-READINESS.md) tracks what is do
 what is not, honestly, and
 [docs/BROWSER-QA-2026-08-22.md](docs/BROWSER-QA-2026-08-22.md) records the last full
 browser pass before deployment — what was found, what was fixed, and what it did not
-cover.
+cover. [docs/RELEASING.md](docs/RELEASING.md) is the release runbook; read it before
+cutting one, because the step that publishes the image is not automatic.
 
 ## Built on
 
