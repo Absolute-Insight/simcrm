@@ -446,12 +446,17 @@ const contacts = createListResource({
 })
 
 const rows = computed(() => {
-  let list = !tabIndex.value ? deals : contacts
+  // `tabIndex` holds the tab's name ('Deals' / 'Contacts'), not an index, so it
+  // has to be compared the same way `columns` below compares it. Testing it for
+  // falsiness always picked the contacts branch, which left the Deals tab
+  // pairing deal columns with contact rows.
+  const showingDeals = tabIndex.value === 'Deals'
+  const list = showingDeals ? deals : contacts
 
   if (!list.data) return []
 
   return list.data.map((row) => {
-    return !tabIndex.value ? getDealRowObject(row) : getContactRowObject(row)
+    return showingDeals ? getDealRowObject(row) : getContactRowObject(row)
   })
 })
 
