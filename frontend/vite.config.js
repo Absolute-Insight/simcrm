@@ -225,6 +225,10 @@ export default defineConfig(async ({ mode }) => {
         'vue',
         'vue-router',
         'frappe-ui',
+        // reka-ui carries the dialog's title/description context. A second copy
+        // would provide into different injection keys, so `DialogTitle` in this
+        // app would silently stop naming frappe-ui's `DialogContent`.
+        'reka-ui',
         'dompurify',
         '@tiptap/core',
         '@tiptap/pm',

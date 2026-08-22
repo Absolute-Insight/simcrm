@@ -7,13 +7,20 @@
       >
         <div class="mb-6 flex items-center justify-between">
           <div>
-            <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">
-              {{
-                linkedDocs?.length == 0
-                  ? __('Delete')
-                  : __('Delete or unlink linked documents')
-              }}
-            </h3>
+            <DialogTitle as-child>
+              <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">
+                {{
+                  linkedDocs?.length == 0
+                    ? __('Delete')
+                    : __('Delete or unlink linked documents')
+                }}
+              </h3>
+            </DialogTitle>
+            <VisuallyHidden>
+              <DialogDescription>{{
+                __('Confirm deleting this record and everything linked to it')
+              }}</DialogDescription>
+            </VisuallyHidden>
           </div>
           <div class="flex items-center gap-1">
             <Button variant="ghost" icon="lucide-x" @click="show = false" />
@@ -131,6 +138,7 @@
 </template>
 
 <script setup>
+import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
 import { describeError } from '@/utils/describeError'
 import { createResource, call, toast } from 'frappe-ui'
 import { useRouter } from 'vue-router'
