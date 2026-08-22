@@ -23,5 +23,9 @@
 <script setup>
 import { isEmoji } from '@/utils'
 
-defineProps({ icon: { type: [String, Object], required: true } })
+/* `Object` alone rejects a render function, and Settings passes one for the
+   Profile row (an Avatar built from the live user). Vue renders it correctly
+   either way -- only the type check failed -- so the fix is to admit the form
+   the call sites already use. */
+defineProps({ icon: { type: [String, Object, Function], required: true } })
 </script>
