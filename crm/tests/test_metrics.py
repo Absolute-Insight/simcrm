@@ -284,7 +284,18 @@ class MetricsTest(IntegrationTestCase):
 
 		from crm.api import dashboard
 
-		self.make_deal(expected_deal_value=1_000, probability=50, exchange_rate=1)
+		# The deal needs a close date inside the snapshot window (today-1mo ..
+		# today+6mo) or it buckets into no month, the site scope writes no rows,
+		# and `written` is 0 whatever the failing rep does. Without it this
+		# passed only on a site carrying deals left by an earlier run.
+		self.make_deal(
+			expected_deal_value=1_000,
+			probability=50,
+			exchange_rate=1,
+			expected_closure_date=frappe.utils.add_months(
+				frappe.utils.get_first_day(frappe.utils.nowdate()), 1
+			),
+		)
 		real = dashboard.get_forecasted_revenue
 
 		def explode(from_date, to_date, **kwargs):
