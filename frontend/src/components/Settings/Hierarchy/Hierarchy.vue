@@ -151,9 +151,11 @@
         {{ dragLabel }}
       </div>
     </Teleport>
+    <!-- not `bare`: this dialog's title and its Add button come from the props
+         below, and frappe-ui renders neither when `bare` is set -- which left
+         the picker open with no way to confirm the selection. -->
     <Dialog
       v-model:open="showAddDialog"
-      bare
       :title="__('Add Users')"
       :actions="[
         {
@@ -178,9 +180,16 @@
       <template #default>
         <div class="bg-surface-elevation-2 px-4 pb-6 pt-5 sm:px-6">
           <div class="mb-4 flex items-center justify-between">
-            <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">
-              {{ __('Delete') }}
-            </h3>
+            <DialogTitle as-child>
+              <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">
+                {{ __('Delete') }}
+              </h3>
+            </DialogTitle>
+            <VisuallyHidden>
+              <DialogDescription>{{
+                __('Confirm removing this person from the sales hierarchy')
+              }}</DialogDescription>
+            </VisuallyHidden>
             <Button
               variant="ghost"
               icon="lucide-x"
@@ -241,6 +250,7 @@
 </template>
 
 <script setup>
+import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
 import HierarchyRow from './HierarchyRow.vue'
 import HierarchyTree from './HierarchyTree.vue'
