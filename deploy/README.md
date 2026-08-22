@@ -6,11 +6,15 @@ The stack in this directory runs the production image that
 [frappe_docker](https://github.com/frappe/frappe_docker)'s canonical layout:
 one image, one role per container.
 
-**Status: authored and reviewed, not yet exercised.** This configuration has
-not been booted end-to-end — the environment it was written in has no Docker
-daemon, and the image itself first exists after `main` receives a release and
-`builds.yml` runs. Treat the first boot as part of the rollout, not as a
-formality.
+**Status: booted and upgraded end-to-end, never run on a real host.** As of
+2026-08-22 this stack has been started from the published image (v3.1.5 and
+v3.2.1), seeded, and taken through the documented upgrade — so first boot,
+`create-site`, the volume layout, nginx routing, the workers and the scheduler
+are all exercised rather than assumed, and so is `migrate` across a release.
+What no run here can cover is a real host: TLS, DNS, a port published anywhere
+but loopback, real mail, inbound webhooks, and performance against a real
+dataset. Restore has been drilled on a bench but not through this stack. Treat
+those as part of the rollout, not as formalities.
 
 ## Prerequisites
 
@@ -143,8 +147,9 @@ refused rather than published.
 
 It proves the image boots, `create-site` completes, the volume layout is right,
 nginx routes to the backend and the socket, the workers and scheduler come up,
-and — with `--profile local-model` — that ollama pulls and answers. That is the
-whole unrehearsed half of the deployment.
+and — with `--profile local-model` — that ollama pulls and answers. That was
+the whole unrehearsed half of the deployment until 2026-08-22; see *Upgrading*
+for what has since been run.
 
 It does not prove anything about TLS, DNS, real mail delivery, or performance
 under a real dataset, and a loopback site cannot receive an inbound webhook.
@@ -192,6 +197,7 @@ docker compose pull
 docker compose up -d                      # replaces containers on the new image
 docker compose exec backend bench --site all migrate
 
+# 3. reopen. Give it a minute -- see "Maintenance mode lags by a minute"
 docker compose exec backend bench --site <site> set-maintenance-mode off
 ```
 
@@ -208,6 +214,42 @@ that window reps are on new code against an old schema, which is the one
 combination nothing is tested against. Maintenance mode gives them an honest
 "be right back" instead of errors that look like data loss.
 
+### Maintenance mode lags by a minute
+
+`set-maintenance-mode` writes a flag to `site_config.json`, and a running web
+worker does not see that write for up to 60 seconds. Frappe reads the site
+config through a 60-second in-process cache on the request path
+(`site_cache(ttl=60)` in `frappe/config.py`, used because `frappe/app.py` calls
+`frappe.init(..., is_request=True)`). Background workers and the scheduler
+re-init per job and per tick, so they take the flag up immediately; only HTTP
+traffic lags.
+
+It lags in *both* directions, measured on this version:
+
+- After `set-maintenance-mode on`, the site keeps serving normally for up to a
+  minute. In the sequence above that does not matter, because `up -d` replaces
+  the backend container a moment later and the new process reads the flag at
+  startup — which is the real reason the site is closed during `migrate`, not
+  the command on its own. If you ever set the flag *without* restarting
+  anything, wait a minute before believing the site is closed.
+- After `set-maintenance-mode off`, real endpoints keep answering 503 for up to
+  a minute, then recover on their own. That is the cache expiring, not a failed
+  upgrade: check `curl` again after 60 seconds before reaching for a restart.
+
+`/api/method/ping` answers 200 throughout — it is exempt so healthchecks stay
+green during the window — so it tells you nothing about whether maintenance
+mode is engaged. Test a real endpoint.
+
+**If you do restart to force the issue, do not restart `backend` alone.** nginx
+in the `frontend` service resolves the backend's address when it loads its
+config, so a backend that comes back on a new container IP leaves `frontend`
+proxying to an address nothing answers on, and every request 502s until nginx
+restarts too. Restart the pair, or the whole stack:
+
+```bash
+docker compose restart backend frontend
+```
+
 *Rehearsed (2026-08-18), and worth being exact about what that did and did not
 prove.* `migrate` was run against a scratch site restored from a real
 1,716-deal backup. It completed without error, every record count survived
@@ -217,9 +259,25 @@ all known to survive production-shaped data.
 
 It did **not** exercise the patches. A restored database carries the origin's
 `Patch Log`, so all 33 entries in `crm/patches.txt` were already recorded and
-`migrate` skipped every one. Patches applying cleanly on a *fresh* site is still
-only covered by CI. Nor did this go through `docker compose exec`, so the
-container swap in steps 1–2 remains unrehearsed.
+`migrate` skipped every one. Nor did it go through `docker compose exec`, so it
+said nothing about the container swap or the maintenance-mode steps.
+
+*Rehearsed again (2026-08-22), this time as the whole sequence.* A stack was
+booted on v3.1.5 from the published image, seeded (12 deals, 8 leads, 5
+contacts, 1 organization), and taken to v3.2.1 by running the steps above
+verbatim through `docker compose exec`. Backup wrote all four artifacts.
+`migrate` exited 0 and applied both patches new in that range
+(`add_analytics_dashboard_widgets`, `remove_duplicated_grid_tiles`) — so patches
+running on a fresh-ish site is no longer CI-only. Every count survived
+unchanged and the deal-value sum matched to the cent. The site logged in and
+served its endpoints on the new version, and the scheduler was still enabled
+afterwards.
+
+The one thing that pass changed here is the section above: reopening the site
+appeared to fail, and the cause turned out to be the 60-second config cache
+rather than anything in the procedure. Still unrehearsed: the restore path in
+*Rolling back*, and anything involving a real host — TLS, a published port, an
+inbound webhook.
 
 Order matters: migrate *after* the new image is up, so patches run on the code
 that shipped them. `merge_duplicate_rep_plan_weeks` and friends are one-shot

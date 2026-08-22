@@ -9,13 +9,20 @@
                  extractor can see, because none of them appear in the source.
                  A placeholder makes "Edit {0}" the one visible key, and the
                  name is translated on its own. -->
-            <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">
-              {{
-                editMode
-                  ? __('Edit {0}', [__(doctypeTitle || doctype)])
-                  : __('Create {0}', [__(doctypeTitle || doctype)])
-              }}
-            </h3>
+            <DialogTitle as-child>
+              <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">
+                {{
+                  editMode
+                    ? __('Edit {0}', [__(doctypeTitle || doctype)])
+                    : __('Create {0}', [__(doctypeTitle || doctype)])
+                }}
+              </h3>
+            </DialogTitle>
+            <VisuallyHidden>
+              <DialogDescription>{{
+                __('Create or edit this record')
+              }}</DialogDescription>
+            </VisuallyHidden>
           </div>
           <div class="flex items-center gap-1">
             <CustomActions
@@ -65,6 +72,7 @@
 </template>
 
 <script setup>
+import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
 import EditIcon from '@/components/Icons/EditIcon.vue'
 import FieldLayout from '@/components/FieldLayout/FieldLayout.vue'
 import CustomActions from '@/components/CustomActions.vue'

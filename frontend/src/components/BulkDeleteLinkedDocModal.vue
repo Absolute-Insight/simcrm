@@ -4,9 +4,18 @@
       <div class="bg-surface-elevation-2 px-4 pb-6 pt-5 sm:px-6">
         <div class="mb-6 flex items-center justify-between">
           <div>
-            <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">
-              {{ __('Delete') }}
-            </h3>
+            <DialogTitle as-child>
+              <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">
+                {{ __('Delete') }}
+              </h3>
+            </DialogTitle>
+            <VisuallyHidden>
+              <DialogDescription>{{
+                __(
+                  'Confirm deleting the selected records and everything linked to them',
+                )
+              }}</DialogDescription>
+            </VisuallyHidden>
           </div>
           <div class="flex items-center gap-1">
             <Button variant="ghost" icon="lucide-x" @click="show = false" />
@@ -90,6 +99,7 @@
 </template>
 
 <script setup>
+import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
 import { describeError } from '@/utils/describeError'
 import { call, toast } from 'frappe-ui'
 import { ref } from 'vue'

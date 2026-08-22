@@ -5,7 +5,14 @@
         <div class="flex justify-center">
           <div class="flex flex-col items-center">
             <CRMLogo class="mb-3 size-12" />
-            <h3 class="text-2xl-semibold text-ink-gray-9">Vectora</h3>
+            <DialogTitle as-child>
+              <h3 class="text-2xl-semibold text-ink-gray-9">Vectora</h3>
+            </DialogTitle>
+            <VisuallyHidden>
+              <DialogDescription>{{
+                __('Version information for this installation')
+              }}</DialogDescription>
+            </VisuallyHidden>
           </div>
         </div>
         <hr class="border-t my-3 mx-2" />
@@ -44,6 +51,7 @@
   </Dialog>
 </template>
 <script setup>
+import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
 import CRMLogo from '@/components/Icons/CRMLogo.vue'
 import GitHubIcon from '@/components/Icons/GitHubIcon.vue'
 import LucideBug from '~icons/lucide/bug'

@@ -4,9 +4,16 @@
       <div class="px-4 pt-5 pb-6 bg-surface-elevation-2 sm:px-6">
         <div class="flex items-center justify-between mb-5">
           <div>
-            <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">
-              {{ __('New Organization') }}
-            </h3>
+            <DialogTitle as-child>
+              <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">
+                {{ __('New Organization') }}
+              </h3>
+            </DialogTitle>
+            <VisuallyHidden>
+              <DialogDescription>{{
+                __('Create a new organization')
+              }}</DialogDescription>
+            </VisuallyHidden>
           </div>
           <div class="flex items-center gap-1">
             <Button
@@ -58,6 +65,7 @@
 </template>
 
 <script setup>
+import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
 import FieldLayout from '@/components/FieldLayout/FieldLayout.vue'
 import EditIcon from '@/components/Icons/EditIcon.vue'
 import { usersStore } from '@/stores/users'

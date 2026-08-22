@@ -7,6 +7,12 @@
     @close="activeSettingsPage = ''"
   >
     <template #default>
+      <VisuallyHidden>
+        <DialogTitle>{{ __('Settings') }}</DialogTitle>
+        <DialogDescription>
+          {{ __('Manage your profile and this workspace') }}
+        </DialogDescription>
+      </VisuallyHidden>
       <div class="flex h-[calc(100vh_-_8rem)] bg-surface-gray-1">
         <div
           class="flex flex-col m-1 rounded-l-6 w-56 shrink-0 bg-surface-gray-1 overflow-y-auto"
@@ -89,6 +95,7 @@ import EmailTemplatePage from '@/components/Settings/EmailTemplate/EmailTemplate
 import TelephonyPage from '@/components/Settings/Telephony/TelephonyPage.vue'
 import EmailConfig from '@/components/Settings/EmailConfig.vue'
 import Icon from '@/components/Icon.vue'
+import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
 import { usersStore } from '@/stores/users'
 import {
   showSettings,
