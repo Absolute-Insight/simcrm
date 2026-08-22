@@ -11,7 +11,7 @@
     </div>
     <div id="app-header" class="flex-1" />
   </div>
-  <CallUI class="mr-3 mt-2" />
+  <CallUI />
 </template>
 
 <script setup>

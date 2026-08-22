@@ -73,7 +73,7 @@
                 size="md"
                 :label="form.published ? __('Published') : __('Draft')"
               />
-              <Dropdown placement="right" :options="rowOptions(form)">
+              <Dropdown align="end" :options="rowOptions(form)">
                 <Button
                   icon="lucide-more-horizontal"
                   variant="ghost"
@@ -260,7 +260,7 @@ function rowOptions(form) {
   return [
     {
       label: __('Edit'),
-      icon: 'edit-2',
+      icon: 'lucide-edit-2',
       onClick: () => emit('open', form.name),
     },
     {
@@ -268,7 +268,11 @@ function rowOptions(form) {
       icon: form.published ? 'eye-off' : 'eye',
       onClick: () => togglePublished(form, !form.published),
     },
-    { label: __('Copy link'), icon: 'link', onClick: () => copyLink(form) },
+    {
+      label: __('Copy link'),
+      icon: 'lucide-link',
+      onClick: () => copyLink(form),
+    },
     ...ConfirmDelete({
       isConfirmingDelete,
       onConfirmDelete: () => deleteForm(form),

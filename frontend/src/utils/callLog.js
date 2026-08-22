@@ -11,7 +11,7 @@ export function getCallLogDetail(row, log, columns = []) {
   if (row === 'duration') {
     return {
       label: log._duration,
-      icon: 'clock',
+      icon: 'lucide-clock',
     }
   } else if (row === 'caller') {
     return {

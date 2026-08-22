@@ -193,7 +193,7 @@
         />
         <Dropdown
           v-if="route.params.viewType !== 'kanban' || isManager()"
-          placement="right"
+          align="end"
           :options="[
             {
               group: __('Options'),
@@ -371,9 +371,14 @@ const { isManager, getUser } = usersStore()
 const { organizations } = organizationsStore()
 
 const list = defineModel({ type: Object, default: () => ({}) })
-const loadMore = defineModel('loadMore', { type: Boolean })
-const resizeColumn = defineModel('resizeColumn', { type: Boolean })
-const updatedPageCount = defineModel('updatedPageCount', { type: Boolean })
+// All three carry numbers, not flags. `loadMore` and `resizeColumn` are change
+// counters the list views increment to ask for another page or a column
+// re-measure — their value is never read, only its change. `updatedPageCount`
+// carries the page length itself. Declaring them Boolean made every list view
+// fail prop validation on mount.
+const loadMore = defineModel('loadMore', { type: Number })
+const resizeColumn = defineModel('resizeColumn', { type: Number })
+const updatedPageCount = defineModel('updatedPageCount', { type: Number })
 
 const route = useRoute()
 const router = useRouter()
@@ -759,7 +764,7 @@ const viewsDropdownOptions = computed(() => {
     options: [
       {
         label: __('Create View'),
-        icon: 'plus',
+        icon: 'lucide-plus',
         onClick: () => createView(),
       },
     ],
@@ -1198,7 +1203,7 @@ const viewActions = (view, close) => {
       options: [
         {
           label: __('Delete'),
-          icon: 'trash-2',
+          icon: 'lucide-trash-2',
           onClick: () =>
             $dialog({
               title: __('Delete View'),

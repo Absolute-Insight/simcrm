@@ -28,10 +28,10 @@
           ]"
           :button="{
             label: __('New'),
-            iconLeft: 'plus',
+            iconLeft: 'lucide-plus',
             variant: 'solid',
           }"
-          placement="right"
+          align="end"
         />
       </div>
     </div>
@@ -110,13 +110,13 @@
               <Dropdown
                 :options="getMoreOptions(user)"
                 :button="{
-                  icon: 'more-horizontal',
+                  icon: 'lucide-more-horizontal',
                   onblur: (e) => {
                     e.stopPropagation()
                     confirmRemove = false
                   },
                 }"
-                placement="right"
+                align="end"
               />
               <Tooltip
                 v-if="isManager() && user.role == 'System Manager'"
@@ -129,7 +129,7 @@
                 :options="getDropdownOptions(user)"
                 :button="{
                   label: roleMap[user.role],
-                  iconRight: 'chevron-down',
+                  iconRight: 'lucide-chevron-down',
                   iconLeft:
                     user.role === 'System Manager'
                       ? 'shield'
@@ -137,7 +137,7 @@
                         ? 'briefcase'
                         : 'user-check',
                 }"
-                placement="right"
+                align="end"
               />
             </div>
           </li>
@@ -230,7 +230,7 @@ function getDropdownOptions(user) {
       component: () =>
         DropdownOption({
           option: __('Admin'),
-          icon: 'shield',
+          icon: 'lucide-shield',
           selected: user.role === 'System Manager',
         }),
       onClick: () => updateRole(user, 'System Manager'),
@@ -241,7 +241,7 @@ function getDropdownOptions(user) {
       component: () =>
         DropdownOption({
           option: __('Manager'),
-          icon: 'briefcase',
+          icon: 'lucide-briefcase',
           selected: user.role === 'Sales Manager',
         }),
       onClick: () => updateRole(user, 'Sales Manager'),
@@ -252,7 +252,7 @@ function getDropdownOptions(user) {
       component: () =>
         DropdownOption({
           option: __('Sales User'),
-          icon: 'user-check',
+          icon: 'lucide-user-check',
           selected: user.role === 'Sales User',
         }),
       onClick: () => updateRole(user, 'Sales User'),

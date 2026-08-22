@@ -165,13 +165,13 @@ const tabs = computed(() => {
       items: [
         {
           label: __('Users'),
-          icon: 'user',
+          icon: 'lucide-user',
           component: markRaw(Users),
           condition: () => isManager(),
         },
         {
           label: __('Invite User'),
-          icon: 'user-plus',
+          icon: 'lucide-user-plus',
           component: markRaw(InviteUserPage),
           condition: () => isManager(),
         },
@@ -252,7 +252,7 @@ const tabs = computed(() => {
         {
           label: __('Home Actions'),
           component: markRaw(HomeActions),
-          icon: 'house',
+          icon: 'lucide-house',
         },
       ],
       condition: () => isManager(),
@@ -279,7 +279,7 @@ const tabs = computed(() => {
         },
         {
           label: __('Lead Syncing'),
-          icon: 'refresh-cw',
+          icon: 'lucide-refresh-cw',
           component: markRaw(LeadSyncSourcePage),
           condition: () => leadSyncingEnabled.value && isManager(),
         },

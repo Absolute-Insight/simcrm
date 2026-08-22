@@ -9,7 +9,7 @@
       @click.stop="emit('toggle', $event)"
     >
       <Icon
-        :icon="isCollapsed ? 'chevron-right' : 'chevron-down'"
+        :icon="isCollapsed ? 'lucide-chevron-right' : 'lucide-chevron-down'"
         class="size-3 stroke-2 stroke-ink-gray-5"
       />
     </div>
@@ -146,13 +146,13 @@ const moreOptions = computed(() => {
   if (props.node.reports_to) {
     opts.push({
       label: __('Move to top level'),
-      icon: 'corner-up-left',
+      icon: 'lucide-corner-up-left',
       onClick: () => emit('move-to-root', props.node),
     })
   }
   opts.push({
     label: __('Delete'),
-    icon: 'trash-2',
+    icon: 'lucide-trash-2',
     onClick: () => emit('remove', props.node),
   })
   return opts

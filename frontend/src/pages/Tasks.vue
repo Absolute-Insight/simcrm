@@ -384,7 +384,7 @@ function actions(name) {
   return [
     {
       label: __('Delete'),
-      icon: 'trash-2',
+      icon: 'lucide-trash-2',
       onClick: () => {
         deleteTask(name)
         tasks.value.reload()

@@ -1117,13 +1117,13 @@ function columnOps(cols) {
   return [
     {
       label: __('Add Column'),
-      icon: 'columns',
+      icon: 'lucide-columns',
       onClick: () => addColumn(cols),
       condition: () => cols.length < MAX_COLUMNS,
     },
     {
       label: __('Remove Last Column'),
-      icon: 'trash-2',
+      icon: 'lucide-trash-2',
       onClick: () => removeLastColumn(cols),
       condition: () => cols.length > 1,
     },
@@ -1138,12 +1138,12 @@ function sectionMenu(sec) {
       options: [
         {
           label: __('Rename'),
-          icon: 'edit',
+          icon: 'lucide-edit',
           onClick: () => (sec.editingLabel = true),
         },
         {
           label: __('Remove Section'),
-          icon: 'trash-2',
+          icon: 'lucide-trash-2',
           onClick: () => removeBreak(sec.secField),
         },
       ],

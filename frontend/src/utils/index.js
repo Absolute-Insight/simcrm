@@ -829,7 +829,7 @@ export function ConfirmDelete({
       component: (props) =>
         TemplateOption({
           option: label,
-          icon: 'trash-2',
+          icon: 'lucide-trash-2',
           active: props.active,
           variant: 'grey',
           onClick: (event) => {
@@ -845,7 +845,7 @@ export function ConfirmDelete({
       component: (props) =>
         TemplateOption({
           option: __('Confirm {0}', [label]),
-          icon: 'trash-2',
+          icon: 'lucide-trash-2',
           active: props.active,
           variant: 'danger',
           onClick: () => {

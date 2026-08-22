@@ -883,15 +883,15 @@ async function moveTo(item, date) {
 
 function itemActions(item) {
   const actions = [
-    { label: __('Edit'), icon: 'edit-2', onClick: () => editItem(item) },
+    { label: __('Edit'), icon: 'lucide-edit-2', onClick: () => editItem(item) },
     {
       label: __('Move a day earlier'),
-      icon: 'arrow-left',
+      icon: 'lucide-arrow-left',
       onClick: () => moveTo(item, addDays(item.planned_date, -1)),
     },
     {
       label: __('Move a day later'),
-      icon: 'arrow-right',
+      icon: 'lucide-arrow-right',
       onClick: () => moveTo(item, addDays(item.planned_date, 1)),
     },
   ]
@@ -902,21 +902,21 @@ function itemActions(item) {
     if (item.status !== 'Done') {
       actions.push({
         label: __('Mark as done'),
-        icon: 'check-circle',
+        icon: 'lucide-check-circle',
         onClick: () => overrideItem('mark_fulfilled', item),
       })
     }
     if (item.status !== 'Missed') {
       actions.push({
         label: __('Mark as missed'),
-        icon: 'x-circle',
+        icon: 'lucide-x-circle',
         onClick: () => overrideItem('mark_missed', item),
       })
     }
     if (item.manual_override) {
       actions.push({
         label: __('Hand back to the matcher'),
-        icon: 'rotate-ccw',
+        icon: 'lucide-rotate-ccw',
         onClick: () => overrideItem('clear_override', item),
       })
     }
@@ -924,7 +924,7 @@ function itemActions(item) {
 
   actions.push({
     label: __('Remove from plan'),
-    icon: 'trash-2',
+    icon: 'lucide-trash-2',
     onClick: () => removeItem(item),
   })
   return actions

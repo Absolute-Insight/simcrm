@@ -56,7 +56,8 @@
             class="shrink-0 [&_svg]:text-ink-gray-5"
             :iconLeft="!hideLabel && !sortValues?.size && SortIcon"
             :iconRight="
-              sortValues?.size && (open ? 'chevron-up' : 'chevron-down')
+              sortValues?.size &&
+              (open ? 'lucide-chevron-up' : 'lucide-chevron-down')
             "
             :class="sortValues.size ? 'rounded-l-none' : ''"
           />
@@ -107,7 +108,9 @@
                       class="flex w-full items-center justify-between rounded-l-none !text-ink-gray-5"
                       size="md"
                       :label="displayValue"
-                      :iconRight="open ? 'chevron-down' : 'chevron-up'"
+                      :iconRight="
+                        open ? 'lucide-chevron-down' : 'lucide-chevron-up'
+                      "
                       @click="setOpen(!open)"
                     />
                   </template>

@@ -75,7 +75,7 @@
           class="flex items-center gap-1"
           :label="__('New')"
           iconLeft="lucide-plus"
-          :iconRight="open ? 'chevron-up' : 'chevron-down'"
+          :iconRight="open ? 'lucide-chevron-up' : 'lucide-chevron-down'"
         />
       </template>
     </Dropdown>
@@ -179,7 +179,7 @@ const callActions = computed(() => {
   let actions = [
     {
       label: __('Log a Call'),
-      icon: 'plus',
+      icon: 'lucide-plus',
       onClick: () => props.modalRef.createCallLog(),
     },
     {

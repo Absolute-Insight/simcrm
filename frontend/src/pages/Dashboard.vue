@@ -60,8 +60,8 @@
           class:
             '!w-full justify-start [&>span]:mr-auto [&>svg]:text-ink-gray-5',
           variant: 'outline',
-          iconRight: 'chevron-down',
-          iconLeft: 'calendar',
+          iconRight: 'lucide-chevron-down',
+          iconLeft: 'lucide-calendar',
         }"
       />
       <DateRangePicker
@@ -370,7 +370,7 @@
               class="relative h-full"
             >
               <EmptyState
-                icon="line-chart"
+                icon="lucide-line-chart"
                 :title="__('Nothing here yet')"
                 :description="chart.emptyDescription"
                 top="15%"

@@ -93,7 +93,7 @@
                   />
                 </div>
                 <div>
-                  <Dropdown placement="right" :options="dropdownOptions(sla)">
+                  <Dropdown align="end" :options="dropdownOptions(sla)">
                     <Button
                       icon="lucide-more-horizontal"
                       variant="ghost"
@@ -187,7 +187,7 @@ const dropdownOptions = (sla) => [
         name: sla.name + ' (Copy)',
       }
     },
-    icon: 'copy',
+    icon: 'lucide-copy',
   },
   ...ConfirmDelete({
     onConfirmDelete: () => deleteSla(sla),

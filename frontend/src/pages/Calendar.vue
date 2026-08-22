@@ -30,7 +30,7 @@
         enableShortcuts: false,
         noBorder: true,
       }"
-      :events="events.data"
+      :events="events.data || []"
       :onClick="showDetails"
       :onDblClick="editDetails"
       :onCellClick="newEvent"

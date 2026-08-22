@@ -162,7 +162,7 @@ const options = computed(() => {
   })
   let _options = [
     {
-      icon: 'download',
+      icon: 'lucide-download',
       label: __('Download'),
       onClick: () => {
         const a = document.createElement('a')

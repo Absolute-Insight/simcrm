@@ -11,7 +11,7 @@
         </div>
         <template #suffix>
           <Icon
-            :icon="open ? 'chevron-up' : 'chevron-down'"
+            :icon="open ? 'lucide-chevron-up' : 'lucide-chevron-down'"
             class="h-4 text-ink-gray-5"
           />
         </template>
