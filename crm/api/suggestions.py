@@ -30,11 +30,32 @@ def _is_manager() -> bool:
 	return "Sales Manager" in roles or "System Manager" in roles
 
 
+def _scope_filters(filters: dict) -> dict:
+	"""Narrow ``filters`` to what the session user may see.
+
+	The doctype's ``get_permission_query_conditions`` already applies through
+	``get_list`` -- own rows for a rep, the subtree plus unowned team-wide rows
+	for an in-tree manager, everything for one outside the tree. This only adds
+	the explicit owner filter for a non-manager, so the two rules stay visibly in
+	step even if someone reads this file without the other.
+	"""
+	if not _is_manager():
+		# unowned suggestions surface only in manager views
+		return filters | {"user": frappe.session.user}
+	return filters
+
+
 def _get_for_update(name: str):
+	from crm.fcrm.doctype.crm_suggestion.crm_suggestion import has_permission
+
 	doc = frappe.get_doc("CRM Suggestion", name)
-	# an unowned suggestion is a team-wide signal: manager-only, rather than
-	# actionable by whichever rep names it first
-	if not _is_manager() and doc.user != frappe.session.user:
+	# the doctype's own rule: a rep acts on their own rows, a manager on their
+	# subtree's; an unowned suggestion is a team-wide signal and stays
+	# manager-only rather than actionable by whichever rep names it first. Checked
+	# here too because the save below runs with ignore_permissions, and because
+	# the reference check that follows is skipped for an orphan whose record is
+	# gone -- without this an out-of-subtree manager could clear anyone's orphan.
+	if not has_permission(doc, "read"):
 		frappe.throw(
 			_("This suggestion belongs to another user."),
 			frappe.PermissionError,
@@ -66,13 +87,9 @@ def get_suggestions(reference_doctype: str | None = None, reference_docname: str
 			"reference_docname": reference_docname,
 		}
 
-	if not _is_manager():
-		# unowned suggestions surface only in manager views
-		filters["user"] = frappe.session.user
-
 	return frappe.get_list(
 		"CRM Suggestion",
-		filters=filters,
+		filters=_scope_filters(filters),
 		fields=[
 			"name",
 			"signal",
@@ -95,11 +112,19 @@ def get_suggestions(reference_doctype: str | None = None, reference_docname: str
 @frappe.whitelist()
 @sales_user_only
 def get_open_count():
-	"""Open-suggestion count for the badge — same scoping as get_suggestions."""
-	filters = {"status": "Open"}
-	if not _is_manager():
-		filters["user"] = frappe.session.user
-	return frappe.db.count("CRM Suggestion", filters)
+	"""Open-suggestion count for the badge — same scoping as get_suggestions.
+
+	Through ``get_list`` rather than ``db.count``: the latter bypasses the
+	doctype's permission query, so a hierarchy-scoped manager was badged with the
+	site-wide number while their inbox showed their subtree's.
+	"""
+	rows = frappe.get_list(
+		"CRM Suggestion",
+		filters=_scope_filters({"status": "Open"}),
+		fields=[{"COUNT": "*"}],
+		limit_page_length=0,
+	)
+	return int(next(iter(rows[0].values()), 0) or 0) if rows else 0
 
 
 @frappe.whitelist()

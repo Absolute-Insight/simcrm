@@ -32,11 +32,42 @@ docker compose up -d
 docker compose logs -f create-site   # one-shot; wait for it to finish
 ```
 
-Then browse `http://<host>:8080` (or your `HTTP_PUBLISH_PORT`) — the CRM is at
-`/crm`. Log in as `Administrator` with the admin password from `.env`.
+Every long-running service waits for `create-site` to finish, so `up -d` on a
+fresh host serves nothing until the site exists — `docker compose ps` shows
+`backend`, `frontend` and the workers as `Created` until then, which is
+correct, not stuck. Then browse `http://<host>:8080` (or your
+`HTTP_PUBLISH_PORT`; it is bound to loopback by default, see [TLS](#tls)) —
+the CRM is at `/crm`. Log in as `Administrator` with the admin password from
+`.env`.
 
-`create-site` is idempotent: it skips itself when the site directory already
-exists, so `docker compose up -d` is always safe to re-run.
+`create-site` is idempotent: it skips the create when the site directory
+already exists, so `docker compose up -d` is always safe to re-run. What it
+does on *every* run is `bench enable-scheduler`: `bench new-site` writes
+`enable_scheduler: 0` into the new site's config, and a site left that way has
+every cron job in `crm/hooks.py` — the hourly signal run, deal-health scoring,
+the daily digest — silently not running, with nothing in any log to say so.
+
+**Verify the first boot** before handing anyone the URL:
+
+```bash
+docker compose ps                               # every service `running (healthy)`
+docker compose exec backend bench --site <site> doctor
+```
+
+A healthy `doctor` looks like this — the scheduler line is the one that
+matters:
+
+```
+-----Checking scheduler status-----
+Scheduler disabled for <site>? False     # anything else: bench --site <site> enable-scheduler
+Scheduler inactive for <site>? False
+Workers online: 2                        # queue-short and queue-long
+-----<site> Jobs-----
+```
+
+`Scheduler disabled ... True` means `create-site` did not get to its last
+line; `Workers online: 0` means the queue containers are not up
+(`docker compose ps`, then `docker compose logs queue-long`).
 
 **Demo data is not seeded.** A new site starts with `setup_complete = 0`, so
 opening the desk UI — which the scheduler-watching step below sends you to —
@@ -88,7 +119,7 @@ Then browse `http://localhost:8090/crm` and log in as `Administrator` with
 
 ### The image is the part people get wrong
 
-`:stable` is a moving pointer to the newest **main** build, and main is the last
+`:stable` is a moving pointer to the newest **main** or release-tag build, and main is the last
 release. So a localhost rehearsal pinned to `:stable` rehearses the last
 release, not the code you are about to ship — which is the opposite of the
 point. Publish the current branch first:
@@ -97,17 +128,16 @@ point. Publish the current branch first:
 gh workflow run builds.yml --ref develop
 ```
 
-That produces three tags: `:develop`, `:sha-<short>`, and — because the tag is
-hard-coded in the workflow — **`:stable` as well**. Know that before you run it:
-a develop dispatch moves `:stable` off main, so `:stable` stops meaning "newest
-main build" until the next release build restores it. If that matters to
-something else pointing at `:stable`, cut the release instead and rehearse the
-release tag.
+That produces two tags: `:develop` and `:sha-<short>`. `:stable` is only
+written by a build of `main` or a `v*` tag, so a develop dispatch cannot move it — an earlier
+version of the workflow tagged every build `:stable`, which meant a rehearsal
+silently redirected whatever was pulling "newest main" at a develop commit.
 
-The build guard requires this commit's **Playwright E2E Tests** check to be
-green, and that suite runs on pushes to `develop` as well as `main`, so a
-develop dispatch satisfies it without a release. A dispatch of a commit whose
-checks are absent or red is refused rather than published.
+The build guard requires this commit's **Playwright E2E Tests**, **Server
+Tests** and **Unit Tests & Coverage** checks to be green. All three suites run
+on pushes to `develop` as well as `main`, so a develop dispatch satisfies it
+without a release. A dispatch of a commit whose checks are absent or red is
+refused rather than published.
 
 ### What a localhost run does and does not prove
 
@@ -126,6 +156,22 @@ This stack does not terminate TLS. Put your standard reverse proxy (Traefik,
 Caddy, nginx with certbot) in front of the `frontend` service and forward to
 `HTTP_PUBLISH_PORT`. If you already run frappe_docker's Traefik overlay,
 `frontend` here is the same nginx it expects.
+
+**The HTTP port is bound to loopback by default** —
+`127.0.0.1:${HTTP_PUBLISH_PORT}` — so a proxy on the same host reaches it at
+`http://127.0.0.1:8080` and nothing else can. That is the shape to keep: the
+port speaks plain HTTP and carries session cookies, and Docker's published
+ports bypass host firewall rules such as `ufw`, so a `0.0.0.0` bind is open to
+the internet the moment it exists, whatever the firewall says.
+
+If the proxy runs on another machine, expose the port deliberately in `.env`:
+
+```bash
+HTTP_BIND_ADDRESS=0.0.0.0      # or the host's private-network address
+```
+
+and restrict who can reach it at the network layer yourself, because once the
+bind is not loopback, nothing in this stack does.
 
 ## Upgrading
 
@@ -152,8 +198,9 @@ docker compose exec backend bench --site <site> set-maintenance-mode off
 **If you skip step 1, nothing upgrades** — `pull` re-fetches the same pinned
 tag and `up -d` finds nothing to replace. That is the intended trade: an
 upgrade you have to ask for, and a `.env` that records what is running when
-somebody reports a bug. (`VECTORA_TAG=stable` restores pull-and-go, at the cost
-of not being able to say what a given host is running.)
+somebody reports a bug. (`VECTORA_TAG=stable`, set explicitly — the compose
+file has no default — restores pull-and-go, at the cost of not being able to
+say what a given host is running.)
 
 **Step 2 is not ceremony.** `up -d` starts serving the new code immediately,
 and `migrate` then takes as long as it takes — minutes on a real dataset. In
@@ -302,6 +349,54 @@ off the host; a backup on the machine it protects is a copy, not a backup.
   It works with the assistant switched off, and it is the fastest way to tell a
   wrong `base_url` from a model that cannot do structured output — those look
   identical to a rep, and have different fixes.
+
+## Telemetry
+
+Off unless two things are both true: `pulse_api_key` is set in the site's
+config **and** *Enable Telemetry* is on in System Settings (`developer_mode`
+also switches it off). `create-site` sets neither key, so a stack built from
+this directory sends nothing — the check is
+`frappe.utils.telemetry.pulse.client.is_enabled`, and the first line of it
+returns on the missing key.
+
+When it is on, the CRM adds one daily event (`crm.telemetry.capture_feature_state`,
+in `crm/hooks.py`'s `daily` list) on top of frappe's own: which integrations
+are enabled and row counts — leads synced, products, hierarchy nodes. Feature
+flags and counts; no record content, names, or values. The desk UI's usage
+events come from frappe and follow the same switch.
+
+To opt out on a site that has a key:
+
+```bash
+# the switch telemetry actually reads
+docker compose exec backend bench --site <site> execute frappe.client.set_value \
+  --kwargs '{"doctype": "System Settings", "name": "System Settings", "fieldname": "enable_telemetry", "value": 0}'
+# or: desk UI → System Settings → untick Enable Telemetry
+```
+
+Removing `pulse_api_key` from `site_config.json` is the other off switch, and
+the more durable one: a setup-wizard re-run can tick the checkbox back.
+
+## site_config keys
+
+Everything this stack reads from `sites/<site>/site_config.json`, set with
+`docker compose exec backend bench --site <site> set-config <key> <value>`.
+Unset means off for all of them.
+
+| Key | What it does | Production? |
+|---|---|---|
+| `crm_seed_demo_data` | Lets the setup wizard seed fake leads, deals and users — see [First boot](#first-boot) for why that is opt-in and what clearing it later removes | No. Scratch and rehearsal sites only |
+| `crm_enable_lead_syncing` | Turns the Facebook lead-ads connector back on, with the paging bug described [below](#lead-syncing-is-off) | Only if you accept that behaviour |
+| `crm_proxy_read_timeout` | Tells the backend what `PROXY_READ_TIMEOUT` nginx was given, so **CRM Agent Settings** can allow a matching agent `timeout` — see [Operating the proactive tier](#operating-the-proactive-tier) | Yes, when you raise the proxy ceiling; keep the two equal |
+| `is_demo_site` | Shows the "try it / sign up" banner in the sidebar (`window.is_demo_site`) | No |
+| `developer_mode` | Frappe's developer mode: writes doctype JSON to disk on save, relaxes several checks, disables telemetry | **Never.** Changes made in the UI become file edits inside the container |
+| `demo_username` / `demo_password` | Together they make `crm.api.live_demo.login` log any visitor in as that user **without a password** (the endpoint returns immediately unless both are set) | **Never set these on production.** They are a password-less login for that account, by design, for the public demo site only |
+| `enable_scheduler` | Whether cron jobs run; `create-site` sets it to 1 every boot | Must be 1 — check with `bench doctor` |
+| `pulse_api_key` | Telemetry destination; absent means off — see [Telemetry](#telemetry) | Your call |
+
+`site_config.json` is a file in the `sites` volume, so it survives image
+upgrades and does not travel with a backup — see the restore notes above. Read
+it back with `docker compose exec -T backend cat sites/<site>/site_config.json`.
 
 ## Lead syncing is off
 

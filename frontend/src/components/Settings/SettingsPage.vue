@@ -18,11 +18,11 @@
           >
             {{ title || __(doctype) }}
           </h2>
-          <Badge
+          <ToneBadge
             v-if="data.isDirty"
             :label="__('Not Saved')"
             variant="subtle"
-            theme="amber"
+            theme="orange"
           />
         </div>
       </div>
@@ -50,12 +50,12 @@
   </div>
 </template>
 <script setup>
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import FieldLayout from '@/components/FieldLayout/FieldLayout.vue'
 import {
   createDocumentResource,
   createResource,
   LoadingIndicator,
-  Badge,
   toast,
   ErrorMessage,
 } from 'frappe-ui'

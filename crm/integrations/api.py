@@ -9,7 +9,7 @@ from frappe.query_builder import Order
 from pypika.functions import Replace
 from werkzeug.wrappers import Response
 
-from crm.utils import are_same_phone_number, parse_phone_number
+from crm.utils import are_same_phone_number, parse_phone_number, sales_user_only
 
 
 def _get_recording_credentials(telephony_medium: str) -> tuple | None:
@@ -118,6 +118,7 @@ def add_task_to_call_log(call_sid: str, task: dict):
 		).insert(ignore_permissions=True)
 	else:
 		_task = frappe.get_doc("CRM Task", task.get("name"))
+		_task.check_permission("write")
 		_task.update(
 			{
 				"title": task.get("title"),
@@ -128,7 +129,7 @@ def add_task_to_call_log(call_sid: str, task: dict):
 				"priority": task.get("priority"),
 			}
 		)
-		_task.save(ignore_permissions=True)
+		_task.save()
 
 	call_log = frappe.get_doc("CRM Call Log", call_sid)
 	call_log.link_with_reference_doc("CRM Task", _task.name)
@@ -138,9 +139,18 @@ def add_task_to_call_log(call_sid: str, task: dict):
 
 
 @frappe.whitelist()
+@sales_user_only
 def get_contact_lead_or_deal_from_number(number: str):
-	"""Get contact, lead or deal from the given number."""
-	contact = get_contact_by_phone_number(number)
+	"""Get contact, lead or deal from the given number, restricted to records the caller can read."""
+	return _contact_lead_or_deal(get_contact_by_phone_number(number))
+
+
+def lookup_contact_lead_or_deal_from_number(number: str):
+	"""Unrestricted lookup for server-side callers (inbound webhooks run without a sales user)."""
+	return _contact_lead_or_deal(lookup_contact_by_phone_number(number))
+
+
+def _contact_lead_or_deal(contact: dict):
 	if contact.get("name"):
 		doctype = "Contact"
 		docname = contact.get("name")
@@ -155,14 +165,33 @@ def get_contact_lead_or_deal_from_number(number: str):
 
 
 @frappe.whitelist()
+@sales_user_only
 def get_contact_by_phone_number(phone_number: str):
-	"""Get contact by phone number."""
+	"""Get contact by phone number, restricted to records the caller can read."""
+	return _restrict_to_readable(lookup_contact_by_phone_number(phone_number))
+
+
+def lookup_contact_by_phone_number(phone_number: str):
+	"""Unrestricted lookup for server-side callers (inbound webhooks run without a sales user)."""
 	number = parse_phone_number(phone_number)
 
 	if number.get("is_valid"):
 		return get_contact(number.get("national_number"), number.get("country"))
 	else:
 		return get_contact(phone_number, number.get("country"), exact_match=True)
+
+
+def _restrict_to_readable(contact: dict):
+	"""Drop the lead/deal/contact from a ``get_contact`` result the session user
+	cannot read, so the phone lookup can't be used to enumerate other reps' records."""
+	if contact.get("lead") and not frappe.has_permission("CRM Lead", "read", doc=contact["lead"]):
+		return {"mobile_no": contact.get("mobile_no")}
+	if contact.get("deal") and not frappe.has_permission("CRM Deal", "read", doc=contact["deal"]):
+		contact.pop("deal", None)
+	if contact.get("name") and not contact.get("lead"):
+		if not frappe.has_permission("Contact", "read", doc=contact["name"]):
+			return {"mobile_no": contact.get("mobile_no")}
+	return contact
 
 
 def _resolve_validated_ip(hostname: str, port: int) -> str:
@@ -323,6 +352,8 @@ def get_contact(phone_number: str, country: str = "IN", exact_match: bool = Fals
 		.replace("(", "")
 		.replace(")", "")
 		.replace("+", "")
+		.replace("%", "")
+		.replace("_", "")
 	)
 
 	# Check if the number is associated with a contact.

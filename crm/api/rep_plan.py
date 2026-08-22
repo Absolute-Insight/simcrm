@@ -38,6 +38,10 @@ ITEM_FIELDS = (
 	"suggestion",
 )
 
+# One request may replace the whole week; this is far above any plan a person
+# writes by hand and keeps a client from growing the child table without bound.
+MAX_PLAN_ITEMS = 200
+
 # the fields a client may set; everything else on a row belongs to the matcher
 EDITABLE_ITEM_FIELDS = (
 	"activity_type",
@@ -171,6 +175,26 @@ def _stage_items(plan, items: list[dict]) -> set[str]:
 	return dropped - {row.get("suggestion") for row in items if row.get("suggestion")}
 
 
+def _items_or_throw(items) -> list[dict]:
+	"""The wire's ``items`` as a bounded list of dicts, or a clean error.
+
+	Anything else used to fall through to ``plan.append`` and 500; a list with
+	no ceiling was a way to write an unbounded child table in one request.
+	"""
+	if isinstance(items, str):
+		try:
+			items = json.loads(items)
+		except ValueError:
+			frappe.throw(_("Plan items must be a list."), frappe.ValidationError)
+	if not isinstance(items, list) or not all(isinstance(row, dict) for row in items):
+		frappe.throw(_("Plan items must be a list."), frappe.ValidationError)
+	if len(items) > MAX_PLAN_ITEMS:
+		frappe.throw(
+			_("A week's plan can hold at most {0} items.").format(MAX_PLAN_ITEMS), frappe.ValidationError
+		)
+	return items
+
+
 @frappe.whitelist()
 @sales_user_only
 def save_plan(week_start: str, items: list | str, modified: str | None = None):
@@ -182,8 +206,7 @@ def save_plan(week_start: str, items: list | str, modified: str | None = None):
 	instead of overwriting it.
 	"""
 	week_start = _monday_or_throw(week_start)
-	if isinstance(items, str):
-		items = json.loads(items)
+	items = _items_or_throw(items)
 
 	horizon = frappe.utils.getdate() - timedelta(weeks=MATCH_HORIZON_WEEKS)
 	if frappe.utils.getdate(week_start) < horizon:

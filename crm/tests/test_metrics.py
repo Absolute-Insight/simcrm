@@ -278,6 +278,57 @@ class MetricsTest(IntegrationTestCase):
 		take_forecast_snapshot()
 		self.assertEqual(frappe.db.count("CRM Forecast Snapshot"), first)
 
+	def test_a_failing_scope_costs_only_its_own_rows(self):
+		"""One rep whose forecast raises must not abort the weekly run for the site."""
+		from unittest.mock import patch
+
+		from crm.api import dashboard
+
+		# The deal needs a close date inside the snapshot window (today-1mo ..
+		# today+6mo) or it buckets into no month, the site scope writes no rows,
+		# and `written` is 0 whatever the failing rep does. Without it this
+		# passed only on a site carrying deals left by an earlier run.
+		self.make_deal(
+			expected_deal_value=1_000,
+			probability=50,
+			exchange_rate=1,
+			expected_closure_date=frappe.utils.add_months(
+				frappe.utils.get_first_day(frappe.utils.nowdate()), 1
+			),
+		)
+		real = dashboard.get_forecasted_revenue
+
+		def explode(from_date, to_date, **kwargs):
+			if kwargs.get("user") == USER:
+				raise ValueError("bad rep")
+			return real(from_date, to_date, **kwargs)
+
+		with patch.object(dashboard, "get_forecasted_revenue", explode):
+			written = take_forecast_snapshot()
+		self.assertGreater(written, 0)
+		self.assertTrue(frappe.get_all("CRM Forecast Snapshot", filters={"scope": "Site", "user": ""}))
+		self.assertFalse(frappe.get_all("CRM Forecast Snapshot", filters={"scope": "Rep", "user": USER}))
+
+	def test_a_duplicate_snapshot_row_is_refused_by_the_table(self):
+		"""exists-then-insert can race; the unique key cannot."""
+		if not frappe.db.sql(
+			"select 1 from information_schema.TABLE_CONSTRAINTS where table_name=%s and CONSTRAINT_NAME=%s",
+			("tabCRM Forecast Snapshot", "unique_snapshot_key"),
+		):
+			self.skipTest("unique_snapshot_key is not on this site yet (migrate adds it)")
+		row = {
+			"doctype": "CRM Forecast Snapshot",
+			"snapshot_date": "2026-01-03",
+			"month": "2026-02",
+			"scope": "Rep",
+			"user": USER,
+			"forecasted": 1,
+		}
+		first = frappe.get_doc(row).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Forecast Snapshot", first.name, force=True)
+		with self.assertRaises(frappe.UniqueValidationError):
+			frappe.get_doc(row).insert(ignore_permissions=True)
+
 	def test_snapshots_are_taken_per_rep_as_well_as_site_wide(self):
 		month = frappe.utils.add_months(frappe.utils.get_first_day(frappe.utils.nowdate()), 1)
 		self.make_deal(

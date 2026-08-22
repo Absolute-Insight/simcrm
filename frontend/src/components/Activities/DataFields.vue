@@ -4,11 +4,11 @@
   >
     <div class="flex h-8 items-center text-2xl-semibold text-ink-gray-8">
       {{ __('Data') }}
-      <Badge
+      <ToneBadge
         v-if="document.isDirty"
         class="ml-3"
         :label="__('Not Saved')"
-        theme="amber"
+        theme="orange"
       />
     </div>
     <div class="flex gap-1">
@@ -56,10 +56,11 @@
 </template>
 
 <script setup>
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import EditIcon from '@/components/Icons/EditIcon.vue'
 import DataFieldsModal from '@/components/Modals/DataFieldsModal.vue'
 import FieldLayout from '@/components/FieldLayout/FieldLayout.vue'
-import { Badge, createResource } from 'frappe-ui'
+import { createResource } from 'frappe-ui'
 import LoadingIndicator from '@/components/Icons/LoadingIndicator.vue'
 import { usersStore } from '@/stores/users'
 import { useDocument } from '@/data/document'

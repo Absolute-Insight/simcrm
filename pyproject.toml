@@ -85,6 +85,6 @@ indent-style = "tab"
 docstring-code-format = true
 
 [project.urls]
-Homepage = "https://frappe.io/crm"
-Repository = "https://github.com/frappe/crm.git"
-"Bug Reports" = "https://github.com/frappe/crm/issues"
+Homepage = "https://github.com/Absolute-Insight/simcrm"
+Repository = "https://github.com/Absolute-Insight/simcrm.git"
+"Bug Reports" = "https://github.com/Absolute-Insight/simcrm/issues"

@@ -162,6 +162,51 @@ class SuggestionApiTest(IntegrationTestCase):
 		frappe.set_user(OWNER)
 		self.assertEqual(get_open_count(), 1)
 
+	def test_an_in_tree_manager_is_badged_with_their_subtree_not_the_site(self):
+		"""``db.count`` skips the doctype's permission query, so a manager scoped to a
+		subtree was badged with every open row on the site while the inbox behind the
+		badge showed only their team's."""
+		manager = "suggestion-manager@crmtest.test"
+		make_sales_user(manager, "Suggestion Manager")
+		frappe.get_doc("User", manager).add_roles("Sales Manager")
+		self.make_hierarchy(manager, OWNER)
+
+		make_suggestion(OWNER, self.deal)
+		make_suggestion(INTRUDER, self.deal, title="Outside the subtree")
+		frappe.set_user(manager)
+		self.assertEqual(get_open_count(), 1)
+		self.assertEqual([s.user for s in get_suggestions()], [OWNER])
+
+	def test_an_in_tree_manager_cannot_clear_an_orphan_outside_their_subtree(self):
+		"""An orphan (its record already deleted) skips the record-access check, so
+		a flat "is a manager" test was the only thing between any Sales Manager and
+		every orphan on the site."""
+		manager = "suggestion-manager@crmtest.test"
+		make_sales_user(manager, "Suggestion Manager")
+		frappe.get_doc("User", manager).add_roles("Sales Manager")
+		self.make_hierarchy(manager, OWNER)
+
+		orphan = make_suggestion(INTRUDER, self.deal)
+		frappe.db.set_value("CRM Suggestion", orphan, "reference_docname", "CRM-DEAL-GONE-0000")
+		frappe.set_user(manager)
+		with self.assertRaises(frappe.PermissionError):
+			dismiss(orphan, reason="not my team")
+
+	def make_hierarchy(self, manager: str, *reports: str):
+		"""A one-level sales tree, the same structure that scopes leads and deals."""
+		self.addCleanup(frappe.db.set_single_value, "FCRM Settings", "enable_sales_hierarchy", 0)
+		self.addCleanup(frappe.cache.delete_value, "crm_sales_hierarchy_subtree")
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+		frappe.db.delete("CRM Sales Hierarchy", {"user": ("in", [manager, *reports])})
+		top = frappe.get_doc(
+			{"doctype": "CRM Sales Hierarchy", "user": manager, "full_name": "Suggestion Manager"}
+		).insert(ignore_permissions=True)
+		for report in reports:
+			frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": report, "reports_to": top.name}).insert(
+				ignore_permissions=True
+			)
+		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
+
 	def test_a_non_open_suggestion_cannot_be_accepted_again(self):
 		name = make_suggestion(OWNER, self.deal)
 		frappe.set_user(OWNER)

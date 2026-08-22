@@ -1,3 +1,5 @@
+import re
+
 import frappe
 import requests
 from frappe import _
@@ -12,12 +14,36 @@ from crm.fcrm.doctype.fcrm_settings.fcrm_settings import FCRMSettings
 # 30/min is far above any real use: the UI fetches on a currency change.
 EXCHANGE_RATE_LIMIT = 30
 
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _validate_inputs(from_currency: str, to_currency: str, date: str):
+	"""Every value here is interpolated into a provider URL; only accept known
+	currency codes and an ISO date so nothing else can reach the path or query."""
+	for currency in (from_currency, to_currency):
+		if not currency or not frappe.db.exists("Currency", currency):
+			frappe.throw(_("Invalid currency: {0}").format(frappe.bold(currency)))
+	if date != "latest" and not DATE_PATTERN.match(date):
+		frappe.throw(_("Invalid date: {0}. Use YYYY-MM-DD.").format(frappe.bold(date)))
+
+
+def _get_access_key(settings: FCRMSettings):
+	access_key = settings.get_password("access_key", raise_exception=False)
+	if not access_key:
+		frappe.throw(
+			_("Access Key is required for Service Provider: {0}").format(
+				frappe.bold(settings.service_provider)
+			)
+		)
+	return access_key
+
 
 @frappe.whitelist()
 @rate_limit(limit=EXCHANGE_RATE_LIMIT, seconds=60)
 def get_exchange_rate(from_currency: str, to_currency: str, date: str | None = None):
 	if not date:
 		date = "latest"
+	_validate_inputs(from_currency, to_currency, date)
 
 	# "latest" is keyed by today's date so tomorrow's call automatically misses the cache
 	cache_date = frappe.utils.today() if date == "latest" else date
@@ -102,13 +128,8 @@ def _fetch_from_fawaz_api(from_currency: str, to_currency: str, date: str):
 
 
 def _fetch_from_exchangerate_host(settings: FCRMSettings, from_currency: str, to_currency: str, date: str):
-	if not settings.access_key:
-		frappe.throw(
-			_("Access Key is required for Service Provider: {0}").format(
-				frappe.bold(settings.service_provider)
-			)
-		)
-	params = {"access_key": settings.access_key, "from": from_currency, "to": to_currency, "amount": 1}
+	access_key = _get_access_key(settings)
+	params = {"access_key": access_key, "from": from_currency, "to": to_currency, "amount": 1}
 	if date != "latest":
 		params["date"] = date
 	res = requests.get("https://api.exchangerate.host/convert", params=params, timeout=5)
@@ -118,14 +139,9 @@ def _fetch_from_exchangerate_host(settings: FCRMSettings, from_currency: str, to
 
 
 def _fetch_from_exchangerate_api(settings: FCRMSettings, from_currency: str, to_currency: str):
-	if not settings.access_key:
-		frappe.throw(
-			_("Access Key is required for Service Provider: {0}").format(
-				frappe.bold(settings.service_provider)
-			)
-		)
+	access_key = _get_access_key(settings)
 	res = requests.get(
-		f"https://v6.exchangerate-api.com/v6/{settings.access_key}/pair/{from_currency}/{to_currency}",
+		f"https://v6.exchangerate-api.com/v6/{access_key}/pair/{from_currency}/{to_currency}",
 		timeout=5,
 	)
 	if res.ok:

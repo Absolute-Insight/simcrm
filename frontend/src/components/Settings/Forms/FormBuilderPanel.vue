@@ -11,10 +11,10 @@
           class="-ml-4 cursor-pointer !max-w-96 !justify-start !pr-0 text-lg-semibold text-ink-gray-7 no-underline hover:bg-transparent hover:no-underline hover:opacity-70 focus:bg-transparent focus:outline-none focus:ring-0"
           @click="goBack"
         />
-        <Badge
+        <ToneBadge
           v-if="dirty"
           variant="subtle"
-          theme="amber"
+          theme="orange"
           size="sm"
           :label="__('Not Saved')"
         />
@@ -196,13 +196,13 @@
                               (e) => addFieldToColumn(col, e)
                             "
                           >
-                            <template #trigger="{ open, setOpen }">
+                            <template #trigger="{ open: isOpen, setOpen }">
                               <Button
                                 class="!h-8 w-full !bg-surface-elevation-2"
                                 variant="outline"
                                 :label="__('Add Field')"
                                 icon-left="lucide-plus"
-                                @click="openFieldPicker(open, setOpen)"
+                                @click="openFieldPicker(isOpen, setOpen)"
                               />
                             </template>
                           </Combobox>
@@ -656,8 +656,8 @@
 </template>
 
 <script setup>
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import {
-  Badge,
   Button,
   Switch,
   Combobox,
@@ -1117,13 +1117,13 @@ function columnOps(cols) {
   return [
     {
       label: __('Add Column'),
-      icon: 'columns',
+      icon: 'lucide-columns',
       onClick: () => addColumn(cols),
       condition: () => cols.length < MAX_COLUMNS,
     },
     {
       label: __('Remove Last Column'),
-      icon: 'trash-2',
+      icon: 'lucide-trash-2',
       onClick: () => removeLastColumn(cols),
       condition: () => cols.length > 1,
     },
@@ -1138,12 +1138,12 @@ function sectionMenu(sec) {
       options: [
         {
           label: __('Rename'),
-          icon: 'edit',
+          icon: 'lucide-edit',
           onClick: () => (sec.editingLabel = true),
         },
         {
           label: __('Remove Section'),
-          icon: 'trash-2',
+          icon: 'lucide-trash-2',
           onClick: () => removeBreak(sec.secField),
         },
       ],

@@ -475,6 +475,56 @@ class MatchActualsJobTest(IntegrationTestCase):
 		plan.reload()
 		self.assertEqual(plan.items[0].status, "Done")
 
+	def test_actuals_are_fetched_once_per_source_however_many_plans_there_are(self):
+		"""The daily run reads every rep's activity once and slices it per plan;
+		the per-plan version was four queries a plan plus one per Done item."""
+		for offset in (0, -7, -14):
+			monday = frappe.utils.add_days(self.monday, offset)
+			for user in (self.USER, self.OTHER):
+				self.make_plan(
+					{"activity_type": "Task", "planned_date": monday},
+					{"activity_type": "Call", "planned_date": monday},
+					user=user,
+					week_start=monday,
+				)
+		with patch.object(rep_planning, "_query_source", wraps=rep_planning._query_source) as queries:
+			match_actuals()
+		self.assertEqual(queries.call_count, len(rep_planning.ACTUAL_SOURCES))
+
+	def test_a_rolled_back_plan_leaves_no_claim_behind(self):
+		"""A plan that fails after claiming a record must not keep that record
+		from the plan that is then matched successfully."""
+		last_monday = frappe.utils.add_days(self.monday, -7)
+		broken = self.make_plan(
+			{"activity_type": "Task", "planned_date": last_monday}, week_start=last_monday
+		)
+		plan = self.make_plan(self.on_deal(activity_type="Task"))
+		frappe.get_doc(
+			{
+				"doctype": "CRM Task",
+				"title": "Claimed then released",
+				"status": "Done",
+				"assigned_to": self.USER,
+				"reference_doctype": "CRM Deal",
+				"reference_docname": self.deal,
+			}
+		).insert(ignore_permissions=True)
+
+		real = rep_planning._match_plan
+
+		def claim_then_explode(row, today, claimed):
+			if row.name == broken.name:
+				claimed[("CRM Task", "stray")] = row.name
+				raise ValueError("after claiming")
+			return real(row, today, claimed)
+
+		with patch.object(rep_planning, "_match_plan", claim_then_explode):
+			match_actuals()
+
+		plan.reload()
+		self.assertEqual(plan.items[0].status, "Done")
+		self.assertNotIn(("CRM Task", "stray"), rep_planning._claimed_actuals(self.monday))
+
 	def test_a_week_old_plan_settles_within_the_horizon(self):
 		"""The horizon sweep must not touch weeks the matcher still visits."""
 		last_monday = frappe.utils.add_days(self.monday, -7)

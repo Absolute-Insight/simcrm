@@ -174,7 +174,7 @@ const dropdownOptions = computed(() => {
 
   options.push({
     label: __('Remove'),
-    icon: 'trash-2',
+    icon: 'lucide-trash-2',
     variant: 'red',
     onClick: () => emit('remove'),
     condition: () => !props.isGroup,
@@ -182,7 +182,7 @@ const dropdownOptions = computed(() => {
 
   options.push({
     label: __('Remove Group'),
-    icon: 'trash-2',
+    icon: 'lucide-trash-2',
     variant: 'red',
     onClick: () => emit('remove'),
     condition: () => props.isGroup,

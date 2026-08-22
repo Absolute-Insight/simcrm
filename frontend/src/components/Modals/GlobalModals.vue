@@ -16,6 +16,7 @@
     v-model="showChangePasswordModal"
   />
   <AboutModal v-model="showAboutModal" />
+  <HelpCenterModal v-if="helpCenterVisible" />
   <FieldLayoutDialogContainer />
 </template>
 <script setup>
@@ -24,6 +25,8 @@ import ChangePasswordModal from '@/components/Modals/ChangePasswordModal.vue'
 import CreateDocumentModal from '@/components/Modals/CreateDocumentModal.vue'
 import QuickEntryModal from '@/components/Modals/QuickEntryModal.vue'
 import AboutModal from '@/components/Modals/AboutModal.vue'
+import HelpCenterModal from '@/components/Modals/HelpCenterModal.vue'
+import { helpCenterVisible } from '@/stores/help'
 import {
   showCreateDocumentModal,
   createDocumentDoctype,

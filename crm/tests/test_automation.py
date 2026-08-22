@@ -145,6 +145,28 @@ class AutomationRuleTest(IntegrationTestCase):
 		deal.save()
 		self.assertEqual(len(self.suggestions_for(deal)), 1)
 
+	def test_a_rule_suggestion_expires_like_a_signal_one_and_its_title_is_clipped(self):
+		"""The hourly signals stamp ``expires_on`` so the expiry sweep can retire a
+		row; a rule's suggestion had none and so outlived everything. And the title
+		is Data(140): a template over a long organization name used to raise out of
+		the save that triggered the rule."""
+		from crm.agent.config import get_signal_config
+		from crm.agent.signals import TITLE_MAX_LENGTH
+
+		# the template field is Data(140) too, so the overflow has to come from rendering
+		make_rule(action="Create Suggestion", title_template="{{ doc.name }}" * 10)
+		deal = self.make_deal()
+		rows = frappe.get_all(
+			"CRM Suggestion",
+			filters={"reference_docname": deal.name, "signal": ("like", "rule:%")},
+			fields=["title", "expires_on"],
+		)
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(len(rows[0].title), TITLE_MAX_LENGTH)
+		self.assertIsNotNone(rows[0].expires_on)
+		expected = frappe.utils.add_days(frappe.utils.now_datetime(), get_signal_config().suggestion_ttl_days)
+		self.assertLess(abs((rows[0].expires_on - expected).total_seconds()), 120)
+
 	def test_an_insert_does_not_also_fire_the_status_changed_rules(self):
 		"""frappe runs on_update during the insert and has_value_changed answers True
 		with no previous document, so every new record used to fire both rule sets."""

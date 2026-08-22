@@ -16,6 +16,7 @@
 import { statusesStore } from '@/stores/statuses'
 import { viewsStore } from '@/stores/views'
 import { drilldownFor, standardViewPayload } from '@/utils/dashboardHome'
+import { describeError } from '@/utils/describeError'
 import { call, toast } from 'frappe-ui'
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
@@ -53,7 +54,9 @@ export function useDrilldown() {
       // this the list would open on the filter set from the *previous* visit.
       await views.reload()
     } catch (error) {
-      toast.error(error.messages?.[0] || error.message)
+      toast.error(
+        describeError(error).message || __('Could not open that list'),
+      )
       return
     }
     router.push({ name: routeName, params: { viewType: 'list' } })

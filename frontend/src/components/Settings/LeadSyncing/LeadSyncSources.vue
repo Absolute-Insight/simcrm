@@ -5,7 +5,7 @@
       <div class="flex flex-col gap-1 w-9/12">
         <h2 class="flex gap-2 text-2xl-semibold leading-none h-5 items-center">
           {{ __('Lead Sources') }}
-          <Badge theme="amber" size="sm">Beta</Badge>
+          <ToneBadge theme="orange" size="sm">Beta</ToneBadge>
         </h2>
         <p class="text-p-base text-ink-gray-6">
           {{
@@ -85,9 +85,9 @@
               <Dropdown
                 class=""
                 :options="getDropdownOptions(source)"
-                placement="right"
+                align="end"
                 :button="{
-                  icon: 'more-horizontal',
+                  icon: 'lucide-more-horizontal',
                   variant: 'ghost',
                   onblur: (e) => {
                     e.stopPropagation()
@@ -121,7 +121,8 @@
   </div>
 </template>
 <script setup>
-import { Switch, Dropdown, toast, Badge } from 'frappe-ui'
+import ToneBadge from '@/components/ui/ToneBadge.vue'
+import { Switch, Dropdown, toast } from 'frappe-ui'
 import { ref, computed, inject } from 'vue'
 import EmptyState from '../../ListViews/EmptyState.vue'
 import { ConfirmDelete } from '../../../utils'
@@ -184,7 +185,7 @@ function getDropdownOptions(source) {
   let options = [
     {
       label: __('Duplicate'),
-      icon: 'copy',
+      icon: 'lucide-copy',
       onClick: () => emit('updateStep', 'new-source', { ...source }),
     },
     ...ConfirmDelete({

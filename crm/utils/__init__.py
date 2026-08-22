@@ -1,4 +1,5 @@
 import functools
+import time
 
 import frappe
 import phonenumbers
@@ -138,6 +139,43 @@ def sales_user_only(fn: callable) -> callable:
 		return fn(*args, **kwargs)
 
 	return wrapper
+
+
+def user_rate_key(scope: str, window_seconds: int = 60, user: str | None = None) -> str:
+	"""The redis key :func:`user_rate_limited` counts in for this window.
+
+	``incr``/``expire`` are raw redis commands and skip the site prefix that
+	``get_value`` applies, so the site goes in the key by hand or every site on
+	the bench shares one bucket. Exposed so a test can clear its own bucket.
+	"""
+	bucket = int(time.time()) // max(int(window_seconds), 1)
+	return f"crm_user_rate:{frappe.local.site}:{scope}:{user or frappe.session.user}:{bucket}"
+
+
+def user_rate_limited(scope: str, limit: int, window_seconds: int = 60) -> bool:
+	"""True when the current user has exceeded ``limit`` calls to ``scope`` in the current window.
+
+	``frappe.rate_limiter.rate_limit`` keys on the request IP by default, which is
+	one bucket for every user behind an office NAT and a fresh bucket for every
+	address one user can borrow. This one keys on the session user, so it is the
+	layer that actually bounds what a single account can do; keep the IP limiter
+	as the second layer rather than replacing it.
+
+	Fixed windows: the bucket is ``now // window_seconds``, so the counter for one
+	window is a redis key that expires itself. Fails open on cache errors -- an
+	unreachable redis must not take the feature down with it.
+	"""
+	if limit <= 0:
+		return False
+	key = user_rate_key(scope, window_seconds)
+	try:
+		cache = frappe.cache()
+		count = cache.incr(key)
+		if count == 1:
+			cache.expire(key, int(window_seconds) * 2)
+	except Exception:
+		return False
+	return count > limit
 
 
 def is_frappe_version(version: str, above: bool = False, below: bool = False):

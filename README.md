@@ -52,10 +52,14 @@ upgrades, backups, and the restore drill you should rehearse before trusting eit
 
 ```bash
 cd deploy
-cp .env.example .env        # SITE_NAME, DB_ROOT_PASSWORD, ADMIN_PASSWORD
+cp .env.example .env        # VECTORA_TAG, SITE_NAME, DB_ROOT_PASSWORD, ADMIN_PASSWORD
 docker compose up -d
 docker compose logs -f create-site
+docker compose exec backend bench --site <site> doctor   # scheduler enabled, workers online
 ```
+
+The stack publishes its HTTP port on loopback only; the runbook's TLS section
+covers putting a reverse proxy in front of it.
 
 Read [deploy/README.md](deploy/README.md) before the first upgrade: reverting the image
 is **not** a rollback once `migrate` has run, and the runbook explains what is.
@@ -94,7 +98,10 @@ pre-commit run --files <changed files>
 
 [AGENTS.md](AGENTS.md) is the map of the codebase; [CLAUDE.md](CLAUDE.md) covers how to
 work in it. [docs/PILOT-READINESS.md](docs/PILOT-READINESS.md) tracks what is done and
-what is not, honestly.
+what is not, honestly, and
+[docs/BROWSER-QA-2026-08-22.md](docs/BROWSER-QA-2026-08-22.md) records the last full
+browser pass before deployment — what was found, what was fixed, and what it did not
+cover.
 
 ## Built on
 

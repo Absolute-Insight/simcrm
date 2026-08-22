@@ -2,7 +2,6 @@
 # For license information, please see license.txt
 
 import frappe
-from frappe.utils.caching import request_cache
 
 _OWNER_FIELD = {
 	"CRM Lead": "lead_owner",
@@ -104,6 +103,11 @@ def has_deal_permission(doc, ptype, user):
 
 
 def _in_hierarchy(user: str) -> bool:
+	# Deliberately not request_cache'd: frappe.local.request_cache is created in
+	# frappe.init and only cleared at the end of a web request, so in a scheduler
+	# job or a test run it lives for the whole process -- a user added to the
+	# hierarchy mid-run would read as outside it until a restart. One indexed
+	# exists() per check is cheaper than that class of bug.
 	return bool(frappe.db.exists("CRM Sales Hierarchy", {"user": user}))
 
 

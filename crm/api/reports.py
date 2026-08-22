@@ -136,7 +136,7 @@ def _pipeline_by_segment(from_date, to_date, user, territory=None):
 
 
 def _quota_attainment_by_rep(from_date, to_date, user, territory=None):
-	from crm.api.dashboard import quota_in_period, visible_reps, won_value_in_period
+	from crm.api.dashboard import quota_by_user, visible_reps, won_value_by_user
 
 	reps = set(frappe.get_all("CRM Quota", pluck="user", distinct=True))
 	Deal = DocType("CRM Deal")
@@ -163,10 +163,13 @@ def _quota_attainment_by_rep(from_date, to_date, user, territory=None):
 		if visible is not None:
 			reps &= set(visible)
 
+	# one grouped read each for quota and closed-won, not two queries per rep
+	quotas = quota_by_user(list(reps), from_date, to_date)
+	actuals = won_value_by_user(list(reps), from_date, to_date)
 	rows = []
 	for rep in sorted(reps):
-		quota = quota_in_period(from_date, to_date, rep)
-		actual = won_value_in_period(from_date, to_date, rep)
+		quota = quotas.get(rep, 0.0)
+		actual = actuals.get(rep, 0.0)
 		rows.append(
 			{
 				"user": rep,
@@ -299,6 +302,11 @@ def get_report(
 	user: str | None = None,
 	territory: str | None = None,
 ):
+	from crm.api.dashboard import check_user_rate
+
+	# per-account on top of the per-IP decorator; a report is a full aggregate
+	# pass, so the user budget is the same 60 rather than the dashboard's double
+	check_user_rate("report", 60)
 	if name not in REPORTS:
 		frappe.throw(_("Unknown report: {0}").format(name))
 	if not from_date or not to_date:

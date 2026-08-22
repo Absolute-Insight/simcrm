@@ -38,7 +38,8 @@
    "in_standard_filter": 1,
    "label": "Scope",
    "options": "Rep\nTeam\nSite",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "description": "Whose forecast this is: the rep for a Rep row, the manager at the top of the subtree for a Team row, blank for Site.",
@@ -47,7 +48,8 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "User",
-   "options": "User"
+   "options": "User",
+   "search_index": 1
   },
   {
    "fieldname": "forecasted",

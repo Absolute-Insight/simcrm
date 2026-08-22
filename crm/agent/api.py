@@ -6,7 +6,7 @@
 Returns a status rather than raising when the model is off or unreachable: an
 unavailable endpoint should look like a feature that is not there, not like a bug.
 Mirrors the shape of ``crm.domain_enrichment.api``, including its rule that every entry
-point which triggers an outbound fetch is rate-limited per user.
+point which triggers an outbound fetch is rate-limited -- here per user *and* per IP.
 """
 
 from __future__ import annotations
@@ -16,21 +16,45 @@ import time
 import frappe
 from frappe.rate_limiter import rate_limit
 
-from crm.agent import actions, client, tools
+from crm.agent import actions, client, knowledge, tools
 from crm.agent.config import get_config, get_signal_config
 from crm.agent.context import build_thread_messages
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
-from crm.agent.schemas import ConnectionProbe, ThreadSummary
+from crm.agent.schemas import AssistantAnswer, ConnectionProbe, ThreadSummary
+from crm.help import load_articles
+from crm.utils import sales_user_only, user_rate_limited
 
-# Per-user, per-minute cap, matching ``domain_enrichment.api.ENRICH_RATE_LIMIT``.
-# One call holds a worker for up to ``timeout`` x ``client.MAX_ATTEMPTS`` -- 60 seconds
-# at the shipped defaults -- so without a cap a single authenticated user can occupy
-# the whole worker pool from a loop. 10/min is far above any real human burst.
+# Per-minute cap, matching ``domain_enrichment.api.ENRICH_RATE_LIMIT``. One call
+# holds a worker for up to ``timeout`` x ``client.MAX_ATTEMPTS`` -- 60 seconds at the
+# shipped defaults -- so without a cap a single authenticated user can occupy the
+# whole worker pool from a loop. 10/min is far above any real human burst.
+#
+# Applied twice, on purpose. ``@rate_limit`` is frappe's limiter and it keys on the
+# *request IP* (``ip_based=True`` is its default), so on its own it is one bucket
+# for a whole office behind a NAT and a fresh bucket for every address one account
+# can borrow. ``user_rate_limited`` keys on the session user and is the layer that
+# bounds what a single account can do; the IP layer stays as the backstop for
+# unauthenticated-looking floods. Both read the same number.
 SUMMARISE_RATE_LIMIT = 10
+USER_RATE_SCOPE = "crm_agent_model_call"
 
 # Tighter than the feature endpoints: this is an admin pressing a button, not a
 # rep working, and each press costs a full model call against someone's endpoint.
 TEST_CONNECTION_RATE_LIMIT = 6
+TEST_CONNECTION_RATE_SCOPE = "crm_agent_test_connection"
+
+# The per-user share of the day: a floor of 10 so a small budget still leaves a
+# rep a working session, else a fifth of the site's budget, so no single account
+# can spend more than that before everyone else is locked out for the day. It is
+# derived rather than a settings field: an admin who sets the site budget has
+# already said how much the endpoint may cost, and this only keeps one user from
+# being the one who spends it.
+USER_DAILY_BUDGET_FLOOR = 10
+USER_DAILY_BUDGET_SHARE = 5
+
+# The longest question the assistant accepts. Anything past this is a paste,
+# not a question, and a paste belongs in the record it came from.
+ASSISTANT_QUESTION_MAX_CHARS = 2000
 
 BUDGET_CACHE_KEY = "crm_agent_daily_calls"
 
@@ -45,26 +69,51 @@ def budget_key() -> str:
 	return f"{BUDGET_CACHE_KEY}:{frappe.local.site}:{frappe.utils.today()}"
 
 
+def user_budget_key(user: str | None = None) -> str:
+	"""Today's per-user counter key, site-scoped like :func:`budget_key`."""
+	return f"{budget_key()}:{user or frappe.session.user}"
+
+
+def user_daily_call_budget(cfg) -> int:
+	"""One account's share of ``daily_call_budget``; 0 (uncapped) when the site is."""
+	if cfg.daily_call_budget <= 0:
+		return 0
+	return max(USER_DAILY_BUDGET_FLOOR, cfg.daily_call_budget // USER_DAILY_BUDGET_SHARE)
+
+
 def _budget_spent(cfg) -> bool:
-	"""Count this call against the site-wide daily budget; True when it is gone.
+	"""Count this call against the daily budgets; True when either is gone.
 
 	The per-user rate limit bounds a burst, not a day: fifty users at ten calls a
 	minute is still an unbounded bill against whoever hosts the endpoint. The
-	counter is a redis key per day, so it costs one incr and expires itself.
+	site-wide counter is a redis key per day, so it costs one incr and expires
+	itself. A second counter per user keeps one account from spending the whole
+	site's day on its own -- see :func:`user_daily_call_budget`.
 	"""
 	if cfg.daily_call_budget <= 0:
 		return False
-	key = budget_key()
 	try:
-		spent = frappe.cache().incr(key)
-		frappe.cache().expire(key, 60 * 60 * 36)
+		cache = frappe.cache()
+		key = budget_key()
+		spent = cache.incr(key)
+		cache.expire(key, 60 * 60 * 36)
+		user_key = user_budget_key()
+		user_spent = cache.incr(user_key)
+		cache.expire(user_key, 60 * 60 * 36)
 	except Exception:
 		# a cache that is unavailable must not take the feature down with it
 		return False
-	return spent > cfg.daily_call_budget
+	return spent > cfg.daily_call_budget or user_spent > user_daily_call_budget(cfg)
+
+
+def _throttled(cfg) -> bool:
+	"""The per-user minute window, then the daily budgets -- in that order, so a
+	call the burst limiter refuses is not also charged to the day."""
+	return user_rate_limited(USER_RATE_SCOPE, SUMMARISE_RATE_LIMIT) or _budget_spent(cfg)
 
 
 @frappe.whitelist()
+@sales_user_only
 @rate_limit(limit=SUMMARISE_RATE_LIMIT, seconds=60)
 def summarise_thread(reference_doctype: str, reference_name: str) -> dict:
 	"""Summarise a record's communication thread.
@@ -75,7 +124,7 @@ def summarise_thread(reference_doctype: str, reference_name: str) -> dict:
 	cfg = get_config()
 	if not cfg.enabled:
 		return {"status": "disabled"}
-	if _budget_spent(cfg):
+	if _throttled(cfg):
 		return {"status": "unavailable"}
 
 	record = tools.read_record(reference_doctype, reference_name)
@@ -92,6 +141,7 @@ def summarise_thread(reference_doctype: str, reference_name: str) -> dict:
 
 
 @frappe.whitelist()
+@sales_user_only
 @rate_limit(limit=SUMMARISE_RATE_LIMIT, seconds=60)
 def draft_reply(reference_doctype: str, reference_name: str) -> dict:
 	"""Draft a reply to the latest inbound message on a record's thread.
@@ -103,7 +153,7 @@ def draft_reply(reference_doctype: str, reference_name: str) -> dict:
 	cfg = get_config()
 	if not cfg.enabled:
 		return {"status": "disabled"}
-	if _budget_spent(cfg):
+	if _throttled(cfg):
 		return {"status": "unavailable"}
 
 	record = tools.read_record(reference_doctype, reference_name)
@@ -116,6 +166,61 @@ def draft_reply(reference_doctype: str, reference_name: str) -> dict:
 		return {"status": "unavailable"}
 
 	return {"status": "ok", "draft": draft.model_dump()}
+
+
+@frappe.whitelist()
+@sales_user_only
+@rate_limit(limit=SUMMARISE_RATE_LIMIT, seconds=60)
+def ask_assistant(question: str, history: str | list | None = None) -> dict:
+	"""Answer a question about the product, grounded on the help articles.
+
+	Returns ``{"status": "ok", "answer": str, "related_articles": [...]}`` or a
+	bare degrade status. The chat tier reads no CRM records at all: its whole
+	knowledge is the shipped manual, so there is nothing here for a hostile
+	record or email to inject through, and nothing the answer can leak that the
+	help center does not already show every user.
+	"""
+	question = (question or "").strip()
+	if not question:
+		frappe.throw(frappe._("Ask a question."), frappe.ValidationError)
+	question = question[:ASSISTANT_QUESTION_MAX_CHARS]
+
+	cfg = get_config()
+	if not cfg.enabled:
+		return {"status": "disabled"}
+	if _throttled(cfg):
+		return {"status": "unavailable"}
+
+	articles = load_articles()
+	selected = knowledge.select_articles(question, articles)
+	messages = knowledge.build_assistant_messages(question, selected, _parse_history(history))
+
+	try:
+		reply = client.complete(cfg, AssistantAnswer, messages)
+	except (AgentUnavailable, SchemaMismatch) as exc:
+		frappe.log_error(title="CRM assistant answer failed", message=str(exc))
+		return {"status": "unavailable"}
+
+	# The model cites articles by name; only names that actually exist survive,
+	# so an invented citation cannot become a dead link in the help center.
+	known = {article["name"] for article in articles}
+	related = [name for name in reply.related_articles if name in known]
+	return {"status": "ok", "answer": reply.answer, "related_articles": related}
+
+
+def _parse_history(history) -> list[dict]:
+	"""Whatever the wire delivered into a list of turns, dropping anything odd.
+
+	``frappe.parse_json`` handles the string form a whitelisted arg arrives in;
+	knowledge then keeps only well-shaped turns, so this only has to guarantee
+	"a list or nothing".
+	"""
+	if isinstance(history, str):
+		try:
+			history = frappe.parse_json(history)
+		except ValueError:
+			return []
+	return history if isinstance(history, list) else []
 
 
 @frappe.whitelist()
@@ -141,6 +246,14 @@ def test_connection() -> dict:
 	frappe.only_for("System Manager", True)
 
 	cfg = get_config()
+	if user_rate_limited(TEST_CONNECTION_RATE_SCOPE, TEST_CONNECTION_RATE_LIMIT):
+		return {
+			"ok": False,
+			"kind": "rate_limited",
+			"base_url": cfg.base_url,
+			"model": cfg.model,
+			"message": frappe._("Too many connection tests in a minute. Try again shortly."),
+		}
 	started = time.monotonic()
 	try:
 		client.complete(
@@ -150,6 +263,15 @@ def test_connection() -> dict:
 		)
 	except AgentUnavailable as exc:
 		# str(exc) is "<base_url>: <requests error>" -- no headers, so no key.
+		if isinstance(exc, client.EndpointRejectedKey):
+			# the host answered; the fix is the api_key field, not the URL
+			return {
+				"ok": False,
+				"kind": "unauthorised",
+				"base_url": cfg.base_url,
+				"model": cfg.model,
+				"message": frappe._("The endpoint rejected the API key: {0}").format(exc),
+			}
 		return {
 			"ok": False,
 			"kind": "unreachable",

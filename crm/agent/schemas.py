@@ -44,6 +44,21 @@ class ConnectionProbe(BaseModel):
 	ok: bool
 
 
+class AssistantAnswer(BaseModel):
+	"""A chat answer about the product, grounded on the help articles.
+
+	``answer`` is plain text for the panel to display verbatim -- never rendered
+	as HTML. ``related_articles`` is the model's citation of the articles it
+	leaned on; the endpoint filters it against the real article names, so an
+	invented name is dropped rather than becoming a dead link in the help center.
+	"""
+
+	model_config = ConfigDict(extra="forbid")
+
+	answer: str = Field(min_length=1, max_length=4000)
+	related_articles: list[str] = Field(default_factory=list, max_length=3)
+
+
 class ReplyDraft(BaseModel):
 	"""A reply the rep can edit and send. A draft, never a sent message."""
 

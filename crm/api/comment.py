@@ -98,6 +98,7 @@ def add_attachments(name: str, attachments: Iterable[str | dict]) -> None:
 	# loop through attachments
 	for a in attachments:
 		if isinstance(a, str):
+			frappe.has_permission("File", "read", doc=a, throw=True)
 			attach = frappe.db.get_value("File", {"name": a}, ["file_url", "is_private"], as_dict=1)
 			file_args = {
 				"file_url": attach.file_url,

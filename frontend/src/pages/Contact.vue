@@ -42,14 +42,14 @@
                         ? {
                             options: [
                               {
-                                icon: 'upload',
+                                icon: 'lucide-upload',
                                 label: contact.doc.image
                                   ? __('Change Image')
                                   : __('Upload Image'),
                                 onClick: openFileSelector,
                               },
                               {
-                                icon: 'trash-2',
+                                icon: 'lucide-trash-2',
                                 label: __('Remove Image'),
                                 onClick: () => changeContactImage(''),
                               },
@@ -325,7 +325,7 @@ const deals = createResource({
 })
 
 const rows = computed(() => {
-  if (!deals.data || deals.data == []) return []
+  if (!deals.data?.length) return []
 
   return deals.data.map((row) => getDealRowObject(row))
 })

@@ -160,7 +160,7 @@ const tempSelection = ref(null)
 // Users data — use the store's `allUsers` computed so we get the full
 // list once the background fetch lands, falling back to the smaller
 // crm-users-only payload during initial load.
-const { users, allUsers } = usersStore()
+const { allUsers } = usersStore()
 
 // Contacts resource (only if needed)
 const filterOptions = ref(null)

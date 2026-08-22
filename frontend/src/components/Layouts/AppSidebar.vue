@@ -16,7 +16,10 @@
       class="border-r border-outline-gray-1"
     >
       <div class="flex h-full flex-col p-2">
-        <UserDropdown :isCollapsed="isCollapsed" />
+        <SidebarBrand
+          :isCollapsed="isCollapsed"
+          @toggle="isSidebarCollapsed = !isSidebarCollapsed"
+        />
 
         <!-- overflow-y-auto forces overflow-x to clip too, which would slice the
              active row's shadow. Widen the scroll box to the sidebar edges and
@@ -105,6 +108,21 @@
             </template>
           </SidebarItem>
 
+          <!-- Desktop-only for now, like the panels below: on a phone the
+               slide-over has nowhere to slide from. The help center covers
+               the same questions on mobile. -->
+          <SidebarItem
+            v-if="!mobile"
+            id="assistant-btn"
+            :label="__('Assistant')"
+            :active="assistantVisible"
+            @click="toggleAssistant"
+          >
+            <template #prefix>
+              <SparkleIcon class="size-4 text-ink-gray-7" />
+            </template>
+          </SidebarItem>
+
           <CollapsibleSection
             v-for="section in allViews"
             :key="section.name"
@@ -182,46 +200,30 @@
               <BrushCleaningIcon class="size-4" />
             </template>
           </SidebarItem>
-          <SidebarItem
-            v-if="isOnboardingStepsCompleted"
-            :label="__('Help')"
-            @click="toggleHelpModal"
-          >
-            <template #prefix>
-              <HelpIcon class="size-4 text-ink-gray-7" />
-            </template>
-          </SidebarItem>
-          <SidebarItem
-            :label="isCollapsed ? __('Expand') : __('Collapse')"
-            @click="isSidebarCollapsed = !isSidebarCollapsed"
-          >
-            <template #prefix>
-              <CollapseSidebar
-                class="size-4 text-ink-gray-7 duration-300 ease-in-out"
-                :class="{ '[transform:rotateY(180deg)]': isCollapsed }"
-              />
-            </template>
-          </SidebarItem>
+          <SidebarUser :isCollapsed="isCollapsed" />
         </div>
       </div>
     </Sidebar>
     <Notifications v-if="!mobile" />
     <Suggestions v-if="!mobile" />
+    <Assistant v-if="!mobile" />
   </div>
 
   <template v-if="!mobile">
     <Settings />
-    <HelpModal
+    <!-- The getting-started checklist. Rendered in-repo (OnboardingPanel)
+         over the framework's step state, so it sits clear of page headers and
+         its help link opens the in-app help center. -->
+    <!-- v-if matters: useOnboarding() hands back the step list as it stands
+         when called, and the steps are registered in onMounted. -->
+    <OnboardingPanel
       v-if="showHelpModal"
-      v-model="showHelpModal"
-      v-model:articles="articles"
       :logo="CRMLogo"
       :title="__('Vectora')"
       :afterSkip="(step) => capture('onboarding_step_skipped_' + step)"
       :afterSkipAll="() => capture('onboarding_steps_skipped')"
       :afterReset="(step) => capture('onboarding_step_reset_' + step)"
       :afterResetAll="() => capture('onboarding_steps_reset')"
-      docsLink="/crm/help"
     />
     <IntermediateStepModal
       v-model="showIntermediateModal"
@@ -245,7 +247,8 @@ import StepsIcon from '@/components/Icons/StepsIcon.vue'
 import CollapsibleSection from '@/components/CollapsibleSection.vue'
 import Icon from '@/components/Icon.vue'
 import PinIcon from '@/components/Icons/PinIcon.vue'
-import UserDropdown from '@/components/UserDropdown.vue'
+import SidebarBrand from '@/components/Layouts/SidebarBrand.vue'
+import SidebarUser from '@/components/Layouts/SidebarUser.vue'
 import SquareAsterisk from '@/components/Icons/SquareAsterisk.vue'
 import LeadsIcon from '@/components/Icons/LeadsIcon.vue'
 import DealsIcon from '@/components/Icons/DealsIcon.vue'
@@ -255,11 +258,12 @@ import NoteIcon from '@/components/Icons/NoteIcon.vue'
 import TaskIcon from '@/components/Icons/TaskIcon.vue'
 import CalendarIcon from '@/components/Icons/CalendarIcon.vue'
 import PhoneIcon from '@/components/Icons/PhoneIcon.vue'
-import CollapseSidebar from '@/components/Icons/CollapseSidebar.vue'
 import NotificationsIcon from '@/components/Icons/NotificationsIcon.vue'
-import HelpIcon from '@/components/Icons/HelpIcon.vue'
 import Notifications from '@/components/Notifications.vue'
 import Suggestions from '@/components/Suggestions.vue'
+import Assistant from '@/components/Assistant.vue'
+import SparkleIcon from '@/components/Icons/SparkleIcon.vue'
+import { assistantVisible, toggleAssistant } from '@/stores/assistant'
 import {
   suggestionsStore,
   openCountUnavailable,
@@ -286,8 +290,8 @@ import { useBroadcast } from '@/composables/useBroadcast.js'
 import { call, Sidebar, SidebarItem, SidebarLabel, Tooltip } from 'frappe-ui'
 import { SignupBanner } from '@framework/ui/components/SignupBanner'
 import { TrialBanner } from '@framework/ui/components/TrialBanner'
+import OnboardingPanel from '@/components/OnboardingPanel.vue'
 import {
-  HelpModal,
   GettingStartedBanner,
   useOnboarding,
   showHelpModal,
@@ -295,7 +299,6 @@ import {
   IntermediateStepModal,
 } from '@framework/ui/components/Onboarding'
 import { useTelemetry } from '@framework/ui/telemetry'
-import { helpPanelArticles } from '@/help/manifest'
 import router from '@/router'
 import { useStorage } from '@vueuse/core'
 import { useDemoData } from '@/composables/demoData'
@@ -524,11 +527,6 @@ function onSuggestionsClick(event) {
   }
 }
 
-function toggleHelpModal() {
-  showHelpModal.value = minimize.value ? true : !showHelpModal.value
-  minimize.value = !showHelpModal.value
-}
-
 // onboarding
 const { user } = sessionStore()
 const { users, isManager } = usersStore()
@@ -749,12 +747,4 @@ onMounted(async () => {
 
   setUp(filteredSteps)
 })
-
-/* The help centre's own list, read from the one place it is written down.
-   This was thirty-four hardcoded links to docs.frappe.io -- another product's
-   documentation, describing features this one renamed and missing every
-   feature it added. `HelpModal` is frappe's component and opens
-   `${docsLink}/${name}`, so pointing docsLink at /crm/help is all it takes for
-   those links to land inside this product. */
-const articles = ref(helpPanelArticles(__))
 </script>

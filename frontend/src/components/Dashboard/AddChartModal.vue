@@ -42,7 +42,9 @@
 
 <script setup lang="ts">
 import { getRandom } from '@/utils'
-import { createResource, Dialog, FormControl } from 'frappe-ui'
+import { describeError } from '@/utils/describeError'
+import { quiet } from '@/utils/quiet'
+import { createResource, Dialog, FormControl, toast } from 'frappe-ui'
 import { ref, reactive, inject } from 'vue'
 
 const show = defineModel({
@@ -68,11 +70,13 @@ const chartTypes = [
 ]
 
 const numberChart = ref('')
+// Metrics the curated tile row already shows (CURATED_TILE_METRICS in
+// crm_dashboard.py) are deliberately not offered here: the picker adding them
+// back to the grid is how the same number ends up answered twice on one page.
+// Saved layouts that still carry one keep rendering — this list only gates
+// what can be newly added.
 const numberCharts = [
-  { label: __('Total Leads'), value: 'total_leads' },
-  { label: __('Ongoing Deals'), value: 'ongoing_deals' },
   { label: __('Avg Ongoing Deal Value'), value: 'average_ongoing_deal_value' },
-  { label: __('Won Deals'), value: 'won_deals' },
   { label: __('Avg Won Deal Value'), value: 'average_won_deal_value' },
   { label: __('Avg Deal Value'), value: 'average_deal_value' },
   {
@@ -83,10 +87,6 @@ const numberCharts = [
     label: __('Avg Time to Close a Deal'),
     value: 'average_time_to_close_a_deal',
   },
-  // "Critical" matches the record badge's band for the same scores; see the
-  // note on get_deals_at_risk. The value stays `deals_at_risk` — saved
-  // dashboards store it.
-  { label: __('Critical deals'), value: 'deals_at_risk' },
 ]
 
 const axisChart = ref('sales_trend')
@@ -111,19 +111,24 @@ const donutCharts = [
 ]
 
 async function addChart() {
-  show.value = false
   if (chartType.value == 'spacer') {
     items.value.push({
       name: 'spacer',
       type: 'spacer',
       layout: { x: 0, y: 0, w: 4, h: 2, i: 'spacer_' + getRandom(4) },
     })
-  } else {
-    await getChart(chartType.value)
+    show.value = false
+    return
   }
+  // The modal only closes once the chart is in the grid: closing first left
+  // a failed fetch with nowhere to report to, and nothing on screen.
+  if (await getChart(chartType.value)) show.value = false
 }
 
-async function getChart(type: string) {
+/* Resolves true once the chart is pushed, false if the server said no. The
+   resource's own rejection is swallowed here because onError already told the
+   user (frappe-ui rethrows after onError). */
+function getChart(type: string): Promise<boolean> {
   let name =
     type == 'number_chart'
       ? numberChart.value
@@ -131,38 +136,49 @@ async function getChart(type: string) {
         ? axisChart.value
         : donutChart.value
 
-  await createResource({
-    url: 'crm.api.dashboard.get_chart',
-    params: {
-      name,
-      type,
-      from_date: fromDate.value,
-      to_date: toDate.value,
-      user: filters.user,
-    },
-    auto: true,
-    onSuccess: (data = {}) => {
-      let width = 4
-      let height = 2
-
-      if (['axis_chart', 'donut_chart'].includes(type)) {
-        width = 10
-        height = 7
-      }
-
-      items.value.push({
+  return new Promise((resolve) => {
+    const chart = createResource({
+      url: 'crm.api.dashboard.get_chart',
+      params: {
         name,
         type,
-        layout: {
-          x: 0,
-          y: 0,
-          w: width,
-          h: height,
-          i: name + '_' + getRandom(4),
-        },
-        data: data,
-      })
-    },
+        from_date: fromDate.value,
+        to_date: toDate.value,
+        user: filters.user,
+        // Same scope the rest of the dashboard sends (Dashboard.vue
+        // chartResource) — a chart added under a territory filter should
+        // show that territory, not the whole site.
+        territory: filters.territory || null,
+      },
+      onError: (e) => {
+        toast.error(describeError(e).message || __('Could not add that chart'))
+        resolve(false)
+      },
+      onSuccess: (data = {}) => {
+        let width = 4
+        let height = 2
+
+        if (['axis_chart', 'donut_chart'].includes(type)) {
+          width = 10
+          height = 7
+        }
+
+        items.value.push({
+          name,
+          type,
+          layout: {
+            x: 0,
+            y: 0,
+            w: width,
+            h: height,
+            i: name + '_' + getRandom(4),
+          },
+          data: data,
+        })
+        resolve(true)
+      },
+    })
+    quiet(chart.fetch())
   })
 }
 </script>

@@ -683,6 +683,15 @@ class PurgeTest(IntegrationTestCase):
 		self.assertTrue(frappe.db.exists("CRM Suggestion", recent))
 		self.assertTrue(frappe.db.exists("CRM Suggestion", still_open))
 
+	def test_accepted_rows_past_the_window_go_too(self):
+		"""An accepted suggestion has done its job; it is settled like a dismissed
+		one and stops being evidence at the same age."""
+		old_accepted = self.make("Accepted", 200)
+		fresh_accepted = self.make("Accepted", 2)
+		purge_old_suggestions()
+		self.assertFalse(frappe.db.exists("CRM Suggestion", old_accepted))
+		self.assertTrue(frappe.db.exists("CRM Suggestion", fresh_accepted))
+
 
 SLA_REP = "sla-rep@crmtest.test"
 

@@ -377,6 +377,7 @@ import { getSettings } from '@/stores/settings'
 import { usersStore } from '@/stores/users'
 import { formatRange, getLastXDays, parseDateRange } from '@/utils/dashboard'
 import { formatCell, toCsv } from '@/utils/reportExport'
+import { quiet } from '@/utils/quiet'
 import {
   createResource,
   DateRangePicker,
@@ -673,7 +674,8 @@ const baseCurrency = computed(
 watch(
   requestKey,
   () => {
-    if (active.value) source.value.fetch()
+    // The template renders source.error itself; only the rejection is dropped.
+    if (active.value) quiet(source.value.fetch())
   },
   { immediate: true },
 )

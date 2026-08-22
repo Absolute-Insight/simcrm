@@ -10,12 +10,14 @@
         </div>
         <hr class="border-t my-3 mx-2" />
         <div>
-          <a
+          <component
+            :is="link.url ? 'a' : 'button'"
             v-for="link in links"
             :key="link.label"
-            class="flex py-2 px-2 hover:bg-surface-gray-1 rounded-4 cursor-pointer"
-            target="_blank"
+            class="flex w-full py-2 px-2 hover:bg-surface-gray-1 rounded-4 cursor-pointer"
+            :target="link.url ? '_blank' : undefined"
             :href="link.url"
+            @click="link.onClick"
           >
             <component
               :is="link.icon"
@@ -25,7 +27,7 @@
             <span class="text-base text-ink-gray-8">
               {{ link.label }}
             </span>
-          </a>
+          </component>
         </div>
         <hr class="border-t my-3 mx-2" />
         <!-- Attribution, not decoration: this is AGPLv3 software built on
@@ -46,6 +48,7 @@ import CRMLogo from '@/components/Icons/CRMLogo.vue'
 import GitHubIcon from '@/components/Icons/GitHubIcon.vue'
 import LucideBug from '~icons/lucide/bug'
 import LucideBookOpen from '~icons/lucide/book-open'
+import { openHelpCenter } from '@/stores/help'
 
 let show = defineModel({ type: Boolean })
 
@@ -66,7 +69,10 @@ let links = [
   },
   {
     label: __('Vectora help centre'),
-    url: '/crm/help',
+    onClick: () => {
+      show.value = false
+      openHelpCenter()
+    },
     icon: LucideBookOpen,
   },
   {

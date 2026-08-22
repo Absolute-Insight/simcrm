@@ -1,10 +1,9 @@
 import frappe
-from bs4 import BeautifulSoup
 from frappe import _
 from frappe.core.api.file import get_max_file_size
 from frappe.rate_limiter import rate_limit
 from frappe.translate import get_all_translations
-from frappe.utils import cstr, split_emails, validate_email_address
+from frappe.utils import sanitize_html, split_emails, validate_email_address
 
 from crm.utils import is_frappe_version
 
@@ -44,15 +43,9 @@ def get_user_signature():
 	if not signature:
 		return
 
-	soup = BeautifulSoup(signature, "html.parser")
-	html_signature = soup.find("div", {"class": "ql-editor read-mode"})
-	_signature = None
-	if html_signature:
-		_signature = html_signature.renderContents()
-	content = ""
-	if cstr(_signature) or signature:
-		content = f'<br><p class="signature">{signature}</p>'
-	return content
+	# The signature is stored HTML that gets rendered into the composer;
+	# sanitize it so a script in a user's or account's signature never runs.
+	return f'<br><p class="signature">{sanitize_html(signature, always_sanitize=True)}</p>'
 
 
 def check_app_permission():

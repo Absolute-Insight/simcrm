@@ -36,7 +36,7 @@
             <div class="text-base-semibold text-ink-gray-9">
               {{ __('Language & Time') }}
             </div>
-            <Badge
+            <ToneBadge
               v-if="isDirty"
               :variant="'subtle'"
               :theme="'orange'"
@@ -83,6 +83,7 @@
 </template>
 
 <script setup>
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import CRMLogo from '@/components/Icons/CRMLogo.vue'
 import ThemeSwitcher from '@/components/Settings/ThemeSwitcher.vue'
 import SettingsLayoutBase from '@/components/Layouts/SettingsLayoutBase.vue'
@@ -91,7 +92,6 @@ import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
 import { getSettings } from '@/stores/settings'
 import {
   Combobox,
-  Badge,
   toast,
   createResource,
   createDocumentResource,

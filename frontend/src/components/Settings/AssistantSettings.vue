@@ -1,5 +1,5 @@
 <template>
-  <div class="flex h-full flex-col gap-5 overflow-y-auto">
+  <div class="flex h-full flex-col gap-5 overflow-y-auto p-8">
     <div class="flex flex-col gap-1">
       <h2 class="v-title text-ink-gray-8">{{ __('Assistant') }}</h2>
       <p class="text-p-sm text-ink-gray-5">

@@ -370,6 +370,7 @@ import Skeleton from '@/components/ui/Skeleton.vue'
 import ViewBreadcrumbs from '@/components/ViewBreadcrumbs.vue'
 import { useConfirmGate } from '@/composables/confirmGate'
 import { describeError } from '@/utils/describeError'
+import { quiet } from '@/utils/quiet'
 import { renderFieldLayoutDialog } from '@/utils/renderFieldLayoutDialog'
 import {
   EDITABLE_ITEM_FIELDS,
@@ -588,19 +589,19 @@ async function confirmDiscard() {
 async function shiftWeek(days) {
   if (!(await confirmDiscard())) return
   weekStart.value = addDays(weekStart.value, days)
-  plan.reload()
+  quiet(plan.reload())
 }
 
 async function goToCurrentWeek() {
   if (!(await confirmDiscard())) return
   weekStart.value = mondayOf(today.value)
-  plan.reload()
+  quiet(plan.reload())
 }
 
 async function goToWeekOf(item) {
   if (!(await confirmDiscard())) return
   weekStart.value = mondayOf(item.planned_date)
-  plan.reload()
+  quiet(plan.reload())
 }
 
 async function requestUser(name) {
@@ -611,7 +612,7 @@ async function requestUser(name) {
      the real component -- a native <select> would need the value restored. */
   if (!(await confirmDiscard())) return
   planUser.value = name
-  plan.reload()
+  quiet(plan.reload())
 }
 
 function warnOnUnload(event) {
@@ -882,15 +883,15 @@ async function moveTo(item, date) {
 
 function itemActions(item) {
   const actions = [
-    { label: __('Edit'), icon: 'edit-2', onClick: () => editItem(item) },
+    { label: __('Edit'), icon: 'lucide-edit-2', onClick: () => editItem(item) },
     {
       label: __('Move a day earlier'),
-      icon: 'arrow-left',
+      icon: 'lucide-arrow-left',
       onClick: () => moveTo(item, addDays(item.planned_date, -1)),
     },
     {
       label: __('Move a day later'),
-      icon: 'arrow-right',
+      icon: 'lucide-arrow-right',
       onClick: () => moveTo(item, addDays(item.planned_date, 1)),
     },
   ]
@@ -901,21 +902,21 @@ function itemActions(item) {
     if (item.status !== 'Done') {
       actions.push({
         label: __('Mark as done'),
-        icon: 'check-circle',
+        icon: 'lucide-check-circle',
         onClick: () => overrideItem('mark_fulfilled', item),
       })
     }
     if (item.status !== 'Missed') {
       actions.push({
         label: __('Mark as missed'),
-        icon: 'x-circle',
+        icon: 'lucide-x-circle',
         onClick: () => overrideItem('mark_missed', item),
       })
     }
     if (item.manual_override) {
       actions.push({
         label: __('Hand back to the matcher'),
-        icon: 'rotate-ccw',
+        icon: 'lucide-rotate-ccw',
         onClick: () => overrideItem('clear_override', item),
       })
     }
@@ -923,7 +924,7 @@ function itemActions(item) {
 
   actions.push({
     label: __('Remove from plan'),
-    icon: 'trash-2',
+    icon: 'lucide-trash-2',
     onClick: () => removeItem(item),
   })
   return actions
@@ -1004,7 +1005,7 @@ async function savePlan() {
 async function reloadAfterConflict() {
   if (!(await confirmDiscard())) return
   stale.value = false
-  plan.reload()
+  quiet(plan.reload())
 }
 
 usePageMeta(() => ({ title: __('Planner') }))

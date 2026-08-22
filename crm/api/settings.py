@@ -1,8 +1,10 @@
 import frappe
+from frappe import _
 
 
 @frappe.whitelist()
 def create_email_account(data: dict):
+	frappe.only_for(["System Manager", "Sales Manager"], True)
 	service = data.get("service")
 	service_config = email_service_config.get(service)
 	if not service_config:
@@ -42,8 +44,11 @@ def create_email_account(data: dict):
 
 		# if correct credentials, save the email account
 		email_doc.save()
-	except Exception as e:
-		frappe.throw(str(e))
+	except Exception:
+		# The raw exception can carry the mail host's banner and the credentials
+		# we just sent; log it for the admin and give the user a generic message.
+		frappe.log_error(frappe.get_traceback(), "Email account setup failed")
+		frappe.throw(_("Could not connect to the mail server. Check the credentials and try again."))
 
 
 email_service_config = {

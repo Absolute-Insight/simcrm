@@ -30,6 +30,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import frappe
+from frappe.query_builder import Order
 
 from crm.agent.config import get_signal_config
 from crm.agent.signals import CLOSE_HORIZON_DAYS, EARLY_STAGE_PROBABILITY, cadence_ratio
@@ -194,6 +195,9 @@ def _stage_median_days(status: str) -> float | None:
 		.where(log.parenttype == "CRM Deal")
 		.where(log["from"] == status)
 		.where(log.duration > 0)
+		# newest first: a LIMIT with no ORDER BY is whatever the engine reaches
+		# first, so the baseline could shift between two runs on identical data
+		.orderby(log.creation, order=Order.desc)
 		.limit(STAGE_SAMPLE_LIMIT)
 		.run()
 	)

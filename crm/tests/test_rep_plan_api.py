@@ -142,6 +142,20 @@ class RepPlanApiTest(IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			save_plan(stranded, [{"activity_type": "Task", "planned_date": stranded}])
 
+	def test_items_must_be_a_bounded_list(self):
+		"""A non-list payload used to fall through to ``plan.append`` and 500; a
+		list with no ceiling was an unbounded child table in one request."""
+		from crm.api.rep_plan import MAX_PLAN_ITEMS
+
+		frappe.set_user(REP)
+		for bad in ('{"activity_type": "Call"}', "not json", 42, [1, 2]):
+			with self.assertRaises(frappe.ValidationError):
+				save_plan(self.monday, bad)
+		too_many = [{"activity_type": "Call", "planned_date": self.monday}] * (MAX_PLAN_ITEMS + 1)
+		with self.assertRaises(frappe.ValidationError):
+			save_plan(self.monday, too_many)
+		self.assertFalse(frappe.db.exists("CRM Rep Plan", {"user": REP, "week_start": self.monday}))
+
 	def test_an_item_cannot_reference_an_arbitrary_doctype(self):
 		frappe.set_user(REP)
 		with self.assertRaises(frappe.ValidationError):

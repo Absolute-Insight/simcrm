@@ -325,7 +325,7 @@ const detailFields = computed(() => {
     },
     {
       icon: h(Icon, {
-        icon: 'play-circle',
+        icon: 'lucide-play-circle',
         class: 'h-4 w-4 mt-2',
       }),
       name: 'recording_url_path',

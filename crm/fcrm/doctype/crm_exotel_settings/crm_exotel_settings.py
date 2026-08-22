@@ -35,6 +35,7 @@ class CRMExotelSettings(Document):
 					subdomain=self.subdomain, sid=self.account_sid
 				),
 				auth=(self.api_key, self.get_password("api_token")),
+				timeout=(5, 30),
 			)
 			if response.status_code != 200:
 				frappe.throw(

@@ -24,7 +24,13 @@
       </div>
     </div>
 
-    <div class="flex-1 flex flex-col overflow-y-auto">
+    <!-- `settings.doc` is null until the document resource resolves, and the
+         fields below bind straight into it with v-model, which cannot be
+         optional-chained because it has to be assignable. Without this guard the
+         first render threw "Cannot read properties of null (reading 'currency')"
+         on the very first field. DashboardSettings already guards the same
+         binding with `settings.doc?.currency`. -->
+    <div v-if="settings.doc" class="flex-1 flex flex-col overflow-y-auto">
       <div class="flex items-center justify-between gap-4 py-3 px-2">
         <div class="flex flex-col">
           <div class="text-p-base-medium text-ink-gray-7 truncate">

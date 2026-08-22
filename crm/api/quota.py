@@ -38,7 +38,7 @@ def get_quota_grid(year: int | str | None = None):
 	Managers get the whole team; a rep gets only their own row, so the same screen
 	serves "set the team's targets" and "what is mine".
 	"""
-	from crm.api.dashboard import won_value_in_period
+	from crm.api.dashboard import won_value_by_user
 
 	year = cint(year) or getdate().year
 	months = _months(year)
@@ -64,6 +64,9 @@ def get_quota_grid(year: int | str | None = None):
 		for u in frappe.get_all("User", filters={"name": ("in", users)}, fields=["name", "full_name"])
 	}
 
+	# one grouped read for the whole grid rather than a closed-won query per rep
+	actual = won_value_by_user(users, months[0], f"{year}-12-31")
+
 	return {
 		"year": year,
 		"months": months,
@@ -73,7 +76,7 @@ def get_quota_grid(year: int | str | None = None):
 				"user": user,
 				"full_name": user_meta.get(user) or user,
 				"quota": by_user.get(user, {}),
-				"actual": won_value_in_period(months[0], f"{year}-12-31", user),
+				"actual": actual.get(user, 0.0),
 			}
 			for user in sorted(users, key=lambda u: (user_meta.get(u) or u).lower())
 		],
@@ -83,10 +86,13 @@ def get_quota_grid(year: int | str | None = None):
 def _sales_users() -> list[str]:
 	"""Enabled users who can own a deal — the population a quota can apply to."""
 	return frappe.get_all(
-		"Has Role",
-		filters={"role": ("in", ["Sales User", "Sales Manager"]), "parenttype": "User"},
+		"User",
+		filters=[
+			["User", "enabled", "=", 1],
+			["Has Role", "role", "in", ("Sales User", "Sales Manager")],
+		],
+		pluck="name",
 		distinct=True,
-		pluck="parent",
 	)
 
 
@@ -129,6 +135,9 @@ def copy_quota_forward(user: str, from_period: str, months: int | str = 11):
 	if not amount:
 		frappe.throw(_("Set the first month's quota before copying it forward."))
 
-	for offset in range(1, cint(months) + 1):
+	# at most the rest of a year: the grid is twelve cells wide, and an
+	# unbounded count is a write loop the caller sizes
+	months = max(0, min(cint(months), 11))
+	for offset in range(1, months + 1):
 		set_quota(user, frappe.utils.add_months(source, offset), amount)
-	return {"copied": cint(months)}
+	return {"copied": months}

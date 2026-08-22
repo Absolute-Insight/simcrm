@@ -42,9 +42,25 @@ Import direction is one-way: `errors` ← `config`/`schemas`/`context` ← `clie
 - The endpoint degrades: with the flag off or the endpoint down, callers get a status,
   never an exception. Config normalisation degrades too — an uninterpretable value falls
   back to its default rather than raising out of `get_config()`.
-- Every endpoint that can trigger an outbound model call is `@rate_limit`-ed per user,
-  the same rule `crm/domain_enrichment/api.py` follows. One call can hold a worker for
-  `timeout × MAX_ATTEMPTS`.
+- Every endpoint that can trigger an outbound model call is gated on a sales role
+  (`@sales_user_only`) and rate-limited **twice**: frappe's `@rate_limit`, which keys on
+  the request IP (its `ip_based` default — on its own it was one bucket for an office
+  behind a NAT and no bucket at all for a user rotating addresses), and
+  `crm.utils.user_rate_limited(scope, limit, window_seconds=60)`, which keys on the
+  session user and is the layer that actually bounds one account. Both read
+  `SUMMARISE_RATE_LIMIT` (10/min); `test_connection` has its own 6/min pair. A throttled
+  call returns `{"status": "unavailable"}`, which the frontend already treats as
+  weather. One call can hold a worker for `timeout × MAX_ATTEMPTS`.
+- Two daily budgets, both redis counters that expire themselves: the site-wide
+  `daily_call_budget` from settings, and a per-user share derived from it —
+  `max(10, daily_call_budget // 5)` — so one account cannot spend the whole site's day.
+  `0` on the site budget means uncapped for both.
+- `client._post` streams the body under a wall-clock deadline of `cfg.timeout` from the
+  start of the call and a 2 MiB ceiling (`MAX_RESPONSE_BYTES`). `requests`' `timeout`
+  is only an inactivity timeout; a server that trickled a byte every few seconds never
+  tripped it. A 401/403 raises `client.EndpointRejectedKey` (an `AgentUnavailable`),
+  which `test_connection` reports as `kind: "unauthorised"` so the admin is pointed at
+  `api_key` rather than at the URL.
 - The role grants no DocPerms yet, on purpose: `add_permission` would snapshot standard
   perms into `Custom DocPerm` on shared core doctypes, irreversibly. See the docstring in
   `install.py`.
@@ -288,9 +304,19 @@ the finding above rather than in spite of it:
   attached. The number to watch as models change is which ones confirm the discount *less
   often*; none tried so far resist it.
 
+## The assistant tier (`ask_assistant`)
+
+Built 2026-08-21 — see [../help/README.md](../help/README.md). A chat endpoint
+grounded exclusively on the in-app help articles (`crm/agent/knowledge.py`,
+pure and in the layering map). It deliberately reads **no CRM records**: its
+whole knowledge is the shipped manual, so there is no thread for hostile
+content to inject through, which is why it needed no new entry in the
+injection table above. If it ever grows record reads, it joins that table
+first.
+
 ## What is not here yet
 
-MCP transport and the assistant tier.
+MCP transport.
 
 The enrichment fallback extractor used to be listed here and is now built —
 `crm/domain_enrichment/model_fallback.py`, with tests and a golden-set eval runner

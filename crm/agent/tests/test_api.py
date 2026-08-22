@@ -20,10 +20,25 @@ ENABLED = AgentConfig(enabled=True, base_url="http://x/v1", model="m", timeout=5
 SUMMARY = ThreadSummary(summary="Stalled on pricing.", next_steps=["Send quote"], sentiment="neutral")
 
 
-# Both endpoints run their config through the budget counter; the tests that are not
-# about the budget stub it out rather than depending on a shared redis counter.
+# Every endpoint runs through the per-user minute window and the daily budgets; the
+# tests that are not about either stub the whole throttle out rather than depending
+# on a shared redis counter.
 def no_budget_check():
-	return mock.patch.object(api_mod, "_budget_spent", return_value=False)
+	return mock.patch.object(api_mod, "_throttled", return_value=False)
+
+
+def clear_user_window(scope: str, user: str | None = None) -> None:
+	from crm.utils import user_rate_key
+
+	frappe.cache().delete(user_rate_key(scope, user=user))
+
+
+def make_sales_user(email: str, first_name: str) -> str:
+	if not frappe.db.exists("User", email):
+		frappe.get_doc(
+			{"doctype": "User", "email": email, "first_name": first_name, "send_welcome_email": 0}
+		).insert(ignore_permissions=True).add_roles("Sales User")
+	return email
 
 
 class FlagTest(IntegrationTestCase):
@@ -82,6 +97,76 @@ class RateLimitTest(IntegrationTestCase):
 		self.assertIsNot(api_mod.summarise_thread, api_mod.summarise_thread.__wrapped__)
 		self.assertGreater(api_mod.SUMMARISE_RATE_LIMIT, 0)
 
+	def test_the_same_user_trips_the_per_user_window_and_another_user_does_not(self):
+		"""frappe's ``@rate_limit`` keys on the request IP, so on its own it never
+		bounded one account: a user behind a rotating address had no limit, and an
+		office behind one NAT shared a single bucket. This layer keys on the user."""
+		from crm.utils import user_rate_limited
+
+		scope = "crm_agent_rate_test"
+		alice = make_sales_user("agent-rate-alice@crmtest.test", "Alice")
+		bob = make_sales_user("agent-rate-bob@crmtest.test", "Bob")
+		self.addCleanup(frappe.set_user, "Administrator")
+		for user in (alice, bob):
+			clear_user_window(scope, user)
+			self.addCleanup(clear_user_window, scope, user)
+
+		frappe.set_user(alice)
+		verdicts = [user_rate_limited(scope, 10) for _ in range(11)]
+		self.assertEqual(verdicts[:10], [False] * 10)
+		self.assertTrue(verdicts[10])
+
+		frappe.set_user(bob)
+		self.assertFalse(user_rate_limited(scope, 10))
+
+	def test_a_user_past_the_window_gets_unavailable_and_the_model_is_never_called(self):
+		alice = make_sales_user("agent-rate-alice@crmtest.test", "Alice")
+		self.addCleanup(frappe.set_user, "Administrator")
+		clear_user_window(api_mod.USER_RATE_SCOPE, alice)
+		self.addCleanup(clear_user_window, api_mod.USER_RATE_SCOPE, alice)
+		frappe.set_user(alice)
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod, "_budget_spent", return_value=False),
+			mock.patch.object(api_mod.tools, "read_record", return_value={}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.client, "complete", return_value=SUMMARY) as complete,
+		):
+			results = [
+				api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001")
+				for _ in range(api_mod.SUMMARISE_RATE_LIMIT + 1)
+			]
+		self.assertEqual(results[-1], {"status": "unavailable"})
+		self.assertEqual(complete.call_count, api_mod.SUMMARISE_RATE_LIMIT)
+
+	def test_a_dead_cache_fails_open(self):
+		from crm.utils import user_rate_limited
+
+		with mock.patch.object(frappe, "cache", side_effect=RuntimeError("no redis")):
+			self.assertFalse(user_rate_limited("crm_agent_rate_test", 1))
+
+
+class RoleGateTest(IntegrationTestCase):
+	def test_a_user_without_a_sales_role_cannot_call_the_model_endpoints(self):
+		"""Each call costs a model call against the configured endpoint; a Website
+		User with a session is not a rep and gets nothing."""
+		email = "agent-nobody@crmtest.test"
+		if not frappe.db.exists("User", email):
+			frappe.get_doc(
+				{"doctype": "User", "email": email, "first_name": "Nobody", "send_welcome_email": 0}
+			).insert(ignore_permissions=True)
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(email)
+		with mock.patch.object(api_mod.client, "complete") as complete:
+			for call in (
+				lambda: api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001"),
+				lambda: api_mod.draft_reply("CRM Deal", "CRM-DEAL-0001"),
+				lambda: api_mod.ask_assistant("hello"),
+			):
+				with self.assertRaises(frappe.PermissionError):
+					call()
+		complete.assert_not_called()
+
 
 class DailyBudgetTest(IntegrationTestCase):
 	"""The per-user rate limit bounds a burst; it does not bound a day.
@@ -126,18 +211,74 @@ class DailyBudgetTest(IntegrationTestCase):
 		tiny = AgentConfig(
 			enabled=True, base_url="http://x/v1", model="m", timeout=5, max_tokens=64, daily_call_budget=2
 		)
-		key = api_mod.budget_key()
-		frappe.cache().delete(key)
-		self.addCleanup(frappe.cache().delete, key)
+		for key in (api_mod.budget_key(), api_mod.user_budget_key()):
+			frappe.cache().delete(key)
+			self.addCleanup(frappe.cache().delete, key)
 		self.assertFalse(api_mod._budget_spent(tiny))
 		self.assertFalse(api_mod._budget_spent(tiny))
 		self.assertTrue(api_mod._budget_spent(tiny))
+
+	def test_one_user_cannot_spend_the_whole_site_budget(self):
+		"""The per-user share is a fifth of the site's day with a floor of ten, so a
+		budget of 100 lets one account make 20 calls and then blocks it while the
+		site counter still has room for everyone else."""
+		shared = AgentConfig(
+			enabled=True, base_url="http://x/v1", model="m", timeout=5, max_tokens=64, daily_call_budget=100
+		)
+		self.assertEqual(api_mod.user_daily_call_budget(shared), 20)
+		small = AgentConfig(
+			enabled=True, base_url="http://x/v1", model="m", timeout=5, max_tokens=64, daily_call_budget=12
+		)
+		self.assertEqual(api_mod.user_daily_call_budget(small), api_mod.USER_DAILY_BUDGET_FLOOR)
+
+		for key in (api_mod.budget_key(), api_mod.user_budget_key()):
+			frappe.cache().delete(key)
+			self.addCleanup(frappe.cache().delete, key)
+		verdicts = [api_mod._budget_spent(shared) for _ in range(21)]
+		self.assertEqual(verdicts[:20], [False] * 20)
+		self.assertTrue(verdicts[20])
+		self.assertLess(int(frappe.cache().get(api_mod.budget_key()) or 0), shared.daily_call_budget)
 
 
 class TestConnectionTest(IntegrationTestCase):
 	"""Until this endpoint existed, the only way to discover a wrong ``base_url``
 	was a rep clicking a feature and getting a degraded dialog -- the failure
 	reached a user before the admin who caused it."""
+
+	def setUp(self):
+		super().setUp()
+		clear_user_window(api_mod.TEST_CONNECTION_RATE_SCOPE)
+		self.addCleanup(clear_user_window, api_mod.TEST_CONNECTION_RATE_SCOPE)
+
+	def test_a_rejected_key_is_a_distinct_failure_that_names_the_fix(self):
+		"""A 401 is not "unreachable": the host answered, and what is wrong is the
+		api_key field. The message has to say so or the admin chases the URL."""
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(
+				api_mod.client,
+				"complete",
+				side_effect=api_mod.client.EndpointRejectedKey(
+					"http://x/v1: endpoint rejected the API key (HTTP 401)"
+				),
+			),
+		):
+			result = api_mod.test_connection()
+
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["kind"], "unauthorised")
+		self.assertIn("rejected the API key", result["message"])
+
+	def test_too_many_probes_in_a_minute_are_refused_without_a_model_call(self):
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod, "user_rate_limited", return_value=True),
+			mock.patch.object(api_mod.client, "complete") as complete,
+		):
+			result = api_mod.test_connection()
+		self.assertFalse(result["ok"])
+		self.assertEqual(result["kind"], "rate_limited")
+		complete.assert_not_called()
 
 	def test_a_working_endpoint_reports_the_model_and_how_long_it_took(self):
 		from crm.agent.schemas import ConnectionProbe

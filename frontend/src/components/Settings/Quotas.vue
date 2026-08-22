@@ -1,5 +1,5 @@
 <template>
-  <div class="flex h-full flex-col gap-4">
+  <div class="flex h-full flex-col gap-4 p-8">
     <div class="flex items-start justify-between gap-4">
       <div class="flex flex-col gap-1">
         <h2 class="v-title text-ink-gray-8">
@@ -187,6 +187,7 @@ import ErrorState from '@/components/ui/ErrorState.vue'
 import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import { computed, ref, watch } from 'vue'
 import { formatCell } from '@/utils/reportExport'
+import { quiet } from '@/utils/quiet'
 
 const { isManager } = usersStore()
 
@@ -199,7 +200,7 @@ const grid = createResource({
   auto: true,
 })
 
-watch(year, () => grid.reload())
+watch(year, () => quiet(grid.reload()))
 
 const rows = computed(() => grid.data?.rows || [])
 

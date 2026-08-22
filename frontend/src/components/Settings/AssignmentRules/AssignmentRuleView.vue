@@ -15,7 +15,7 @@
           class="cursor-pointer -ml-4 hover:bg-transparent focus:bg-transparent focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:none active:bg-transparent active:outline-none active:ring-0 active:ring-offset-0 active:text-ink-gray-5 text-2xl-semibold hover:opacity-70 !pr-0 !max-w-96 !justify-start"
           @click="goBack()"
         />
-        <Badge
+        <ToneBadge
           v-if="isDirty"
           :variant="'subtle'"
           :theme="'orange'"
@@ -150,12 +150,13 @@
                   documentType,
                 ])
               }}
-              <a
+              <button
                 class="font-medium underline"
-                href="/crm/help/automation-rules"
-                target="_blank"
-                >{{ __('Learn about conditions') }}</a
+                type="button"
+                @click="openHelpCenter('automation-rules')"
               >
+                {{ __('Learn about conditions') }}
+              </button>
             </span>
             <div v-if="isOldSla && step.data">
               <Popover trigger="hover" :hoverDelay="0.25" placement="top-end">
@@ -230,12 +231,13 @@
                   [documentType],
                 )
               }}
-              <a
+              <button
                 class="font-medium underline"
-                href="/crm/help/automation-rules"
-                target="_blank"
-                >{{ __('Learn about conditions') }}</a
+                type="button"
+                @click="openHelpCenter('automation-rules')"
               >
+                {{ __('Learn about conditions') }}
+              </button>
             </span>
             <div
               v-if="
@@ -327,8 +329,8 @@
 </template>
 
 <script setup>
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import {
-  Badge,
   Button,
   call,
   createResource,
@@ -348,6 +350,7 @@ import AssignmentRulesSection from './AssignmentRulesSection.vue'
 import AssignmentSchedule from './AssignmentSchedule.vue'
 import AssigneeRules from './AssigneeRules.vue'
 import { globalStore } from '@/stores/global'
+import { openHelpCenter } from '@/stores/help'
 import { disableSettingModalOutsideClick } from '@/composables/settings'
 import { useUnsavedChangesWarning } from '@/composables/useUnsavedChangesWarning'
 import { convertToConditions, validateConditions } from '@/utils'

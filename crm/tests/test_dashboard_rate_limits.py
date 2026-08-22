@@ -90,3 +90,24 @@ class TileFanOutTest(UnitTestCase):
 		with mock.patch.object(Path, "read_text", return_value="no catalogue here"):
 			with self.assertRaises(AssertionError):
 				tiles_in_catalogue()
+
+
+class UserRateLimitTest(UnitTestCase):
+	def test_a_user_over_budget_gets_the_same_error_as_the_ip_limiter(self):
+		from unittest import mock
+
+		from crm.api import dashboard
+
+		with mock.patch.object(dashboard, "user_rate_limited", return_value=True):
+			with self.assertRaises(frappe.TooManyRequestsError):
+				dashboard.check_user_rate("dashboard", 1)
+		with mock.patch.object(dashboard, "user_rate_limited", return_value=False):
+			dashboard.check_user_rate("dashboard", 1)
+
+	def test_the_user_budget_keeps_the_tile_fan_out_relationship(self):
+		from crm.api.dashboard import USER_CHART_CALLS_PER_MINUTE, USER_DASHBOARD_VIEWS_PER_MINUTE
+
+		self.assertGreaterEqual(
+			USER_CHART_CALLS_PER_MINUTE, USER_DASHBOARD_VIEWS_PER_MINUTE * DASHBOARD_TILE_COUNT
+		)
+		self.assertGreaterEqual(USER_DASHBOARD_VIEWS_PER_MINUTE, DASHBOARD_VIEWS_PER_MINUTE)

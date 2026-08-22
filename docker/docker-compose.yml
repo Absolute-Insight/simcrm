@@ -9,7 +9,10 @@ services:
       - --skip-character-set-client-handshake
       - --skip-innodb-read-only-compressed # Temporary fix for MariaDB 10.6
     environment:
-      MYSQL_ROOT_PASSWORD: 123
+      # Dev stack only: this database is reachable from nothing but the
+      # `frappe` container on the compose network. Override in a .env beside
+      # this file; init.sh reads the same variable for `bench new-site`.
+      MYSQL_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-123}
     volumes:
       - mariadb-data:/var/lib/mysql
 
@@ -17,10 +20,15 @@ services:
     image: redis:alpine
 
   frappe:
-    image: frappe/bench:latest
+    # Pinned: `latest` moved under the dev stack without anyone choosing to.
+    # Verified against hub.docker.com/r/frappe/bench tags on 2026-08-21.
+    image: frappe/bench:v5.31.0
     command: bash /workspace/init.sh
     environment:
       - SHELL=/bin/bash
+      - MARIADB_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD:-123}
+      - CRM_REPO=${CRM_REPO:-https://github.com/Absolute-Insight/simcrm.git}
+      - CRM_BRANCH=${CRM_BRANCH:-main}
     working_dir: /home/frappe
     volumes:
       - .:/workspace

@@ -200,6 +200,7 @@ def sync_default_columns(view):
 @frappe.whitelist()
 def set_as_default(name: str | int | None = None, type: str | None = None, doctype: str | None = None):
 	if name:
+		check_permission(frappe.get_doc("CRM View Settings", name))
 		frappe.db.set_value("CRM View Settings", name, "is_default", 1)
 	else:
 		doc = create_or_update_standard_view({"type": type, "doctype": doctype, "is_default": 1})
@@ -290,6 +291,7 @@ def create_or_update_standard_view(view: dict):
 @frappe.whitelist()
 def fetch_and_update_kanban_columns(name: str | int):
 	doc = frappe.get_doc("CRM View Settings", name)
+	check_permission(doc)
 	if doc.type != "kanban":
 		return
 
@@ -301,7 +303,7 @@ def fetch_and_update_kanban_columns(name: str | int):
 			existing_columns.append({"name": column.get("name"), "delete": True})
 
 	doc.kanban_columns = json.dumps(existing_columns)
-	doc.save(ignore_permissions=True)
+	doc.save()
 	return doc.kanban_columns
 
 

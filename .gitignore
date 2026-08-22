@@ -37,3 +37,7 @@ AGENTS.md
 # production database password. .env.example stays tracked; .env never is.
 .env
 deploy/.env
+# Local container scratch: the Chrome installer used to provision Playwright's
+# browser, and the devcontainer lockfile the CLI regenerates per rebuild.
+google-chrome-stable_current_amd64.deb
+.devcontainer/devcontainer-lock.json

@@ -263,7 +263,9 @@ export default defineConfig(async ({ mode }) => {
       buildConfig: {
         indexHtmlPath: '../crm/www/crm.html',
         emptyOutDir: true,
-        sourcemap: true,
+        // Maps only for dev builds — a production bundle shipped 154 .map
+        // files (a 6.8 MB one for Dashboard alone) to every browser.
+        sourcemap: isDev,
       },
     }),
   )

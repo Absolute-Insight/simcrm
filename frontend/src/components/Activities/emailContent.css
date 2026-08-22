@@ -29,11 +29,25 @@
 :root {
   --bg-surface-gray-3: #ededed;
   --bg-surface-gray-4: #e2e2e2;
+  --email-canvas: #ffffff;
 }
 
 [data-theme='dark'] {
   --bg-surface-gray-3: #343434;
   --bg-surface-gray-4: #424242;
+  --email-canvas: #1c1e2c;
+}
+
+/* The frame needs a background of its own. Its document is a srcdoc island, so
+   it never inherits the app's surface -- and with a transparent root Chrome
+   paints the frame's white base canvas instead of letting the app show through.
+   `prose` flips its body colour to near-white under [data-theme='dark'], so on
+   a dark theme that near-white text landed on that white base and measured
+   1.41:1. Painting the canvas explicitly keeps text and ground on the same
+   theme, which is the whole reason the theme is mirrored onto this document. */
+html,
+body {
+  background-color: var(--email-canvas);
 }
 
 .replied-content .collapse {
