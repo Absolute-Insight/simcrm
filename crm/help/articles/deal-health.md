@@ -23,6 +23,19 @@ Factors include:
   is still low.
 - **Cooling** — the contact cadence is decelerating against the deal's own
   median gap.
+- **Stage stagnation**, **close date passed** and **one-sided** (you are the
+  only one talking) round out the list.
+
+A factor that cannot be measured is never punished: a deal with no expected
+close date does not lose points for not having one.
+
+## The bands
+
+| Band | Score |
+|---|---|
+| **Healthy** | 70–100 |
+| **At risk** | 40–69 — one or more factors firing; look at the list |
+| **Critical** | below 40 — several are; where a manager should be asking |
 
 ## Reading it
 
@@ -31,6 +44,9 @@ Factors include:
 - The score is computed from structured data only — dates, stages, task and
   message counts. It does not depend on the model tier and no model output can
   influence it.
+- It is not a probability of closing — stage probability is that. Health
+  measures whether the deal is being *worked*, which is the question you can
+  do something about today.
 
 ## Where it shows up
 

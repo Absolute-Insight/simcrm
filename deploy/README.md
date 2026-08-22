@@ -430,17 +430,29 @@ shapes are supported:
 | **Hosted API** | per-token billing | Cheapest to run. Note that thread contents, including customer email, leave your infrastructure — a decision for whoever owns that data. |
 | **Local model** | one host with a GPU | Nothing leaves your network. |
 
-For the local shape this stack ships an opt-in profile:
+For the local shape this stack ships an opt-in profile. On a **first boot**, set
+`VECTORA_AGENT_ENABLED=1` in `.env` before bringing it up and the site is created
+already pointed at the model:
 
 ```bash
 docker compose --profile local-model up -d
 docker compose logs -f ollama-pull    # first run downloads several GB
 ```
 
-Then point the CRM at it — **CRM Agent Settings** → `base_url`
-`http://ollama:11434/v1`, `model` the same value as `VECTORA_AGENT_MODEL`, and
-`enabled` on. `127.0.0.1` will not work: from inside the backend container that
-is the container itself, so the endpoint has to be the service name.
+`create-site` passes `VECTORA_AGENT_BASE_URL`, `VECTORA_AGENT_MODEL` and
+`VECTORA_AGENT_ENABLED` to `after_install`, which writes them into **CRM Agent
+Settings** once. It is read at site creation and never again — an admin who
+later changes the endpoint in the UI keeps that change across upgrades, which a
+value re-applied on every deploy would silently undo.
+
+On a site that **already exists** those variables do nothing, because
+`create-site` skips. Set it in the UI instead: **Settings → Assistant** →
+`base_url` `http://ollama:11434/v1`, `model` the same value as
+`VECTORA_AGENT_MODEL`, `enabled` on.
+
+Either way the endpoint has to be the service name. `127.0.0.1` will not work:
+from inside the backend container that is the container itself — which is the
+one mistake that makes a correctly-pulled model look broken.
 
 `ollama-pull` is a one-shot that fetches the weights and then makes one
 throwaway call to warm them. It is idempotent, so `up -d` stays safe to re-run.

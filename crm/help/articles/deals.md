@@ -14,7 +14,7 @@ they are worth keeping honest:
 
 | Field | What reads it |
 |---|---|
-| **Status / stage** | Pipeline reports, funnel conversion, stage probability |
+| **Status / stage** | Pipeline reports, funnel conversion, stage probability — each status carries a probability set by your administrator, read by the forecast, the *close at risk* signal and deal health's slip-risk factor. Set it to what your pipeline actually converts at. |
 | **Expected deal value** and **currency** | Every monetary aggregate. Values are converted through the deal's stored exchange rate, so mixed currencies sum correctly. |
 | **Expected closure date** | The forecast, and the *close at risk* signal |
 | **Closed date** | Set when a deal is won; actual revenue is bucketed by this date |

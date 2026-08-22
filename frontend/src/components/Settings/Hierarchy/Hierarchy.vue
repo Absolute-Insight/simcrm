@@ -7,12 +7,9 @@
             {{ __('Sales Hierarchy') }}
           </h2>
           <Tooltip :text="__('View documentation')">
-            <a
-              href="https://docs.frappe.io/crm/settings/sales-hierarchy"
-              target="_blank"
-            >
+            <button type="button" @click="openHelpCenter('assignment-and-sla')">
               <LucideCircleQuestionMark class="h-4 w-4 text-ink-gray-6" />
-            </a>
+            </button>
           </Tooltip>
         </div>
         <p class="text-p-base text-ink-gray-6">
@@ -251,6 +248,7 @@ import UserMultiSelect from './UserMultiSelect.vue'
 import { useRemoveNode } from './useRemoveNode'
 import { useDragDrop } from './useDragDrop'
 import { globalStore } from '@/stores/global'
+import { openHelpCenter } from '@/stores/help'
 import { usersStore } from '@/stores/users'
 import LucideNetwork from '~icons/lucide/network'
 import LucideCircleQuestionMark from '~icons/lucide/circle-question-mark'

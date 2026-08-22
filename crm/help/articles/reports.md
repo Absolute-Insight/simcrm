@@ -26,9 +26,16 @@ the number on a tile are the same number for the same period.
 - **Export CSV** — download the rows exactly as shown.
 - **Print** — a print-friendly view for sharing.
 - Manager scoping follows the sales hierarchy: you see the reps you manage.
+  Every report is scoped by permission *before* it aggregates — no report
+  shows a total you are not allowed to see the rows of.
+- **Forecast vs actual** is blank while forecasting is switched off in
+  Settings, and says so above the table rather than showing an empty grid.
+  An empty report is not a broken one: check the period and territory filter
+  first.
 
 ## Scheduled digests
 
 **Settings → Report Digests** emails a report on a schedule. Each recipient
 gets the report scoped to *their own* visibility — a rep receives their rows,
-a manager the team's. Recipients must be active users with a CRM role.
+a manager the team's. Recipients must be active users with a CRM role. See
+**Scheduled digests**.

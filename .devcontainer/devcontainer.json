@@ -8,6 +8,12 @@
     },
     "dockerComposeFile": "./docker-compose.yml",
     "service": "frappe",
+    "features": {
+      "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+        "moby": true,
+        "dockerDashComposeVersion": "v2"
+      }
+    },
     "workspaceFolder": "/workspace/frappe-bench",
     "postCreateCommand": "bash /workspace/scripts/init.sh",
     "shutdownAction": "stopCompose",

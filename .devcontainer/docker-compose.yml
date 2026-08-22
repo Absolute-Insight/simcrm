@@ -36,6 +36,33 @@ services:
       - SHELL=/bin/bash
     volumes:
       - ..:/workspace:cached
+      # Docker-outside-of-docker: talk to the host's daemon rather than running
+      # one in here. Without it `deploy/docker-compose.yml` -- the production
+      # stack this repo ships -- cannot be brought up from inside the
+      # devcontainer at all, so an image can be checked for its contents and
+      # never actually booted. That gap is how every published image from
+      # v2.0.0 to v3.1.4 shipped with frappe and no CRM app in it.
+      #
+      # The CLI that uses this socket comes from the docker-outside-of-docker
+      # feature in devcontainer.json; the mount has to be declared here because
+      # a feature's own `mounts` are not applied to compose-based devcontainers.
+      #
+      # TWO THINGS TO KNOW.
+      #  1. Reaching this socket is root on the host. Fine for a personal dev
+      #     box, not a claim to make quietly.
+      #  2. If /var/run/docker.sock does not exist on the host, compose creates
+      #     an empty *directory* at that path instead and every docker command
+      #     fails with a confusing error. Check first, on the host:
+      #         ls -l /var/run/docker.sock
+      #     Docker Desktop with WSL integration and a native docker-ce inside
+      #     WSL both put it there; if yours is elsewhere, change the left side.
+      #
+      # Containers started from in here are siblings, not children: they land on
+      # the host's docker, and published ports appear on the host. Bind-mount
+      # paths would be resolved by the host daemon against the host filesystem,
+      # not against /workspace -- deploy/docker-compose.yml uses only named
+      # volumes, so it is unaffected, but anything with a `-v` needs care.
+      - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /workspace/frappe-bench
     ports:
       - 8000-8005:8000-8005

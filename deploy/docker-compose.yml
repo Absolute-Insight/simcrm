@@ -138,6 +138,16 @@ services:
     environment:
       DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      # Read by crm.agent.install.apply_endpoint_defaults during after_install,
+      # and only there. The shipped base URL is localhost, which is correct for a
+      # bench on a laptop and wrong in a compose network where the inference
+      # server is a sibling service -- so without this the local-model profile
+      # pulled several GB of weights that no code path could reach. Seeded once,
+      # never re-applied, so an admin who changes the endpoint in Settings keeps
+      # their change across upgrades.
+      VECTORA_AGENT_BASE_URL: ${VECTORA_AGENT_BASE_URL:-http://ollama:11434/v1}
+      VECTORA_AGENT_MODEL: ${VECTORA_AGENT_MODEL:-hf.co/ibm-granite/granite-4.0-h-tiny-GGUF:Q4_K_M}
+      VECTORA_AGENT_ENABLED: ${VECTORA_AGENT_ENABLED:-0}
     entrypoint: ["bash", "-c"]
     # `bench new-site` writes enable_scheduler=0 into the new site's config, so
     # without the enable-scheduler step every cron job in crm/hooks.py -- the
@@ -320,7 +330,9 @@ services:
         ollama pull "$$MODEL"
         echo "Warming $$MODEL"
         ollama run "$$MODEL" "reply with the single word: ready" >/dev/null
-        echo "Local model ready. Point CRM Agent Settings at http://ollama:11434/v1"
+        echo "Local model ready at http://ollama:11434/v1"
+        echo "A site created with VECTORA_AGENT_ENABLED=1 is already pointed at it;"
+        echo "otherwise switch the tier on in Settings -> Assistant."
 
 volumes:
   ollama-models:

@@ -9,9 +9,9 @@
           {{ __('ERPNext Settings') }}
         </h2>
         <Tooltip text="View documentation">
-          <a href="https://docs.frappe.io/crm/erpnext" target="_blank">
+          <button type="button" @click="openHelpCenter('integrations')">
             <lucide-circle-question-mark class="h-4 w-4 text-ink-gray-6" />
-          </a>
+          </button>
         </Tooltip>
       </div>
     </template>
@@ -484,6 +484,7 @@ import ErrorState from '@/components/ui/ErrorState.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Link from '../Controls/Link.vue'
 import { globalStore } from '@/stores/global'
+import { openHelpCenter } from '@/stores/help'
 import { formatDate } from '@/utils'
 import { useTelemetry } from '@framework/ui/telemetry'
 

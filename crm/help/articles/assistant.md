@@ -35,6 +35,20 @@ endpoint — your own server or provider; nothing is sent anywhere Vectora is
 not told to send it. **Test connection** verifies the endpoint before reps
 ever see the feature. There is a daily call budget so usage stays bounded.
 
+- **Base URL** is an OpenAI-compatible endpoint including the version prefix —
+  `http://ollama:11434/v1`, `https://api.example.com/v1`. **API Key** only if
+  the server requires one.
+- **Test connection** sends one real request and checks the reply's shape; it
+  works with the tier still off, and tells a wrong base URL from a model that
+  cannot do structured output — those look identical from a record page.
+- A model on your own hardware is just a different base URL. The self-hosted
+  stack ships an inference container behind an opt-in profile, and a site
+  created with it already has the endpoint filled in. From inside the
+  application container `127.0.0.1` is that container, not the machine —
+  address a local endpoint by its service name or a real host.
+- **Timeout** is capped at 59 seconds, summarise and draft at 10 calls a
+  minute per user.
+
 When the model tier is off or unreachable, the assistant says so and the rest
 of Vectora is unaffected: signals, scoring, planning and analytics are
 deterministic and never depend on a model.

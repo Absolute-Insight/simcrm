@@ -150,12 +150,13 @@
                   documentType,
                 ])
               }}
-              <a
+              <button
                 class="font-medium underline"
-                href="https://docs.frappe.io/crm/assignment-rule"
-                target="_blank"
-                >{{ __('Learn about conditions') }}</a
+                type="button"
+                @click="openHelpCenter('automation-rules')"
               >
+                {{ __('Learn about conditions') }}
+              </button>
             </span>
             <div v-if="isOldSla && step.data">
               <Popover trigger="hover" :hoverDelay="0.25" placement="top-end">
@@ -230,12 +231,13 @@
                   [documentType],
                 )
               }}
-              <a
+              <button
                 class="font-medium underline"
-                href="https://docs.frappe.io/crm/assignment-rule"
-                target="_blank"
-                >{{ __('Learn about conditions') }}</a
+                type="button"
+                @click="openHelpCenter('automation-rules')"
               >
+                {{ __('Learn about conditions') }}
+              </button>
             </span>
             <div
               v-if="
@@ -348,6 +350,7 @@ import AssignmentRulesSection from './AssignmentRulesSection.vue'
 import AssignmentSchedule from './AssignmentSchedule.vue'
 import AssigneeRules from './AssigneeRules.vue'
 import { globalStore } from '@/stores/global'
+import { openHelpCenter } from '@/stores/help'
 import { disableSettingModalOutsideClick } from '@/composables/settings'
 import { useUnsavedChangesWarning } from '@/composables/useUnsavedChangesWarning'
 import { convertToConditions, validateConditions } from '@/utils'

@@ -12,8 +12,10 @@ what actually happened — plan-vs-actual is computed, never self-reported.
 
 - **Add items by hand**: pick an activity type, a day, an optional note and an
   optional deal or lead the item is about.
-- **Propose my week** drafts a week from your open suggestions, spread over
-  the remaining weekdays. It writes nothing until you review and save.
+- **Propose my week** drafts a week from your ten highest-scoring open
+  suggestions, spread over the remaining weekdays — a *schedule call*
+  suggestion becomes a call, the rest become tasks. It writes nothing until
+  you review and save.
 - Reschedule or remove items any time; the header rolls up planned / done /
   missed for the week.
 
@@ -29,11 +31,13 @@ A daily matcher links each planned item to real logged activity:
 | Meeting | A calendar event that was not cancelled |
 
 Matching prefers activity on the same deal or lead the item referenced, then
-the closest date. One real activity can only ever fulfil one planned item.
+the closest date, oldest week first. One real activity can only ever fulfil
+one planned item.
 
 The verdict is re-derived every run: if the call log behind a Done item is
 deleted, the Done goes away again. Items past the matching horizon are settled
-as Missed and the week becomes read-only.
+as Missed and the week becomes read-only. A missed item is itself a signal: it
+comes back to you in the suggestions inbox as a *stale plan*.
 
 ## Correcting the matcher
 

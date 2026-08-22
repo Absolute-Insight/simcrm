@@ -36,7 +36,12 @@ Everything above, plus:
   the dashboard is meant to be worked from, not just read.
 - **Deltas** compare against the previous period of the same length. For
   metrics where lower is better (time to close, critical deals), a falling
-  number shows as improvement.
+  number shows as improvement. A tile with no change does not show one.
+- Rows below 60% adherence or 80% attainment are marked in the manager
+  panels.
+- Charts group by things that are sometimes not set — a deal with no
+  territory or no owner. Those rows are labelled **Unassigned** rather than
+  dropped.
 - **Panels** can be hidden or reordered with the controls in each panel's
   corner; hidden panels stay one click away at the bottom of the page.
 

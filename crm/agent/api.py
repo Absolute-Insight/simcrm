@@ -336,4 +336,5 @@ def get_settings() -> dict:
 		"close_horizon_days": signals.close_horizon_days,
 		"suggestion_ttl_days": signals.suggestion_ttl_days,
 		"dismiss_cooldown_days": signals.dismiss_cooldown_days,
+		"max_open_per_user": signals.max_open_per_user,
 	}

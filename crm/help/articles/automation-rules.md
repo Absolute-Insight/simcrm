@@ -10,10 +10,21 @@ on the model tier — a rule fires the same way every time, model on or off.
 
 ## What a rule is
 
-- **A trigger** — the record event the rule watches.
-- **Conditions** — what must be true of the record for the rule to apply.
-- **An action** — what happens: update a field, or raise a suggestion in the
-  owner's inbox.
+- **A trigger** — the record event the rule watches: **Created**, or
+  **Status Changed**, optionally narrowed to one **To Status**.
+- **A condition** — an optional sandboxed Python expression with the record as
+  `doc` (`doc.deal_value > 50000`). Blank means always.
+- **An action** — create a task (with priority and due-in days), or raise a
+  suggestion in the owner's inbox with an urgency you set. Title and
+  description templates accept `{{ doc.field }}`; `doc` is the only thing in
+  scope, on purpose.
+- **Priority** decides order when several rules match; lower first. Each rule
+  runs isolated, so one that errors is logged and skipped and the rest still
+  run.
+
+A rule that never fires: check it is **Enabled**, the document type matches,
+the status actually *changed*, **To Status** matches the status name exactly,
+and the condition evaluates true.
 
 ## Rules vs. signals
 

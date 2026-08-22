@@ -41,7 +41,7 @@ class AgentSettingsTest(IntegrationTestCase):
 		place and off in the other."""
 		meta = frappe.get_meta("CRM Agent Settings")
 		self.assertEqual(len(DEFAULT_SETTINGS), 6)
-		self.assertEqual(len(SIGNAL_DEFAULTS), 5)
+		self.assertEqual(len(SIGNAL_DEFAULTS), 6)
 		for fieldname, default in {**DEFAULT_SETTINGS, **SIGNAL_DEFAULTS}.items():
 			field = meta.get_field(fieldname)
 			self.assertIsNotNone(field, f"{fieldname} is in the defaults but not in the doctype")

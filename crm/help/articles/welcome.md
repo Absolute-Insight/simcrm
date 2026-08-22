@@ -30,8 +30,15 @@ attention and why*, not with an empty list.
 - **One source of numbers.** Dashboard tiles, forecasts and reports are computed
   in one tested place, so two screens never disagree about the same metric.
 
+## A note on this help center
+
+It is served by Vectora itself, from the same container as the rest of the
+product. There is nothing to reach on the internet, and no page here describes
+a feature this build does not have.
+
 ## Where to go next
 
-- New here? Read **Setting up your workspace** if you administer the site, or
-  jump to **Leads** and **Deals** to learn the day-to-day flow.
+- New here? Read **Your first week**, then **Setting up your workspace** if
+  you administer the site, or jump to **Leads** and **Deals** to learn the
+  day-to-day flow.
 - Curious what the badge on the sidebar means? See **The suggestions inbox**.

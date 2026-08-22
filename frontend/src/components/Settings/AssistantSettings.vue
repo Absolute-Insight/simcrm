@@ -160,6 +160,16 @@
             type="number"
             :label="__('Cooldown after dismissal (days)')"
           />
+          <FormControl
+            v-model.number="draft.max_open_per_user"
+            type="number"
+            :label="__('Most open suggestions per rep')"
+            :description="
+              __(
+                'The inbox is a worklist, not a backlog. Lower-scoring suggestions past this limit expire instead of piling up.',
+              )
+            "
+          />
         </div>
       </section>
 
@@ -278,6 +288,7 @@ const FIELDS = [
   'close_horizon_days',
   'suggestion_ttl_days',
   'dismiss_cooldown_days',
+  'max_open_per_user',
 ]
 
 const draft = reactive({})

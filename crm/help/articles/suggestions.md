@@ -21,6 +21,12 @@ record until you confirm it.
 
 The last two are the predictive ones: they warn before the problem is obvious.
 
+Activity means a communication, a task, a call log or a human comment. An
+assignment comment does not count — nobody talked to the customer.
+
+Each suggestion carries a score, shown as a word rather than a number:
+**Urgent** at 70 and above, **Soon** at 40, **Low** below that.
+
 ## Working the inbox
 
 - Suggestions are ranked by urgency. Reps see their own; managers also see
@@ -34,11 +40,24 @@ The last two are the predictive ones: they warn before the problem is obvious.
 ## Housekeeping you never have to do
 
 - Only one open suggestion exists per signal per record — no pile-ups.
-- Suggestions expire on their own after a while and dismissed ones observe a
-  cooldown before the same signal can re-fire.
+- Suggestions expire on their own after a while (14 days by default) and
+  dismissed ones observe a cooldown before the same signal can re-fire.
+- Each rep has a ceiling on open suggestions (**30** by default). Left alone,
+  *no next step* would fire on every open deal without a task — on an imported
+  pipeline that is thousands of rows. The highest-scoring suggestions fill the
+  ceiling and the rest are not created at all; a full inbox gets nothing new
+  until you work it down, which is the right behaviour for a worklist.
 
 ## Configuration
 
 Admins tune the thresholds — idle days, close horizon, expiry and cooldown —
-in **Settings → Assistant**, under Signals. Signals are deterministic and run
-even when the model tier is off.
+in **Settings → Assistant**, under Signals, along with the per-rep ceiling.
+Signals are deterministic and run even when the model tier is off.
+
+## When nothing appears
+
+- The scheduler is not running, so the hourly job never fires.
+- **Generate suggestions** is off in **Settings → Assistant**.
+- Your inbox is already at the ceiling.
+- There is genuinely nothing to report, which on a small, well-tended pipeline
+  is the normal state.

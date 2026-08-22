@@ -41,6 +41,7 @@ IDLE_DEAL_DAYS = SIGNAL_DEFAULTS["idle_deal_days"]
 DISMISS_COOLDOWN_DAYS = SIGNAL_DEFAULTS["dismiss_cooldown_days"]
 SUGGESTION_TTL_DAYS = SIGNAL_DEFAULTS["suggestion_ttl_days"]
 CLOSE_HORIZON_DAYS = SIGNAL_DEFAULTS["close_horizon_days"]
+MAX_OPEN_PER_USER = SIGNAL_DEFAULTS["max_open_per_user"]
 
 # An expiry is nobody's decision, so the signal is allowed back -- but not on the
 # next hourly run, or the job would expire and re-create the same row forever.
@@ -467,6 +468,46 @@ def dedupe(
 	return out
 
 
+def _rank_key(candidate: dict) -> tuple:
+	"""Highest score first, then a stable tie-break.
+
+	Score alone is not an ordering: ``no_next_step`` gives every candidate the
+	same 40, so a sort on score would keep whichever rows the deal query
+	happened to return first and reshuffle them the next hour. The signal and
+	record names make the choice reproducible.
+	"""
+	return (-float(candidate.get("score") or 0), candidate["signal"], candidate["reference_docname"])
+
+
+def cap_per_user(candidates: list[dict], open_counts: dict[str, int], cap: int) -> list[dict]:
+	"""Keep only the highest-scoring candidates that fit under each rep's ceiling.
+
+	An inbox is a ranked worklist, not a census. ``no_next_step`` fires on every
+	open deal with no task, so an org that imports its pipeline gets one
+	suggestion per deal -- and the inbox only ever renders 50 rows, so the rest
+	are written, counted in the badge, and unreadable by anyone. Ranking here
+	rather than at read time is deliberate: the rows that would not fit are not
+	stored at all, so the badge, the query, and the hourly job all shrink
+	together.
+
+	``open_counts`` is what each user already has open, so a rep sitting on a
+	full inbox gets nothing new until they work it down. Candidates with no
+	owner share one bucket: nobody's queue is still a queue, and a manager
+	reading the unscoped list should not be handed the whole backlog either.
+	"""
+	room = {}
+	out = []
+	for candidate in sorted(candidates, key=_rank_key):
+		user = candidate.get("user") or ""
+		if user not in room:
+			room[user] = max(0, cap - open_counts.get(user, 0))
+		if room[user] <= 0:
+			continue
+		room[user] -= 1
+		out.append(candidate)
+	return out
+
+
 # --- frappe-facing layer -------------------------------------------------
 
 
@@ -696,6 +737,69 @@ def expire_stale(now: datetime) -> int:
 	).run()
 
 
+def _open_counts() -> dict[str, int]:
+	"""How many open suggestions each rep is already carrying.
+
+	Keyed by user with the unowned rows under ``""``, which is the same bucket
+	``cap_per_user`` uses -- a deal with no owner still produces candidates, and
+	they have to be counted somewhere.
+	"""
+	from frappe.query_builder.functions import Count
+
+	table = frappe.qb.DocType("CRM Suggestion")
+	rows = (
+		frappe.qb.from_(table)
+		.select(table.user, Count(table.name).as_("open"))
+		.where(table.status == "Open")
+		.groupby(table.user)
+		.run(as_dict=True)
+	)
+	return {(row["user"] or ""): row["open"] for row in rows}
+
+
+def trim_open_over_cap(now: datetime, cap: int = MAX_OPEN_PER_USER) -> int:
+	"""Expire the lowest-ranked open rows for any rep already over the ceiling.
+
+	``cap_per_user`` keeps a queue from growing past the cap, but it cannot
+	shrink one that is already over -- a site that ran before the cap existed,
+	or whose admin has just lowered it, keeps its backlog forever otherwise.
+	This is the other half of the same rule, applied to rows already on disk.
+
+	Which rows survive is deliberate and must not change between runs: the
+	ranking is score first, then oldest first, then name. ``creation`` and
+	``name`` never move, so the same rows survive every hour instead of the
+	inbox reshuffling itself under a rep who is working through it.
+	"""
+	expired = 0
+	table = frappe.qb.DocType("CRM Suggestion")
+	for user, count in sorted(_open_counts().items()):
+		if count <= cap:
+			continue
+		owner = table.user.isnull() | (table.user == "") if not user else table.user == user
+		names = (
+			frappe.qb.from_(table)
+			.select(table.name)
+			.where(table.status == "Open")
+			.where(owner)
+			.orderby(table.score)
+			.orderby(table.creation, order=frappe.qb.desc)
+			.orderby(table.name, order=frappe.qb.desc)
+			.limit(count - cap)
+			.run(pluck=True)
+		)
+		for batch in _batched(names):
+			# the row count comes from the batch, not from run(): a query-builder
+			# UPDATE returns a tuple, and adding that to an int is a TypeError
+			(
+				frappe.qb.update(table)
+				.set(table.status, "Expired")
+				.set(table.modified, now)
+				.where(table.name.isin(batch))
+			).run()
+			expired += len(batch)
+	return expired
+
+
 def _collect_candidates(now: datetime, cfg) -> list[dict]:
 	deals = _working_deal_rows()
 	deal_names = [d["name"] for d in deals]
@@ -731,10 +835,13 @@ def run_signals() -> int:
 	# run must still block, or the job re-creates what it just expired
 	existing = _existing_suggestions([c["reference_docname"] for c in candidates]) if candidates else []
 	expire_stale(now)
+	trim_open_over_cap(now, cfg.max_open_per_user)
 	if not candidates:
 		return 0
 
 	fresh = dedupe(candidates, existing, now, cfg.dismiss_cooldown_days, _dismissal_counts(candidates))
+	# after expiring and trimming, so the room each rep has left is the real one
+	fresh = cap_per_user(fresh, _open_counts(), cfg.max_open_per_user)
 	expires_on = now + timedelta(days=cfg.suggestion_ttl_days)
 
 	created = 0

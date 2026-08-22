@@ -18,13 +18,20 @@ The rules that keep it honest:
 - **A settled month with nothing closed shows 0, not blank** — "zero revenue"
   and "no data yet" stay distinguishable; only future months are blank.
 - Forecasting is switched on per site; when it is off, the charts say so
-  instead of drawing an empty line.
+  instead of drawing an empty line. While it is off, **expected deal value**
+  and **expected close date** are not mandatory on a deal — once it is on,
+  make sure they are being filled in.
+- Forward-looking figures (pipeline, forecast) use *expected* value; realised
+  figures (won revenue, actual) use what the deal closed at. A future month
+  with a large forecast and an actual of 0 has nothing wrong with it.
 
 ## Forecast accuracy
 
 Vectora snapshots the forecast weekly. The accuracy chart compares the last
 snapshot taken *before* each month began against that month's live actual —
 your forecast is measured against reality, not against what it later became.
+Snapshots cover last month to six months out; re-running on the same day
+updates in place.
 The chart starts drawing once enough snapshot history has accumulated.
 
 ## Sales targets (quotas)

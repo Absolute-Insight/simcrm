@@ -17,7 +17,13 @@ is on that record's timeline, not in a separate inbox.
 ## Receiving
 
 - Mail to a connected account (**Settings → Email → Accounts**) is matched to
-  the record by the sender's address and appears on the timeline.
+  the record by the sender's address and appears on the timeline. Most
+  providers need an app password rather than your ordinary one.
+- Without a connected account the thread on a record is empty, the *idle* and
+  *cooling* signals have no communications to read, and the assistant has
+  nothing to summarise. Mail sent from your own client, outside Vectora, is
+  invisible to it — the deal will look idle because, as far as Vectora can
+  tell, it is.
 
 ## Summaries and drafted replies
 

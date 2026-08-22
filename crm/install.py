@@ -6,7 +6,7 @@ import click
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
-from crm.agent.install import ensure_agent_role
+from crm.agent.install import apply_endpoint_defaults, ensure_agent_role
 from crm.domain_enrichment.install import seed_default_rules_and_mappings
 from crm.fcrm.doctype.crm_dashboard.crm_dashboard import create_default_manager_dashboard
 from crm.fcrm.doctype.crm_products.crm_products import create_product_details_script
@@ -36,6 +36,7 @@ def after_install(force=False):
 	add_assignment_rule_property_setters()
 	seed_default_rules_and_mappings()
 	ensure_agent_role()
+	apply_endpoint_defaults()
 	# install/migrate runs outside a request, so nothing else will commit the
 	# fixtures created above.
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
