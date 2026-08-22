@@ -11,10 +11,10 @@
           class="-ml-4 cursor-pointer !max-w-96 !justify-start !pr-0 text-lg-semibold text-ink-gray-7 no-underline hover:bg-transparent hover:no-underline hover:opacity-70 focus:bg-transparent focus:outline-none focus:ring-0"
           @click="goBack"
         />
-        <Badge
+        <ToneBadge
           v-if="dirty"
           variant="subtle"
-          theme="amber"
+          theme="orange"
           size="sm"
           :label="__('Not Saved')"
         />
@@ -656,8 +656,8 @@
 </template>
 
 <script setup>
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import {
-  Badge,
   Button,
   Switch,
   Combobox,

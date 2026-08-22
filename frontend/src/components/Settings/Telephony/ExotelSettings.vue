@@ -10,11 +10,11 @@
           class="cursor-pointer -ml-4 hover:bg-transparent focus:bg-transparent focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:none active:bg-transparent active:outline-none active:ring-0 active:ring-offset-0 active:text-ink-gray-5 text-2xl-semibold hover:opacity-70 !pr-0 !max-w-96 !justify-start"
           @click="emit('updateStep', 'telephony-settings')"
         />
-        <Badge
+        <ToneBadge
           v-if="exotel.doc?.enabled && isDirty"
           :label="__('Not Saved')"
           variant="subtle"
-          theme="amber"
+          theme="orange"
         />
       </div>
     </template>
@@ -129,6 +129,7 @@
   </SettingsLayoutBase>
 </template>
 <script setup>
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import { setEnabled } from '@/composables/telephony'
 import { useDocument } from '@/data/document'
 import { Switch } from 'frappe-ui'

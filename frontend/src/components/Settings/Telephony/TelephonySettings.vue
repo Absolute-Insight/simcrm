@@ -7,11 +7,11 @@
           class="flex gap-2 text-2xl-semibold leading-none h-5 text-ink-gray-8"
         >
           {{ __('Telephony Settings') }}
-          <Badge
+          <ToneBadge
             v-if="isDirty"
             :label="__('Not Saved')"
             variant="subtle"
-            theme="amber"
+            theme="orange"
           />
         </h2>
         <p class="text-p-base text-ink-gray-6">
@@ -217,13 +217,8 @@
   </div>
 </template>
 <script setup>
-import {
-  FormControl,
-  Badge,
-  ErrorMessage,
-  createResource,
-  toast,
-} from 'frappe-ui'
+import ToneBadge from '@/components/ui/ToneBadge.vue'
+import { FormControl, ErrorMessage, createResource, toast } from 'frappe-ui'
 import { useTelephony } from '@/composables/telephony'
 import { useDocument } from '@/data/document'
 import { usersStore } from '@/stores/users'

@@ -5,11 +5,11 @@
         class="flex items-center gap-2 text-3xl-semibold leading-6 text-ink-gray-9"
       >
         <div>{{ __('Edit Grid Fields Layout') }}</div>
-        <Badge
+        <ToneBadge
           v-if="dirty"
           :label="__('Not Saved')"
           variant="subtle"
-          theme="amber"
+          theme="orange"
         />
       </h3>
     </template>
@@ -96,6 +96,7 @@
   </Dialog>
 </template>
 <script setup>
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import DragVerticalIcon from '@/components/Icons/DragVerticalIcon.vue'
 import { getMeta } from '@/stores/meta'
 import Draggable from 'vuedraggable'

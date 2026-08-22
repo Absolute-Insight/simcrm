@@ -58,7 +58,7 @@
       </div>
 
       <div class="flex items-center justify-between py-0.5">
-        <Badge
+        <ToneBadge
           :label="__('{0}% completed', [completedPercentage])"
           :theme="completedPercentage == 100 ? 'green' : 'orange'"
           size="lg"
@@ -140,6 +140,7 @@
 </template>
 
 <script setup>
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import HelpIcon from '@/components/Icons/HelpIcon.vue'
 import { openHelpCenter } from '@/stores/help'
 import {
@@ -147,7 +148,7 @@ import {
   showHelpModal,
   useOnboarding,
 } from '@framework/ui/components/Onboarding'
-import { Badge, Button, Tooltip } from 'frappe-ui'
+import { Button, Tooltip } from 'frappe-ui'
 import { isRef, ref, watch } from 'vue'
 
 const props = defineProps({
