@@ -98,7 +98,10 @@ pre-commit run --files <changed files>
 
 [AGENTS.md](AGENTS.md) is the map of the codebase; [CLAUDE.md](CLAUDE.md) covers how to
 work in it. [docs/PILOT-READINESS.md](docs/PILOT-READINESS.md) tracks what is done and
-what is not, honestly.
+what is not, honestly, and
+[docs/BROWSER-QA-2026-08-22.md](docs/BROWSER-QA-2026-08-22.md) records the last full
+browser pass before deployment — what was found, what was fixed, and what it did not
+cover.
 
 ## Built on
 
