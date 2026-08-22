@@ -38,17 +38,27 @@ jobs:
         outputs:
             frappe-branches: ${{ steps.resolve.outputs.branches }}
         steps:
-            - name: Resolve frappe branches from target branch
+            - name: Resolve frappe branch
               id: resolve
               run: |
-                  BASE="${{ github.base_ref || github.ref_name }}"
-                  # develop builds against this fork's pinned frappe branch
-                  # (Absolute-Insight/frappe@vectora); the stable lane ships 15 and 16.
-                  if [ "$BASE" = "develop" ]; then
-                      echo 'branches=["vectora"]' >> "$GITHUB_OUTPUT"
-                  else
-                      echo 'branches=["version-15","version-16"]' >> "$GITHUB_OUTPUT"
-                  fi
+                  # Always this fork's pinned frappe branch, on every lane. The
+                  # inherited mapping sent the main lane to version-15/16, which
+                  # this fork cannot run on: pyproject requires frappe
+                  # >=16.0.0-dev, and Absolute-Insight/frappe carries only
+                  # `develop` and `vectora` -- so the clone failed outright with
+                  # "Remote branch version-16 not found in upstream origin".
+                  #
+                  # It stayed hidden because this suite ran only on
+                  # pull_request, and pull requests target develop. Adding the
+                  # push trigger so builds.yml's guard could require this check
+                  # is what finally ran the main lane, and it failed on the
+                  # first release that needed it -- the same "green only by
+                  # never running" this fork already fixed in
+                  # migration-test.yml.
+                  #
+                  # Testing the lane the shipped image is actually built from
+                  # is also the more honest check: builds.yml builds vectora.
+                  echo 'branches=["vectora"]' >> "$GITHUB_OUTPUT"
 
     test:
         name: Tests (frappe ${{ matrix.frappe-branch }})
@@ -79,8 +89,11 @@ jobs:
                   python-version: "3.14"
                   node-version: "24"
                   type: "server"
-                  # erpnext: stable lane only, never v16 (v16 test bootstrap broken on bare bench)
-                  install-erpnext: ${{ (github.base_ref == 'main-hotfix' || github.base_ref == 'main') && matrix.frappe-branch != 'version-16' }}
+                  # erpnext on the release lanes only -- it is not needed to
+                  # prove the app works, and its bootstrap is the slowest part
+                  # of the job. The old `!= 'version-16'` guard went with the
+                  # stable lane it was written for.
+                  install-erpnext: ${{ github.base_ref == 'main-hotfix' || github.base_ref == 'main' }}
                   frappe-branch: ${{ matrix.frappe-branch }}
 
             - name: Run server tests
@@ -101,9 +114,9 @@ jobs:
                   coverage-path: /home/runner/frappe-bench/sites/coverage.xml
 
     # One check with a fixed name, whatever the matrix resolved to. The matrix
-    # job is called "Tests (frappe vectora)" on develop and "Tests (frappe
-    # version-15)" / "(frappe version-16)" on main, so builds.yml's guard could
-    # not name a single check to wait for; it names this one. `always()` so it
+    # job carries the frappe branch in its name ("Tests (frappe vectora)"), so
+    # builds.yml's guard cannot name it directly without breaking the next time
+    # the matrix changes; it names this one instead. `always()` so it
     # still reports when a matrix leg fails -- a skipped job is no verdict,
     # and the guard treats absence as unpublishable.
     server-tests:
