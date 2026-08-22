@@ -21,9 +21,7 @@
       <div class="flex item-center space-x-2 w-3/12 justify-end">
         <Button
           v-if="isDirty"
-          :loading="
-            isNewDoc ? insertResource.loading : telephonyAgent.save?.loading
-          "
+          :loading="saving"
           :label="__('Update')"
           variant="solid"
           @click="update"
@@ -211,19 +209,16 @@
         />
       </div>
     </div>
-    <ErrorMessage
-      :message="isNewDoc ? insertResource.error : telephonyAgent.save?.error"
-    />
+    <ErrorMessage :message="saveError" />
   </div>
 </template>
 <script setup>
 import ToneBadge from '@/components/ui/ToneBadge.vue'
 import { FormControl, ErrorMessage, createResource, toast } from 'frappe-ui'
 import { useTelephony } from '@/composables/telephony'
-import { useDocument } from '@/data/document'
 import { usersStore } from '@/stores/users'
 import { validatePhone } from '@/utils'
-import { ref, computed } from 'vue'
+import { computed, reactive, ref } from 'vue'
 
 const { isEnabled } = useTelephony()
 
@@ -231,34 +226,83 @@ const emit = defineEmits(['updateStep'])
 
 const { getUser, isManager } = usersStore()
 
+const FIELDS = [
+  'name',
+  'default_medium',
+  'twilio_number',
+  'exotel_number',
+  'mobile_no',
+]
+
+const telephonyAgent = reactive({ doc: null, originalDoc: null })
 const isNewDoc = ref(false)
 
-const { document: telephonyAgent } = useDocument(
-  'CRM Telephony Agent',
-  getUser().name,
-  {
-    onError: (err) => {
-      if (err.exc_type === 'DoesNotExistError') {
-        isNewDoc.value = true
-        telephonyAgent.doc = {}
-        telephonyAgent.originalDoc = {}
-      }
-    },
+/**
+ * A user who has never saved telephony settings has no `CRM Telephony Agent`,
+ * and `frappe.client.get` answers 404 for that -- twice, once for the document
+ * and once for its permissions. The pane already treated that as "new
+ * document" and rendered correctly, but frappe-ui's resource layer rethrows
+ * after running `onError`, so both 404s still surfaced as uncaught rejections
+ * on every visit and would reach any error monitor wired up in production.
+ *
+ * `get_value` answers 200 with `{}` for the same query, so the empty case
+ * arrives as data instead of as an error, and the pane makes one request
+ * rather than two.
+ */
+createResource({
+  url: 'frappe.client.get_value',
+  auto: true,
+  params: {
+    doctype: 'CRM Telephony Agent',
+    filters: { user: getUser().name },
+    fieldname: FIELDS,
   },
-)
+  onSuccess: (data) => applyDoc(data),
+  onError: (err) => err.messages?.forEach((msg) => toast.error(msg)),
+})
+
+// Keep the editable document to the fields this pane owns, so `isDirty`
+// compares like with like and a save sends only what the form can change.
+function applyDoc(data) {
+  const exists = Boolean(data?.name)
+  const doc = {}
+  for (const field of FIELDS) doc[field] = exists ? data[field] ?? null : null
+  if (!exists) delete doc.name
+
+  isNewDoc.value = !exists
+  telephonyAgent.doc = doc
+  telephonyAgent.originalDoc = { ...doc }
+}
 
 const insertResource = createResource({
   url: 'frappe.client.insert',
   onSuccess: (data) => {
-    isNewDoc.value = false
-    telephonyAgent.doc = data
-    telephonyAgent.originalDoc = JSON.parse(JSON.stringify(data))
+    applyDoc(data)
     toast.success(__('Document created successfully'))
   },
   onError: (err) => {
     err.messages?.forEach((msg) => toast.error(msg))
   },
 })
+
+const saveResource = createResource({
+  url: 'frappe.client.set_value',
+  onSuccess: (data) => {
+    applyDoc(data)
+    toast.success(__('Document updated successfully'))
+  },
+  onError: (err) => {
+    err.messages?.forEach((msg) => toast.error(msg))
+  },
+})
+
+const saving = computed(() =>
+  isNewDoc.value ? insertResource.loading : saveResource.loading,
+)
+
+const saveError = computed(() =>
+  isNewDoc.value ? insertResource.error : saveResource.error,
+)
 
 function update() {
   if (!isDirty.value) return
@@ -272,7 +316,12 @@ function update() {
       },
     })
   } else {
-    telephonyAgent.save.submit()
+    const { name, ...values } = telephonyAgent.doc
+    saveResource.submit({
+      doctype: 'CRM Telephony Agent',
+      name,
+      fieldname: values,
+    })
   }
 }
 
