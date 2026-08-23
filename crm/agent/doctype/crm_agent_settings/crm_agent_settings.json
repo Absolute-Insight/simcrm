@@ -44,7 +44,7 @@
    "label": "Base URL"
   },
   {
-   "default": "lfm2.5-2.6b",
+   "default": "hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M",
    "fieldname": "model",
    "fieldtype": "Data",
    "label": "Model"
@@ -67,7 +67,7 @@
    "label": "Timeout"
   },
   {
-   "default": "1024",
+   "default": "2048",
    "fieldname": "max_tokens",
    "fieldtype": "Int",
    "label": "Max Tokens"

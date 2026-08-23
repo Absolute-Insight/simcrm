@@ -32,7 +32,9 @@ class AgentSettingsTest(IntegrationTestCase):
 		meta = frappe.get_meta("CRM Agent Settings")
 		self.assertEqual(meta.get_field("enabled").default, "0")
 		self.assertEqual(meta.get_field("timeout").default, "30")
-		self.assertEqual(meta.get_field("max_tokens").default, "1024")
+		# 2048, not 1024: the shipped default model truncates mid-object on a long
+		# thread at 1024 and the reply arrives as invalid JSON.
+		self.assertEqual(meta.get_field("max_tokens").default, "2048")
 
 	def test_declared_defaults_match_the_config_modules_copy(self):
 		"""``config.DEFAULT_SETTINGS`` exists because an unsaved Single has no row to read

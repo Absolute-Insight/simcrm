@@ -146,7 +146,7 @@ services:
       # never re-applied, so an admin who changes the endpoint in Settings keeps
       # their change across upgrades.
       VECTORA_AGENT_BASE_URL: ${VECTORA_AGENT_BASE_URL:-http://ollama:11434/v1}
-      VECTORA_AGENT_MODEL: ${VECTORA_AGENT_MODEL:-hf.co/ibm-granite/granite-4.0-h-tiny-GGUF:Q4_K_M}
+      VECTORA_AGENT_MODEL: ${VECTORA_AGENT_MODEL:-hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M}
       VECTORA_AGENT_ENABLED: ${VECTORA_AGENT_ENABLED:-0}
     entrypoint: ["bash", "-c"]
     # `bench new-site` writes enable_scheduler=0 into the new site's config, so
@@ -280,11 +280,11 @@ services:
   # No memory ceiling here on purpose: the model's working set is the weights,
   # and a limit below them is an OOM-kill mid-answer. The README is explicit
   # that the 4 GB host running the rest of this stack cannot also host a model.
-  # On a bigger host, size it to the model -- e.g. for granite-4.0-h-tiny Q4:
+  # On a bigger host, size it to the model -- e.g. for LFM2.5-2.6B Q4 (1.7 GB):
   #   deploy:
   #     resources:
   #       limits:
-  #         memory: 6g
+  #         memory: 4g
   #         cpus: "4"
   # GPU: add a device reservation to `ollama` if the host has one --
   #   deploy:
@@ -321,7 +321,7 @@ services:
         condition: service_healthy
     environment:
       OLLAMA_HOST: http://ollama:11434
-      MODEL: ${VECTORA_AGENT_MODEL:-hf.co/ibm-granite/granite-4.0-h-tiny-GGUF:Q4_K_M}
+      MODEL: ${VECTORA_AGENT_MODEL:-hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
