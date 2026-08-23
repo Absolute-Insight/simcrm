@@ -41,3 +41,9 @@ deploy/.env
 # browser, and the devcontainer lockfile the CLI regenerates per rebuild.
 google-chrome-stable_current_amd64.deb
 .devcontainer/devcontainer-lock.json
+
+# Rotating .env keeps the superseded credentials in the working tree, one
+# `git add -A` away from being published; and an override file is by definition
+# one host's paths, ports and hardware, which nobody else can use.
+deploy/.env.bak-*
+deploy/docker-compose.override.yml

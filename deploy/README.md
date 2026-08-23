@@ -638,6 +638,80 @@ Write down what surprised you at each step. That list is the real distance
 between "works in a container" and "works on a host", and it is what the first
 customer deployment should be planned against.
 
+### What the first one surprised us with
+
+Run on `vectora.absolute-insight.ai`, 2026-08-23. Measured numbers, not estimates.
+
+**Changing the site timezone freezes every scheduled job, and then self-heals.**
+The worst finding of the day, because nothing reports it. Completing the setup
+wizard moved the site from Frappe's `+05:30` default to `+02:00`.
+`Scheduled Job Type.last_execution` stores a *naive local* datetime, so every
+stored value was re-read 3h30m in the future, `get_next_execution()` sat
+permanently ahead of `now()`, and all 59 jobs stopped being due. No email flush,
+no inbound mail pull, no signal run, no digests — for the length of the offset.
+Then it comes back on its own, so whoever investigates later finds a healthy
+system and no evidence. After any timezone change, check:
+
+```bash
+docker compose exec backend bench --site <site> console
+>>> frappe.get_doc("Scheduled Job Type", {"method": "frappe.email.queue.flush"}).is_event_due()
+```
+
+If that is `False` with a `last_execution` in the future, shift the stored values
+back by the offset rather than clamping them to `now()` — clamping makes every
+daily job skip a day. The same shift is needed for `creation`/`modified` across
+the data: 153,661 of them were future-dated here, which sorts anything you
+genuinely touch *below* every seeded row in a list view ordered by last-modified.
+
+**The "Create Lead from Incoming Emails" toggle does not govern IMAP accounts.**
+`crm/api/settings.py` appends `{"append_to": "CRM Lead"}` to the IMAP folder row
+unconditionally. Frappe core then creates the document itself
+(`receive.py`: `append_to = self.append_to if self.email_account.use_imap else ...`)
+and stamps the Communication, so CRM's own hook returns early at
+`if doc.reference_doctype and doc.reference_name` and never consults the flag.
+Result: a lead per unknown sender whatever the checkbox says. Clear `append_to`
+on the folder row to make the toggle authoritative.
+
+**No custom IMAP/SMTP option exists in the Add Email screen.** The list is
+GMail, Outlook, Sendgrid, SparkPost, Yahoo, Yandex and Frappe Mail. A customer
+on their own mail host — which is most of them — cannot add an account without a
+bench shell. This deployment's IONOS account had to be created server-side.
+
+**The `local-model` profile pinned an image tag that does not exist.**
+`ollama/ollama:0.12.12` has never been published; the series is 0.3x. Anyone
+following step 7 hit `failed to resolve reference` immediately. Now pinned to
+`0.32.15`. Check a pin resolves before shipping it.
+
+**`VECTORA_AGENT_ENABLED` does nothing on an existing site.**
+`apply_endpoint_defaults()` runs from `after_install` only — deliberately, so an
+upgrade cannot silently revert an endpoint an admin changed. On a site that
+already exists, switch the tier on in the settings doctype instead.
+
+**Measured, for planning against:**
+
+| | |
+|---|---|
+| `bench migrate` | **5s** against 3,000 deals / 5,002 leads / 6,018 contacts |
+| hourly scheduler batch | ~20s wall clock, all jobs `Complete` |
+| `score_open_deals` coverage | 2,997 of 2,997 open deals scored |
+| `run_signals` output | 156 open suggestions |
+| mail round trip | send → scheduler flush 20s; inbound pull ≤10 min (cron interval) |
+
+Mail deliverability needed no DNS work — IONOS's own `s1-ionos` selector signed,
+and the receiver returned `dkim=pass spf=pass dmarc=pass`. A dangling
+`*._domainkey` CNAME left over from an earlier setup was irrelevant, because the
+signing selector is chosen by the sending server, not by what is in DNS.
+
+**Demo data plus a live mailbox is a reputation risk.** Seeded users sit on
+`@vectora.test` and `@example.com`; `.test` is a reserved TLD that can never
+resolve. Every CRM notification to one is a hard `550` at the smarthost. Turn
+`enable_email_notifications` off for them — that stops the mail without
+disabling the accounts, so they can still be logged into for role testing.
+
+**Still open here:** an offsite backup destination (decided: an S3-compatible
+bucket, not yet wired — step 3 cannot close until it exists), and every
+integration in step 6.
+
 ## Pilot checklist
 
 The defaults below are deliberately conservative; loosen them as the pilot
