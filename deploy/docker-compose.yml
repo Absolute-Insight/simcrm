@@ -294,7 +294,7 @@ services:
   # CPU-only works but is slow enough that the agent timeout needs raising, and
   # the proxy ceiling with it. See README.md.
   ollama:
-    image: ollama/ollama:0.12.12
+    image: ollama/ollama:0.32.15
     profiles: ["local-model"]
     restart: unless-stopped
     environment:
@@ -313,7 +313,7 @@ services:
   # request from a rep is a warm one. Idempotent -- a pull of a model already
   # present is a no-op, so `up -d` stays safe to re-run.
   ollama-pull:
-    image: ollama/ollama:0.12.12
+    image: ollama/ollama:0.32.15
     profiles: ["local-model"]
     restart: on-failure
     depends_on:
