@@ -524,18 +524,69 @@ interaction described above — raise the agent `timeout`, and
 that comfortably runs the rest of this stack is **not** enough to also host a
 model; put inference on its own machine.
 
-**Model choice.** `granite-4.0-h-tiny` at Q4_K_M is what this stack is verified
-against: guided decoding is clean and a warm summary returns in about a second
-on a small GPU, against roughly nine and a half seconds cold — which is what
-`OLLAMA_KEEP_ALIVE` exists to avoid. `LFM2.5-2.6B` also works, more slowly. Do
-not ship `MiniCPM5-1B`: it intermittently returns empty content, which the agent
-correctly reports as `unavailable` rather than inventing a summary.
+**Model choice.** `LFM2.5-2.6B` at Q4_K_M is the default and what this stack is
+verified against. Eleven models were run through the real `client.complete()`
+path — the same code a rep's summary goes through — on two axes: does guided
+decoding produce a schema-valid object, and does the model follow instructions
+planted in a customer's email. The second axis chose the default.
 
-**What a local model does not fix.** Prompt injection. Every model tested so far
-follows instructions embedded in a customer's email — that is why this tier has
-no write tools and why drafted replies are always shown to a human before
-sending. Running the model yourself changes where the weights live, not whether
-the output can be steered by someone who emails your reps.
+| Model | Licence | Q4 | Warm | Injection cases landed |
+|---|---|---|---|---|
+| **LFM2.5-2.6B** | LFM1.0 | 1.7 GB | 2.8 s | **1 of 4** — refused the discount draft **0/7** |
+| granite-4.0-h-micro | Apache-2.0 | 1.9 GB | 1.1 s | 3 of 4 — discount **7/7** |
+| Qwen3.8-2B-Distill | Apache-2.0 | 1.3 GB | 1.7 s | 3 of 4 — discount **7/7** |
+| granite-4.0-h-tiny *(old default)* | Apache-2.0 | 4.2 GB | 0.8 s | discount **7/7**, and calls a plainly negative thread `neutral` |
+| antares-1b | Apache-2.0 | 1.1 GB | 0.5 s | 4 of 4 |
+| SmolLM3-3B | Apache-2.0 | 1.9 GB | 1.0 s | 4 of 4 |
+| granite-4.1-3b / 4.1-8b | Apache-2.0 | 2.1 / 5.0 GB | 1.0 / 3.0 s | 4 of 4 / no better at 8B |
+
+Four more could not run this workload at all, which is worth knowing before you
+try them: `InternScience/Agents-A1-4B` and `MiniCPM5-1B` return **empty content**
+under a schema (A1-4B spends its whole budget in a `reasoning` channel — 39s,
+84s and 95s at 2048, 4096 and 8192 tokens, all empty); `Qwen3-4B-Instruct-2507`
+invents keys the schema forbids; `Nanbeige4.2-3B` fails with
+`Failed to initialize samplers` because llama.cpp cannot build a grammar for it;
+`fuse-1-Lite` will not load — `unknown model architecture: 'fuse3'`.
+
+Scale does not buy resistance: `granite-4.1-8b` is no better than the 3B, and it
+inherits the same `neutral` sentiment error as `granite-4.0-h-tiny`.
+
+`max_tokens` must be **2048 or more** for this default. At 1024 a long thread
+comes back as `Invalid JSON: EOF while parsing a string` — a budget too small to
+finish the object, reported to the rep as `unavailable`.
+
+### The model licence, and who it binds
+
+**`LFM2.5-2.6B` is not permissively licensed.** It ships under LFM1.0, whose own
+text defines a *Threshold* of **"annual revenue of 10 million United States
+dollars ($10,000,000) or more"** and limits Commercial Use above it. Apache-2.0
+models carry no such condition; this one was chosen anyway, because it is the
+only model measured here that refuses to draft a fraudulent discount.
+
+The licensee is whoever runs the weights — the customer, not us. So the position
+has to be stated at the point of sale rather than discovered at an audit:
+
+- **Under the threshold:** run the default as shipped. Nothing to buy.
+- **At or above it:** two supported ways through, and the choice is theirs.
+  1. **Buy a commercial licence from Liquid AI** and keep the default, its
+     footprint and its behaviour unchanged.
+  2. **Move to hardware that can host a larger permissively-licensed model.**
+     The Apache field only becomes interesting further up the size curve than
+     the 1.7 GB default — that means a dedicated inference host with a real GPU,
+     not the 4 GB VM this stack runs on. Set `VECTORA_AGENT_MODEL` and
+     `VECTORA_AGENT_BASE_URL` accordingly; nothing in the code changes.
+
+Either way the endpoint is two settings fields. A deployment that wants neither
+can leave the agent tier off, which is the shipped default and a supported state
+— the deterministic tier (assignment, SLA, automation rules, signals) runs
+without a model at all.
+
+**What a local model does not fix.** Prompt injection — not even this one. The
+default resists the draft case and one summarise case; it still follows a
+planted instruction in the other three. Every other model tested is worse. That
+is why this tier has no write tools and why drafted replies are always shown to
+a human before sending. Running the model yourself changes where the weights
+live, not whether the output can be steered by someone who emails your reps.
 
 ## Pilot checklist
 

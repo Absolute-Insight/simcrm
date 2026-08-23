@@ -429,8 +429,14 @@ someone other than me:
       **1.03 s warm** (9.46 s cold), guided decoding clean. So this is deployment work, not a
       rewrite: an opt-in compose profile, a weights volume, `base_url` on a service name
       (127.0.0.1 does not resolve from inside the backend container), keep-alive plus a boot
-      warmup for the 9× cold-start penalty, and honest hardware guidance. granite-4.0-h-tiny
-      is the verified-good model; MiniCPM5-1B must not ship (returns empty content). **2 days.**
+      warmup for the 9× cold-start penalty, and honest hardware guidance. The shipped
+      default is now `LFM2.5-2.6B` — chosen on 2026-08-23 after running eleven models
+      through the real client, because it is the only one that refused to draft the
+      fraudulent discount in the injection corpus (0/7, against 7/7 for every
+      Apache-licensed candidate including the previous `granite-4.0-h-tiny` default).
+      Its LFM1.0 licence limits commercial use above $10M revenue, so deploy/README.md
+      carries the two supported ways through for customers above that line. MiniCPM5-1B
+      must not ship (returns empty content). **2 days.**
 - [x] **No Agent settings UI.** Eleven configurable fields, including every signal
       threshold, with no pane in Vectora's own Settings — an admin had to drop to the raw
       Frappe desk to tune a pilot's thresholds. Now **Settings → Assistant**, gated on

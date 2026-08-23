@@ -25,9 +25,18 @@ DEFAULT_SETTINGS = {
 	# default and what the deploy stack's local-model profile serves, so the
 	# default is now either correct or refused at connect, which reads honestly.
 	"base_url": "http://localhost:11434/v1",
-	"model": "lfm2.5-2.6b",
+	# The ollama reference, because the shipped local-model profile serves ollama
+	# and a bare tag resolves to nothing there. Chosen on measurement, not vendor:
+	# of eleven models run through this client, LFM2.5-2.6B is the only one that
+	# refused to draft the fraudulent discount in the injection corpus (0/7, where
+	# every Apache-licensed candidate confirmed it 7/7). Its licence is not
+	# permissive -- see deploy/README.md, "The model licence, and who it binds".
+	"model": "hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M",
 	"timeout": 30,
-	"max_tokens": 1024,
+	# 1024 truncates this model mid-JSON on a long thread -- the reply comes back
+	# as `Invalid JSON: EOF while parsing a string` and the tier reports
+	# "unavailable" for what is really a budget too small to finish the object.
+	"max_tokens": 2048,
 	"daily_call_budget": 500,
 }
 
