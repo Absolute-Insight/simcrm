@@ -588,6 +588,56 @@ is why this tier has no write tools and why drafted replies are always shown to
 a human before sending. Running the model yourself changes where the weights
 live, not whether the output can be steered by someone who emails your reps.
 
+## First deployment (internal)
+
+Before any customer sees this, put it on a real host with no real users. That
+deployment is not a formality — it is the only place several things can be
+tested at all, because everything below is unreachable from a container:
+
+**What relaxes on an internal box.** Throwaway data means a lost restore costs
+an afternoon, not a customer. Loosen the conservative defaults deliberately
+here, and find out what breaks while it is cheap.
+
+**What does not.** Docker's published ports bypass host firewall rules such as
+`ufw`, so a `0.0.0.0` bind is on the internet the moment it exists, whatever the
+firewall says — and this stack speaks plain HTTP carrying session cookies. Keep
+the loopback bind and put a proxy in front, on a test box as much as a real one.
+`DB_ROOT_PASSWORD` and `ADMIN_PASSWORD` are real credentials regardless of whose
+data sits behind them.
+
+Exercise these in order, because each one is untested by everything upstream of
+this point:
+
+1. **TLS, DNS, and a proxy in front of `HTTP_PUBLISH_PORT`.** Never exercised.
+   The stack terminates no TLS by design.
+2. **Real mail.** A default outgoing account, one real send, and confirm it is
+   recorded as a Communication. Every test upstream runs against a muted queue.
+3. **A backup cron, then a restore on that host.** *There is no automated backup
+   in this stack* — `bench backup` is a manual step in *Upgrading* above, and
+   frappe's own scheduler only cleans up old downloadable backups. Wire the cron
+   and an offsite copy on day one, then restore from it. Restore is rehearsed
+   through `docker compose exec` but only against a dozen records; duration
+   against a real database is unknown.
+4. **The scheduler across a full day.** `docker compose logs -f scheduler` — the
+   hourly signal run and deal-health scoring have never run against
+   real-shaped data on a real clock.
+5. **Volume.** Load a dataset the size you expect and watch the list views, the
+   dashboard and how long `migrate` takes.
+6. **The integrations you intend to sell** — telephony, WhatsApp, ERPNext, lead
+   syncing. All four are credential-gated and none has been exercised.
+7. **The agent tier last, and on its own machine.** The host running this stack
+   cannot also host a model. Bring it up with `--profile local-model`, confirm
+   the default answers, and leave drafted replies behind the human gate.
+
+**Then upgrade that host when the next release lands.** Following *Upgrading*
+against a machine carrying accumulated state is the only version of that test
+that counts, and it is where you will meet the 60-second maintenance-mode lag in
+the wild rather than in a rehearsal.
+
+Write down what surprised you at each step. That list is the real distance
+between "works in a container" and "works on a host", and it is what the first
+customer deployment should be planned against.
+
 ## Pilot checklist
 
 The defaults below are deliberately conservative; loosen them as the pilot
