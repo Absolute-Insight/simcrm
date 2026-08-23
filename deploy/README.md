@@ -238,7 +238,20 @@ It lags in *both* directions, measured on this version:
 
 `/api/method/ping` answers 200 throughout — it is exempt so healthchecks stay
 green during the window — so it tells you nothing about whether maintenance
-mode is engaged. Test a real endpoint.
+mode is engaged. Test a real endpoint, and **test it with a session**.
+
+That second half is not a detail. An unauthenticated request is rejected before
+the maintenance gate runs, so it answers 403 whether the site is closed or not —
+`curl https://<site>/crm` looks identical either way. Probe it that way during an
+upgrade and you will conclude the flag never took, and start restarting things to
+force an issue that does not exist. Log in and look for `SessionStopped`:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<site>/api/method/login \
+  -H 'Content-Type: application/json' \
+  -d '{"usr":"Administrator","pwd":"<admin password>"}'
+# 503 while closed, 200 once the config cache has expired
+```
 
 **If you do restart to force the issue, do not restart `backend` alone.** nginx
 in the `frontend` service resolves the backend's address when it loads its
@@ -707,6 +720,26 @@ signing selector is chosen by the sending server, not by what is in DNS.
 resolve. Every CRM notification to one is a hard `550` at the smarthost. Turn
 `enable_email_notifications` off for them — that stops the mail without
 disabling the accounts, so they can still be logged into for role testing.
+
+**The upgrade, rehearsed.** v3.3.0 → v3.3.1 on this host, carrying the full
+dataset, following *Upgrading* above verbatim:
+
+| Step | |
+|---|---|
+| `bench --site all backup --with-files` | 2.6 MiB dump + tars, seconds |
+| `docker compose pull` | **205s** — the long pole, and it happens *before* the site closes |
+| `docker compose up -d` | **101s** |
+| `bench --site all migrate` | **12s** |
+| maintenance-off → serving again | **32s** |
+
+Total closed-to-users window: about **2m30s**, of which the pull is none — pull
+first, then close. Everything survived: row counts, the Email Account with its
+password, the cleared `append_to`, and the agent tier's endpoint and model. The
+container's `/tmp` does not survive, which matters only if you have staged
+scripts there.
+
+Run the profile you actually use — `docker compose --profile local-model up -d`
+rather than bare `up -d`, or the model service drops out of compose's view.
 
 **Still open here:** an offsite backup destination (decided: an S3-compatible
 bucket, not yet wired — step 3 cannot close until it exists), and every
