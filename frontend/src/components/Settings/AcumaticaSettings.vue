@@ -19,8 +19,18 @@
           placeholder="https://tenant.acumatica.com"
         />
         <FormControl
+          v-model="settings.doc.endpoint_name"
+          :label="__('Endpoint Name')"
+          placeholder="Default"
+        />
+        <FormControl
           v-model="settings.doc.endpoint_version"
           :label="__('Endpoint Version')"
+        />
+        <FormControl
+          v-model="settings.doc.branch"
+          :label="__('Branch')"
+          :description="__('Optional; only needed on multi-branch instances')"
         />
         <FormControl
           v-model="settings.doc.client_id"
@@ -48,6 +58,38 @@
           v-model="settings.doc.webhook_verify_token"
           :label="__('Webhook Verify Token')"
         />
+        <FormControl
+          v-model="settings.doc.customer_numbering"
+          type="select"
+          :options="customerNumberingOptions"
+          :label="__('Customer Numbering')"
+          :description="
+            __('How the CustomerID is chosen when a customer is created')
+          "
+        />
+        <FormControl
+          v-model.number="settings.doc.request_pause"
+          type="number"
+          step="0.1"
+          :label="__('Request Pause (seconds)')"
+          :description="__('Throttles paging; API licences cap request rates')"
+        />
+      </div>
+
+      <div class="flex flex-col gap-4 border-t border-outline-elevation-2 pt-4">
+        <FormControl
+          v-model="settings.doc.create_customer_on_status_change"
+          type="checkbox"
+          :label="__('Create the customer in Acumatica on deal status change')"
+        />
+        <Link
+          v-if="settings.doc.create_customer_on_status_change"
+          v-model="settings.doc.deal_status"
+          doctype="CRM Deal Status"
+          :label="__('Deal Status')"
+          :placeholder="__('Won')"
+          class="w-64"
+        />
       </div>
 
       <div class="flex items-center gap-3">
@@ -59,13 +101,14 @@
         />
         <Button
           :label="__('Run backfill')"
-          :disabled="!settings.doc.enabled"
+          :disabled="!settings.doc.enabled || backfilling"
           @click="runBackfill"
         />
       </div>
 
       <div v-if="status" class="text-p-sm text-ink-gray-6">
-        {{ __('Last synced') }}: {{ status.last_synced_at || __('never') }} ·
+        {{ __('Last synced') }} ({{ __('UTC') }}):
+        {{ status.last_synced_at || __('never') }} ·
         {{ __('Open sync issues') }}: {{ status.open_issues }}
       </div>
     </template>
@@ -82,6 +125,7 @@ import {
   Switch,
   toast,
 } from 'frappe-ui'
+import Link from '@/components/Controls/Link.vue'
 
 const settings = createDocumentResource({
   doctype: 'CRM Acumatica Settings',
@@ -89,16 +133,33 @@ const settings = createDocumentResource({
   auto: true,
 })
 
+// Matches the Select options on the doctype field; sending anything else silently
+// falls back to AutoNumber in outbound.create_customer_in_acumatica.
+const customerNumberingOptions = ['AutoNumber', 'From Organization Name']
+
 const status = ref(null)
+const backfilling = ref(false)
 
 async function loadStatus() {
-  status.value = await call('crm.integrations.acumatica.api.get_sync_status')
+  try {
+    status.value = await call('crm.integrations.acumatica.api.get_sync_status')
+  } catch (e) {
+    // the panel is informational; a failed read must not blow up the page
+    status.value = null
+  }
 }
 
 async function runBackfill() {
-  await call('crm.integrations.acumatica.api.start_backfill')
-  toast.success(__('Backfill queued — watch Last synced below'))
-  loadStatus()
+  backfilling.value = true
+  try {
+    await call('crm.integrations.acumatica.api.start_backfill')
+    toast.success(__('Backfill queued — watch Last synced below'))
+    loadStatus()
+  } catch (e) {
+    toast.error(e.messages?.[0] || __('Could not queue the backfill'))
+  } finally {
+    backfilling.value = false
+  }
 }
 
 onMounted(loadStatus)
