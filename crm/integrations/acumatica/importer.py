@@ -1,5 +1,6 @@
+from datetime import datetime, timezone
+
 import frappe
-from frappe.utils import now_datetime
 
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 	get_settings,
@@ -91,10 +92,15 @@ def run_backfill(modified_since: str | None = None) -> dict:
 	counts = {"customers": 0, "contacts": 0, "products": 0, "issues": 0}
 	filter_ = None
 	if modified_since:
-		# OData v3 literal; the trailing Z matters -- Acumatica stores UTC
+		# OData v3 literal. modified_since (from last_synced_at) is stored as naive
+		# UTC, so the trailing Z is valid -- Acumatica interprets it as UTC too.
 		filter_ = f"LastModifiedDateTime gt datetimeoffset'{modified_since}Z'"
 
-	started_at = now_datetime()
+	# now_datetime() returns naive SITE-LOCAL time -- storing that as the high-water
+	# mark and asserting "Z" (UTC) on it would silently drop records on any site not
+	# on UTC (e.g. skip everything modified in the site's UTC offset each sweep).
+	# Capture naive UTC instead so the stored mark and the "Z" filter agree.
+	started_at = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
 	for entity, upsert, counter in _ENTITIES:
 		done_in_entity = 0
 		for rec in client.iter_all(entity, filter=filter_):
@@ -105,12 +111,18 @@ def run_backfill(modified_since: str | None = None) -> dict:
 					counts[counter] += 1
 			except Exception as e:
 				counts["issues"] += 1
-				record_sync_issue(
-					entity,
-					v(rec, "CustomerID") or v(rec, "InventoryID") or v(rec, "ContactID") or "?",
-					"Import Failed",
-					str(e),
-				)
+				try:
+					record_sync_issue(
+						entity,
+						v(rec, "CustomerID") or v(rec, "InventoryID") or v(rec, "ContactID") or "?",
+						"Import Failed",
+						str(e),
+					)
+				except Exception:
+					# record_sync_issue does its own doc.save() and can fail in turn;
+					# losing the ability to log one bad record must not abort the rest
+					# of the run.
+					frappe.log_error(frappe.get_traceback(), "Acumatica sync issue recording failed")
 			done_in_entity += 1
 			if done_in_entity % COMMIT_EVERY == 0:
 				frappe.db.commit()

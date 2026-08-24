@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -91,3 +92,36 @@ class TestBackfill(FrappeTestCase):
 		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
 		frappe.clear_cache(doctype="CRM Acumatica Settings")  # get_settings() is cached
 		importer.nightly_sweep()  # must not raise, must not call out
+
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_run_backfill_stores_high_water_mark_as_naive_utc(self, ClientCls):
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.iter_all.side_effect = lambda entity, **kw: iter([])
+
+		importer.run_backfill()
+
+		last_synced_at = frappe.db.get_single_value("CRM Acumatica Settings", "last_synced_at")
+		now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+		# test_site resolves to UTC+5:30; a site-local (now_datetime()) capture
+		# stored here would be off by hours, well outside this window.
+		self.assertLessEqual(abs((now_utc - last_synced_at).total_seconds()), 120)
+
+	@patch("crm.integrations.acumatica.importer.record_sync_issue")
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_run_backfill_survives_a_failing_record_sync_issue_call(self, ClientCls, record_sync_issue_mock):
+		client = MagicMock()
+		ClientCls.return_value = client
+		record_sync_issue_mock.side_effect = Exception("boom")
+
+		def fake_iter(entity, **kw):
+			if entity == "Customer":
+				return iter([C(NoteID=None, CustomerID="BAD")])  # triggers the except path
+			return iter([])
+
+		client.iter_all.side_effect = fake_iter
+
+		out = importer.run_backfill()  # must not raise even though record_sync_issue blew up
+
+		self.assertEqual(out["issues"], 1)
+		self.assertIsNotNone(frappe.db.get_single_value("CRM Acumatica Settings", "last_synced_at"))
