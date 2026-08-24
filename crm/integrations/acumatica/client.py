@@ -72,7 +72,9 @@ class AcumaticaClient:
 			)
 		body = resp.json()
 		token = body["access_token"]
-		ttl = max(int(body.get("expires_in", 3600)) - 60, 60)
+		# `or 3600`, not a dict default: instances that answer with "expires_in": null
+		# would blow up int(None).
+		ttl = max(int(body.get("expires_in") or 3600) - 60, 60)
 		frappe.cache().set_value(self._cache_key(), token, expires_in_sec=ttl)
 		return token
 
@@ -97,8 +99,10 @@ class AcumaticaClient:
 		raise AcumaticaError("unreachable")  # pragma: no cover
 
 	# --- reads ----------------------------------------------------------
-	def get_page(self, entity, top=100, skip=0, filter=None, select=None, expand=None):
-		params = {"$top": top, "$skip": skip}
+	def get_page(self, entity, top=100, skip=0, filter=None, select=None, expand=None, orderby="NoteID"):
+		# $skip paging over an unordered result set is undefined -- the server may return
+		# a record twice and skip another. NoteID is stable and present on every entity.
+		params = {"$top": top, "$skip": skip, "$orderby": orderby}
 		if filter:
 			params["$filter"] = filter
 		if select:
@@ -112,9 +116,12 @@ class AcumaticaClient:
 		while True:
 			page = self.get_page(entity, top=page_size, skip=skip, **kw)
 			yield from page
-			if len(page) < page_size:
+			# Stop on an EMPTY page, never on a short one: an API licence tier can cap the
+			# rows per response below $top, and treating that cap as the end of the data
+			# silently truncates the backfill. Advance by what actually arrived.
+			if not page:
 				return
-			skip += page_size
+			skip += len(page)
 			pause = float(self.settings.request_pause or 0)
 			if pause:
 				time.sleep(pause)

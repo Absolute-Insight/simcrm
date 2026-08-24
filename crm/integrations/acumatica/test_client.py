@@ -58,7 +58,23 @@ class TestClient(FrappeTestCase):
 		get_url = rget.call_args[0][0]
 		self.assertEqual(get_url, "https://t.acumatica.com/entity/Default/24.200.001/Customer")
 		self.assertEqual(rget.call_args.kwargs["params"]["$top"], 5)
+		self.assertEqual(rget.call_args.kwargs["params"]["$orderby"], "NoteID")
 		self.assertEqual(rget.call_args.kwargs["headers"]["Authorization"], "Bearer tok")
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_get_page_orderby_is_overridable(self, rget, rpost):
+		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": 3600})
+		rget.return_value = _resp(200, [])
+		AcumaticaClient(_settings()).get_page("SalesOrder", orderby="OrderNbr")
+		self.assertEqual(rget.call_args.kwargs["params"]["$orderby"], "OrderNbr")
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_null_expires_in_does_not_break_the_token_cache(self, rget, rpost):
+		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": None})
+		rget.return_value = _resp(200, [])
+		AcumaticaClient(_settings()).get_page("Customer")  # must not raise on int(None)
 
 	@patch("crm.integrations.acumatica.client.requests.post")
 	@patch("crm.integrations.acumatica.client.requests.get")
@@ -73,14 +89,19 @@ class TestClient(FrappeTestCase):
 
 	@patch("crm.integrations.acumatica.client.requests.post")
 	@patch("crm.integrations.acumatica.client.requests.get")
-	def test_iter_all_pages_until_short_page(self, rget, rpost):
+	def test_iter_all_pages_until_empty_page(self, rget, rpost):
+		"""A short page is not the end of the data: licence tiers cap the rows per
+		response, so stopping there truncates the backfill."""
 		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": 3600})
 		full = [{"CustomerID": {"value": f"C{i}"}} for i in range(2)]
-		rget.side_effect = [_resp(200, full), _resp(200, full[:1])]
+		rget.side_effect = [_resp(200, full), _resp(200, full[:1]), _resp(200, [])]
 		c = AcumaticaClient(_settings())
 		got = list(c.iter_all("Customer", page_size=2))
 		self.assertEqual(len(got), 3)
+		self.assertEqual(rget.call_count, 3)
 		self.assertEqual(rget.call_args_list[1].kwargs["params"]["$skip"], 2)
+		# the short page moved the cursor by what arrived, not by $top
+		self.assertEqual(rget.call_args_list[2].kwargs["params"]["$skip"], 3)
 
 	@patch("crm.integrations.acumatica.client.requests.post")
 	@patch("crm.integrations.acumatica.client.requests.put")
