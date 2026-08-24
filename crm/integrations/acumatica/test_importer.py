@@ -60,6 +60,95 @@ class TestUpserts(FrappeTestCase):
 		self.assertEqual(prod.product_code, "WIDGET")
 		self.assertEqual(prod.standard_rate, 12.5)
 
+	def test_upsert_product_renames_product_code_on_inventory_id_change(self):
+		importer.upsert_product(C(NoteID="g-i2", InventoryID="OLDCODE", Description="Old", DefaultPrice=1))
+		name = importer.upsert_product(
+			C(NoteID="g-i2", InventoryID="NEWCODE", Description="New", DefaultPrice=2)
+		)
+		# field:product_code autoname re-derives the field from the docname on save
+		self.assertEqual(frappe.db.get_value("CRM Product", name, "product_code"), "NEWCODE")
+		self.assertEqual(frappe.db.get_value("CRM Product", name, "product_name"), "New")
+
+
+class TestAdoptOnMatch(FrappeTestCase):
+	"""A backfill onto a CRM that already holds the same customers must claim those
+	records, not collide with them -- an unlinked org gets a SECOND Customer pushed
+	back into Acumatica by the outbound hook."""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def test_upsert_organization_adopts_pre_existing_org_by_name(self):
+		org_name = f"Adopt Org {frappe.generate_hash(length=6)}"
+		existing = frappe.get_doc({"doctype": "CRM Organization", "organization_name": org_name}).insert(
+			ignore_permissions=True
+		)
+		self.assertFalse(existing.get("acumatica_noteid"))
+
+		name = importer.upsert_organization(C(NoteID="g-adopt-1", CustomerID="ADOPT1", CustomerName=org_name))
+
+		self.assertEqual(name, existing.name)
+		self.assertEqual(frappe.db.get_value("CRM Organization", name, "acumatica_noteid"), "g-adopt-1")
+		self.assertEqual(frappe.db.get_value("CRM Organization", name, "acumatica_id"), "ADOPT1")
+		self.assertEqual(
+			frappe.db.count("CRM Organization", {"organization_name": org_name}),
+			1,
+		)
+
+	def test_upsert_organization_refuses_to_steal_a_differently_linked_org(self):
+		org_name = f"Claimed Org {frappe.generate_hash(length=6)}"
+		frappe.get_doc({"doctype": "CRM Organization", "organization_name": org_name}).insert(
+			ignore_permissions=True
+		)
+		frappe.db.set_value("CRM Organization", org_name, "acumatica_noteid", "g-other")
+
+		with self.assertRaises(ValueError):
+			importer.upsert_organization(C(NoteID="g-adopt-2", CustomerID="ADOPT2", CustomerName=org_name))
+
+		self.assertEqual(frappe.db.get_value("CRM Organization", org_name, "acumatica_noteid"), "g-other")
+
+	def test_upsert_product_adopts_pre_existing_product_by_code(self):
+		code = f"ADOPT-{frappe.generate_hash(length=6)}"
+		existing = frappe.get_doc(
+			{"doctype": "CRM Product", "product_code": code, "product_name": "Local name"}
+		).insert(ignore_permissions=True)
+
+		name = importer.upsert_product(C(NoteID="g-adopt-3", InventoryID=code, Description="Remote name"))
+
+		self.assertEqual(name, existing.name)
+		self.assertEqual(frappe.db.get_value("CRM Product", name, "acumatica_noteid"), "g-adopt-3")
+		self.assertEqual(frappe.db.count("CRM Product", {"product_code": code}), 1)
+
+	def test_upsert_contact_adopts_pre_existing_contact_by_name(self):
+		last = f"Adoptee{frappe.generate_hash(length=6)}"
+		existing = frappe.get_doc({"doctype": "Contact", "first_name": "Ana", "last_name": last}).insert(
+			ignore_permissions=True
+		)
+
+		name = importer.upsert_contact(C(NoteID="g-adopt-4", ContactID="41", FirstName="Ana", LastName=last))
+
+		self.assertEqual(name, existing.name)
+		self.assertEqual(frappe.db.get_value("Contact", name, "acumatica_noteid"), "g-adopt-4")
+		self.assertEqual(frappe.db.count("Contact", {"first_name": "Ana", "last_name": last}), 1)
+
+	def test_upsert_contact_adopts_on_primary_email_when_the_name_differs(self):
+		email = f"{frappe.generate_hash(length=8)}@example.com"
+		existing = frappe.get_doc(
+			{
+				"doctype": "Contact",
+				"first_name": "Robert",
+				"last_name": f"Mail{frappe.generate_hash(length=6)}",
+				"email_ids": [{"email_id": email, "is_primary": 1}],
+			}
+		).insert(ignore_permissions=True)
+
+		name = importer.upsert_contact(
+			C(NoteID="g-adopt-5", ContactID="51", FirstName="Bob", LastName="Renamed", Email=email)
+		)
+
+		self.assertEqual(name, existing.name)
+		self.assertEqual(frappe.db.get_value("Contact", name, "acumatica_noteid"), "g-adopt-5")
+
 
 class TestBackfill(FrappeTestCase):
 	def tearDown(self):

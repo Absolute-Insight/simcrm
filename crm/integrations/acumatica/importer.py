@@ -15,11 +15,31 @@ def _find_by_noteid(doctype, noteid):
 	return frappe.db.get_value(doctype, {"acumatica_noteid": noteid}, "name")
 
 
+def _adopt(doctype, name, noteid):
+	"""Claim a pre-existing CRM record that matches an Acumatica record on its natural key.
+
+	Without this, a customer that already exists in the CRM under the same name collides
+	on save (CRM Organization/CRM Product autoname on the natural key) -- the record is
+	never linked, so the outbound hook later PUTs a SECOND Customer into the client's ERP.
+
+	A record already carrying a DIFFERENT NoteID is somebody else's: adopting it would
+	steal the link, so raise instead and let the caller log a sync issue."""
+	if not name:
+		return None
+	claimed = frappe.db.get_value(doctype, name, "acumatica_noteid")
+	if claimed and claimed != noteid:
+		raise ValueError(f"{doctype} {name} is already linked to Acumatica NoteID {claimed}")
+	return name
+
+
 def upsert_organization(rec) -> str:
 	noteid = v(rec, "NoteID")
 	name = _find_by_noteid("CRM Organization", noteid)
-	doc = frappe.get_doc("CRM Organization", name) if name else frappe.new_doc("CRM Organization")
 	organization_name = v(rec, "CustomerName") or v(rec, "CustomerID")
+	if not name and organization_name:
+		# CRM Organization autonames on `field:organization_name`, so the docname IS the name.
+		name = _adopt("CRM Organization", frappe.db.exists("CRM Organization", organization_name), noteid)
+	doc = frappe.get_doc("CRM Organization", name) if name else frappe.new_doc("CRM Organization")
 	doc.organization_name = organization_name
 	doc.acumatica_noteid = noteid
 	doc.acumatica_id = v(rec, "CustomerID")
@@ -35,44 +55,75 @@ def upsert_organization(rec) -> str:
 	return doc.name
 
 
+def _find_matching_contact(first, last, company_name, email):
+	"""Contact autonames on first/last/company and appends "-1" on collision, so an
+	unmatched import duplicates a person the CRM already knows ("Ana Diaz-1")."""
+	filters = {"first_name": first, "last_name": last or ""}
+	if company_name:
+		filters["company_name"] = company_name
+	name = frappe.db.get_value("Contact", filters, "name")
+	if name:
+		return name
+	if email:
+		return frappe.db.get_value(
+			"Contact Email", {"email_id": email, "is_primary": 1, "parenttype": "Contact"}, "parent"
+		)
+	return None
+
+
 def upsert_contact(rec) -> str | None:
 	first = v(rec, "FirstName") or v(rec, "DisplayName")
 	if not first:
 		return None
 	noteid = v(rec, "NoteID")
+	last = v(rec, "LastName") or ""
+	email = v(rec, "Email")
+
+	company_name = None
+	account = v(rec, "BusinessAccount")
+	if account:
+		company_name = frappe.db.get_value("CRM Organization", {"acumatica_id": account}, "name")
+
 	name = _find_by_noteid("Contact", noteid)
+	if not name:
+		name = _adopt("Contact", _find_matching_contact(first, last, company_name, email), noteid)
 	doc = frappe.get_doc("Contact", name) if name else frappe.new_doc("Contact")
 	doc.first_name = first
-	doc.last_name = v(rec, "LastName") or ""
+	doc.last_name = last
 	doc.acumatica_noteid = noteid
 	doc.acumatica_id = v(rec, "ContactID")
 
-	email = v(rec, "Email")
 	if email and not any(row.email_id == email for row in doc.email_ids):
 		doc.append("email_ids", {"email_id": email, "is_primary": not doc.email_ids})
 	phone = v(rec, "Phone1")
 	if phone and not any(row.phone == phone for row in doc.phone_nos):
 		doc.append("phone_nos", {"phone": phone})
 
-	account = v(rec, "BusinessAccount")
-	if account:
-		org = frappe.db.get_value("CRM Organization", {"acumatica_id": account}, "name")
-		if org:
-			doc.company_name = org
+	if company_name:
+		doc.company_name = company_name
 	doc.save(ignore_permissions=True)
 	return doc.name
 
 
 def upsert_product(rec) -> str:
 	noteid = v(rec, "NoteID")
+	product_code = v(rec, "InventoryID")
 	name = _find_by_noteid("CRM Product", noteid)
+	if not name and product_code:
+		# CRM Product autonames on `field:product_code`, so the docname IS the InventoryID.
+		name = _adopt("CRM Product", frappe.db.exists("CRM Product", product_code), noteid)
 	doc = frappe.get_doc("CRM Product", name) if name else frappe.new_doc("CRM Product")
-	doc.product_code = v(rec, "InventoryID")
-	doc.product_name = v(rec, "Description") or v(rec, "InventoryID")
+	doc.product_code = product_code
+	doc.product_name = v(rec, "Description") or product_code
 	doc.standard_rate = v(rec, "DefaultPrice") or 0
 	doc.acumatica_noteid = noteid
-	doc.acumatica_id = v(rec, "InventoryID")
+	doc.acumatica_id = product_code
 	doc.save(ignore_permissions=True)
+	if name and doc.product_code != product_code:
+		# Same autoname trap as CRM Organization above: _sync_autoname_field() re-derives
+		# product_code from the docname on save, so an InventoryID rename in Acumatica
+		# would silently revert here. db_set writes it through without a rename.
+		doc.db_set("product_code", product_code)
 	return doc.name
 
 
