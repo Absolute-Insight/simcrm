@@ -47,7 +47,9 @@ def get_crm_form_script():
 				call("crm.integrations.acumatica.outbound.create_sales_quote_from_deal", {
 					crm_deal: this.doc.name,
 				}).then((order_nbr) => {
-					frappe.show_alert({ message: __("Sales quote {0} created in Acumatica", [order_nbr]), indicator: "green" })
+					toast.success(__("Sales quote {0} created in Acumatica", [order_nbr]))
+				}).catch((e) => {
+					toast.error(e.messages[0] || __("Error while creating sales quote in Acumatica. Check error log for more details"))
 				})
 			},
 		})
