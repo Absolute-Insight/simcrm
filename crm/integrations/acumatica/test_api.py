@@ -49,3 +49,13 @@ class TestStartBackfill(FrappeTestCase):
 				start_backfill()
 		finally:
 			frappe.set_user("Administrator")
+
+
+class TestFormScript(FrappeTestCase):
+	def test_form_script_mentions_quote_action_and_endpoint(self):
+		from crm.integrations.acumatica.api import get_crm_form_script
+
+		script = get_crm_form_script()
+		self.assertIn("Create Sales Quote", script)
+		self.assertIn("crm.integrations.acumatica.outbound.create_sales_quote_from_deal", script)
+		self.assertIn("CRM Acumatica Settings", script)

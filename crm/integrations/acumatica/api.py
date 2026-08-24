@@ -23,3 +23,33 @@ def get_sync_status() -> dict:
 	settings = frappe.get_cached_doc("CRM Acumatica Settings")
 	open_issues = sum(1 for row in settings.sync_issues if not row.dismissed)
 	return {"last_synced_at": settings.last_synced_at, "open_issues": open_issues}
+
+
+@frappe.whitelist()
+def get_crm_form_script():
+	"""Form Script for CRM Deal -- same delivery mechanism as the ERPNext
+	integration's get_crm_form_script. Additive only: it registers an action,
+	it does not touch existing helpers."""
+	return """class CRMDeal {
+	onLoad() {
+		if (this.doc.__newDocument) return
+		call("frappe.client.get_single_value", {
+			doctype: "CRM Acumatica Settings",
+			field: "enabled",
+		}).then((enabled) => {
+			if (enabled) this.doc.trigger("setAcumaticaActions")
+		})
+	}
+	setAcumaticaActions() {
+		this.actions.push({
+			label: __("Create Sales Quote"),
+			onClick: () => {
+				call("crm.integrations.acumatica.outbound.create_sales_quote_from_deal", {
+					crm_deal: this.doc.name,
+				}).then((order_nbr) => {
+					frappe.show_alert({ message: __("Sales quote {0} created in Acumatica", [order_nbr]), indicator: "green" })
+				})
+			},
+		})
+	}
+}"""

@@ -83,6 +83,7 @@ import ProfilePage from '@/components/Settings/Profile/ProfilePage.vue'
 import PreferencesSettings from '@/components/Settings/PreferencesSettings.vue'
 import WhatsAppSettings from '@/components/Settings/WhatsAppSettings.vue'
 import ERPNextSettings from '@/components/Settings/ERPNextSettings.vue'
+import AcumaticaSettings from '@/components/Settings/AcumaticaSettings.vue'
 import LeadSyncSourcePage from '@/components/Settings/LeadSyncing/LeadSyncSourcePage.vue'
 import DefaultsSettings from '@/components/Settings/DefaultsSettings.vue'
 import BrandSettings from '@/components/Settings/BrandSettings.vue'
@@ -282,6 +283,12 @@ const tabs = computed(() => {
           label: __('ERPNext'),
           icon: ERPNextIcon,
           component: markRaw(ERPNextSettings),
+          condition: () => isManager(),
+        },
+        {
+          label: __('Acumatica'),
+          icon: ERPNextIcon,
+          component: markRaw(AcumaticaSettings),
           condition: () => isManager(),
         },
         {
