@@ -38,7 +38,17 @@ def ensure_custom_fields() -> None:
 					"label": "Customer in Acumatica",
 					"read_only": 1,
 					"insert_after": "organization",
-				}
+				},
+				{
+					# Idempotency key for the Create Sales Quote action: Acumatica's
+					# SalesOrder PUT has no key in the body, so without this every click
+					# would create another order.
+					"fieldname": "acumatica_sales_quote",
+					"fieldtype": "Data",
+					"label": "Sales Quote in Acumatica",
+					"read_only": 1,
+					"insert_after": "acumatica_customer",
+				},
 			],
 		},
 		ignore_validate=True,

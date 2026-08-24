@@ -1,4 +1,5 @@
 import frappe
+import requests
 from frappe import _
 
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
@@ -33,8 +34,11 @@ def create_customer_in_acumatica(doc, method):
 
 	try:
 		created = AcumaticaClient(settings).put("Customer", payload)
-	except AcumaticaError as e:
-		record_sync_issue("Customer", org.name, "Push Failed", f"{e} :: {e.body}")
+	except (AcumaticaError, requests.RequestException, ValueError) as e:
+		# This runs inside the user's deal save. A DNS blip, a read timeout or an HTML
+		# error page from a proxy (json() raises ValueError/JSONDecodeError) must land in
+		# the sync-issues table like any other push failure -- never fail the save.
+		record_sync_issue("Customer", org.name, "Push Failed", f"{e} :: {getattr(e, 'body', '')}")
 		return
 
 	frappe.db.set_value(
@@ -53,20 +57,40 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 		frappe.throw(_("The Acumatica integration is not enabled"))
 
 	deal = frappe.get_doc("CRM Deal", crm_deal)
+	existing_quote = deal.get("acumatica_sales_quote")
+	if existing_quote:
+		# SalesOrder is a PUT-upsert with no key in the body, so every click would create
+		# ANOTHER order in the client's ERP. The stored OrderNbr is the idempotency key.
+		frappe.throw(_("Sales quote {0} already exists in Acumatica").format(existing_quote))
+
 	customer_id = deal.get("acumatica_customer") or frappe.db.get_value(
 		"CRM Organization", deal.organization, "acumatica_id"
 	)
 	if not customer_id:
 		frappe.throw(_("This deal's organization is not linked to an Acumatica customer yet"))
 
+	products = deal.get("products") or []
 	details = []
 	# CRM Deal's child table is `products` (CRM Products rows); the row's link to
 	# the CRM Product is `product_code`, the quantity field is `qty`.
-	for row in deal.get("products") or []:
+	for row in products:
 		inventory_id = frappe.db.get_value("CRM Product", row.product_code, "acumatica_id")
 		if not inventory_id:
 			continue
-		details.append({"InventoryID": inventory_id, "OrderQty": row.qty or 1})
+		line = {
+			"InventoryID": inventory_id,
+			"OrderQty": row.qty or 1,
+			"UnitPrice": row.rate,
+			"DiscountPercent": row.discount_percentage,
+		}
+		# Acumatica reprices any line whose price keys are absent; send what the deal
+		# negotiated, and only the keys the row actually carries.
+		details.append({key: value for key, value in line.items() if value is not None})
+
+	if products and not details:
+		frappe.throw(
+			_("None of this deal's products are linked to Acumatica inventory items — run a backfill first")
+		)
 
 	payload = {
 		"OrderType": settings.quote_order_type,
@@ -77,4 +101,7 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 		payload["Details"] = details
 
 	created = AcumaticaClient(settings).put("SalesOrder", payload)
-	return v(created, "OrderNbr") or ""
+	order_nbr = v(created, "OrderNbr") or ""
+	if order_nbr:
+		frappe.db.set_value("CRM Deal", deal.name, "acumatica_sales_quote", order_nbr)
+	return order_nbr
