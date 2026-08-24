@@ -1,6 +1,7 @@
 import hmac
 
 import frappe
+from frappe import _
 
 # Paste into Acumatica's Push Notifications (SM302000) webhook destination:
 # https://<site>/api/method/crm.integrations.acumatica.webhook.handle_notification?key=<webhook_verify_token>
@@ -8,12 +9,15 @@ import frappe
 # through the authenticated client, so its worst-case abuse is a redundant sweep.
 
 
-@frappe.whitelist(allow_guest=True)  # nosemgrep: guest-whitelisted-method
+# POST only: Acumatica's push notifications POST, and a GET endpoint carrying the
+# verify token in the query string is the shape that ends up in proxy access logs
+# and browser history.
+@frappe.whitelist(allow_guest=True, methods=["POST"])  # nosemgrep: guest-whitelisted-method
 def handle_notification():
 	key = frappe.request.args.get("key") if frappe.request else None
 	stored = frappe.db.get_single_value("CRM Acumatica Settings", "webhook_verify_token")
 	if not (key and stored and hmac.compare_digest(key, stored)):
-		frappe.throw("Invalid webhook key", frappe.PermissionError)
+		frappe.throw(_("Invalid webhook key"), frappe.PermissionError)
 
 	if frappe.db.get_single_value("CRM Acumatica Settings", "enabled"):
 		frappe.enqueue(

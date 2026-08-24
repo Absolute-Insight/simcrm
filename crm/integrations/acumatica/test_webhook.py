@@ -8,11 +8,14 @@ from crm.integrations.acumatica import webhook
 
 class TestWebhook(FrappeTestCase):
 	def setUp(self):
+		self.original_token = frappe.db.get_single_value("CRM Acumatica Settings", "webhook_verify_token")
 		frappe.db.set_single_value("CRM Acumatica Settings", "webhook_verify_token", "tok123")
 		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 1)
 		frappe.clear_cache(doctype="CRM Acumatica Settings")
 
 	def tearDown(self):
+		# one test blanks the token; leaving it blank would disarm the next one
+		frappe.db.set_single_value("CRM Acumatica Settings", "webhook_verify_token", self.original_token)
 		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
 		frappe.clear_cache(doctype="CRM Acumatica Settings")
 
