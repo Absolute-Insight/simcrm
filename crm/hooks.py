@@ -201,6 +201,7 @@ doc_events = {
 		"after_insert": ["crm.automation.run_automations"],
 		"on_update": [
 			"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.create_customer_in_erpnext",
+			"crm.integrations.acumatica.outbound.create_customer_in_acumatica",
 			"crm.automation.run_automations",
 		],
 		"on_trash": ["crm.automation.clear_suggestions"],
