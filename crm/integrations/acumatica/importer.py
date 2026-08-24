@@ -1,0 +1,134 @@
+import frappe
+from frappe.utils import now_datetime
+
+from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
+	get_settings,
+	record_sync_issue,
+)
+from crm.integrations.acumatica.client import AcumaticaClient, v
+
+COMMIT_EVERY = 50  # keep transactions short; a 50k-customer backfill must not hold one tx
+
+
+def _find_by_noteid(doctype, noteid):
+	return frappe.db.get_value(doctype, {"acumatica_noteid": noteid}, "name")
+
+
+def upsert_organization(rec) -> str:
+	noteid = v(rec, "NoteID")
+	name = _find_by_noteid("CRM Organization", noteid)
+	doc = frappe.get_doc("CRM Organization", name) if name else frappe.new_doc("CRM Organization")
+	organization_name = v(rec, "CustomerName") or v(rec, "CustomerID")
+	doc.organization_name = organization_name
+	doc.acumatica_noteid = noteid
+	doc.acumatica_id = v(rec, "CustomerID")
+	currency = v(rec, "CurrencyID")
+	if currency and frappe.db.exists("Currency", currency):
+		doc.currency = currency
+	doc.save(ignore_permissions=True)
+	if name and doc.organization_name != organization_name:
+		# CRM Organization autonames on `field:organization_name`; Document._sync_autoname_field()
+		# re-derives the field FROM the (stable) docname on every save, clobbering an update to the
+		# display name for an existing record. db_set writes it through without a rename.
+		doc.db_set("organization_name", organization_name)
+	return doc.name
+
+
+def upsert_contact(rec) -> str | None:
+	first = v(rec, "FirstName") or v(rec, "DisplayName")
+	if not first:
+		return None
+	noteid = v(rec, "NoteID")
+	name = _find_by_noteid("Contact", noteid)
+	doc = frappe.get_doc("Contact", name) if name else frappe.new_doc("Contact")
+	doc.first_name = first
+	doc.last_name = v(rec, "LastName") or ""
+	doc.acumatica_noteid = noteid
+	doc.acumatica_id = v(rec, "ContactID")
+
+	email = v(rec, "Email")
+	if email and not any(row.email_id == email for row in doc.email_ids):
+		doc.append("email_ids", {"email_id": email, "is_primary": not doc.email_ids})
+	phone = v(rec, "Phone1")
+	if phone and not any(row.phone == phone for row in doc.phone_nos):
+		doc.append("phone_nos", {"phone": phone})
+
+	account = v(rec, "BusinessAccount")
+	if account:
+		org = frappe.db.get_value("CRM Organization", {"acumatica_id": account}, "name")
+		if org:
+			doc.company_name = org
+	doc.save(ignore_permissions=True)
+	return doc.name
+
+
+def upsert_product(rec) -> str:
+	noteid = v(rec, "NoteID")
+	name = _find_by_noteid("CRM Product", noteid)
+	doc = frappe.get_doc("CRM Product", name) if name else frappe.new_doc("CRM Product")
+	doc.product_code = v(rec, "InventoryID")
+	doc.product_name = v(rec, "Description") or v(rec, "InventoryID")
+	doc.standard_rate = v(rec, "DefaultPrice") or 0
+	doc.acumatica_noteid = noteid
+	doc.acumatica_id = v(rec, "InventoryID")
+	doc.save(ignore_permissions=True)
+	return doc.name
+
+
+_ENTITIES = (
+	# (entity, upsert fn key, result counter) -- customers first so contacts can link
+	("Customer", upsert_organization, "customers"),
+	("Contact", upsert_contact, "contacts"),
+	("StockItem", upsert_product, "products"),
+)
+
+
+def run_backfill(modified_since: str | None = None) -> dict:
+	"""Import everything (or everything modified since the high-water mark).
+	Records that fail land in the sync-issues table instead of aborting the run."""
+	settings = get_settings()
+	client = AcumaticaClient(settings)
+	counts = {"customers": 0, "contacts": 0, "products": 0, "issues": 0}
+	filter_ = None
+	if modified_since:
+		# OData v3 literal; the trailing Z matters -- Acumatica stores UTC
+		filter_ = f"LastModifiedDateTime gt datetimeoffset'{modified_since}Z'"
+
+	started_at = now_datetime()
+	for entity, upsert, counter in _ENTITIES:
+		done_in_entity = 0
+		for rec in client.iter_all(entity, filter=filter_):
+			try:
+				if not v(rec, "NoteID"):
+					raise ValueError("record has no NoteID")
+				if upsert(rec) is not None:
+					counts[counter] += 1
+			except Exception as e:
+				counts["issues"] += 1
+				record_sync_issue(
+					entity,
+					v(rec, "CustomerID") or v(rec, "InventoryID") or v(rec, "ContactID") or "?",
+					"Import Failed",
+					str(e),
+				)
+			done_in_entity += 1
+			if done_in_entity % COMMIT_EVERY == 0:
+				frappe.db.commit()
+		frappe.db.commit()
+
+	# High-water mark is when this run STARTED: anything modified mid-run is
+	# picked up again next sweep rather than lost in the gap.
+	frappe.db.set_single_value("CRM Acumatica Settings", "last_synced_at", started_at)
+	frappe.db.commit()
+	return counts
+
+
+def nightly_sweep() -> None:
+	"""Scheduler entry. Webhooks are the latency mechanism; this is the
+	correctness mechanism -- Acumatica keeps failed push notifications for
+	only 2 days, so the sweep must always run."""
+	settings = get_settings()
+	if not settings.enabled:
+		return
+	since = settings.last_synced_at
+	run_backfill(modified_since=str(since).replace(" ", "T") if since else None)
