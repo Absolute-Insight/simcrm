@@ -211,6 +211,9 @@ doc_events = {
 		"on_update": ["crm.automation.run_automations"],
 		"on_trash": ["crm.automation.clear_suggestions"],
 	},
+	"ERPNext CRM Settings": {
+		"validate": ["crm.integrations.acumatica.install.block_dual_erp"],
+	},
 	"Sales Order": {
 		"before_validate": [
 			"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.create_customer_on_sales_order"

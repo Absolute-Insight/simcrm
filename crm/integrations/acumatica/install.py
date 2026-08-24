@@ -1,4 +1,5 @@
 import frappe
+from frappe import _
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 
@@ -53,3 +54,16 @@ def ensure_custom_fields() -> None:
 		},
 		ignore_validate=True,
 	)
+
+
+def block_dual_erp(doc, method=None) -> None:
+	"""Reciprocal of CRM Acumatica Settings.validate: one ERP integration at a time.
+
+	Enabling Acumatica already refuses while SIMERP is on; without this, enabling
+	SIMERP from the other side silently leaves both running and both pushing
+	customers. It lives here, wired through this app's doc_events, because
+	crm/integrations/erpnext and the ERPNext settings doctype are not ours to edit."""
+	if doc.enabled and frappe.db.get_single_value("CRM Acumatica Settings", "enabled"):
+		frappe.throw(
+			_("Disable the Acumatica integration first — one ERP integration may be active at a time")
+		)

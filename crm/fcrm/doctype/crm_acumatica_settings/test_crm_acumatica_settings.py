@@ -165,3 +165,42 @@ class TestAcumaticaSettings(FrappeTestCase):
 					force=True,
 					ignore_permissions=True,
 				)
+
+
+class TestMutualExclusion(FrappeTestCase):
+	"""One ERP integration at a time, enforced on BOTH saves."""
+
+	def tearDown(self):
+		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
+		frappe.db.set_single_value("ERPNext CRM Settings", "enabled", 0)
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+
+	def test_guard_is_wired_to_the_erpnext_settings_save(self):
+		self.assertIn(
+			"crm.integrations.acumatica.install.block_dual_erp",
+			frappe.get_hooks("doc_events").get("ERPNext CRM Settings", {}).get("validate", []),
+		)
+
+	def test_enabling_erpnext_while_acumatica_is_on_is_refused(self):
+		"""Driven through the guard rather than ERPNextCRMSettings.save(): on a site
+		without erpnext installed that controller throws "ERPNext is not installed"
+		before any doc_event hook runs, which would prove nothing about this rule."""
+		from crm.integrations.acumatica.install import block_dual_erp
+
+		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 1)
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+
+		erpnext_settings = frappe.get_doc("ERPNext CRM Settings")
+		erpnext_settings.enabled = 1
+		with self.assertRaises(frappe.ValidationError):
+			block_dual_erp(erpnext_settings, "validate")
+
+	def test_enabling_erpnext_while_acumatica_is_off_is_allowed(self):
+		from crm.integrations.acumatica.install import block_dual_erp
+
+		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+
+		erpnext_settings = frappe.get_doc("ERPNext CRM Settings")
+		erpnext_settings.enabled = 1
+		block_dual_erp(erpnext_settings, "validate")  # must not raise
