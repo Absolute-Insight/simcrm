@@ -42,7 +42,7 @@ class CRMProduct(Document):
 				_(
 					"ERPNext integration is active. Create an Item in ERPNext and it will appear in CRM Product automatically."
 				),
-				title=_("Use ERPNext to Create Products"),
+				title=_("Use SIMERP to Create Products"),
 			)
 
 	def validate(self):

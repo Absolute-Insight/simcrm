@@ -24,7 +24,7 @@ def _log_and_throw(message: str, title: str | None = None):
 def _get_enabled_settings():
 	settings = frappe.get_single("ERPNext CRM Settings")
 	if not settings.enabled:
-		frappe.throw(_("ERPNext is not integrated with the CRM"))
+		frappe.throw(_("SIMERP is not integrated with the CRM"))
 	return settings
 
 
@@ -68,7 +68,7 @@ class ERPNextCRMSettings(Document):
 	def validate_if_erpnext_installed(self):
 		if not self.is_erpnext_in_different_site:
 			if not _is_erpnext_installed():
-				frappe.throw(_("ERPNext is not installed in the current site"))
+				frappe.throw(_("SIMERP is not installed in the current site"))
 
 	def add_quotation_to_option(self):
 		if not self.is_erpnext_in_different_site:
@@ -85,7 +85,7 @@ class ERPNextCRMSettings(Document):
 	def create_custom_fields(self):
 		if not self.is_erpnext_in_different_site:
 			if not _is_erpnext_installed():
-				frappe.throw(_("ERPNext is not installed in the current site"))
+				frappe.throw(_("SIMERP is not installed in the current site"))
 		else:
 			self.create_custom_fields_in_remote_site()
 
@@ -159,7 +159,7 @@ class ERPNextCRMSettings(Document):
 					"If it is running the latest ERPNext, enable <b>Frappe CRM Data Synchronization</b> "
 					"in its CRM Settings, Otherwise check the Error Log."
 				).format(self.erpnext_site_url),
-				title=_("ERPNext custom fields not created"),
+				title=_("SIMERP custom fields not created"),
 				indicator="orange",
 			)
 
@@ -221,7 +221,7 @@ class ERPNextCRMSettings(Document):
 	def run_product_sync(self):
 		frappe.only_for(["System Manager", "Sales Manager"], True)
 		if not self.enabled or self.is_erpnext_in_different_site:
-			frappe.throw(_("ERPNext integration must be enabled on the same site"))
+			frappe.throw(_("SIMERP integration must be enabled on the same site"))
 		from crm.fcrm.doctype.crm_product.reconcile_job import enqueue_reconciliation
 
 		enqueue_reconciliation()
@@ -603,7 +603,7 @@ def create_customer_from_deal(doc, erpnext_crm_settings):
 			try:
 				from erpnext.crm.frappe_crm_api import create_customer
 			except ImportError:
-				frappe.throw(_("ERPNext is not installed in the current site"))
+				frappe.throw(_("SIMERP is not installed in the current site"))
 
 			if doc.territory and not frappe.db.exists("Territory", doc.territory):
 				customer_data["territory"] = ""
