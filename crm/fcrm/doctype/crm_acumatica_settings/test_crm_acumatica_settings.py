@@ -63,3 +63,24 @@ class TestAcumaticaSettings(FrappeTestCase):
 			self.assertIsNotNone(meta.get_field("acumatica_noteid"), doctype)
 			self.assertIsNotNone(meta.get_field("acumatica_id"), doctype)
 		self.assertIsNotNone(frappe.get_meta("CRM Deal").get_field("acumatica_customer"))
+
+	def test_enabling_installs_the_crm_form_script(self):
+		try:
+			s = frappe.get_doc("CRM Acumatica Settings")
+			s.enabled = 1
+			s.instance_url = "https://x.acumatica.com"
+			s.save()
+
+			self.assertTrue(frappe.db.exists("CRM Form Script", "Create Sales Quote from CRM Deal"))
+			script_doc = frappe.get_doc("CRM Form Script", "Create Sales Quote from CRM Deal")
+			self.assertEqual(script_doc.dt, "CRM Deal")
+			self.assertEqual(script_doc.enabled, 1)
+		finally:
+			frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
+			if frappe.db.exists("CRM Form Script", "Create Sales Quote from CRM Deal"):
+				frappe.delete_doc(
+					"CRM Form Script",
+					"Create Sales Quote from CRM Deal",
+					force=True,
+					ignore_permissions=True,
+				)

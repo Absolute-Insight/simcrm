@@ -21,6 +21,23 @@ class CRMAcumaticaSettings(Document):
 			from crm.integrations.acumatica.install import ensure_custom_fields
 
 			ensure_custom_fields()
+			self.create_crm_form_script()
+
+	def create_crm_form_script(self):
+		if not frappe.db.exists("CRM Form Script", "Create Sales Quote from CRM Deal"):
+			from crm.integrations.acumatica.api import get_crm_form_script
+
+			frappe.get_doc(
+				{
+					"doctype": "CRM Form Script",
+					"name": "Create Sales Quote from CRM Deal",
+					"dt": "CRM Deal",
+					"view": "Form",
+					"script": get_crm_form_script(),
+					"enabled": 1,
+					"is_standard": 1,
+				}
+			).insert(ignore_permissions=True)
 
 
 def get_settings():
