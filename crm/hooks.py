@@ -267,6 +267,9 @@ scheduler_events = {
 		# off unless an admin turns scheduled_reenrichment on; long because each
 		# record it queues is a crawl of somebody else's website
 		"crm.domain_enrichment.tasks.reenrich_stale_records",
+		# correctness sweep for the Acumatica integration -- webhooks only lower
+		# latency, they do not guarantee delivery (2-day retention on their side)
+		"crm.integrations.acumatica.importer.nightly_sweep",
 	],
 	"hourly_long": [
 		"crm.lead_syncing.background_sync.sync_leads_from_sources_hourly",
