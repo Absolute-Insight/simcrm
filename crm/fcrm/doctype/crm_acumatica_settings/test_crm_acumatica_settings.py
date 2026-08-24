@@ -53,3 +53,13 @@ class TestAcumaticaSettings(FrappeTestCase):
 		self.assertEqual(len(after), before + 1)
 		self.assertEqual(after[-1].entity, "Customer")
 		self.assertEqual(after[-1].kind, "Import Failed")
+
+	def test_ensure_custom_fields_creates_identity_fields(self):
+		from crm.integrations.acumatica.install import ensure_custom_fields
+
+		ensure_custom_fields()
+		for doctype in ("CRM Organization", "Contact", "CRM Product"):
+			meta = frappe.get_meta(doctype)
+			self.assertIsNotNone(meta.get_field("acumatica_noteid"), doctype)
+			self.assertIsNotNone(meta.get_field("acumatica_id"), doctype)
+		self.assertIsNotNone(frappe.get_meta("CRM Deal").get_field("acumatica_customer"))
