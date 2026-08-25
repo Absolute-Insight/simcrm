@@ -28,6 +28,12 @@ def create_email_account(data: dict):
 				"use_tls": 1,
 				"use_imap": 1,
 				"smtp_port": 587,
+				# Lead capture is the Communication hook's job
+				# (crm.utils.create_lead_from_incoming_email), gated per account by
+				# this custom field. Frappe-core ingestion via append_to must stay
+				# unset: it would create a CRM Lead from every incoming email,
+				# ignoring this toggle.
+				"create_lead_from_incoming_email": 1 if data.get("create_lead_from_incoming_email") else 0,
 				**service_config,
 			}
 		)
@@ -35,9 +41,8 @@ def create_email_account(data: dict):
 			email_doc.api_key = data.get("api_key")
 			email_doc.api_secret = data.get("api_secret")
 			email_doc.frappe_mail_site = data.get("frappe_mail_site")
-			email_doc.append_to = "CRM Lead"
 		else:
-			email_doc.append("imap_folder", {"append_to": "CRM Lead", "folder_name": "INBOX"})
+			email_doc.append("imap_folder", {"folder_name": "INBOX"})
 			email_doc.password = data.get("password")
 			# validate whether the credentials are correct
 			email_doc.get_incoming_server()
