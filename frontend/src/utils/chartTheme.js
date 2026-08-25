@@ -132,6 +132,15 @@ export function applyLuxChartTheme(config, dark) {
             ...config.yAxis?.echartOptions,
           },
         },
+        y2Axis: {
+          ...config.y2Axis,
+          echartOptions: {
+            splitLine: {
+              lineStyle: { color: 'rgba(255, 255, 255, 0.08)' },
+            },
+            ...config.y2Axis?.echartOptions,
+          },
+        },
       }
     : {}
 

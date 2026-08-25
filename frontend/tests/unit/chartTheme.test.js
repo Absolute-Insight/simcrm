@@ -109,6 +109,9 @@ describe('applyLuxChartTheme', () => {
     expect(dark.yAxis.echartOptions.splitLine.lineStyle.color).toBe(
       'rgba(255, 255, 255, 0.08)',
     )
+    expect(dark.y2Axis.echartOptions.splitLine.lineStyle.color).toBe(
+      'rgba(255, 255, 255, 0.08)',
+    )
     expect(
       applyLuxChartTheme(axisConfig(), false).yAxis.echartOptions,
     ).toBeUndefined()
