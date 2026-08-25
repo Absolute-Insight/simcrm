@@ -447,7 +447,7 @@
            chart at all. -->
       <template v-if="!isTeamView">
         <h2 class="v-title-sm mt-6 text-ink-gray-8">{{ __('Your trends') }}</h2>
-        <div class="mt-2 grid grid-cols-1 gap-3 xl:grid-cols-2">
+        <div class="mt-2 grid grid-cols-1 gap-3">
           <div
             v-for="chart in repCharts"
             :key="chart.name"
