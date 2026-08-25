@@ -25,5 +25,6 @@ export function formatDelta(delta, suffix = '') {
   if (magnitude >= 1000) return `${value > 0 ? '>' : '<−'}999${suffix}`
   const rounded =
     magnitude >= 100 ? Math.round(magnitude) : Math.round(magnitude * 10) / 10
+  if (!rounded) return ''
   return `${sign}${rounded}${suffix}`
 }

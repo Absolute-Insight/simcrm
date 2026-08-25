@@ -48,4 +48,9 @@ describe('formatDelta', () => {
     expect(formatDelta(null, '%')).toBe('')
     expect(formatDelta(undefined, '%')).toBe('')
   })
+
+  it('renders nothing when the delta rounds to zero', () => {
+    expect(formatDelta(0.04, '%')).toBe('')
+    expect(formatDelta(-0.04, '%')).toBe('')
+  })
 })

@@ -145,7 +145,10 @@
       <!-- The headline numbers. Each one clicks through to the records behind
            it, which is the whole difference between a dashboard you read and a
            dashboard you work from. -->
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div
+        class="grid grid-cols-1 gap-3 sm:grid-cols-2"
+        :class="kpiTiles.length === 3 ? 'xl:grid-cols-3' : 'xl:grid-cols-4'"
+      >
         <StatTile
           v-for="tile in kpiTiles"
           :key="tile.name"
@@ -154,8 +157,7 @@
           :value="tile.resource.data?.value"
           :prefix="tile.resource.data?.prefix || ''"
           :suffix="tile.resource.data?.suffix || ''"
-          :hint="tile.showHint ? tile.resource.data?.tooltip || '' : ''"
-          :tooltip="tile.showHint ? '' : tile.resource.data?.tooltip || ''"
+          :tooltip="tile.resource.data?.tooltip || ''"
           :delta="tile.resource.data?.delta ?? 0"
           :delta-suffix="tile.resource.data?.deltaSuffix || ''"
           :negative-is-better="!!tile.resource.data?.negativeIsBetter"
@@ -374,8 +376,7 @@
               </div>
               <div
                 class="h-2 w-full overflow-hidden rounded-full bg-surface-gray-3"
-                role="img"
-                :aria-label="`${row.stage}: ${panel.cell(row)}`"
+                aria-hidden="true"
               >
                 <div
                   class="h-full rounded-full"
@@ -849,6 +850,7 @@ function repName(user: string) {
 /* Bar width for the pipeline panel: share of the largest stage, floored at
    2% so a tiny stage still draws a visible sliver rather than nothing. */
 function pipelineShare(rows, row) {
+  if (!row.deals) return 0
   const max = Math.max(...rows.map((r) => r.deals || 0), 1)
   return Math.max(2, Math.round(((row.deals || 0) / max) * 100))
 }

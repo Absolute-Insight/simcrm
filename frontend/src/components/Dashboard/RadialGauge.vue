@@ -27,7 +27,7 @@
       width="6.5rem"
       :label="__('Loading {0}', [label])"
     />
-    <svg v-else width="104" height="104" viewBox="0 0 140 140">
+    <svg v-else-if="!error" width="104" height="104" viewBox="0 0 140 140">
       <defs>
         <linearGradient :id="gradientId" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stop-color="#21abfb" />

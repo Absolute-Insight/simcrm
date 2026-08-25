@@ -100,6 +100,7 @@ import LucideArrowUpRight from '~icons/lucide/arrow-up-right'
 import LucideTriangleAlert from '~icons/lucide/alert-triangle'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { deltaTone } from '@/utils/dashboardHome'
+import { formatDelta } from '@/utils/gauge'
 import { formatCell } from '@/utils/reportExport'
 import { Tooltip } from 'frappe-ui'
 import { computed, defineComponent, h, markRaw } from 'vue'
@@ -178,21 +179,5 @@ const display = computed(() => {
 
 const tone = computed(() => deltaTone(props.delta, props.negativeIsBetter))
 
-// Deltas arrive as raw ratios — a month that went from 1 deal to 18 produces
-// 1721.4285714285716. Sixteen significant figures of period-over-period change
-// is noise, and it wrecks the tile's layout; one decimal is as much as anyone
-// reads, and past 999% the exact figure has stopped meaning anything anyway.
-const deltaDisplay = computed(() => {
-  const value = Number(props.delta) || 0
-  const sign = value > 0 ? '+' : value < 0 ? '−' : ''
-  const magnitude = Math.abs(value)
-  // The clamp is a comparison, not a signed number: "+999+%" reads as a typo
-  // with its two plus signs, where ">999%" says the same thing once.
-  if (magnitude >= 1000) {
-    return `${value > 0 ? '>' : '<−'}999${props.deltaSuffix}`
-  }
-  const rounded =
-    magnitude >= 100 ? Math.round(magnitude) : Math.round(magnitude * 10) / 10
-  return `${sign}${rounded}${props.deltaSuffix}`
-})
+const deltaDisplay = computed(() => formatDelta(props.delta, props.deltaSuffix))
 </script>
