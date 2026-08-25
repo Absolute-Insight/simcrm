@@ -99,27 +99,12 @@
 import LucideArrowUpRight from '~icons/lucide/arrow-up-right'
 import LucideTriangleAlert from '~icons/lucide/alert-triangle'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import { NativeButton } from '@/utils/nativeButton'
 import { deltaTone } from '@/utils/dashboardHome'
 import { formatDelta } from '@/utils/gauge'
 import { formatCell } from '@/utils/reportExport'
 import { Tooltip } from 'frappe-ui'
-import { computed, defineComponent, h, markRaw } from 'vue'
-
-/* Not the string 'button': a string passed to `<component :is>` is resolved
-   as a component name before it is treated as an element, and main.js
-   registers frappe-ui's Button globally — so 'button' resolved to that, and
-   every drillable tile silently picked up a design-system button's
-   inline-flex centering and background on top of its own classes. A wrapper
-   that renders the real element dodges the lookup; class, type, aria-label
-   and the click listener all reach it through attrs fallthrough. */
-const NativeButton = markRaw(
-  defineComponent({
-    name: 'StatTileNativeButton',
-    setup(_, { slots }) {
-      return () => h('button', null, slots.default?.())
-    },
-  }),
-)
+import { computed } from 'vue'
 
 const props = defineProps({
   // Already translated by the caller: half these labels come from the server,

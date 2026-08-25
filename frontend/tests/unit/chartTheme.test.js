@@ -29,6 +29,10 @@ describe('hexToRgba', () => {
   it('handles full alpha', () => {
     expect(hexToRgba('#000000', 1)).toBe('rgba(0, 0, 0, 1)')
   })
+
+  it('expands 3-digit shorthand hex', () => {
+    expect(hexToRgba('#abc', 1)).toBe('rgba(170, 187, 204, 1)')
+  })
 })
 
 describe('applyLuxChartTheme', () => {
@@ -42,16 +46,15 @@ describe('applyLuxChartTheme', () => {
     expect(applyLuxChartTheme(config, true)).toBe(config)
   })
 
-  it('applies the series palette to configs without series (donut/number)', () => {
+  it('applies one brand series to both themes so colors follow the entity', () => {
     const config = { title: 'Sources', data: [] }
     const dark = applyLuxChartTheme(config, true)
     const light = applyLuxChartTheme(config, false)
     expect(dark.colors).toHaveLength(8)
-    expect(light.colors).toHaveLength(8)
-    expect(dark.colors).not.toEqual(light.colors)
+    expect(light.colors).toEqual(dark.colors)
   })
 
-  it('anchors the dark palette on the validated brand set', () => {
+  it('anchors the palette on the validated brand set', () => {
     const dark = applyLuxChartTheme({ title: 'x', data: [] }, true)
     expect(dark.colors.slice(0, 4)).toEqual([
       '#5b5fe8',

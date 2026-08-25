@@ -272,6 +272,24 @@ body {
     0 0 18px -6px rgba(91, 95, 232, 0.45);
 }
 
+/* Slide-over panels (notifications, suggestions, assistant) — a surface one
+   breath lighter than the canvas in dark, with its own hairline, so the panel
+   reads as a sheet over the app rather than a hole in it. Light mode keeps
+   the plain base surface it always had. Unlayered: it replaces the utility
+   background the panels used to carry. */
+.v-panel {
+  background: var(--v-panel-bg);
+  border-right: 1px solid var(--v-panel-hairline);
+}
+:root {
+  --v-panel-bg: var(--surface-base);
+  --v-panel-hairline: var(--outline-gray-1);
+}
+[data-theme='dark'] {
+  --v-panel-bg: color-mix(in srgb, var(--surface-base) 97%, white);
+  --v-panel-hairline: rgba(255, 255, 255, 0.08);
+}
+
 /* Slim, token-colored scrollbars everywhere. */
 * {
   scrollbar-width: thin;

@@ -4,6 +4,8 @@
  * as-is; only the drawn arc clamps to the ring's 0-100 domain.
  */
 export function ringDash(value, radius) {
+  // Non-finite input (null, text, an unguarded x/0 ratio) draws an empty
+  // ring rather than a full one: an absent value must not read as 100%.
   const number = Number(value)
   const pct = Number.isFinite(number) ? Math.min(100, Math.max(0, number)) : 0
   const circumference = 2 * Math.PI * radius
