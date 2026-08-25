@@ -2,7 +2,7 @@
   <div class="h-full w-full">
     <div
       v-if="item.type == 'number_chart'"
-      class="v-number-card flex h-full w-full rounded-4 shadow overflow-hidden cursor-pointer"
+      class="v-number-card v-glass flex h-full w-full rounded-4 overflow-hidden cursor-pointer"
     >
       <Tooltip :text="unfilteredNote || __(item.data.tooltip)">
         <NumberChart
@@ -22,7 +22,7 @@
     </div>
     <div
       v-else-if="item.type == 'axis_chart'"
-      class="relative h-full w-full rounded-5 bg-surface-base shadow"
+      class="v-glass relative h-full w-full rounded-5"
     >
       <p v-if="unfilteredNote" :class="noteClass">{{ unfilteredNote }}</p>
       <p v-if="blankReason" :class="blankClass">{{ blankReason }}</p>
@@ -30,7 +30,7 @@
     </div>
     <div
       v-else-if="item.type == 'donut_chart'"
-      class="relative h-full w-full rounded-5 bg-surface-base shadow overflow-hidden"
+      class="v-glass relative h-full w-full rounded-5 overflow-hidden"
     >
       <p v-if="unfilteredNote" :class="noteClass">{{ unfilteredNote }}</p>
       <p v-if="blankReason" :class="blankClass">{{ blankReason }}</p>
@@ -39,7 +39,7 @@
   </div>
 </template>
 <script setup>
-import { withVectoraTheme } from '@/utils/chartTheme'
+import { withVectoraLux } from '@/utils/chartTheme'
 import { Tooltip } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
 import { AxisChart, DonutChart, NumberChart } from 'frappe-ui/experimental'
@@ -53,7 +53,7 @@ const props = defineProps({
 
 // the server returns the chart's shape and data; its colours are a display
 // decision, so they are applied here rather than travelling over the wire
-const themed = computed(() => withVectoraTheme(props.item.data))
+const themed = computed(() => withVectoraLux(props.item.data))
 
 /**
  * Why this chart is blank, when the aggregate knows why.

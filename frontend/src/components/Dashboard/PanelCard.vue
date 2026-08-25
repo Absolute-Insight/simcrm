@@ -13,7 +13,7 @@
        clickable, since opacity does not disable pointer events -- so a stray
        click made a panel vanish with no visible control to blame. -->
   <section
-    class="group/panel flex min-w-0 flex-col rounded-6 border border-outline-gray-1 bg-surface-elevation-2"
+    class="group/panel v-glass flex min-w-0 flex-col rounded-6"
     :aria-labelledby="headingId"
   >
     <header
