@@ -12,17 +12,22 @@
     :is="clickable ? NativeButton : 'div'"
     :type="clickable ? 'button' : undefined"
     class="v-stat-tile v-glass group relative flex min-h-[6.5rem] w-full flex-col justify-between gap-2 rounded-6 p-4 text-left"
-    :class="
+    :class="[
       clickable
         ? 'cursor-pointer hover:border-outline-gray-2 hover:shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2'
-        : ''
-    "
+        : '',
+      accent === 'danger' ? '!border-[rgba(216,77,77,0.35)]' : '',
+    ]"
     :aria-label="clickable ? drilldownLabel : undefined"
     @click="clickable && $emit('drill')"
   >
     <div class="flex items-start justify-between gap-2">
       <Tooltip :text="tooltip || ''" :disabled="!tooltip">
-        <span class="text-sm text-ink-gray-6">{{ label }}</span>
+        <span
+          class="v-kpi-label"
+          :class="accent === 'danger' ? 'text-ink-red-9' : 'text-ink-gray-5'"
+          >{{ label }}</span
+        >
       </Tooltip>
       <LucideArrowUpRight
         v-if="clickable"
@@ -64,7 +69,7 @@
 
     <div v-else class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
       <span
-        class="font-display text-3xl-semibold tracking-tight text-ink-gray-9"
+        class="font-display text-[38px] font-semibold leading-[1.05] tracking-tight text-ink-gray-9"
       >
         {{ display }}
       </span>
@@ -138,6 +143,9 @@ const props = defineProps({
   retry: { type: Function, default: null },
   // Where clicking lands, for the accessible name. Empty means not clickable.
   drilldownLabel: { type: String, default: '' },
+  // 'danger' tints the tile's frame and label red: the one tile whose number
+  // being high is itself the alert (critical deals).
+  accent: { type: String, default: '' },
 })
 
 defineEmits(['drill'])
