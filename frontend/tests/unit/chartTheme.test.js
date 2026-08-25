@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyLuxChartTheme,
   hexToRgba,
+  useIsDark,
   withVectoraTheme,
 } from '@/utils/chartTheme'
 
@@ -132,5 +133,19 @@ describe('withVectoraTheme (existing contract)', () => {
   it('still applies the palette without touching explicit colors', () => {
     expect(withVectoraTheme({ colors: ['#abc'] }).colors).toEqual(['#abc'])
     expect(withVectoraTheme({}).colors).toHaveLength(8)
+  })
+})
+
+describe('useIsDark', () => {
+  it('tracks the data-theme attribute without a reload', async () => {
+    document.documentElement.setAttribute('data-theme', 'light')
+    const dark = useIsDark()
+    expect(dark.value).toBe(false)
+    document.documentElement.setAttribute('data-theme', 'dark')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(dark.value).toBe(true)
+    document.documentElement.setAttribute('data-theme', 'light')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(dark.value).toBe(false)
   })
 })

@@ -153,7 +153,12 @@
           v-for="tile in kpiTiles"
           :key="tile.name"
           :label="tile.label"
-          :accent="tile.name === 'deals_at_risk' ? 'danger' : ''"
+          :accent="
+            tile.name === 'deals_at_risk' &&
+            (tile.resource.data?.value || 0) > 0
+              ? 'danger'
+              : ''
+          "
           :value="tile.resource.data?.value"
           :prefix="tile.resource.data?.prefix || ''"
           :suffix="tile.resource.data?.suffix || ''"

@@ -45,6 +45,8 @@ const DARK_SERIES = [
   '#4d7c0f', // olive
 ]
 
+import { ref } from 'vue'
+
 function isDark() {
   if (typeof document === 'undefined') return false
   return document.documentElement.getAttribute('data-theme') === 'dark'
@@ -155,4 +157,31 @@ export function applyLuxChartTheme(config, dark) {
 
 export function withVectoraLux(config) {
   return applyLuxChartTheme(config, isDark())
+}
+
+/**
+ * The theme as a ref, so a chart config computed from it re-themes the moment
+ * the user flips light/dark instead of on the next reload. One observer for
+ * the whole app, started on first use; `data-theme` is the attribute
+ * frappe-ui's useColorScheme writes.
+ */
+const darkRef = ref(isDark())
+let observing = false
+
+export function useIsDark() {
+  if (
+    !observing &&
+    typeof document !== 'undefined' &&
+    typeof MutationObserver !== 'undefined'
+  ) {
+    observing = true
+    new MutationObserver(() => {
+      darkRef.value = isDark()
+    }).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    })
+  }
+  darkRef.value = isDark()
+  return darkRef
 }

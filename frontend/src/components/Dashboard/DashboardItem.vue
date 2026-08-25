@@ -39,7 +39,7 @@
   </div>
 </template>
 <script setup>
-import { withVectoraLux } from '@/utils/chartTheme'
+import { applyLuxChartTheme, useIsDark } from '@/utils/chartTheme'
 import { Tooltip } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
 import { AxisChart, DonutChart, NumberChart } from 'frappe-ui/experimental'
@@ -52,8 +52,10 @@ const props = defineProps({
 })
 
 // the server returns the chart's shape and data; its colours are a display
-// decision, so they are applied here rather than travelling over the wire
-const themed = computed(() => withVectoraLux(props.item.data))
+// decision, so they are applied here rather than travelling over the wire —
+// and re-applied live when the theme flips, since the ref below tracks it
+const dark = useIsDark()
+const themed = computed(() => applyLuxChartTheme(props.item.data, dark.value))
 
 /**
  * Why this chart is blank, when the aggregate knows why.

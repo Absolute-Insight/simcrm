@@ -14,7 +14,7 @@
     class="v-stat-tile v-glass group relative flex min-h-[6.5rem] w-full flex-col justify-between gap-2 rounded-6 p-4 text-left"
     :class="[
       clickable
-        ? 'cursor-pointer hover:border-outline-gray-2 hover:shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2'
+        ? 'v-glass-hover cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2'
         : '',
       accent === 'danger' ? '!border-[rgba(216,77,77,0.35)]' : '',
     ]"

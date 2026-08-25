@@ -14,7 +14,7 @@
     class="v-glass group flex w-full items-center gap-5 rounded-6 p-4 text-left"
     :class="
       clickable
-        ? 'cursor-pointer hover:border-outline-gray-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2'
+        ? 'v-glass-hover cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2'
         : ''
     "
     :aria-label="clickable ? drilldownLabel : undefined"
@@ -39,7 +39,7 @@
         cy="70"
         r="58"
         fill="none"
-        class="stroke-outline-gray-1"
+        stroke="var(--v-gauge-track)"
         stroke-width="10"
         aria-hidden="true"
       />
