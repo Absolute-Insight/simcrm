@@ -215,6 +215,47 @@ body {
     );
 }
 
+/* Vectora Lux — the shell. The sidebar and the page header are the frame
+   every Lux surface sits in, so they take the same deep tone in dark mode: a
+   sidebar slightly deeper than the canvas (so the stage reads as lit beside
+   it) and a translucent header with a hairline. Light mode keeps its exact
+   current surfaces — the variables resolve to the same tokens it used. */
+:root {
+  --v-shell-sidebar-bg: var(--surface-gray-1);
+  --v-shell-header-bg: var(--surface-base);
+  --v-shell-hairline: var(--outline-gray-1);
+}
+[data-theme='dark'] {
+  --v-shell-sidebar-bg: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-base) 94%, black) 0%,
+    color-mix(in srgb, var(--surface-base) 86%, black) 100%
+  );
+  --v-shell-header-bg: color-mix(in srgb, var(--surface-base) 82%, transparent);
+  --v-shell-hairline: rgba(255, 255, 255, 0.07);
+}
+@layer components {
+  .v-shell-sidebar {
+    background: var(--v-shell-sidebar-bg);
+  }
+  .v-shell-header {
+    background: var(--v-shell-header-bg);
+    border-color: var(--v-shell-hairline);
+  }
+  [data-theme='dark'] .v-shell-header {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+}
+/* The active nav row: a lit rim and a whisper of brand glow behind the
+   position rail. Unlayered on purpose — it has to win over frappe-ui's
+   `shadow-sm` utility on the same element. */
+[data-theme='dark'] [data-slot='sidebar-item'][data-state='active'] {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 18px -6px rgba(91, 95, 232, 0.45);
+}
+
 /* Slim, token-colored scrollbars everywhere. */
 * {
   scrollbar-width: thin;
