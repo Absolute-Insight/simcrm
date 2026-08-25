@@ -147,9 +147,10 @@
            dashboard you work from. -->
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile
-          v-for="tile in tiles"
+          v-for="tile in kpiTiles"
           :key="tile.name"
           :label="tile.label"
+          :accent="tile.name === 'deals_at_risk' ? 'danger' : ''"
           :value="tile.resource.data?.value"
           :prefix="tile.resource.data?.prefix || ''"
           :suffix="tile.resource.data?.suffix || ''"
@@ -165,6 +166,69 @@
           :unfiltered-note="unfilteredNoteFor(tile.resource.data)"
           @drill="drillInto(tile.name, drilldownContext)"
         />
+      </div>
+
+      <!-- The hero: the trend everyone asks about first, at a size that
+           answers before it is clicked. Beside it, the two percentages that
+           are targets rather than counts, drawn as rings. -->
+      <div class="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-3">
+        <div
+          class="h-80 overflow-hidden rounded-6 xl:col-span-2"
+          :class="
+            heroTrend.loading ||
+            heroTrend.error ||
+            axisChartEmpty(heroTrend.data)
+              ? 'v-glass'
+              : ''
+          "
+        >
+          <SkeletonTable v-if="heroTrend.loading" :rows="5" :columns="3" />
+          <ErrorState
+            v-else-if="heroTrend.error"
+            compact
+            :error="heroTrend.error"
+            :retry="() => heroTrend.reload()"
+          />
+          <div
+            v-else-if="axisChartEmpty(heroTrend.data)"
+            class="relative h-full"
+          >
+            <EmptyState
+              icon="lucide-line-chart"
+              :title="__('Nothing here yet')"
+              :description="
+                __('Leads, deals and wins chart here as they are logged.')
+              "
+              top="15%"
+              width="lg"
+            />
+          </div>
+          <DashboardItem
+            v-else-if="heroTrend.data"
+            :index="0"
+            :item="{ type: 'axis_chart', data: heroTrend.data }"
+          />
+        </div>
+        <div class="flex flex-col gap-3">
+          <RadialGauge
+            v-for="tile in gaugeTiles"
+            :key="tile.name"
+            class="flex-1"
+            :label="tile.label"
+            :value="tile.resource.data?.value"
+            :suffix="tile.resource.data?.suffix || '%'"
+            :hint="tile.resource.data?.tooltip || ''"
+            :delta="tile.resource.data?.delta ?? 0"
+            :delta-suffix="tile.resource.data?.deltaSuffix || ''"
+            :negative-is-better="!!tile.resource.data?.negativeIsBetter"
+            :loading="tile.resource.loading"
+            :error="tile.resource.error"
+            :retry="() => tile.resource.reload()"
+            :drilldown-label="drilldownLabelFor(tile)"
+            :unfiltered-note="unfilteredNoteFor(tile.resource.data)"
+            @drill="drillInto(tile.name, drilldownContext)"
+          />
+        </div>
       </div>
 
       <div class="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">
@@ -284,6 +348,44 @@
               variant="subtle"
               @click="router.push({ name: 'Planner' })"
             />
+          </div>
+
+          <!-- The pipeline as bars rather than a table: stage sizes are the
+               one panel where the shape IS the answer. The count (and value,
+               when forecasting is on) stays as text — the bar only ranks. -->
+          <div v-else-if="panel.id === 'pipeline'" class="flex flex-col gap-3">
+            <p
+              v-if="panel.note?.value"
+              class="flex items-start gap-2 rounded bg-surface-orange-1 px-3 py-2 text-sm text-ink-orange-9"
+            >
+              <LucideInfo class="mt-0.5 size-4 shrink-0" />
+              <span>{{ panel.note.value }}</span>
+            </p>
+            <div
+              v-for="(row, i) in panel.rows.value"
+              :key="i"
+              class="flex flex-col gap-1.5"
+            >
+              <div class="flex items-baseline justify-between gap-2 text-base">
+                <span class="truncate text-ink-gray-7">{{ row.stage }}</span>
+                <span class="shrink-0 tabular-nums text-ink-gray-8">
+                  {{ panel.cell(row) }}
+                </span>
+              </div>
+              <div
+                class="h-2 w-full overflow-hidden rounded-full bg-surface-gray-3"
+                role="img"
+                :aria-label="`${row.stage}: ${panel.cell(row)}`"
+              >
+                <div
+                  class="h-full rounded-full"
+                  :style="{
+                    width: `${pipelineShare(panel.rows.value, row)}%`,
+                    background: 'var(--brand-gradient)',
+                  }"
+                />
+              </div>
+            </div>
           </div>
 
           <!-- Manager panels are report rows, rendered as a compact table so
@@ -447,6 +549,7 @@ import LucidePenLine from '~icons/lucide/pen-line'
 import LucideInfo from '~icons/lucide/info'
 import DashboardGrid from '@/components/Dashboard/DashboardGrid.vue'
 import PanelCard from '@/components/Dashboard/PanelCard.vue'
+import RadialGauge from '@/components/Dashboard/RadialGauge.vue'
 import StatTile from '@/components/Dashboard/StatTile.vue'
 import { useDrilldown } from '@/components/Dashboard/drilldown'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -593,6 +696,18 @@ const tiles = computed(() =>
   })),
 )
 
+/* Command Center split: the four counting tiles form the KPI band; the two
+   percentage tiles render as radial gauges in the hero rail. One catalogue,
+   two presentations — the resources, role gating, and drilldowns are shared
+   unchanged. */
+const GAUGE_NAMES = ['plan_adherence', 'quota_attainment']
+const kpiTiles = computed(() =>
+  tiles.value.filter((t) => !GAUGE_NAMES.includes(t.name)),
+)
+const gaugeTiles = computed(() =>
+  tiles.value.filter((t) => GAUGE_NAMES.includes(t.name)),
+)
+
 const drilldownContext = computed(() => ({
   user: scopeUser.value,
   fromDate: fromDate.value,
@@ -703,13 +818,6 @@ function repChartResource(name: string) {
 
 const repCharts = [
   {
-    name: 'sales_trend',
-    resource: repChartResource('sales_trend'),
-    emptyDescription: __(
-      'Your leads, deals and wins chart here as you log them.',
-    ),
-  },
-  {
     name: 'funnel_conversion',
     resource: repChartResource('funnel_conversion'),
     emptyDescription: __(
@@ -718,8 +826,31 @@ const repCharts = [
   },
 ]
 
+/* The hero: the same sales_trend chart the rep strip used to render, now the
+   page's centerpiece for both roles. The server scopes it by role exactly as
+   it does for the grid and the strip. */
+const heroTrend = createResource({
+  url: 'crm.api.dashboard.get_chart',
+  makeParams: () => ({
+    name: 'sales_trend',
+    type: 'axis_chart',
+    from_date: fromDate.value,
+    to_date: toDate.value,
+    user: scopeUser.value,
+    territory: scopeTerritory.value,
+  }),
+  auto: true,
+})
+
 function repName(user: string) {
   return getUser(user)?.full_name || user
+}
+
+/* Bar width for the pipeline panel: share of the largest stage, floored at
+   2% so a tiny stage still draws a visible sliver rather than nothing. */
+function pipelineShare(rows, row) {
+  const max = Math.max(...rows.map((r) => r.deals || 0), 1)
+  return Math.max(2, Math.round(((row.deals || 0) / max) * 100))
 }
 
 const PANEL_CATALOGUE = computed(() => {
@@ -878,6 +1009,7 @@ function updateFilter(key: string, value: unknown, callback?: () => void) {
 }
 
 function reloadAll() {
+  quiet(heroTrend.reload())
   quiet(dashboardItems.reload())
   Object.values(tileResources).forEach((r) => quiet(r.reload()))
   quiet(suggestions.reload())
