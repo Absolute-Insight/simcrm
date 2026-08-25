@@ -6,7 +6,12 @@ from frappe import _
 def create_email_account(data: dict):
 	frappe.only_for(["System Manager", "Sales Manager"], True)
 	service = data.get("service")
-	service_config = email_service_config.get(service)
+	if service == "Custom":
+		service_config = custom_service_config(data)
+		if not service_config:
+			frappe.throw(_("IMAP server and SMTP server are required for a custom account"))
+	else:
+		service_config = email_service_config.get(service)
 	if not service_config:
 		return "Service not supported"
 
@@ -16,7 +21,9 @@ def create_email_account(data: dict):
 				"doctype": "Email Account",
 				"email_id": data.get("email_id"),
 				"email_account_name": data.get("email_account_name"),
-				"service": service,
+				# "Custom" is a UI concept, not an Email Account select option; a
+				# custom account is stored with no service, its servers explicit.
+				"service": "" if service == "Custom" else service_select_value.get(service, service),
 				"enable_incoming": data.get("enable_incoming"),
 				"enable_outgoing": data.get("enable_outgoing"),
 				"default_incoming": data.get("default_incoming"),
@@ -28,6 +35,12 @@ def create_email_account(data: dict):
 				"use_tls": 1,
 				"use_imap": 1,
 				"smtp_port": 587,
+				# Lead capture is the Communication hook's job
+				# (crm.utils.create_lead_from_incoming_email), gated per account by
+				# this custom field. Frappe-core ingestion via append_to must stay
+				# unset: it would create a CRM Lead from every incoming email,
+				# ignoring this toggle.
+				"create_lead_from_incoming_email": 1 if data.get("create_lead_from_incoming_email") else 0,
 				**service_config,
 			}
 		)
@@ -35,9 +48,8 @@ def create_email_account(data: dict):
 			email_doc.api_key = data.get("api_key")
 			email_doc.api_secret = data.get("api_secret")
 			email_doc.frappe_mail_site = data.get("frappe_mail_site")
-			email_doc.append_to = "CRM Lead"
 		else:
-			email_doc.append("imap_folder", {"append_to": "CRM Lead", "folder_name": "INBOX"})
+			email_doc.append("imap_folder", {"folder_name": "INBOX"})
 			email_doc.password = data.get("password")
 			# validate whether the credentials are correct
 			email_doc.get_incoming_server()
@@ -50,6 +62,16 @@ def create_email_account(data: dict):
 		frappe.log_error(frappe.get_traceback(), "Email account setup failed")
 		frappe.throw(_("Could not connect to the mail server. Check the credentials and try again."))
 
+
+# The dialog's provider names vs the Email Account `service` select's options.
+# Sending the dialog name verbatim fails _validate_selects on save, and the
+# blanket except in create_email_account rewrote that as "could not connect" --
+# so these three providers never worked from the UI at all.
+service_select_value = {
+	"Outlook": "Outlook.com",
+	"Yahoo": "Yahoo Mail",
+	"Yandex": "Yandex.Mail",
+}
 
 email_service_config = {
 	"Frappe Mail": {
@@ -102,3 +124,33 @@ email_service_config = {
 		"smtp_port": 587,
 	},
 }
+
+
+def custom_service_config(data: dict) -> dict | None:
+	"""Server settings for the "Custom" (any IMAP/SMTP provider) service.
+
+	Every other service ships a fixed entry in email_service_config; a custom
+	provider's servers come from the form instead. Incoming defaults to SSL
+	(port 993, STARTTLS when SSL is off), and SMTP port 465 -- implicit-TLS by
+	definition -- switches outgoing from STARTTLS to SSL, so the two well-known
+	port conventions both work without extra checkboxes.
+	"""
+	from frappe.utils import cint
+
+	email_server = (data.get("email_server") or "").strip()
+	smtp_server = (data.get("smtp_server") or "").strip()
+	if not email_server or not smtp_server:
+		return None
+
+	use_ssl = cint(data.get("use_ssl", 1))
+	smtp_port = cint(data.get("smtp_port")) or 587
+	smtp_ssl = 1 if smtp_port == 465 else 0
+	return {
+		"email_server": email_server,
+		"use_ssl": use_ssl,
+		"use_starttls": 0 if use_ssl else 1,
+		"smtp_server": smtp_server,
+		"smtp_port": smtp_port,
+		"use_ssl_for_outgoing": smtp_ssl,
+		"use_tls": 0 if smtp_ssl else 1,
+	}

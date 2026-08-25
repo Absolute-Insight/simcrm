@@ -1,4 +1,4 @@
-import { validateEmail } from '../../utils'
+import { validateInputs } from '@/utils/emailAccountValidation'
 
 import LogoGmail from '@/images/gmail.png'
 import LogoOutlook from '@/images/outlook.png'
@@ -7,6 +7,7 @@ import LogoSparkpost from '@/images/sparkpost.webp'
 import LogoYahoo from '@/images/yahoo.png'
 import LogoYandex from '@/images/yandex.png'
 import LogoFrappeMail from '@/images/frappe-mail.svg'
+import LogoCustomMail from '@/images/custom-mail.svg'
 
 const fixedFields = [
   {
@@ -97,6 +98,51 @@ export const customProviderFields = [
   },
 ]
 
+export const imapSmtpProviderFields = [
+  ...fixedFields,
+  {
+    label: __('Password'),
+    name: 'password',
+    type: 'password',
+    placeholder: '********',
+  },
+  {
+    label: __('IMAP Server'),
+    name: 'email_server',
+    type: 'text',
+    placeholder: 'imap.example.com',
+  },
+  {
+    label: __('Use SSL for Incoming (IMAP port 993; off = STARTTLS on 143)'),
+    name: 'use_ssl',
+    type: 'checkbox',
+  },
+  {
+    label: __('SMTP Server'),
+    name: 'smtp_server',
+    type: 'text',
+    placeholder: 'smtp.example.com',
+  },
+  {
+    label: __('SMTP Port (465 switches outgoing to SSL)'),
+    name: 'smtp_port',
+    type: 'text',
+    placeholder: '587',
+  },
+]
+
+export function fieldsForService(serviceName) {
+  if (serviceName === 'Frappe Mail') {
+    return customProviderFields
+  }
+  // An account with no service is one configured server-by-server: Custom
+  // accounts are stored that way, and so are accounts created from the desk.
+  if (!serviceName || serviceName === 'Custom') {
+    return imapSmtpProviderFields
+  }
+  return popularProviderFields
+}
+
 export const services = [
   {
     name: 'GMail',
@@ -161,6 +207,15 @@ export const services = [
     link: 'https://github.com/frappe/mail',
     custom: true,
   },
+  {
+    name: 'Custom',
+    icon: LogoCustomMail,
+    info: __(
+      'Connect any provider over IMAP/SMTP with a mailbox or app password. Incoming defaults to SSL on port 993; SMTP port 465 uses SSL for outgoing, any other port STARTTLS. Read more',
+    ),
+    link: 'https://docs.erpnext.com/docs/user/manual/en/email-account',
+    custom: false,
+  },
 ]
 
 export const emailIcon = {
@@ -170,30 +225,12 @@ export const emailIcon = {
   SparkPost: LogoSparkpost,
   Yahoo: LogoYahoo,
   Yandex: LogoYandex,
+  // saved accounts carry the select's own values, not the dialog names
+  'Outlook.com': LogoOutlook,
+  'Yahoo Mail': LogoYahoo,
+  'Yandex.Mail': LogoYandex,
   'Frappe Mail': LogoFrappeMail,
+  Custom: LogoCustomMail,
 }
 
-export function validateInputs(state, isCustom) {
-  if (!state.email_account_name) {
-    return __('Account name is required')
-  }
-  if (!state.email_id) {
-    return __('Email ID is required')
-  }
-  const validEmail = validateEmail(state.email_id)
-  if (!validEmail) {
-    return __('Invalid email ID')
-  }
-  if (!isCustom && !state.password) {
-    return __('Password is required')
-  }
-  if (isCustom) {
-    if (!state.api_key) {
-      return __('API key is required')
-    }
-    if (!state.api_secret) {
-      return
-    }
-  }
-  return ''
-}
+export { validateInputs }
