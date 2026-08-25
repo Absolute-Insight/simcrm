@@ -121,7 +121,21 @@ export function applyLuxChartTheme(config, dark) {
     return { ...s, echartOptions: { ...lux, ...s.echartOptions } }
   })
 
-  return { ...config, colors: palette, series }
+  const darkAxes = dark
+    ? {
+        yAxis: {
+          ...config.yAxis,
+          echartOptions: {
+            splitLine: {
+              lineStyle: { color: 'rgba(255, 255, 255, 0.08)' },
+            },
+            ...config.yAxis?.echartOptions,
+          },
+        },
+      }
+    : {}
+
+  return { ...config, colors: palette, series, ...darkAxes }
 }
 
 export function withVectoraLux(config) {

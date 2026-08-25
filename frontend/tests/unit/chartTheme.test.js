@@ -103,6 +103,16 @@ describe('applyLuxChartTheme', () => {
     applyLuxChartTheme(config, true)
     expect(JSON.stringify(config)).toBe(snapshot)
   })
+
+  it('fades y-axis split lines in dark mode without clobbering caller axis options', () => {
+    const dark = applyLuxChartTheme(axisConfig(), true)
+    expect(dark.yAxis.echartOptions.splitLine.lineStyle.color).toBe(
+      'rgba(255, 255, 255, 0.08)',
+    )
+    expect(
+      applyLuxChartTheme(axisConfig(), false).yAxis.echartOptions,
+    ).toBeUndefined()
+  })
 })
 
 describe('withVectoraTheme (existing contract)', () => {
