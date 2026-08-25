@@ -40,7 +40,7 @@
    "depends_on": "enabled",
    "fieldname": "section_break_oubd",
    "fieldtype": "Section Break",
-   "label": "ERPNext Site API's"
+   "label": "SIMERP Site API's"
   },
   {
    "fieldname": "column_break_fllx",
@@ -50,14 +50,14 @@
    "depends_on": "eval:doc.enabled && doc.is_erpnext_in_different_site",
    "fieldname": "erpnext_site_url",
    "fieldtype": "Data",
-   "label": "ERPNext Site URL",
+   "label": "SIMERP Site URL",
    "mandatory_depends_on": "is_erpnext_in_different_site"
   },
   {
    "depends_on": "enabled",
    "fieldname": "erpnext_company",
    "fieldtype": "Data",
-   "label": "Company in ERPNext site",
+   "label": "Company in SIMERP site",
    "mandatory_depends_on": "enabled"
   },
   {
@@ -82,7 +82,7 @@
    "depends_on": "enabled",
    "fieldname": "is_erpnext_in_different_site",
    "fieldtype": "Check",
-   "label": "Is ERPNext installed on a different site?"
+   "label": "Is SIMERP installed on a different site?"
   },
   {
    "default": "1",
