@@ -29,7 +29,7 @@ export async function createDocument(doctype, obj, close, callback) {
   if (!doctype) return
   if (doctype === 'CRM Product' && (await shouldCreateProductInERPNext())) {
     close?.()
-    toast.info(__('Create products as Items in ERPNext'))
+    toast.info(__('Create products as Items in SIMERP'))
     window.open('/app/item/new', '_blank')
     return
   }

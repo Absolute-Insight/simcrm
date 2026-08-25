@@ -279,7 +279,7 @@ const tabs = computed(() => {
           condition: () => isWhatsappInstalled.value && isManager(),
         },
         {
-          label: __('ERPNext'),
+          label: __('SIMERP'),
           icon: ERPNextIcon,
           component: markRaw(ERPNextSettings),
           condition: () => isManager(),

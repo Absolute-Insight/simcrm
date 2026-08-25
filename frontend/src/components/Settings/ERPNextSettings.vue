@@ -1,12 +1,12 @@
 <template>
   <SettingsLayoutBase
-    :title="__('ERPNext Settings')"
-    :description="__('Manage ERPNext integration settings')"
+    :title="__('SIMERP Settings')"
+    :description="__('Manage SIMERP integration settings')"
   >
     <template #title>
       <div class="flex gap-2 items-center">
         <h2 class="flex text-2xl-semibold leading-none h-5">
-          {{ __('ERPNext Settings') }}
+          {{ __('SIMERP Settings') }}
         </h2>
         <Tooltip text="View documentation">
           <button type="button" @click="openHelpCenter('integrations')">
@@ -69,7 +69,7 @@
               required
               :description="
                 __(
-                  'ERPNext is not installed on this site either install it or enter the URL of your ERPNext site to connect',
+                  'SIMERP is not installed on this site either install it or enter the URL of your SIMERP site to connect',
                 )
               "
               autocomplete="off"
@@ -152,7 +152,7 @@
                     {{ __('Company Name') }}
                   </div>
                   <div class="text-p-sm text-ink-gray-5 truncate">
-                    {{ __('Select your ERPNext company to connect with') }}
+                    {{ __('Select your SIMERP company to connect with') }}
                   </div>
                 </div>
                 <div class="w-48">
@@ -218,7 +218,7 @@
                   <div class="text-p-sm text-ink-gray-5">
                     {{
                       __(
-                        'ERPNext Items always sync into CRM Products. Turn this on to also sync CRM Product changes back to ERPNext Items.',
+                        'SIMERP Items always sync into CRM Products. Turn this on to also sync CRM Product changes back to SIMERP Items.',
                       )
                     }}
                   </div>
@@ -246,10 +246,10 @@
                     {{
                       erpnextCRMSettingsResource.doc.sync_products
                         ? __(
-                            'Run a manual bi-directional sync between ERPNext Items and CRM Products.',
+                            'Run a manual bi-directional sync between SIMERP Items and CRM Products.',
                           )
                         : __(
-                            'Run a manual synchronization to pull the latest Items from ERPNext.',
+                            'Run a manual synchronization to pull the latest Items from SIMERP.',
                           )
                     }}
                   </div>
@@ -272,7 +272,7 @@
                   <div class="text-p-sm text-ink-gray-5 truncate">
                     {{
                       __(
-                        'Create customer in ERPNext when the deal status is changed',
+                        'Create customer in SIMERP when the deal status is changed',
                       )
                     }}
                   </div>
@@ -302,7 +302,7 @@
                     <div class="text-p-sm text-ink-gray-5">
                       {{
                         __(
-                          'Select the deal status to trigger the auto customer creation in ERPNext',
+                          'Select the deal status to trigger the auto customer creation in SIMERP',
                         )
                       }}
                     </div>
@@ -444,12 +444,12 @@
             <ERPNextIcon class="size-7.5 text-ink-gray-5" />
             <div class="flex flex-col items-center gap-1.5 text-center">
               <span class="text-lg-medium text-ink-gray-8">
-                {{ __('Connect ERPNext to Vectora') }}
+                {{ __('Connect SIMERP to Vectora') }}
               </span>
               <span class="text-center text-p-base text-ink-gray-6">
                 {{
                   __(
-                    'Enable the integration to create quotations and more in ERPNext.',
+                    'Enable the integration to create quotations and more in SIMERP.',
                   )
                 }}
               </span>
@@ -542,7 +542,7 @@ const productSyncSections = computed(() => {
   const data = productSyncStatus.data || {}
   return [
     getProductSyncSection('products', 'Products', 'No CRM Products'),
-    getProductSyncSection('items', 'Items', 'No synced ERPNext Items'),
+    getProductSyncSection('items', 'Items', 'No synced SIMERP Items'),
     getProductSyncSection('failed', 'Failed Logs', 'No failed syncs'),
   ].map((section) => ({
     ...section,
@@ -670,7 +670,7 @@ const saveSettings = async () => {
 const toggleEnable = (value) => {
   if (value) {
     $dialog({
-      title: __('Disable ERPNext Integration'),
+      title: __('Disable SIMERP Integration'),
       message: __(
         'Create quotation button on deal page and auto customer creation on deal status change will be disabled. Are you sure?',
       ),
