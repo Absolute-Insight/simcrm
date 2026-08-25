@@ -87,9 +87,7 @@ import { call, toast } from 'frappe-ui'
 import EmailProviderIcon from './EmailProviderIcon.vue'
 import {
   emailIcon,
-  services,
-  popularProviderFields,
-  customProviderFields,
+  fieldsForService,
   validateInputs,
   incomingOutgoingFields,
 } from './emailConfig'
@@ -109,6 +107,10 @@ const state = reactive({
   api_secret: props.accountData?.api_secret || null,
   password: props.accountData?.password || null,
   frappe_mail_site: props.accountData?.frappe_mail_site || '',
+  email_server: props.accountData?.email_server || '',
+  use_ssl: props.accountData?.use_ssl ?? true,
+  smtp_server: props.accountData?.smtp_server || '',
+  smtp_port: props.accountData?.smtp_port ?? '587',
   enable_incoming: props.accountData.enable_incoming || false,
   enable_outgoing: props.accountData.enable_outgoing || false,
   default_outgoing: props.accountData.default_outgoing || false,
@@ -122,21 +124,12 @@ const info = {
   link: 'https://docs.erpnext.com/docs/user/manual/en/email-account',
 }
 
-const isCustomService = computed(() => {
-  return services.find((s) => s.name === props.accountData.service)?.custom
-})
-
-const fields = computed(() => {
-  if (isCustomService.value) {
-    return customProviderFields
-  }
-  return popularProviderFields
-})
+const fields = computed(() => fieldsForService(props.accountData.service))
 
 const error = ref()
 const loading = ref(false)
 async function updateAccount() {
-  error.value = validateInputs(state, isCustomService.value)
+  error.value = validateInputs(state, props.accountData.service)
   if (error.value) return
   const old = { ...props.accountData }
   const updatedEmailAccount = { ...state }
@@ -184,7 +177,11 @@ const isDirty = computed(() => {
     state.enable_outgoing !== props.accountData.enable_outgoing ||
     state.default_outgoing !== props.accountData.default_outgoing ||
     state.default_incoming !== props.accountData.default_incoming ||
-    state.frappe_mail_site !== props.accountData.frappe_mail_site
+    state.frappe_mail_site !== props.accountData.frappe_mail_site ||
+    state.email_server !== props.accountData.email_server ||
+    state.use_ssl !== props.accountData.use_ssl ||
+    state.smtp_server !== props.accountData.smtp_server ||
+    state.smtp_port !== props.accountData.smtp_port
   )
 })
 

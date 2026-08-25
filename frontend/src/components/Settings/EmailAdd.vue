@@ -98,8 +98,7 @@ import { createResource, toast } from 'frappe-ui'
 import { useTelemetry } from '@framework/ui/telemetry'
 import CircleAlert from '~icons/lucide/circle-alert'
 import {
-  customProviderFields,
-  popularProviderFields,
+  fieldsForService,
   services,
   validateInputs,
   incomingOutgoingFields,
@@ -116,6 +115,10 @@ const state = reactive({
   api_key: '',
   api_secret: '',
   frappe_mail_site: '',
+  email_server: '',
+  use_ssl: true,
+  smtp_server: '',
+  smtp_port: '587',
   enable_incoming: false,
   enable_outgoing: false,
   default_incoming: false,
@@ -125,9 +128,7 @@ const state = reactive({
 const { capture } = useTelemetry()
 
 const selectedService = ref(null)
-const fields = computed(() =>
-  selectedService.value.custom ? customProviderFields : popularProviderFields,
-)
+const fields = computed(() => fieldsForService(selectedService.value.name))
 
 function handleSelect(service) {
   selectedService.value = service
@@ -152,7 +153,7 @@ const addEmailRes = createResource({
 
 const error = ref()
 function createEmailAccount() {
-  error.value = validateInputs(state, selectedService.value.custom)
+  error.value = validateInputs(state, selectedService.value.name)
   if (error.value) return
 
   addEmailRes.submit({ data: state })
