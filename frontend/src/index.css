@@ -139,27 +139,59 @@ body {
    border and a soft two-layer shadow — premium but conventional, per the
    design spec. Dark theme: translucent glass over the stage — a lit top rim,
    a low-alpha fill, and blur. The blur lives ONLY on .v-glass cards and cards
-   never nest, which is what keeps the paint cost bounded. */
+   never nest, which is what keeps the paint cost bounded.
+
+   The rules sit in Tailwind's components layer on purpose: an unlayered rule
+   outranks every utility regardless of specificity, so a `hover:` or `!`
+   utility on the same element could never win against the glass shorthand
+   (the tile hover was silently dead until this moved). Variables stay
+   unlayered — they carry no cascade weight of their own. */
 :root {
   --v-glass-bg: var(--surface-elevation-2);
   --v-glass-border: var(--outline-gray-1);
   --v-glass-shadow: 0 1px 2px rgba(16, 24, 40, 0.05),
     0 10px 28px -14px rgba(16, 24, 40, 0.14);
+  --v-glass-border-hover: var(--outline-gray-2);
+  --v-glass-shadow-hover: 0 1px 2px rgba(16, 24, 40, 0.06),
+    0 14px 32px -14px rgba(16, 24, 40, 0.2);
+  --v-gauge-track: var(--outline-gray-2);
 }
 [data-theme='dark'] {
   --v-glass-bg: rgba(255, 255, 255, 0.04);
   --v-glass-border: rgba(255, 255, 255, 0.09);
   --v-glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07),
     0 14px 36px -18px rgba(0, 0, 0, 0.6);
+  /* Hover brightens the rim and lets a little brand glow through — the rim
+     stays, which is the difference between "lit" and "lost". */
+  --v-glass-border-hover: rgba(255, 255, 255, 0.18);
+  --v-glass-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 18px 40px -18px rgba(0, 0, 0, 0.7), 0 0 24px -8px rgba(91, 95, 232, 0.35);
+  --v-gauge-track: rgba(255, 255, 255, 0.1);
 }
-.v-glass {
-  background: var(--v-glass-bg);
-  border: 1px solid var(--v-glass-border);
-  box-shadow: var(--v-glass-shadow);
-}
-[data-theme='dark'] .v-glass {
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+@layer components {
+  .v-glass {
+    background: var(--v-glass-bg);
+    border: 1px solid var(--v-glass-border);
+    box-shadow: var(--v-glass-shadow);
+  }
+  [data-theme='dark'] .v-glass {
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+  /* Interactive glass only: a card that goes somewhere says so on hover. */
+  .v-glass-hover:hover {
+    border-color: var(--v-glass-border-hover);
+    box-shadow: var(--v-glass-shadow-hover);
+  }
+  /* KPI label — the small uppercase caption above a Command Center numeral.
+     Sets shape only; callers pick the ink (gray normally, red-9 on the danger
+     tile) so token contrast rules stay theirs to obey. */
+  .v-kpi-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
 }
 
 /* The stage the glass sits on. Light theme is untouched — the class exists so

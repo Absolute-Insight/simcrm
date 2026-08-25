@@ -28,16 +28,24 @@ const LIGHT_SERIES = [
   '#be185d', // deep magenta
 ]
 
+/* Rebuilt against the CVD validator on the dark surface #131521: the previous
+   lifted pastels collapsed under deuteranopia (indigo/sky/magenta all read as
+   the same blue, worst adjacent ΔE 1.8). These sit in the OKLCH L 0.48-0.67
+   band and alternate hue families so adjacent series stay separable; the one
+   sub-8 pair (positions 7-8) is legal because every chart carries a legend
+   and direct labels as secondary encoding. */
 const DARK_SERIES = [
-  '#a5a8f2',
-  '#7dc9fd',
-  '#eb9bf3',
-  '#2dd4bf',
-  '#fbbf24',
-  '#a78bfa',
-  '#38bdf8',
-  '#f472b6',
+  '#5b5fe8', // brand indigo — the primary series
+  '#0d9488', // teal
+  '#d33fd1', // magenta
+  '#d97706', // amber
+  '#7c3aed', // violet
+  '#0284c7', // deep sky
+  '#be185d', // deep magenta
+  '#4d7c0f', // olive
 ]
+
+import { ref } from 'vue'
 
 function isDark() {
   if (typeof document === 'undefined') return false
@@ -149,4 +157,31 @@ export function applyLuxChartTheme(config, dark) {
 
 export function withVectoraLux(config) {
   return applyLuxChartTheme(config, isDark())
+}
+
+/**
+ * The theme as a ref, so a chart config computed from it re-themes the moment
+ * the user flips light/dark instead of on the next reload. One observer for
+ * the whole app, started on first use; `data-theme` is the attribute
+ * frappe-ui's useColorScheme writes.
+ */
+const darkRef = ref(isDark())
+let observing = false
+
+export function useIsDark() {
+  if (
+    !observing &&
+    typeof document !== 'undefined' &&
+    typeof MutationObserver !== 'undefined'
+  ) {
+    observing = true
+    new MutationObserver(() => {
+      darkRef.value = isDark()
+    }).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    })
+  }
+  darkRef.value = isDark()
+  return darkRef
 }

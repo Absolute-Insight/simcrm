@@ -12,17 +12,22 @@
     :is="clickable ? NativeButton : 'div'"
     :type="clickable ? 'button' : undefined"
     class="v-stat-tile v-glass group relative flex min-h-[6.5rem] w-full flex-col justify-between gap-2 rounded-6 p-4 text-left"
-    :class="
+    :class="[
       clickable
-        ? 'cursor-pointer hover:border-outline-gray-2 hover:shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2'
-        : ''
-    "
+        ? 'v-glass-hover cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2'
+        : '',
+      accent === 'danger' ? '!border-[rgba(216,77,77,0.35)]' : '',
+    ]"
     :aria-label="clickable ? drilldownLabel : undefined"
     @click="clickable && $emit('drill')"
   >
     <div class="flex items-start justify-between gap-2">
       <Tooltip :text="tooltip || ''" :disabled="!tooltip">
-        <span class="text-sm text-ink-gray-6">{{ label }}</span>
+        <span
+          class="v-kpi-label"
+          :class="accent === 'danger' ? 'text-ink-red-9' : 'text-ink-gray-5'"
+          >{{ label }}</span
+        >
       </Tooltip>
       <LucideArrowUpRight
         v-if="clickable"
@@ -64,7 +69,7 @@
 
     <div v-else class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
       <span
-        class="font-display text-3xl-semibold tracking-tight text-ink-gray-9"
+        class="font-display text-[38px] font-semibold leading-[1.05] tracking-tight text-ink-gray-9"
       >
         {{ display }}
       </span>
@@ -95,6 +100,7 @@ import LucideArrowUpRight from '~icons/lucide/arrow-up-right'
 import LucideTriangleAlert from '~icons/lucide/alert-triangle'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { deltaTone } from '@/utils/dashboardHome'
+import { formatDelta } from '@/utils/gauge'
 import { formatCell } from '@/utils/reportExport'
 import { Tooltip } from 'frappe-ui'
 import { computed, defineComponent, h, markRaw } from 'vue'
@@ -138,6 +144,9 @@ const props = defineProps({
   retry: { type: Function, default: null },
   // Where clicking lands, for the accessible name. Empty means not clickable.
   drilldownLabel: { type: String, default: '' },
+  // 'danger' tints the tile's frame and label red: the one tile whose number
+  // being high is itself the alert (critical deals).
+  accent: { type: String, default: '' },
 })
 
 defineEmits(['drill'])
@@ -170,21 +179,5 @@ const display = computed(() => {
 
 const tone = computed(() => deltaTone(props.delta, props.negativeIsBetter))
 
-// Deltas arrive as raw ratios — a month that went from 1 deal to 18 produces
-// 1721.4285714285716. Sixteen significant figures of period-over-period change
-// is noise, and it wrecks the tile's layout; one decimal is as much as anyone
-// reads, and past 999% the exact figure has stopped meaning anything anyway.
-const deltaDisplay = computed(() => {
-  const value = Number(props.delta) || 0
-  const sign = value > 0 ? '+' : value < 0 ? '−' : ''
-  const magnitude = Math.abs(value)
-  // The clamp is a comparison, not a signed number: "+999+%" reads as a typo
-  // with its two plus signs, where ">999%" says the same thing once.
-  if (magnitude >= 1000) {
-    return `${value > 0 ? '>' : '<−'}999${props.deltaSuffix}`
-  }
-  const rounded =
-    magnitude >= 100 ? Math.round(magnitude) : Math.round(magnitude * 10) / 10
-  return `${sign}${rounded}${props.deltaSuffix}`
-})
+const deltaDisplay = computed(() => formatDelta(props.delta, props.deltaSuffix))
 </script>

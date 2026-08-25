@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyLuxChartTheme,
   hexToRgba,
+  useIsDark,
   withVectoraTheme,
 } from '@/utils/chartTheme'
 
@@ -48,6 +49,16 @@ describe('applyLuxChartTheme', () => {
     expect(dark.colors).toHaveLength(8)
     expect(light.colors).toHaveLength(8)
     expect(dark.colors).not.toEqual(light.colors)
+  })
+
+  it('anchors the dark palette on the validated brand set', () => {
+    const dark = applyLuxChartTheme({ title: 'x', data: [] }, true)
+    expect(dark.colors.slice(0, 4)).toEqual([
+      '#5b5fe8',
+      '#0d9488',
+      '#d33fd1',
+      '#d97706',
+    ])
   })
 
   it('gives line series a same-hue glow in dark mode only', () => {
@@ -122,5 +133,19 @@ describe('withVectoraTheme (existing contract)', () => {
   it('still applies the palette without touching explicit colors', () => {
     expect(withVectoraTheme({ colors: ['#abc'] }).colors).toEqual(['#abc'])
     expect(withVectoraTheme({}).colors).toHaveLength(8)
+  })
+})
+
+describe('useIsDark', () => {
+  it('tracks the data-theme attribute without a reload', async () => {
+    document.documentElement.setAttribute('data-theme', 'light')
+    const dark = useIsDark()
+    expect(dark.value).toBe(false)
+    document.documentElement.setAttribute('data-theme', 'dark')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(dark.value).toBe(true)
+    document.documentElement.setAttribute('data-theme', 'light')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(dark.value).toBe(false)
   })
 })
