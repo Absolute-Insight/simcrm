@@ -125,7 +125,7 @@
     <Tabs
       v-model="tabIndex"
       :tabs="tabs"
-      class="flex flex-1 overflow-hidden flex-col [&_[role='tablist']]:gap-7.5 [&_[role='tablist']]:px-5 [&_[role='tablist']::-webkit-scrollbar]:h-0 [&_[role='tablist']]:min-h-[45px] [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:flex-col [&_[role='tabpanel']:not([hidden])]:grow [&_[role='tabpanel']:not([hidden])]:overflow-hidden"
+      class="v-lux-stage flex flex-1 overflow-hidden flex-col [&_[role='tablist']]:gap-7.5 [&_[role='tablist']]:px-5 [&_[role='tablist']::-webkit-scrollbar]:h-0 [&_[role='tablist']]:min-h-[45px] [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:flex-col [&_[role='tabpanel']:not([hidden])]:grow [&_[role='tabpanel']:not([hidden])]:overflow-hidden"
     >
       <template #tab-item="{ tab, selected }">
         <button
