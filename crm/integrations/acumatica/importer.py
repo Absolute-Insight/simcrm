@@ -176,13 +176,18 @@ def run_backfill(modified_since: str | None = None) -> dict:
 					frappe.log_error(frappe.get_traceback(), "Acumatica sync issue recording failed")
 			done_in_entity += 1
 			if done_in_entity % COMMIT_EVERY == 0:
-				frappe.db.commit()
-		frappe.db.commit()
+				# A 50k-record backfill must not hold one transaction; committing per
+				# page keeps locks short and preserves progress if the job dies.
+				frappe.db.commit()  # nosemgrep: frappe-manual-commit
+		# Entity boundary: same reasoning as the per-page commit above.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 	# High-water mark is when this run STARTED: anything modified mid-run is
 	# picked up again next sweep rather than lost in the gap.
 	frappe.db.set_single_value("CRM Acumatica Settings", "last_synced_at", started_at)
-	frappe.db.commit()
+	# The high-water mark must be durable the moment it is set -- the next sweep
+	# reads it from a different worker process.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	return counts
 
 

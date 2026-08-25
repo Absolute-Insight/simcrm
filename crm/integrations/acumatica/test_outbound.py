@@ -27,7 +27,8 @@ def _disable():
 	which implicitly commits the open transaction -- so `enabled=1` outlives the
 	test's rollback and every later CRM Deal test record tries to reach Acumatica."""
 	frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
-	frappe.db.commit()
+	# Deliberate: the docstring above explains why this write must outlive rollback.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	frappe.clear_cache(doctype="CRM Acumatica Settings")
 
 
