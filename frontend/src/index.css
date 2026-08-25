@@ -215,6 +215,22 @@ body {
     );
 }
 
+/* List header strip — frappe-ui's ListHeader paints itself bg-surface-gray-2,
+   a flat block that reads as unfinished on the dark canvas. Unlayered so it
+   wins over that internal utility; light mode keeps the exact same token. */
+.v-list-header {
+  background: var(--v-list-header-bg);
+  border: 1px solid var(--v-list-header-border);
+}
+:root {
+  --v-list-header-bg: var(--surface-gray-2);
+  --v-list-header-border: transparent;
+}
+[data-theme='dark'] {
+  --v-list-header-bg: rgba(255, 255, 255, 0.045);
+  --v-list-header-border: rgba(255, 255, 255, 0.07);
+}
+
 /* Slim, token-colored scrollbars everywhere. */
 * {
   scrollbar-width: thin;

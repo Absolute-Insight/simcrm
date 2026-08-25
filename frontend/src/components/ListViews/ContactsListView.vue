@@ -17,7 +17,7 @@
     @update:selections="(selections) => emit('selectionsChanged', selections)"
   >
     <ListHeader
-      class="mx-3 sm:mx-5"
+      class="v-list-header mx-3 sm:mx-5"
       @columnWidthUpdated="emit('columnWidthUpdated')"
     >
       <ListHeaderItem
@@ -41,7 +41,7 @@
     </ListHeader>
     <ListRows
       v-slot="{ idx, column, item, row }"
-      class="mx-3 sm:mx-5"
+      class="v-list-header mx-3 sm:mx-5"
       :rows="rows"
       doctype="Contact"
     >

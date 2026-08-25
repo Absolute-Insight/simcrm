@@ -17,7 +17,7 @@
     @update:selections="(selections) => emit('selectionsChanged', selections)"
   >
     <ListHeader
-      class="sm:mx-5 mx-3"
+      class="v-list-header sm:mx-5 mx-3"
       @columnWidthUpdated="emit('columnWidthUpdated')"
     >
       <ListHeaderItem

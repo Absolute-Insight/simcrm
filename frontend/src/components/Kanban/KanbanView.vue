@@ -1,5 +1,5 @@
 <template>
-  <div class="flex overflow-x-auto h-full">
+  <div class="v-lux-stage flex overflow-x-auto h-full">
     <Draggable
       v-if="columns"
       :list="columns"
@@ -81,7 +81,7 @@
               <template #item="{ element: fields }">
                 <component
                   :is="options.getRoute ? 'router-link' : 'div'"
-                  class="pt-3 px-3.5 pb-2.5 rounded-6 border bg-surface-base text-base flex flex-col text-ink-gray-9"
+                  class="v-glass v-glass-hover pt-3 px-3.5 pb-2.5 rounded-6 text-base flex flex-col text-ink-gray-9"
                   :data-name="fields.name"
                   v-bind="{
                     to: options.getRoute ? options.getRoute(fields) : undefined,
