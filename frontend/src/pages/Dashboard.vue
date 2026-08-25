@@ -351,7 +351,11 @@
             :key="chart.name"
             class="h-72 overflow-hidden rounded-6"
             :class="
-              chart.resource.loading || chart.resource.error ? 'v-glass' : ''
+              chart.resource.loading ||
+              chart.resource.error ||
+              axisChartEmpty(chart.resource.data)
+                ? 'v-glass'
+                : ''
             "
           >
             <SkeletonTable
