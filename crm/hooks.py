@@ -201,6 +201,7 @@ doc_events = {
 		"after_insert": ["crm.automation.run_automations"],
 		"on_update": [
 			"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.create_customer_in_erpnext",
+			"crm.integrations.acumatica.outbound.create_customer_in_acumatica",
 			"crm.automation.run_automations",
 		],
 		"on_trash": ["crm.automation.clear_suggestions"],
@@ -209,6 +210,9 @@ doc_events = {
 		"after_insert": ["crm.automation.run_automations"],
 		"on_update": ["crm.automation.run_automations"],
 		"on_trash": ["crm.automation.clear_suggestions"],
+	},
+	"ERPNext CRM Settings": {
+		"validate": ["crm.integrations.acumatica.install.block_dual_erp"],
 	},
 	"Sales Order": {
 		"before_validate": [
@@ -267,6 +271,9 @@ scheduler_events = {
 		# off unless an admin turns scheduled_reenrichment on; long because each
 		# record it queues is a crawl of somebody else's website
 		"crm.domain_enrichment.tasks.reenrich_stale_records",
+		# correctness sweep for the Acumatica integration -- webhooks only lower
+		# latency, they do not guarantee delivery (2-day retention on their side)
+		"crm.integrations.acumatica.importer.nightly_sweep",
 	],
 	"hourly_long": [
 		"crm.lead_syncing.background_sync.sync_leads_from_sources_hourly",
