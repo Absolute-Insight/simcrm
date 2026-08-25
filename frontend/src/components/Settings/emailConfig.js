@@ -225,6 +225,10 @@ export const emailIcon = {
   SparkPost: LogoSparkpost,
   Yahoo: LogoYahoo,
   Yandex: LogoYandex,
+  // saved accounts carry the select's own values, not the dialog names
+  'Outlook.com': LogoOutlook,
+  'Yahoo Mail': LogoYahoo,
+  'Yandex.Mail': LogoYandex,
   'Frappe Mail': LogoFrappeMail,
   Custom: LogoCustomMail,
 }

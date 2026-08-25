@@ -23,7 +23,7 @@ def create_email_account(data: dict):
 				"email_account_name": data.get("email_account_name"),
 				# "Custom" is a UI concept, not an Email Account select option; a
 				# custom account is stored with no service, its servers explicit.
-				"service": "" if service == "Custom" else service,
+				"service": "" if service == "Custom" else service_select_value.get(service, service),
 				"enable_incoming": data.get("enable_incoming"),
 				"enable_outgoing": data.get("enable_outgoing"),
 				"default_incoming": data.get("default_incoming"),
@@ -62,6 +62,16 @@ def create_email_account(data: dict):
 		frappe.log_error(frappe.get_traceback(), "Email account setup failed")
 		frappe.throw(_("Could not connect to the mail server. Check the credentials and try again."))
 
+
+# The dialog's provider names vs the Email Account `service` select's options.
+# Sending the dialog name verbatim fails _validate_selects on save, and the
+# blanket except in create_email_account rewrote that as "could not connect" --
+# so these three providers never worked from the UI at all.
+service_select_value = {
+	"Outlook": "Outlook.com",
+	"Yahoo": "Yahoo Mail",
+	"Yandex": "Yandex.Mail",
+}
 
 email_service_config = {
 	"Frappe Mail": {

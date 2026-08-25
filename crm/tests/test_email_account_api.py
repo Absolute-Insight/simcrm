@@ -51,6 +51,38 @@ class TestCreateEmailAccount(IntegrationTestCase):
 		self.assertFalse([f for f in doc.imap_folder if f.append_to])
 
 
+class TestServiceSelectValues(IntegrationTestCase):
+	"""The dialog's Outlook/Yahoo/Yandex names are not valid Email Account
+	`service` select options; saving them verbatim failed validation, masked as
+	a connection error. They must be stored under the select's own values."""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def test_renamed_services_store_the_select_option(self):
+		for ui_name, select_value, imap_host in [
+			("Outlook", "Outlook.com", "imap-mail.outlook.com"),
+			("Yahoo", "Yahoo Mail", "imap.mail.yahoo.com"),
+			("Yandex", "Yandex.Mail", "imap.yandex.com"),
+		]:
+			data = {
+				"service": ui_name,
+				"email_account_name": f"{ui_name} Check",
+				"email_id": f"{ui_name.lower()}-check@example.com",
+				"password": "app-password",
+				"enable_incoming": 1,
+			}
+			with (
+				patch.object(EmailAccount, "get_incoming_server", return_value=None),
+				patch.object(EmailAccount, "validate_imap_folders_exist", return_value=None),
+				patch.object(EmailAccount, "validate_smtp_conn", return_value=True),
+			):
+				create_email_account(data)
+			doc = frappe.get_doc("Email Account", f"{ui_name} Check")
+			self.assertEqual(doc.service, select_value)
+			self.assertEqual(doc.email_server, imap_host)
+
+
 class TestCustomServiceConfig(IntegrationTestCase):
 	def test_defaults_are_ssl_imap_and_starttls_smtp(self):
 		config = custom_service_config({"email_server": "imap.ionos.com", "smtp_server": "smtp.ionos.com"})
