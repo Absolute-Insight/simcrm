@@ -1,40 +1,23 @@
+import { ref } from 'vue'
+
 /**
  * Vectora's chart palette.
  *
  * frappe-ui charts fall back to ECharts' stock sky/cyan/yellow/salmon, which
  * has no relationship to the indigo system the rest of the app is built from —
  * on the dashboard, the screen an exec actually looks at, that reads as a
- * widget bolted onto someone else's product. These series colours are drawn
- * from the brand gradient's own stops and spaced by hue so adjacent series stay
- * separable, including for the common forms of colour blindness (no red/green
- * pair carries meaning on its own).
+ * widget bolted onto someone else's product.
  *
- * Two ramps because a chart is drawn on the canvas: the light one is saturated
- * enough to hold against near-white, the dark one lifted so it does not sink
- * into #131521.
+ * ONE series, both themes: these eight are drawn from the brand hues and
+ * validated (six-check CVD validator) against BOTH canvases — light #fafbff
+ * and dark #131521 — so a series keeps its colour when the user flips the
+ * theme, and adjacent series stay separable for the common forms of colour
+ * blindness. The one sub-8 adjacent pair (positions 7-8) is legal because
+ * every chart carries a legend and direct labels as secondary encoding. The
+ * old split ramps failed those checks (light: magenta↔sky ΔE 3.0 deutan and
+ * two sub-3:1 series; dark: worst adjacent ΔE 1.8).
  */
-
-// sky and magenta are the gradient's own ends, indigo its middle; the rest are
-// spaced around the wheel from there, avoiding the 90-150 deg band that reads
-// as "good" next to a red that reads as "bad".
-const LIGHT_SERIES = [
-  '#5b5fe8', // brand indigo — the primary series
-  '#21abfb', // gradient sky
-  '#df5feb', // gradient magenta
-  '#0d9488', // teal
-  '#d97706', // amber
-  '#7c3aed', // violet
-  '#0369a1', // deep sky
-  '#be185d', // deep magenta
-]
-
-/* Rebuilt against the CVD validator on the dark surface #131521: the previous
-   lifted pastels collapsed under deuteranopia (indigo/sky/magenta all read as
-   the same blue, worst adjacent ΔE 1.8). These sit in the OKLCH L 0.48-0.67
-   band and alternate hue families so adjacent series stay separable; the one
-   sub-8 pair (positions 7-8) is legal because every chart carries a legend
-   and direct labels as secondary encoding. */
-const DARK_SERIES = [
+const SERIES = [
   '#5b5fe8', // brand indigo — the primary series
   '#0d9488', // teal
   '#d33fd1', // magenta
@@ -45,15 +28,13 @@ const DARK_SERIES = [
   '#4d7c0f', // olive
 ]
 
-import { ref } from 'vue'
-
 function isDark() {
   if (typeof document === 'undefined') return false
   return document.documentElement.getAttribute('data-theme') === 'dark'
 }
 
 export function chartSeriesColors() {
-  return isDark() ? [...DARK_SERIES] : [...LIGHT_SERIES]
+  return [...SERIES]
 }
 
 /**
@@ -108,7 +89,7 @@ function verticalFade(hex, topAlpha, bottomAlpha) {
 export function applyLuxChartTheme(config, dark) {
   if (!config || typeof config !== 'object') return config
   if (config.colors?.length) return config
-  const palette = dark ? [...DARK_SERIES] : [...LIGHT_SERIES]
+  const palette = [...SERIES]
   if (!Array.isArray(config.series)) return { ...config, colors: palette }
 
   const series = config.series.map((s, index) => {
