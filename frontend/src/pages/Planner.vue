@@ -60,9 +60,18 @@
         v-if="server.loaded"
         class="flex items-center gap-2 text-sm text-ink-gray-6"
       >
-        <span>{{ totals.planned }} {{ __('planned') }}</span>
-        <span class="text-ink-green-9">{{ totals.done }} {{ __('done') }}</span>
-        <span v-if="totals.missed" class="text-ink-red-9">
+        <span class="v-glass rounded-full px-2.5 py-0.5 tabular-nums">
+          {{ totals.planned }} {{ __('planned') }}
+        </span>
+        <span
+          class="v-glass rounded-full px-2.5 py-0.5 tabular-nums text-ink-green-9"
+        >
+          {{ totals.done }} {{ __('done') }}
+        </span>
+        <span
+          v-if="totals.missed"
+          class="v-glass rounded-full px-2.5 py-0.5 tabular-nums text-ink-red-9"
+        >
           {{ totals.missed }} {{ __('missed') }}
         </span>
         <span
@@ -182,7 +191,7 @@
        desktop. -->
   <div
     v-if="!plan.error && !showReadOnlyEmpty"
-    class="flex flex-1 flex-col overflow-y-auto sm:flex-row sm:overflow-x-auto"
+    class="v-lux-stage flex flex-1 flex-col overflow-y-auto sm:flex-row sm:overflow-x-auto"
   >
     <div
       v-for="day in weekDays"
@@ -196,17 +205,25 @@
       @dragleave="onDragLeave(day.date)"
       @drop="onDrop($event, day.date)"
     >
+      <!-- Today wears the position rail's gradient as an underline: the one
+           signature the rest of the app already reads as "you are here". -->
       <div
-        class="flex items-baseline justify-between border-b px-3 py-2"
+        class="relative flex items-baseline justify-between border-b px-3 py-2"
         :class="day.isToday ? 'text-ink-gray-9' : 'text-ink-gray-5'"
       >
-        <span class="text-sm font-medium">{{ dayName(day.date) }}</span>
+        <span class="v-kpi-label">{{ dayName(day.date) }}</span>
         <span
-          class="text-sm tabular-nums"
-          :class="day.isToday && 'font-display font-semibold text-brand'"
+          class="font-display text-lg font-semibold leading-none tabular-nums tracking-tight"
+          :class="day.isToday && 'text-brand'"
         >
           {{ dayOfMonth(day.date) }}
         </span>
+        <span
+          v-if="day.isToday"
+          class="absolute inset-x-3 -bottom-px h-0.5 rounded-full"
+          :style="{ background: 'var(--brand-gradient)' }"
+          aria-hidden="true"
+        />
       </div>
 
       <div class="flex flex-1 flex-col gap-1.5 p-1.5">
@@ -225,8 +242,11 @@
           <div
             v-for="item in byDay[day.date]"
             :key="item._uid"
-            class="v-plan-card group rounded-5 border border-outline-gray-1 bg-surface-elevation-1 px-2.5 py-2 shadow-sm"
-            :class="dragging === item ? 'opacity-50' : ''"
+            class="v-plan-card v-glass group rounded-5 px-2.5 py-2"
+            :class="[
+              dragging === item ? 'opacity-50' : '',
+              canEdit ? 'v-glass-hover' : '',
+            ]"
             :data-plan-uid="item._uid"
             :draggable="canEdit"
             @dragstart="onDragStart($event, item)"

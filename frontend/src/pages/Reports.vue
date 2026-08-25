@@ -288,10 +288,25 @@
         />
       </div>
 
-      <div v-else class="flex-1 overflow-auto px-3 py-4 sm:px-5">
-        <p class="mb-3 text-sm text-ink-gray-6 print:hidden">
-          {{ showing.description }}
-        </p>
+      <div v-else class="v-lux-stage flex-1 overflow-auto px-3 py-4 sm:px-5">
+        <!-- On-screen masthead: the rail names the report, but the sheet
+             itself should say what it is and over what period, the way the
+             print masthead below already does. -->
+        <div
+          class="mb-4 flex flex-wrap items-end justify-between gap-x-6 gap-y-1 print:hidden"
+        >
+          <div class="flex min-w-0 flex-col gap-1">
+            <h2
+              class="font-display text-2xl font-semibold tracking-tight text-ink-gray-9"
+            >
+              {{ showing.title }}
+            </h2>
+            <p class="text-sm text-ink-gray-6">{{ showing.description }}</p>
+          </div>
+          <div class="v-kpi-label shrink-0 pb-1 text-ink-gray-5">
+            {{ showing.period === false ? __('As at today') : printedRange }}
+          </div>
+        </div>
 
         <!-- Why the numbers below look the way they do, when the server knows.
              Zeroed forward-looking columns beside real realised revenue read as
@@ -319,43 +334,48 @@
           top="20%"
         />
 
-        <table v-else class="w-full border-collapse text-base">
-          <thead>
-            <tr>
-              <th
-                v-for="col in showing.columns"
-                :key="col.key"
-                class="sticky top-0 border-b-2 border-outline-gray-2 bg-surface-base px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-ink-gray-5 print:static"
-                :class="col.type !== 'text' && 'text-right'"
-                :abbr="col.description || undefined"
+        <div
+          v-else
+          class="v-glass overflow-hidden rounded-6 print:rounded-none print:border-0 print:shadow-none"
+        >
+          <table class="w-full border-collapse text-base">
+            <thead>
+              <tr>
+                <th
+                  v-for="col in showing.columns"
+                  :key="col.key"
+                  class="v-kpi-label sticky top-0 border-b border-outline-gray-2 bg-surface-elevation-2 px-3 py-2.5 text-left text-ink-gray-5 print:static"
+                  :class="col.type !== 'text' && 'text-right'"
+                  :abbr="col.description || undefined"
+                >
+                  <Tooltip v-if="col.description" :text="col.description">
+                    <span class="inline-flex items-center gap-1">
+                      {{ col.label }}
+                      <LucideInfo class="size-3 shrink-0 print:hidden" />
+                    </span>
+                  </Tooltip>
+                  <template v-else>{{ col.label }}</template>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="(row, i) in showing.rows"
+                :key="i"
+                class="hover:bg-surface-gray-1 last:[&>td]:border-b-0"
               >
-                <Tooltip v-if="col.description" :text="col.description">
-                  <span class="inline-flex items-center gap-1">
-                    {{ col.label }}
-                    <LucideInfo class="size-3 shrink-0 print:hidden" />
-                  </span>
-                </Tooltip>
-                <template v-else>{{ col.label }}</template>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="(row, i) in showing.rows"
-              :key="i"
-              class="hover:bg-surface-gray-1"
-            >
-              <td
-                v-for="col in showing.columns"
-                :key="col.key"
-                class="border-b border-outline-gray-1 px-3 py-2 tabular-nums"
-                :class="col.type !== 'text' && 'text-right'"
-              >
-                {{ formatCell(row[col.key], col.type, baseCurrency) }}
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                <td
+                  v-for="col in showing.columns"
+                  :key="col.key"
+                  class="border-b border-outline-gray-1 px-3 py-2 tabular-nums"
+                  :class="col.type !== 'text' && 'text-right'"
+                >
+                  {{ formatCell(row[col.key], col.type, baseCurrency) }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
