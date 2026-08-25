@@ -27,13 +27,7 @@
       width="6.5rem"
       :label="__('Loading {0}', [label])"
     />
-    <svg
-      v-else
-      width="104"
-      height="104"
-      viewBox="0 0 140 140"
-      aria-hidden="true"
-    >
+    <svg v-else width="104" height="104" viewBox="0 0 140 140">
       <defs>
         <linearGradient :id="gradientId" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stop-color="#21abfb" />
@@ -47,6 +41,7 @@
         fill="none"
         class="stroke-outline-gray-1"
         stroke-width="10"
+        aria-hidden="true"
       />
       <circle
         v-if="ring.pct > 0"
@@ -59,6 +54,7 @@
         stroke-linecap="round"
         :stroke-dasharray="ring.dasharray"
         transform="rotate(-90 70 70)"
+        aria-hidden="true"
       />
       <text
         x="70"
