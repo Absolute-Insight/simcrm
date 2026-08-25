@@ -29,6 +29,10 @@ describe('hexToRgba', () => {
   it('handles full alpha', () => {
     expect(hexToRgba('#000000', 1)).toBe('rgba(0, 0, 0, 1)')
   })
+
+  it('expands 3-digit shorthand hex', () => {
+    expect(hexToRgba('#abc', 1)).toBe('rgba(170, 187, 204, 1)')
+  })
 })
 
 describe('applyLuxChartTheme', () => {

@@ -3,9 +3,9 @@
   <div
     v-if="visible"
     ref="target"
-    class="absolute z-20 h-screen bg-surface-base transition-all duration-300 ease-in-out"
+    class="v-panel absolute z-20 h-screen transition-all duration-300 ease-in-out"
     :style="{
-      'box-shadow': '8px 0px 8px rgba(0, 0, 0, 0.1)',
+      'box-shadow': 'var(--elevation-lg)',
       'max-width': '400px',
       'min-width': '400px',
       left: 'calc(100% + 1px)',
@@ -13,7 +13,7 @@
   >
     <div class="flex h-screen flex-col text-ink-gray-9">
       <div class="flex justify-between items-center">
-        <div class="text-lg-medium text-ink-gray-8 px-4 pt-[15px] pb-3">
+        <div class="v-title-sm text-ink-gray-8 px-4 pt-[15px] pb-3">
           {{ __('Notifications') }}
         </div>
         <div class="flex gap-1 mr-3">

@@ -106,19 +106,8 @@
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { deltaTone } from '@/utils/dashboardHome'
 import { formatDelta, ringDash } from '@/utils/gauge'
-import { computed, defineComponent, h, markRaw, useId } from 'vue'
-
-/* Same trap StatTile documents: the string 'button' handed to
-   `<component :is>` resolves to frappe-ui's globally registered Button, so
-   the real element needs a wrapper that dodges the name lookup. */
-const NativeButton = markRaw(
-  defineComponent({
-    name: 'RadialGaugeNativeButton',
-    setup(_, { slots }) {
-      return () => h('button', null, slots.default?.())
-    },
-  }),
-)
+import { NativeButton } from '@/utils/nativeButton'
+import { computed, useId } from 'vue'
 
 const props = defineProps({
   label: { type: String, required: true },

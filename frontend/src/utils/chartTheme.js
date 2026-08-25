@@ -79,7 +79,12 @@ export function withVectoraTheme(config) {
 const LINE_GLOW = { blur: 14, alpha: 0.4, offsetY: 6 }
 
 export function hexToRgba(hex, alpha) {
-  const value = hex.replace('#', '')
+  let value = hex.replace('#', '')
+  // #abc is #aabbcc — expand shorthand so a future caller with a 3-digit
+  // brand hex gets a color rather than NaN soup.
+  if (value.length === 3) {
+    value = value.replace(/./g, (c) => c + c)
+  }
   const r = parseInt(value.slice(0, 2), 16)
   const g = parseInt(value.slice(2, 4), 16)
   const b = parseInt(value.slice(4, 6), 16)

@@ -3,7 +3,7 @@
     <div
       v-if="suggestionsVisible"
       ref="target"
-      class="absolute z-20 h-screen bg-surface-base"
+      class="v-panel absolute z-20 h-screen"
       :style="{
         'box-shadow': 'var(--elevation-lg)',
         'max-width': 'min(400px, 100vw)',
