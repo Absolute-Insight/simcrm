@@ -141,7 +141,7 @@
       </Link>
     </div>
 
-    <div class="w-full flex-1 overflow-y-auto px-5 pb-6">
+    <div class="v-lux-stage w-full flex-1 overflow-y-auto px-5 pb-6">
       <!-- The headline numbers. Each one clicks through to the records behind
            it, which is the whole difference between a dashboard you read and a
            dashboard you work from. -->
@@ -349,7 +349,14 @@
           <div
             v-for="chart in repCharts"
             :key="chart.name"
-            class="h-72 overflow-hidden rounded-6 border border-outline-gray-1"
+            class="h-72 overflow-hidden rounded-6"
+            :class="
+              chart.resource.loading ||
+              chart.resource.error ||
+              axisChartEmpty(chart.resource.data)
+                ? 'v-glass'
+                : ''
+            "
           >
             <SkeletonTable
               v-if="chart.resource.loading"

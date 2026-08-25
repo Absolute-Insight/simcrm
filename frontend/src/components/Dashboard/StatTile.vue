@@ -11,7 +11,7 @@
   <component
     :is="clickable ? NativeButton : 'div'"
     :type="clickable ? 'button' : undefined"
-    class="v-stat-tile group relative flex min-h-[6.5rem] w-full flex-col justify-between gap-2 rounded-6 border border-outline-gray-1 bg-surface-elevation-2 p-4 text-left"
+    class="v-stat-tile v-glass group relative flex min-h-[6.5rem] w-full flex-col justify-between gap-2 rounded-6 p-4 text-left"
     :class="
       clickable
         ? 'cursor-pointer hover:border-outline-gray-2 hover:shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2'
@@ -64,7 +64,7 @@
 
     <div v-else class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
       <span
-        class="font-display text-2xl font-medium tracking-tight text-ink-gray-9"
+        class="font-display text-3xl-semibold tracking-tight text-ink-gray-9"
       >
         {{ display }}
       </span>
