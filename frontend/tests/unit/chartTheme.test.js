@@ -50,6 +50,16 @@ describe('applyLuxChartTheme', () => {
     expect(dark.colors).not.toEqual(light.colors)
   })
 
+  it('anchors the dark palette on the validated brand set', () => {
+    const dark = applyLuxChartTheme({ title: 'x', data: [] }, true)
+    expect(dark.colors.slice(0, 4)).toEqual([
+      '#5b5fe8',
+      '#0d9488',
+      '#d33fd1',
+      '#d97706',
+    ])
+  })
+
   it('gives line series a same-hue glow in dark mode only', () => {
     const dark = applyLuxChartTheme(axisConfig(), true)
     const light = applyLuxChartTheme(axisConfig(), false)

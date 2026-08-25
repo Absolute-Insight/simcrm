@@ -27,6 +27,16 @@ import { telemetryPlugin } from '@framework/ui/telemetry'
 // parked in experimental for v1 (frappe-ui migration doc)
 import { spritePlugin } from 'frappe-ui/experimental'
 
+/* Vectora ships dark-first: a visitor with no stored preference boots into
+   the premium dark theme. Any stored choice — light, dark, or system — wins
+   untouched; frappe-ui's useColorScheme then restores this like any other
+   saved preference. */
+try {
+  if (!localStorage.getItem('theme')) localStorage.setItem('theme', 'dark')
+} catch {
+  /* storage disabled: the browser default (system) applies */
+}
+
 let globalComponents = {
   Button,
   TextInput,

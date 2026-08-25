@@ -183,6 +183,16 @@ body {
     );
 }
 
+/* KPI label — the small uppercase caption above a Command Center numeral.
+   Sets shape only; callers pick the ink (gray normally, red-9 on the danger
+   tile) so token contrast rules stay theirs to obey. */
+.v-kpi-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
 /* Slim, token-colored scrollbars everywhere. */
 * {
   scrollbar-width: thin;
