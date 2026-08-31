@@ -95,7 +95,7 @@
                   target="_blank"
                   href="https://developers.facebook.com/docs/facebook-login/guides/access-tokens/"
                 >
-                  <LucideCircleQuestionMark class="w-4" />
+                  <LucideCircleQuestionMark class="h-4 w-4" />
                 </a>
               </template>
             </FormControl>
@@ -179,7 +179,7 @@ import {
 import { getMeta } from '@/stores/meta'
 import Link from '@/components/Controls/Link.vue'
 import Grid from '@/components/Controls/Grid.vue'
-import LucideCircleQuestionMark from '~icons/lucide/circle-question-mark'
+import { PhQuestion as LucideCircleQuestionMark } from '@phosphor-icons/vue'
 import FailureLogs from './FailureLogs.vue'
 import DetailsIcon from '@/components/Icons/DetailsIcon.vue'
 import RefreshIcon from '@/components/Icons/RefreshIcon.vue'

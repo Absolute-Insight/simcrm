@@ -150,7 +150,7 @@ import {
   toast,
 } from 'frappe-ui'
 import { useTelemetry } from '@framework/ui/telemetry'
-import LucideTextCursorInput from '~icons/lucide/text-cursor-input'
+import { PhCursorText as LucideTextCursorInput } from '@phosphor-icons/vue'
 import { ref, reactive, h } from 'vue'
 import { ConfirmDelete, copyToClipboard } from '../../../utils'
 

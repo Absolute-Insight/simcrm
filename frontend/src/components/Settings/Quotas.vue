@@ -180,7 +180,7 @@
 </template>
 
 <script setup>
-import LucideTarget from '~icons/lucide/target'
+import { PhTarget as LucideTarget } from '@phosphor-icons/vue'
 import { usersStore } from '@/stores/users'
 import { Button, call, createResource, toast } from 'frappe-ui'
 import ErrorState from '@/components/ui/ErrorState.vue'

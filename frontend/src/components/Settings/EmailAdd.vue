@@ -96,7 +96,7 @@
 import { computed, reactive, ref } from 'vue'
 import { createResource, toast } from 'frappe-ui'
 import { useTelemetry } from '@framework/ui/telemetry'
-import CircleAlert from '~icons/lucide/circle-alert'
+import { PhWarningCircle as CircleAlert } from '@phosphor-icons/vue'
 import {
   fieldsForService,
   services,

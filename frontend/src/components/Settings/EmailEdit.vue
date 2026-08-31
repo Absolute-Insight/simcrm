@@ -91,8 +91,7 @@ import {
   validateInputs,
   incomingOutgoingFields,
 } from './emailConfig'
-import CircleAlert from '~icons/lucide/circle-alert'
-
+import { PhWarningCircle as CircleAlert } from '@phosphor-icons/vue'
 const props = defineProps({
   accountData: { type: Object, default: () => ({}) },
 })

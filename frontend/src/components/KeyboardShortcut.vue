@@ -16,10 +16,9 @@
   </div>
 </template>
 <script setup>
-import LucideCommand from '~icons/lucide/command'
-import LucideShift from '~icons/lucide/arrow-big-up'
-import LucideAlt from '~icons/lucide/option'
-
+import { PhCommand as LucideCommand } from '@phosphor-icons/vue'
+import { PhArrowFatUp as LucideShift } from '@phosphor-icons/vue'
+import { PhOption as LucideAlt } from '@phosphor-icons/vue'
 const isMac = navigator.userAgent.includes('Mac')
 
 defineProps({

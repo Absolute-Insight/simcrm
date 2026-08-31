@@ -91,13 +91,13 @@
 </template>
 
 <script setup>
-import LucideChevronRight from '~icons/lucide/chevron-right'
-import LucideCloudOff from '~icons/lucide/cloud-off'
-import LucideCopy from '~icons/lucide/copy'
-import LucideLock from '~icons/lucide/lock'
-import LucideRotateCw from '~icons/lucide/rotate-cw'
+import { PhCaretRight as LucideChevronRight } from '@phosphor-icons/vue'
+import { PhCloudSlash as LucideCloudOff } from '@phosphor-icons/vue'
+import { PhCopy as LucideCopy } from '@phosphor-icons/vue'
+import { PhLock as LucideLock } from '@phosphor-icons/vue'
+import { PhArrowClockwise as LucideRotateCw } from '@phosphor-icons/vue'
 import LucideSearchX from '~icons/lucide/search-x'
-import LucideTriangleAlert from '~icons/lucide/alert-triangle'
+import { PhWarning as LucideTriangleAlert } from '@phosphor-icons/vue'
 import { describeError } from '@/utils/describeError'
 import { copyToClipboard } from '@/utils'
 import { Button } from 'frappe-ui'

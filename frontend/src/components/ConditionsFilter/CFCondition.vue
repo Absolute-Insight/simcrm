@@ -110,7 +110,7 @@
 </template>
 
 <script setup>
-import GroupIcon from '~icons/lucide/group'
+import { PhStack as GroupIcon } from '@phosphor-icons/vue'
 import UnGroupIcon from '~icons/lucide/ungroup'
 import CFConditions from './CFConditions.vue'
 import Link from '@/components/Controls/Link.vue'

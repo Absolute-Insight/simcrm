@@ -167,7 +167,7 @@
    Extracted so the desktop slide-over and the mobile page are the same list:
    the accept/dismiss flow and the "not an empty inbox" error handling are the
    parts that must not diverge between them. */
-import LucideSparkles from '~icons/lucide/sparkles'
+import { PhSparkle as LucideSparkles } from '@phosphor-icons/vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'

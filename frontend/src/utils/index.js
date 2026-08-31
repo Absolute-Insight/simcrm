@@ -1,4 +1,4 @@
-import LucideCheck from '~icons/lucide/check'
+import { PhCheck as LucideCheck } from '@phosphor-icons/vue'
 import Icon from '@/components/Icon.vue'
 import TaskStatusIcon from '@/components/Icons/TaskStatusIcon.vue'
 import TaskPriorityIcon from '@/components/Icons/TaskPriorityIcon.vue'

@@ -117,7 +117,7 @@
   </div>
 </template>
 <script setup>
-import ImageIcon from '~icons/lucide/image'
+import { PhImage as ImageIcon } from '@phosphor-icons/vue'
 import ImageUploader from '@/components/Controls/ImageUploader.vue'
 import { FormControl } from 'frappe-ui'
 import { getSettings } from '@/stores/settings'

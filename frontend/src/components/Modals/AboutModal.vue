@@ -54,8 +54,8 @@
 import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
 import CRMLogo from '@/components/Icons/CRMLogo.vue'
 import GitHubIcon from '@/components/Icons/GitHubIcon.vue'
-import LucideBug from '~icons/lucide/bug'
-import LucideBookOpen from '~icons/lucide/book-open'
+import { PhBug as LucideBug } from '@phosphor-icons/vue'
+import { PhBookOpen as LucideBookOpen } from '@phosphor-icons/vue'
 import { openHelpCenter } from '@/stores/help'
 
 let show = defineModel({ type: Boolean })

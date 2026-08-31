@@ -377,11 +377,11 @@
 
 <script setup>
 import LucideCalendarClock from '~icons/lucide/calendar-clock'
-import LucideCircleCheck from '~icons/lucide/circle-check'
-import LucideMail from '~icons/lucide/mail'
-import LucidePhone from '~icons/lucide/phone'
-import LucideSparkles from '~icons/lucide/sparkles'
-import LucideUserCheck from '~icons/lucide/user-check'
+import { PhCheckCircle as LucideCircleCheck } from '@phosphor-icons/vue'
+import { PhEnvelope as LucideMail } from '@phosphor-icons/vue'
+import { PhPhone as LucidePhone } from '@phosphor-icons/vue'
+import { PhSparkle as LucideSparkles } from '@phosphor-icons/vue'
+import { PhUserCheck as LucideUserCheck } from '@phosphor-icons/vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'

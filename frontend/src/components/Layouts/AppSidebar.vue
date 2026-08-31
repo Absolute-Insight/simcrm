@@ -233,7 +233,7 @@
 </template>
 
 <script setup>
-import BrushCleaningIcon from '~icons/lucide/brush-cleaning'
+import { PhBroom as BrushCleaningIcon } from '@phosphor-icons/vue'
 import DashboardIcon from '@/components/Icons/DashboardIcon.vue'
 import PlannerIcon from '@/components/Icons/PlannerIcon.vue'
 import ReportsIcon from '@/components/Icons/ReportsIcon.vue'

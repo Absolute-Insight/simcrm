@@ -88,7 +88,7 @@
 </template>
 
 <script setup>
-import LogOutIcon from '~icons/lucide/log-out'
+import { PhSignOut as LogOutIcon } from '@phosphor-icons/vue'
 import HelpIcon from '@/components/Icons/HelpIcon.vue'
 import SettingsIcon from '@/components/Icons/SettingsIcon.vue'
 import { sessionStore } from '@/stores/session'

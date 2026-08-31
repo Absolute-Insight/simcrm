@@ -146,7 +146,7 @@
 <script setup>
 import SettingsLayoutBase from '@/components/Layouts/SettingsLayoutBase.vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
-import ShieldCheck from '~icons/lucide/shield-check'
+import { PhShieldCheck as ShieldCheck } from '@phosphor-icons/vue'
 import {
   Badge,
   Button,

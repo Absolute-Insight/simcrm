@@ -115,7 +115,7 @@
 </template>
 
 <script setup>
-import LucideSearch from '~icons/lucide/search'
+import { PhMagnifyingGlass as LucideSearch } from '@phosphor-icons/vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import {

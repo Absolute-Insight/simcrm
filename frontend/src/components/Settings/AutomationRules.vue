@@ -250,8 +250,8 @@
 </template>
 
 <script setup>
-import LucidePlus from '~icons/lucide/plus'
-import LucideWorkflow from '~icons/lucide/workflow'
+import { PhPlus as LucidePlus } from '@phosphor-icons/vue'
+import { PhFlowArrow as LucideWorkflow } from '@phosphor-icons/vue'
 import {
   Badge,
   Button,

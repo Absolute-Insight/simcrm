@@ -71,7 +71,7 @@
   </Dialog>
 </template>
 <script setup>
-import LockKeyhole from '~icons/lucide/lock-keyhole'
+import { PhLockKey as LockKeyhole } from '@phosphor-icons/vue'
 import { Dialog, toast, createResource, Password } from 'frappe-ui'
 import { useOnboarding } from '@framework/ui/components/Onboarding'
 import { ref, watch } from 'vue'
