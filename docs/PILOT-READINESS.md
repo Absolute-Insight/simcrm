@@ -379,10 +379,21 @@ someone other than me:
       publishable outright. A `guard` job now blocks the build until the commit's checks
       are green: it fails on any failed check and refuses a commit with no test run at
       all, waiting rather than reading once because a tag build can start before the
-      main-push checks have finished. Decision logic unit-tested across seven states.
-      *Partial by construction:* it can only require checks that actually run on `main`
-      (today, the e2e suite) — the `pull_request`-only workflows are absent on that SHA.
-      Making it total means running the full suite on `main` too. **2 h.**
+      main-push checks have finished.
+      **This said "decision logic unit-tested across seven states". There are no such
+      tests, and there never were** — the only `guard*` files in the tree are the
+      unrelated `.claude/hooks/guard-{commit,paths}.sh`. What the logic has instead is
+      verification against real data: the bump-commit branch was replayed over the v3.4.0
+      and v3.3.1 release commits and correctly inherited from their parents, an ordinary
+      merge commit correctly used its own checks, and the premise was confirmed — the
+      v3.4.0 bump commit carries **zero** check runs while its parent carries the full
+      green set. Without inheritance that release would have been unpublishable. Real
+      fixtures beat synthetic ones, but they are not a test suite and this entry should
+      not have claimed one.
+      *No longer partial:* this said the guard could only require checks that run on
+      `main` (then, the e2e suite alone). All three required names — Playwright E2E Tests,
+      Server Tests, Unit Tests & Coverage — now run on push to `main` as well as
+      `develop`, so the estimate that closed it (**2 h**) is spent.
 - [x] **CI's only build gate compiled against the `@framework/ui` stub.** `yarn build`
       with no bench fell back to no-ops behind a `console.warn` and reported green — so
       a bundle where the Data Import page renders nothing and every product event is
