@@ -42,3 +42,4 @@ crm.patches.v1_0.set_default_rule_suggestion_score
 crm.patches.v1_0.add_analytics_dashboard_widgets
 crm.patches.v1_0.remove_duplicated_grid_tiles #2
 crm.patches.v1_0.create_custom_fields_for_acumatica_in_crm
+crm.patches.v1_0.enable_zar_currency
