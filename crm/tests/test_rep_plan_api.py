@@ -81,9 +81,14 @@ class RepPlanApiTest(IntegrationTestCase):
 			doc["action_payload"] = frappe.as_json(action_payload)
 		return frappe.get_doc(doc).insert(ignore_permissions=True).name
 
-	def make_task(self) -> str:
+	def make_task(self, assigned_to: str | None = None) -> str:
 		task = frappe.get_doc(
-			{"doctype": "CRM Task", "title": "Fulfilment stand-in", "status": "Done"}
+			{
+				"doctype": "CRM Task",
+				"title": "Fulfilment stand-in",
+				"status": "Done",
+				"assigned_to": assigned_to,
+			}
 		).insert(ignore_permissions=True)
 		self.addCleanup(frappe.delete_doc, "CRM Task", task.name, force=True)
 		return str(task.name)
@@ -307,7 +312,7 @@ class RepPlanApiTest(IntegrationTestCase):
 		frappe.set_user(REP)
 		out = save_plan(self.monday, [{"activity_type": "Call", "planned_date": self.monday}])
 		item_name = out["items"][0]["name"]
-		mark_fulfilled(item_name, fulfilled_by_doctype="CRM Task", fulfilled_by=self.make_task())
+		mark_fulfilled(item_name, fulfilled_by_doctype="CRM Task", fulfilled_by=self.make_task(assigned_to=REP))
 
 		out = save_plan(
 			self.monday,
@@ -330,6 +335,53 @@ class RepPlanApiTest(IntegrationTestCase):
 		out = save_plan(self.monday, [{"activity_type": "Call", "planned_date": self.monday}])
 		with self.assertRaises(frappe.ValidationError):
 			mark_fulfilled(out["items"][0]["name"], fulfilled_by_doctype="User", fulfilled_by=OTHER)
+
+	def test_mark_fulfilled_refuses_a_record_that_does_not_exist(self):
+		frappe.set_user(REP)
+		out = save_plan(self.monday, [{"activity_type": "Call", "planned_date": self.monday}])
+		item_name = out["items"][0]["name"]
+		with self.assertRaises(frappe.ValidationError):
+			mark_fulfilled(item_name, fulfilled_by_doctype="CRM Call Log", fulfilled_by="no-such-call")
+		self.assertEqual(frappe.db.get_value("CRM Rep Plan Item", item_name, "status"), "Planned")
+
+	def test_mark_fulfilled_refuses_another_reps_record(self):
+		"""A bogus claim is not only wrong for this item: _claimed_actuals
+		indexes claims across every plan in the horizon, so it would exclude the
+		real record from its own rep's matching and dock their adherence."""
+		theirs = frappe.get_doc(
+			{"doctype": "CRM Task", "title": "Someone else's work", "status": "Done", "assigned_to": OTHER}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Task", theirs.name, force=True)
+		frappe.set_user(REP)
+		out = save_plan(self.monday, [{"activity_type": "Task", "planned_date": self.monday}])
+		with self.assertRaises(frappe.ValidationError):
+			mark_fulfilled(
+				out["items"][0]["name"], fulfilled_by_doctype="CRM Task", fulfilled_by=str(theirs.name)
+			)
+
+	def test_mark_fulfilled_accepts_the_callers_own_completed_work(self):
+		frappe.set_user(REP)
+		out = save_plan(self.monday, [{"activity_type": "Task", "planned_date": self.monday}])
+		out = mark_fulfilled(
+			out["items"][0]["name"],
+			fulfilled_by_doctype="CRM Task",
+			fulfilled_by=self.make_task(assigned_to=REP),
+		)
+		self.assertEqual(out["items"][0]["status"], "Done")
+
+	def test_propose_week_keeps_a_meeting_a_meeting(self):
+		"""ACTIVITY_TO_ACTION maps Meeting to create_task, so the round trip
+		Meeting -> suggestion -> proposed week used to come back as a Task --
+		and the matcher then hunted a CRM Task for the meeting the rep actually
+		held, docking adherence through no fault of theirs."""
+		self.make_suggestion(
+			REP,
+			title="Overdue plan item: Meet Plan API Org",
+			action_payload={"title": "Meet Plan API Org", "activity_type": "Meeting"},
+		)
+		frappe.set_user(REP)
+		drafts = propose_week(self.monday)
+		self.assertEqual(drafts[0]["activity_type"], "Meeting")
 
 	def test_an_in_tree_team_lead_sees_their_own_teams_plans(self):
 		frappe.set_user(REP)

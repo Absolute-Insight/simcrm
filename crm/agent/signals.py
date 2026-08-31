@@ -402,7 +402,10 @@ def find_stale_plan_items(rows: list[dict], now: datetime) -> list[dict]:
 				"reference_docname": row["reference_docname"],
 				"user": row.get("user"),
 				"suggested_action": ACTIVITY_TO_ACTION.get(activity, "create_task"),
-				"action_payload": {"title": label},
+				# the activity rides in the payload because the action mapping is
+				# lossy: propose_week rebuilds the item from it, and without this a
+				# missed Meeting came back as a Task
+				"action_payload": {"title": label, "activity_type": activity},
 				"rationale": (
 					f"You planned this {activity.lower()} for {planned} and it is still open."
 					if planned

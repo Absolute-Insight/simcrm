@@ -330,6 +330,12 @@ class StalePlanTest(UnitTestCase):
 		rows = [plan_row(reference_docname=None)]
 		self.assertEqual(find_stale_plan_items(rows, NOW), [])
 
+	def test_the_payload_carries_the_activity_for_the_round_trip(self):
+		"""propose_week rebuilds the activity from the payload: without it the
+		suggested_action mapping is lossy (Meeting -> create_task -> Task)."""
+		out = find_stale_plan_items([plan_row(activity_type="Meeting")], NOW)
+		self.assertEqual(out[0]["action_payload"]["activity_type"], "Meeting")
+
 	def test_lateness_never_goes_negative(self):
 		"""A Missed item whose planned date is still in the future (the matcher
 		can write one at a week boundary) must not subtract from the base score

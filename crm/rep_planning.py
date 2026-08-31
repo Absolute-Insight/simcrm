@@ -70,6 +70,9 @@ ACTUAL_SOURCES = {
 	},
 }
 
+# the reverse map, for callers handed a doctype (mark_fulfilled's claim check)
+KIND_BY_DOCTYPE = {source["doctype"]: kind for kind, source in ACTUAL_SOURCES.items()}
+
 # Communication names its reference differently to everything else here
 REFERENCE_NAME_FIELD = {"Communication": "reference_name"}
 

@@ -22,7 +22,7 @@ import frappe
 from frappe import _
 
 from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
-from crm.rep_planning import ACTUAL_SOURCES, MATCH_HORIZON_WEEKS
+from crm.rep_planning import ACTUAL_SOURCES, KIND_BY_DOCTYPE, MATCH_HORIZON_WEEKS, _query_source
 from crm.utils import sales_user_only
 
 ITEM_FIELDS = (
@@ -289,6 +289,17 @@ def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled
 		frappe.throw(_("{0} cannot fulfil a plan item.").format(fulfilled_by_doctype))
 	if fulfilled_by and not fulfilled_by_doctype:
 		frappe.throw(_("Name the document type that fulfilled this item."))
+	if fulfilled_by:
+		# The claim is a request, not proof: ``_claimed_actuals`` indexes claims
+		# across every plan in the horizon, so an unverified name would exclude
+		# the real record from its own rep's matching and dock their adherence.
+		# The matcher's own definition of "this rep's completed work" decides --
+		# existence, the kind's status filters, and ownership in one query.
+		kind = KIND_BY_DOCTYPE[fulfilled_by_doctype]
+		if not _query_source(kind, frappe.session.user, None, names=[fulfilled_by]):
+			frappe.throw(
+				_("{0} {1} is not a completed activity of yours.").format(fulfilled_by_doctype, fulfilled_by)
+			)
 
 	frappe.db.set_value(
 		"CRM Rep Plan Item",
@@ -365,11 +376,19 @@ def propose_week(week_start: str):
 	days = _spread_days(monday)
 	drafts = []
 	for i, s in enumerate(suggestions):
+		payload = _parse_payload(s.action_payload)
+		# The payload's activity wins: the suggested_action mapping is lossy
+		# (Meeting -> create_task -> Task), so a missed meeting round-tripped
+		# as a Task and the matcher then hunted a CRM Task for the meeting the
+		# rep actually held. stale_plan payloads carry the original activity.
+		activity = payload.get("activity_type")
+		if activity not in ACTUAL_SOURCES:
+			activity = ACTION_TO_ACTIVITY.get(s.suggested_action, "Task")
 		drafts.append(
 			{
-				"activity_type": ACTION_TO_ACTIVITY.get(s.suggested_action, "Task"),
+				"activity_type": activity,
 				"planned_date": str(days[i % len(days)]),
-				"note": _draft_note(s),
+				"note": _draft_note(s, payload),
 				"reference_doctype": s.reference_doctype,
 				"reference_docname": s.reference_docname,
 				"suggestion": s.name,
@@ -378,7 +397,16 @@ def propose_week(week_start: str):
 	return drafts
 
 
-def _draft_note(suggestion) -> str:
+def _parse_payload(action_payload) -> dict:
+	"""A suggestion's ``action_payload`` as a dict, or ``{}`` for anything odd."""
+	try:
+		payload = json.loads(action_payload or "{}")
+	except (ValueError, TypeError):
+		payload = {}
+	return payload if isinstance(payload, dict) else {}
+
+
+def _draft_note(suggestion, payload: dict) -> str:
 	"""The activity to do, not the reason it is being suggested.
 
 	A suggestion's title addresses the rep ("Overdue plan item: Call Acme"),
@@ -387,12 +415,7 @@ def _draft_note(suggestion) -> str:
 	plan notes back, so titling the draft from the title nests the prefix a
 	little deeper every week it is missed.
 	"""
-	try:
-		payload = json.loads(suggestion.action_payload or "{}")
-	except (ValueError, TypeError):
-		payload = {}
-	title = payload.get("title") if isinstance(payload, dict) else None
-	return (title or suggestion.title or "").strip()
+	return (payload.get("title") or suggestion.title or "").strip()
 
 
 def _spread_days(monday):
