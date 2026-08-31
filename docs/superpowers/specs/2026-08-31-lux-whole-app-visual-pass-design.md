@@ -78,6 +78,35 @@ Explicit line-heights are set per type step to absorb the +4.1% line box.
 
 ### 2. Icon system — adapter, not rewrite
 
+**Corrected inventory (the original survey was wrong).** The first pass of this
+spec said the app had 119 hand-drawn icons and no icon library. It has three
+icon systems:
+
+| Source | Scale | Role |
+|---|---|---|
+| Local `.vue` icons | 119 files, 90 consumers | The hand-drawn set |
+| Lucide via `unplugin-icons` (`~icons/lucide/…`) | 67 distinct icons, 90 imports, 31 files | App chrome — includes the sidebar and user menu |
+| Lucide SVG sprite via frappe-ui's `spritePlugin` | `Icon.vue`, 22 usages | The user-facing IconPicker |
+
+The library search missed the second and third because the imports are virtual
+and the sprite ships from `frappe-ui/experimental`, so neither appears in
+`package.json`.
+
+**What this changes.** `crm_view_settings` and `crm_dropdown_item` both carry an
+`icon` field, so **users' saved views persist Lucide icon names in the
+database**, resolved against a vendor-owned sprite. Converting only the local
+119 to Phosphor would leave Phosphor and Lucide rendering side by side in the
+same sidebar — the exact inconsistency this pass exists to remove.
+
+**Decision (settled with the user):** Phosphor owns everything the app itself
+draws — the 119 local icons *and* the 67 Lucide chrome imports. The Lucide
+sprite stays exactly as it is for the IconPicker, because those names are user
+data rather than design, and replacing them would mean a schema migration and
+fighting a frappe-ui-owned sprite for no visual gain. The one place the two
+sets meet is a picker whose contents the user chose.
+
+
+
 `@phosphor-icons/vue` merges `$attrs` onto its `<svg>` root and defaults
 `fill="currentColor"` (verified in the compiled package source). That means
 every existing call site — `<DealsIcon class="h-4" />`, `text-ink-gray-5`, and
