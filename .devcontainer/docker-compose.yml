@@ -1,4 +1,3 @@
-version: "3.7"
 services:
   mariadb:
     image: mariadb:10.6
@@ -34,8 +33,26 @@ services:
     command: sleep infinity
     environment:
       - SHELL=/bin/bash
+      # frontend/vite.config.js finds frappe's unpublished @framework/ui by
+      # guessing where the bench sits relative to the repo. Neither guess can
+      # reach a bench on a volume outside /workspace, and getting it wrong is not
+      # a build failure -- it is a bundle of silent no-ops -- so name it here.
+      - FRAPPE_UI_SRC=/home/frappe/frappe-bench/apps/frappe/ui/src
     volumes:
       - ..:/workspace:cached
+      # The bench is a build artefact, not source, so it lives on its own volume
+      # rather than in the bind-mounted repo. Three things follow from that.
+      #  1. It survives "Rebuild Container" without landing ~1.5GB of apps/frappe,
+      #     env/ and sites/ in `git status`.
+      #  2. apps/crm can symlink to /workspace without folding the repo back into
+      #     itself -- with the bench inside /workspace that link made
+      #     /workspace/frappe-bench/apps/crm/frappe-bench/... infinite, which any
+      #     tree walk that does not honour .gitignore will happily follow.
+      #  3. It shares a lifecycle with mariadb-data: `docker compose down -v`
+      #     drops both, so the bench and the database it points at cannot skew.
+      #     Wiping only one is what leaves `bench new-site` failing on "database
+      #     already exists".
+      - bench-data:/home/frappe/frappe-bench
       # Docker-outside-of-docker: talk to the host's daemon rather than running
       # one in here. Without it `deploy/docker-compose.yml` -- the production
       # stack this repo ships -- cannot be brought up from inside the
@@ -63,10 +80,12 @@ services:
       # not against /workspace -- deploy/docker-compose.yml uses only named
       # volumes, so it is unaffected, but anything with a `-v` needs care.
       - /var/run/docker.sock:/var/run/docker.sock
-    working_dir: /workspace/frappe-bench
+    working_dir: /home/frappe/frappe-bench
     ports:
       - 8000-8005:8000-8005
       - 9000-9005:9000-9005
+      # vite dev server (frontend/yarn dev)
+      - 8080:8080
     # Expose the host GPU to the container. The NVIDIA Container Toolkit injects
     # the host driver libraries and nvidia-smi at runtime -- do NOT install an
     # NVIDIA driver inside the container, and never inside WSL itself.
@@ -82,4 +101,5 @@ services:
 
 volumes:
   mariadb-data:
+  bench-data:
   postgresql-data:
