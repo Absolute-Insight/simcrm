@@ -202,25 +202,13 @@ def visible_reps() -> list[str] | None:
 	Plan and quota aggregates are keyed on a user rather than on a deal, so they
 	cannot go through :func:`scope_deals`; they get the same subtree from the
 	hierarchy instead, so a manager's rep table and their deal tiles cover the
-	same people.
+	same people. This *is* the planner's ``visible_users`` — it used to be a
+	line-for-line copy, and two copies of the same permission logic are one
+	silent divergence away from a manager reading outside their tree.
 	"""
-	from crm.permissions.org_hierarchy import _in_hierarchy, _team_mem_query, hierarchy_enabled
+	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
 
-	user = frappe.session.user
-	if user == "Administrator":
-		return None
-
-	roles = frappe.get_roles(user)
-	if "System Manager" in roles:
-		return None
-
-	if hierarchy_enabled() and _in_hierarchy(user):
-		return [user, *(_team_mem_query(user).run(pluck=True) or [])]
-
-	if "Sales Manager" in roles:
-		return None
-
-	return [user]
+	return visible_users()
 
 
 @frappe.whitelist()
@@ -2444,6 +2432,12 @@ def forecast_accuracy_scope(user: str | None) -> tuple[str, str, list[str] | Non
 	reps = visible_reps()
 	if reps is None:
 		return "Site", "", None
+	if sorted(set(reps)) == [frappe.session.user]:
+		# an in-tree manager with no reports yet: no Team snapshot row is ever
+		# written for a node without descendants (forecast_snapshot_scopes skips
+		# them), so the Team series would stay empty forever — their series is
+		# their own Rep row
+		return "Rep", frappe.session.user, [frappe.session.user]
 	return "Team", frappe.session.user, reps
 
 

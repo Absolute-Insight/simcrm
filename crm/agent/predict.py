@@ -247,16 +247,13 @@ def get_deal_health(name: str) -> dict:
 		)
 	)
 
-	comms = frappe.get_all(
-		"Communication",
-		filters={"reference_doctype": "CRM Deal", "reference_name": name},
-		fields=["sent_or_received"],
-		limit_page_length=200,
-	)
-	inbound_ratio = None
-	if comms:
-		inbound = sum(1 for c in comms if c.sent_or_received == "Received")
-		inbound_ratio = inbound / len(comms)
+	# the tile's own aggregate, not a capped fetch: this used to count at most
+	# 200 rows while _at_risk_deals counted them all, so a busy deal scored one
+	# way on its page and another in the tile — the exact drift the shared
+	# feature extraction exists to prevent
+	from crm.api.dashboard import _inbound_ratio
+
+	inbound_ratio = _inbound_ratio([name]).get(name)
 
 	return score_deal(
 		{
@@ -291,8 +288,6 @@ def score_open_deals(batch_size: int = 1000) -> int:
 	from crm.api.dashboard import _at_risk_deals
 
 	scored = _at_risk_deals()
-	if not scored:
-		return 0
 
 	now = frappe.utils.now_datetime()
 	Deal = frappe.qb.DocType("CRM Deal")
@@ -315,7 +310,9 @@ def score_open_deals(batch_size: int = 1000) -> int:
 
 	# a deal that closed since the last run keeps a stale score, and the tile
 	# filters on open status anyway — but clear it so nothing downstream reads a
-	# score that no longer describes anything
+	# score that no longer describes anything. Runs even when nothing was left
+	# to score: an early return on the empty list used to skip exactly this,
+	# so when the last open deals closed their scores survived forever.
 	Status = frappe.qb.DocType("CRM Deal Status")
 	closed = (
 		frappe.qb.from_(Deal)
