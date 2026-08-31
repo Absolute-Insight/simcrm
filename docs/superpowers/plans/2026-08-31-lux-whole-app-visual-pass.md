@@ -1119,3 +1119,114 @@ measured on real screens with every surface consuming them."
 **Two things the plan adds that the spec did not name:** the chart font family (Task 2 — frappe-ui hardcodes `InterVar` in `measureText.ts`, so charts would have silently kept Inter) and the `TaskPriorityIcon` comma-expression bug (Task 5 Step 2 — found while checking whether it could be a mechanical wrapper).
 
 **Type consistency.** `intrinsicProps(name)` and `INTRINSIC_SIZE` are named identically in Tasks 3, 4 and 5. The count assertion moves 106 → 109 in Task 5 Step 3, matching the 106 codemod conversions plus the 3 special icons. Token names in Task 6 match their uses in Tasks 7–11.
+
+---
+
+## Task 13: Convert the Lucide chrome icons to Phosphor
+
+**Execution order:** run this immediately after Task 5 and before Task 6. It is numbered 13 only because renumbering the existing tasks would invalidate every brief already extracted.
+
+**Files:**
+- Modify: the 31 files under `frontend/src` that import from `~icons/lucide/…` (90 import lines, 67 distinct icons)
+- Do **not** touch: `frontend/src/components/Icon.vue`, `frontend/src/main.js`'s `spritePlugin` registration, or anything the IconPicker reads
+
+**Interfaces:**
+- Consumes: `intrinsicProps` and the adapter conventions from Task 3.
+- Produces: no new interface. After this task, every icon the app itself draws is Phosphor.
+
+**Why this task exists:** the original survey missed that this app already uses Lucide for its chrome — including the sidebar (`AppSidebar.vue`) and the user menu (`SidebarUser.vue`). Converting only the local 119 would have left two icon languages in the same sidebar. See the spec's corrected inventory.
+
+**The boundary that must not move.** `crm_view_settings` and `crm_dropdown_item` have an `icon` field, so users' saved views persist Lucide names in the database, resolved through frappe-ui's sprite. The sprite and `Icon.vue` stay exactly as they are. If you find yourself editing `Icon.vue`, the sprite, or a doctype JSON, stop — you have crossed out of this task.
+
+**Import shape.** These are virtual imports, not files: `import LogOutIcon from '~icons/lucide/log-out'`. Replace with a named Phosphor import, keeping the local identifier unchanged so the template needs no edit:
+
+```js
+// before
+import LogOutIcon from '~icons/lucide/log-out'
+// after
+import { PhSignOut as LogOutIcon } from '@phosphor-icons/vue'
+```
+
+Keeping the alias means call sites (`<LogOutIcon class="h-4" />`) are untouched. Note these Lucide components size from CSS classes, not intrinsic width/height, so check each call site still renders at the intended size — Phosphor defaults to `1em`, which is NOT the same as Lucide's 24×24 default. Where a call site passed only a height class, add the matching width so the glyph stays square.
+
+**Mapping.** These are unambiguous — use them verbatim:
+
+| Lucide | Phosphor | | Lucide | Phosphor |
+|---|---|---|---|---|
+| `alert-triangle` | `PhWarning` | | `pencil` | `PhPencilSimple` |
+| `align-left` | `PhTextAlignLeft` | | `pen-line` | `PhPencilLine` |
+| `arrow-big-up` | `PhArrowFatUp` | | `percent` | `PhPercent` |
+| `arrow-up-right` | `PhArrowUpRight` | | `phone` | `PhPhone` |
+| `book-open` | `PhBookOpen` | | `plus` | `PhPlus` |
+| `brush-cleaning` | `PhBroom` | | `printer` | `PhPrinter` |
+| `bug` | `PhBug` | | `refresh-ccw` | `PhArrowCounterClockwise` |
+| `calendar` | `PhCalendarBlank` | | `rotate-cw` | `PhArrowClockwise` |
+| `check` | `PhCheck` | | `search` | `PhMagnifyingGlass` |
+| `chevron-down` | `PhCaretDown` | | `settings` | `PhGear` |
+| `chevron-right` | `PhCaretRight` | | `share-2` | `PhShareNetwork` |
+| `chevrons-up-down` | `PhCaretUpDown` | | `shield-check` | `PhShieldCheck` |
+| `circle-alert` | `PhWarningCircle` | | `sparkles` | `PhSparkle` |
+| `circle-check` | `PhCheckCircle` | | `square-check` | `PhCheckSquare` |
+| `circle-question-mark` | `PhQuestion` | | `target` | `PhTarget` |
+| `clock` | `PhClock` | | `text-cursor-input` | `PhCursorText` |
+| `cloud-off` | `PhCloudSlash` | | `triangle-alert` | `PhWarning` |
+| `command` | `PhCommand` | | `type` | `PhTextT` |
+| `copy` | `PhCopy` | | `undo-2` | `PhArrowUUpLeft` |
+| `download` | `PhDownloadSimple` | | `user-check` | `PhUserCheck` |
+| `external-link` | `PhArrowSquareOut` | | `workflow` | `PhFlowArrow` |
+| `eye` | `PhEye` | | `x` | `PhX` |
+| `eye-off` | `PhEyeSlash` | | `hash` | `PhHash` |
+| `group` | `PhStack` | | `image` | `PhImage` |
+| `info` | `PhInfo` | | `lock` | `PhLock` |
+| `layout-dashboard` | `PhSquaresFour` | | `lock-keyhole` | `PhLockKey` |
+| `layout-list` | `PhListDashes` | | `log-out` | `PhSignOut` |
+| `link` | `PhLink` | | `mail` | `PhEnvelope` |
+| `loader-circle` | `PhCircleNotch` | | `palette` | `PhPalette` |
+| `network` | `PhNetwork` | | `monitor-cog` | `PhMonitor` |
+
+**Seven need your judgment — do not force them.** Phosphor has no exact equivalent for `mail-check`, `search-x`, `ungroup`, `import`, `option`, `image-up`, `calendar-clock`. For each: pick the closest honest glyph if one exists, and if none does, **leave that single `~icons/lucide/…` import in place** and record why in your report. One deliberately retained Lucide import is far better than a glyph that says the wrong thing. Name every choice you made in the report.
+
+- [ ] **Step 1: Inventory the call sites**
+
+```bash
+cd /home/evo/dev/simcrm
+grep -rn "~icons/lucide/" --include=*.vue --include=*.js frontend/src
+```
+
+Expect 90 import lines across 31 files. Record the count before and after.
+
+- [ ] **Step 2: Convert, file by file, keeping every local identifier**
+
+Work through the files from Step 1. For each import, swap to the aliased Phosphor named import. Do not rename the local binding, and do not edit templates except where Step 3 requires a size fix.
+
+- [ ] **Step 3: Fix the sizing where a call site relied on Lucide's intrinsic 24×24**
+
+Lucide's virtual components default to 24×24; Phosphor defaults to `1em`. For every converted call site, check the classes it passes. A site passing both a width and height class (`h-4 w-4`, `size-4`) is fine. A site passing only a height (`h-4`) will render 1em wide against a 16px-tall box — add the matching width class.
+
+- [ ] **Step 4: Confirm the boundary held**
+
+```bash
+cd /home/evo/dev/simcrm
+git status --porcelain -- frontend/src/components/Icon.vue frontend/src/main.js crm/
+# Expected: no output. Icon.vue, the sprite registration and all doctypes are out of scope.
+grep -rn "~icons/lucide/" --include=*.vue --include=*.js frontend/src | wc -l
+# Expected: 0, or exactly the deliberately-retained imports named in your report.
+```
+
+- [ ] **Step 5: Run the tests and commit**
+
+```bash
+docker exec simcrm_devcontainer-frappe-1 bash -lc 'cd /workspace/frontend && yarn test:run'
+docker exec simcrm_devcontainer-frappe-1 bash -lc 'cd /workspace/frontend && yarn build'
+```
+
+The build matters here: an unresolved virtual import fails at build time, not test time, so a typo'd Phosphor name would otherwise pass the suite and break the app.
+
+```bash
+git add -A frontend/src
+git commit -m "feat: convert the Lucide chrome icons to Phosphor
+
+The app drew its chrome from two icon sets. Phosphor now owns
+everything the app draws; the Lucide sprite stays for the IconPicker,
+whose names users have persisted in saved views."
+```
