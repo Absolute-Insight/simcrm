@@ -12,7 +12,7 @@ where you are before running anything.
 ## 0. Where am I?
 
 ```bash
-pwd            # host: /home/evo/dev/simcrm   container: /workspace/frappe-bench
+pwd            # host: /home/evo/dev/simcrm   container: /workspace
 command -v bench yarn
 ```
 
@@ -33,31 +33,44 @@ confusing error. Fix that before opening the container.
 ## 2. Open the devcontainer
 
 This is the user's action, not yours — VS Code → *Reopen in Container*
-(service `frappe`, workspace `/workspace/frappe-bench`). `postCreateCommand`
+(service `frappe`, workspace `/workspace`, which is the repo). `postCreateCommand`
 runs `scripts/init.sh`, which:
 
-- `bench init` into `/workspace/frappe-bench`
+- `bench init` into `/home/frappe/frappe-bench`, a named docker volume, against
+  the frappe commit pinned in `scripts/frappe-pin.env`
 - points mariadb/redis at the compose services
 - `bench new-site dev.localhost` (root pw `123`, admin pw `admin`)
-- `developer_mode 1`, `bench get-app crm`, `install-app crm`
+- `developer_mode 1`, symlinks `apps/crm` → `/workspace`, `install-app crm`
+- `yarn install` in `frontend/`
 
-It is **idempotent by design**: it exits early if `apps/frappe` already exists.
-Do not re-run it by hand to "refresh" a bench — the early-exit guard is the only
-thing standing between a rebuild and a second clone of the app over a symlink.
+The bench is deliberately **not** in the repo: that keeps it out of `git status`,
+stops `apps/crm` folding `/workspace` back into itself, and lets it outlive a
+container rebuild.
+
+Every step is guarded, so **re-running it is the repair**:
+
+```bash
+bash /workspace/scripts/init.sh
+```
+
+It resumes rather than starting over, and is a no-op against a finished bench.
+It tees to `.devcontainer/init.log` — read that first when the container comes up
+and nothing works, because postCreate output scrolls away in the Dev Containers
+terminal and a failure there is otherwise invisible.
 
 ## 3. Inside the container
 
 ```bash
-cd /workspace/frappe-bench
+cd /home/frappe/frappe-bench
 bench start                      # web :8000, socketio :9000
 ```
 
 Frontend, in a second terminal:
 
 ```bash
-cd /workspace/apps/crm/frontend  # or wherever the repo is mounted
-yarn install
-yarn dev                         # vite :8080
+cd /workspace/frontend           # init.sh has already run yarn install
+yarn dev --host                  # vite :8080 -- --host, or the published port
+                                 # cannot reach it (vite binds loopback)
 ```
 
 ## 4. Verify, don't assume

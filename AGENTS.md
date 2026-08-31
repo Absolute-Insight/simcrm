@@ -109,7 +109,7 @@ yarn test:run      # single run
 yarn test          # watch mode
 ```
 
-- **21 files · 420 tests · well under a second** — all must pass before committing.
+- **29 files · 480 tests · well under a second** — all must pass before committing.
   Counts drift; re-read them from `yarn test:run` rather than trusting this line.
 - Location: `frontend/tests/unit/`
 - Only pure utility functions are unit-tested (no Vue component tests yet)
@@ -118,7 +118,7 @@ yarn test          # watch mode
 ### Python
 
 ```bash
-cd frappe-bench
+cd /home/frappe/frappe-bench    # the bench is a docker volume, not a repo directory
 bench --site test_site run-tests --app crm                          # all of it
 bench --site test_site run-tests --module crm.agent.tests.test_signals
 bench --site test_site reinstall --yes                              # reset, as CI does per run

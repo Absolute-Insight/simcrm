@@ -30,7 +30,7 @@ cd frontend && npx eslint src --ext .js,.ts,.vue && npx oxlint src
 ## Python (bench) — use `test_site`, never your dev site
 
 ```bash
-cd frappe-bench
+cd /home/frappe/frappe-bench    # the bench is a docker volume, not a repo directory
 bench --site test_site run-tests --app crm
 bench --site test_site run-tests --module crm.agent.tests.test_signals
 ```
