@@ -47,18 +47,6 @@ jobs:
                   # fork's previous release, and a shallow checkout has none
                   fetch-depth: 0
 
-            - name: Resolve frappe branch for base
-              id: frappe
-              run: |
-                  # Always this fork's pinned frappe branch. The inherited mapping sent
-                  # the main lane to
-                  # frappe version-15, but this fork cannot run there at all --
-                  # pyproject requires frappe >=16.0.0-dev, and server-tests.yml
-                  # and builds.yml both use develop. Installing a Vectora release
-                  # on version-15 would fail at the dependency solver, so the
-                  # main lane was only ever green by never running.
-                  echo "branch=vectora" >> "$GITHUB_OUTPUT"
-
             - name: Setup Python
               uses: actions/setup-python@v7
               with:
@@ -86,10 +74,17 @@ jobs:
                   mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "FLUSH PRIVILEGES"
 
             - name: Init bench with frappe
+              # The pinned commit from scripts/frappe-pin.env, same as every
+              # other lane and the published image. The inherited mapping sent
+              # the main lane to frappe version-15, which this fork cannot run
+              # on at all -- pyproject requires >=16.0.0-dev -- so installing a
+              # Vectora release there would fail at the dependency solver. That
+              # lane was only ever green by never running.
               run: |
                   pip install frappe-bench
-                  git clone "https://github.com/Absolute-Insight/frappe" --branch "${{ steps.frappe.outputs.branch }}" --depth 1 ~/frappe
-                  bench init --skip-assets --frappe-path ~/frappe --python "$(which python)" "$BENCH_PATH"
+                  source "${GITHUB_WORKSPACE}/pr-crm/scripts/frappe-pin.env"
+                  bash "${GITHUB_WORKSPACE}/pr-crm/scripts/fetch-frappe.sh" ~/frappe
+                  bench init --skip-assets --frappe-path ~/frappe --frappe-branch "$FRAPPE_PIN_BRANCH" --python "$(which python)" "$BENCH_PATH"
 
             - name: Install CRM at base branch
               working-directory: /home/runner/frappe-bench

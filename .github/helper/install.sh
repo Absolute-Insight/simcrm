@@ -8,18 +8,22 @@ sudo apt update
 sudo apt remove mysql-server mysql-client
 sudo apt install libcups2-dev redis-server mariadb-client libmariadb-dev
 
-# Frappe source. Defaults to this fork's pinned `vectora` branch rather than
-# upstream develop, which moves under us: two builds a week apart used to
-# contain different framework code with no way to reproduce the earlier one.
-FRAPPE_REPO="${FRAPPE_REPO:-https://github.com/Absolute-Insight/frappe}"
-FRAPPE_BRANCH="${FRAPPE_BRANCH:-vectora}"
-# erpnext is a separate project and has no `vectora` branch; it was sharing
-# FRAPPE_BRANCH, so pinning frappe would have broken the erpnext lane.
+# Frappe comes from scripts/frappe-pin.env -- one pinned commit shared by the
+# devcontainer, every test lane and the published image, so none of them can
+# drift from the others. This used to be a FRAPPE_REPO/FRAPPE_BRANCH pair
+# repeated in four workflows, all naming a fork that was never created.
+#
+# erpnext is a separate project on its own release line. It briefly shared
+# FRAPPE_BRANCH, which is why it has its own variable now, and it still tracks
+# develop.
 ERPNEXT_BRANCH="${ERPNEXT_BRANCH:-develop}"
 
+# shellcheck source=../../scripts/frappe-pin.env
+source "${GITHUB_WORKSPACE}/scripts/frappe-pin.env"
+
 pip install frappe-bench
-git clone "${FRAPPE_REPO}" --branch "${FRAPPE_BRANCH}" --depth 1
-bench init --skip-assets --frappe-path ~/frappe --python "$(which python)" frappe-bench
+bash "${GITHUB_WORKSPACE}/scripts/fetch-frappe.sh" ~/frappe
+bench init --skip-assets --frappe-path ~/frappe --frappe-branch "${FRAPPE_PIN_BRANCH}" --python "$(which python)" frappe-bench
 
 mkdir ~/frappe-bench/sites/test_site
 

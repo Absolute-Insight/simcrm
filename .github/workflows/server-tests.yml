@@ -36,17 +36,19 @@ jobs:
         name: Resolve frappe matrix
         runs-on: ubuntu-latest
         outputs:
-            frappe-branches: ${{ steps.resolve.outputs.branches }}
+            frappe-refs: ${{ steps.resolve.outputs.refs }}
         steps:
-            - name: Resolve frappe branch
+            - name: Clone
+              uses: actions/checkout@v7
+
+            - name: Resolve frappe ref
               id: resolve
               run: |
-                  # Always this fork's pinned frappe branch, on every lane. The
-                  # inherited mapping sent the main lane to version-15/16, which
-                  # this fork cannot run on: pyproject requires frappe
-                  # >=16.0.0-dev, and Absolute-Insight/frappe carries only
-                  # `develop` and `vectora` -- so the clone failed outright with
-                  # "Remote branch version-16 not found in upstream origin".
+                  # One lane, on the one frappe this project pins. The inherited
+                  # mapping sent the main lane to version-15/16, which this fork
+                  # cannot run on -- pyproject requires frappe >=16.0.0-dev --
+                  # so the clone failed outright with "Remote branch version-16
+                  # not found in upstream origin".
                   #
                   # It stayed hidden because this suite ran only on
                   # pull_request, and pull requests target develop. Adding the
@@ -56,19 +58,22 @@ jobs:
                   # never running" this fork already fixed in
                   # migration-test.yml.
                   #
-                  # Testing the lane the shipped image is actually built from
-                  # is also the more honest check: builds.yml builds vectora.
-                  echo 'branches=["vectora"]' >> "$GITHUB_OUTPUT"
+                  # The value is a label only: it names the job and the coverage
+                  # artifact. install.sh resolves the actual source from
+                  # scripts/frappe-pin.env, so this cannot select a frappe that
+                  # differs from the one the image is built against.
+                  source scripts/frappe-pin.env
+                  echo "refs=[\"${FRAPPE_REF:0:12}\"]" >> "$GITHUB_OUTPUT"
 
     test:
-        name: Tests (frappe ${{ matrix.frappe-branch }})
+        name: Tests (frappe ${{ matrix.frappe-ref }})
         needs: setup
         runs-on: ubuntu-latest
         timeout-minutes: 60
         strategy:
             fail-fast: false
             matrix:
-                frappe-branch: ${{ fromJson(needs.setup.outputs.frappe-branches) }}
+                frappe-ref: ${{ fromJson(needs.setup.outputs.frappe-refs) }}
 
         services:
             mysql:
@@ -94,7 +99,6 @@ jobs:
                   # of the job. The old `!= 'version-16'` guard went with the
                   # stable lane it was written for.
                   install-erpnext: ${{ github.base_ref == 'main-hotfix' || github.base_ref == 'main' }}
-                  frappe-branch: ${{ matrix.frappe-branch }}
 
             - name: Run server tests
               uses: ./.github/actions/run-server-tests
@@ -110,11 +114,11 @@ jobs:
               if: github.base_ref == 'develop' || github.ref_name == 'develop'
               uses: ./.github/actions/upload-coverage
               with:
-                  artifact-name: coverage-${{ matrix.frappe-branch }}
+                  artifact-name: coverage-${{ matrix.frappe-ref }}
                   coverage-path: /home/runner/frappe-bench/sites/coverage.xml
 
     # One check with a fixed name, whatever the matrix resolved to. The matrix
-    # job carries the frappe branch in its name ("Tests (frappe vectora)"), so
+    # job carries the frappe commit in its name ("Tests (frappe e2e1006be484)"), so
     # builds.yml's guard cannot name it directly without breaking the next time
     # the matrix changes; it names this one instead. `always()` so it
     # still reports when a matrix leg fails -- a skipped job is no verdict,

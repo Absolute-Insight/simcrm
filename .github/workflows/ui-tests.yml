@@ -23,11 +23,6 @@ concurrency:
   group: ui-tests-crm-${{ github.event.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  # this fork's pinned frappe, not upstream's moving develop
-  FRAPPE_REPO: https://github.com/Absolute-Insight/frappe
-  FRAPPE_BRANCH: vectora
-
 jobs:
   ui-tests:
     runs-on: ubuntu-latest
@@ -109,9 +104,16 @@ jobs:
           sudo apt-get install mariadb-client
 
       - name: Setup Bench
+        # frappe comes from scripts/frappe-pin.env, cloned locally first.
+        # `bench init --frappe-branch` cannot take the pin directly: bench turns
+        # it into `git clone --branch`, which accepts a branch or tag and never
+        # a commit. fetch-frappe.sh parks the commit on a local branch so bench
+        # has a name it can ask for.
         run: |
           pip install frappe-bench
-          bench init --skip-redis-config-generation --skip-assets --frappe-path "$FRAPPE_REPO" --frappe-branch "$FRAPPE_BRANCH" --python "$(which python)" ~/frappe-bench
+          source "${GITHUB_WORKSPACE}/scripts/frappe-pin.env"
+          bash "${GITHUB_WORKSPACE}/scripts/fetch-frappe.sh" ~/frappe
+          bench init --skip-redis-config-generation --skip-assets --frappe-path ~/frappe --frappe-branch "$FRAPPE_PIN_BRANCH" --python "$(which python)" ~/frappe-bench
           mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL character_set_server = 'utf8mb4'"
           mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL collation_server = 'utf8mb4_unicode_ci'"
 
