@@ -185,10 +185,15 @@
               :isSidebarCollapsed="isCollapsed"
               :afterUpgrade="() => capture('upgrade_plan_from_trial_banner')"
             />
-            <GettingStartedBanner
-              v-if="!isOnboardingStepsCompleted"
-              :isSidebarCollapsed="isCollapsed"
-            />
+            <!-- frappe-ui's own markup (button + wrapper divs) carries no
+                 class, id, or data-slot hook of its own -- every class on it
+                 is a shared Tailwind utility used elsewhere in the app -- so
+                 wrap it here, in code we own, rather than reaching into its
+                 internal structure from index.css. See the .v-getting-started
+                 rule there for why (F3, low-contrast CTA button). -->
+            <div v-if="!isOnboardingStepsCompleted" class="v-getting-started">
+              <GettingStartedBanner :isSidebarCollapsed="isCollapsed" />
+            </div>
           </div>
           <SidebarItem
             v-if="isManager() && isDemoDataCreated"

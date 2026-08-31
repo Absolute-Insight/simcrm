@@ -160,14 +160,47 @@ body {
   }
 }
 
-/* frappe-ui's NumberChart paints its positive delta text-ink-green-6, which
-   measures 2.74:1 on these cards in light mode and 3.75:1 in dark — both under
-   the 4.5:1 floor (the ink ramps are readability ladders; see AGENTS.md, Design
-   system). The negative delta already uses red-8 and passes. Upstream fix
-   belongs in frappe-ui; until then, remap just that token inside the dashboard
-   number cards, where green-9 measures 7.6:1 light / 12.5:1 dark. */
+/* frappe-ui's NumberChart paints its positive delta text-ink-green-6 (or, as
+   of a later frappe-ui, text-ink-green-5 — QA measured 2.74:1 light / 3.75:1
+   dark on -6 and 2.74:1 light on -5; both under the 4.5:1 floor, since the ink
+   ramps are readability ladders, not lightness ones; see AGENTS.md, Design
+   system) and its negative delta text-ink-red-6 / text-ink-red-5 (red-5
+   measured 4.46:1 light, just under the floor). Upstream fix belongs in
+   frappe-ui; until then, remap both steps of both ramps inside the dashboard
+   number cards, where green-9 measures 7.6:1 light / 12.5:1 dark and red-9
+   clears the same floor by the same margin. Keep BOTH the -5 and -6 selectors
+   even though only one is live today — frappe-ui has already silently swapped
+   the step once, and the failure mode was that the override stopped applying
+   without any visible change to review. Remove when frappe-ui stops setting
+   an unconditional low-contrast ink step on the delta. */
+.v-number-card .text-ink-green-5,
 .v-number-card .text-ink-green-6 {
   color: var(--ink-green-9);
+}
+.v-number-card .text-ink-red-5,
+.v-number-card .text-ink-red-6 {
+  color: var(--ink-red-9);
+}
+
+/* frappe-ui's GettingStartedBanner (the "Getting started" widget in the
+   sidebar footer) paints its CTA button text-ink-blue-5 on bg-surface-blue-2
+   -- QA measured 3.0:1 light / 3.23:1 dark on the "Start now"/"Continue"
+   label, under the 4.5:1 floor. The component exposes no class, id, or
+   data-slot hook: the button and every wrapper div around it carry only
+   shared Tailwind utilities (bg-surface-elevation-2, shadow-sm, rounded-lg,
+   ...) that appear throughout the app, so there is no selector into
+   frappe-ui's own markup that would not also match unrelated elements.
+   AppSidebar.vue wraps the banner in `.v-getting-started` instead -- an
+   owned hook, not a coupling to frappe-ui's internal structure, so this
+   survives a frappe-ui markup change the way the row-density rules above
+   (coupled to internal markup) would not. `button` reaches the one button
+   the banner renders in either of its states (the label button, or the
+   collapsed-sidebar icon-only button); the icon's stroke inherits via
+   `currentColor` so it gets the same fix for free. ink-blue-9 measures
+   8.38:1 light / 9.92:1 dark against the button's own bg-surface-blue-2 (and
+   still clears the floor against its hover/active bg-surface-blue-3/4). */
+.v-getting-started button {
+  color: var(--ink-blue-9);
 }
 
 /* Vectora Lux — glass surfaces and the dashboard stage.
