@@ -27,10 +27,12 @@ from crm.agent.signals import (
 	EXPIRY_COOLDOWN_DAYS,
 	IDLE_DEAL_DAYS,
 	MAX_OPEN_PER_USER,
+	PLAN_MISSED_SCORE_BASE,
 	TITLE_MAX_LENGTH,
 	_batched,
 	_latest_activity,
 	_sla_lead_rows,
+	_stale_plan_rows,
 	cadence_ratio,
 	cap_per_user,
 	dedupe,
@@ -328,6 +330,17 @@ class StalePlanTest(UnitTestCase):
 		rows = [plan_row(reference_docname=None)]
 		self.assertEqual(find_stale_plan_items(rows, NOW), [])
 
+	def test_lateness_never_goes_negative(self):
+		"""A Missed item whose planned date is still in the future (the matcher
+		can write one at a week boundary) must not subtract from the base score
+		or render a nonsense '-2 days past the planned date' factor."""
+		rows = [plan_row(status="Missed", planned_date=NOW.date() + timedelta(days=2))]
+		out = find_stale_plan_items(rows, NOW)
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]["score"], PLAN_MISSED_SCORE_BASE)
+		late = next(f for f in out[0]["factors"] if f["key"] == "days_late")
+		self.assertGreaterEqual(late["value"], 0)
+
 
 class DedupeTest(UnitTestCase):
 	def candidate(self, **overrides):
@@ -341,9 +354,12 @@ class DedupeTest(UnitTestCase):
 		return row
 
 	def existing(self, status, modified_days_ago):
+		# mirrors what _existing_suggestions returns, user included: the block
+		# is per rep, so the row has to say whose it is
 		return {
 			"signal": "idle_deal",
 			"reference_docname": "CRM-DEAL-1",
+			"user": "rep@example.com",
 			"status": status,
 			"modified": NOW - timedelta(days=modified_days_ago),
 		}
@@ -391,6 +407,27 @@ class DedupeTest(UnitTestCase):
 		existing = [self.existing("Dismissed", DISMISS_COOLDOWN_DAYS + 1)]
 		dismissals = {("someone-else@example.com", "idle_deal"): 5}
 		self.assertEqual(len(dedupe([self.candidate()], existing, NOW, dismissals=dismissals)), 1)
+
+	def test_one_reps_open_row_does_not_block_another_reps_candidate(self):
+		"""Two reps can both plan the same deal. A's open suggestion used to
+		block B's forever, because the key carried no user."""
+		existing = [self.existing("Open", 1)]
+		other_rep = self.candidate(user="other@example.com")
+		self.assertEqual(len(dedupe([other_rep], existing, NOW)), 1)
+
+	def test_two_candidates_for_the_same_key_collapse_to_the_higher_ranked_one(self):
+		"""One run can detect the same (signal, record, user) twice — a missed
+		Call and a missed Email on one deal are both stale_plan on it — and used
+		to insert both."""
+		a = self.candidate(score=60.0)
+		b = self.candidate(score=57.0)
+		out = dedupe([b, a], [], NOW)
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]["score"], 60.0)
+
+	def test_two_candidates_for_different_users_both_survive(self):
+		out = dedupe([self.candidate(), self.candidate(user="other@example.com")], [], NOW)
+		self.assertEqual(len(out), 2)
 
 
 class BatchingTest(UnitTestCase):
@@ -1011,3 +1048,55 @@ class RunSignalsRespectsTheCapTest(PinnedSignalConfig, IntegrationTestCase):
 		run_signals()
 		run_signals()
 		self.assertEqual(len(self.open_for_rep()), 1)
+
+
+class StalePlanRowsTest(IntegrationTestCase):
+	"""The query side of the stale-plan signal must leave hand-corrected items
+	alone — the same respect the matcher shows (``_match_plan`` filters
+	``manual_override``). ``mark_missed`` sets it, so without this filter a rep
+	who wrote an item off was nagged to do it within the hour."""
+
+	def test_a_hand_corrected_item_is_not_a_candidate(self):
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Stale Plan Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		deals = []
+		for _ in range(2):
+			deal = frappe.get_doc({"doctype": "CRM Deal", "organization": org}).insert(ignore_permissions=True)
+			self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True, ignore_missing=True)
+			deals.append(deal.name)
+
+		now = frappe.utils.now_datetime()
+		monday = now.date() - timedelta(days=now.weekday() + 7)
+		plan = frappe.get_doc(
+			{
+				"doctype": "CRM Rep Plan",
+				"user": "Administrator",
+				"week_start": monday,
+				"items": [
+					{
+						"activity_type": "Call",
+						"planned_date": monday,
+						"status": "Missed",
+						"manual_override": 0,
+						"reference_doctype": "CRM Deal",
+						"reference_docname": deals[0],
+					},
+					{
+						"activity_type": "Call",
+						"planned_date": monday,
+						"status": "Missed",
+						"manual_override": 1,
+						"reference_doctype": "CRM Deal",
+						"reference_docname": deals[1],
+					},
+				],
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Rep Plan", plan.name, force=True, ignore_missing=True)
+
+		names = {row["reference_docname"] for row in _stale_plan_rows(now)}
+		self.assertIn(deals[0], names)
+		self.assertNotIn(deals[1], names)

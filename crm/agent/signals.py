@@ -389,7 +389,11 @@ def find_stale_plan_items(rows: list[dict], now: datetime) -> list[dict]:
 			continue
 		activity = row.get("activity_type") or "Task"
 		label = _label(row.get("note"), f"{activity} on {row['reference_docname']}")
-		late = (today - planned).days if planned else None
+		# floored at zero: the matcher can write a Missed item whose planned
+		# date is still ahead (a week boundary), and a negative lateness would
+		# subtract from the base score and render as "-2 days past the planned
+		# date"
+		late = max(0, (today - planned).days) if planned else None
 		out.append(
 			{
 				"signal": "stale_plan",
@@ -450,20 +454,35 @@ def dedupe(
 	stretches their cooldown accordingly: the queue learns from the dismissals
 	instead of only recording them. Expired rows block for the shorter
 	EXPIRY_COOLDOWN_DAYS so the job cannot expire and re-create a row in a loop.
+
+	The key carries the user: two reps can both plan the same deal, and a key of
+	(signal, record) alone let one rep's open row block the other's candidate
+	forever. Candidates are also deduped against *each other* -- one run can
+	detect the same (signal, record, user) twice, a missed Call and a missed
+	Email on one deal both being stale_plan on it -- walked in rank order so the
+	duplicate that survives is deterministically the higher-ranked one.
 	"""
 	dismissals = dismissals or {}
-	by_key: dict[tuple[str, str], list[dict]] = {}
+
+	def key_of(row: dict) -> tuple[str, str, str]:
+		return (row["signal"], row["reference_docname"], row.get("user") or "")
+
+	by_key: dict[tuple[str, str, str], list[dict]] = {}
 	for row in existing:
-		by_key.setdefault((row["signal"], row["reference_docname"]), []).append(row)
+		by_key.setdefault(key_of(row), []).append(row)
 
 	out = []
-	for candidate in candidates:
-		key = (candidate["signal"], candidate["reference_docname"])
+	seen: set[tuple[str, str, str]] = set()
+	for candidate in sorted(candidates, key=_rank_key):
+		key = key_of(candidate)
+		if key in seen:
+			continue
 		cooldown = dismissal_cooldown(
 			cooldown_days, dismissals.get((candidate.get("user"), candidate["signal"]), 0)
 		)
 		if any(_blocks(row, now, cooldown) for row in by_key.get(key, ())):
 			continue
+		seen.add(key)
 		out.append(candidate)
 	return out
 
@@ -677,6 +696,11 @@ def _stale_plan_rows(now: datetime) -> list[dict]:
 			plan.user,
 		)
 		.where(item.status.isin(("Planned", "Missed")))
+		# a rep who corrected an item by hand owns it -- the same respect the
+		# matcher shows (_match_plan). mark_missed sets manual_override, so
+		# without this a rep who wrote an item off was nagged to do it within
+		# the hour, rationale and all.
+		.where(item.manual_override == 0)
 		.where(item.reference_docname.notnull())
 		.where(plan.week_start >= horizon)
 		.run(as_dict=True)
@@ -689,7 +713,7 @@ def _existing_suggestions(reference_docnames: list[str]) -> list[dict]:
 		rows += frappe.get_all(
 			"CRM Suggestion",
 			filters={"reference_docname": ("in", batch)},
-			fields=["signal", "reference_docname", "status", "modified"],
+			fields=["signal", "reference_docname", "user", "status", "modified"],
 		)
 	return rows
 
