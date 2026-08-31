@@ -452,3 +452,35 @@ class InflightSlotTest(IntegrationTestCase):
 			result = api_mod.summarise_thread("CRM Deal", "X")
 		self.assertEqual(result, {"status": "unavailable"})
 		complete.assert_not_called()
+
+
+class SlotRefusalRefundTest(IntegrationTestCase):
+	"""A slot-refused call must not burn the day budgets either.
+
+	_throttled charges the user and site counters before the slot can say no,
+	so during a slow-model incident -- exactly when the slots fill -- each
+	retry burned a daily-budget unit for a call that never reached the model,
+	and the tier stayed dark after the model recovered.
+	"""
+
+	def test_a_slot_refusal_leaves_both_day_counters_where_they_were(self):
+		inflight = api_mod._inflight_key()
+		site_key, user_key = api_mod.budget_key(), api_mod.user_budget_key()
+		for key in (inflight, site_key, user_key):
+			frappe.cache().delete(key)
+			self.addCleanup(frappe.cache().delete, key)
+		frappe.cache().setex(inflight, 60, api_mod.MAX_CONCURRENT_MODEL_CALLS)
+
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod, "user_rate_limited", return_value=False),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "X"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.client, "complete") as complete,
+		):
+			result = api_mod.summarise_thread("CRM Deal", "X")
+
+		self.assertEqual(result, {"status": "unavailable"})
+		complete.assert_not_called()
+		self.assertEqual(int(frappe.cache().get(site_key) or 0), 0)
+		self.assertEqual(int(frappe.cache().get(user_key) or 0), 0)

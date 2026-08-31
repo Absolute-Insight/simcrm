@@ -120,6 +120,22 @@ def _budget_spent(cfg) -> bool:
 	return False
 
 
+def _refund_budget(cfg) -> None:
+	"""Give back the day-units :func:`_budget_spent` charged for a call that
+	was never made -- the slot said no after the budgets said yes. Without
+	this, a slow-model incident (exactly when the slots fill) burned the
+	site's day on refused retries and kept the tier dark after the model
+	recovered."""
+	if cfg.daily_call_budget <= 0:
+		return
+	try:
+		cache = frappe.cache()
+		cache.decr(user_budget_key())
+		cache.decr(budget_key())
+	except Exception:
+		pass
+
+
 # Bounds *simultaneous* model calls per site, where the rate limits bound calls
 # per minute: one call holds a web worker for up to timeout x client.MAX_ATTEMPTS,
 # so ten users each inside their burst limit can still occupy the whole gunicorn
@@ -145,12 +161,19 @@ def _model_call_slot():
 	try:
 		cache = frappe.cache()
 		taken = cache.incr(_inflight_key())
-		cache.expire(_inflight_key(), INFLIGHT_TTL_SECONDS)
 	except Exception:
 		# same rule as the budgets: a cache outage must not take the tier down
 		yield True
 		return
 	try:
+		if taken == 1:
+			# Armed once, at key creation: a slot leaked by a hard-killed worker
+			# then always clears within the window. Re-arming on every call kept
+			# a leaked slot alive for as long as traffic never paused this long.
+			try:
+				cache.expire(_inflight_key(), INFLIGHT_TTL_SECONDS)
+			except Exception:
+				pass
 		yield taken <= MAX_CONCURRENT_MODEL_CALLS
 	finally:
 		try:
@@ -189,6 +212,8 @@ def summarise_thread(reference_doctype: str, reference_name: str) -> dict:
 
 	with _model_call_slot() as free:
 		if not free:
+			# refused after the budgets were charged: a refused call costs nobody anything
+			_refund_budget(cfg)
 			return {"status": "unavailable"}
 		try:
 			summary = client.complete(cfg, ThreadSummary, messages)
@@ -220,6 +245,8 @@ def draft_reply(reference_doctype: str, reference_name: str) -> dict:
 
 	with _model_call_slot() as free:
 		if not free:
+			# refused after the budgets were charged: a refused call costs nobody anything
+			_refund_budget(cfg)
 			return {"status": "unavailable"}
 		try:
 			draft = actions.propose_reply(cfg, record, thread)
@@ -259,6 +286,8 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 
 	with _model_call_slot() as free:
 		if not free:
+			# refused after the budgets were charged: a refused call costs nobody anything
+			_refund_budget(cfg)
 			return {"status": "unavailable"}
 		try:
 			reply = client.complete(cfg, AssistantAnswer, messages)
