@@ -40,7 +40,7 @@
   />
   <SkeletonTable
     v-else-if="!tasks.data"
-    class="px-5 pt-3"
+    class="px-[var(--v-page-gutter)] pt-3"
     :columns="columns.length || 6"
     :rows="10"
     :label="__('Loading tasks')"

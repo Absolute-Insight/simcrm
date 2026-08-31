@@ -36,7 +36,7 @@
   />
   <SkeletonTable
     v-else-if="!callLogs.data"
-    class="px-5 pt-3"
+    class="px-[var(--v-page-gutter)] pt-3"
     :columns="columns.length || 6"
     :rows="10"
     :label="__('Loading call logs')"

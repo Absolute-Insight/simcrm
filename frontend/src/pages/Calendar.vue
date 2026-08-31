@@ -18,7 +18,7 @@
       </ShortcutTooltip>
     </template>
   </LayoutHeader>
-  <div class="flex h-screen overflow-hidden">
+  <div class="v-lux-stage flex h-screen overflow-hidden">
     <Calendar
       ref="calendar"
       class="flex-1 overflow-hidden"
@@ -58,7 +58,7 @@
              one control that could have escaped the week grid was the one
              cut off. -->
         <div
-          class="my-4 mx-3 flex flex-wrap items-center justify-between gap-2 sm:mx-5 sm:flex-nowrap"
+          class="my-4 mx-3 flex flex-wrap items-center justify-between gap-2 sm:mx-[var(--v-page-gutter)] sm:flex-nowrap"
         >
           <!-- left side  -->
           <!-- Month Year -->
@@ -153,8 +153,11 @@
     <!-- Event Panel Container -->
     <div
       class="overflow-hidden flex-none transition-all duration-300 ease-in-out flex flex-col"
+      style="background: var(--v-panel-bg)"
       :class="
-        showEventPanel ? 'w-[352px] border-l bg-surface-base' : 'w-0 border-l-0'
+        showEventPanel
+          ? 'w-[352px] border-l border-[var(--v-panel-hairline)]'
+          : 'w-0 border-l-0'
       "
     >
       <CalendarEventPanel
