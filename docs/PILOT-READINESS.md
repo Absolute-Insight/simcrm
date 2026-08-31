@@ -334,12 +334,21 @@ someone other than me:
       saying so is the point.
 - [x] **The image built against Frappe `develop`**, so the framework moved under us even
       when our own tag did not. Rather than migrate to a released frappe — which the app
-      cannot take today, since `pyproject.toml` requires `>=16.0.0-dev` — frappe is forked
-      to `Absolute-Insight/frappe` and pinned on a **`vectora`** branch frozen at a
-      known-good develop commit. Every lane now uses it: the image build, server tests,
-      the migration test and the e2e suite. That freezes exactly the pairing the suite has
+      cannot take today, since `pyproject.toml` requires `>=16.0.0-dev` — frappe is pinned
+      to an exact upstream **commit** in `scripts/frappe-pin.env`. Every lane resolves it
+      through `scripts/fetch-frappe.sh`: the image build, server tests, the migration test,
+      the e2e suite and the devcontainer. That freezes exactly the pairing the suite has
       been proving, with no behavioural change, and it advances only when someone decides
       to move it.
+      **This originally said the fork already existed. It did not.** `Absolute-Insight`
+      holds only `simcrm`, so every lane was cloning a repo that has never been created;
+      GitHub 404s a missing repo exactly as it 404s a private one, so git asked for a
+      username, found no TTY, and died with "could not read Username". Server, Migration
+      and UI Tests were red for that reason, and the devcontainer built no bench at all.
+      A commit pin needs no fork — but nothing in the toolchain accepts one directly:
+      `bench init --frappe-branch` becomes `git clone --branch`, which takes a branch or a
+      tag and never a SHA, so `fetch-frappe.sh` clones the commit and parks it on a local
+      branch bench can name.
       Two details worth knowing. `FRAPPE_BRANCH` was also erpnext's branch, so pinning it
       would have broken that lane — erpnext now has its own variable. And frappe_docker's
       Containerfile spends `FRAPPE_BRANCH` twice, once as the *builder image tag*
@@ -349,16 +358,22 @@ someone other than me:
       Now pinned by digest, along with `frappe/base` — and pinning that second image was
       not housekeeping: the Containerfile derives **both** of its bases from
       `FRAPPE_BRANCH`, the earlier fix rewrote only the `builder` line, and
-      `frappe/base:vectora` does not exist, so the next release build would have died on
+      no `frappe/base:<our branch name>` is published, so the next release build would have died on
       a manifest-not-found error far from its cause. Caught by reading the upstream file
       rather than by CI, because `builds.yml` runs only on push to `main`. The step now
       **asserts** no `FROM` still resolves through `FRAPPE_BRANCH`, so a stage upstream
       adds tomorrow fails loudly here instead of silently. Both digests verified to be
       multi-arch indexes (amd64 + arm64) — pinning a per-architecture manifest would have
-      broken the arm64 half. **How to advance frappe:** move
-      `Absolute-Insight/frappe@vectora` to a newer upstream commit, let CI run, merge only
-      if green. **How to advance the toolchain:**
-      `docker buildx imagetools inspect frappe/build:develop --format '{{.Manifest.Digest}}'`.
+      broken the arm64 half. **How to advance frappe:** change `FRAPPE_REF` in
+      `scripts/frappe-pin.env`, let CI run, merge only if green. **How to advance the
+      toolchain:** `docker buildx imagetools inspect frappe/build:develop --format
+      '{{.Manifest.Digest}}'`, then update `.github/helper/image-pins.env`.
+      Both pins, and frappe_docker's own ref, are now checked against each other on every
+      PR that touches them by `image-build-inputs.yml`, which runs the same scripts
+      `builds.yml` runs without building anything. That closes the gap this item describes
+      as "caught by reading the upstream file rather than by CI": the builder image is
+      asserted to satisfy the pinned frappe's `engines.node` and `requires-python`, and
+      both Containerfile rewrites are asserted to still match upstream at the pinned ref.
 - [x] **No test gate on the image build.** `builds.yml` runs on push to `main` and on any
       tag, neither of which runs the suite, so a `workflow_dispatch` of a red commit was
       publishable outright. A `guard` job now blocks the build until the commit's checks

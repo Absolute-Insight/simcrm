@@ -1,0 +1,68 @@
+name: Image Build Inputs
+
+# builds.yml runs only on a push to main or a tag, so everything it depends on
+# was previously first exercised during a release: an upstream Containerfile
+# edit, a base image that no longer suits the pinned frappe, a sed that stopped
+# matching. All of those produced a failed or -- worse -- a quietly wrong
+# release rather than a red check.
+#
+# This runs the same scripts builds.yml runs, on every PR that touches a pin or
+# the scripts themselves, without building or pushing anything. About a minute.
+on:
+    pull_request:
+        paths:
+            - ".github/helper/image-pins.env"
+            - ".github/helper/prepare-containerfile.sh"
+            - ".github/helper/check-build-toolchain.sh"
+            - ".github/workflows/builds.yml"
+            - ".github/workflows/image-build-inputs.yml"
+            - "scripts/frappe-pin.env"
+            - "scripts/fetch-frappe.sh"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: image-build-inputs-${{ github.event.number || github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    inputs:
+        name: Image Build Inputs
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+            - name: Clone
+              uses: actions/checkout@v7
+
+            - name: Load image pins
+              run: |
+                  set -euo pipefail
+                  set -a; source .github/helper/image-pins.env; set +a
+                  for v in FRAPPE_DOCKER_REF FRAPPE_BUILD_IMAGE FRAPPE_BASE_IMAGE; do
+                    [ -n "${!v:-}" ] || { echo "::error::$v is empty in image-pins.env"; exit 1; }
+                    echo "$v=${!v}" >> "$GITHUB_ENV"
+                  done
+
+            - name: Check out frappe_docker at the pin
+              uses: actions/checkout@v7
+              with:
+                  repository: frappe/frappe_docker
+                  path: builds
+                  ref: ${{ env.FRAPPE_DOCKER_REF }}
+
+            - name: Fetch the pinned frappe
+              # Only the metadata is read here (package.json engines,
+              # pyproject requires-python), but it is the same fetch builds.yml
+              # does, so a broken pin fails here too.
+              run: bash scripts/fetch-frappe.sh builds/frappe-src
+
+            - name: Check the builder image can build the pinned frappe
+              run: bash .github/helper/check-build-toolchain.sh builds/frappe-src
+
+            - name: Prepare the Containerfile
+              # Proves both rewrites still match upstream's file at the pinned
+              # ref. This is the check that would have caught the `base` stage
+              # being added while only `builder` was rewritten.
+              run: bash .github/helper/prepare-containerfile.sh builds/images/layered/Containerfile
