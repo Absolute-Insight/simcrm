@@ -60,7 +60,7 @@
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `--v-font-sans` CSS variable, consumed by Task 2 (charts) and every later tier. `fontFamily.sans` / `fontFamily.display` Tailwind keys both resolving to `'Plus Jakarta Sans Variable'`.
+- Produces: `--v-font-sans` CSS variable, consumed by every later tier. (Task 2 deliberately does **not** consume it — ECharts renders to canvas and cannot resolve CSS custom properties, so the chart config carries the family as a literal.) `fontFamily.sans` / `fontFamily.display` Tailwind keys both resolving to `'Plus Jakarta Sans Variable'`.
 
 **Why a `:root` rule and not just the Tailwind key:** frappe-ui sets the body face in `node_modules/frappe-ui/src/fonts/Inter/inter.css`, which `frappe-ui/style.css` imports on its line 1:
 
@@ -197,7 +197,7 @@ from :root rather than carrying a font-sans utility."
 - Test: `frontend/tests/unit/chartTheme.test.js`
 
 **Interfaces:**
-- Consumes: `--v-font-sans` from Task 1.
+- Consumes: nothing. The font stack is repeated as a literal here on purpose: ECharts paints to canvas and never resolves `var(--v-font-sans)`. If Task 1's stack changes, this literal changes with it — the duplication is deliberate and the test below pins it.
 - Produces: `withVectoraLux(config)` output now carries `textStyle.fontFamily`.
 
 **Why:** `chartTheme.js` sets no font, so ECharts falls back to frappe-ui's `CHART_FONT_FAMILY = 'InterVar, Inter, sans-serif'` (`node_modules/frappe-ui/src/charts/measureText.ts:19`). Without this task every chart label stays on Inter while the rest of the app moves — visible on the Dashboard, Reports and Planner.
@@ -304,10 +304,6 @@ describe('intrinsicProps', () => {
 })
 
 describe('INTRINSIC_SIZE', () => {
-  it('covers every icon the codemod converts', () => {
-    expect(Object.keys(INTRINSIC_SIZE).length).toBe(106)
-  })
-
   it('has no zero or negative dimensions', () => {
     for (const [name, [w, h]] of Object.entries(INTRINSIC_SIZE)) {
       expect(w, name).toBeGreaterThan(0)
@@ -356,7 +352,7 @@ export function intrinsicProps(name) {
 }
 ```
 
-> The full 106-entry table is emitted by the codemod in Task 4 Step 1; run that step's generator before finishing this task so the count test passes.
+> Hand-write only the two entries the tests above need (`BellIcon: [16, 16]`, `DocumentIcon: [24, 24]`). The full table is generated in Task 4 — this task must pass its own tests on its own, so it does not assert a count it cannot yet produce.
 
 - [ ] **Step 4: Set the Phosphor defaults app-wide**
 
@@ -393,7 +389,7 @@ import { intrinsicProps } from './_phosphor'
 cd /workspace/frontend && yarn test:run tests/unit/phosphorAdapter.test.js
 ```
 
-Expected: PASS, all five cases.
+Expected: PASS, all four cases.
 
 - [ ] **Step 7: Verify the pilot renders identically in the browser**
 
@@ -565,13 +561,23 @@ git status --porcelain src/ | grep -v 'src/components/Icons/' | grep -v 'src/mai
 # Expected: no output
 ```
 
-- [ ] **Step 5: Run tests**
+- [ ] **Step 5: Add the count assertion, now that the table is real**
+
+Append to `frontend/tests/unit/phosphorAdapter.test.js`:
+
+```js
+it('covers every icon the codemod converts', () => {
+  expect(Object.keys(INTRINSIC_SIZE).length).toBe(106)
+})
+```
+
+Then run the full suite:
 
 ```bash
 cd /workspace/frontend && yarn test:run
 ```
 
-Expected: PASS, including the 106-entry count assertion from Task 3.
+Expected: PASS, including the new count assertion.
 
 - [ ] **Step 6: Verify in the browser, both themes**
 
@@ -701,7 +707,20 @@ import { intrinsicProps } from './_phosphor'
 </script>
 ```
 
-Add all three to `MAP`'s size collection by appending them to `_sizes.generated.js` via the codemod's size logic, or record them directly in the generated file: `TaskStatusIcon: [16, 16]`, `TaskPriorityIcon: [12, 12]`, `LoadingIndicator: [24, 24]`. Update the count assertion in `tests/unit/phosphorAdapter.test.js` from `106` to `109`.
+These three need intrinsic sizes too, but `_sizes.generated.js` says "do not hand-edit" and means it. Add a second constant to `scripts/convert-icons.mjs` and merge it into the generated table, so the file stays generated:
+
+```js
+// The three icons that are not mechanical wrappers still need intrinsic
+// sizes. They are listed here rather than hand-edited into the generated
+// file, so there stays exactly one writer of _sizes.generated.js.
+const SPECIAL_SIZES = {
+  TaskStatusIcon: [16, 16],
+  TaskPriorityIcon: [12, 12],
+  LoadingIndicator: [24, 24],
+}
+```
+
+Merge `SPECIAL_SIZES` into `sizes` before the file is written, re-run `node scripts/convert-icons.mjs`, and update the count assertion in `tests/unit/phosphorAdapter.test.js` from `106` to `109`.
 
 - [ ] **Step 4: Verify the priority fix actually shows colour**
 
@@ -813,65 +832,207 @@ rounded-1/4/5/6/8/lg and the per-surface padding choices."
 
 ---
 
-## Tasks 7–11: The five surface tiers
+## Task 7: Tier 1 — the shell
 
-Each tier follows the same five steps. They are separate commits because a
-reviewer could reasonably accept the shell and reject the list density.
+**Files:**
+- Modify: `frontend/src/components/Layouts/AppSidebar.vue`, `AppHeader.vue`, `SidebarBrand.vue`, `SidebarUser.vue`, `DesktopLayout.vue`, `MobileLayout.vue`, `SettingsLayoutBase.vue`, `frontend/src/components/ViewBreadcrumbs.vue`
 
-**Per-tier procedure:**
+**Interfaces:**
+- Consumes: the scale and elevation tokens from Task 6 (`--v-radius-control`, `--v-radius-card`, `--v-radius-overlay`, `--v-row-h`, `--v-cell-px`, `--v-section-gap`, `--v-page-gutter`, `--v-toolbar-h`, `.v-glass`, `.v-glass-sm`); the type system from Task 1; the converted icons from Tasks 4–5.
+- Produces: no new interface. `--v-toolbar-h` is consumed here (header and sidebar rows) — it is defined in Task 6 and this is its first real use.
 
-- [ ] **Step 1: Screenshot the tier before touching it**, both themes, so there is a baseline to compare against.
-- [ ] **Step 2: Replace ad-hoc radius and padding with the tokens** from Task 6. Radius utilities become `rounded-[var(--v-radius-control)]` / `-card` / `-overlay`; page gutters become `var(--v-page-gutter)`.
-- [ ] **Step 3: Apply the elevation language** — `.v-glass` for cards and panels, `.v-glass-sm` for rows and inline surfaces. Add `.v-lux-stage` to the tier's scroll container where it is a full page.
-- [ ] **Step 4: Verify in the browser, both themes.** Compare against the Step 1 baseline. Confirm no text moved onto a surface it no longer contrasts against.
-- [ ] **Step 5: Run `yarn test:run` and commit.**
+The shell is on every screen, so it sets the standard the other tiers are judged against. It already has `.v-shell-sidebar`, `.v-shell-header` and the position rail; this tier applies the scale tokens to them and brings the light theme's version of those surfaces up to the quality of the dark one's.
 
-### Task 7 — Tier 1, the shell
+`SidebarBrand.vue:22` carries the "Vectora" wordmark on `font-display`. Space Grotesk is gone as of Task 1, so confirm the wordmark reads well as Plus Jakarta Sans at weight 800 with tight tracking. If it does not, say so in the report rather than reaching for a second font family — that decision was settled in the spec.
 
-**Files:** `src/components/Layouts/AppSidebar.vue`, `AppHeader.vue`, `SidebarBrand.vue`, `SidebarUser.vue`, `DesktopLayout.vue`, `MobileLayout.vue`, `SettingsLayoutBase.vue`, `src/components/ViewBreadcrumbs.vue`
+- [ ] **Step 1: Screenshot the tier before touching it**
 
-The shell already has `.v-shell-sidebar`, `.v-shell-header` and the position rail. This tier applies the scale tokens to them and brings the light theme's version of those surfaces up to the dark one's quality. `SidebarBrand.vue:22` carries the wordmark — confirm it reads well at PJS 800 with tight tracking now that Space Grotesk is gone.
+Load `localhost:3001/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
 
-### Task 8 — Tier 2, the list surfaces
+- [ ] **Step 2: Replace ad-hoc radius and padding with the tokens**
 
-**Files:** `src/components/ListViews/*.vue` (9 files incl. `ListRows.vue`, `EmptyState.vue`), `src/components/Kanban/KanbanView.vue`, filter/sort/toolbar controls under `src/components/Controls/`
+Radius utilities become `rounded-[var(--v-radius-control)]` for inputs, buttons, badges and menu items; `rounded-[var(--v-radius-card)]` for cards, panels and list containers; `rounded-[var(--v-radius-overlay)]` for modals, popovers and slide-overs. Page gutters become `var(--v-page-gutter)`. Do not introduce a fourth radius value: if something seems to need one, it is the wrong element for the job, and that belongs in the report.
 
-**This tier carries the plan's one fragile change.** `frappe-ui/experimental/ListView` exposes **no `data-slot` hooks** — its row markup is `<div class="grid items-center gap-4 px-2">` and its header is `<div class="mb-2 grid items-center gap-4 rounded-4 bg-surface-gray-2 p-2">`. Row density can only be reached by targeting those utility classes.
+- [ ] **Step 3: Apply the elevation language**
 
-Scope every such override under a class this repo owns, applied on the wrapper in `ListRows.vue`, and keep it at zero specificity so any component that needs to opt out still wins:
+`.v-glass` for cards and panels, `.v-glass-sm` for rows and inline surfaces. Where the tier is a full page, add `.v-lux-stage` to its scroll container. Light theme takes **no blur and no glow** — if a surface only reads as premium in dark, it is not finished.
+
+- [ ] **Step 4: Verify in the browser, both themes**
+
+Re-capture every surface from Step 1 and compare. Confirm: nothing moved that should not have; no text landed on a surface it no longer contrasts against; no horizontal scrollbar appeared. Measure contrast on any text whose background changed — the `-9` step rule and the 4.5:1 floor are non-negotiable and are not covered by the theme generator.
+
+- [ ] **Step 5: Run tests and commit**
+
+```bash
+cd /workspace/frontend && yarn test:run
+git add -A frontend/src
+git commit -m "feat: apply the Lux scale and elevation to tier 1 — the shell"
+```
+
+---
+
+## Task 8: Tier 2 — the list surfaces
+
+**Files:**
+- Modify: `frontend/src/components/ListViews/*.vue` (9 files, including `ListRows.vue` and `EmptyState.vue`), `frontend/src/components/Kanban/KanbanView.vue`, the filter/sort/toolbar controls under `frontend/src/components/Controls/`
+
+**Interfaces:**
+- Consumes: the scale and elevation tokens from Task 6 (`--v-radius-control`, `--v-radius-card`, `--v-radius-overlay`, `--v-row-h`, `--v-cell-px`, `--v-section-gap`, `--v-page-gutter`, `--v-toolbar-h`, `.v-glass`, `.v-glass-sm`); the type system from Task 1; the converted icons from Tasks 4–5.
+- Produces: no new interface. `--v-row-h` and `--v-cell-px` are consumed here.
+
+**This tier carries the plan's one fragile change.** `frappe-ui/experimental/ListView` exposes **no `data-slot` hooks** — verified by grep across the package. Its row markup is `<div class="grid items-center gap-4 px-2">` and its header is `<div class="mb-2 grid items-center gap-4 rounded-4 bg-surface-gray-2 p-2">`. Row density can only be reached by targeting those utility classes.
+
+Scope every such override under a class this repo owns, applied to the wrapper in `ListRows.vue`, and hold it at zero specificity so any component needing different density still wins:
 
 ```css
 /* frappe-ui's experimental ListView exposes no data-slot hooks, so row
    density can only be reached through the utility classes it writes itself.
    Scoped under a class we own and held at zero specificity with :where(), so
    a component that needs different density still wins.
-   FRAGILE: this selector is coupled to frappe-ui's internal markup and will
-   need revisiting on upgrade. Check it when bumping frappe-ui. */
+   FRAGILE: coupled to frappe-ui's internal markup. Re-check on every
+   frappe-ui upgrade. */
 .v-list :where(.grid.items-center.gap-4) {
   min-height: var(--v-row-h);
   padding-inline: var(--v-cell-px);
 }
 ```
 
-Also retire the `.v-list-header` hard-coded `rounded-4` in favour of `var(--v-radius-card)`.
+Also retire the hard-coded `rounded-4` in the existing `.v-list-header` rule in `index.css` in favour of `var(--v-radius-card)`.
 
-### Task 9 — Tier 3, the detail pages
+- [ ] **Step 1: Screenshot the tier before touching it**
 
-**Files:** `src/pages/Lead.vue`, `Deal.vue`, `Contact.vue`, `Organization.vue`, `Tasks.vue`, `Notes.vue`, `CallLogs.vue`, `Calendar.vue`, `src/components/Activities/*.vue`, `src/components/FieldLayout/Section.vue`
+Load `localhost:3001/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
 
-Note `Section.vue` is the container the spec flagged: `text-lg-medium` sizes both panel headings and layout containers whose children are body text. It must **not** pick up the display face — only elements that opt in via `.v-title-sm` do. Verify no section label changed face.
+- [ ] **Step 2: Replace ad-hoc radius and padding with the tokens**
 
-### Task 10 — Tier 4, modals and settings
+Radius utilities become `rounded-[var(--v-radius-control)]` for inputs, buttons, badges and menu items; `rounded-[var(--v-radius-card)]` for cards, panels and list containers; `rounded-[var(--v-radius-overlay)]` for modals, popovers and slide-overs. Page gutters become `var(--v-page-gutter)`. Do not introduce a fourth radius value: if something seems to need one, it is the wrong element for the job, and that belongs in the report.
 
-**Files:** all of `src/components/Modals/`, all of `src/components/Settings/`
+- [ ] **Step 3: Apply the elevation language**
 
-The highest-variance tier: modal padding is currently `p-2` (34×), `px-6` (16×), `px-4` (16×), `p-1` (15×), `p-3` (8×), `p-4` (6×). Settle every dialog on `--v-radius-overlay` and one padding rhythm.
+`.v-glass` for cards and panels, `.v-glass-sm` for rows and inline surfaces. Where the tier is a full page, add `.v-lux-stage` to its scroll container. Light theme takes **no blur and no glow** — if a surface only reads as premium in dark, it is not finished.
 
-### Task 11 — Tier 5, mobile and the remaining pages
+- [ ] **Step 4: Verify in the browser, both themes**
 
-**Files:** `src/pages/Mobile*.vue`, `src/components/Mobile/`, `src/pages/Welcome.vue`, `DataImport.vue`, `PersonaForm.vue`, `InvalidPage.vue`, `NotPermitted.vue`
+Re-capture every surface from Step 1 and compare. Confirm: nothing moved that should not have; no text landed on a surface it no longer contrasts against; no horizontal scrollbar appeared. Measure contrast on any text whose background changed — the `-9` step rule and the 4.5:1 floor are non-negotiable and are not covered by the theme generator.
 
-Mobile has its own layout; apply the type and scale tokens, not the desktop density values. Verify at 390 px width.
+- [ ] **Step 5: Run tests and commit**
+
+```bash
+cd /workspace/frontend && yarn test:run
+git add -A frontend/src
+git commit -m "feat: apply the Lux scale and elevation to tier 2 — the list surfaces"
+```
+
+---
+
+## Task 9: Tier 3 — the detail pages
+
+**Files:**
+- Modify: `frontend/src/pages/Lead.vue`, `Deal.vue`, `Contact.vue`, `Organization.vue`, `Tasks.vue`, `Notes.vue`, `CallLogs.vue`, `Calendar.vue`, `frontend/src/components/Activities/*.vue`, `frontend/src/components/FieldLayout/Section.vue`
+
+**Interfaces:**
+- Consumes: the scale and elevation tokens from Task 6 (`--v-radius-control`, `--v-radius-card`, `--v-radius-overlay`, `--v-row-h`, `--v-cell-px`, `--v-section-gap`, `--v-page-gutter`, `--v-toolbar-h`, `.v-glass`, `.v-glass-sm`); the type system from Task 1; the converted icons from Tasks 4–5.
+- Produces: no new interface. `--v-section-gap` is consumed here (the gap between FieldLayout sections).
+
+**Watch `FieldLayout/Section.vue` specifically.** `text-lg-medium` is overloaded in this codebase: it sizes panel headings but also layout containers whose children are body text. The type rule in `index.css` deliberately selects the display face by name (`.v-title-sm`) rather than by size, so section labels do **not** inherit it. Verify no section label changed face in this tier — if one did, the fix is to stop it opting in, never to widen the type selector.
+
+- [ ] **Step 1: Screenshot the tier before touching it**
+
+Load `localhost:3001/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
+
+- [ ] **Step 2: Replace ad-hoc radius and padding with the tokens**
+
+Radius utilities become `rounded-[var(--v-radius-control)]` for inputs, buttons, badges and menu items; `rounded-[var(--v-radius-card)]` for cards, panels and list containers; `rounded-[var(--v-radius-overlay)]` for modals, popovers and slide-overs. Page gutters become `var(--v-page-gutter)`. Do not introduce a fourth radius value: if something seems to need one, it is the wrong element for the job, and that belongs in the report.
+
+- [ ] **Step 3: Apply the elevation language**
+
+`.v-glass` for cards and panels, `.v-glass-sm` for rows and inline surfaces. Where the tier is a full page, add `.v-lux-stage` to its scroll container. Light theme takes **no blur and no glow** — if a surface only reads as premium in dark, it is not finished.
+
+- [ ] **Step 4: Verify in the browser, both themes**
+
+Re-capture every surface from Step 1 and compare. Confirm: nothing moved that should not have; no text landed on a surface it no longer contrasts against; no horizontal scrollbar appeared. Measure contrast on any text whose background changed — the `-9` step rule and the 4.5:1 floor are non-negotiable and are not covered by the theme generator.
+
+- [ ] **Step 5: Run tests and commit**
+
+```bash
+cd /workspace/frontend && yarn test:run
+git add -A frontend/src
+git commit -m "feat: apply the Lux scale and elevation to tier 3 — the detail pages"
+```
+
+---
+
+## Task 10: Tier 4 — modals and settings
+
+**Files:**
+- Modify: all of `frontend/src/components/Modals/`, all of `frontend/src/components/Settings/`
+
+**Interfaces:**
+- Consumes: the scale and elevation tokens from Task 6 (`--v-radius-control`, `--v-radius-card`, `--v-radius-overlay`, `--v-row-h`, `--v-cell-px`, `--v-section-gap`, `--v-page-gutter`, `--v-toolbar-h`, `.v-glass`, `.v-glass-sm`); the type system from Task 1; the converted icons from Tasks 4–5.
+- Produces: no new interface. `--v-radius-overlay` and `--v-toolbar-h` (dialog headers) are consumed here.
+
+The highest-variance tier. Modal padding is currently `p-2` (34 occurrences), `px-6` (16), `px-4` (16), `p-1` (15), `p-3` (8), `p-4` (6) — used more or less interchangeably. Settings mixes `gap-1`/`gap-2`/`gap-3`/`gap-4` and `py-2`/`py-3` the same way. Settle every dialog on `--v-radius-overlay` and one padding rhythm, and every settings row on one gap.
+
+- [ ] **Step 1: Screenshot the tier before touching it**
+
+Load `localhost:3001/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
+
+- [ ] **Step 2: Replace ad-hoc radius and padding with the tokens**
+
+Radius utilities become `rounded-[var(--v-radius-control)]` for inputs, buttons, badges and menu items; `rounded-[var(--v-radius-card)]` for cards, panels and list containers; `rounded-[var(--v-radius-overlay)]` for modals, popovers and slide-overs. Page gutters become `var(--v-page-gutter)`. Do not introduce a fourth radius value: if something seems to need one, it is the wrong element for the job, and that belongs in the report.
+
+- [ ] **Step 3: Apply the elevation language**
+
+`.v-glass` for cards and panels, `.v-glass-sm` for rows and inline surfaces. Where the tier is a full page, add `.v-lux-stage` to its scroll container. Light theme takes **no blur and no glow** — if a surface only reads as premium in dark, it is not finished.
+
+- [ ] **Step 4: Verify in the browser, both themes**
+
+Re-capture every surface from Step 1 and compare. Confirm: nothing moved that should not have; no text landed on a surface it no longer contrasts against; no horizontal scrollbar appeared. Measure contrast on any text whose background changed — the `-9` step rule and the 4.5:1 floor are non-negotiable and are not covered by the theme generator.
+
+- [ ] **Step 5: Run tests and commit**
+
+```bash
+cd /workspace/frontend && yarn test:run
+git add -A frontend/src
+git commit -m "feat: apply the Lux scale and elevation to tier 4 — modals and settings"
+```
+
+---
+
+## Task 11: Tier 5 — mobile and the remaining pages
+
+**Files:**
+- Modify: `frontend/src/pages/Mobile*.vue`, `frontend/src/components/Mobile/`, `frontend/src/pages/Welcome.vue`, `DataImport.vue`, `PersonaForm.vue`, `InvalidPage.vue`, `NotPermitted.vue`
+
+**Interfaces:**
+- Consumes: the scale and elevation tokens from Task 6 (`--v-radius-control`, `--v-radius-card`, `--v-radius-overlay`, `--v-row-h`, `--v-cell-px`, `--v-section-gap`, `--v-page-gutter`, `--v-toolbar-h`, `.v-glass`, `.v-glass-sm`); the type system from Task 1; the converted icons from Tasks 4–5.
+- Produces: no new interface. Radius tokens are consumed here; density values are overridden for touch.
+
+Mobile has its own layout and its own touch-target needs. Apply the type and radius tokens, but **do not apply the desktop density values** — a 40px row that reads as comfortable on a desktop list is below the 44px touch-target floor on a phone. Where a mobile surface needs a different value, use the token with a mobile override rather than a hard-coded number.
+
+- [ ] **Step 1: Screenshot the tier before touching it**
+
+Load `localhost:3001/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
+
+- [ ] **Step 2: Replace ad-hoc radius and padding with the tokens**
+
+Radius utilities become `rounded-[var(--v-radius-control)]` for inputs, buttons, badges and menu items; `rounded-[var(--v-radius-card)]` for cards, panels and list containers; `rounded-[var(--v-radius-overlay)]` for modals, popovers and slide-overs. Page gutters become `var(--v-page-gutter)`. Do not introduce a fourth radius value: if something seems to need one, it is the wrong element for the job, and that belongs in the report.
+
+- [ ] **Step 3: Apply the elevation language**
+
+`.v-glass` for cards and panels, `.v-glass-sm` for rows and inline surfaces. Where the tier is a full page, add `.v-lux-stage` to its scroll container. Light theme takes **no blur and no glow** — if a surface only reads as premium in dark, it is not finished.
+
+- [ ] **Step 4: Verify in the browser, both themes**
+
+Re-capture every surface from Step 1 and compare. Confirm: nothing moved that should not have; no text landed on a surface it no longer contrasts against; no horizontal scrollbar appeared. Measure contrast on any text whose background changed — the `-9` step rule and the 4.5:1 floor are non-negotiable and are not covered by the theme generator.
+
+- [ ] **Step 5: Run tests and commit**
+
+```bash
+cd /workspace/frontend && yarn test:run
+git add -A frontend/src
+git commit -m "feat: apply the Lux scale and elevation to tier 5 — mobile and the remaining pages"
+```
 
 ---
 
