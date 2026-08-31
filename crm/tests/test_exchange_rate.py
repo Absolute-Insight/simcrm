@@ -1,6 +1,7 @@
 # Copyright (c) 2025, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -8,11 +9,11 @@ from frappe.tests.utils import FrappeTestCase
 
 from crm.api.exchange_rate import (
 	_fetch_exchange_rate,
-	_fetch_from_sarb,
 	_fetch_from_exchangerate_api,
 	_fetch_from_exchangerate_host,
 	_fetch_from_fawaz_api,
 	_fetch_from_frankfurter,
+	_fetch_from_sarb,
 	get_exchange_rate,
 )
 
@@ -235,7 +236,7 @@ class TestFetchFromSarb(FrappeTestCase):
 	current official ZAR fix against USD, GBP, EUR and JPY. Everything else is
 	None, so the free-provider chain takes over."""
 
-	PAYLOAD = [
+	PAYLOAD: ClassVar = [
 		{"Name": "CPI", "TimeseriesCode": "CPI1000F", "Value": 4.3},
 		{"Name": "Rand per US Dollar", "TimeseriesCode": "EXCX135D", "Value": 16.0},
 		{"Name": "Rand per Euro", "TimeseriesCode": "EXCZ002D", "Value": 18.0},
