@@ -195,7 +195,7 @@ From `AGENTS.md`, non-negotiable:
 
 1. `cd frontend && yarn test:run` — the full unit suite green. (Read the count
    from the run; the number in `AGENTS.md` drifts.)
-2. Playwright against the live instance on `localhost:3001/crm`: every tier,
+2. Playwright against the live instance on `localhost:8000/crm`: every tier,
    in **both** themes, screenshotted.
 3. In-browser contrast measurement on the new surfaces — computed values, not
    estimates — for body text, muted labels and coloured deltas on each new

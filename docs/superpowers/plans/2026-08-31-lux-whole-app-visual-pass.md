@@ -19,7 +19,8 @@
 - **Light theme takes no blur and no glow.** Its premium reading comes from elevation, surface tint, hairlines and type.
 - **`prefers-reduced-motion: reduce` disables every animation globally.** The existing block in `index.css` must keep covering anything added.
 - **Both themes verified in a browser** — the generator's contrast floors cover only tokens it writes, not hand-authored effects.
-- **Toolchain lives in the devcontainer.** `yarn` and `pre-commit` are not on the host. Run them from `/workspace/frontend` inside the `.devcontainer` stack.
+- **Toolchain lives in the devcontainer.** `yarn` and `pre-commit` are not on the host. Run them from `/workspace/frontend` inside the `.devcontainer` stack (`docker exec simcrm_devcontainer-frappe-1 bash -lc '...'`).
+- **The app is served at `http://localhost:8000/crm`**, with vite HMR on `:8080`, and only while `bench start` is running in the devcontainer. Nothing else on this host serves this app — in particular `:3001` is an unrelated container and `:8090` is a deployed build that does not reflect source changes.
 - Commit style: `feat:` / `fix:` / `refactor:` / `test:` / `docs:`. One commit per coherent change.
 
 ---
@@ -155,7 +156,7 @@ PJS's default line box is 1.26 em against Inter's 1.21 — **+4.1%**. Anything s
 
 - [ ] **Step 6: Verify the face actually applied, in the browser**
 
-Start the dev server, then in the Playwright console on `localhost:3001/crm`:
+Start the dev server, then in the Playwright console on `localhost:8000/crm`:
 
 ```js
 getComputedStyle(document.documentElement).fontFamily
@@ -393,7 +394,7 @@ Expected: PASS, all four cases.
 
 - [ ] **Step 7: Verify the pilot renders identically in the browser**
 
-`BellIcon` is used in the app header. Load `localhost:3001/crm` and confirm: the bell renders, is 16×16, follows `text-ink-*` colour, and sits on the same baseline as its neighbours. **Compare against a screenshot taken before this task** — this is the moment to judge whether Phosphor's uniform 256-grid reads too light at 16px next to the remaining legacy icons. If it does, `app.provide('weight', 'bold')` is the one-line correction, and now is when to make it.
+`BellIcon` is used in the app header. Load `localhost:8000/crm` and confirm: the bell renders, is 16×16, follows `text-ink-*` colour, and sits on the same baseline as its neighbours. **Compare against a screenshot taken before this task** — this is the moment to judge whether Phosphor's uniform 256-grid reads too light at 16px next to the remaining legacy icons. If it does, `app.provide('weight', 'bold')` is the one-line correction, and now is when to make it.
 
 - [ ] **Step 8: Commit**
 
@@ -581,7 +582,7 @@ Expected: PASS, including the new count assertion.
 
 - [ ] **Step 6: Verify in the browser, both themes**
 
-Load `localhost:3001/crm` and walk the sidebar, a list view, a detail page and Settings. Confirm: every icon renders (no blank boxes from a bad import), sizes match the pre-change screenshots, and colours still follow `text-ink-*`. Check the console for unresolved-component warnings.
+Load `localhost:8000/crm` and walk the sidebar, a list view, a detail page and Settings. Confirm: every icon renders (no blank boxes from a bad import), sizes match the pre-change screenshots, and colours still follow `text-ink-*`. Check the console for unresolved-component warnings.
 
 - [ ] **Step 7: Commit**
 
@@ -847,7 +848,7 @@ The shell is on every screen, so it sets the standard the other tiers are judged
 
 - [ ] **Step 1: Screenshot the tier before touching it**
 
-Load `localhost:3001/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
+Load `localhost:8000/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
 
 - [ ] **Step 2: Replace ad-hoc radius and padding with the tokens**
 
@@ -901,7 +902,7 @@ Also retire the hard-coded `rounded-4` in the existing `.v-list-header` rule in 
 
 - [ ] **Step 1: Screenshot the tier before touching it**
 
-Load `localhost:3001/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
+Load `localhost:8000/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
 
 - [ ] **Step 2: Replace ad-hoc radius and padding with the tokens**
 
@@ -938,7 +939,7 @@ git commit -m "feat: apply the Lux scale and elevation to tier 2 — the list su
 
 - [ ] **Step 1: Screenshot the tier before touching it**
 
-Load `localhost:3001/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
+Load `localhost:8000/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
 
 - [ ] **Step 2: Replace ad-hoc radius and padding with the tokens**
 
@@ -975,7 +976,7 @@ The highest-variance tier. Modal padding is currently `p-2` (34 occurrences), `p
 
 - [ ] **Step 1: Screenshot the tier before touching it**
 
-Load `localhost:3001/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
+Load `localhost:8000/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
 
 - [ ] **Step 2: Replace ad-hoc radius and padding with the tokens**
 
@@ -1012,7 +1013,7 @@ Mobile has its own layout and its own touch-target needs. Apply the type and rad
 
 - [ ] **Step 1: Screenshot the tier before touching it**
 
-Load `localhost:3001/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
+Load `localhost:8000/crm`, navigate to each surface in the file list above, and capture it in **both** themes. These are the baseline the change is judged against — without them "nothing regressed" is an assertion, not a finding.
 
 - [ ] **Step 2: Replace ad-hoc radius and padding with the tokens**
 
