@@ -1,6 +1,9 @@
 <template>
   <ListView
-    :class="$attrs.class"
+    :class="[
+      'v-glass v-list-card mx-3 sm:mx-[var(--v-page-gutter)]',
+      $attrs.class,
+    ]"
     :columns="columns"
     :rows="rows"
     :options="{
@@ -17,7 +20,7 @@
     @update:selections="(selections) => emit('selectionsChanged', selections)"
   >
     <ListHeader
-      class="v-list-header mx-3 sm:mx-[var(--v-page-gutter)]"
+      class="v-list-header"
       @columnWidthUpdated="emit('columnWidthUpdated')"
     >
       <ListHeaderItem
@@ -41,7 +44,6 @@
     </ListHeader>
     <ListRows
       v-slot="{ idx, column, item, row }"
-      class="v-list-header mx-3 sm:mx-[var(--v-page-gutter)]"
       :rows="rows"
       doctype="Contact"
     >

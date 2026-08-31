@@ -308,24 +308,43 @@ input[type='checkbox']:checked {
     );
 }
 
-/* List header strip — frappe-ui's ListHeader paints itself bg-surface-gray-2,
-   a flat block that reads as unfinished on the dark canvas. Unlayered so it
-   wins over that internal utility; light mode keeps the exact same token. */
+/* List surface — the header strip and its rows now live inside ONE .v-glass
+   card (applied as `.v-glass .v-list-card` on frappe-ui's ListView root, see
+   the six *ListView.vue files), so the list reads as a document on a desk
+   instead of a loose grid on the page (design direction, "The list becomes
+   one surface"). The page gutter moved to that card's own margin; the header
+   and rows below are flush against its inner edges.
+
+   The header itself goes quiet: no more separate bg-surface-gray-2 block
+   sitting a `mb-2` gap above the rows — it is a transparent strip inside the
+   same card, closed off by one hairline that reuses the card's own border
+   tint so header, rows and card all draw from one hairline language.
+   Unlayered so it wins over frappe-ui's own utilities (bg-surface-gray-2,
+   mb-2, rounded-4, p-2). */
 .v-list-header {
-  background: var(--v-list-header-bg);
-  border: 1px solid var(--v-list-header-border);
-  /* Retires the hard-coded `rounded-4` frappe-ui's ListHeader paints on
-     itself (a Tailwind utility, layered) in favour of the card token — this
-     rule is unlayered so it wins regardless. */
-  border-radius: var(--v-radius-card);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--v-glass-border);
+  border-radius: var(--v-radius-card) var(--v-radius-card) 0 0;
+  margin: 0;
+  padding: 10px var(--v-cell-px);
 }
-:root {
-  --v-list-header-bg: var(--surface-gray-2);
-  --v-list-header-border: transparent;
+@layer components {
+  .v-list-card {
+    border-radius: var(--v-radius-card);
+  }
 }
-[data-theme='dark'] {
-  --v-list-header-bg: rgba(255, 255, 255, 0.045);
-  --v-list-header-border: rgba(255, 255, 255, 0.07);
+
+/* Column headers get quiet — reuse of `.v-kpi-label`'s shape (11px/600/
+   0.09em/uppercase), not a new treatment: column headers are navigation, not
+   content, and should recede (design direction, "Column headers get quiet").
+   frappe-ui's ListHeaderItem paints its label `text-sm text-ink-gray-5`;
+   scoped to `.v-list-header` so nothing outside the list header is touched. */
+.v-list-header :where(.text-sm.text-ink-gray-5) {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
 }
 
 /* frappe-ui's experimental ListView exposes no data-slot hooks, so row
@@ -339,6 +358,150 @@ input[type='checkbox']:checked {
 .v-list :where(.grid.items-center.gap-4) {
   min-height: var(--v-row-h);
   padding-inline: var(--v-cell-px);
+}
+
+/* Typographic hierarchy inside the row — today every cell was one weight,
+   which is why the list read as a spreadsheet (design direction,
+   "Typographic hierarchy inside the row"). ListRow.vue already marks the
+   identifying (first) column `text-ink-gray-9` and every other column
+   `text-ink-gray-7`; this promotes that existing colour hook to a weight
+   hook too, so one row now carries two visible levels. Scoped to the row
+   grid so the same `text-ink-gray-9` class elsewhere (e.g. a checkbox
+   control) is untouched.
+   FRAGILE: same internal-markup coupling as the row-density rule above. */
+.v-list :where(.grid.items-center.gap-4 > .text-ink-gray-9) {
+  font-weight: 600;
+}
+
+/* Row separators — inset from the card edge, not full-bleed. Full-bleed
+   rules read as a table; inset rules read as a list (design direction, "Row
+   rhythm"). frappe-ui draws this itself as a `mx-2 border-outline-gray-1`
+   divider on every unselected row; widening the inset to match the row's own
+   cell padding and swapping in the card's hairline var keeps every hairline
+   in the list — header, rows, card — drawn from the same token.
+   FRAGILE: same internal-markup coupling as the row-density rule above. */
+.v-list :where(.h-px.border-t.mx-2) {
+  margin-inline: var(--v-cell-px);
+  border-color: var(--v-glass-border);
+}
+
+/* frappe-ui bug, found while building the card above: ListRow.vue's inner
+   wrapper for a row with no navigation route (`onRowClick` lists — Tasks,
+   Call Logs) is `<component :is="list.options.getRowRoute ? 'div' : 'button'">`.
+   A *string* `:is="'button'"` runs through Vue's dynamic-component resolver,
+   which capitalizes the name and checks it against globally-registered
+   components before falling back to a native tag — and this app registers
+   frappe-ui's `Button` globally, so `'button'` resolves to that component
+   instead of a plain <button>. Every onRowClick row was quietly painted with
+   Button's own `bg-surface-gray-2`; barely visible against the old page
+   background (~13/255 off), now visible against the new white card. frappe-ui
+   already has the fix for this exact collision (`NativeButton`, in
+   `shared/nativeElements.ts` — its own comment names this failure mode) but
+   the experimental ListView doesn't use it yet. Not forkable here, so the
+   background is neutralised at the call site instead.
+   FRAGILE: same internal-markup coupling as the row-density rule above. */
+.v-list :where(button[class*='[all:unset]']) {
+  background: transparent;
+}
+
+/* Row hover — must be perceptible without being only a colour change (design
+   direction, "Row rhythm"). frappe-ui's own hover is a flat bg swap; this
+   adds a real lift on top of it. Three tags because the row wrapper varies
+   by list: `a`/router-link when a row navigates (`getRowRoute`), plain `div`
+   when it opens in place (`onRowClick`, e.g. Tasks/Call Logs) — both carry
+   `cursor-pointer` when hoverable either way. `position:relative` + z-index
+   keeps the shadow from being painted over by the next row in source order.
+   No glow — a neutral shadow is elevation, not a coloured halo, so this
+   holds in light theme too. */
+.v-list :where(a.cursor-pointer):hover,
+.v-list :where(div.cursor-pointer):hover,
+.v-list :where(button.cursor-pointer):hover {
+  position: relative;
+  z-index: 1;
+  box-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.05),
+    0 6px 14px -8px rgba(16, 24, 40, 0.18);
+}
+[data-theme='dark'] .v-list :where(a.cursor-pointer):hover,
+[data-theme='dark'] .v-list :where(div.cursor-pointer):hover,
+[data-theme='dark'] .v-list :where(button.cursor-pointer):hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 8px 20px -10px rgba(0, 0, 0, 0.55);
+}
+
+/* Signature — the position rail reaches the selected list row (design
+   direction, "Signature"). `.v-rail` is the primitive; frappe-ui's ListRow
+   gives a selected/active row no data-slot or aria hook, only the static
+   class it already paints for that state (`bg-surface-gray-2`), so this
+   keys off that instead. The gradient still appears nowhere else — same
+   discipline as the sidebar rail.
+   FRAGILE: same internal-markup coupling as the row-density rule above. */
+.v-list :where(a.bg-surface-gray-2),
+.v-list :where(div.bg-surface-gray-2) {
+  position: relative;
+}
+.v-list :where(a.bg-surface-gray-2)::before,
+.v-list :where(div.bg-surface-gray-2)::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 16px;
+  width: 2.5px;
+  transform: translateY(-50%);
+  border-radius: 9999px;
+  background: var(--brand-gradient-y);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .v-list :where(a.bg-surface-gray-2)::before,
+  .v-list :where(div.bg-surface-gray-2)::before {
+    animation: v-rail-in var(--motion-base) var(--motion-ease-out);
+  }
+}
+
+/* Toolbar consolidation — Filter, Sort and Columns/Kanban-Settings shared one
+   frame instead of floating as three separate pills (design direction,
+   "Toolbar consolidation"). Wrap the trio in `.v-toolbar-group` (ViewControls
+   .vue); the trigger buttons are frappe-ui's default subtle/gray Button (no
+   border, `bg-surface-gray-2`, `rounded-4`) — this swaps the per-button fill
+   for one shared strip with hairline dividers between direct children.
+   Deliberately NOT `overflow:hidden`-and-square-middle-buttons: the first
+   pass did that and it clipped the focus outline on the first/last button to
+   three-quarters invisible, which fails the keyboard-focus rule. Every
+   button keeps its own full radius instead — first, middle and last all read
+   as the same rounded chip on hover/focus, nothing to clip. Unlayered so it
+   outranks those utilities; :where() keeps specificity at zero so a control
+   that truly needs its own look still wins. */
+.v-toolbar-group {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--v-glass-sm-border);
+  border-radius: var(--v-radius-control);
+  background: var(--v-glass-sm-bg);
+}
+.v-toolbar-group :where(button) {
+  background: transparent;
+  border-radius: var(--v-radius-control);
+}
+.v-toolbar-group :where(button):hover {
+  background: var(--surface-gray-3);
+}
+/* A focused button must paint its outline over its neighbours, not under
+   them — plain DOM order would let the next sibling's opaque background
+   cover the shared edge of the outline. */
+.v-toolbar-group :where(button):focus-visible {
+  position: relative;
+  z-index: 1;
+}
+/* The divider targets the direct child AND its first real button descendant:
+   SortBy's unselected state renders its trigger through frappe-ui's Combobox,
+   whose own root is `display:contents` (an unpainted box), so a shadow on
+   that direct child alone never reaches the screen — the shadow has to land
+   on the actual button underneath it. */
+.v-toolbar-group > * + *,
+.v-toolbar-group > * + * :where(button) {
+  box-shadow: inset 1px 0 0 var(--v-glass-sm-border);
 }
 
 /* Vectora Lux — the shell. The sidebar and the page header are the frame
