@@ -658,14 +658,14 @@ import {
 import { intrinsicProps } from './_phosphor'
 
 // The legacy glyphs read as a progress ladder: dashed ring (Backlog), empty
-// ring (Todo), half-filled (In Progress), tick (Done), cross (Cancelled).
+// ring (Todo), half-filled (In Progress), tick (Done), cross (Canceled -- single L, which is the status string this app actually uses).
 // Phosphor carries that same ladder, so the semantics survive the swap.
 const GLYPH = {
   Backlog: PhCircleDashed,
   Todo: PhCircle,
   'In Progress': PhCircleHalf,
   Done: PhCheckCircle,
-  Cancelled: PhXCircle,
+  Canceled: PhXCircle,
 }
 
 defineProps({ status: { type: String, required: true } })
