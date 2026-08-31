@@ -24,6 +24,6 @@ describe('INTRINSIC_SIZE', () => {
   })
 
   it('covers every icon the codemod converts', () => {
-    expect(Object.keys(INTRINSIC_SIZE).length).toBe(106)
+    expect(Object.keys(INTRINSIC_SIZE).length).toBe(109)
   })
 })

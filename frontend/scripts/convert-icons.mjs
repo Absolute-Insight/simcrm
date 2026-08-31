@@ -113,13 +113,28 @@ const MAP = {
   LocationIcon: 'PhMapPin',
 }
 
-// BellIcon was already converted in Task 3 (the pilot for this codemod), so
-// its file is already a Phosphor wrapper with no width/height/viewBox left
-// to scrape. Fall back to the size Task 3 recorded for it in _phosphor.js.
-const PRE_CONVERTED_SIZES = { BellIcon: [16, 16] }
-
 const DIR = new URL('../src/components/Icons/', import.meta.url).pathname
-const sizes = {}
+
+// Icons already converted by a previous run of this script are already
+// Phosphor wrappers, with no width/height/viewBox left to scrape from their
+// source. Fall back to whatever _sizes.generated.js already recorded for
+// them, so the script stays safe to re-run (e.g. to merge in SPECIAL_SIZES)
+// after the bulk of the icon set has already been converted.
+const sizesFile = path.join(DIR, '_sizes.generated.js')
+const PRE_CONVERTED_SIZES = fs.existsSync(sizesFile)
+  ? (await import(sizesFile)).INTRINSIC_SIZE
+  : {}
+
+// The three icons that are not mechanical wrappers still need intrinsic
+// sizes. They are listed here rather than hand-edited into the generated
+// file, so there stays exactly one writer of _sizes.generated.js.
+const SPECIAL_SIZES = {
+  TaskStatusIcon: [16, 16],
+  TaskPriorityIcon: [12, 12],
+  LoadingIndicator: [24, 24],
+}
+
+const sizes = { ...SPECIAL_SIZES }
 
 // Pass 1: read every size BEFORE overwriting anything. Keeping the read and
 // write passes separate means a bad mapping fails loudly before any file is
