@@ -5,7 +5,7 @@
     @close="show = false"
   >
     <template #default>
-      <div class="flex gap-1 border rounded-4 mb-4 p-2 text-ink-gray-5">
+      <div class="flex gap-1 border rounded-[var(--v-radius-control)] mb-4 p-2 text-ink-gray-5">
         <span class="lucide-info size-3.5 mt-0.5" aria-hidden="true" />
         <p class="text-p-sm">
           {{
@@ -21,7 +21,7 @@
       </label>
 
       <div
-        class="p-2 group bg-surface-gray-2 hover:bg-surface-gray-3 rounded-4"
+        class="p-2 group bg-surface-gray-2 hover:bg-surface-gray-3 rounded-[var(--v-radius-control)]"
       >
         <EmailMultiSelect
           v-if="users?.data?.crmUsers?.length"

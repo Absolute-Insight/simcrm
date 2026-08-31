@@ -647,3 +647,26 @@ input[type='checkbox']:checked {
 .menu-content {
   z-index: 101;
 }
+
+/* Every dialog in the app -- both frappe-ui's own chrome and every local
+   Modals/*.vue that renders `bare` and reproduces that chrome by hand --
+   shares one DialogContent root, which hard-codes `rounded-7` (16px, frappe-
+   ui's own scale). That is a fourth radius no local file can reach to fix:
+   the three-token rule (control/card/overlay) never actually reached a real
+   modal corner. Retarget the one vendor class to the overlay token instead
+   of forking Dialog.vue. */
+.dialog-content {
+  border-radius: var(--v-radius-overlay);
+}
+
+/* frappe-ui's own SidebarItem (used by the app's Settings sidebar, and via
+   [data-slot='sidebar-item'] anywhere else that vendor component is reused)
+   hard-codes `rounded-4` on its own root and inner button -- another corner
+   the three-token system never reached. It is a nav row, so it takes the
+   control token, same role as every other interactive row in the app.
+   Scoped to the vendor's own `.rounded-4` hook (not every child) so a
+   differently-rounded child -- an avatar, an icon badge -- is untouched. */
+[data-slot='sidebar-item'].rounded-4,
+[data-slot='sidebar-item'] .rounded-4 {
+  border-radius: var(--v-radius-control);
+}

@@ -1,7 +1,7 @@
 <template>
   <div class="flex gap-3">
     <div
-      class="flex-1 rounded-6 border cursor-pointer"
+      class="flex-1 rounded-[var(--v-radius-card)] border cursor-pointer"
       :class="
         theme == 'light'
           ? 'border-outline-gray-7'
@@ -25,7 +25,7 @@
                 :src="logo"
                 class="size-5 object-cover"
               />
-              <component :is="logo" v-else class="size-5 shrink-0 rounded-4" />
+              <component :is="logo" v-else class="size-5 shrink-0 rounded-[var(--v-radius-control)]" />
               <div>{{ __(name) }}</div>
             </div>
             <div class="flex flex-col flex-1 gap-[5px]">
@@ -51,7 +51,7 @@
       </div>
     </div>
     <div
-      class="flex-1 rounded-6 border cursor-pointer"
+      class="flex-1 rounded-[var(--v-radius-card)] border cursor-pointer"
       :class="
         theme == 'dark' ? 'border-outline-gray-7' : 'border-outline-elevation-2'
       "
@@ -73,7 +73,7 @@
                 :src="logo"
                 class="size-5 object-cover"
               />
-              <component :is="logo" v-else class="size-5 shrink-0 rounded-4" />
+              <component :is="logo" v-else class="size-5 shrink-0 rounded-[var(--v-radius-control)]" />
               <div>{{ __(name) }}</div>
             </div>
             <div class="flex flex-col flex-1 gap-[5px]">
@@ -99,7 +99,7 @@
       </div>
     </div>
     <div
-      class="flex-1 rounded-6 border cursor-pointer"
+      class="flex-1 rounded-[var(--v-radius-card)] border cursor-pointer"
       :class="
         theme == 'system'
           ? 'border-outline-gray-7'
@@ -129,7 +129,7 @@
                 <component
                   :is="logo"
                   v-else
-                  class="size-5 shrink-0 rounded-4"
+                  class="size-5 shrink-0 rounded-[var(--v-radius-control)]"
                 />
                 <div>{{ __(name) }}</div>
               </div>
@@ -157,7 +157,7 @@
                 <component
                   :is="logo"
                   v-else
-                  class="size-5 shrink-0 rounded-4"
+                  class="size-5 shrink-0 rounded-[var(--v-radius-control)]"
                 />
                 <div>{{ __(name) }}</div>
               </div>

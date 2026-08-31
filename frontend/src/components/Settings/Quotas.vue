@@ -122,7 +122,7 @@
               <input
                 v-if="editable"
                 :value="displayValue(row, month)"
-                class="w-full rounded-4 border border-transparent bg-transparent px-1.5 py-1 text-right text-sm tabular-nums text-ink-gray-8 transition placeholder:text-ink-gray-4 hover:border-outline-gray-2 focus:border-outline-gray-3 focus:bg-surface-white focus:outline-none focus:ring-2 focus:ring-outline-gray-3"
+                class="w-full rounded-[var(--v-radius-control)] border border-transparent bg-transparent px-1.5 py-1 text-right text-sm tabular-nums text-ink-gray-8 transition placeholder:text-ink-gray-4 hover:border-outline-gray-2 focus:border-outline-gray-3 focus:bg-surface-white focus:outline-none focus:ring-2 focus:ring-outline-gray-3"
                 inputmode="decimal"
                 placeholder="—"
                 :aria-label="`${row.full_name} ${month}`"

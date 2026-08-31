@@ -1,7 +1,7 @@
 <template>
   <Dialog v-model:open="show" bare :size="'sm'">
     <template #default>
-      <div class="p-4 pt-5">
+      <div class="px-4 pb-6 pt-5 sm:px-6">
         <div class="flex justify-center">
           <div class="flex flex-col items-center">
             <CRMLogo class="mb-3 size-12" />
@@ -21,7 +21,7 @@
             :is="link.url ? 'a' : 'button'"
             v-for="link in links"
             :key="link.label"
-            class="flex w-full py-2 px-2 hover:bg-surface-gray-1 rounded-4 cursor-pointer"
+            class="flex w-full py-2 px-2 hover:bg-surface-gray-1 rounded-[var(--v-radius-control)] cursor-pointer"
             :target="link.url ? '_blank' : undefined"
             :href="link.url"
             @click="link.onClick"
