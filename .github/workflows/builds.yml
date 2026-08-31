@@ -14,23 +14,6 @@ permissions:
   packages: write
   checks: read
 
-env:
-  # frappe_docker's Containerfile derives BOTH of its base images from
-  # FRAPPE_BRANCH, and upstream publishes them only for its own branch names --
-  # so the local branch name the pinned source is parked on resolved to
-  # frappe/build:pinned and frappe/base:pinned, neither of which exists. They are a toolchain (node,
-  # python, wkhtmltopdf) and a runtime base, not frappe application code, so
-  # they are pinned here independently of the source branch.
-  #
-  # By digest, not by tag: `develop` is a moving pointer, so two builds a week
-  # apart could ship different toolchains under the same image tag with no way
-  # to reproduce the earlier one. Refresh deliberately with:
-  #   docker buildx imagetools inspect frappe/build:develop --format '{{.Manifest.Digest}}'
-  # Both are multi-arch indexes covering linux/amd64 and linux/arm64; pinning a
-  # per-architecture manifest instead would break the arm64 half of the build.
-  FRAPPE_BUILD_IMAGE: frappe/build@sha256:9d6f54db5635f8c5c10911112dfdeaf29b18c9cfe062f89731d2c591f3730d60
-  FRAPPE_BASE_IMAGE: frappe/base@sha256:aa470cd87c680914a03c295f443b366bd1930a4f3c4965c18eef427b78db332d
-
 jobs:
   guard:
     name: Require green checks
@@ -174,6 +157,22 @@ jobs:
       - name: Checkout Entire Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Load image pins
+        # frappe_docker's ref and both base-image digests, from the file the
+        # PR-time check (image-build-inputs.yml) reads too, so a bump cannot
+        # reach a release without that check having proved it.
+        run: |
+          set -euo pipefail
+          set -a; source .github/helper/image-pins.env; set +a
+          # An unset value would make the checkout below silently take
+          # frappe_docker's default branch, which is the drift this pin exists
+          # to stop -- so refuse rather than default.
+          for v in FRAPPE_DOCKER_REF FRAPPE_BUILD_IMAGE FRAPPE_BASE_IMAGE; do
+            [ -n "${!v:-}" ] || { echo "::error::$v is empty in image-pins.env"; exit 1; }
+            echo "$v=${!v}" >> "$GITHUB_ENV"
+            echo "$v=${!v}"
+          done
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
 
@@ -251,6 +250,12 @@ jobs:
         with:
           repository: frappe/frappe_docker
           path: builds
+          # Pinned, not main. This is third-party source that the next step
+          # rewrites by sed, and this workflow runs only on a push to main or a
+          # tag -- so an upstream edit would not surface until a release, at the
+          # moment it is least welcome. The pin and the bump instructions live
+          # in .github/helper/image-pins.env.
+          ref: ${{ env.FRAPPE_DOCKER_REF }}
 
       - name: Put the pinned frappe in the build context
         # Cloned here rather than fetched by the Containerfile so the image is
@@ -262,66 +267,25 @@ jobs:
           bash scripts/fetch-frappe.sh builds/frappe-src
           git -C builds/frappe-src log -1 --format='context frappe: %H'
 
-      - name: Copy the pinned frappe into the builder stage
-        # The Containerfile clones frappe from FRAPPE_PATH, which is now a path
-        # inside the image, so the source has to be there before `bench init`
-        # runs. Insert the COPY immediately above that RUN, in the builder
-        # stage -- the backend stage copies only the finished bench, so this
-        # adds nothing to the shipped image.
-        run: |
-          set -euo pipefail
-          file=builds/images/layered/Containerfile
+      - name: Check the builder image can build the pinned frappe
+        # The two pins move independently -- frappe by commit, the builder image
+        # by digest -- and nothing used to check they still work together. Node
+        # is the live example: the pinned frappe declares engines ">=24", and a
+        # builder still on 22 fails inside `bench init` on a rollback prompt no
+        # build can answer.
+        run: bash .github/helper/check-build-toolchain.sh builds/frappe-src
 
-          anchor='RUN --mount=type=secret,id=apps_json'
-          if [ "$(grep -c "^$anchor" "$file")" != "1" ]; then
-            echo "::error::Expected exactly one '$anchor' line in the Containerfile."
-            echo "::error::Upstream changed it; re-anchor this step."
-            grep -nE '^RUN|^COPY' "$file"
-            exit 1
-          fi
-
-          sed -i "s|^$anchor|COPY --chown=frappe:frappe frappe-src /home/frappe/frappe-src\n&|" "$file"
-
-          # Assert rather than trust the sed, the same way the base-image step
-          # does. A silently missing COPY would not fail here -- it would fail
-          # deep inside `bench init` with a git error about a path that does
-          # not exist, far from its cause.
-          if ! grep -q '^COPY --chown=frappe:frappe frappe-src /home/frappe/frappe-src$' "$file"; then
-            echo "::error::The frappe-src COPY was not inserted."
-            exit 1
-          fi
-          grep -nE '^FROM |^COPY |^RUN ' "$file"
+      - name: Prepare the Containerfile
+        # Copies the pinned frappe into the builder stage and points both base
+        # images at pinned digests, asserting each rewrite. The same script runs
+        # on every PR via image-build-inputs.yml, which is the only reason a
+        # rewrite that stopped applying would be caught before a release.
+        run: bash .github/helper/prepare-containerfile.sh builds/images/layered/Containerfile
 
       # One build, one manifest, both platforms. The inherited per-arch matrix
       # pushed two single-arch images to the SAME tags, so whichever job
       # finished last won and the other architecture pulled an image it could
       # not exec.
-      # Point both base images at pinned digests instead of at the source
-      # branch. See the FRAPPE_*_IMAGE comment at the top for why.
-      - name: Decouple the base images from the frappe source branch
-        run: |
-          set -euo pipefail
-          file=builds/images/layered/Containerfile
-
-          sed -i "s|^FROM \${FRAPPE_IMAGE_PREFIX}/build:\${FRAPPE_BRANCH} AS builder|FROM ${FRAPPE_BUILD_IMAGE} AS builder|" "$file"
-          sed -i "s|^FROM \${FRAPPE_IMAGE_PREFIX}/base:\${FRAPPE_BRANCH} AS backend|FROM ${FRAPPE_BASE_IMAGE} AS backend|" "$file"
-
-          # Assert rather than trust the sed. This is checked-out upstream code
-          # that changes without notice: the `base` stage was missed when only
-          # the `builder` line was rewritten, and because frappe/base:pinned
-          # does not exist the next release build would have failed on a
-          # manifest-not-found error far from its cause. Any FROM still
-          # resolving through FRAPPE_BRANCH -- including a stage upstream adds
-          # tomorrow -- stops the build here, where the message is legible.
-          if grep -nE '^FROM .*\$\{FRAPPE_BRANCH\}' "$file"; then
-            echo "::error::A FROM line above still resolves through FRAPPE_BRANCH."
-            echo "::error::Upstream publishes those images only for its own branch"
-            echo "::error::names, so this would look for a tag that does not exist."
-            echo "::error::Pin the new stage in the env block at the top of this workflow."
-            exit 1
-          fi
-          grep -nE '^FROM ' "$file"
-
       - name: Build and push
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
