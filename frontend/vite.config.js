@@ -278,13 +278,21 @@ export default defineConfig(async ({ mode }) => {
 })
 
 function resolveFrameworkUi() {
-  // two layouts carry the real package: building through the bench symlink
+  // Two layouts carry the real package: building through the bench symlink
   // (frappe-bench/apps/crm/frontend) and building from the working tree with
-  // the bench checked out beside it
+  // the bench checked out beside it. Both are guesses about where the bench
+  // sits relative to this file, and node resolves import.meta.dirname through
+  // symlinks, so the first only matches when the app is a real subdirectory of
+  // the bench rather than a link into it.
+  //
+  // FRAPPE_UI_SRC names it outright for layouts neither guess covers -- the
+  // devcontainer keeps its bench on a volume at /home/frappe/frappe-bench,
+  // outside the repo entirely, and sets this in docker-compose.yml.
   const candidates = [
+    process.env.FRAPPE_UI_SRC,
     path.resolve(import.meta.dirname, '../../frappe/ui/src'),
     path.resolve(import.meta.dirname, '../frappe-bench/apps/frappe/ui/src'),
-  ]
+  ].filter(Boolean)
   const stub = path.resolve(import.meta.dirname, 'src/lib/framework-ui-stub')
   if (process.env.FRAMEWORK_UI_STUB === '1') {
     console.info('@framework/ui: stub forced via FRAMEWORK_UI_STUB=1')
@@ -302,15 +310,24 @@ function resolveFrameworkUi() {
   throw new Error(
     '@framework/ui: no bench sibling found. Checked:\n' +
       candidates.map((p) => `  ${p}`).join('\n') +
-      '\nBuild from a bench, or set FRAMEWORK_UI_STUB=1 to build against the ' +
-      'no-op stub on purpose (see src/lib/framework-ui-stub/README.md).',
+      '\nBuild from a bench, point FRAPPE_UI_SRC at its apps/frappe/ui/src, or ' +
+      'set FRAMEWORK_UI_STUB=1 to build against the no-op stub on purpose ' +
+      '(see src/lib/framework-ui-stub/README.md).',
   )
 }
 
 async function importFrappeUIPlugin(isDev, config) {
   if (isDev) {
     try {
-      // Check if local frappe-ui has the vite plugin file
+      // Opt-in dev override: build against a local frappe-ui checkout instead
+      // of the pinned npm package, for iterating on the two together. This
+      // used to be a git submodule, removed because its pinned commit no
+      // longer exists upstream — so the path is now yours to create or not:
+      //
+      //   git clone https://github.com/frappe/frappe-ui <repo-root>/frappe-ui
+      //
+      // Absent, the block below is skipped and the npm package is used; that
+      // is the normal path and the only one CI and production builds take.
       const fs = await import('node:fs')
       const localVitePluginPath = path.resolve(
         import.meta.dirname,

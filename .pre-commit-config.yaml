@@ -14,6 +14,13 @@ repos:
           - id: check-merge-conflict
           - id: check-ast
           - id: check-json
+            # .vscode/settings.json and .devcontainer/devcontainer.json are
+            # JSONC, not JSON: comments are part of both formats and VS Code
+            # reads them fine. check-json is a strict json.loads, so it rejects
+            # every one. Excluding them beats stripping the comments -- these
+            # two files carry the reasons for choices (which interpreter, which
+            # workspace root) that are wrong-looking without them.
+            exclude: ^(\.vscode/settings\.json|\.devcontainer/devcontainer\.json)$
           - id: check-toml
           - id: check-yaml
           - id: debug-statements

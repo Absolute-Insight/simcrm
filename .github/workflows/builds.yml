@@ -17,8 +17,8 @@ permissions:
 env:
   # frappe_docker's Containerfile derives BOTH of its base images from
   # FRAPPE_BRANCH, and upstream publishes them only for its own branch names --
-  # so a source branch of `vectora` resolved to frappe/build:vectora and
-  # frappe/base:vectora, neither of which exists. They are a toolchain (node,
+  # so the local branch name the pinned source is parked on resolved to
+  # frappe/build:pinned and frappe/base:pinned, neither of which exists. They are a toolchain (node,
   # python, wkhtmltopdf) and a runtime base, not frappe application code, so
   # they are pinned here independently of the source branch.
   #
@@ -192,20 +192,28 @@ jobs:
         # pointed at upstream frappe/crm, so the image this workflow published
         # would have contained none of this fork's code.
         #
-        # Frappe comes from this fork's pinned `vectora` branch, not upstream's
-        # develop. Upstream develop moves, so two builds a week apart shipped
-        # different framework code with no way to reproduce the earlier one --
-        # the question a customer bug report actually asks. `vectora` is frozen
-        # at a known-good develop commit and advanced deliberately, which keeps
-        # the exact pairing the test suite runs against (server-tests.yml also
-        # builds against vectora).
+        # Frappe comes from the commit pinned in scripts/frappe-pin.env, the
+        # same one server-tests.yml, migration-test.yml, ui-tests.yml and the
+        # devcontainer use -- so the image customers run is built against
+        # exactly the framework the suite proved. Upstream develop moves, so
+        # two builds a week apart shipped different framework code with no way
+        # to reproduce the earlier one, which is the question a customer bug
+        # report actually asks.
+        #
+        # FRAPPE_PATH is a path inside the builder image, not a URL. The
+        # Containerfile runs `bench init --frappe-branch=$FRAPPE_BRANCH
+        # --frappe-path=$FRAPPE_PATH`, and bench turns that into `git clone
+        # --branch`, which takes a branch or a tag and never a commit. So the
+        # pinned commit is cloned into the build context below and copied in,
+        # parked on a local branch bench can name.
         run: |
           export APPS_JSON='[{"url": "https://github.com/'"$GITHUB_REPOSITORY"'","branch": "'"$GITHUB_REF_NAME"'"}]'
           # Passed to the build as a secret, not a build-arg -- see the
           # `secrets:` block below for why that distinction was load-bearing.
           echo "APPS_JSON=$APPS_JSON" >> $GITHUB_ENV
-          echo "FRAPPE_PATH=https://github.com/Absolute-Insight/frappe" >> $GITHUB_ENV
-          echo "FRAPPE_BRANCH=vectora" >> $GITHUB_ENV
+          source scripts/frappe-pin.env
+          echo "FRAPPE_PATH=/home/frappe/frappe-src" >> $GITHUB_ENV
+          echo "FRAPPE_BRANCH=$FRAPPE_PIN_BRANCH" >> $GITHUB_ENV
 
       - name: Set Image Tag
         # Registry paths must be lowercase; github.repository is not.
@@ -244,6 +252,46 @@ jobs:
           repository: frappe/frappe_docker
           path: builds
 
+      - name: Put the pinned frappe in the build context
+        # Cloned here rather than fetched by the Containerfile so the image is
+        # built from a commit, not from wherever a branch points today.
+        # frappe_docker's .dockerignore lists only README/LICENSE/.gitignore/
+        # compose*.yaml, so this directory does reach the build.
+        run: |
+          set -euo pipefail
+          bash scripts/fetch-frappe.sh builds/frappe-src
+          git -C builds/frappe-src log -1 --format='context frappe: %H'
+
+      - name: Copy the pinned frappe into the builder stage
+        # The Containerfile clones frappe from FRAPPE_PATH, which is now a path
+        # inside the image, so the source has to be there before `bench init`
+        # runs. Insert the COPY immediately above that RUN, in the builder
+        # stage -- the backend stage copies only the finished bench, so this
+        # adds nothing to the shipped image.
+        run: |
+          set -euo pipefail
+          file=builds/images/layered/Containerfile
+
+          anchor='RUN --mount=type=secret,id=apps_json'
+          if [ "$(grep -c "^$anchor" "$file")" != "1" ]; then
+            echo "::error::Expected exactly one '$anchor' line in the Containerfile."
+            echo "::error::Upstream changed it; re-anchor this step."
+            grep -nE '^RUN|^COPY' "$file"
+            exit 1
+          fi
+
+          sed -i "s|^$anchor|COPY --chown=frappe:frappe frappe-src /home/frappe/frappe-src\n&|" "$file"
+
+          # Assert rather than trust the sed, the same way the base-image step
+          # does. A silently missing COPY would not fail here -- it would fail
+          # deep inside `bench init` with a git error about a path that does
+          # not exist, far from its cause.
+          if ! grep -q '^COPY --chown=frappe:frappe frappe-src /home/frappe/frappe-src$' "$file"; then
+            echo "::error::The frappe-src COPY was not inserted."
+            exit 1
+          fi
+          grep -nE '^FROM |^COPY |^RUN ' "$file"
+
       # One build, one manifest, both platforms. The inherited per-arch matrix
       # pushed two single-arch images to the SAME tags, so whichever job
       # finished last won and the other architecture pulled an image it could
@@ -260,7 +308,7 @@ jobs:
 
           # Assert rather than trust the sed. This is checked-out upstream code
           # that changes without notice: the `base` stage was missed when only
-          # the `builder` line was rewritten, and because frappe/base:vectora
+          # the `builder` line was rewritten, and because frappe/base:pinned
           # does not exist the next release build would have failed on a
           # manifest-not-found error far from its cause. Any FROM still
           # resolving through FRAPPE_BRANCH -- including a stage upstream adds

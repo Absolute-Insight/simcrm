@@ -19,9 +19,33 @@ formatting, so run the hook after regenerating and commit what it leaves.
 
 import json
 import math
+import re
 from itertools import pairwise
 
-SRC = "/workspace/frappe-ui/tailwind/generated/colors.json"
+# Was /workspace/frappe-ui/... -- a git submodule that has been removed. Its
+# pinned commit no longer exists on frappe/frappe-ui (upload-pack: not our ref),
+# so that path could not be materialised by anyone and this script had no
+# runnable token source at all. Nothing else in the repo used the submodule:
+# the production build resolves frappe-ui from node_modules, and the dev-only
+# local-checkout override in vite.config.js is guarded by existsSync.
+#
+# This now reads the pinned npm package. A regenerated file is equivalent to
+# the committed one: every shared variable is value-identical, and nothing is
+# emitted that was not there before. Two differences are expected and correct:
+#
+#   * beta.55 spells pure white `oklch(1 0 0)` where the old source wrote
+#     `#ffffff`. Same colour, different notation.
+#   * The six --ink-alert-button-* / --surface-alert-button-* variables
+#     disappear. frappe-ui dropped them deliberately in beta.55 (see
+#     DROPPED_SEMANTIC_NAMES in tailwind/figma-tokens-to-theme.js): a Figma
+#     spec that was never wired to code, with zero call sites across
+#     frappe-ui's own source, all nine consumer apps, and frappe's ui/
+#     package. Nothing in this repo referenced them either.
+#
+# So regenerating is safe. Still diff the result -- the contrast assertions
+# below cover the tokens this script solves for, not the ones it passes
+# through, so a genuine upstream token change would not announce itself.
+SRC = "/workspace/frontend/node_modules/frappe-ui/tailwind/generated/colors.json"
 OUT = "/workspace/frontend/src/styles/vectora-theme.css"
 
 # ---------------------------------------------------------------------------
@@ -183,8 +207,27 @@ stock_light_alpha = d["lightMode"]["gray-alpha"]
 stock_dark_alpha = d["darkMode"]["gray-alpha"]
 
 
-def tint_alpha(stock_hex, base):
-	return base + stock_hex[7:9]
+def _alpha_hex(stock):
+	"""frappe-ui's per-shade alpha, as a two-digit hex suffix.
+
+	Two spellings have shipped. The older token dumps wrote `#rrggbbaa`; since
+	1.0.0-beta.55 the generated tokens are `oklch(L C H / a)`. Only the alpha
+	channel is read either way -- the colour underneath is discarded, because
+	the point of the ramp is frappe-ui's opacity over *our* indigo-tinted base.
+
+	Reading the oklch form as a hex string is what the slice below used to do,
+	and it fails silently: `"oklch(0 0 0 / 0.031)"[7:9]` is `" 0"`, so every
+	step collapsed to `#0e0e1f 0` -- a value CSS drops, leaving the ramp
+	invisible rather than wrong-looking.
+	"""
+	m = re.search(r"/\s*([0-9.]+)\s*\)$", stock.strip())
+	if m:
+		return f"{round(float(m.group(1)) * 255):02x}"
+	return stock[7:9]
+
+
+def tint_alpha(stock, base):
+	return base + _alpha_hex(stock)
 
 
 LIGHT_GRAY_ALPHA = {k: tint_alpha(v, LIGHT_ALPHA_BASE) for k, v in stock_light_alpha.items()}

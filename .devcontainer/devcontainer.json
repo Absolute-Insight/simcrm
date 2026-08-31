@@ -1,27 +1,45 @@
 {
-    "name": "Frappe Bench",
-    "forwardPorts": [8000, 9000, 6787],
-    "remoteUser": "frappe",
-    "settings": {
-      "terminal.integrated.defaultProfile.linux": "bash",
-      "debug.node.autoAttach": "disabled"
-    },
-    "dockerComposeFile": "./docker-compose.yml",
-    "service": "frappe",
-    "features": {
-      "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
-        "moby": true,
-        "dockerDashComposeVersion": "v2"
-      }
-    },
-    "workspaceFolder": "/workspace/frappe-bench",
-    "postCreateCommand": "bash /workspace/scripts/init.sh",
-    "shutdownAction": "stopCompose",
-    "extensions": [
-      "ms-python.python",
-      "ms-vscode.live-server",
-      "grapecity.gc-excelviewer",
-      "mtxr.sqltools",
-      "visualstudioexptteam.vscodeintellicode"
-    ]
+  "name": "Frappe Bench",
+  "forwardPorts": [8000, 8080, 9000, 6787],
+  "remoteUser": "frappe",
+  "dockerComposeFile": "./docker-compose.yml",
+  "service": "frappe",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+      "moby": true,
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+  // The repo, not the bench. This used to be /workspace/frappe-bench, which is
+  // where scripts/init.sh builds the bench -- so when init.sh failed, VS Code
+  // created the missing directory and opened an empty folder: no crm/, no
+  // frontend/, no git. Even with a working bench it was the wrong root, because
+  // every ${workspaceFolder}-relative path in .vscode/settings.json and
+  // simcrm.code-workspace is written against the repo. The bench now lives on
+  // its own volume at /home/frappe/frappe-bench; cd there to run bench.
+  "workspaceFolder": "/workspace",
+  "postCreateCommand": "bash /workspace/scripts/init.sh",
+  "shutdownAction": "stopCompose",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "debug.node.autoAttach": "disabled",
+        // Absolute container paths, and container-only on purpose: the bench is
+        // outside the workspace and does not exist on the host, so these cannot
+        // live in the committed .vscode/settings.json or the .code-workspace.
+        "python.defaultInterpreterPath": "/home/frappe/frappe-bench/env/bin/python",
+        "python.analysis.extraPaths": [
+          "/home/frappe/frappe-bench/apps/frappe"
+        ]
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-vscode.live-server",
+        "grapecity.gc-excelviewer",
+        "mtxr.sqltools",
+        "visualstudioexptteam.vscodeintellicode"
+      ]
+    }
   }
+}

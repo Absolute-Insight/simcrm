@@ -26,10 +26,18 @@ package-lock.json
 
 CLAUDE.md
 AGENTS.md
-.claude
 .pi
 .patch
 *.pdf
+
+# .claude/ is tracked on purpose. settings.json, hooks/ and skills/ encode this
+# repo's rules -- the generated files nobody should hand-edit, the branches
+# pre-commit refuses a commit on, and the release procedure whose one manual
+# step is easy to miss -- so they belong to the repo, not to one machine.
+# Two paths inside it do not: settings.local.json is per-developer overrides,
+# and format.log is the formatter hook's own record of tools it could not find.
+.claude/settings.local.json
+.claude/hooks/format.log
 
 # deploy/README.md's first boot step is `cp .env.example .env` *inside this
 # working tree*, and that file holds DB_ROOT_PASSWORD and ADMIN_PASSWORD. This
@@ -47,3 +55,12 @@ google-chrome-stable_current_amd64.deb
 # one host's paths, ports and hardware, which nobody else can use.
 deploy/.env.bak-*
 deploy/docker-compose.override.yml
+
+# scripts/init.sh tees its output here so a failed devcontainer provision can be
+# read after the Dev Containers terminal has scrolled away.
+.devcontainer/init.log
+
+# The devcontainer builds its bench on a named docker volume, not in the tree.
+# This stays as a backstop: a `bench init` run by hand from the repo root, or an
+# older container, still lands ~1.5GB of apps/, env/ and sites/ right here.
+/frappe-bench/

@@ -1,5 +1,10 @@
 {
-    "python.defaultInterpreterPath": "${workspaceFolder}/frappe-bench/env/bin/python",
+    // No python.* interpreter setting here on purpose. The bench lives on a
+    // docker volume at /home/frappe/frappe-bench, outside the workspace and
+    // absent on the host, so any path this file could name would be wrong in one
+    // of the two places. The container-only settings are in
+    // .devcontainer/devcontainer.json, which is the file that knows it is in a
+    // container.
     "debug.node.autoAttach": "disabled",
     "vitest.configSearchPatternExclude": "{**/node_modules/**,**/vendor/**,**/.*/**,**/*.d.ts,frappe-ui/**,frappe-bench/**}",
     "vitest.rootConfig": "frontend/vitest.config.js",
