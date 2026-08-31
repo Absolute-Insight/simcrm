@@ -217,17 +217,27 @@ jobs:
       - name: Set Image Tag
         # Registry paths must be lowercase; github.repository is not.
         #
-        # Three tags, and only one of them is stable in the sense of unchanging:
-        #   sha-<short>  immutable, always exactly this commit
+        # Three tags, none of them content-addressed:
+        #   sha-<short>  always exactly this COMMIT -- but see the caveat below
         #   <ref_name>   main, or the release tag — the release tag is immutable
         #                in practice because the git tag is; :main is not
         #   stable       a moving pointer to the newest main build
         #
         # A deployment that pins :stable cannot say what it is running, and two
         # `docker compose pull`s a week apart give different systems with no way
-        # to reproduce the earlier one. sha- gives every build a name that will
-        # still mean the same thing later, which is what a customer bug report
-        # needs.
+        # to reproduce the earlier one. sha- at least names the commit, which is
+        # what a customer bug report starts from.
+        #
+        # But sha- is NOT byte-immutable, and this comment used to claim it was.
+        # Building the same commit twice gives two different images -- transitive
+        # python and node dependencies resolve at build time, and layer metadata
+        # carries timestamps -- and the second push silently replaces the first
+        # under the same tag. Demonstrated: two rehearsal builds of 369cf5c2
+        # produced sha256:1b3adf4c... and sha256:639ece98...
+        #
+        # So sha- answers "which commit", never "which bytes". For the second
+        # question the only honest answer is the digest, which a deployment can
+        # pin (image@sha256:...) and which release notes should record.
         #
         # :stable is written only by a build of main or of a release tag
         # (v*), which is always cut from main. It used to be written by every
