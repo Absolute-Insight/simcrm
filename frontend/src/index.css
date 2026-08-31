@@ -26,6 +26,24 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* One scale, three steps. A fourth step is how a design system starts to rot:
+   if something needs a radius between card and overlay, it is the wrong
+   element for the job, not a missing token. */
+:root {
+  --v-radius-control: 6px; /* inputs, buttons, badges, menu items */
+  --v-radius-card: 10px; /* cards, panels, list containers */
+  --v-radius-overlay: 14px; /* modals, popovers, slide-overs */
+
+  /* Density. Values are the starting point; they are tuned against
+     screenshots in Task 12, because PJS's 4.1% taller line box means the
+     right row height is something to measure on screen. */
+  --v-row-h: 40px;
+  --v-cell-px: 12px;
+  --v-section-gap: 20px;
+  --v-page-gutter: 20px;
+  --v-toolbar-h: 44px;
+}
+
 /* Vectora signature — the position rail. One gradient, one meaning: "you are
    here". Vertical lists get the rail; horizontal strips get the same gradient
    as an underline. It appears nowhere else except the logo mark itself.
@@ -174,6 +192,16 @@ body {
   --v-glass-shadow-hover:
     0 1px 2px rgba(16, 24, 40, 0.06), 0 14px 32px -14px rgba(16, 24, 40, 0.2);
   --v-gauge-track: var(--outline-gray-2);
+
+  /* Small elevation: a tint off pure white, so cards read as paper on a
+     surface rather than as holes punched in it. No blur, no glow — those
+     stay reserved for .v-glass. */
+  --v-glass-sm-bg: color-mix(
+    in srgb,
+    var(--surface-base) 97%,
+    var(--brand-500)
+  );
+  --v-glass-sm-border: var(--outline-gray-1);
 }
 [data-theme='dark'] {
   --v-glass-bg: rgba(255, 255, 255, 0.04);
@@ -188,6 +216,8 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.12),
     0 18px 40px -18px rgba(0, 0, 0, 0.7), 0 0 24px -8px rgba(91, 95, 232, 0.35);
   --v-gauge-track: rgba(255, 255, 255, 0.1);
+  --v-glass-sm-bg: rgba(255, 255, 255, 0.03);
+  --v-glass-sm-border: rgba(255, 255, 255, 0.07);
 }
 /* In light mode a ticked checkbox was indistinguishable from an unticked one,
    anywhere in the app. frappe-ui's Checkbox draws the tick as
@@ -230,6 +260,15 @@ input[type='checkbox']:checked {
   [data-theme='dark'] .v-glass {
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
+  }
+  /* Row- and inline-level lift, for surfaces that need to sit above the
+     canvas without becoming a full card. No blur even in dark: blur is
+     reserved for .v-glass, and nesting blurs is what makes a page expensive
+     to paint. */
+  .v-glass-sm {
+    background: var(--v-glass-sm-bg);
+    border: 1px solid var(--v-glass-sm-border);
+    border-radius: var(--v-radius-control);
   }
   /* Interactive glass only: a card that goes somewhere says so on hover. */
   .v-glass-hover:hover {
