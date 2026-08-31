@@ -310,7 +310,15 @@ function resolveFrameworkUi() {
 async function importFrappeUIPlugin(isDev, config) {
   if (isDev) {
     try {
-      // Check if local frappe-ui has the vite plugin file
+      // Opt-in dev override: build against a local frappe-ui checkout instead
+      // of the pinned npm package, for iterating on the two together. This
+      // used to be a git submodule, removed because its pinned commit no
+      // longer exists upstream — so the path is now yours to create or not:
+      //
+      //   git clone https://github.com/frappe/frappe-ui <repo-root>/frappe-ui
+      //
+      // Absent, the block below is skipped and the npm package is used; that
+      // is the normal path and the only one CI and production builds take.
       const fs = await import('node:fs')
       const localVitePluginPath = path.resolve(
         import.meta.dirname,
