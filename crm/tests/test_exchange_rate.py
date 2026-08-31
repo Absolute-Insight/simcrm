@@ -7,6 +7,8 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from crm.api.exchange_rate import (
+	_fetch_exchange_rate,
+	_fetch_from_sarb,
 	_fetch_from_exchangerate_api,
 	_fetch_from_exchangerate_host,
 	_fetch_from_fawaz_api,
@@ -226,3 +228,145 @@ class TestDealSurvivesAnUnreachableProvider(FrappeTestCase):
 
 		mock_fetch.assert_not_called()
 		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "exchange_rate"), 1)
+
+
+class TestFetchFromSarb(FrappeTestCase):
+	"""The SARB provider answers exactly what the central bank publishes: the
+	current official ZAR fix against USD, GBP, EUR and JPY. Everything else is
+	None, so the free-provider chain takes over."""
+
+	PAYLOAD = [
+		{"Name": "CPI", "TimeseriesCode": "CPI1000F", "Value": 4.3},
+		{"Name": "Rand per US Dollar", "TimeseriesCode": "EXCX135D", "Value": 16.0},
+		{"Name": "Rand per Euro", "TimeseriesCode": "EXCZ002D", "Value": 18.0},
+	]
+
+	@patch("crm.api.exchange_rate.requests.get")
+	def test_returns_the_published_rate_for_a_direct_pair(self, mock_get):
+		mock_get.return_value = _make_response(True, self.PAYLOAD)
+
+		self.assertEqual(_fetch_from_sarb("USD", "ZAR", "latest"), 16.0)
+
+	@patch("crm.api.exchange_rate.requests.get")
+	def test_returns_the_inverse_for_the_reversed_pair(self, mock_get):
+		mock_get.return_value = _make_response(True, self.PAYLOAD)
+
+		self.assertEqual(_fetch_from_sarb("ZAR", "USD", "latest"), 1 / 16.0)
+
+	@patch("crm.api.exchange_rate.requests.get")
+	def test_a_non_zar_pair_is_declined_without_a_network_call(self, mock_get):
+		self.assertIsNone(_fetch_from_sarb("USD", "EUR", "latest"))
+		mock_get.assert_not_called()
+
+	@patch("crm.api.exchange_rate.requests.get")
+	def test_a_historical_date_is_declined_without_a_network_call(self, mock_get):
+		"""SARB publishes today's fix, not history — a dated request belongs to
+		the fallback chain, which has ECB history for ZAR."""
+		self.assertIsNone(_fetch_from_sarb("USD", "ZAR", "2026-01-15"))
+		mock_get.assert_not_called()
+
+	@patch("crm.api.exchange_rate.requests.get")
+	def test_returns_none_when_response_not_ok(self, mock_get):
+		mock_get.return_value = _make_response(False, [])
+
+		self.assertIsNone(_fetch_from_sarb("USD", "ZAR", "latest"))
+
+	@patch("crm.api.exchange_rate.requests.get", side_effect=Exception("Connection refused"))
+	def test_returns_none_on_network_error(self, mock_get):
+		self.assertIsNone(_fetch_from_sarb("USD", "ZAR", "latest"))
+
+	@patch("crm.api.exchange_rate.requests.get")
+	def test_returns_none_when_the_timeseries_row_is_missing(self, mock_get):
+		mock_get.return_value = _make_response(True, [{"TimeseriesCode": "CPI1000F", "Value": 4.3}])
+
+		self.assertIsNone(_fetch_from_sarb("GBP", "ZAR", "latest"))
+
+	@patch("crm.api.exchange_rate.requests.get")
+	def test_a_zero_rate_is_unusable_not_a_division_error(self, mock_get):
+		mock_get.return_value = _make_response(True, [{"TimeseriesCode": "EXCX135D", "Value": 0}])
+
+		self.assertIsNone(_fetch_from_sarb("ZAR", "USD", "latest"))
+
+
+class TestSarbProviderRouting(FrappeTestCase):
+	"""provider == 'sarb' behaves like the other free providers: authoritative
+	when it can answer, silent fallback through the free chain when it cannot."""
+
+	@patch("crm.api.exchange_rate.frappe.get_single")
+	@patch("crm.api.exchange_rate._fetch_from_sarb")
+	def test_the_sarb_rate_wins_when_it_answers(self, mock_sarb, mock_single):
+		mock_single.return_value = _mock_settings("sarb")
+		mock_sarb.return_value = 16.0
+
+		rate, api_used = _fetch_exchange_rate("USD", "ZAR", "latest")
+
+		self.assertEqual((rate, api_used), (16.0, "sarb"))
+
+	@patch("crm.api.exchange_rate.frappe.get_single")
+	@patch("crm.api.exchange_rate._fetch_from_frankfurter")
+	@patch("crm.api.exchange_rate._fetch_from_sarb")
+	def test_falls_back_to_frankfurter_when_sarb_cannot_answer(self, mock_sarb, mock_frank, mock_single):
+		mock_single.return_value = _mock_settings("sarb")
+		mock_sarb.return_value = None
+		mock_frank.return_value = 0.052
+
+		rate, api_used = _fetch_exchange_rate("ZAR", "EUR", "2026-01-15")
+
+		self.assertEqual((rate, api_used), (0.052, "frankfurter"))
+
+	@patch("crm.api.exchange_rate.frappe.get_single")
+	@patch("crm.api.exchange_rate._fetch_from_fawaz_api")
+	@patch("crm.api.exchange_rate._fetch_from_frankfurter")
+	@patch("crm.api.exchange_rate._fetch_from_sarb")
+	def test_falls_all_the_way_to_fawaz(self, mock_sarb, mock_frank, mock_fawaz, mock_single):
+		mock_single.return_value = _mock_settings("sarb")
+		mock_sarb.return_value = None
+		mock_frank.return_value = None
+		mock_fawaz.return_value = 16.1
+
+		rate, api_used = _fetch_exchange_rate("USD", "ZAR", "latest")
+
+		self.assertEqual((rate, api_used), (16.1, "fawazahmed-exchange-api"))
+
+
+class TestEnableZarPatch(FrappeTestCase):
+	"""The dashboard-currency picker offers only enabled currencies, and frappe
+	ships ZAR disabled — which is what 'ZAR is missing' means in practice."""
+
+	def setUp(self):
+		super().setUp()
+		self.had_row = frappe.db.exists("Currency", "ZAR")
+		self.was_enabled = self.had_row and frappe.db.get_value("Currency", "ZAR", "enabled")
+
+	def tearDown(self):
+		if self.had_row:
+			frappe.db.set_value("Currency", "ZAR", "enabled", self.was_enabled or 0)
+		else:
+			frappe.delete_doc("Currency", "ZAR", force=True, ignore_missing=True)
+		super().tearDown()
+
+	def test_a_disabled_zar_is_enabled(self):
+		from crm.patches.v1_0.enable_zar_currency import execute
+
+		if not self.had_row:
+			self.skipTest("site has no ZAR row; covered by the creation test")
+		frappe.db.set_value("Currency", "ZAR", "enabled", 0)
+		execute()
+		self.assertEqual(frappe.db.get_value("Currency", "ZAR", "enabled"), 1)
+
+	def test_the_patch_is_idempotent(self):
+		from crm.patches.v1_0.enable_zar_currency import execute
+
+		execute()
+		execute()
+		self.assertEqual(frappe.db.get_value("Currency", "ZAR", "enabled"), 1)
+
+	def test_a_site_without_the_row_gets_a_complete_one(self):
+		from crm.patches.v1_0.enable_zar_currency import execute
+
+		frappe.delete_doc("Currency", "ZAR", force=True, ignore_missing=True)
+		execute()
+		row = frappe.db.get_value("Currency", "ZAR", ["enabled", "symbol", "fraction"], as_dict=True)
+		self.assertEqual(row.enabled, 1)
+		self.assertEqual(row.symbol, "R")
+		self.assertEqual(row.fraction, "Cent")
