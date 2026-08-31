@@ -2,11 +2,17 @@
 @import '@fontsource-variable/plus-jakarta-sans';
 @import './styles/vectora-theme.css';
 
-/* Body face. frappe-ui's inter.css sets `:root { font-family: InterVar }` from
-   its own import above; both rules are :root specificity, so this wins on
-   source order alone. Overriding Tailwind's `fontFamily.sans` is not
-   sufficient — almost everything inherits from :root rather than carrying a
-   `font-sans` utility. */
+/* Body face. frappe-ui's inter.css (imported above) has no live font-family
+   declaration — its `:root { font-family: InterVar }` lines sit inside a
+   "Variable fonts usage" comment block in that file, not live CSS, and its
+   Tailwind preset defines no `fontFamily` key either. The actual
+   default-face rules are `html { font-family: InterVar, ... }` (frappe-ui's
+   plugin) and Tailwind's own preflight `html, :host { font-family:
+   theme(fontFamily.sans) }` — both element selectors, specificity (0,0,1).
+   This `:root` rule wins on specificity alone, (0,1,0), regardless of
+   source order. Overriding Tailwind's `fontFamily.sans` is not sufficient
+   on its own — almost everything inherits from the root element rather
+   than carrying a `font-sans` utility. */
 :root {
   --v-font-sans:
     'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', InterVar, ui-sans-serif,
