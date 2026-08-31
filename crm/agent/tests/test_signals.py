@@ -1070,7 +1070,9 @@ class StalePlanRowsTest(IntegrationTestCase):
 		)
 		deals = []
 		for _ in range(2):
-			deal = frappe.get_doc({"doctype": "CRM Deal", "organization": org}).insert(ignore_permissions=True)
+			deal = frappe.get_doc({"doctype": "CRM Deal", "organization": org}).insert(
+				ignore_permissions=True
+			)
 			self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True, ignore_missing=True)
 			deals.append(deal.name)
 

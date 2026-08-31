@@ -106,9 +106,7 @@ def score_deal(features: dict, close_horizon_days: int = CLOSE_HORIZON_DAYS) -> 
 			factors.append(
 				{
 					"key": "slow_stage",
-					"label": (
-						f"{ratio:.1f}x slower through {stage} than the usual " f"{stage_median:.0f} days"
-					),
+					"label": (f"{ratio:.1f}x slower through {stage} than the usual {stage_median:.0f} days"),
 					"weight": min(
 						SLOW_STAGE_WEIGHT_CAP,
 						round((ratio - 1) * SLOW_STAGE_WEIGHT_PER_MULTIPLE),

@@ -282,8 +282,7 @@ class ReportTerritoryFilterTest(TerritoryFixture, IntegrationTestCase):
 		self.assertEqual(
 			ignored,
 			[],
-			"these reports claim territory_filtered but return identical rows for "
-			"two different territories",
+			"these reports claim territory_filtered but return identical rows for two different territories",
 		)
 
 	def test_a_blind_report_really_is_unchanged(self):

@@ -747,7 +747,9 @@ def _dismissal_counts(candidates: list[dict]) -> dict[tuple[str, str], int]:
 	return {(row["user"], row["signal"]): row["dismissals"] for row in rows}
 
 
-def suggestion_blocked(signal: str, reference_docname: str, user: str | None, now: datetime | None = None) -> bool:
+def suggestion_blocked(
+	signal: str, reference_docname: str, user: str | None, now: datetime | None = None
+) -> bool:
 	"""Would :func:`dedupe` drop this (signal, record, user) right now?
 
 	For creators outside the hourly run -- the rule engine fires on save. Its

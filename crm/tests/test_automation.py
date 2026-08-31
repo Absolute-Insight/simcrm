@@ -634,7 +634,9 @@ class RuleLifecycleTest(IntegrationTestCase):
 			close_horizon_days=SIGNAL_DEFAULTS["close_horizon_days"],
 			max_open_per_user=1,
 		)
-		make_rule(title="Capped", action="Create Suggestion", title_template="One more {{ doc.organization }}")
+		make_rule(
+			title="Capped", action="Create Suggestion", title_template="One more {{ doc.organization }}"
+		)
 		with mock.patch("crm.automation.get_signal_config", return_value=pinned):
 			deal = self.make_deal(deal_owner=self.owner)
 

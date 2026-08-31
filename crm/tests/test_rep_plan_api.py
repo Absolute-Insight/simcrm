@@ -312,7 +312,9 @@ class RepPlanApiTest(IntegrationTestCase):
 		frappe.set_user(REP)
 		out = save_plan(self.monday, [{"activity_type": "Call", "planned_date": self.monday}])
 		item_name = out["items"][0]["name"]
-		mark_fulfilled(item_name, fulfilled_by_doctype="CRM Task", fulfilled_by=self.make_task(assigned_to=REP))
+		mark_fulfilled(
+			item_name, fulfilled_by_doctype="CRM Task", fulfilled_by=self.make_task(assigned_to=REP)
+		)
 
 		out = save_plan(
 			self.monday,

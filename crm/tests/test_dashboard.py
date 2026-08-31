@@ -898,9 +898,9 @@ class PeriodWindowTest(IntegrationTestCase):
 		other suites' fixtures cannot drift into either window."""
 
 		def lead_on(day: str) -> None:
-			doc = frappe.get_doc(
-				{"doctype": "CRM Lead", "first_name": "Window", "last_name": day}
-			).insert(ignore_permissions=True)
+			doc = frappe.get_doc({"doctype": "CRM Lead", "first_name": "Window", "last_name": day}).insert(
+				ignore_permissions=True
+			)
 			frappe.db.set_value("CRM Lead", doc.name, "creation", f"{day} 12:00:00", update_modified=False)
 
 		# current period: Mar 1..Mar 31 2031 (31 days); previous: Jan 29..Feb 28

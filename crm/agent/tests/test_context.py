@@ -155,7 +155,12 @@ class BudgetAndSortHardeningTest(UnitTestCase):
 		from datetime import datetime
 
 		comms = [
-			{"name": "COMM-1", "creation": datetime(2026, 8, 1, 9, 0), "sender": "a@x.test", "content": "first"},
+			{
+				"name": "COMM-1",
+				"creation": datetime(2026, 8, 1, 9, 0),
+				"sender": "a@x.test",
+				"content": "first",
+			},
 			{"name": "COMM-2", "creation": None, "sender": "b@x.test", "content": "second"},
 		]
 		messages = build_thread_messages(DEAL, comms)
