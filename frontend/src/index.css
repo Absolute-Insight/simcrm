@@ -168,6 +168,38 @@ body {
     0 18px 40px -18px rgba(0, 0, 0, 0.7), 0 0 24px -8px rgba(91, 95, 232, 0.35);
   --v-gauge-track: rgba(255, 255, 255, 0.1);
 }
+/* In light mode a ticked checkbox was indistinguishable from an unticked one,
+   anywhere in the app. frappe-ui's Checkbox draws the tick as
+   @tailwindcss/forms' background-image -- an SVG with fill='white' -- and
+   relies on the plugin's `[type=checkbox]:checked { background-color:
+   currentColor }` to put a coloured field behind it. Under Tailwind 4 that rule
+   sits in @layer base while the component's own `bg-surface-base` is a utility,
+   and layer order beats specificity, so the field stays surface-coloured. A
+   bare <input type=checkbox> is unaffected -- it carries no background utility
+   for the plugin rule to lose to.
+
+   Measured, not inferred. Light: checked and unchecked both computed to
+   `srgb(0.980 0.984 1)`, so a white tick on a white field. Dark: both computed
+   to `srgb(0.075 0.082 0.129)`, where a white tick is perfectly legible -- the
+   bug never existed there.
+
+   Which is why this is NOT `currentColor`, the obvious fix. The component sets
+   `text-[color:var(--surface-gray-10)]`, and that token inverts per theme:
+   rgb(20,22,35) in light but rgb(246,247,254) in dark, giving a white tick
+   1.07:1 against its own field. It would fix light and break dark. Measured
+   before it shipped, because AGENTS.md says to check both themes and this is
+   exactly the trap it is warning about.
+
+   --surface-blue-6 holds a white tick at 8.74:1 light and 8.64:1 dark, so it
+   clears AAA in both and needs no per-theme branch. Unlayered so it outranks
+   the utility; @layer utilities would merely tie with bg-surface-base.
+
+   Remove when frappe-ui stops setting an unconditional background utility on
+   the input. */
+input[type='checkbox']:checked {
+  background-color: var(--surface-blue-6, #2b7cd3);
+}
+
 @layer components {
   .v-glass {
     background: var(--v-glass-bg);
