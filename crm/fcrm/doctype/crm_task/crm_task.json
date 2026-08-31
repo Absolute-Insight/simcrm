@@ -13,6 +13,7 @@
   "start_date",
   "reference_doctype",
   "reference_docname",
+  "automation_rule",
   "column_break_cqua",
   "assigned_to",
   "status",
@@ -86,11 +87,20 @@
    "fieldtype": "Dynamic Link",
    "label": "Reference Doc",
    "options": "reference_doctype"
+  },
+  {
+   "fieldname": "automation_rule",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Automation Rule",
+   "no_copy": 1,
+   "read_only": 1,
+   "description": "The CRM Automation Rule that created this task; the flap guard keys on it. Data rather than Link so deleting a rule cannot orphan its tasks. A renamed rule leaves old tasks under its old name, costing at most one duplicate task on that rule's next fire."
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-03-26 12:55:16.304522",
+ "modified": "2026-09-01 00:30:00.000000",
  "modified_by": "shariq@frappe.io",
  "module": "FCRM",
  "name": "CRM Task",

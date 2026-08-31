@@ -525,3 +525,143 @@ class RuleScoreBackfillPatchTest(IntegrationTestCase):
 		frappe.db.set_value("CRM Automation Rule", name, "suggestion_score", 5, update_modified=False)
 		execute()
 		self.assertEqual(self.score(name), 5)
+
+
+class RuleLifecycleTest(IntegrationTestCase):
+	"""Rule-created suggestions must honour the suggestion lifecycle, and the
+	task flap guard must key on the rule rather than the rendered title."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.db.delete("CRM Automation Rule")
+		frappe.db.delete("CRM Suggestion", {"signal": ("like", "rule:%")})
+		frappe.db.delete("CRM Task", {"title": ("like", "%Lifecycle Org%")})
+		self.org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Lifecycle Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		self.owner = ensure_user("automation-lifecycle@crmtest.test", "Lifecycle Owner")
+		self._made = []
+
+	def tearDown(self):
+		frappe.db.delete("CRM Automation Rule")
+		frappe.db.delete("CRM Suggestion", {"signal": ("like", "rule:%")})
+		frappe.db.delete("CRM Suggestion", {"signal": "lifecycle_test"})
+		for doctype, name in self._made:
+			frappe.delete_doc(doctype, name, force=True, ignore_missing=True)
+		super().tearDown()
+
+	def make_deal(self, **kwargs):
+		deal = frappe.get_doc({"doctype": "CRM Deal", "organization": self.org, **kwargs}).insert()
+		self._made.append(("CRM Deal", deal.name))
+		return deal
+
+	def tasks_for(self, doc):
+		return frappe.get_all(
+			"CRM Task",
+			filters={"reference_doctype": doc.doctype, "reference_docname": doc.name},
+			fields=["title"],
+			order_by="creation asc",
+		)
+
+	def suggestions_for(self, doc):
+		return frappe.get_all(
+			"CRM Suggestion",
+			filters={"reference_docname": doc.name, "signal": ("like", "rule:%")},
+			fields=["name", "status", "user"],
+		)
+
+	def working_statuses(self, count=2):
+		return frappe.get_all(
+			"CRM Deal Status", filters={"type": ("in", ("Open", "Ongoing"))}, pluck="name", limit=count
+		)
+
+	def test_a_dismissed_rule_suggestion_is_not_recreated_inside_the_cooldown(self):
+		"""A rep who said no to this rule's suggestion must not be overruled by
+		the next status flap -- the old duplicate check only saw Open rows, so a
+		Dismissed one was recreated immediately."""
+		statuses = self.working_statuses()
+		make_rule(
+			title="Lifecycle nudge",
+			trigger="Status Changed",
+			action="Create Suggestion",
+			title_template="Chase {{ doc.organization }}",
+		)
+		deal = self.make_deal(status=statuses[0], deal_owner=self.owner)
+		deal.status = statuses[1]
+		deal.save()
+		rows = self.suggestions_for(deal)
+		self.assertEqual(len(rows), 1)
+
+		frappe.db.set_value("CRM Suggestion", rows[0].name, "status", "Dismissed")
+		deal.reload()
+		deal.status = statuses[0]
+		deal.save()
+
+		rows = self.suggestions_for(deal)
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(rows[0].status, "Dismissed")
+
+	def test_a_rule_cannot_push_a_rep_past_the_open_cap(self):
+		"""cap_per_user bounds the hourly run; a rule firing on save used to
+		write straight past the ceiling and leave the hourly trim to mop up."""
+		from unittest import mock
+
+		from crm.agent.config import SIGNAL_DEFAULTS, SignalConfig
+
+		parked = self.make_deal(deal_owner=self.owner)
+		frappe.get_doc(
+			{
+				"doctype": "CRM Suggestion",
+				"signal": "lifecycle_test",
+				"title": "already open",
+				"rationale": "already open",
+				"reference_doctype": "CRM Deal",
+				"reference_docname": parked.name,
+				"user": self.owner,
+				"status": "Open",
+				"suggested_action": "create_task",
+				"action_payload": "{}",
+			}
+		).insert(ignore_permissions=True)
+
+		pinned = SignalConfig(
+			signals_enabled=True,
+			idle_deal_days=SIGNAL_DEFAULTS["idle_deal_days"],
+			suggestion_ttl_days=SIGNAL_DEFAULTS["suggestion_ttl_days"],
+			dismiss_cooldown_days=SIGNAL_DEFAULTS["dismiss_cooldown_days"],
+			close_horizon_days=SIGNAL_DEFAULTS["close_horizon_days"],
+			max_open_per_user=1,
+		)
+		make_rule(
+			title="Capped", action="Create Suggestion", title_template="One more {{ doc.organization }}"
+		)
+		with mock.patch("crm.automation.get_signal_config", return_value=pinned):
+			deal = self.make_deal(deal_owner=self.owner)
+
+		self.assertEqual(self.suggestions_for(deal), [])
+
+	def test_a_mutable_title_template_does_not_stack_tasks(self):
+		"""A title interpolating a field that changes per flap renders a fresh
+		title each time, which walked straight past a guard keyed on the title."""
+		statuses = self.working_statuses()
+		make_rule(
+			title="Status chaser",
+			trigger="Status Changed",
+			title_template="Follow up: {{ doc.status }}",
+		)
+		deal = self.make_deal(status=statuses[0])
+		for status in (statuses[1], statuses[0]):
+			deal.status = status
+			deal.save()
+			deal.reload()
+		self.assertEqual(len(self.tasks_for(deal)), 1)
+
+	def test_two_rules_with_the_same_title_both_create_their_task(self):
+		"""Two distinct rules are two instructions; the title-keyed guard made
+		whichever ran second silently create nothing."""
+		make_rule(title="R1", title_template="Same task title")
+		make_rule(title="R2", title_template="Same task title")
+		deal = self.make_deal()
+		self.assertEqual(len(self.tasks_for(deal)), 2)

@@ -18,7 +18,13 @@ import frappe
 from jinja2.sandbox import SandboxedEnvironment
 
 from crm.agent.config import get_signal_config
-from crm.agent.signals import TITLE_MAX_LENGTH, clear_suggestions_for, resync_owner
+from crm.agent.signals import (
+	TITLE_MAX_LENGTH,
+	clear_suggestions_for,
+	resync_owner,
+	suggestion_blocked,
+	user_at_open_cap,
+)
 
 OWNER_FIELD = {"CRM Lead": "lead_owner", "CRM Deal": "deal_owner"}
 
@@ -172,16 +178,33 @@ def _apply(rule, doc) -> None:
 	description = render_rule_template(rule.description_template, doc_dict)
 
 	if rule.action == "Create Task":
-		# status flapping must not stack duplicate tasks for the same record
-		if frappe.db.exists(
+		# Status flapping must not stack duplicate tasks for the same record.
+		# Keyed on the rule, not the rendered title: a template interpolating a
+		# mutable field ("Follow up: {{ doc.status }}") renders a fresh title
+		# per flap and walked straight past a title-keyed guard, while two
+		# distinct rules that happen to render the same title are two
+		# instructions and used to suppress each other. The title arm survives
+		# only for rows created before the field existed.
+		open_statuses = ("not in", ("Done", "Canceled"))
+		duplicate = frappe.db.exists(
 			"CRM Task",
 			{
+				"automation_rule": rule.name,
+				"reference_doctype": doc.doctype,
+				"reference_docname": doc.name,
+				"status": open_statuses,
+			},
+		) or frappe.db.exists(
+			"CRM Task",
+			{
+				"automation_rule": ("is", "not set"),
 				"title": title,
 				"reference_doctype": doc.doctype,
 				"reference_docname": doc.name,
-				"status": ("not in", ("Done", "Canceled")),
+				"status": open_statuses,
 			},
-		):
+		)
+		if duplicate:
 			return
 		frappe.get_doc(
 			{
@@ -194,20 +217,21 @@ def _apply(rule, doc) -> None:
 				"assigned_to": owner,
 				"reference_doctype": doc.doctype,
 				"reference_docname": doc.name,
+				"automation_rule": rule.name,
 			}
 		).insert(ignore_permissions=True)
 
 	elif rule.action == "Create Suggestion":
 		signal = f"rule:{rule.name}"
-		# status flapping must not stack duplicates for the same record
-		if frappe.db.exists(
-			"CRM Suggestion",
-			{
-				"signal": signal,
-				"reference_docname": doc.name,
-				"status": "Open",
-			},
-		):
+		# The same lifecycle the hourly signals honour, not a bare Open-only
+		# check: an Open row blocks, and so do the dismiss/accept cooldowns and
+		# the repeat-dismisser multiplier -- a rep who said no to this rule's
+		# suggestion must not be overruled by the next status flap.
+		if suggestion_blocked(signal, doc.name, owner):
+			return
+		# And the same ceiling: a bulk import firing Created rules must not
+		# write past the rep's cap and leave the hourly trim to mop up.
+		if user_at_open_cap(owner, get_signal_config().max_open_per_user):
 			return
 		frappe.get_doc(
 			{
