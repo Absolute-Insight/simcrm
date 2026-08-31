@@ -60,8 +60,11 @@ Three consequences drive the design:
 Add `@fontsource-variable/plus-jakarta-sans`; remove
 `@fontsource-variable/space-grotesk` and its `@import`.
 
-Body inherits PJS by overriding `fontFamily.sans` in the Tailwind preset, so
-frappe-ui's own components pick it up without per-component edits.
+Body inherits PJS from a `:root` rule in `index.css`, with `fontFamily.sans`
+set to match so the `font-sans` utility agrees. (frappe-ui ships no live
+`font-family` declaration — the `:root` rules in its `inter.css` sit inside a
+comment block — and its preset defines no `fontFamily` key, so ours is the
+only one.)
 
 **Display differentiation moves from family to weight and tracking.** There is
 no second family any more: `fontFamily.display` resolves to PJS, and the

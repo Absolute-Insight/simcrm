@@ -63,16 +63,21 @@
 - Consumes: nothing.
 - Produces: `--v-font-sans` CSS variable, consumed by every later tier. (Task 2 deliberately does **not** consume it — ECharts renders to canvas and cannot resolve CSS custom properties, so the chart config carries the family as a literal.) `fontFamily.sans` / `fontFamily.display` Tailwind keys both resolving to `'Plus Jakarta Sans Variable'`.
 
-**Why a `:root` rule and not just the Tailwind key:** frappe-ui sets the body face in `node_modules/frappe-ui/src/fonts/Inter/inter.css`, which `frappe-ui/style.css` imports on its line 1:
+**Why a `:root` rule and not just the Tailwind key:** elements inherit their
+face from `:root`, not from a `font-sans` utility, so overriding
+`fontFamily.sans` alone would leave most of the app on whatever `:root`
+resolves to.
 
-```css
-:root { font-family: "Inter", sans-serif; }
-@supports (font-variation-settings: normal) {
-  :root { font-family: "InterVar", sans-serif; font-optical-sizing: auto; }
-}
-```
-
-Elements inherit from `:root`, not from a `font-sans` utility, so overriding `fontFamily.sans` alone would leave most of the app on Inter. Both rules are `:root` specificity, so **source order decides** — our block must come after all `@import`s in `index.css`.
+**Corrected during implementation:** an earlier draft of this plan claimed
+frappe-ui sets `:root { font-family: InterVar }` in
+`node_modules/frappe-ui/src/fonts/Inter/inter.css`, and that our override wins
+on source order. That is wrong. Lines 1-5 of that file are a
+`/* Variable fonts usage: ... */` **comment block** — the `:root` rules inside
+it are documentation, not live CSS. frappe-ui ships no live `font-family`
+declaration at all, and its Tailwind preset defines no `fontFamily` key.
+Our `:root` rule is therefore the only one, and it wins outright rather than
+on ordering. Do not reason about other `:root` overrides in this plan from the
+retracted source-order claim.
 
 - [ ] **Step 1: Swap the font packages**
 
