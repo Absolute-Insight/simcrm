@@ -1125,8 +1125,8 @@ def get_funnel_conversion(
 
 	result.append({"stage": "Leads", "count": total_leads_count})
 
-	result += get_deal_status_change_counts(from_date, to_date, user)
-	result.append({"stage": _("Lost"), "count": lost_deal_count(from_date, to_date, user)})
+	result += get_deal_status_change_counts(from_date, to_date, user, territory)
+	result.append({"stage": _("Lost"), "count": lost_deal_count(from_date, to_date, user, territory)})
 
 	return {
 		"data": result or [],
@@ -1733,6 +1733,7 @@ def get_deal_status_change_counts(
 	from_date: str | None = None,
 	to_date: str | None = None,
 	user: str | None = None,
+	territory: str | None = None,
 ):
 	"""
 	Count the deals that ever reached each stage, ordered by stage position.
@@ -1779,11 +1780,19 @@ def get_deal_status_change_counts(
 
 	if user:
 		query = query.where(belongs_to(CRMDeal, user, "CRM Deal"))
+	# the funnel is stamped territory_filtered, so every row has to mean it —
+	# these two used to skip the filter while the lead row honoured it
+	query = apply_territory(query, CRMDeal, territory)
 
 	return scope_deals(query).run(as_dict=True) or []
 
 
-def lost_deal_count(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def lost_deal_count(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""Deals created in the period that are lost today — the funnel's terminal row."""
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
@@ -1797,6 +1806,7 @@ def lost_deal_count(from_date: str | None = None, to_date: str | None = None, us
 	)
 	if user:
 		query = query.where(belongs_to(Deal, user, "CRM Deal"))
+	query = apply_territory(query, Deal, territory)
 
 	rows = scope_deals(query).run(as_dict=True)
 	return rows[0].count if rows else 0

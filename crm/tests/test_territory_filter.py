@@ -293,3 +293,43 @@ class ReportTerritoryFilterTest(TerritoryFixture, IntegrationTestCase):
 
 	def test_the_blind_list_only_names_reports_that_exist(self):
 		self.assertEqual(REPORT_TERRITORY_BLIND - set(REPORTS), set())
+
+
+class FunnelTerritoryTest(TerritoryFixture, IntegrationTestCase):
+	"""Every funnel row must narrow, not just the lead row.
+
+	Only the Leads count used to be territory-scoped: the stage rows and the
+	Lost row were company-wide, while territory_filtered still read true — so
+	one region's leads appeared to convert into the whole company's deals, with
+	the response vouching for the lie.
+	"""
+
+	def rows(self, territory):
+		result = get_chart(
+			name="funnel_conversion",
+			type="axis_chart",
+			from_date=self.from_date,
+			to_date=self.to_date,
+			territory=territory,
+		)
+		return {row["stage"]: row["count"] for row in result["data"]}
+
+	def test_the_lost_row_narrows_to_the_territory(self):
+		self.assertEqual(self.rows(NORTH)["Lost"], 2)
+		self.assertEqual(self.rows(SOUTH)["Lost"], 1)
+
+	def test_the_stage_rows_narrow_to_the_territory(self):
+		"""A deal logs a ``to`` row only on a real transition (insert writes the
+		initial status into ``from``), so make one transition in North: its stage
+		row must count there and not in South's funnel."""
+		deal_name = next(name for doctype, name in self.created if doctype == "CRM Deal")
+		deal = frappe.get_doc("CRM Deal", deal_name)
+		deal.status = frappe.db.get_value(
+			"CRM Deal Status", {"name": ("!=", deal.status), "type": ("in", ("Open", "Ongoing"))}
+		)
+		deal.save(ignore_permissions=True)
+
+		def stage_total(rows):
+			return sum(count for stage, count in rows.items() if stage not in ("Leads", "Lost"))
+
+		self.assertGreater(stage_total(self.rows(NORTH)), stage_total(self.rows(SOUTH)))
