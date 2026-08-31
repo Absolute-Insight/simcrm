@@ -95,12 +95,12 @@
    "label": "Automation Rule",
    "no_copy": 1,
    "read_only": 1,
-   "description": "The CRM Automation Rule that created this task; the flap guard keys on it. Data rather than Link so deleting a rule cannot orphan its tasks."
+   "description": "The CRM Automation Rule that created this task; the flap guard keys on it. Data rather than Link so deleting a rule cannot orphan its tasks. A renamed rule leaves old tasks under its old name, costing at most one duplicate task on that rule's next fire."
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-08-31 12:00:00.000000",
+ "modified": "2026-09-01 00:30:00.000000",
  "modified_by": "shariq@frappe.io",
  "module": "FCRM",
  "name": "CRM Task",

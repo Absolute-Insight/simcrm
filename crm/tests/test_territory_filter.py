@@ -331,4 +331,7 @@ class FunnelTerritoryTest(TerritoryFixture, IntegrationTestCase):
 		def stage_total(rows):
 			return sum(count for stage, count in rows.items() if stage not in ("Leads", "Lost"))
 
-		self.assertGreater(stage_total(self.rows(NORTH)), stage_total(self.rows(SOUTH)))
+		# exact, not merely greater: a partially-applied filter could still
+		# order the two, and the fixture makes the true counts knowable
+		self.assertEqual(stage_total(self.rows(NORTH)), 1)
+		self.assertEqual(stage_total(self.rows(SOUTH)), 0)
