@@ -744,6 +744,44 @@ def _dismissal_counts(candidates: list[dict]) -> dict[tuple[str, str], int]:
 	return {(row["user"], row["signal"]): row["dismissals"] for row in rows}
 
 
+def suggestion_blocked(signal: str, reference_docname: str, user: str | None, now: datetime | None = None) -> bool:
+	"""Would :func:`dedupe` drop this (signal, record, user) right now?
+
+	For creators outside the hourly run -- the rule engine fires on save. Its
+	old Open-only exists check silently bypassed the dismiss/accept cooldowns
+	and the repeat-dismisser multiplier, so a suggestion the rep had just
+	dismissed came straight back on the next status flap. One candidate, the
+	same machinery.
+	"""
+	now = now or frappe.utils.now_datetime()
+	cfg = get_signal_config()
+	existing = frappe.get_all(
+		"CRM Suggestion",
+		filters={"signal": signal, "reference_docname": reference_docname},
+		fields=["signal", "reference_docname", "user", "status", "modified"],
+	)
+	candidate = {"signal": signal, "reference_docname": reference_docname, "user": user}
+	dismissals = _dismissal_counts([candidate]) if user else {}
+	return not dedupe([candidate], existing, now, cfg.dismiss_cooldown_days, dismissals)
+
+
+def user_at_open_cap(user: str | None, cap: int) -> bool:
+	"""Is this rep's (or the unowned bucket's) open queue already full?
+
+	``cap_per_user`` enforces the ceiling inside the hourly run; a creator
+	outside it has to ask the same question one row at a time, against the same
+	buckets -- the unowned rows share ``""`` here as they do everywhere else.
+	"""
+	from frappe.query_builder.functions import Count
+
+	table = frappe.qb.DocType("CRM Suggestion")
+	owner = (table.user.isnull() | (table.user == "")) if not user else table.user == user
+	count = (
+		frappe.qb.from_(table).select(Count(table.name)).where(table.status == "Open").where(owner).run()
+	)[0][0]
+	return count >= cap
+
+
 def expire_stale(now: datetime) -> int:
 	"""Flip every overdue open suggestion in one statement, touching ``modified``.
 
