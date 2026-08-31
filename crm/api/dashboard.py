@@ -311,6 +311,20 @@ def _run_chart(name, chart, from_date, to_date, user, territory):
 	return result
 
 
+def period_windows(from_date, to_date) -> tuple:
+	"""``(prev_from_date, to_date_plus_one)`` for a period-over-period tile.
+
+	The current window is ``[from_date, to_date]`` inclusive — ``diff + 1``
+	days. The previous window must be the same length, ending the day before
+	``from_date``: ``[prev_from_date, from_date)``. The old per-tile arithmetic
+	used ``diff`` days, so every tile compared a 31-day month against a 30-day
+	window and reported ~3.3% growth on uniform activity — in eight copies,
+	which is also why this is a helper now.
+	"""
+	days = date_diff(to_date, from_date) + 1
+	return add_days(from_date, -days), add_days(to_date, 1)
+
+
 def get_total_leads(
 	from_date: str | None = None,
 	to_date: str | None = None,
@@ -320,12 +334,7 @@ def get_total_leads(
 	"""
 	Get lead count for the dashboard.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 
 	Lead = DocType("CRM Lead")
 
@@ -375,12 +384,7 @@ def get_ongoing_deals(
 	"""
 	Get ongoing deal count for the dashboard, and also calculate average deal value for ongoing deals.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
@@ -442,12 +446,7 @@ def get_average_ongoing_deal_value(
 	"""
 	Get ongoing deal count for the dashboard, and also calculate average deal value for ongoing deals.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
@@ -510,12 +509,7 @@ def get_won_deals(
 	"""
 	Get won deal count for the dashboard, and also calculate average deal value for won deals.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
@@ -573,12 +567,7 @@ def get_average_won_deal_value(
 	"""
 	Get won deal count for the dashboard, and also calculate average deal value for won deals.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
@@ -637,12 +626,7 @@ def get_average_deal_value(
 	"""
 	Get average deal value for the dashboard.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
@@ -699,12 +683,7 @@ def get_average_time_to_close_a_lead(
 	"""
 	Get average time to close deals for the dashboard.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 	prev_to_date = from_date
 
 	Deal = DocType("CRM Deal")
@@ -770,12 +749,7 @@ def get_average_time_to_close_a_deal(
 	"""
 	Get average time to close deals for the dashboard.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 	prev_to_date = from_date
 
 	Deal = DocType("CRM Deal")
@@ -1896,8 +1870,10 @@ def get_plan_adherence(
 	"""
 	current = plan_adherence(from_date, to_date, user)[0]
 
-	diff = date_diff(to_date, from_date) or 1
-	previous = plan_adherence(add_days(from_date, -diff), add_days(from_date, -1), user)[0]
+	# the same equal-length rule period_windows applies to the tiles: the
+	# current window is diff+1 days inclusive, so the previous one must be too
+	days = date_diff(to_date, from_date) + 1
+	previous = plan_adherence(add_days(from_date, -days), add_days(from_date, -1), user)[0]
 
 	return {
 		"title": _("Plan adherence"),

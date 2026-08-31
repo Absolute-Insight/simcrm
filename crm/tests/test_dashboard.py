@@ -868,3 +868,45 @@ class TestBlankGroupingLabels(IntegrationTestCase):
 	def test_the_label_is_translated_per_call(self):
 		"""Not frozen at import: a module is evaluated once per worker."""
 		self.assertEqual(blank_label(), frappe._("Unassigned"))
+
+
+class PeriodWindowTest(IntegrationTestCase):
+	"""The previous window must be the same length as the current one.
+
+	Every number tile compared ``[from_date, to_date]`` inclusive (diff+1 days)
+	against ``[from_date - diff, from_date)`` (diff days), so a 31-day month was
+	measured against a 30-day window and uniform activity read as ~+3.3% growth.
+	"""
+
+	def test_the_previous_window_is_the_same_length_as_the_current_one(self):
+		from crm.api.dashboard import period_windows
+
+		prev_from, to_plus_one = period_windows("2026-08-01", "2026-08-31")
+		self.assertEqual(str(prev_from), "2026-07-01")
+		self.assertEqual(str(to_plus_one), "2026-09-01")
+
+	def test_a_single_day_period_compares_against_the_single_previous_day(self):
+		from crm.api.dashboard import period_windows
+
+		prev_from, to_plus_one = period_windows("2026-08-15", "2026-08-15")
+		self.assertEqual(str(prev_from), "2026-08-14")
+		self.assertEqual(str(to_plus_one), "2026-08-16")
+
+	def test_uniform_activity_reports_no_growth(self):
+		"""Two leads in each window, the earliest on the day the old arithmetic
+		excluded, must read as delta 0 — not +100%. Dated far in the future so
+		other suites' fixtures cannot drift into either window."""
+
+		def lead_on(day: str) -> None:
+			doc = frappe.get_doc(
+				{"doctype": "CRM Lead", "first_name": "Window", "last_name": day}
+			).insert(ignore_permissions=True)
+			frappe.db.set_value("CRM Lead", doc.name, "creation", f"{day} 12:00:00", update_modified=False)
+
+		# current period: Mar 1..Mar 31 2031 (31 days); previous: Jan 29..Feb 28
+		for day in ("2031-01-29", "2031-02-10", "2031-03-05", "2031-03-20"):
+			lead_on(day)
+
+		result = get_total_leads("2031-03-01", "2031-03-31")
+		self.assertEqual(result["value"], 2)
+		self.assertEqual(result["delta"], 0)
