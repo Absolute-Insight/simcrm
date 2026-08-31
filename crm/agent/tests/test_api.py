@@ -365,3 +365,90 @@ class TestConnectionTest(IntegrationTestCase):
 		frappe.set_user(email)
 		with self.assertRaises(frappe.PermissionError):
 			api_mod.test_connection()
+
+
+class BudgetRefundTest(IntegrationTestCase):
+	"""A refused call must cost nobody anything.
+
+	The site counter used to be charged before the per-user check with no refund
+	on refusal, so one capped account's retries — still permitted by the burst
+	limiter — could spend the whole site's day on calls that never reached the
+	model.
+	"""
+
+	def test_a_capped_users_retries_do_not_burn_the_site_budget(self):
+		shared = AgentConfig(
+			enabled=True, base_url="http://x/v1", model="m", timeout=5, max_tokens=64, daily_call_budget=100
+		)
+		site_key, user_key = api_mod.budget_key(), api_mod.user_budget_key()
+		for key in (site_key, user_key):
+			frappe.cache().delete(key)
+			self.addCleanup(frappe.cache().delete, key)
+		# the rep has already spent their share of 20
+		frappe.cache().setex(user_key, 3600, api_mod.user_daily_call_budget(shared))
+
+		for _ in range(5):
+			self.assertTrue(api_mod._budget_spent(shared))
+
+		# the refusals crept nothing: user counter pinned at its cap, site untouched
+		self.assertEqual(int(frappe.cache().get(user_key)), api_mod.user_daily_call_budget(shared))
+		self.assertEqual(int(frappe.cache().get(site_key) or 0), 0)
+
+	def test_a_refused_site_budget_charges_neither_counter(self):
+		tiny = AgentConfig(
+			enabled=True, base_url="http://x/v1", model="m", timeout=5, max_tokens=64, daily_call_budget=1
+		)
+		site_key, user_key = api_mod.budget_key(), api_mod.user_budget_key()
+		for key in (site_key, user_key):
+			frappe.cache().delete(key)
+			self.addCleanup(frappe.cache().delete, key)
+		frappe.cache().setex(site_key, 3600, 1)  # the site's day is spent by someone else
+
+		self.assertTrue(api_mod._budget_spent(tiny))
+		self.assertEqual(int(frappe.cache().get(site_key)), 1)
+		self.assertEqual(int(frappe.cache().get(user_key) or 0), 0)
+
+
+class InflightSlotTest(IntegrationTestCase):
+	"""Bounds simultaneous model calls: each one holds a web worker for up to
+	timeout x MAX_ATTEMPTS, so a burst inside the rate limits could still occupy
+	the whole gunicorn pool."""
+
+	def _clear(self):
+		key = api_mod._inflight_key()
+		frappe.cache().delete(key)
+		self.addCleanup(frappe.cache().delete, key)
+		return key
+
+	def test_a_free_slot_is_taken_and_released(self):
+		key = self._clear()
+		with api_mod._model_call_slot() as free:
+			self.assertTrue(free)
+			self.assertEqual(int(frappe.cache().get(key)), 1)
+		self.assertEqual(int(frappe.cache().get(key) or 0), 0)
+
+	def test_a_full_slot_set_reports_busy_and_releases_its_probe(self):
+		key = self._clear()
+		frappe.cache().setex(key, 60, api_mod.MAX_CONCURRENT_MODEL_CALLS)
+		with api_mod._model_call_slot() as free:
+			self.assertFalse(free)
+		self.assertEqual(int(frappe.cache().get(key)), api_mod.MAX_CONCURRENT_MODEL_CALLS)
+
+	def test_a_dead_cache_fails_open(self):
+		with mock.patch.object(frappe, "cache", side_effect=RuntimeError("no redis")):
+			with api_mod._model_call_slot() as free:
+				self.assertTrue(free)
+
+	def test_the_endpoint_reports_unavailable_when_every_slot_is_taken(self):
+		key = self._clear()
+		frappe.cache().setex(key, 60, api_mod.MAX_CONCURRENT_MODEL_CALLS)
+		with (
+			no_budget_check(),
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "X"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.client, "complete") as complete,
+		):
+			result = api_mod.summarise_thread("CRM Deal", "X")
+		self.assertEqual(result, {"status": "unavailable"})
+		complete.assert_not_called()
