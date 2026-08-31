@@ -129,7 +129,10 @@
       <Button icon="lucide-x" @click="customizeQuickFilter = false" />
     </div>
   </div>
-  <div v-else class="flex items-center justify-between gap-2 px-[var(--v-page-gutter)] py-4">
+  <div
+    v-else
+    class="flex items-center justify-between gap-2 px-[var(--v-page-gutter)] py-4"
+  >
     <FadedScrollableDiv
       class="flex flex-1 items-center overflow-x-auto -ml-1 h-9"
       orientation="horizontal"
@@ -167,30 +170,36 @@
           :doctype="doctype"
           @update="updateGroupBy"
         />
-        <Filter
-          v-model="list"
-          :doctype="doctype"
-          :default_filters="filters"
-          @update="updateFilter"
-        />
-        <SortBy
-          v-if="route.params.viewType !== 'kanban'"
-          v-model="list"
-          :doctype="doctype"
-          @update="updateSort"
-        />
-        <KanbanSettings
-          v-if="route.params.viewType === 'kanban'"
-          v-model="list"
-          :doctype="doctype"
-          @update="updateKanbanSettings"
-        />
-        <ColumnSettings
-          v-else-if="!options.hideColumnsButton"
-          v-model="list"
-          :doctype="doctype"
-          @update="(isDefault) => updateColumns(isDefault)"
-        />
+        <!-- Toolbar consolidation (design direction): Filter, Sort and
+             Columns/Kanban Settings floated as three separate pills; framed
+             together here they read as one instrument instead. See
+             `.v-toolbar-group` in index.css for the shared-frame styling. -->
+        <div class="v-toolbar-group">
+          <Filter
+            v-model="list"
+            :doctype="doctype"
+            :default_filters="filters"
+            @update="updateFilter"
+          />
+          <SortBy
+            v-if="route.params.viewType !== 'kanban'"
+            v-model="list"
+            :doctype="doctype"
+            @update="updateSort"
+          />
+          <KanbanSettings
+            v-if="route.params.viewType === 'kanban'"
+            v-model="list"
+            :doctype="doctype"
+            @update="updateKanbanSettings"
+          />
+          <ColumnSettings
+            v-else-if="!options.hideColumnsButton"
+            v-model="list"
+            :doctype="doctype"
+            @update="(isDefault) => updateColumns(isDefault)"
+          />
+        </div>
         <Dropdown
           v-if="route.params.viewType !== 'kanban' || isManager()"
           align="end"
