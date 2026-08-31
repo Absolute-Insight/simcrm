@@ -28,7 +28,7 @@
         >
           <template v-if="sortValues?.size" #suffix>
             <div
-              class="flex h-5 w-5 items-center justify-center rounded-[5px] bg-surface-base pt-px text-xs-medium text-ink-gray-8 shadow-sm"
+              class="flex h-5 w-5 items-center justify-center rounded-[var(--v-radius-control)] bg-surface-base pt-px text-xs-medium text-ink-gray-8 shadow-sm"
             >
               {{ sortValues.size }}
             </div>
@@ -66,7 +66,7 @@
     </template>
     <template #default="{ close }">
       <div
-        class="my-2 min-w-40 rounded-6 bg-surface-elevation-2 shadow-2xl ring-1 ring-black/5 focus:outline-none"
+        class="my-2 min-w-40 rounded-[var(--v-radius-overlay)] bg-surface-elevation-2 shadow-2xl ring-1 ring-black/5 focus:outline-none"
       >
         <div class="min-w-60 p-2">
           <div

@@ -1,5 +1,8 @@
 <template>
-  <div v-if="showGroupedRows" class="mx-3 mt-2 h-full overflow-y-auto sm:mx-5">
+  <div
+    v-if="showGroupedRows"
+    class="v-list mx-3 mt-2 h-full overflow-y-auto sm:mx-[var(--v-page-gutter)]"
+  >
     <div v-for="group in reactivieRows" :key="group.group">
       <ListGroupHeader :group="group">
         <div
@@ -30,7 +33,7 @@
   <ListRows
     v-else
     ref="scrollContainer"
-    class="mx-3 sm:mx-5"
+    class="v-list mx-3 sm:mx-[var(--v-page-gutter)]"
     @scroll="handleScroll"
   >
     <ListRow

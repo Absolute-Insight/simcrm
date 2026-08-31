@@ -13,7 +13,7 @@
     @update:selections="(selections) => emit('selectionsChanged', selections)"
   >
     <ListHeader
-      class="v-list-header sm:mx-5 mx-3"
+      class="v-list-header sm:mx-[var(--v-page-gutter)] mx-3"
       @columnWidthUpdated="emit('columnWidthUpdated')"
     >
       <ListHeaderItem
@@ -37,7 +37,7 @@
     </ListHeader>
     <ListRows
       v-slot="{ idx, column, item, row }"
-      class="v-list-header mx-3 sm:mx-5"
+      class="v-list-header mx-3 sm:mx-[var(--v-page-gutter)]"
       :rows="rows"
       doctype="CRM Call Log"
     >
@@ -165,7 +165,7 @@
   </ListView>
   <ListFooter
     v-model="pageLengthCount"
-    class="border-t sm:px-5 px-3 py-2"
+    class="border-t sm:px-[var(--v-page-gutter)] px-3 py-2"
     :options="{
       rowCount: options.rowCount,
       totalCount: options.totalCount,

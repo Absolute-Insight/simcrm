@@ -314,6 +314,10 @@ input[type='checkbox']:checked {
 .v-list-header {
   background: var(--v-list-header-bg);
   border: 1px solid var(--v-list-header-border);
+  /* Retires the hard-coded `rounded-4` frappe-ui's ListHeader paints on
+     itself (a Tailwind utility, layered) in favour of the card token — this
+     rule is unlayered so it wins regardless. */
+  border-radius: var(--v-radius-card);
 }
 :root {
   --v-list-header-bg: var(--surface-gray-2);
@@ -322,6 +326,19 @@ input[type='checkbox']:checked {
 [data-theme='dark'] {
   --v-list-header-bg: rgba(255, 255, 255, 0.045);
   --v-list-header-border: rgba(255, 255, 255, 0.07);
+}
+
+/* frappe-ui's experimental ListView exposes no data-slot hooks, so row
+   density can only be reached through the utility classes it writes itself
+   (ListRow.vue's `<div class="grid items-center gap-4 px-2">`). Scoped under
+   a class we own (`.v-list`, applied to the wrapper in ListRows.vue) and held
+   at zero specificity with :where(), so a component that needs different
+   density still wins.
+   FRAGILE: coupled to frappe-ui's internal markup. Re-check on every
+   frappe-ui upgrade. */
+.v-list :where(.grid.items-center.gap-4) {
+  min-height: var(--v-row-h);
+  padding-inline: var(--v-cell-px);
 }
 
 /* Vectora Lux — the shell. The sidebar and the page header are the frame

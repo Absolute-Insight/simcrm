@@ -1,7 +1,7 @@
 <template>
   <div
     v-if="isMobileView"
-    class="flex flex-col justify-between gap-2 sm:px-5 px-3 py-4"
+    class="flex flex-col justify-between gap-2 sm:px-[var(--v-page-gutter)] px-3 py-4"
   >
     <div class="flex flex-col gap-2">
       <div class="flex items-center justify-between gap-2 overflow-x-auto">
@@ -61,7 +61,7 @@
   </div>
   <div
     v-else-if="customizeQuickFilter"
-    class="flex items-center justify-between gap-2 p-5"
+    class="flex items-center justify-between gap-2 p-[var(--v-page-gutter)]"
   >
     <div class="flex flex-1 items-center overflow-hidden pl-1 gap-2">
       <FadedScrollableDiv
@@ -129,7 +129,7 @@
       <Button icon="lucide-x" @click="customizeQuickFilter = false" />
     </div>
   </div>
-  <div v-else class="flex items-center justify-between gap-2 px-5 py-4">
+  <div v-else class="flex items-center justify-between gap-2 px-[var(--v-page-gutter)] py-4">
     <FadedScrollableDiv
       class="flex flex-1 items-center overflow-x-auto -ml-1 h-9"
       orientation="horizontal"
