@@ -190,3 +190,39 @@ class GetDealHealthTest(IntegrationTestCase):
 
 	def test_a_stage_with_no_history_yields_no_median(self):
 		self.assertIsNone(_stage_median_days("a status no deal has ever left"))
+
+
+class ScoreOpenDealsCleanupTest(IntegrationTestCase):
+	"""The closed-deal cleanup must run even when nothing is left to score.
+
+	The early return on an empty scored list skipped it, so when the last open
+	deals closed, their stale scores — and the timestamps that make a score
+	count as real — survived forever.
+	"""
+
+	def test_scores_are_cleared_even_when_no_open_deals_remain(self):
+		from unittest import mock
+
+		from crm.agent.predict import score_open_deals
+
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Predict Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		won = frappe.get_all("CRM Deal Status", filters={"type": "Won"}, pluck="name")
+		if not won:
+			self.skipTest("site has no Won deal status")
+		deal = frappe.get_doc({"doctype": "CRM Deal", "organization": org}).insert()
+		self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True, ignore_missing=True)
+		frappe.db.set_value(
+			"CRM Deal",
+			deal.name,
+			{"status": won[0], "health_score": 25, "health_scored_on": frappe.utils.now_datetime()},
+			update_modified=False,
+		)
+
+		with mock.patch("crm.api.dashboard._at_risk_deals", return_value=[]):
+			score_open_deals()
+
+		self.assertIsNone(frappe.db.get_value("CRM Deal", deal.name, "health_scored_on"))

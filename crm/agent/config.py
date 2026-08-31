@@ -156,12 +156,20 @@ class SignalConfig:
 
 
 def get_config() -> AgentConfig:
-	"""Build an ``AgentConfig`` from the Settings Single. Cached per request by frappe."""
-	doc = frappe.get_cached_doc("CRM Agent Settings")
-	settings = doc.as_dict()
-	# A Password field comes back encrypted from as_dict(); get_password decrypts it. It
-	# is absent rather than empty on a Single that has never been saved, hence the guard.
+	"""Build an ``AgentConfig`` from the Settings Single.
+
+	Read through ``get_singles_dict`` rather than the cached document, for the
+	same reason ``get_signal_config`` does: ``as_dict()`` coerces an Int field
+	that was never saved to 0, so a site provisioned only by
+	``install.apply_endpoint_defaults`` (enabled, base_url, model) ran with
+	``timeout=0`` — every call's deadline already expired — and
+	``daily_call_budget=0``, which reads as *uncapped*. The document is still
+	the only way to decrypt the Password field, so it is kept for that alone;
+	the key is absent rather than empty on a Single never saved, hence the guard.
+	"""
+	settings = frappe.db.get_singles_dict("CRM Agent Settings")
 	try:
+		doc = frappe.get_cached_doc("CRM Agent Settings")
 		settings["api_key"] = doc.get_password("api_key", raise_exception=False) or ""
 	except Exception:
 		settings["api_key"] = ""

@@ -113,7 +113,9 @@
    "fieldtype": "Datetime",
    "label": "Health Scored On",
    "read_only": 1,
-   "no_copy": 1
+   "no_copy": 1,
+   "search_index": 1,
+   "description": "Indexed: the Critical-deals tile reads MAX(health_scored_on) on every render, which is a full-table scan without it."
   },
   {
    "fetch_from": ".annual_revenue",
@@ -534,7 +536,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-04 12:34:10.808282",
+ "modified": "2026-08-31 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM Deal",

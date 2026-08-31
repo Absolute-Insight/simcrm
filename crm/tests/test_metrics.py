@@ -825,6 +825,24 @@ class ForecastScopeTest(ScopedMetricsTest):
 
 		self.assertEqual(forecast_accuracy_scope(REP), ("Rep", REP, [REP]))
 
+	def test_a_manager_with_no_reports_yet_reads_their_own_rep_series(self):
+		"""No Team snapshot row is ever written for a node without reports (see
+		test_no_team_row_is_written_for_a_leaf), so handing an in-tree manager
+		with no subtree the Team series handed them a chart that could never
+		populate. Their series is their own Rep row."""
+		from crm.api.dashboard import forecast_accuracy_scope
+
+		leaf = "metrics.leafmgr@example.com"
+		if not frappe.db.exists("User", leaf):
+			user = frappe.get_doc(
+				{"doctype": "User", "email": leaf, "first_name": "Leaf Manager", "send_welcome_email": 0}
+			).insert(ignore_permissions=True)
+			user.add_roles("Sales Manager")
+		self.make_node(leaf, "Leaf Manager")
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(leaf)
+		self.assertEqual(forecast_accuracy_scope(None), ("Rep", leaf, [leaf]))
+
 	def test_an_empty_team_series_says_why_it_is_empty(self):
 		"""Existing sites have no team history and none can be invented, so the
 		chart has to explain itself rather than look broken."""

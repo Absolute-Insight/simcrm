@@ -202,25 +202,13 @@ def visible_reps() -> list[str] | None:
 	Plan and quota aggregates are keyed on a user rather than on a deal, so they
 	cannot go through :func:`scope_deals`; they get the same subtree from the
 	hierarchy instead, so a manager's rep table and their deal tiles cover the
-	same people.
+	same people. This *is* the planner's ``visible_users`` — it used to be a
+	line-for-line copy, and two copies of the same permission logic are one
+	silent divergence away from a manager reading outside their tree.
 	"""
-	from crm.permissions.org_hierarchy import _in_hierarchy, _team_mem_query, hierarchy_enabled
+	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
 
-	user = frappe.session.user
-	if user == "Administrator":
-		return None
-
-	roles = frappe.get_roles(user)
-	if "System Manager" in roles:
-		return None
-
-	if hierarchy_enabled() and _in_hierarchy(user):
-		return [user, *(_team_mem_query(user).run(pluck=True) or [])]
-
-	if "Sales Manager" in roles:
-		return None
-
-	return [user]
+	return visible_users()
 
 
 @frappe.whitelist()
@@ -311,6 +299,20 @@ def _run_chart(name, chart, from_date, to_date, user, territory):
 	return result
 
 
+def period_windows(from_date, to_date) -> tuple:
+	"""``(prev_from_date, to_date_plus_one)`` for a period-over-period tile.
+
+	The current window is ``[from_date, to_date]`` inclusive — ``diff + 1``
+	days. The previous window must be the same length, ending the day before
+	``from_date``: ``[prev_from_date, from_date)``. The old per-tile arithmetic
+	used ``diff`` days, so every tile compared a 31-day month against a 30-day
+	window and reported ~3.3% growth on uniform activity — in eight copies,
+	which is also why this is a helper now.
+	"""
+	days = date_diff(to_date, from_date) + 1
+	return add_days(from_date, -days), add_days(to_date, 1)
+
+
 def get_total_leads(
 	from_date: str | None = None,
 	to_date: str | None = None,
@@ -320,12 +322,7 @@ def get_total_leads(
 	"""
 	Get lead count for the dashboard.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 
 	Lead = DocType("CRM Lead")
 
@@ -375,12 +372,7 @@ def get_ongoing_deals(
 	"""
 	Get ongoing deal count for the dashboard, and also calculate average deal value for ongoing deals.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
@@ -442,12 +434,7 @@ def get_average_ongoing_deal_value(
 	"""
 	Get ongoing deal count for the dashboard, and also calculate average deal value for ongoing deals.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
@@ -510,12 +497,7 @@ def get_won_deals(
 	"""
 	Get won deal count for the dashboard, and also calculate average deal value for won deals.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
@@ -573,12 +555,7 @@ def get_average_won_deal_value(
 	"""
 	Get won deal count for the dashboard, and also calculate average deal value for won deals.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
@@ -637,12 +614,7 @@ def get_average_deal_value(
 	"""
 	Get average deal value for the dashboard.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
@@ -699,12 +671,7 @@ def get_average_time_to_close_a_lead(
 	"""
 	Get average time to close deals for the dashboard.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 	prev_to_date = from_date
 
 	Deal = DocType("CRM Deal")
@@ -770,12 +737,7 @@ def get_average_time_to_close_a_deal(
 	"""
 	Get average time to close deals for the dashboard.
 	"""
-	diff = frappe.utils.date_diff(to_date, from_date)
-	if diff == 0:
-		diff = 1
-
-	prev_from_date = frappe.utils.add_days(from_date, -diff)
-	to_date_plus_one = frappe.utils.add_days(to_date, 1)
+	prev_from_date, to_date_plus_one = period_windows(from_date, to_date)
 	prev_to_date = from_date
 
 	Deal = DocType("CRM Deal")
@@ -1151,8 +1113,8 @@ def get_funnel_conversion(
 
 	result.append({"stage": "Leads", "count": total_leads_count})
 
-	result += get_deal_status_change_counts(from_date, to_date, user)
-	result.append({"stage": _("Lost"), "count": lost_deal_count(from_date, to_date, user)})
+	result += get_deal_status_change_counts(from_date, to_date, user, territory)
+	result.append({"stage": _("Lost"), "count": lost_deal_count(from_date, to_date, user, territory)})
 
 	return {
 		"data": result or [],
@@ -1759,6 +1721,7 @@ def get_deal_status_change_counts(
 	from_date: str | None = None,
 	to_date: str | None = None,
 	user: str | None = None,
+	territory: str | None = None,
 ):
 	"""
 	Count the deals that ever reached each stage, ordered by stage position.
@@ -1805,11 +1768,19 @@ def get_deal_status_change_counts(
 
 	if user:
 		query = query.where(belongs_to(CRMDeal, user, "CRM Deal"))
+	# the funnel is stamped territory_filtered, so every row has to mean it —
+	# these two used to skip the filter while the lead row honoured it
+	query = apply_territory(query, CRMDeal, territory)
 
 	return scope_deals(query).run(as_dict=True) or []
 
 
-def lost_deal_count(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+def lost_deal_count(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+):
 	"""Deals created in the period that are lost today — the funnel's terminal row."""
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
@@ -1823,6 +1794,7 @@ def lost_deal_count(from_date: str | None = None, to_date: str | None = None, us
 	)
 	if user:
 		query = query.where(belongs_to(Deal, user, "CRM Deal"))
+	query = apply_territory(query, Deal, territory)
 
 	rows = scope_deals(query).run(as_dict=True)
 	return rows[0].count if rows else 0
@@ -1896,8 +1868,10 @@ def get_plan_adherence(
 	"""
 	current = plan_adherence(from_date, to_date, user)[0]
 
-	diff = date_diff(to_date, from_date) or 1
-	previous = plan_adherence(add_days(from_date, -diff), add_days(from_date, -1), user)[0]
+	# the same equal-length rule period_windows applies to the tiles: the
+	# current window is diff+1 days inclusive, so the previous one must be too
+	days = date_diff(to_date, from_date) + 1
+	previous = plan_adherence(add_days(from_date, -days), add_days(from_date, -1), user)[0]
 
 	return {
 		"title": _("Plan adherence"),
@@ -2458,6 +2432,12 @@ def forecast_accuracy_scope(user: str | None) -> tuple[str, str, list[str] | Non
 	reps = visible_reps()
 	if reps is None:
 		return "Site", "", None
+	if sorted(set(reps)) == [frappe.session.user]:
+		# an in-tree manager with no reports yet: no Team snapshot row is ever
+		# written for a node without descendants (forecast_snapshot_scopes skips
+		# them), so the Team series would stay empty forever — their series is
+		# their own Rep row
+		return "Rep", frappe.session.user, [frappe.session.user]
 	return "Team", frappe.session.user, reps
 
 
