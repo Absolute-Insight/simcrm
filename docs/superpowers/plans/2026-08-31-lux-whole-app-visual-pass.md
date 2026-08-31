@@ -509,18 +509,32 @@ const MAP = {
 const DIR = new URL('../src/components/Icons/', import.meta.url).pathname
 const sizes = {}
 
-for (const [name, phosphor] of Object.entries(MAP)) {
+// Two passes on purpose: read every size BEFORE writing anything. A
+// single-pass loop that writes as it goes will leave the directory
+// half-converted if it throws partway, and the files it already rewrote no
+// longer carry the sizes it still needs.
+for (const [name] of Object.entries(MAP)) {
   const file = path.join(DIR, `${name}.vue`)
   const src = fs.readFileSync(file, 'utf8')
   const w = src.match(/width="(\d+)"/)
   const h = src.match(/height="(\d+)"/)
   // Fall back to the viewBox when the svg carried no explicit width/height.
   const vb = src.match(/viewBox="0 0 (\d+) (\d+)"/)
-  const width = Number(w?.[1] ?? vb?.[1])
-  const height = Number(h?.[1] ?? vb?.[2])
+  // An icon converted by an earlier task is already a Phosphor wrapper and
+  // carries no width/height to scrape — read its size from the table it
+  // already contributed to rather than crashing the run.
+  const already = src.includes('@phosphor-icons/vue')
+    ? PREVIOUSLY_CONVERTED[name]
+    : null
+  const width = already?.[0] ?? Number(w?.[1] ?? vb?.[1])
+  const height = already?.[1] ?? Number(h?.[1] ?? vb?.[2])
   if (!width || !height) throw new Error(`No size found for ${name}`)
   sizes[name] = [width, height]
+}
 
+// Second pass: every size is now captured, so writing cannot lose one.
+for (const [name, phosphor] of Object.entries(MAP)) {
+  const file = path.join(DIR, `${name}.vue`)
   fs.writeFileSync(
     file,
     `<template>\n  <${phosphor} v-bind="intrinsicProps('${name}')" />\n` +
@@ -543,10 +557,14 @@ fs.writeFileSync(
 
 - [ ] **Step 2: Point `_phosphor.js` at the generated table**
 
-Replace the hand-written `INTRINSIC_SIZE` in `_phosphor.js` with a re-export, so the table has exactly one source:
+Replace the hand-written `INTRINSIC_SIZE` in `_phosphor.js` so the table has exactly one source. It must be **import-then-export**, not a bare re-export:
 
 ```js
-export { INTRINSIC_SIZE } from './_sizes.generated'
+// `export { X } from './y'` re-exports without creating a local binding, so
+// intrinsicProps below would throw ReferenceError on every icon. Import it
+// into scope first, then re-export.
+import { INTRINSIC_SIZE } from './_sizes.generated'
+export { INTRINSIC_SIZE }
 ```
 
 - [ ] **Step 3: Run the codemod**
