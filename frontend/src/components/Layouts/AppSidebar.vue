@@ -13,7 +13,7 @@
       v-model:collapsed="isSidebarCollapsed"
       :disable-collapse="mobile"
       :width="mobile ? '260px' : undefined"
-      class="border-r border-outline-gray-1"
+      class="border-r border-[var(--v-shell-hairline)]"
     >
       <div class="flex h-full flex-col p-2">
         <SidebarBrand
@@ -193,7 +193,7 @@
           <SidebarItem
             v-if="isManager() && isDemoDataCreated"
             :label="__('Clear Demo Data')"
-            class="!text-ink-red-6 hover:!bg-surface-red-2"
+            class="!text-ink-red-9 hover:!bg-surface-red-2"
             @click="() => clearDemoData()"
           >
             <template #prefix>
