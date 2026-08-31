@@ -19,6 +19,7 @@
     "@fontsource-variable/plus-jakarta-sans": "^5.3.0",
     "@framework/ui": "link:../../frappe/ui",
     "@headlessui/vue": "^1.7.23",
+    "@phosphor-icons/vue": "^2.2.1",
     "@tiptap/core": "^3.30.2",
     "@tiptap/extension-paragraph": "^3.30.2",
     "@tiptap/pm": "^3.30.2",

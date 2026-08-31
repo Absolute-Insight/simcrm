@@ -52,6 +52,14 @@ let pinia = createPinia()
 
 let app = createApp(App)
 
+// Phosphor reads these through `inject`, so one provide sets the default for
+// every icon in the app. `regular` is the set's baseline weight; `fill` is
+// reserved for active nav items and status dots, and `duotone` for empty
+// states, both opted into per call site. A set that uses every weight looks
+// like a set with no rules.
+app.provide('weight', 'regular')
+app.provide('color', 'currentColor')
+
 setConfig('resourceFetcher', frappeRequest)
 app.use(FrappeUI)
 app.use(spritePlugin)
