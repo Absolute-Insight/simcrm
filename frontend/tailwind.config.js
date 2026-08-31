@@ -32,10 +32,20 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        // Display face for the wordmark, panel headings and dashboard numerals.
-        // Body text stays on frappe-ui's Inter.
+        // One family app-wide. The display voice is weight + tracking, not a
+        // second family: PJS's cap-height (0.745 em, above Inter's 0.728)
+        // carries display sizes on its own.
+        sans: [
+          'Plus Jakarta Sans Variable',
+          'Plus Jakarta Sans',
+          'InterVar',
+          'ui-sans-serif',
+          'system-ui',
+          'sans-serif',
+        ],
         display: [
-          'Space Grotesk Variable',
+          'Plus Jakarta Sans Variable',
+          'Plus Jakarta Sans',
           'InterVar',
           'ui-sans-serif',
           'system-ui',

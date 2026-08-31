@@ -1,6 +1,19 @@
 @import 'frappe-ui/style.css';
-@import '@fontsource-variable/space-grotesk';
+@import '@fontsource-variable/plus-jakarta-sans';
 @import './styles/vectora-theme.css';
+
+/* Body face. frappe-ui's inter.css sets `:root { font-family: InterVar }` from
+   its own import above; both rules are :root specificity, so this wins on
+   source order alone. Overriding Tailwind's `fontFamily.sans` is not
+   sufficient — almost everything inherits from :root rather than carrying a
+   `font-sans` utility. */
+:root {
+  --v-font-sans:
+    'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', InterVar, ui-sans-serif,
+    system-ui, sans-serif;
+  font-family: var(--v-font-sans);
+  font-optical-sizing: auto;
+}
 
 /* Data app: digits align in tables, currency and timestamps everywhere. */
 body {
@@ -56,13 +69,13 @@ body {
    component that needs its own transition still wins. */
 @media (prefers-reduced-motion: no-preference) {
   :where(
-      button,
-      a,
-      [role='tab'],
-      [role='option'],
-      [role='menuitem'],
-      [data-slot='sidebar-item']
-    ) {
+    button,
+    a,
+    [role='tab'],
+    [role='option'],
+    [role='menuitem'],
+    [data-slot='sidebar-item']
+  ) {
     transition:
       background-color var(--motion-fast) var(--motion-ease),
       border-color var(--motion-fast) var(--motion-ease),
@@ -149,22 +162,24 @@ body {
 :root {
   --v-glass-bg: var(--surface-elevation-2);
   --v-glass-border: var(--outline-gray-1);
-  --v-glass-shadow: 0 1px 2px rgba(16, 24, 40, 0.05),
-    0 10px 28px -14px rgba(16, 24, 40, 0.14);
+  --v-glass-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.05), 0 10px 28px -14px rgba(16, 24, 40, 0.14);
   --v-glass-border-hover: var(--outline-gray-2);
-  --v-glass-shadow-hover: 0 1px 2px rgba(16, 24, 40, 0.06),
-    0 14px 32px -14px rgba(16, 24, 40, 0.2);
+  --v-glass-shadow-hover:
+    0 1px 2px rgba(16, 24, 40, 0.06), 0 14px 32px -14px rgba(16, 24, 40, 0.2);
   --v-gauge-track: var(--outline-gray-2);
 }
 [data-theme='dark'] {
   --v-glass-bg: rgba(255, 255, 255, 0.04);
   --v-glass-border: rgba(255, 255, 255, 0.09);
-  --v-glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07),
+  --v-glass-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
     0 14px 36px -18px rgba(0, 0, 0, 0.6);
   /* Hover brightens the rim and lets a little brand glow through — the rim
      stays, which is the difference between "lit" and "lost". */
   --v-glass-border-hover: rgba(255, 255, 255, 0.18);
-  --v-glass-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, 0.12),
+  --v-glass-shadow-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
     0 18px 40px -18px rgba(0, 0, 0, 0.7), 0 0 24px -8px rgba(91, 95, 232, 0.35);
   --v-gauge-track: rgba(255, 255, 255, 0.1);
 }
@@ -230,7 +245,8 @@ input[type='checkbox']:checked {
    the dark theme has somewhere to hang its depth: two faint brand glows (the
    gradient's own sky and magenta ends) and a vignette toward the edges. */
 [data-theme='dark'] .v-lux-stage {
-  background: radial-gradient(
+  background:
+    radial-gradient(
       55rem 38rem at 12% -8%,
       rgba(33, 171, 251, 0.07),
       transparent 60%
@@ -349,19 +365,33 @@ input[type='checkbox']:checked {
   [class*='text-3xl-'] {
     font-family: theme(fontFamily.display);
     letter-spacing: -0.02em;
+    /* PJS ships a 4.1% taller default line box than Inter. Display steps pin
+       their own leading so headings do not silently gain height. */
+    line-height: 1.15;
   }
   /* text-lg-medium is overloaded — it sizes panel headings but also layout
      containers whose children are body text (FieldLayout Section) — so the lg
      step opts in by name instead of by size. Every lg heading that wants the
      display face now says so with `.v-title-sm`; nothing selects the face by
-     DOM position any more. */
+     DOM position any more.
+
+     `text-lg-medium` (frappe-ui, generated from the `lg` size token) ships its
+     own `line-height: 1.15` and, being a later same-specificity rule, would
+     otherwise win over the pin above. It happens to carry the same 1.15
+     today — frappe-ui's whole fontSize scale (sm through 4xl) standardizes on
+     1.15 — but that is a property of their token table, not of this rule, so
+     it is re-asserted explicitly rather than relied on. */
   .v-title-sm {
     @apply text-lg-medium;
+    line-height: 1.15;
   }
   /* No `.v-display` alias: the 3xl step already selects the face by size, so a
-     named class for it would be a second way to say the same thing. */
+     named class for it would be a second way to say the same thing.
+     Same `@apply` line-height risk as `.v-title-sm` above (text-2xl-semibold
+     also ships `line-height: 1.15`) — re-asserted for the same reason. */
   .v-title {
     @apply text-2xl-semibold;
+    line-height: 1.15;
   }
 
   .prose-f {
