@@ -205,13 +205,16 @@ def page_text(pages, max_chars: int) -> str:
 		if not body:
 			continue
 		entry = f"[{getattr(page, 'url', '')}]\n{body}"
-		if len(entry) > budget:
+		# the blank-line join is part of the cost, or the text overshoots
+		# max_chars by two chars per seam
+		needed = len(entry) + (2 if kept else 0)
+		if needed > budget:
 			if kept or budget <= len(TRUNCATION_NOTE):
 				break
 			kept.append(entry[: budget - len(TRUNCATION_NOTE)] + TRUNCATION_NOTE)
 			break
 		kept.append(entry)
-		budget -= len(entry)
+		budget -= needed
 	return "\n\n".join(kept)
 
 

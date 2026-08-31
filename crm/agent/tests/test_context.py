@@ -145,3 +145,31 @@ class ThreadMessagesTest(UnitTestCase):
 		self.assertIn("body-2", user)
 		self.assertIn("truncated", user)
 		self.assertNotIn("body-1", user)
+
+
+class BudgetAndSortHardeningTest(UnitTestCase):
+	def test_a_null_creation_does_not_break_the_sort(self):
+		"""tools hands rows straight from the database, and a Communication with
+		a NULL creation made the sort key compare datetime with str — a
+		TypeError out of a tier whose contract is to degrade, never raise."""
+		from datetime import datetime
+
+		comms = [
+			{"name": "COMM-1", "creation": datetime(2026, 8, 1, 9, 0), "sender": "a@x.test", "content": "first"},
+			{"name": "COMM-2", "creation": None, "sender": "b@x.test", "content": "second"},
+		]
+		messages = build_thread_messages(DEAL, comms)
+		self.assertIn("first", messages[1]["content"])
+		self.assertIn("second", messages[1]["content"])
+
+	def test_the_fence_budget_covers_the_join_separators_too(self):
+		"""Entries are joined with a newline the budget never charged, so the
+		fenced body could exceed max_chars by one char per seam. 238 is chosen
+		to sit exactly in that gap: three 79-char entries fit the budget, but
+		joined they are 239 chars."""
+		from crm.agent.context import _fenced_thread
+
+		comms = [_comm(i, content="z" * 40) for i in range(1, 10)]
+		body = _fenced_thread(comms, max_chars=238)
+		inner = body[len(CONTENT_START) + 1 : -(len(CONTENT_END) + 1)]
+		self.assertLessEqual(len(inner), 238)

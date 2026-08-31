@@ -62,10 +62,17 @@ def _fenced_thread(communications: list[dict], max_chars: int) -> str:
 
 	kept: list[str] = []
 	budget = max_chars
-	for comm in sorted(communications, key=lambda c: c.get("creation") or "", reverse=True):
+	# str() in the key: rows off the database carry datetimes and a NULL
+	# creation becomes "", and datetime-vs-str comparison is a TypeError out of
+	# a tier whose contract is to degrade. Datetimes stringify in an order that
+	# is still chronological, and a NULL sorts oldest, which is the safe end.
+	for comm in sorted(communications, key=lambda c: str(c.get("creation") or ""), reverse=True):
 		sender = comm.get("sender", "unknown")
 		entry = f"[{comm.get('creation', '')}] {sender}: {_neutralise(comm.get('content', ''))}"
-		if len(entry) > budget:
+		# the joining newline is part of the cost, or the fenced body overshoots
+		# max_chars by one char per seam
+		needed = len(entry) + (1 if kept else 0)
+		if needed > budget:
 			# One entry can exceed the entire budget on its own -- a single quoted-reply
 			# chain of raw HTML reaches 12,000 characters easily. Dropping it left an
 			# empty fence with no "No communications recorded." line either, while the
@@ -78,7 +85,7 @@ def _fenced_thread(communications: list[dict], max_chars: int) -> str:
 			kept.append(entry[: budget - len(TRUNCATION_NOTE)] + TRUNCATION_NOTE)
 			break
 		kept.append(entry)
-		budget -= len(entry)
+		budget -= needed
 
 	if not kept:
 		# Reachable when ``max_chars`` is smaller than the truncation note itself, and a
