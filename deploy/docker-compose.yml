@@ -209,6 +209,15 @@ services:
   frontend:
     <<: *app
     command: ["nginx-entrypoint.sh"]
+    # Repeats x-app's two volumes on purpose: a `volumes:` key here replaces the
+    # merged list outright rather than extending it, so dropping either line
+    # takes the site data with it. The third adds the Service-Worker-Allowed
+    # header the PWA needs -- see nginx/security_headers.conf for why a security
+    # snippet is the place it goes.
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+      - ./nginx/security_headers.conf:/etc/nginx/snippets/security_headers.conf:ro
     environment:
       BACKEND: backend:8000
       SOCKETIO: websocket:9000

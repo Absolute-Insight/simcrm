@@ -178,6 +178,44 @@ HTTP_BIND_ADDRESS=0.0.0.0      # or the host's private-network address
 and restrict who can reach it at the network layer yourself, because once the
 bind is not loopback, nothing in this stack does.
 
+## Installing it as an app (PWA)
+
+Vectora ships a web app manifest and a service worker, so a browser can install
+it to a desktop or home screen and run it in its own window. Nothing needs
+turning on — but two things have to be true of the deployment, and one of them
+is easy to break from outside this stack.
+
+**It needs a secure context.** Service workers register only over HTTPS, or on
+`localhost`. A rehearsal on `vectora.localhost:8090` therefore installs fine; a
+real host reached over plain HTTP does not, which is one more reason the TLS
+section above is not optional.
+
+**It needs the `Service-Worker-Allowed` header to survive your proxy.** The
+worker is served from `/assets/crm/frontend/sw.js` but has to control `/crm`,
+and a worker may not claim a scope above its own directory unless the response
+says it may. `nginx/security_headers.conf` — mounted into `frontend` by
+`docker-compose.yml` — adds `Service-Worker-Allowed: /crm`. A proxy that
+rewrites response headers can strip it on the way out.
+
+Check both in one line, against the public URL rather than the container:
+
+```bash
+curl -sI https://<site>/assets/crm/frontend/sw.js | grep -i service-worker-allowed
+# Service-Worker-Allowed: /crm
+```
+
+If it is missing, registration fails with a `SecurityError` in the browser
+console and the app carries on with no worker: no offline shell, no install
+prompt, everything else unaffected. That is a degradation, not an outage — it
+is not worth a rollback, and it is invisible from the server side, so this
+`curl` is the only cheap way to know.
+
+To confirm the install itself, open the site in Chrome and look at DevTools →
+Application → Manifest: `Scope` and `Start URL` should both read `/crm`, and
+the install control appears in the address bar. On iOS the route is Share → Add
+to Home Screen, which uses the apple-touch icons and ignores the manifest scope
+entirely — it works whether or not the header made it through.
+
 ## Upgrading
 
 `.env` pins `VECTORA_TAG` to a release, so upgrading is a deliberate edit
