@@ -14,7 +14,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, get_first_day, getdate
 
-from crm.api.dashboard import get_base_currency
+from crm.api.dashboard import get_base_currency, visible_reps
 
 
 def _is_manager() -> bool:
@@ -25,6 +25,19 @@ def _is_manager() -> bool:
 def _only_managers():
 	if not _is_manager():
 		frappe.throw(_("Only a Sales Manager can set quota."), frappe.PermissionError)
+
+
+def _only_own_team(user: str):
+	"""A manager sets targets for their subtree, not for every rep on the site.
+
+	``visible_reps`` is the same scope the dashboard and planner apply, so the
+	people a manager can set a target for are exactly the people whose numbers
+	they can read. ``None`` is unrestricted (Administrator, System Manager, a
+	manager outside the hierarchy).
+	"""
+	reps = visible_reps()
+	if reps is not None and user not in reps:
+		frappe.throw(_("{0} is not on your team.").format(user), frappe.PermissionError)
 
 
 def _months(year: int) -> list[str]:
@@ -43,7 +56,12 @@ def get_quota_grid(year: int | str | None = None):
 	year = cint(year) or getdate().year
 	months = _months(year)
 
-	users = _sales_users() if _is_manager() else [frappe.session.user]
+	if _is_manager():
+		reps = visible_reps()
+		# the subtree, kept to enabled sales users so a disabled rep does not get a row
+		users = _sales_users() if reps is None else [u for u in _sales_users() if u in set(reps)]
+	else:
+		users = [frappe.session.user]
 	if not users:
 		return {"year": year, "months": months, "currency": get_base_currency(), "rows": []}
 
@@ -100,6 +118,7 @@ def _sales_users() -> list[str]:
 def set_quota(user: str, period_start: str, amount: float | str):
 	"""Upsert one cell of the grid. Zero or blank clears the target for that month."""
 	_only_managers()
+	_only_own_team(user)
 	if user not in _sales_users():
 		frappe.throw(_("{0} is not a sales user.").format(user))
 
@@ -130,6 +149,9 @@ def copy_quota_forward(user: str, from_period: str, months: int | str = 11):
 	"""Repeat one month's target across the following ``months`` — the common case
 	when a target is flat for a year, and far less error-prone than typing twelve cells."""
 	_only_managers()
+	# scoped before the source is read, so the copy neither reveals nor
+	# rewrites a target outside the caller's subtree
+	_only_own_team(user)
 	source = get_first_day(getdate(from_period))
 	amount = frappe.db.get_value("CRM Quota", {"user": user, "period_start": source}, "amount")
 	if not amount:

@@ -292,6 +292,42 @@ class TestCRMDeal(IntegrationTestCase):
 		self.assertEqual(contact.first_name, "Deal")
 		self.assertEqual(contact.email_id, "dealcreator@example.com")
 
+	def test_create_deal_refuses_a_user_without_a_crm_role(self):
+		"""The endpoint used to insert with ignore_permissions, so any logged-in
+		account could author a deal; it now asks for create on CRM Deal first."""
+		nobody = "deal-nobody@crmtest.test"
+		if not frappe.db.exists("User", nobody):
+			frappe.get_doc(
+				{"doctype": "User", "email": nobody, "first_name": "Nobody", "send_welcome_email": 0}
+			).insert(ignore_permissions=True)
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(nobody)
+		with self.assertRaises(frappe.PermissionError):
+			create_deal({"organization_name": "Nobody Org", "first_name": "No", "email": "no@example.com"})
+		self.assertFalse(frappe.db.exists("CRM Organization", {"organization_name": "Nobody Org"}))
+
+	def test_a_contacts_new_email_reaches_every_deal_it_is_primary_on(self):
+		"""``update_deals_email_mobile_no`` rewrites the linked deals in one
+		statement; both deals must still pick up the change, and a deal already
+		in step must not be touched."""
+		contact = create_test_contact(first_name="Sync", email="sync@example.com", mobile_no="+2222222222")
+		first = create_test_deal(organization="Sync Org One")
+		first.append("contacts", {"contact": contact.name, "is_primary": 1})
+		first.save()
+		second = create_test_deal(organization="Sync Org Two")
+		second.append("contacts", {"contact": contact.name, "is_primary": 1})
+		second.save()
+
+		contact.reload()
+		contact.email_ids[0].email_id = "sync-new@example.com"
+		contact.save()
+
+		for name in (first.name, second.name):
+			self.assertEqual(
+				frappe.db.get_value("CRM Deal", name, ["email", "mobile_no"], as_dict=True),
+				{"email": "sync-new@example.com", "mobile_no": "+2222222222"},
+			)
+
 	def test_create_deal_with_existing_organization(self):
 		"""Test create_deal with existing organization"""
 		# Create organization first

@@ -499,6 +499,7 @@ def create_contact(doc):
 
 @frappe.whitelist()
 def create_deal(doc: dict):
+	frappe.has_permission("CRM Deal", "create", throw=True)
 	deal = frappe.new_doc("CRM Deal")
 
 	contact = doc.get("contact")
@@ -518,5 +519,5 @@ def create_deal(doc: dict):
 
 	deal.update(doc)
 
-	deal.insert(ignore_permissions=True)
+	deal.insert()
 	return deal.name

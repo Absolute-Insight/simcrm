@@ -46,6 +46,7 @@ class CRMViewSettings(Document):
 @frappe.whitelist()
 def create(view: dict):
 	view = frappe._dict(view)
+	frappe.has_permission(view.doctype, "read", throw=True)
 
 	view.filters = parse_json(view.filters) or {}
 	view.columns = parse_json(view.columns or "[]")
@@ -129,10 +130,11 @@ def delete(name: str | int):
 
 @frappe.whitelist()
 def public(name: str | int, value: bool | int):
+	doc = frappe.get_doc("CRM View Settings", name)
+	check_permission(doc)
 	if frappe.session.user != "Administrator" and "Sales Manager" not in frappe.get_roles():
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 
-	doc = frappe.get_doc("CRM View Settings", name)
 	if doc.pinned:
 		doc.pinned = False
 	doc.public = bool(value)
@@ -178,13 +180,16 @@ def sync_default_rows(doctype, type="list"):
 
 def sync_default_columns(view):
 	doctype = view.dt or view.doctype
+	frappe.has_permission(doctype, "read", throw=True)
 	list = get_controller(doctype)
 	columns = []
 
 	if view.type == "kanban" and view.column_field:
 		field_meta = frappe.get_meta(doctype).get_field(view.column_field)
 		if field_meta.fieldtype == "Link":
-			columns = frappe.get_all(
+			# get_list, not get_all: the column doctype's own permissions decide
+			# which of its rows the caller may see as a kanban column
+			columns = frappe.get_list(
 				field_meta.options,
 				fields=["name"],
 				order_by="modified asc",
@@ -218,6 +223,7 @@ def set_as_default(name: str | int | None = None, type: str | None = None, docty
 @frappe.whitelist()
 def create_or_update_standard_view(view: dict):
 	view = frappe._dict(view)
+	frappe.has_permission(view.doctype, "read", throw=True)
 
 	filters = parse_json(view.filters) or {}
 	columns = parse_json(view.columns or "[]")

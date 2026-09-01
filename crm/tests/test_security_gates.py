@@ -109,6 +109,36 @@ class SecurityGateTest(IntegrationTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			get_deal_contacts(self.deal.name)
 
+	def test_a_contacts_linked_deals_are_read_through_the_deal_permission_query(self):
+		"""``get_linked_deals`` used to ``get_cached_doc`` every deal the contact
+		sits on, so a rep who could read the contact read deals outside their
+		subtree. It now lists them, and the hierarchy decides which come back."""
+		from crm.api.contact import get_linked_deals
+
+		contact = frappe.get_doc({"doctype": "Contact", "first_name": "Gate Contact"}).insert(
+			ignore_permissions=True
+		)
+		self.deal.append("contacts", {"contact": contact.name, "is_primary": 1})
+		self.deal.deal_owner = "Administrator"
+		self.deal.save(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "Contact", contact.name, force=True, ignore_permissions=True)
+
+		# REP alone in the tree: the hierarchy scopes deals to their own subtree
+		was_enabled = frappe.db.get_single_value("FCRM Settings", "enable_sales_hierarchy")
+		self.addCleanup(
+			frappe.db.set_single_value, "FCRM Settings", "enable_sales_hierarchy", was_enabled or 0
+		)
+		self.addCleanup(frappe.cache.delete_value, "crm_sales_hierarchy_subtree")
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+		frappe.db.delete("CRM Sales Hierarchy", {"user": REP})
+		node = frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": REP}).insert(ignore_permissions=True)
+		self.addCleanup(frappe.db.delete, "CRM Sales Hierarchy", {"name": node.name})
+		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
+
+		self.assertIn(self.deal.name, [d.name for d in get_linked_deals(contact.name)])
+		frappe.set_user(REP)
+		self.assertEqual(get_linked_deals(contact.name), [])
+
 	def test_user_without_crm_role_cannot_list_linked_docs(self):
 		from crm.api.doc import get_linked_docs_of_document
 

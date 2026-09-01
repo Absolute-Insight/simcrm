@@ -7,23 +7,28 @@ def validate(doc, method):
 
 
 def update_deals_email_mobile_no(doc):
-	linked_deals = frappe.get_all(
+	deal_names = frappe.get_all(
 		"CRM Contacts",
-		filters={"contact": doc.name, "is_primary": 1},
-		fields=["parent"],
+		filters={"contact": doc.name, "is_primary": 1, "parenttype": "CRM Deal"},
+		pluck="parent",
+		distinct=True,
 	)
+	if not deal_names:
+		return
 
-	for linked_deal in linked_deals:
-		deal = frappe.db.get_values("CRM Deal", linked_deal.parent, ["email", "mobile_no"], as_dict=True)[0]
-		if deal.email != doc.email_id or deal.mobile_no != doc.mobile_no:
-			frappe.db.set_value(
-				"CRM Deal",
-				linked_deal.parent,
-				{
-					"email": doc.email_id,
-					"mobile_no": doc.mobile_no,
-				},
-			)
+	# one read and one write for every linked deal rather than a pair per deal
+	deals = frappe.get_all(
+		"CRM Deal",
+		filters={"name": ("in", deal_names)},
+		fields=["name", "email", "mobile_no"],
+	)
+	to_update = [d.name for d in deals if d.email != doc.email_id or d.mobile_no != doc.mobile_no]
+	if to_update:
+		frappe.db.set_value(
+			"CRM Deal",
+			{"name": ("in", to_update)},
+			{"email": doc.email_id, "mobile_no": doc.mobile_no},
+		)
 
 
 @frappe.whitelist()
@@ -36,31 +41,31 @@ def get_linked_deals(contact: str):
 	deal_names = frappe.get_all(
 		"CRM Contacts",
 		filters={"contact": contact, "parenttype": "CRM Deal"},
-		fields=["parent"],
+		pluck="parent",
 		distinct=True,
 	)
+	if not deal_names:
+		return []
 
-	# get deals data
-	deals = []
-	for d in deal_names:
-		deal = frappe.get_cached_doc(
-			"CRM Deal",
-			d.parent,
-			fields=[
-				"name",
-				"organization",
-				"currency",
-				"deal_value",
-				"status",
-				"email",
-				"mobile_no",
-				"deal_owner",
-				"modified",
-			],
-		)
-		deals.append(deal.as_dict())
-
-	return deals
+	# get_list, not get_cached_doc: the rows come back through the deal's own
+	# permission query, so a contact shared across teams shows only the deals
+	# the caller may read
+	return frappe.get_list(
+		"CRM Deal",
+		filters={"name": ("in", deal_names)},
+		fields=[
+			"name",
+			"organization",
+			"currency",
+			"deal_value",
+			"status",
+			"email",
+			"mobile_no",
+			"deal_owner",
+			"modified",
+		],
+		order_by="modified desc",
+	)
 
 
 @frappe.whitelist()
