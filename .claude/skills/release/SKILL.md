@@ -1,7 +1,6 @@
 ---
 name: release
 description: Cut a release - promote develop to main, let semantic-release tag it, then dispatch the image build and verify the image reached ghcr. Use when the user wants to ship a version.
-disable-model-invocation: true
 ---
 
 # Cut a release
