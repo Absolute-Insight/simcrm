@@ -48,7 +48,14 @@ require_type_annotated_api_methods = True
 # filename. A raw path is served with `max-age=43200` and no version stamp,
 # so an edit would not reach anyone who had loaded the page in the last 12
 # hours -- including, say, the morning of a demo.
-web_include_css = "login.bundle.css"
+#
+# The `vectora-` prefix is load-bearing: frappe ships its own
+# `login.bundle.scss`, and a bundle is resolved by bare name across every
+# installed app. Named `login.bundle.css` this resolved to frappe's file in
+# the release image -- ours was built and never referenced, so the login page
+# deployed completely unstyled. It happened to resolve our way in the
+# devcontainer, which is exactly why dev verification did not catch it.
+web_include_css = "vectora-login.bundle.css"
 # web_include_js = "/assets/crm/js/crm.js"
 
 # include custom scss in every website theme (without file extension ".scss")
@@ -374,6 +381,14 @@ ignore_links_on_delete = ["Failed Lead Sync Log", "CRM Suggestion"]
 
 after_migrate = [
 	"crm.fcrm.doctype.fcrm_settings.fcrm_settings.after_migrate",
+	# Navbar Settings' app_logo is site data, so a new image alone does not move
+	# it and an existing site never re-runs after_install -- the login page kept
+	# rendering the Frappe Framework logo. Deliberately a hook rather than a
+	# patch: a pending patch makes `bench run-tests` migrate mid-setup, which
+	# left the Acumatica custom-field columns unavailable and failed ten
+	# unrelated tests. Idempotent, and it only claims the field while it still
+	# holds a Frappe default.
+	"crm.install.ensure_app_logo",
 	"crm.api.whatsapp.add_roles",
 	"crm.domain_enrichment.install.seed_default_rules_and_mappings",
 	"crm.agent.install.ensure_agent_role",
