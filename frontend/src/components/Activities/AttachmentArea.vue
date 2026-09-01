@@ -91,7 +91,7 @@ const emit = defineEmits(['reload'])
 const { $dialog } = globalStore()
 
 function openFile(attachment) {
-  window.open(attachment.file_url, '_blank')
+  window.open(attachment.file_url, '_blank', 'noopener')
 }
 
 function togglePrivate(fileName, isPrivate) {
