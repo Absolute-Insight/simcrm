@@ -422,8 +422,10 @@ class TestBulkDeleteReportsWhatItDid(IntegrationTestCase):
 			).insert(ignore_permissions=True)
 			names.append(org.name)
 			self.addCleanup(
-				lambda n=org.name: frappe.db.exists("CRM Organization", n)
-				and frappe.delete_doc("CRM Organization", n, force=True, ignore_permissions=True)
+				lambda n=org.name: (
+					frappe.db.exists("CRM Organization", n)
+					and frappe.delete_doc("CRM Organization", n, force=True, ignore_permissions=True)
+				)
 			)
 		return names
 

@@ -213,8 +213,9 @@ class TestDerivedDemoCleanup(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 		self.addCleanup(
-			lambda n=deal.name: frappe.db.exists("CRM Deal", n)
-			and frappe.delete_doc("CRM Deal", n, force=True)
+			lambda n=deal.name: (
+				frappe.db.exists("CRM Deal", n) and frappe.delete_doc("CRM Deal", n, force=True)
+			)
 		)
 		return deal.name
 
@@ -248,8 +249,9 @@ class TestDerivedDemoCleanup(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 		self.addCleanup(
-			lambda n=doc.name: frappe.db.exists("CRM Suggestion", n)
-			and frappe.delete_doc("CRM Suggestion", n, force=True)
+			lambda n=doc.name: (
+				frappe.db.exists("CRM Suggestion", n) and frappe.delete_doc("CRM Suggestion", n, force=True)
+			)
 		)
 		return doc.name
 
