@@ -376,6 +376,11 @@
 </template>
 
 <script setup>
+// Kept as Lucide: Phosphor's calendar family only pairs with
+// check/plus/minus/x/star/heart/slash markers, none of which reads as
+// "carries a time" — the meaning this glyph exists to convey for a Meeting
+// activity. There is no same-family Phosphor substitute that keeps that
+// meaning intact.
 import LucideCalendarClock from '~icons/lucide/calendar-clock'
 import { PhCheckCircle as LucideCircleCheck } from '@phosphor-icons/vue'
 import { PhEnvelope as LucideMail } from '@phosphor-icons/vue'

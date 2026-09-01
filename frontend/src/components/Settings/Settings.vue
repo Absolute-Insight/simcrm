@@ -59,7 +59,13 @@ import { PhNetwork as LucideNetwork } from '@phosphor-icons/vue'
 import { PhTarget as LucideTarget } from '@phosphor-icons/vue'
 import { PhFlowArrow as LucideWorkflow } from '@phosphor-icons/vue'
 import { PhSparkle as LucideSparkles } from '@phosphor-icons/vue'
-import LucideMailCheck from '~icons/lucide/mail-check'
+// Phosphor has no envelope+checkmark combo glyph, but Report Digests is
+// just "email, periodically" — the checkmark was decorative, not load-
+// bearing meaning — so the plain envelope family already used for every
+// other mail surface in the app (EmailTemplateIcon, Email2Icon) reads fine
+// here too, and drops the Lucide weight mismatch on a Settings-tab icon,
+// one of the two screens a client will look at closely.
+import { PhEnvelopeSimple as LucideMailCheck } from '@phosphor-icons/vue'
 import { PhMonitor as MonitorCogIcon } from '@phosphor-icons/vue'
 import { PhCursorText as LucideTextCursorInput } from '@phosphor-icons/vue'
 import SlidersIcon from '@/components/Icons/SlidersIcon.vue'

@@ -111,7 +111,11 @@
 
 <script setup>
 import { PhStack as GroupIcon } from '@phosphor-icons/vue'
-import UnGroupIcon from '~icons/lucide/ungroup'
+// Phosphor's own family already pairs Stack with a "minus" variant for
+// removing from a stack, which reads as the mirror of "Turn into a Group"
+// (PhStack) above — a closer, same-family match than the Lucide glyph it
+// replaces, not just a style swap.
+import { PhStackMinus as UnGroupIcon } from '@phosphor-icons/vue'
 import CFConditions from './CFConditions.vue'
 import Link from '@/components/Controls/Link.vue'
 import {

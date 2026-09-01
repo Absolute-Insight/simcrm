@@ -5,6 +5,10 @@ import { PhPhone as LucidePhone } from '@phosphor-icons/vue'
 import { PhHash as LucideHash } from '@phosphor-icons/vue'
 import { PhCaretUpDown as LucideChevronsUpDown } from '@phosphor-icons/vue'
 import { PhCalendarBlank as LucideCalendar } from '@phosphor-icons/vue'
+// Kept as Lucide: same reasoning as Planner.vue's Meeting icon — Phosphor's
+// calendar family has no marker that reads as "carries a time", so there is
+// no same-family substitute for the Datetime fieldtype that keeps that
+// meaning.
 import LucideCalendarClock from '~icons/lucide/calendar-clock'
 import { PhClock as LucideClock } from '@phosphor-icons/vue'
 import { PhPercent as LucidePercent } from '@phosphor-icons/vue'

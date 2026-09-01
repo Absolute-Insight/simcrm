@@ -26,7 +26,12 @@
   </FileUploader>
 </template>
 <script setup>
-import ImageUpIcon from '~icons/lucide/image-up'
+// Phosphor has no image+arrow combo glyph; the button's own label
+// ("Upload"/"Change") already carries the action, so the plain picture
+// glyph — already reused for images throughout the app (FileImageIcon,
+// BrandSettings) — carries the subject without a weight-mismatched Lucide
+// icon next to it.
+import { PhImage as ImageUpIcon } from '@phosphor-icons/vue'
 import { FileUploader, Button } from 'frappe-ui'
 
 defineProps({
