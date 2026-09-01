@@ -1,6 +1,6 @@
 <template>
   <Popover placement="bottom-end">
-    <template #trigger>
+    <template #trigger="{ close }">
       <div class="flex items-center">
         <Button
           :label="__('Filter')"
