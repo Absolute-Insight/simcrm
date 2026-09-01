@@ -39,6 +39,15 @@
     var(--brand-500) 55%,
     var(--brand-magenta) 100%
   );
+  --cta-from: #7fd4ff;
+  --cta-to: #21abfb;
+  --cta-ink: #0e1830;
+  --cta-edge: #1a86c9;
+  --cta-gradient: linear-gradient(
+    180deg,
+    var(--cta-from) 0%,
+    var(--cta-to) 100%
+  );
 
   /* Motion */
   --motion-fast: 90ms;
@@ -169,6 +178,15 @@
     var(--brand-sky) 0%,
     var(--brand-500) 55%,
     var(--brand-magenta) 100%
+  );
+  --cta-from: #7fd4ff;
+  --cta-to: #21abfb;
+  --cta-ink: #0e1830;
+  --cta-edge: #1a86c9;
+  --cta-gradient: linear-gradient(
+    180deg,
+    var(--cta-from) 0%,
+    var(--cta-to) 100%
   );
 
   /* Motion */

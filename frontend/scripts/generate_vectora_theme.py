@@ -384,6 +384,37 @@ BRAND = {
 	"--brand-gradient-y": "linear-gradient(180deg, var(--brand-sky) 0%, var(--brand-500) 55%, var(--brand-magenta) 100%)",
 }
 
+# The primary call-to-action ramp.
+#
+# Deliberately NOT --brand-gradient. That gradient means one thing -- "you are
+# here" -- and index.css says three times that it appears nowhere but the
+# position rail and the logo mark. Spending the signature on every Save button
+# would leave the rail saying nothing. So the CTA gets its own ramp, blue only,
+# with no magenta stop to confuse the two.
+#
+# It is a *light* blue, and that is what forces the ink choice: white cannot sit
+# on it. brand-sky against white is 2.54:1, and every light-blue candidate tried
+# came in under AA -- the best reached 4.15:1. A deep navy ink clears it at
+# 6.95:1 on the binding stop, so "light blue" and "readable" stop being a
+# trade-off. The assertions below hold that.
+#
+# The edge is not decoration either: the fill is only 1.59:1 against the light
+# canvas, so without a border the control's own boundary fails SC 1.4.11 in
+# light mode. CTA_EDGE is solved against both canvases.
+CTA_FROM = "#7fd4ff"
+CTA_TO = BRAND["--brand-sky"]
+CTA_INK = "#0e1830"
+CTA_EDGE = "#1a86c9"
+BRAND.update(
+	{
+		"--cta-from": CTA_FROM,
+		"--cta-to": CTA_TO,
+		"--cta-ink": CTA_INK,
+		"--cta-edge": CTA_EDGE,
+		"--cta-gradient": "linear-gradient(180deg, var(--cta-from) 0%, var(--cta-to) 100%)",
+	}
+)
+
 # Motion. Three durations and two curves is the whole language: anything that
 # needs a fourth is a bespoke animation and should say so. Mode-invariant, but
 # emitted into both blocks like every other token (see the cascade note above).
@@ -517,6 +548,14 @@ check("focus ring on white", BRAND["--brand-500"], "#ffffff", NON_TEXT_FLOOR)
 for step in ("950", "900", "800", "700", "600"):
 	check(f"dark focus ring on gray-{step}", BRAND["--brand-300"], DARK_GRAY[step], NON_TEXT_FLOOR)
 # Selection pairs.
+# The CTA ramp. Both stops carry the label, so the darker one binds; the edge
+# has to define the control against either canvas, because the fill alone does
+# not in light mode.
+check("cta ink on ramp top", CTA_INK, CTA_FROM, AA_FLOOR)
+check("cta ink on ramp bottom", CTA_INK, CTA_TO, AA_FLOOR)
+check("cta edge on light canvas", CTA_EDGE, LIGHT_SURFACE_BASE, NON_TEXT_FLOOR)
+check("cta edge on dark canvas", CTA_EDGE, DARK_GRAY["950"], NON_TEXT_FLOOR)
+
 check("light selection", BRAND["--brand-900"], BRAND["--brand-100"], AA_FLOOR)
 check("dark selection", DARK_GRAY["50"], BRAND["--brand-700"], AA_FLOOR)
 # `text-brand` is body-sized text (Planner's today marker), so it takes the

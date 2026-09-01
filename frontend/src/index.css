@@ -566,6 +566,61 @@ input[type='checkbox']:checked {
   box-shadow: inset 1px 0 0 var(--v-glass-sm-border);
 }
 
+/* The primary call to action — a light-blue gradient on solid buttons.
+
+   frappe-ui's Button composes its look from Tailwind utilities and exposes no
+   data-variant or data-slot to key off, so the fill class is the only handle:
+   `bg-surface-gray-10` is `variant="solid"` at its default theme, and
+   `bg-surface-blue-6` is `variant="solid" theme="blue"`. Restricted to
+   `button`/`a` because those utilities are shared and land on non-controls too.
+   FRAGILE: the same coupling to frappe-ui internals as the row rules above.
+
+   Solid red and green are deliberately left alone. A destructive button that
+   looks identical to a confirming one is not a style choice, it is a missing
+   warning — "Delete deal" has to keep reading as different from "Save".
+
+   The ramp is --cta-gradient, NOT --brand-gradient. The brand gradient means
+   one thing, "you are here", and belongs to the position rail alone (see the
+   top of this file). A call to action is not a place, and spending the
+   signature on every Save button would leave the rail saying nothing.
+
+   The ink is --cta-ink, a deep navy, because white cannot sit on a light blue:
+   brand-sky against white is 2.54:1. The generator asserts both ramp stops
+   against this ink at AA, so the pairing cannot quietly drift apart.
+
+   The edge is an inset shadow rather than a border so the button does not grow
+   by 2px. It is not decoration: the fill alone is 1.59:1 against the light
+   canvas, which leaves the control's own boundary short of SC 1.4.11 there.
+
+   Hover and active repeat the element in the selector on purpose. Tailwind's
+   `hover:bg-surface-gray-9` is specificity (0,2,0); a bare class rule would
+   lose to it and the gradient would vanish on hover. They also stay on the two
+   asserted colours — hover simply drops the lighter stop — rather than using a
+   brightness() filter, which would move the fill toward the ink and walk the
+   contrast down somewhere no assertion is watching. */
+:is(button, a).bg-surface-gray-10,
+:is(button, a).bg-surface-blue-6 {
+  background-image: var(--cta-gradient);
+  background-color: var(--cta-to);
+  color: var(--cta-ink);
+  box-shadow: inset 0 0 0 1px var(--cta-edge);
+}
+:is(button, a).bg-surface-gray-10:hover,
+:is(button, a).bg-surface-blue-6:hover {
+  background-image: none;
+  background-color: var(--cta-to);
+  color: var(--cta-ink);
+}
+:is(button, a).bg-surface-gray-10:active,
+:is(button, a).bg-surface-blue-6:active {
+  background-image: none;
+  background-color: var(--cta-to);
+  color: var(--cta-ink);
+  box-shadow:
+    inset 0 0 0 1px var(--cta-edge),
+    inset 0 2px 4px rgba(14, 24, 48, 0.28);
+}
+
 /* Vectora Lux — the shell. The sidebar and the page header are the frame
    every Lux surface sits in, so they take the same deep tone in dark mode: a
    sidebar slightly deeper than the canvas (so the stage reads as lit beside
