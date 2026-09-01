@@ -201,7 +201,7 @@ class TestFacebookPagination(IntegrationTestCase):
 
 		src.fetch_page = FacebookSyncSource.fetch_page.__get__(src)
 		with patch(
-			"crm.lead_syncing.doctype.lead_sync_source.facebook.make_get_request",
+			"crm.lead_syncing.doctype.lead_sync_source.facebook.graph_get",
 			return_value=self.page([], next_url="https://evil.test/leads"),
 		):
 			with self.assertRaises(frappe.ValidationError):

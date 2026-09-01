@@ -39,6 +39,7 @@ from __future__ import annotations
 import frappe
 
 from crm.agent import client
+from crm.agent.api import _budget_spent, _model_call_slot, _refund_budget
 from crm.agent.config import get_config
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
 from crm.agent.schemas import SiteFacts
@@ -120,7 +121,18 @@ def fill_gaps(result, pages, cfg) -> list[str]:
 
 	try:
 		agent_cfg = get_config()
-		facts = client.complete(agent_cfg, SiteFacts, messages)
+		# The same daily budget and in-flight slots as the assistant tier: this is
+		# a model call like any other, and a crawl that reaches the model from a
+		# background job must not spend what the budget was meant to bound, nor
+		# hold a fifth slot while four users wait on a slow endpoint.
+		if _budget_spent(agent_cfg):
+			return []
+		with _model_call_slot() as free:
+			if not free:
+				# refused after the budgets were charged: a refused call costs nobody anything
+				_refund_budget(agent_cfg)
+				return []
+			facts = client.complete(agent_cfg, SiteFacts, messages)
 	except (AgentUnavailable, SchemaMismatch) as exc:
 		# A site we could not read is the state we were already in. Log it so an
 		# admin can see the tier is not earning its keep, and return quietly.

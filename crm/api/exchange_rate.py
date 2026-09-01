@@ -6,13 +6,19 @@ from frappe import _
 from frappe.rate_limiter import rate_limit
 
 from crm.fcrm.doctype.fcrm_settings.fcrm_settings import FCRMSettings
+from crm.utils import user_rate_limited
 
-# Every other outbound-fetch endpoint in this app is rate limited per user --
-# the agent tier and domain enrichment both are. This one was not, and its cache
-# key varies per currency pair and date, so a loop over distinct pairs missed the
-# cache every time and held a worker for up to two provider timeouts per call.
-# 30/min is far above any real use: the UI fetches on a currency change.
+# Limited twice, like every other outbound-fetch endpoint in this app (the agent
+# tier and domain enrichment). ``@rate_limit`` is frappe's limiter and keys on the
+# request IP, so it is one bucket for an office behind NAT and a fresh bucket for
+# every address one user can borrow; ``user_rate_limited`` keys on the session
+# user and is the layer that actually bounds what one account can do. The cache
+# key varies per currency pair and date, so a loop over distinct pairs misses the
+# cache every time and holds a worker for up to two provider timeouts per call;
+# only uncached fetches count against the user bucket. 30/min is far above any
+# real use: the UI fetches on a currency change.
 EXCHANGE_RATE_LIMIT = 30
+EXCHANGE_RATE_SCOPE = "exchange_rate"
 
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -59,6 +65,11 @@ def get_exchange_rate(from_currency: str, to_currency: str, date: str | None = N
 	cached_rate = frappe.cache().get_value(cache_key)
 	if cached_rate is not None:
 		return cached_rate
+
+	if user_rate_limited(EXCHANGE_RATE_SCOPE, EXCHANGE_RATE_LIMIT):
+		# The same shape as every other refusal here: callers on the deal save path
+		# already catch it and keep the previous rate.
+		frappe.throw(_("Too many exchange rate requests. Try again shortly."), frappe.ValidationError)
 
 	rate, api_used = _fetch_exchange_rate(from_currency, to_currency, date)
 

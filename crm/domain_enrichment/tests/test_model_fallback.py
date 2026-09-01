@@ -21,6 +21,7 @@ nothing" is also what a broken fallback looks like:
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from unittest import mock
 
 import frappe
@@ -278,6 +279,42 @@ class DegradesQuietlyTest(UnitTestCase):
 		result = EnrichmentResult(website="https://acme.test")
 		with mock.patch.object(model_fallback.client, "complete", return_value=reply(company_name="   ")):
 			self.assertEqual(model_fallback.fill_gaps(result, [page()], config()), [])
+
+
+class SharesTheAgentBudgetTest(UnitTestCase):
+	"""The fallback is a model call like any other and is bounded like one: the
+	assistant tier's daily budget and its in-flight slots apply here too."""
+
+	def test_a_spent_budget_means_no_model_call(self):
+		result = EnrichmentResult(website="https://acme.test")
+		with (
+			mock.patch.object(model_fallback, "_budget_spent", return_value=True),
+			mock.patch.object(model_fallback.client, "complete") as complete,
+		):
+			self.assertEqual(model_fallback.fill_gaps(result, [page()], config()), [])
+		complete.assert_not_called()
+		self.assertEqual(result.company_name.value, "")
+
+	def test_no_free_slot_refunds_the_budget_and_makes_no_call(self):
+		result = EnrichmentResult(website="https://acme.test")
+		with (
+			mock.patch.object(model_fallback, "_budget_spent", return_value=False),
+			mock.patch.object(model_fallback, "_model_call_slot", return_value=nullcontext(False)),
+			mock.patch.object(model_fallback, "_refund_budget") as refund,
+			mock.patch.object(model_fallback.client, "complete") as complete,
+		):
+			self.assertEqual(model_fallback.fill_gaps(result, [page()], config()), [])
+		complete.assert_not_called()
+		refund.assert_called_once()
+
+	def test_a_free_slot_and_budget_lets_the_call_through(self):
+		result = EnrichmentResult(website="https://acme.test")
+		with (
+			mock.patch.object(model_fallback, "_budget_spent", return_value=False),
+			mock.patch.object(model_fallback, "_model_call_slot", return_value=nullcontext(True)),
+			mock.patch.object(model_fallback.client, "complete", return_value=reply(company_name="Acme")),
+		):
+			self.assertEqual(model_fallback.fill_gaps(result, [page()], config()), ["company_name"])
 
 
 class PageTextSeparatorBudgetTest(UnitTestCase):

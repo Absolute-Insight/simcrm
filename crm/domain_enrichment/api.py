@@ -17,16 +17,29 @@ import frappe
 from frappe import _
 from frappe.rate_limiter import rate_limit
 
+from crm.utils import user_rate_limited
+
 from .config import ENABLE_FLAG_BY_DOCTYPE, EnrichmentConfig, get_config
 from .mapper import get_value_for_source_key
 from .pipeline import preview as run_preview
 from .tasks import enqueue_enrichment
 
-# Per-user, per-minute cap on each enrich entry point (each gets its own bucket).
-# enrich/retry only enqueue a per-doc-deduplicated job, and enrich_preview does one
-# synchronous crawl -- 10/min is far above any real human burst while capping scripted
-# abuse (queue-flooding, or using preview as a fetch oracle).
+# Per-minute cap on the enrich entry points, applied twice: ``@rate_limit`` is
+# frappe's limiter and keys on the request IP (one bucket per endpoint), so it is
+# one bucket for an office behind NAT and a fresh bucket for every address one
+# user can borrow; ``user_rate_limited`` keys on the session user and shares one
+# bucket across the three entry points, so it is the layer that actually bounds
+# what a single account can do. enrich/retry only enqueue a per-doc-deduplicated
+# job, and enrich_preview does one synchronous crawl -- 10/min is far above any
+# real human burst while capping scripted abuse (queue-flooding, or using preview
+# as a fetch oracle).
 ENRICH_RATE_LIMIT = 10
+ENRICH_RATE_SCOPE = "enrich"
+
+
+def _check_user_rate_limit() -> None:
+	if user_rate_limited(ENRICH_RATE_SCOPE, ENRICH_RATE_LIMIT):
+		frappe.throw(_("Too many enrichment requests. Try again shortly."), frappe.ValidationError)
 
 
 def _enabled_doctypes(cfg: EnrichmentConfig) -> list[str]:
@@ -68,6 +81,7 @@ def enrich(reference_doctype: str, reference_name: str) -> dict:
 
 	Returns ``{queued: bool, job_id: str, website: str}``.
 	"""
+	_check_user_rate_limit()
 	cfg = get_config()
 	doc = frappe.get_doc(reference_doctype, reference_name)
 	website = (doc.get("website") or "").strip()
@@ -83,6 +97,7 @@ def retry(run: str) -> dict:
 
 	Returns ``{queued: bool, job_id: str, website: str}``.
 	"""
+	_check_user_rate_limit()
 	run_doc = frappe.get_doc("CRM Enrichment Run", run)
 	if not run_doc.reference_doctype or not run_doc.reference_name:
 		frappe.throw(_("This run has no linked record to re-enrich."), frappe.ValidationError)
@@ -107,6 +122,7 @@ def enrich_preview(website: str, doctype: str = "CRM Deal") -> dict:
 
 	Returns ``{fields: {fieldname: value}, notes: [...]}``.
 	"""
+	_check_user_rate_limit()
 	website = (website or "").strip()
 	if not website:
 		frappe.throw(_("A website is required."), frappe.ValidationError)

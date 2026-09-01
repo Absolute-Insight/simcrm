@@ -2,7 +2,7 @@ from urllib.parse import urlparse
 
 import frappe
 from frappe.exceptions import ValidationError
-from frappe.integrations.utils import make_get_request
+from frappe.integrations.utils import get_request_session
 
 FB_GRAPH_API_BASE = "https://graph.facebook.com"
 FB_GRAPH_API_VERSION = "v23.0"
@@ -25,6 +25,28 @@ ALLOWED_GRAPH_HOSTS = ("graph.facebook.com",)
 
 class DuplicateLeadError(ValidationError):
 	pass
+
+
+# Connect / read, in seconds. frappe's make_get_request passes no timeout, so a
+# Graph endpoint that accepted the connection and never answered held a worker
+# for as long as the socket lived.
+GRAPH_TIMEOUT = (5, 30)
+
+
+def graph_get(url: str, params: dict | None = None) -> dict:
+	"""One GET against Graph, decoded as JSON, with a bounded wait.
+
+	The same contract as frappe's ``make_get_request`` for a JSON endpoint -- a
+	non-2xx status raises, and the failure is logged before it propagates -- with
+	a timeout on top.
+	"""
+	try:
+		response = get_request_session().get(url, params=params, timeout=GRAPH_TIMEOUT)
+		response.raise_for_status()
+		return response.json()
+	except Exception:
+		frappe.log_error()
+		raise
 
 
 def get_fb_graph_api_url(endpoint: str) -> str:
@@ -78,7 +100,7 @@ class FacebookSyncSource:
 		host = (urlparse(url).hostname or "").lower()
 		if host not in ALLOWED_GRAPH_HOSTS:
 			frappe.throw(frappe._("Refusing to follow a lead-paging URL pointing at {0}").format(host or url))
-		return make_get_request(url, params=params) or {}
+		return graph_get(url, params=params) or {}
 
 	def already_imported(self, lead_id: str) -> bool:
 		"""This exact Facebook lead is already a CRM Lead.
@@ -249,7 +271,7 @@ def fetch_and_store_pages_from_facebook(access_token: str) -> list[dict]:
 		frappe.throw(frappe._("Invalid access token provided for Facebook."))
 
 	url = get_fb_graph_api_url("/me/accounts")
-	pages = make_get_request(url, params={"access_token": access_token}).get("data", [])
+	pages = graph_get(url, params={"access_token": access_token}).get("data", [])
 	for page in pages:
 		page_id = page["id"]
 		already_synced = frappe.db.exists("Facebook Page", page_id)
@@ -264,7 +286,7 @@ def fetch_and_store_pages_from_facebook(access_token: str) -> list[dict]:
 def get_fb_account_details(access_token: str) -> dict:
 	url = get_fb_graph_api_url("me")
 	try:
-		response = make_get_request(url, params={"access_token": access_token})
+		response = graph_get(url, params={"access_token": access_token})
 	except Exception as _:
 		frappe.throw(frappe._("Please check your access token"))
 	return response
@@ -286,7 +308,7 @@ def create_facebook_page_in_db(page: dict, account_details: dict) -> None:
 def fetch_and_store_leadgen_forms_from_facebook(page_id: str, page_access_token: str) -> list[dict]:
 	fields = "id,name,questions"
 	url = get_fb_graph_api_url(f"/{page_id}/leadgen_forms")
-	forms = make_get_request(
+	forms = graph_get(
 		url,
 		params={
 			"access_token": page_access_token,

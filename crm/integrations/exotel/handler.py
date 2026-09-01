@@ -4,8 +4,17 @@ import frappe
 import requests
 from frappe import _
 from frappe.integrations.utils import create_request_log
+from frappe.rate_limiter import rate_limit
 
 from crm.integrations.api import lookup_contact_by_phone_number
+from crm.utils import user_rate_limited
+
+# Per user and per minute. Every call here is a real outbound call billed to the
+# Exotel account, and a rep dials a handful an hour; 10 is generous for a person
+# and tight for a script. Applied twice: ``@rate_limit`` keys on the request IP,
+# ``user_rate_limited`` on the session user.
+MAKE_CALL_RATE_LIMIT = 10
+MAKE_CALL_RATE_SCOPE = "exotel_call"
 
 # Endpoints for webhook
 
@@ -92,7 +101,11 @@ def handle_request(**kwargs):
 
 # Outgoing Call
 @frappe.whitelist()
+@rate_limit(limit=MAKE_CALL_RATE_LIMIT, seconds=60)
 def make_a_call(to_number: str, from_number: str | None = None, caller_id: str | None = None):
+	if user_rate_limited(MAKE_CALL_RATE_SCOPE, MAKE_CALL_RATE_LIMIT):
+		frappe.throw(_("Too many call requests. Try again shortly."), frappe.ValidationError)
+
 	if not is_integration_enabled():
 		frappe.throw(_("Please setup Exotel intergration"), title=_("Integration Not Enabled"))
 
