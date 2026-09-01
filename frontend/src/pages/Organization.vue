@@ -32,7 +32,9 @@
           @success="changeOrganizationImage"
         >
           <template #default="{ openFileSelector, error }">
-            <div class="flex flex-col items-start justify-start gap-4 p-[var(--v-page-gutter)]">
+            <div
+              class="flex flex-col items-start justify-start gap-4 p-[var(--v-page-gutter)]"
+            >
               <div class="flex gap-4 items-center">
                 <div class="group relative h-15.5 w-15.5">
                   <Avatar

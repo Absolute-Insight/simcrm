@@ -29,7 +29,9 @@
         </div>
         <Button
           :label="mode === 'edit' ? __('Preview') : __('Edit')"
-          @click="(mode = mode === 'edit' ? 'preview' : 'edit'), resetPreview()"
+          @click="
+            ((mode = mode === 'edit' ? 'preview' : 'edit'), resetPreview())
+          "
         >
           <template #prefix>
             <LucideEye v-if="mode === 'edit'" class="h-4 w-4" />
@@ -230,7 +232,9 @@
                   <LucideEyeOff class="h-3.5 w-3.5 text-ink-gray-5" />
                   {{ __('Hidden required fields') }}
                 </div>
-                <div class="rounded-[var(--v-radius-control)] bg-surface-gray-2 p-2.5">
+                <div
+                  class="rounded-[var(--v-radius-control)] bg-surface-gray-2 p-2.5"
+                >
                   <p class="mb-2.5 text-p-sm text-ink-gray-5">
                     {{
                       __(
@@ -316,7 +320,7 @@
                         <input
                           v-model="form.route"
                           class="min-w-0 flex-1 border-0 bg-transparent p-0 text-base text-ink-gray-8 placeholder:text-ink-gray-4 focus:outline-none focus:ring-0"
-                          @input="(routeEdited = true), markDirty()"
+                          @input="((routeEdited = true), markDirty())"
                         />
                       </div>
                     </div>
@@ -393,8 +397,8 @@
                         class="flex text-ink-gray-5 transition-colors hover:text-ink-gray-8"
                         :title="__('Copy link')"
                         @click="
-                          copyToClipboard(publicUrl),
-                            capture('form_embed_copied', { embed_type: 'link' })
+                          (copyToClipboard(publicUrl),
+                          capture('form_embed_copied', { embed_type: 'link' }))
                         "
                       >
                         <LucideCopy class="h-4 w-4" />
@@ -448,10 +452,10 @@
                         class="absolute right-2 top-2 flex text-ink-gray-5 transition-colors hover:text-ink-gray-8"
                         :title="__('Copy')"
                         @click="
-                          copyToClipboard(iframeSnippet),
-                            capture('form_embed_copied', {
-                              embed_type: 'iframe',
-                            })
+                          (copyToClipboard(iframeSnippet),
+                          capture('form_embed_copied', {
+                            embed_type: 'iframe',
+                          }))
                         "
                       >
                         <LucideCopy class="h-4 w-4" />
