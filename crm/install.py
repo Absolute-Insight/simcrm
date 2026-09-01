@@ -38,9 +38,28 @@ def after_install(force=False):
 	ensure_agent_role()
 	apply_endpoint_defaults()
 	ensure_zar_currency()
+	ensure_app_logo()
 	# install/migrate runs outside a request, so nothing else will commit the
 	# fixtures created above.
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
+
+
+def ensure_app_logo():
+	"""Point Frappe's login page at the Vectora mark.
+
+	``frappe/www/login.py`` renders the logo from ``get_app_logo()``, which
+	reads Navbar Settings -- site data, not a hook -- so ``app_icon_url`` in
+	hooks.py does not cover it. Without this, a freshly installed site shows the
+	Frappe Framework logo above "Sign In": the first screen anyone outside the
+	product ever sees, unbranded.
+
+	Only claims the field while it still holds a Frappe default. An operator who
+	has set their own logo keeps it.
+	"""
+	current = frappe.db.get_single_value("Navbar Settings", "app_logo") or ""
+	if current and not current.startswith("/assets/frappe/"):
+		return
+	frappe.db.set_single_value("Navbar Settings", "app_logo", "/assets/crm/images/logo.svg")
 
 
 def ensure_zar_currency():
