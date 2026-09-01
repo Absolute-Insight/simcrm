@@ -166,6 +166,7 @@ def get_file_uploader_defaults(doctype: str):
 	max_number_of_files = None
 	make_attachments_public = False
 	if doctype:
+		frappe.has_permission(doctype, "read", throw=True)
 		meta = frappe.get_meta(doctype)
 		max_number_of_files = meta.get("max_attachments")
 		make_attachments_public = meta.get("make_attachments_public")

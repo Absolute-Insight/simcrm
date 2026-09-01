@@ -256,10 +256,16 @@ def _plan_for(user: str, week_start: str):
 
 
 def _set_suggestion_status(names: set[str], user: str, expected: str, status: str) -> None:
-	for name in names:
-		owner, current = frappe.db.get_value("CRM Suggestion", name, ["user", "status"]) or (None, None)
-		if current == expected and owner == user:
-			frappe.db.set_value("CRM Suggestion", name, "status", status)
+	if not names:
+		return
+	# one read filtered on owner and current status, one write for what matched
+	matched = frappe.get_all(
+		"CRM Suggestion",
+		filters={"name": ("in", list(names)), "user": user, "status": expected},
+		pluck="name",
+	)
+	if matched:
+		frappe.db.set_value("CRM Suggestion", {"name": ("in", matched)}, "status", status)
 
 
 def _own_plan_of(item: str):
