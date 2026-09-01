@@ -7,7 +7,7 @@
        -- the same condition the dropdown applied before. -->
   <div class="flex flex-col gap-1">
     <div
-      class="flex h-10 items-center rounded-5 duration-300 ease-in-out"
+      class="flex h-10 items-center rounded-[var(--v-radius-control)] duration-300 ease-in-out"
       :class="isCollapsed ? 'justify-center px-0' : 'px-2'"
     >
       <Avatar
@@ -30,7 +30,7 @@
       </div>
       <template v-if="!isCollapsed">
         <button
-          class="grid size-6 shrink-0 place-items-center rounded-4 text-ink-gray-7 hover:bg-surface-gray-2"
+          class="grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
           :aria-label="__('Help')"
           :title="__('Help')"
           @click="() => openHelpCenter()"
@@ -39,7 +39,7 @@
         </button>
         <button
           v-if="!isMobileView"
-          class="ml-1 grid size-6 shrink-0 place-items-center rounded-4 text-ink-gray-7 hover:bg-surface-gray-2"
+          class="ml-1 grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
           :aria-label="__('Settings')"
           :title="__('Settings')"
           @click="openSettings"
@@ -47,7 +47,7 @@
           <SettingsIcon class="size-4" />
         </button>
         <button
-          class="ml-1 grid size-6 shrink-0 place-items-center rounded-4 text-ink-gray-7 hover:bg-surface-gray-2"
+          class="ml-1 grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
           :aria-label="__('Log out')"
           :title="__('Log out')"
           @click="logout.submit()"
@@ -59,7 +59,7 @@
 
     <template v-if="isCollapsed">
       <button
-        class="mx-auto grid size-6 place-items-center rounded-4 text-ink-gray-7 hover:bg-surface-gray-2"
+        class="mx-auto grid size-6 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
         :aria-label="__('Help')"
         :title="__('Help')"
         @click="() => openHelpCenter()"
@@ -68,7 +68,7 @@
       </button>
       <button
         v-if="!isMobileView"
-        class="mx-auto grid size-6 place-items-center rounded-4 text-ink-gray-7 hover:bg-surface-gray-2"
+        class="mx-auto grid size-6 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
         :aria-label="__('Settings')"
         :title="__('Settings')"
         @click="openSettings"
@@ -76,7 +76,7 @@
         <SettingsIcon class="size-4" />
       </button>
       <button
-        class="mx-auto grid size-6 place-items-center rounded-4 text-ink-gray-7 hover:bg-surface-gray-2"
+        class="mx-auto grid size-6 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
         :aria-label="__('Log out')"
         :title="__('Log out')"
         @click="logout.submit()"
@@ -88,7 +88,7 @@
 </template>
 
 <script setup>
-import LogOutIcon from '~icons/lucide/log-out'
+import { PhSignOut as LogOutIcon } from '@phosphor-icons/vue'
 import HelpIcon from '@/components/Icons/HelpIcon.vue'
 import SettingsIcon from '@/components/Icons/SettingsIcon.vue'
 import { sessionStore } from '@/stores/session'

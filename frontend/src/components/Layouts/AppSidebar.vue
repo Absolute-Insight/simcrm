@@ -13,7 +13,7 @@
       v-model:collapsed="isSidebarCollapsed"
       :disable-collapse="mobile"
       :width="mobile ? '260px' : undefined"
-      class="border-r border-outline-gray-1"
+      class="border-r border-[var(--v-shell-hairline)]"
     >
       <div class="flex h-full flex-col p-2">
         <SidebarBrand
@@ -185,15 +185,20 @@
               :isSidebarCollapsed="isCollapsed"
               :afterUpgrade="() => capture('upgrade_plan_from_trial_banner')"
             />
-            <GettingStartedBanner
-              v-if="!isOnboardingStepsCompleted"
-              :isSidebarCollapsed="isCollapsed"
-            />
+            <!-- frappe-ui's own markup (button + wrapper divs) carries no
+                 class, id, or data-slot hook of its own -- every class on it
+                 is a shared Tailwind utility used elsewhere in the app -- so
+                 wrap it here, in code we own, rather than reaching into its
+                 internal structure from index.css. See the .v-getting-started
+                 rule there for why (F3, low-contrast CTA button). -->
+            <div v-if="!isOnboardingStepsCompleted" class="v-getting-started">
+              <GettingStartedBanner :isSidebarCollapsed="isCollapsed" />
+            </div>
           </div>
           <SidebarItem
             v-if="isManager() && isDemoDataCreated"
             :label="__('Clear Demo Data')"
-            class="!text-ink-red-6 hover:!bg-surface-red-2"
+            class="!text-ink-red-9 hover:!bg-surface-red-2"
             @click="() => clearDemoData()"
           >
             <template #prefix>
@@ -233,7 +238,7 @@
 </template>
 
 <script setup>
-import BrushCleaningIcon from '~icons/lucide/brush-cleaning'
+import { PhBroom as BrushCleaningIcon } from '@phosphor-icons/vue'
 import DashboardIcon from '@/components/Icons/DashboardIcon.vue'
 import PlannerIcon from '@/components/Icons/PlannerIcon.vue'
 import ReportsIcon from '@/components/Icons/ReportsIcon.vue'

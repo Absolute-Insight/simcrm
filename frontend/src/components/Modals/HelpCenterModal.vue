@@ -3,7 +3,7 @@
     <template #default>
       <div class="flex h-[calc(100vh_-_8rem)] bg-surface-gray-1">
         <div
-          class="m-1 flex w-64 shrink-0 flex-col rounded-l-6 bg-surface-gray-1"
+          class="m-1 flex w-64 shrink-0 flex-col rounded-l-[var(--v-radius-card)] bg-surface-gray-1"
         >
           <div class="v-title-sm px-3 pb-2 pt-[15px] text-ink-gray-8">
             {{ __('Help center') }}
@@ -115,7 +115,7 @@
 </template>
 
 <script setup>
-import LucideSearch from '~icons/lucide/search'
+import { PhMagnifyingGlass as LucideSearch } from '@phosphor-icons/vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import {

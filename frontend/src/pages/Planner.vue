@@ -376,12 +376,17 @@
 </template>
 
 <script setup>
+// Kept as Lucide: Phosphor's calendar family only pairs with
+// check/plus/minus/x/star/heart/slash markers, none of which reads as
+// "carries a time" — the meaning this glyph exists to convey for a Meeting
+// activity. There is no same-family Phosphor substitute that keeps that
+// meaning intact.
 import LucideCalendarClock from '~icons/lucide/calendar-clock'
-import LucideCircleCheck from '~icons/lucide/circle-check'
-import LucideMail from '~icons/lucide/mail'
-import LucidePhone from '~icons/lucide/phone'
-import LucideSparkles from '~icons/lucide/sparkles'
-import LucideUserCheck from '~icons/lucide/user-check'
+import { PhCheckCircle as LucideCircleCheck } from '@phosphor-icons/vue'
+import { PhEnvelope as LucideMail } from '@phosphor-icons/vue'
+import { PhPhone as LucidePhone } from '@phosphor-icons/vue'
+import { PhSparkle as LucideSparkles } from '@phosphor-icons/vue'
+import { PhUserCheck as LucideUserCheck } from '@phosphor-icons/vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -549,7 +554,9 @@ const isCurrentWeek = computed(() => weekStart.value === mondayOf(today.value))
 
 const weekLabel = computed(() => {
   const start = dayjs(weekStart.value)
-  return `${start.format('D MMM')} – ${start.add(6, 'day').format('D MMM YYYY')}`
+  return `${start.format('D MMM')} – ${start
+    .add(6, 'day')
+    .format('D MMM YYYY')}`
 })
 
 const weekDays = computed(() => weekDayCells(weekStart.value, today.value))

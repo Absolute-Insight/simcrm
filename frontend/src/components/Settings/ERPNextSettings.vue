@@ -362,7 +362,7 @@
                   >
                     <span>{{ __(section.label) }}</span>
                     <span
-                      class="rounded-4 bg-surface-gray-2 px-1.5 text-xs text-ink-gray-6"
+                      class="rounded-[var(--v-radius-control)] bg-surface-gray-2 px-1.5 text-xs text-ink-gray-6"
                     >
                       {{ section.count }}
                     </span>
@@ -370,13 +370,13 @@
                 </div>
                 <div
                   v-if="activeProductSyncLogTab === 'failed' && unsyncedSummary"
-                  class="rounded-4 bg-surface-gray-2 px-3 py-2 text-p-sm text-ink-gray-6"
+                  class="rounded-[var(--v-radius-control)] bg-surface-gray-2 px-3 py-2 text-p-sm text-ink-gray-6"
                 >
                   {{ unsyncedSummary }}
                 </div>
                 <div
                   v-if="!currentProductSyncRows.length"
-                  class="rounded-4 border border-outline-elevation-2 px-3 py-2 text-p-sm text-ink-gray-5"
+                  class="rounded-[var(--v-radius-control)] border border-outline-elevation-2 px-3 py-2 text-p-sm text-ink-gray-5"
                 >
                   {{ __(currentProductSyncSection.emptyLabel) }}
                 </div>
@@ -575,7 +575,9 @@ const unsyncedSummary = computed(() => {
   }
   if (data.sync_products && data.products) {
     parts.push(
-      `${data.products} ${data.products === 1 ? __('product') : __('products')}`,
+      `${data.products} ${
+        data.products === 1 ? __('product') : __('products')
+      }`,
     )
   }
   if (!parts.length) return ''
@@ -734,7 +736,9 @@ function getSyncRowId(row) {
 function getDeskUrl(row) {
   const doctype = getDeskDoctype()
   if (!doctype || !row.name) return ''
-  return `${window.location.origin}/app/${doctype}/${encodeURIComponent(row.name)}`
+  return `${window.location.origin}/app/${doctype}/${encodeURIComponent(
+    row.name,
+  )}`
 }
 
 function getDeskDoctype() {

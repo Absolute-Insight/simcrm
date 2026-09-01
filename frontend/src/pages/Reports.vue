@@ -382,10 +382,10 @@
 </template>
 
 <script setup>
-import LucideCalendar from '~icons/lucide/calendar'
-import LucideDownload from '~icons/lucide/download'
-import LucideInfo from '~icons/lucide/info'
-import LucidePrinter from '~icons/lucide/printer'
+import { PhCalendarBlank as LucideCalendar } from '@phosphor-icons/vue'
+import { PhDownloadSimple as LucideDownload } from '@phosphor-icons/vue'
+import { PhInfo as LucideInfo } from '@phosphor-icons/vue'
+import { PhPrinter as LucidePrinter } from '@phosphor-icons/vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import Link from '@/components/Controls/Link.vue'

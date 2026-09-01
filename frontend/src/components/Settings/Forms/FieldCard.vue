@@ -1,6 +1,6 @@
 <template>
   <div
-    class="rounded-4 border bg-surface-elevation-2 text-ink-gray-8"
+    class="rounded-[var(--v-radius-card)] border bg-surface-elevation-2 text-ink-gray-8"
     :class="expanded ? 'border-outline-gray-3' : 'border-outline-gray-2'"
   >
     <!-- compact header: grip · type icon · label (inline editable) · required · expand · delete -->
@@ -29,7 +29,7 @@
         @click="beginEdit"
       >
         <span
-          class="-ml-1 inline-flex min-w-0 max-w-full items-center gap-1 rounded-4 px-1 py-0.5 transition-colors group-hover/label:bg-surface-gray-3"
+          class="-ml-1 inline-flex min-w-0 max-w-full items-center gap-1 rounded-[var(--v-radius-control)] px-1 py-0.5 transition-colors group-hover/label:bg-surface-gray-3"
         >
           <span
             class="min-w-0 truncate text-base"
@@ -56,7 +56,7 @@
           ])
         "
       >
-        <LucideTriangleAlert class="h-3.5 w-3.5 shrink-0 text-ink-amber-6" />
+        <LucideTriangleAlert class="h-3.5 w-3.5 shrink-0 text-ink-orange-9" />
       </Tooltip>
       <Button
         variant="ghost"
@@ -153,10 +153,10 @@
            empty until the author deliberately exposes those records to visitors -->
       <div
         v-if="guestSelectMissing"
-        class="flex items-start gap-2 rounded-4 border border-outline-amber-2 bg-surface-amber-2 p-2.5"
+        class="flex items-start gap-2 rounded-[var(--v-radius-card)] border border-outline-amber-2 bg-surface-amber-2 p-2.5"
       >
         <LucideTriangleAlert
-          class="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-amber-6"
+          class="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-orange-9"
         />
         <div class="flex min-w-0 flex-col items-start gap-2">
           <p class="text-p-sm text-ink-gray-7">
@@ -184,12 +184,12 @@
 import { computed, nextTick, ref } from 'vue'
 import { Switch, Button, FormControl, Tooltip } from 'frappe-ui'
 import DragVerticalIcon from '@/components/Icons/DragVerticalIcon.vue'
-import LucideX from '~icons/lucide/x'
-import LucideLock from '~icons/lucide/lock'
-import LucidePencil from '~icons/lucide/pencil'
-import LucideChevronDown from '~icons/lucide/chevron-down'
-import LucideTriangleAlert from '~icons/lucide/triangle-alert'
-import LucideInfo from '~icons/lucide/info'
+import { PhX as LucideX } from '@phosphor-icons/vue'
+import { PhLock as LucideLock } from '@phosphor-icons/vue'
+import { PhPencilSimple as LucidePencil } from '@phosphor-icons/vue'
+import { PhCaretDown as LucideChevronDown } from '@phosphor-icons/vue'
+import { PhWarning as LucideTriangleAlert } from '@phosphor-icons/vue'
+import { PhInfo as LucideInfo } from '@phosphor-icons/vue'
 import { fieldTypeIcon, fieldTypeLabel } from './fieldTypeIcon'
 
 const props = defineProps({

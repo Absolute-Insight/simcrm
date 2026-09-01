@@ -1,17 +1,20 @@
-import LucideType from '~icons/lucide/type'
-import LucideAlignLeft from '~icons/lucide/align-left'
-import LucideMail from '~icons/lucide/mail'
-import LucidePhone from '~icons/lucide/phone'
-import LucideHash from '~icons/lucide/hash'
-import LucideChevronsUpDown from '~icons/lucide/chevrons-up-down'
-import LucideCalendar from '~icons/lucide/calendar'
+import { PhTextT as LucideType } from '@phosphor-icons/vue'
+import { PhTextAlignLeft as LucideAlignLeft } from '@phosphor-icons/vue'
+import { PhEnvelope as LucideMail } from '@phosphor-icons/vue'
+import { PhPhone as LucidePhone } from '@phosphor-icons/vue'
+import { PhHash as LucideHash } from '@phosphor-icons/vue'
+import { PhCaretUpDown as LucideChevronsUpDown } from '@phosphor-icons/vue'
+import { PhCalendarBlank as LucideCalendar } from '@phosphor-icons/vue'
+// Kept as Lucide: same reasoning as Planner.vue's Meeting icon — Phosphor's
+// calendar family has no marker that reads as "carries a time", so there is
+// no same-family substitute for the Datetime fieldtype that keeps that
+// meaning.
 import LucideCalendarClock from '~icons/lucide/calendar-clock'
-import LucideClock from '~icons/lucide/clock'
-import LucidePercent from '~icons/lucide/percent'
-import LucidePalette from '~icons/lucide/palette'
-import LucideSquareCheck from '~icons/lucide/square-check'
-import LucideLink from '~icons/lucide/link'
-
+import { PhClock as LucideClock } from '@phosphor-icons/vue'
+import { PhPercent as LucidePercent } from '@phosphor-icons/vue'
+import { PhPalette as LucidePalette } from '@phosphor-icons/vue'
+import { PhCheckSquare as LucideSquareCheck } from '@phosphor-icons/vue'
+import { PhLink as LucideLink } from '@phosphor-icons/vue'
 // map a field (fieldtype + options) to the lucide icon shown next to its label.
 // shared by the field cards and the hidden-fields list so they stay identical.
 export function fieldTypeIcon(field) {

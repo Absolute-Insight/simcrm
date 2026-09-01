@@ -6,7 +6,7 @@
        they cannot reopen. -->
   <div class="flex flex-col gap-1">
     <div
-      class="flex h-12 items-center rounded-5 py-2 duration-300 ease-in-out"
+      class="flex h-12 items-center rounded-[var(--v-radius-control)] py-2 duration-300 ease-in-out"
       :class="isCollapsed ? 'justify-center px-0' : 'px-2'"
     >
       <BrandLogo v-model="brand" class="h-8 max-w-16 shrink-0" />
@@ -19,14 +19,14 @@
         "
       >
         <div
-          class="truncate font-display text-base font-semibold leading-none tracking-tight text-ink-gray-9"
+          class="truncate font-display text-base font-extrabold leading-none tracking-tight text-ink-gray-9"
         >
           {{ __(brand.name || 'Vectora') }}
         </div>
       </div>
       <button
         v-if="!isCollapsed"
-        class="grid size-6 shrink-0 place-items-center rounded-4 text-ink-gray-7 hover:bg-surface-gray-2"
+        class="grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
         :aria-label="__('Collapse sidebar')"
         :title="__('Collapse sidebar')"
         @click="emit('toggle')"
@@ -36,7 +36,7 @@
     </div>
     <button
       v-if="isCollapsed"
-      class="mx-auto grid size-6 place-items-center rounded-4 text-ink-gray-7 hover:bg-surface-gray-2"
+      class="mx-auto grid size-6 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
       :aria-label="__('Expand sidebar')"
       :title="__('Expand sidebar')"
       @click="emit('toggle')"

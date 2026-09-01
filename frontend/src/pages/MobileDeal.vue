@@ -1,7 +1,7 @@
 <template>
   <LayoutHeader>
     <header
-      class="relative flex h-10.5 items-center justify-between gap-2 py-2.5 pl-2"
+      class="relative flex h-[var(--v-toolbar-h)] items-center justify-between gap-2 py-2.5 pl-2"
     >
       <Breadcrumbs :items="breadcrumbs">
         <template #prefix="{ item }">

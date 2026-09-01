@@ -15,7 +15,7 @@
       </VisuallyHidden>
       <div class="flex h-[calc(100vh_-_8rem)] bg-surface-gray-1">
         <div
-          class="flex flex-col m-1 rounded-l-6 w-56 shrink-0 bg-surface-gray-1 overflow-y-auto"
+          class="flex flex-col m-1 rounded-l-[var(--v-radius-card)] w-56 shrink-0 bg-surface-gray-1 overflow-y-auto"
         >
           <template v-for="(tab, i) in tabs" :key="tab.label">
             <div v-if="!tab.hideLabel && i != 0" class="mx-1 mb-0.5 mt-[5px]" />
@@ -54,14 +54,20 @@
   </Dialog>
 </template>
 <script setup>
-import LucideLayoutDashboard from '~icons/lucide/layout-dashboard'
-import LucideNetwork from '~icons/lucide/network'
-import LucideTarget from '~icons/lucide/target'
-import LucideWorkflow from '~icons/lucide/workflow'
-import LucideSparkles from '~icons/lucide/sparkles'
-import LucideMailCheck from '~icons/lucide/mail-check'
-import MonitorCogIcon from '~icons/lucide/monitor-cog'
-import LucideTextCursorInput from '~icons/lucide/text-cursor-input'
+import { PhSquaresFour as LucideLayoutDashboard } from '@phosphor-icons/vue'
+import { PhNetwork as LucideNetwork } from '@phosphor-icons/vue'
+import { PhTarget as LucideTarget } from '@phosphor-icons/vue'
+import { PhFlowArrow as LucideWorkflow } from '@phosphor-icons/vue'
+import { PhSparkle as LucideSparkles } from '@phosphor-icons/vue'
+// Phosphor has no envelope+checkmark combo glyph, but Report Digests is
+// just "email, periodically" — the checkmark was decorative, not load-
+// bearing meaning — so the plain envelope family already used for every
+// other mail surface in the app (EmailTemplateIcon, Email2Icon) reads fine
+// here too, and drops the Lucide weight mismatch on a Settings-tab icon,
+// one of the two screens a client will look at closely.
+import { PhEnvelopeSimple as LucideMailCheck } from '@phosphor-icons/vue'
+import { PhMonitor as MonitorCogIcon } from '@phosphor-icons/vue'
+import { PhCursorText as LucideTextCursorInput } from '@phosphor-icons/vue'
 import SlidersIcon from '@/components/Icons/SlidersIcon.vue'
 import SparkleIcon from '@/components/Icons/SparkleIcon.vue'
 import CalendarIcon from '@/components/Icons/CalendarIcon.vue'
@@ -108,7 +114,7 @@ import { leadSyncingEnabled } from '@/composables/leadSyncing'
 import { Dialog, Avatar, SidebarItem } from 'frappe-ui'
 import { ref, markRaw, computed, watch, h } from 'vue'
 import AssignmentRulePage from './AssignmentRules/AssignmentRulePage.vue'
-import ShieldCheck from '~icons/lucide/shield-check'
+import { PhShieldCheck as ShieldCheck } from '@phosphor-icons/vue'
 import SlaConfig from './Sla/SlaConfig.vue'
 
 const { isManager, isAdmin, getUser } = usersStore()

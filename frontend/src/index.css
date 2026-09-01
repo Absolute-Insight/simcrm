@@ -1,10 +1,45 @@
 @import 'frappe-ui/style.css';
-@import '@fontsource-variable/space-grotesk';
+@import '@fontsource-variable/plus-jakarta-sans';
 @import './styles/vectora-theme.css';
+
+/* Body face. frappe-ui's inter.css (imported above) has no live font-family
+   declaration — its `:root { font-family: InterVar }` lines sit inside a
+   "Variable fonts usage" comment block in that file, not live CSS, and its
+   Tailwind preset defines no `fontFamily` key either. The actual
+   default-face rules are `html { font-family: InterVar, ... }` (frappe-ui's
+   plugin) and Tailwind's own preflight `html, :host { font-family:
+   theme(fontFamily.sans) }` — both element selectors, specificity (0,0,1).
+   This `:root` rule wins on specificity alone, (0,1,0), regardless of
+   source order. Overriding Tailwind's `fontFamily.sans` is not sufficient
+   on its own — almost everything inherits from the root element rather
+   than carrying a `font-sans` utility. */
+:root {
+  --v-font-sans: 'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', InterVar,
+    ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--v-font-sans);
+  font-optical-sizing: auto;
+}
 
 /* Data app: digits align in tables, currency and timestamps everywhere. */
 body {
   font-variant-numeric: tabular-nums;
+}
+
+/* One scale, three steps. A fourth step is how a design system starts to rot:
+   if something needs a radius between card and overlay, it is the wrong
+   element for the job, not a missing token. */
+:root {
+  --v-radius-control: 6px; /* inputs, buttons, badges, menu items */
+  --v-radius-card: 10px; /* cards, panels, list containers */
+  --v-radius-overlay: 14px; /* modals, popovers, slide-overs */
+
+  /* Density. Values are the starting point; they are tuned against
+     screenshots in Task 12, because PJS's 4.1% taller line box means the
+     right row height is something to measure on screen. */
+  --v-row-h: 40px;
+  --v-cell-px: 12px;
+  --v-page-gutter: 20px;
+  --v-toolbar-h: 44px;
 }
 
 /* Vectora signature — the position rail. One gradient, one meaning: "you are
@@ -123,14 +158,47 @@ body {
   }
 }
 
-/* frappe-ui's NumberChart paints its positive delta text-ink-green-6, which
-   measures 2.74:1 on these cards in light mode and 3.75:1 in dark — both under
-   the 4.5:1 floor (the ink ramps are readability ladders; see AGENTS.md, Design
-   system). The negative delta already uses red-8 and passes. Upstream fix
-   belongs in frappe-ui; until then, remap just that token inside the dashboard
-   number cards, where green-9 measures 7.6:1 light / 12.5:1 dark. */
+/* frappe-ui's NumberChart paints its positive delta text-ink-green-6 (or, as
+   of a later frappe-ui, text-ink-green-5 — QA measured 2.74:1 light / 3.75:1
+   dark on -6 and 2.74:1 light on -5; both under the 4.5:1 floor, since the ink
+   ramps are readability ladders, not lightness ones; see AGENTS.md, Design
+   system) and its negative delta text-ink-red-6 / text-ink-red-5 (red-5
+   measured 4.46:1 light, just under the floor). Upstream fix belongs in
+   frappe-ui; until then, remap both steps of both ramps inside the dashboard
+   number cards, where green-9 measures 7.6:1 light / 12.5:1 dark and red-9
+   clears the same floor by the same margin. Keep BOTH the -5 and -6 selectors
+   even though only one is live today — frappe-ui has already silently swapped
+   the step once, and the failure mode was that the override stopped applying
+   without any visible change to review. Remove when frappe-ui stops setting
+   an unconditional low-contrast ink step on the delta. */
+.v-number-card .text-ink-green-5,
 .v-number-card .text-ink-green-6 {
   color: var(--ink-green-9);
+}
+.v-number-card .text-ink-red-5,
+.v-number-card .text-ink-red-6 {
+  color: var(--ink-red-9);
+}
+
+/* frappe-ui's GettingStartedBanner (the "Getting started" widget in the
+   sidebar footer) paints its CTA button text-ink-blue-5 on bg-surface-blue-2
+   -- QA measured 3.0:1 light / 3.23:1 dark on the "Start now"/"Continue"
+   label, under the 4.5:1 floor. The component exposes no class, id, or
+   data-slot hook: the button and every wrapper div around it carry only
+   shared Tailwind utilities (bg-surface-elevation-2, shadow-sm, rounded-lg,
+   ...) that appear throughout the app, so there is no selector into
+   frappe-ui's own markup that would not also match unrelated elements.
+   AppSidebar.vue wraps the banner in `.v-getting-started` instead -- an
+   owned hook, not a coupling to frappe-ui's internal structure, so this
+   survives a frappe-ui markup change the way the row-density rules above
+   (coupled to internal markup) would not. `button` reaches the one button
+   the banner renders in either of its states (the label button, or the
+   collapsed-sidebar icon-only button); the icon's stroke inherits via
+   `currentColor` so it gets the same fix for free. ink-blue-9 measures
+   8.38:1 light / 9.92:1 dark against the button's own bg-surface-blue-2 (and
+   still clears the floor against its hover/active bg-surface-blue-3/4). */
+.v-getting-started button {
+  color: var(--ink-blue-9);
 }
 
 /* Vectora Lux — glass surfaces and the dashboard stage.
@@ -155,6 +223,16 @@ body {
   --v-glass-shadow-hover: 0 1px 2px rgba(16, 24, 40, 0.06),
     0 14px 32px -14px rgba(16, 24, 40, 0.2);
   --v-gauge-track: var(--outline-gray-2);
+
+  /* Small elevation: a tint off pure white, so cards read as paper on a
+     surface rather than as holes punched in it. No blur, no glow — those
+     stay reserved for .v-glass. */
+  --v-glass-sm-bg: color-mix(
+    in srgb,
+    var(--surface-base) 97%,
+    var(--brand-500)
+  );
+  --v-glass-sm-border: var(--outline-gray-1);
 }
 [data-theme='dark'] {
   --v-glass-bg: rgba(255, 255, 255, 0.04);
@@ -167,6 +245,8 @@ body {
   --v-glass-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, 0.12),
     0 18px 40px -18px rgba(0, 0, 0, 0.7), 0 0 24px -8px rgba(91, 95, 232, 0.35);
   --v-gauge-track: rgba(255, 255, 255, 0.1);
+  --v-glass-sm-bg: rgba(255, 255, 255, 0.03);
+  --v-glass-sm-border: rgba(255, 255, 255, 0.07);
 }
 /* In light mode a ticked checkbox was indistinguishable from an unticked one,
    anywhere in the app. frappe-ui's Checkbox draws the tick as
@@ -210,6 +290,15 @@ input[type='checkbox']:checked {
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
   }
+  /* Row- and inline-level lift, for surfaces that need to sit above the
+     canvas without becoming a full card. No blur even in dark: blur is
+     reserved for .v-glass, and nesting blurs is what makes a page expensive
+     to paint. */
+  .v-glass-sm {
+    background: var(--v-glass-sm-bg);
+    border: 1px solid var(--v-glass-sm-border);
+    border-radius: var(--v-radius-control);
+  }
   /* Interactive glass only: a card that goes somewhere says so on hover. */
   .v-glass-hover:hover {
     border-color: var(--v-glass-border-hover);
@@ -247,20 +336,234 @@ input[type='checkbox']:checked {
     );
 }
 
-/* List header strip — frappe-ui's ListHeader paints itself bg-surface-gray-2,
-   a flat block that reads as unfinished on the dark canvas. Unlayered so it
-   wins over that internal utility; light mode keeps the exact same token. */
+/* List surface — the header strip and its rows now live inside ONE .v-glass
+   card (applied as `.v-glass .v-list-card` on frappe-ui's ListView root, see
+   the six *ListView.vue files), so the list reads as a document on a desk
+   instead of a loose grid on the page (design direction, "The list becomes
+   one surface"). The page gutter moved to that card's own margin; the header
+   and rows below are flush against its inner edges.
+
+   The header itself goes quiet: no more separate bg-surface-gray-2 block
+   sitting a `mb-2` gap above the rows — it is a transparent strip inside the
+   same card, closed off by one hairline that reuses the card's own border
+   tint so header, rows and card all draw from one hairline language.
+   Unlayered so it wins over frappe-ui's own utilities (bg-surface-gray-2,
+   mb-2, rounded-4, p-2). */
 .v-list-header {
-  background: var(--v-list-header-bg);
-  border: 1px solid var(--v-list-header-border);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--v-glass-border);
+  border-radius: var(--v-radius-card) var(--v-radius-card) 0 0;
+  margin: 0;
+  padding: 10px var(--v-cell-px);
 }
-:root {
-  --v-list-header-bg: var(--surface-gray-2);
-  --v-list-header-border: transparent;
+@layer components {
+  .v-list-card {
+    border-radius: var(--v-radius-card);
+  }
 }
-[data-theme='dark'] {
-  --v-list-header-bg: rgba(255, 255, 255, 0.045);
-  --v-list-header-border: rgba(255, 255, 255, 0.07);
+
+/* Column headers get quiet — reuse of `.v-kpi-label`'s shape (11px/600/
+   0.09em/uppercase), not a new treatment: column headers are navigation, not
+   content, and should recede (design direction, "Column headers get quiet").
+   frappe-ui's ListHeaderItem paints its label `text-sm text-ink-gray-5`;
+   scoped to `.v-list-header` so nothing outside the list header is touched. */
+.v-list-header :where(.text-sm.text-ink-gray-5) {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+/* frappe-ui's experimental ListView exposes no data-slot hooks, so row
+   density can only be reached through the utility classes it writes itself
+   (ListRow.vue's `<div class="grid items-center gap-4 px-2">`). Scoped under
+   a class we own (`.v-list`, applied to the wrapper in ListRows.vue) and held
+   at zero specificity with :where(), so a component that needs different
+   density still wins.
+   FRAGILE: coupled to frappe-ui's internal markup. Re-check on every
+   frappe-ui upgrade. */
+.v-list :where(.grid.items-center.gap-4) {
+  min-height: var(--v-row-h);
+  padding-inline: var(--v-cell-px);
+}
+
+/* Typographic hierarchy inside the row — today every cell was one weight,
+   which is why the list read as a spreadsheet (design direction,
+   "Typographic hierarchy inside the row"). ListRow.vue already marks the
+   identifying (first) column `text-ink-gray-9` and every other column
+   `text-ink-gray-7`; this promotes that existing colour hook to a weight
+   hook too, so one row now carries two visible levels. Scoped to the row
+   grid so the same `text-ink-gray-9` class elsewhere (e.g. a checkbox
+   control) is untouched.
+   FRAGILE: same internal-markup coupling as the row-density rule above. */
+.v-list :where(.grid.items-center.gap-4 > .text-ink-gray-9) {
+  font-weight: 600;
+}
+
+/* Row separators — inset from the card edge, not full-bleed. Full-bleed
+   rules read as a table; inset rules read as a list (design direction, "Row
+   rhythm"). frappe-ui draws this itself as a `mx-2 border-outline-gray-1`
+   divider on every unselected row; widening the inset to match the row's own
+   cell padding and swapping in the card's hairline var keeps every hairline
+   in the list — header, rows, card — drawn from the same token.
+   FRAGILE: same internal-markup coupling as the row-density rule above. */
+.v-list :where(.h-px.border-t.mx-2) {
+  margin-inline: var(--v-cell-px);
+  border-color: var(--v-glass-border);
+}
+
+/* frappe-ui bug, found while building the card above: ListRow.vue's inner
+   wrapper for a row with no navigation route (`onRowClick` lists — Tasks,
+   Call Logs) is `<component :is="list.options.getRowRoute ? 'div' : 'button'">`.
+   A *string* `:is="'button'"` runs through Vue's dynamic-component resolver,
+   which capitalizes the name and checks it against globally-registered
+   components before falling back to a native tag — and this app registers
+   frappe-ui's `Button` globally, so `'button'` resolves to that component
+   instead of a plain <button>. Every onRowClick row was quietly painted with
+   Button's own `bg-surface-gray-2`; barely visible against the old page
+   background (~13/255 off), now visible against the new white card. frappe-ui
+   already has the fix for this exact collision (`NativeButton`, in
+   `shared/nativeElements.ts` — its own comment names this failure mode) but
+   the experimental ListView doesn't use it yet. Not forkable here, so the
+   background is neutralised at the call site instead.
+   FRAGILE: same internal-markup coupling as the row-density rule above. */
+.v-list :where(button[class*='[all:unset]']) {
+  background: transparent;
+}
+
+/* Row hover — must be perceptible without being only a colour change (design
+   direction, "Row rhythm"). frappe-ui's own hover is a flat bg swap; this
+   adds a real lift on top of it. Three tags because the row wrapper varies
+   by list: `a`/router-link when a row navigates (`getRowRoute`), plain `div`
+   when it opens in place (`onRowClick`, e.g. Tasks/Call Logs) — both carry
+   `cursor-pointer` when hoverable either way. `position:relative` + z-index
+   keeps the shadow from being painted over by the next row in source order.
+   No glow — a neutral shadow is elevation, not a coloured halo, so this
+   holds in light theme too. */
+.v-list :where(a.cursor-pointer):hover,
+.v-list :where(div.cursor-pointer):hover,
+.v-list :where(button.cursor-pointer):hover {
+  position: relative;
+  z-index: 1;
+  box-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.05),
+    0 6px 14px -8px rgba(16, 24, 40, 0.18);
+}
+[data-theme='dark'] .v-list :where(a.cursor-pointer):hover,
+[data-theme='dark'] .v-list :where(div.cursor-pointer):hover,
+[data-theme='dark'] .v-list :where(button.cursor-pointer):hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 8px 20px -10px rgba(0, 0, 0, 0.55);
+}
+
+/* Signature — the position rail reaches the selected list row (design
+   direction, "Signature"). `.v-rail` is the primitive; frappe-ui's ListRow
+   gives a selected/active row no data-slot or aria hook, only the static
+   class it already paints for that state (`bg-surface-gray-2`), so this
+   keys off that instead. The gradient still appears nowhere else — same
+   discipline as the sidebar rail.
+
+   `bg-surface-gray-2` is not unique to the selected row: frappe-ui's Avatar
+   paints its fallback-initials div with the same class, and every row's
+   leading avatar sits inside `.v-list` too. Left unconstrained, the rail
+   drew on every initials avatar instead of the selected row (F1). The row
+   itself, and only the row, contains the density hook already used above
+   (`.grid.items-center.gap-4`) somewhere in its subtree — the row's own
+   `<a>`/`<div>` wraps a `contents`/`[all:unset]` element that in turn wraps
+   that grid, so it's a descendant, not a direct child, hence a bare
+   `:has()` rather than `:has(>...)`. An Avatar never contains that grid, so
+   this reaches the row exclusively.
+   FRAGILE: same internal-markup coupling as the row-density rule above. */
+.v-list :where(a.bg-surface-gray-2:has(.grid.items-center.gap-4)),
+.v-list :where(div.bg-surface-gray-2:has(.grid.items-center.gap-4)) {
+  position: relative;
+}
+.v-list :where(a.bg-surface-gray-2:has(.grid.items-center.gap-4))::before,
+.v-list :where(div.bg-surface-gray-2:has(.grid.items-center.gap-4))::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 16px;
+  width: 2.5px;
+  transform: translateY(-50%);
+  border-radius: 9999px;
+  background: var(--brand-gradient-y);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .v-list :where(a.bg-surface-gray-2:has(.grid.items-center.gap-4))::before,
+  .v-list :where(div.bg-surface-gray-2:has(.grid.items-center.gap-4))::before {
+    animation: v-rail-in var(--motion-base) var(--motion-ease-out);
+  }
+}
+
+/* Toolbar consolidation — Filter, Sort and Columns/Kanban-Settings shared one
+   frame instead of floating as three separate pills (design direction,
+   "Toolbar consolidation"). Wrap the trio in `.v-toolbar-group` (ViewControls
+   .vue); the trigger buttons are frappe-ui's default subtle/gray Button (no
+   border, `bg-surface-gray-2`, `rounded-4`) — this swaps the per-button fill
+   for one shared strip with hairline dividers between direct children.
+   Deliberately NOT `overflow:hidden`-and-square-middle-buttons: the first
+   pass did that and it clipped the focus outline on the first/last button to
+   three-quarters invisible, which fails the keyboard-focus rule. Every
+   button keeps its own full radius instead — first, middle and last all read
+   as the same rounded chip on hover/focus, nothing to clip. Unlayered so it
+   outranks those utilities; :where() keeps specificity at zero so a control
+   that truly needs its own look still wins. */
+.v-toolbar-group {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--v-glass-sm-border);
+  border-radius: var(--v-radius-control);
+  background: var(--v-glass-sm-bg);
+}
+.v-toolbar-group :where(button) {
+  background: transparent;
+  border-radius: var(--v-radius-control);
+}
+/* Segmented pairs (SortBy's asc/desc toggle, Filter's clear-all X) mark their
+   own halves `rounded-l-none`/`rounded-r-none` so the pair reads as one
+   pill. Those utilities live in Tailwind's `utilities` layer, and an
+   unlayered rule always outranks a layered one regardless of specificity —
+   so the blanket reset above was beating them and squaring both halves back
+   into two separate chips. Re-zero just the corner each utility claims,
+   inside this same unlayered block, so the full var(--v-radius-control)
+   radius still applies everywhere else *and* the split pair still joins into
+   one pill. */
+.v-toolbar-group :where(button.rounded-l-none) {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.v-toolbar-group :where(button.rounded-r-none) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.v-toolbar-group :where(button):hover {
+  background: var(--surface-gray-3);
+}
+/* A focused button must paint its outline over its neighbours, not under
+   them — plain DOM order would let the next sibling's opaque background
+   cover the shared edge of the outline. */
+.v-toolbar-group :where(button):focus-visible {
+  position: relative;
+  z-index: 1;
+}
+/* The divider targets the direct child only, one hairline per boundary
+   between Filter / Sort / Columns. A prior version also targeted every
+   button descendant, meant (per its own comment) to reach "the first real
+   button descendant" when a direct child is an unpainted `display:contents`
+   wrapper — but a descendant-button selector matches every button inside
+   the child, not just the first, so it also painted the shadow onto both
+   halves of SortBy's and Filter's own internal segmented pairs: three
+   vertical lines where one belonged (F2). Dropped; the one known casualty is
+   SortBy's empty state (its trigger there is frappe-ui's Combobox, whose own
+   root is `display:contents` and so cannot paint the shadow itself) — it
+   shows no divider before Sort until a sort is applied, at which point its
+   root becomes a real `<div>` and the divider appears. */
+.v-toolbar-group > * + * {
+  box-shadow: inset 1px 0 0 var(--v-glass-sm-border);
 }
 
 /* Vectora Lux — the shell. The sidebar and the page header are the frame
@@ -349,19 +652,33 @@ input[type='checkbox']:checked {
   [class*='text-3xl-'] {
     font-family: theme(fontFamily.display);
     letter-spacing: -0.02em;
+    /* PJS ships a 4.1% taller default line box than Inter. Display steps pin
+       their own leading so headings do not silently gain height. */
+    line-height: 1.15;
   }
   /* text-lg-medium is overloaded — it sizes panel headings but also layout
      containers whose children are body text (FieldLayout Section) — so the lg
      step opts in by name instead of by size. Every lg heading that wants the
      display face now says so with `.v-title-sm`; nothing selects the face by
-     DOM position any more. */
+     DOM position any more.
+
+     `text-lg-medium` (frappe-ui, generated from the `lg` size token) ships its
+     own `line-height: 1.15` and, being a later same-specificity rule, would
+     otherwise win over the pin above. It happens to carry the same 1.15
+     today — frappe-ui's whole fontSize scale (sm through 4xl) standardizes on
+     1.15 — but that is a property of their token table, not of this rule, so
+     it is re-asserted explicitly rather than relied on. */
   .v-title-sm {
     @apply text-lg-medium;
+    line-height: 1.15;
   }
   /* No `.v-display` alias: the 3xl step already selects the face by size, so a
-     named class for it would be a second way to say the same thing. */
+     named class for it would be a second way to say the same thing.
+     Same `@apply` line-height risk as `.v-title-sm` above (text-2xl-semibold
+     also ships `line-height: 1.15`) — re-asserted for the same reason. */
   .v-title {
     @apply text-2xl-semibold;
+    line-height: 1.15;
   }
 
   .prose-f {
@@ -391,4 +708,31 @@ input[type='checkbox']:checked {
    (z-[100]). Lift menus above popovers so nested menus stay visible. */
 .menu-content {
   z-index: 101;
+}
+
+/* Every dialog in the app -- both frappe-ui's own chrome and every local
+   Modals/*.vue that renders `bare` and reproduces that chrome by hand --
+   shares one DialogContent root, which hard-codes `rounded-7` (16px, frappe-
+   ui's own scale). That is a fourth radius no local file can reach to fix:
+   the three-token rule (control/card/overlay) never actually reached a real
+   modal corner. Retarget the one vendor class to the overlay token instead
+   of forking Dialog.vue. */
+.dialog-content {
+  border-radius: var(--v-radius-overlay);
+}
+
+/* frappe-ui's own SidebarItem (used by the app's Settings sidebar, and via
+   [data-slot='sidebar-item'] anywhere else that vendor component is reused)
+   hard-codes `rounded-4` on its own root and inner button -- another corner
+   the three-token system never reached. It is a nav row, so it takes the
+   control token, same role as every other interactive row in the app.
+   This is a plain descendant selector: it reaches the root itself (first
+   arm) plus any element at any depth inside it that carries the `.rounded-4`
+   class (second arm), not merely a direct child. That is exactly what is
+   wanted here, because it is keyed on the class name itself rather than
+   position -- a differently-rounded child -- an avatar, an icon badge --
+   carries no `.rounded-4` class and so is untouched regardless of depth. */
+[data-slot='sidebar-item'].rounded-4,
+[data-slot='sidebar-item'] .rounded-4 {
+  border-radius: var(--v-radius-control);
 }

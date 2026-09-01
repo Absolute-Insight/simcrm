@@ -138,7 +138,19 @@ export function applyLuxChartTheme(config, dark) {
       }
     : {}
 
-  return { ...config, colors: palette, series, ...darkAxes }
+  // frappe-ui's charts default to CHART_FONT_FAMILY ('InterVar, Inter,
+  // sans-serif'), so without this every axis label and legend stays on Inter
+  // while the rest of the app is on Plus Jakarta Sans. Same contract as the
+  // rest of this module: never override what the caller already set.
+  const CHART_FONT =
+    "'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', InterVar, sans-serif"
+  const out = { ...config, colors: palette, series, ...darkAxes }
+  out.textStyle = {
+    fontFamily: CHART_FONT,
+    ...(config.textStyle ?? {}),
+  }
+
+  return out
 }
 
 export function withVectoraLux(config) {

@@ -1,6 +1,9 @@
 <template>
   <ListView
-    :class="$attrs.class"
+    :class="[
+      'v-glass v-list-card mx-3 sm:mx-[var(--v-page-gutter)]',
+      $attrs.class,
+    ]"
     :columns="columns"
     :rows="rows"
     :options="{
@@ -17,7 +20,7 @@
     @update:selections="(selections) => emit('selectionsChanged', selections)"
   >
     <ListHeader
-      class="v-list-header sm:mx-5 mx-3"
+      class="v-list-header"
       @columnWidthUpdated="emit('columnWidthUpdated')"
     >
       <ListHeaderItem
@@ -213,7 +216,7 @@
   <ListFooter
     v-if="pageLengthCount"
     v-model="pageLengthCount"
-    class="border-t sm:px-5 px-3 py-2"
+    class="border-t sm:px-[var(--v-page-gutter)] px-3 py-2"
     :options="{
       rowCount: options.rowCount,
       totalCount: options.totalCount,

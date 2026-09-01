@@ -166,7 +166,7 @@
 </template>
 
 <script setup>
-import LucidePlus from '~icons/lucide/plus'
+import { PhPlus as LucidePlus } from '@phosphor-icons/vue'
 import LucideMailCheck from '~icons/lucide/mail-check'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'

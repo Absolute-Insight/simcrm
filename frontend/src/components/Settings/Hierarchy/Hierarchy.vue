@@ -142,7 +142,7 @@
     <Teleport to="body">
       <div
         v-if="dragLabel"
-        class="fixed pointer-events-none px-2 py-1 rounded-5 bg-gray-900 text-white text-xs shadow-lg"
+        class="fixed pointer-events-none px-2 py-1 rounded-[var(--v-radius-control)] bg-gray-900 text-white text-xs shadow-lg"
         :style="{
           top: `${dragState.y + 25}px`,
           left: `${dragState.x - 25}px`,
@@ -260,8 +260,8 @@ import { useDragDrop } from './useDragDrop'
 import { globalStore } from '@/stores/global'
 import { openHelpCenter } from '@/stores/help'
 import { usersStore } from '@/stores/users'
-import LucideNetwork from '~icons/lucide/network'
-import LucideCircleQuestionMark from '~icons/lucide/circle-question-mark'
+import { PhNetwork as LucideNetwork } from '@phosphor-icons/vue'
+import { PhQuestion as LucideCircleQuestionMark } from '@phosphor-icons/vue'
 import {
   Button,
   Dialog,

@@ -45,7 +45,7 @@
           <div class="flex gap-1 w-9/12">
             <Dropdown class="" :options="colors">
               <div
-                class="flex items-center justify-center size-7 shrink-0 border border-outline-gray-2 bg-surface-base hover:border-outline-gray-3 hover:shadow-sm rounded-4 cursor-pointer"
+                class="flex items-center justify-center size-7 shrink-0 border border-outline-gray-2 bg-surface-base hover:border-outline-gray-3 hover:shadow-sm rounded-[var(--v-radius-control)] cursor-pointer"
               >
                 <div
                   class="size-2.5 rounded-full cursor-pointer"
@@ -174,7 +174,7 @@
           </div>
           <div class="w-9/12">
             <TextEditor
-              editor-class="!prose-sm overflow-auto min-h-[80px] max-h-80 py-1.5 px-2 rounded-4 border border-outline-gray-2 placeholder:text-ink-gray-4 hover:border-outline-gray-3 hover:border-outline-elevation-2 hover:shadow-sm focus:bg-surface-base focus:border-outline-gray-4 focus:ring-0 focus-visible:ring-2 focus-visible:ring-outline-gray-3 text-ink-gray-8 transition-colors"
+              editor-class="!prose-sm overflow-auto min-h-[80px] max-h-80 py-1.5 px-2 rounded-[var(--v-radius-control)] border border-outline-gray-2 placeholder:text-ink-gray-4 hover:border-outline-gray-3 hover:border-outline-elevation-2 hover:shadow-sm focus:bg-surface-base focus:border-outline-gray-4 focus:ring-0 focus-visible:ring-2 focus-visible:ring-outline-gray-3 text-ink-gray-8 transition-colors"
               :bubbleMenu="true"
               :content="_event.description"
               :placeholder="__('Add Description.')"

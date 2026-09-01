@@ -38,7 +38,17 @@ require_type_annotated_api_methods = True
 # app_include_js = "/assets/crm/js/crm.js"
 
 # include js, css files in header of web template
-# web_include_css = "/assets/crm/css/crm.css"
+# Vectora branding for the website pages -- in practice the login flow, which
+# is the first screen anyone outside the product ever sees. Every rule in that
+# file is scoped under `body:has(.login-content)` so enabling it here does not
+# restyle other website pages. We deliberately do not override
+# frappe/www/login.html: the markup stays upstream's, only its presentation is
+# ours.
+# Referenced as a bundle (not a raw /assets path) so the build hashes the
+# filename. A raw path is served with `max-age=43200` and no version stamp,
+# so an edit would not reach anyone who had loaded the page in the last 12
+# hours -- including, say, the morning of a demo.
+web_include_css = "login.bundle.css"
 # web_include_js = "/assets/crm/js/crm.js"
 
 # include custom scss in every website theme (without file extension ".scss")

@@ -173,8 +173,8 @@
 </template>
 
 <script setup>
-import LucideBookOpen from '~icons/lucide/book-open'
-import LucideLoaderCircle from '~icons/lucide/loader-circle'
+import { PhBookOpen as LucideBookOpen } from '@phosphor-icons/vue'
+import { PhCircleNotch as LucideLoaderCircle } from '@phosphor-icons/vue'
 import {
   askAssistant,
   assistantAsking,

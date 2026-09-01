@@ -8,6 +8,9 @@ dev-dist
 tags
 node_modules
 crm/public/frontend
+# esbuild output for crm/public/**/*.bundle.* (hashed filenames, rebuilt by
+# `bench build`); committing it would churn on every build.
+crm/public/dist
 crm/www/crm.html
 build
 frontend/coverage

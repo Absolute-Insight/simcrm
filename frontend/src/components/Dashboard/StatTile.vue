@@ -96,8 +96,8 @@
 </template>
 
 <script setup>
-import LucideArrowUpRight from '~icons/lucide/arrow-up-right'
-import LucideTriangleAlert from '~icons/lucide/alert-triangle'
+import { PhArrowUpRight as LucideArrowUpRight } from '@phosphor-icons/vue'
+import { PhWarning as LucideTriangleAlert } from '@phosphor-icons/vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { NativeButton } from '@/utils/nativeButton'
 import { deltaTone } from '@/utils/dashboardHome'

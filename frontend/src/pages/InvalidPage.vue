@@ -1,6 +1,6 @@
 <template>
   <div
-    class="grid h-full place-items-center px-4 py-20 text-center text-lg text-ink-gray-5"
+    class="v-lux-stage grid h-full place-items-center px-4 py-20 text-center text-lg text-ink-gray-5"
   >
     <div class="space-y-2">
       <div>{{ __('Invalid page or not permitted to access') }}</div>
