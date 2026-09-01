@@ -3,6 +3,7 @@ import './index.css'
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { createDialog } from './utils/dialogs'
+import { cleanUpSupersededWorkers } from './utils/staleServiceWorkers'
 import { initSocket } from './socket'
 import router from './router'
 import translationPlugin from './translation'
@@ -94,3 +95,17 @@ if (import.meta.env.DEV) {
 if (import.meta.env.DEV) {
   window.$dialog = createDialog
 }
+
+/* Housekeeping for the PWA scope move in vite.config.js. The worker used to be
+   registered at vite's base -- /assets/crm/frontend/ -- and that registration
+   outlives the change: scopes key registrations, so the one at /crm is an
+   addition, not a replacement. The old one is left controlling nothing while
+   holding a multi-megabyte precache, and only an explicit unregister clears it.
+
+   Fire and forget. Nothing downstream waits on it, it resolves even when the
+   browser refuses, and once no visitor has a pre-/crm worker left this call
+   does nothing and can go. */
+cleanUpSupersededWorkers({
+  scriptPath: `${import.meta.env.BASE_URL}sw.js`,
+  scope: '/crm', // must track VitePWA's `scope` in vite.config.js
+})
