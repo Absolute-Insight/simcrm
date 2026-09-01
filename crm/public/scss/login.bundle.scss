@@ -44,7 +44,7 @@ body:has(.login-content) {
  */
 body:has(.login-content)::before,
 body:has(.login-content)::after {
-  content: "";
+  content: '';
   position: fixed;
   pointer-events: none;
 }
@@ -85,8 +85,8 @@ body:has(.login-content)::after {
  * reverted: `filter` on a fixed pseudo-element cannot be clipped to the panel,
  * so the blur bled across the form column.) */
 body:has(.login-content)::after {
-  background: url("/assets/crm/images/brand.jpeg") center center /
-    min(96%, 700px) auto no-repeat;
+  background: url('/assets/crm/images/brand.jpeg') center center / min(96%, 700px)
+    auto no-repeat;
   -webkit-mask-image: radial-gradient(
     ellipse 44% 18% at 50% 50%,
     #000 52%,
@@ -154,13 +154,13 @@ body:has(.login-content) label.text-ink-gray-5 {
   color: var(--v-ink-muted);
 }
 
-body:has(.login-content) a[href="#forgot"],
+body:has(.login-content) a[href='#forgot'],
 body:has(.login-content) .sign-up-message,
 body:has(.login-content) .sign-up-message a {
   color: var(--v-ink-link);
 }
 
-body:has(.login-content) a[href="#forgot"]:hover,
+body:has(.login-content) a[href='#forgot']:hover,
 body:has(.login-content) .sign-up-message a:hover {
   color: var(--v-ink);
 }
@@ -224,7 +224,7 @@ body:has(.login-content) .password-field .toggle-password {
   color: var(--v-ink-soft);
 }
 
-body:has(.login-content) .es-button[data-variant="solid"] {
+body:has(.login-content) .es-button[data-variant='solid'] {
   background: var(--v-ink);
   border-radius: 6px;
   font-weight: 600;
@@ -232,7 +232,7 @@ body:has(.login-content) .es-button[data-variant="solid"] {
   transition: background 120ms ease;
 }
 
-body:has(.login-content) .es-button[data-variant="solid"]:hover {
+body:has(.login-content) .es-button[data-variant='solid']:hover {
   background: #22415f;
 }
 

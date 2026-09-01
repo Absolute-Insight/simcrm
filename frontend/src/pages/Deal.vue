@@ -64,9 +64,7 @@
       >
         {{ __(dealId) }}
       </div>
-      <div
-        class="flex items-center justify-start gap-5 border-b p-[var(--v-page-gutter)]"
-      >
+      <div class="flex items-center justify-start gap-5 border-b p-[var(--v-page-gutter)]">
         <Tooltip :text="__('Organization Logo')">
           <div class="group relative size-12">
             <Avatar

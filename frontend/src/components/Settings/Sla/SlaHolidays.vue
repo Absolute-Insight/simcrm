@@ -73,9 +73,7 @@
     </Popover>
   </div>
   <div class="mt-5">
-    <div
-      class="rounded-[var(--v-radius-card)] border px-2 border-outline-gray-2 text-sm"
-    >
+    <div class="rounded-[var(--v-radius-card)] border px-2 border-outline-gray-2 text-sm">
       <div
         v-if="slaData.working_hours?.length !== 0"
         class="grid p-3 px-4 items-center"

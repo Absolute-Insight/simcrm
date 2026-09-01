@@ -36,10 +36,7 @@
             class="flex flex-1 flex-col pr-2"
             :doctype="_doctype"
           />
-          <div
-            v-if="preview"
-            class="flex flex-1 flex-col border rounded-[var(--v-radius-card)]"
-          >
+          <div v-if="preview" class="flex flex-1 flex-col border rounded-[var(--v-radius-card)]">
             <SidePanelLayout
               v-slot="{ section }"
               :sections="tabs.data[0].sections"

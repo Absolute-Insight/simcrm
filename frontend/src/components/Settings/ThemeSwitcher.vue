@@ -25,11 +25,7 @@
                 :src="logo"
                 class="size-5 object-cover"
               />
-              <component
-                :is="logo"
-                v-else
-                class="size-5 shrink-0 rounded-[var(--v-radius-control)]"
-              />
+              <component :is="logo" v-else class="size-5 shrink-0 rounded-[var(--v-radius-control)]" />
               <div>{{ __(name) }}</div>
             </div>
             <div class="flex flex-col flex-1 gap-[5px]">
@@ -77,11 +73,7 @@
                 :src="logo"
                 class="size-5 object-cover"
               />
-              <component
-                :is="logo"
-                v-else
-                class="size-5 shrink-0 rounded-[var(--v-radius-control)]"
-              />
+              <component :is="logo" v-else class="size-5 shrink-0 rounded-[var(--v-radius-control)]" />
               <div>{{ __(name) }}</div>
             </div>
             <div class="flex flex-col flex-1 gap-[5px]">
