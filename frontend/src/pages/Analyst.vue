@@ -245,6 +245,12 @@ function exportCsv(table, period) {
   color: var(--ink-gray-8);
 }
 
+/* The measure columns: this rule must outrank the base th rule above, which
+   the bare utility class does not. */
+.analyst-table th.text-right {
+  text-align: right;
+}
+
 .analyst-table td {
   padding: 0.375rem 0.5rem;
   border-bottom: 1px solid var(--outline-gray-1);
