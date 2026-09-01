@@ -73,7 +73,7 @@ class MessageBuildingTest(UnitTestCase):
 		messages = knowledge.build_assistant_messages("planner", [big])
 		self.assertIn(knowledge.TRUNCATION_NOTE, messages[0]["content"])
 		self.assertLess(
-			len(messages[0]["content"]), knowledge.ARTICLE_CHAR_CAP + len(knowledge.SYSTEM_PROMPT) + 200
+			len(messages[0]["content"]), knowledge.ARTICLE_CHAR_CAP + len(knowledge.MENTOR_SYSTEM_PROMPT) + 200
 		)
 
 	def test_history_is_kept_in_order_between_system_and_question(self):

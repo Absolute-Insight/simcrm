@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-"""``ask_assistant`` endpoint tests. The client is stubbed; flags, degrade paths
+"""``ask_mentor`` endpoint tests. The client is stubbed; flags, degrade paths
 and the citation filter are the subject."""
 
 from __future__ import annotations
@@ -28,14 +28,14 @@ class FlagTest(IntegrationTestCase):
 	def test_disabled_returns_a_status_and_never_calls_the_model(self):
 		with mock.patch.object(api_mod, "get_config", return_value=DISABLED):
 			with mock.patch.object(api_mod.client, "complete") as complete:
-				result = api_mod.ask_assistant("how do quotas work?")
+				result = api_mod.ask_mentor("how do quotas work?")
 
 		self.assertEqual(result, {"status": "disabled"})
 		complete.assert_not_called()
 
 	def test_an_empty_question_is_refused_before_any_config_read(self):
 		with self.assertRaises(frappe.ValidationError):
-			api_mod.ask_assistant("   ")
+			api_mod.ask_mentor("   ")
 
 	def test_an_exhausted_budget_degrades_and_never_calls_the_model(self):
 		with (
@@ -43,7 +43,7 @@ class FlagTest(IntegrationTestCase):
 			mock.patch.object(api_mod, "_budget_spent", return_value=True),
 			mock.patch.object(api_mod.client, "complete") as complete,
 		):
-			result = api_mod.ask_assistant("hello")
+			result = api_mod.ask_mentor("hello")
 
 		self.assertEqual(result, {"status": "unavailable"})
 		complete.assert_not_called()
@@ -56,7 +56,7 @@ class DegradeTest(IntegrationTestCase):
 			mock.patch.object(api_mod.client, "complete", side_effect=AgentUnavailable("down")),
 			no_budget_check(),
 		):
-			result = api_mod.ask_assistant("how do quotas work?")
+			result = api_mod.ask_mentor("how do quotas work?")
 
 		self.assertEqual(result["status"], "unavailable")
 
@@ -72,7 +72,7 @@ class HappyPathTest(IntegrationTestCase):
 			mock.patch.object(api_mod.client, "complete", return_value=answer) as complete,
 			no_budget_check(),
 		):
-			result = api_mod.ask_assistant("where do I set monthly sales targets?")
+			result = api_mod.ask_mentor("where do I set monthly sales targets?")
 
 		self.assertEqual(result["status"], "ok")
 		self.assertEqual(result["answer"], answer.answer)
@@ -92,7 +92,7 @@ class HappyPathTest(IntegrationTestCase):
 			mock.patch.object(api_mod.client, "complete", return_value=answer) as complete,
 			no_budget_check(),
 		):
-			api_mod.ask_assistant("what is a quota?", history=history)
+			api_mod.ask_mentor("what is a quota?", history=history)
 
 		roles = [m["role"] for m in complete.call_args[0][2]]
 		self.assertEqual(roles, ["system", "user", "assistant", "user"])
@@ -105,13 +105,13 @@ class HappyPathTest(IntegrationTestCase):
 				mock.patch.object(api_mod.client, "complete", return_value=answer) as complete,
 				no_budget_check(),
 			):
-				result = api_mod.ask_assistant("q", history=garbage)
+				result = api_mod.ask_mentor("q", history=garbage)
 			self.assertEqual(result["status"], "ok")
 			self.assertEqual([m["role"] for m in complete.call_args[0][2]], ["system", "user"])
 
 	def test_endpoint_is_whitelisted_and_rate_limited(self):
-		self.assertIn(api_mod.ask_assistant, frappe.whitelisted)
-		self.assertTrue(hasattr(api_mod.ask_assistant, "__wrapped__"))
+		self.assertIn(api_mod.ask_mentor, frappe.whitelisted)
+		self.assertTrue(hasattr(api_mod.ask_mentor, "__wrapped__"))
 
 	def test_an_over_long_question_is_truncated_not_refused(self):
 		answer = AssistantAnswer(answer="ok")
@@ -120,7 +120,7 @@ class HappyPathTest(IntegrationTestCase):
 			mock.patch.object(api_mod.client, "complete", return_value=answer) as complete,
 			no_budget_check(),
 		):
-			api_mod.ask_assistant("q" * (api_mod.ASSISTANT_QUESTION_MAX_CHARS + 500))
+			api_mod.ask_mentor("q" * (api_mod.ASSISTANT_QUESTION_MAX_CHARS + 500))
 
 		question = complete.call_args[0][2][-1]["content"]
 		self.assertEqual(len(question), api_mod.ASSISTANT_QUESTION_MAX_CHARS)

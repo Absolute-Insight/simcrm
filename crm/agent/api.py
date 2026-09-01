@@ -11,11 +11,13 @@ point which triggers an outbound fetch is rate-limited -- here per user *and* pe
 
 from __future__ import annotations
 
+import html
 import time
 from contextlib import contextmanager
 
 import frappe
 from frappe.rate_limiter import rate_limit
+from frappe.utils import strip_html_tags
 
 from crm.agent import actions, client, knowledge, tools
 from crm.agent.config import get_config, get_signal_config
@@ -260,19 +262,16 @@ def draft_reply(reference_doctype: str, reference_name: str) -> dict:
 @frappe.whitelist()
 @sales_user_only
 @rate_limit(limit=SUMMARISE_RATE_LIMIT, seconds=60)
-def ask_assistant(question: str, history: str | list | None = None) -> dict:
+def ask_mentor(question: str, history: str | list | None = None) -> dict:
 	"""Answer a question about the product, grounded on the help articles.
 
 	Returns ``{"status": "ok", "answer": str, "related_articles": [...]}`` or a
-	bare degrade status. The chat tier reads no CRM records at all: its whole
+	bare degrade status. The Mentor reads no CRM records at all: its whole
 	knowledge is the shipped manual, so there is nothing here for a hostile
 	record or email to inject through, and nothing the answer can leak that the
 	help center does not already show every user.
 	"""
-	question = (question or "").strip()
-	if not question:
-		frappe.throw(frappe._("Ask a question."), frappe.ValidationError)
-	question = question[:ASSISTANT_QUESTION_MAX_CHARS]
+	question = _clean_question(question)
 
 	cfg = get_config()
 	if not cfg.enabled:
@@ -284,22 +283,117 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 	selected = knowledge.select_articles(question, articles)
 	messages = knowledge.build_assistant_messages(question, selected, _parse_history(history))
 
-	with _model_call_slot() as free:
-		if not free:
-			# refused after the budgets were charged: a refused call costs nobody anything
-			_refund_budget(cfg)
-			return {"status": "unavailable"}
-		try:
-			reply = client.complete(cfg, AssistantAnswer, messages)
-		except (AgentUnavailable, SchemaMismatch) as exc:
-			frappe.log_error(title="CRM assistant answer failed", message=str(exc))
-			return {"status": "unavailable"}
+	reply = _complete_chat(cfg, messages, "CRM mentor answer failed")
+	if reply is None:
+		return {"status": "unavailable"}
 
 	# The model cites articles by name; only names that actually exist survive,
 	# so an invented citation cannot become a dead link in the help center.
 	known = {article["name"] for article in articles}
 	related = [name for name in reply.related_articles if name in known]
 	return {"status": "ok", "answer": reply.answer, "related_articles": related}
+
+
+# How many knowledge rows the Assistant considers. Selection is a scan over
+# titles, tags and bodies, so a catalogue past this is a search index's job,
+# not a prompt's.
+KNOWLEDGE_ROW_LIMIT = 500
+
+
+@frappe.whitelist()
+@sales_user_only
+@rate_limit(limit=SUMMARISE_RATE_LIMIT, seconds=60)
+def ask_assistant(question: str, history: str | list | None = None) -> dict:
+	"""Answer a rep's question about the company's offering from the knowledge base.
+
+	Returns ``{"status": "ok", "answer": str, "sources": [{"name", "title"}]}``,
+	``{"status": "empty"}`` when nothing has been curated yet, or a bare degrade
+	status. The knowledge base is administrator-authored, so it carries the same
+	trust as the help articles; the product catalogue joins it only when the
+	admin says so. Both are read with permission-checked ``get_list`` under the
+	asking user. Nothing here reads deals, leads or email.
+	"""
+	question = _clean_question(question)
+
+	cfg = get_config()
+	if not cfg.enabled:
+		return {"status": "disabled"}
+
+	articles = _knowledge_articles(cfg)
+	if not articles:
+		return {"status": "empty"}
+
+	if _throttled(cfg):
+		return {"status": "unavailable"}
+
+	selected = knowledge.select_articles(question, articles)
+	company = frappe.db.get_single_value("FCRM Settings", "brand_name") or "the company"
+	messages = knowledge.build_assistant_messages(
+		question,
+		selected,
+		_parse_history(history),
+		system_prompt=knowledge.ASSISTANT_SYSTEM_PROMPT.format(company=company),
+		no_match_note=knowledge.ASSISTANT_NO_MATCH_NOTE,
+		heading="Knowledge base",
+	)
+
+	reply = _complete_chat(cfg, messages, "CRM assistant answer failed")
+	if reply is None:
+		return {"status": "unavailable"}
+
+	titles = {article["name"]: article["title"] for article in articles}
+	sources = [{"name": name, "title": titles[name]} for name in reply.related_articles if name in titles]
+	return {"status": "ok", "answer": reply.answer, "sources": sources}
+
+
+def _knowledge_articles(cfg) -> list[dict]:
+	"""Every row the Assistant may quote, in the article shape the scorer reads."""
+	rows = frappe.get_list(
+		"CRM Knowledge Article",
+		filters={"available_to_assistant": 1},
+		fields=["name", "title", "tags", "body"],
+		order_by="modified desc",
+		limit=KNOWLEDGE_ROW_LIMIT,
+	)
+	articles = [
+		{"name": row.name, "title": row.title, "tags": row.tags or "", "content": row.body or ""}
+		for row in rows
+	]
+	if cfg.assistant_reads_products:
+		currency = frappe.db.get_single_value("FCRM Settings", "currency") or ""
+		products = frappe.get_list(
+			"CRM Product",
+			filters={"disabled": 0},
+			fields=["name", "product_code", "product_name", "description", "standard_rate"],
+			order_by="product_name asc",
+			limit=KNOWLEDGE_ROW_LIMIT,
+		)
+		for row in products:
+			row = dict(row)
+			row["description"] = html.unescape(strip_html_tags(row.get("description") or ""))
+			articles.append(knowledge.article_from_product(row, currency))
+	return articles
+
+
+def _clean_question(question: str) -> str:
+	question = (question or "").strip()
+	if not question:
+		frappe.throw(frappe._("Ask a question."), frappe.ValidationError)
+	return question[:ASSISTANT_QUESTION_MAX_CHARS]
+
+
+def _complete_chat(cfg, messages: list[dict], log_title: str) -> AssistantAnswer | None:
+	"""One guarded model call for the chat tiers; ``None`` means degrade."""
+	with _model_call_slot() as free:
+		if not free:
+			# refused after the budgets were charged: a refused call costs nobody anything
+			_refund_budget(cfg)
+			return None
+		try:
+			return client.complete(cfg, AssistantAnswer, messages)
+		except (AgentUnavailable, SchemaMismatch) as exc:
+			frappe.log_error(title=log_title, message=str(exc))
+			return None
 
 
 def _parse_history(history) -> list[dict]:
@@ -425,6 +519,8 @@ def get_settings() -> dict:
 		"timeout": cfg.timeout,
 		"max_tokens": cfg.max_tokens,
 		"daily_call_budget": cfg.daily_call_budget,
+		"assistant_reads_products": int(cfg.assistant_reads_products),
+		"analyst_enabled": int(cfg.analyst_enabled),
 		"signals_enabled": int(signals.signals_enabled),
 		"idle_deal_days": signals.idle_deal_days,
 		"close_horizon_days": signals.close_horizon_days,
