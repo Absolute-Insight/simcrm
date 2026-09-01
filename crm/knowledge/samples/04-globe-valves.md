@@ -7,7 +7,7 @@ tags: globe valve, straight pattern, angle pattern, Y pattern, oblique, throttli
 
 ## What it is
 
-A globe valve is a multi-turn valve whose disc closes down onto a seat set across the flow path. The fluid changes direction through the body, which is why it drops more pressure than a gate valve — and why it throttles well: disc lift controls the flow area smoothly. Patterns are **straight** (tee), **angle** (inlet and outlet at 90 degrees, saving an elbow) and **Y-pattern** (stem at about 45 degrees for a straighter path and lower pressure drop, common on steam). Discs range from flat (shut-off) to plug and parabolic (regulation). A **stop-check** globe has a free disc that also acts as a non-return valve. **Bellows-sealed** stems eliminate stem leakage for toxic or steam service.
+A globe valve is a multi-turn valve whose disc closes down onto a seat set across the flow path. The fluid changes direction through the body, which is why it drops more pressure than a gate valve — and why it throttles well: disc lift controls the flow area smoothly. Patterns are **straight** (tee), **angle** (inlet and outlet at 90 degrees, saving an elbow) and **Y-pattern** (stem at about 45 degrees for lower pressure drop, common on steam). Discs range from flat (shut-off) to plug and parabolic (regulation). A **stop-check** globe has a free disc that also acts as a non-return valve. **Bellows-sealed** stems eliminate stem leakage for toxic or steam service.
 
 ## Typical sizes and ratings
 
@@ -25,8 +25,7 @@ Bodies in bronze (utility, HVAC), WCB carbon steel, A105 forged steel, F11 / F22
 - **Steam and power generation:** boiler drains, blowdown, vents, feedwater regulation, stop-check valves on boiler outlets.
 - **Petrochemical and refining:** throttling on process lines, sample points, instrument isolation.
 - **Water, wastewater, mining and minerals processing:** manual regulation on dosing, reagent and bypass lines — not large-bore isolation.
-- **Food and beverage, pulp and paper:** stainless globes on steam and CIP circuits.
-- **Fire protection:** hose and hydrant valves are commonly globe pattern.
+- **Food and beverage, pulp and paper, fire protection:** stainless globes on steam and CIP circuits; hose and hydrant valves are commonly globe pattern.
 
 ## Strengths and limits
 
@@ -42,4 +41,4 @@ Strengths: good throttling and repeatable regulation, short stroke so it closes 
 
 ## Standards
 
-BS 1873 (steel globe and check valves), API 623 (steel globe valves, flanged and butt-weld), API 602 (compact forged valves), BS 5154 (copper alloy globe valves), ASME B16.34, ASME B16.10 (face-to-face), ASME B16.5 and SANS 1123 (flanges), API 598 (testing).
+BS 1873 (steel globe and check valves), API 623 (steel globe valves), API 602 (compact forged valves), BS 5154 (copper alloy globe valves), ASME B16.34, ASME B16.10 (face-to-face), ASME B16.5 and SANS 1123 (flanges), API 598 (testing).

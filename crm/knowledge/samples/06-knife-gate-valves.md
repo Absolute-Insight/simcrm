@@ -12,22 +12,20 @@ A knife gate valve is a linear valve with a thin, sharpened gate that slices thr
 ## Typical sizes and ratings
 
 - DN 50 to DN 1200; larger for tailings and water works.
-- Typically PN 10, PN 16 on smaller sizes and bonneted variants; the sleeves and body, not the flange, limit pressure.
+- Typically PN 10, PN 16 on smaller sizes and bonneted variants; the sleeves, not the flange, limit pressure.
 - Full-bore sleeved valves match the pipe bore with no pressure drop when open.
 - Temperature limited by the elastomer: about 80 °C for natural rubber, higher for EPDM and FKM.
 
 ## Materials
 
-Bodies in ductile iron (epoxy or rubber coated), carbon steel, CF8M stainless. Gates in 304 or 316 stainless, hard-chromed or overlaid for abrasive duty. Seats and sleeves in natural rubber (best abrasion resistance), EPDM, NBR, polyurethane; metal seats for dry solids and high temperature. Packing in PTFE-impregnated braid.
+Bodies in ductile iron (epoxy or rubber coated), carbon steel, CF8M stainless. Gates in 304 or 316 stainless, hard-chromed or overlaid for abrasive duty. Sleeves in natural rubber (best abrasion resistance), EPDM, NBR, polyurethane; metal seats for dry solids and high temperature. Packing in PTFE-impregnated braid.
 
 ## Where it is used
 
 - **Mining slurry and tailings:** thickener underflow, cyclone feed, mill discharge, tailings lines — the primary application.
-- **Mining and minerals processing:** dry solids and powder isolation at silos and transfer points.
+- **Mining and minerals processing, power generation:** dry solids and powder isolation at silos and transfer points; ash handling and coal slurry.
 - **Water and wastewater:** raw sewage, sludge, grit and screenings lines where a wedge gate would foul.
-- **Pulp and paper:** stock lines, where the gate cuts fibre bundles — often called stock valves.
-- **Power generation:** ash handling and coal slurry.
-- **Food and beverage:** sugar, starch and other fibrous or viscous streams in stainless.
+- **Pulp and paper, food and beverage:** stock lines, where the gate cuts fibre bundles (stock valves); sugar, starch and other fibrous streams in stainless.
 
 ## Strengths and limits
 
@@ -43,4 +41,4 @@ Strengths: full bore, short face-to-face, light for the bore, cuts solids and fi
 
 ## Standards
 
-MSS SP-81 (stainless bonnetless knife gate valves), MSS SP-135 (high-pressure knife gate valves), ISO 5752 / EN 558 (face-to-face where applicable), ASME B16.5, EN 1092 and SANS 1123 (flanges — knife gates are usually drilled to the water-works PN tables), ISO 5211 (actuator mounting).
+MSS SP-81 (stainless bonnetless knife gate valves), MSS SP-135 (high-pressure knife gate valves), ISO 5752 / EN 558 (face-to-face where applicable), ASME B16.5, EN 1092 and SANS 1123 (flanges — usually drilled to the water-works PN tables), ISO 5211 (actuator mounting).

@@ -7,9 +7,9 @@ tags: control valve, globe control valve, modulating, throttling, Cv, Kv, flow c
 
 ## What it is
 
-A control valve modulates flow, pressure, level or temperature in response to a controller signal, rather than simply opening or closing. It is a system: the body and trim, an actuator (usually pneumatic diaphragm or piston, sometimes electric) and a **positioner** that compares the 4–20 mA or fieldbus setpoint with actual stem position and drives the actuator to match. The **globe control valve** with cage- or post-guided plug is the general-purpose design and takes anti-cavitation and low-noise trims. Rotary designs — **V-port (segmented) ball**, eccentric plug and high-performance butterfly — give more capacity per size and cost less on larger lines.
+A control valve modulates flow, pressure, level or temperature in response to a controller signal, rather than simply opening or closing. It is a system: body and trim, an actuator (usually pneumatic diaphragm or piston, sometimes electric) and a **positioner** that compares the 4–20 mA or fieldbus setpoint with actual stem position and drives the actuator to match. The **globe control valve** with cage- or post-guided plug is the general-purpose design and takes anti-cavitation and low-noise trims. Rotary designs — **V-port (segmented) ball**, eccentric plug and high-performance butterfly — give more capacity per size and cost less on larger lines.
 
-Sizing is by flow coefficient (Cv or Kv) at minimum, normal and maximum flow. The inherent **characteristic** (equal percentage, linear, quick opening) is chosen so installed gain stays reasonably constant across the range.
+Sizing is by flow coefficient (Cv or Kv) at minimum, normal and maximum flow. The inherent **characteristic** (equal percentage, linear, quick opening) is chosen so installed gain stays roughly constant across the range.
 
 ## Typical sizes and ratings
 
@@ -26,9 +26,8 @@ Bodies in WCB, WC9, CF8M, duplex and alloys. Trim in 316 stainless, 17-4 PH, Ste
 
 - **Petrochemical and refining:** pressure, flow and level loops on every unit; anti-cavitation trim on letdown, low-noise trim on gas.
 - **Power generation and steam:** feedwater regulation, desuperheater spray, turbine bypass, pressure-reducing stations.
-- **Water and wastewater:** dosing flow, reservoir level, reticulation pressure management.
-- **Mining and minerals processing:** reagent dosing, thickener and flotation level, water balance.
-- **Pulp and paper, food and beverage:** stock and consistency loops (often segmented ball); steam and CIP temperature control with sanitary bodies where in contact with product.
+- **Water, wastewater, mining and minerals processing:** dosing flow, reservoir and thickener level, reticulation pressure management, water balance.
+- **Pulp and paper, food and beverage:** stock and consistency loops (often segmented ball); steam and CIP temperature control, sanitary bodies where in contact with product.
 
 ## Strengths and limits
 
@@ -37,7 +36,7 @@ Strengths: precise, repeatable regulation; diagnostics from a smart positioner; 
 ## Questions to ask the customer
 
 - Fluid, inlet and outlet pressure, temperature and flow at minimum, normal and maximum.
-- What is controlled (flow, pressure, level, temperature) and by what signal (4–20 mA, HART, fieldbus)?
+- What is controlled, and by what signal (4–20 mA, HART, fieldbus)?
 - Fail-open, fail-closed or fail-last on loss of air or power?
 - Allowable leakage class when closed?
 - Instrument air available, at what pressure? Hazardous-area certification?
