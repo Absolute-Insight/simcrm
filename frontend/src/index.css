@@ -469,13 +469,24 @@ input[type='checkbox']:checked {
    class it already paints for that state (`bg-surface-gray-2`), so this
    keys off that instead. The gradient still appears nowhere else — same
    discipline as the sidebar rail.
+
+   `bg-surface-gray-2` is not unique to the selected row: frappe-ui's Avatar
+   paints its fallback-initials div with the same class, and every row's
+   leading avatar sits inside `.v-list` too. Left unconstrained, the rail
+   drew on every initials avatar instead of the selected row (F1). The row
+   itself, and only the row, contains the density hook already used above
+   (`.grid.items-center.gap-4`) somewhere in its subtree — the row's own
+   `<a>`/`<div>` wraps a `contents`/`[all:unset]` element that in turn wraps
+   that grid, so it's a descendant, not a direct child, hence a bare
+   `:has()` rather than `:has(>...)`. An Avatar never contains that grid, so
+   this reaches the row exclusively.
    FRAGILE: same internal-markup coupling as the row-density rule above. */
-.v-list :where(a.bg-surface-gray-2),
-.v-list :where(div.bg-surface-gray-2) {
+.v-list :where(a.bg-surface-gray-2:has(.grid.items-center.gap-4)),
+.v-list :where(div.bg-surface-gray-2:has(.grid.items-center.gap-4)) {
   position: relative;
 }
-.v-list :where(a.bg-surface-gray-2)::before,
-.v-list :where(div.bg-surface-gray-2)::before {
+.v-list :where(a.bg-surface-gray-2:has(.grid.items-center.gap-4))::before,
+.v-list :where(div.bg-surface-gray-2:has(.grid.items-center.gap-4))::before {
   content: '';
   position: absolute;
   left: 0;
@@ -487,8 +498,8 @@ input[type='checkbox']:checked {
   background: var(--brand-gradient-y);
 }
 @media (prefers-reduced-motion: no-preference) {
-  .v-list :where(a.bg-surface-gray-2)::before,
-  .v-list :where(div.bg-surface-gray-2)::before {
+  .v-list :where(a.bg-surface-gray-2:has(.grid.items-center.gap-4))::before,
+  .v-list :where(div.bg-surface-gray-2:has(.grid.items-center.gap-4))::before {
     animation: v-rail-in var(--motion-base) var(--motion-ease-out);
   }
 }
