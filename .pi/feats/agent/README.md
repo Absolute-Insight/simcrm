@@ -352,15 +352,37 @@ the finding above rather than in spite of it:
   attached. The number to watch as models change is which ones confirm the discount *less
   often*; none tried so far resist it.
 
-## The assistant tier (`ask_assistant`)
+## The chat tiers: Mentor, Assistant, Analyst
 
-Built 2026-08-21 — see [../help/README.md](../help/README.md). A chat endpoint
-grounded exclusively on the in-app help articles (`crm/agent/knowledge.py`,
-pure and in the layering map). It deliberately reads **no CRM records**: its
-whole knowledge is the shipped manual, so there is no thread for hostile
-content to inject through, which is why it needed no new entry in the
-injection table above. If it ever grows record reads, it joins that table
-first.
+Three endpoints on the same skeleton (rate limit, budget, slot, guided
+decoding, `disabled`/`unavailable` degrade), differing in who may call them
+and what they are grounded on. Spec:
+`docs/superpowers/specs/2026-09-01-ai-surfaces-design.md`.
+
+| Endpoint | Gate | Grounding | Untrusted content in the prompt? |
+|---|---|---|---|
+| `ask_mentor` | sales user | the shipped help articles (`knowledge.py`, pure) | none — the manual is a constant |
+| `ask_assistant` | sales user | `CRM Knowledge Article` rows with `available_to_assistant=1` (admin-authored), plus enabled `CRM Product` rows when `assistant_reads_products` is on; both via permission-checked `get_list` | none beyond what an admin typed; a product description is admin data too |
+| `ask_analyst` | **System Manager**, then `analyst_enabled` | a catalogue of metrics-layer calculations (`analyst.py` pure, `analyst_data.py` site-bound) and, when an ERP integration is enabled, its invoices and payments | only computed numbers; deal names and organization names appear in two tables |
+
+The Mentor was the original `ask_assistant` (2026-08-21); it was renamed when
+the Assistant took over the sidebar with a different source.
+
+The Analyst is two model calls around one deterministic step: the model picks
+catalogue keys and a period (`AnalystPlan`; `normalise_plan` drops anything
+invented and falls back to keywords), code runs them under the admin's own
+session, the model narrates the figures (`AnalystAnswer`). The UI renders the
+computed tables beside the narrative, so every number on screen traces to
+code. **No model-written SQL, by construction** — `run_plan` accepts only
+catalogue keys and ISO dates. The layering map pins `analyst` pure and lets
+`analyst_data` reach `analyst`, `config`, `predict` and `signals`.
+
+None of the three joins the injection table above: no email or third-party
+text reaches their prompts. The Analyst's `deals_at_risk` and
+`accounts_going_quiet` tables carry deal and organization *names*, which a
+rep types; if that ever proves to steer the narrative, those two tables are
+the place to look, and the blast radius is a sentence an administrator
+reads next to the real table.
 
 ## What is not here yet
 
