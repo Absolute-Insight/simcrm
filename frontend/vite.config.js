@@ -93,16 +93,39 @@ export default defineConfig(async ({ mode }) => {
           path.resolve(import.meta.dirname, '../frappe-ui/src/fonts/Inter'),
         ],
       }),
+      /**
+       * Scope has to be stated twice, because the plugin's default is wrong here.
+       *
+       * `--base=/assets/crm/frontend/` is where the built files *land*; `/crm`
+       * is where Frappe *serves* them. vite-plugin-pwa derives both the manifest
+       * scope and the worker's registration scope from base, which produced a
+       * manifest whose scope excluded its own start_url — invalid, so Chrome
+       * declined to prompt — and a worker scoped to the asset directory, which
+       * can never control the page it exists to cache. Neither failed loudly:
+       * the app just quietly had no working PWA.
+       *
+       * A worker served from /assets/... may only claim /crm if its response
+       * carries `Service-Worker-Allowed: /crm`; deploy/nginx/security_headers.conf
+       * adds it. Without that header registration fails with a SecurityError and
+       * the app runs on with no worker — the page itself is unaffected, so a
+       * deployment that misses the header degrades rather than breaks.
+       */
       VitePWA({
         registerType: 'autoUpdate',
+        scope: '/crm',
         workbox: {
           maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
+          // The worker's scope already confines it to /crm. This is the second
+          // lock: it stops the precached shell answering a navigation to /app,
+          // /login or /api if that scope is ever widened.
+          navigateFallbackAllowlist: [/^\/crm(?:\/|$)/],
         },
         devOptions: {
           enabled: true,
         },
         manifest: {
           display: 'standalone',
+          scope: '/crm',
           name: 'Vectora',
           short_name: 'Vectora',
           start_url: '/crm',
