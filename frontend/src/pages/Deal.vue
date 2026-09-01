@@ -59,12 +59,14 @@
     </Tabs>
     <Resizer side="right" class="flex flex-col justify-between border-l">
       <div
-        class="flex h-[45px] cursor-copy items-center border-b px-5 py-2.5 text-lg-medium text-ink-gray-9"
+        class="flex h-[45px] cursor-copy items-center border-b px-[var(--v-page-gutter)] py-2.5 text-lg-medium text-ink-gray-9"
         @click="copyToClipboard(dealId)"
       >
         {{ __(dealId) }}
       </div>
-      <div class="flex items-center justify-start gap-5 border-b p-5">
+      <div
+        class="flex items-center justify-start gap-5 border-b p-[var(--v-page-gutter)]"
+      >
         <Tooltip :text="__('Organization Logo')">
           <div class="group relative size-12">
             <Avatar

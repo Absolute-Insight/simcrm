@@ -55,14 +55,18 @@ close date near while probability is low), `cooling` (cadence decelerating).
 
 ## Dedupe, cooldown and expiry
 
-One open suggestion per `(signal, reference)`. A dismissed or accepted signal is
+One open suggestion per `(signal, reference, user)` — the user is part of the
+key because two reps can both plan the same deal, and a key without it let one
+rep's open row block the other's forever. A dismissed or accepted signal is
 suppressed for a cooldown; **the cooldown stretches for a repeat dismisser**, up
 to `MAX_COOLDOWN_MULTIPLIER`. Expired rows get their own shorter cooldown so the
 job cannot expire and immediately re-create the same row. `purge_old_suggestions`
 sweeps daily — expired, dismissed *and accepted* rows past `PURGE_AFTER_DAYS` —
 keeping anything a plan item still links to. Suggestions raised by an automation
 rule carry the same `expires_on` (`suggestion_ttl_days`) and the same 140-char title
-clip as the hourly signals.
+clip as the hourly signals — and go through the same lifecycle
+(`signals.suggestion_blocked`) and per-rep ceiling, so a dismissed rule
+suggestion respects its cooldown instead of returning on the next status flap.
 
 Dismissal reasons are readable through `get_dismissal_stats`, so a threshold that
 reps keep rejecting is visible rather than guessed at.

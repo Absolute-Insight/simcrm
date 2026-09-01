@@ -139,6 +139,19 @@ describe('withVectoraTheme (existing contract)', () => {
   })
 })
 
+describe('chart typography', () => {
+  it('sets the app font family on the chart text style', () => {
+    const out = applyLuxChartTheme(axisConfig(), false)
+    expect(out.textStyle.fontFamily).toMatch(/Plus Jakarta Sans/)
+  })
+
+  it('does not override a font family the caller already chose', () => {
+    const config = axisConfig({ textStyle: { fontFamily: 'Courier New' } })
+    const out = applyLuxChartTheme(config, false)
+    expect(out.textStyle.fontFamily).toBe('Courier New')
+  })
+})
+
 describe('useIsDark', () => {
   it('tracks the data-theme attribute without a reload', async () => {
     document.documentElement.setAttribute('data-theme', 'light')

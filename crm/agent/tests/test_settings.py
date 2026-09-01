@@ -129,3 +129,41 @@ class TimeoutValidationTest(IntegrationTestCase):
 		with patch.dict(frappe.conf, {"crm_proxy_read_timeout": "soon"}):
 			with self.assertRaises(frappe.ValidationError):
 				self.save_timeout(300)
+
+
+class EnvProvisionedConfigTest(IntegrationTestCase):
+	"""A site seeded only by ``apply_endpoint_defaults`` must run on the shipped defaults.
+
+	``as_dict()`` on a partially-saved Single coerces the unsaved Int fields to 0,
+	which made ``timeout=0`` (every call's deadline already expired) and
+	``daily_call_budget=0`` (uncapped) on exactly the deploy path
+	``.pi/feats/agent/README.md`` documents. ``get_signal_config`` already reads
+	through ``get_singles_dict`` for this reason; ``get_config`` must too.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		self.saved = frappe.db.get_singles_dict("CRM Agent Settings")
+
+	def tearDown(self):
+		frappe.db.delete("Singles", {"doctype": "CRM Agent Settings"})
+		for field, value in self.saved.items():
+			frappe.db.set_single_value("CRM Agent Settings", field, value)
+		frappe.clear_cache()
+		super().tearDown()
+
+	def test_a_site_seeded_only_by_env_defaults_gets_working_numbers(self):
+		from crm.agent.config import get_config
+
+		frappe.db.delete("Singles", {"doctype": "CRM Agent Settings"})
+		frappe.db.set_single_value("CRM Agent Settings", "enabled", 1)
+		frappe.db.set_single_value("CRM Agent Settings", "base_url", "http://model:11434/v1")
+		frappe.db.set_single_value("CRM Agent Settings", "model", "test-model")
+		frappe.clear_cache()
+
+		cfg = get_config()
+		self.assertTrue(cfg.enabled)
+		self.assertEqual(cfg.base_url, "http://model:11434/v1")
+		self.assertEqual(cfg.timeout, DEFAULT_SETTINGS["timeout"])
+		self.assertEqual(cfg.max_tokens, DEFAULT_SETTINGS["max_tokens"])
+		self.assertEqual(cfg.daily_call_budget, DEFAULT_SETTINGS["daily_call_budget"])

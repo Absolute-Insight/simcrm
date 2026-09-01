@@ -1,11 +1,13 @@
 <template>
-  <div class="flex flex-col gap-5 justify-center items-center h-full">
+  <div
+    class="v-lux-stage flex flex-col gap-5 justify-center items-center h-full"
+  >
     <div class="text-3xl-semibold text-ink-gray-8 mb-3">
       {{ __('Welcome {0}, lets add your first lead', [name]) }}
     </div>
     <div class="flex gap-3">
       <div
-        class="flex flex-col px-6 pt-13 pb-7 justify-between bg-surface-gray-1 rounded-8 items-center space-y-2 size-56"
+        class="v-glass v-glass-hover flex flex-col px-6 pt-13 pb-7 justify-between rounded-[var(--v-radius-card)] items-center space-y-2 size-56"
       >
         <div class="flex flex-col items-center gap-2.5">
           <div class="flex -space-x-2">
@@ -24,7 +26,7 @@
         <Button variant="outline" :label="__('Add Sample Data')" />
       </div>
       <div
-        class="flex flex-col px-6 pt-13 pb-7 justify-between bg-surface-gray-1 rounded-8 items-center space-y-2 size-56"
+        class="v-glass v-glass-hover flex flex-col px-6 pt-13 pb-7 justify-between rounded-[var(--v-radius-card)] items-center space-y-2 size-56"
       >
         <div class="flex flex-col items-center gap-2.5">
           <GoogleIcon class="" />

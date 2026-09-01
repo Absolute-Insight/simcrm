@@ -9,7 +9,7 @@ import { VitePWA } from 'vite-plugin-pwa'
  * Ship the fonts the built CSS actually asks for.
  *
  * Tailwind 4's postcss plugin resolves `@import` itself, so vite never sees
- * `@fontsource-variable/space-grotesk` or frappe-ui's inter.css as modules --
+ * `@fontsource-variable/plus-jakarta-sans` or frappe-ui's inter.css as modules --
  * it neither rewrites their `url()`s nor emits the woff2 they point at. The
  * built CSS keeps the source-relative paths (`./files/…woff2`,
  * `Inter.var.woff2?v=3.19`) and every one of them 404s. Both brand typefaces
@@ -84,7 +84,7 @@ export default defineConfig(async ({ mode }) => {
         searchRoots: [
           path.resolve(
             import.meta.dirname,
-            'node_modules/@fontsource-variable/space-grotesk/files',
+            'node_modules/@fontsource-variable/plus-jakarta-sans/files',
           ),
           path.resolve(
             import.meta.dirname,

@@ -1,5 +1,7 @@
 <template>
-  <div class="relative mx-auto w-full max-w-2xl rounded-8 bg-surface-white p-4">
+  <div
+    class="v-glass relative mx-auto w-full max-w-2xl rounded-[var(--v-radius-card)] p-4"
+  >
     <div class="flex flex-col">
       <CRMLogo class="size-8" />
       <Transition name="q-fade" mode="out-in" @after-enter="focusQuestion">

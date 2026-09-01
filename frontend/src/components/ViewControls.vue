@@ -1,7 +1,7 @@
 <template>
   <div
     v-if="isMobileView"
-    class="flex flex-col justify-between gap-2 sm:px-5 px-3 py-4"
+    class="flex flex-col justify-between gap-2 sm:px-[var(--v-page-gutter)] px-3 py-4"
   >
     <div class="flex flex-col gap-2">
       <div class="flex items-center justify-between gap-2 overflow-x-auto">
@@ -61,7 +61,7 @@
   </div>
   <div
     v-else-if="customizeQuickFilter"
-    class="flex items-center justify-between gap-2 p-5"
+    class="flex items-center justify-between gap-2 p-[var(--v-page-gutter)]"
   >
     <div class="flex flex-1 items-center overflow-hidden pl-1 gap-2">
       <FadedScrollableDiv
@@ -129,7 +129,10 @@
       <Button icon="lucide-x" @click="customizeQuickFilter = false" />
     </div>
   </div>
-  <div v-else class="flex items-center justify-between gap-2 px-5 py-4">
+  <div
+    v-else
+    class="flex items-center justify-between gap-2 px-[var(--v-page-gutter)] py-4"
+  >
     <FadedScrollableDiv
       class="flex flex-1 items-center overflow-x-auto -ml-1 h-9"
       orientation="horizontal"
@@ -167,30 +170,36 @@
           :doctype="doctype"
           @update="updateGroupBy"
         />
-        <Filter
-          v-model="list"
-          :doctype="doctype"
-          :default_filters="filters"
-          @update="updateFilter"
-        />
-        <SortBy
-          v-if="route.params.viewType !== 'kanban'"
-          v-model="list"
-          :doctype="doctype"
-          @update="updateSort"
-        />
-        <KanbanSettings
-          v-if="route.params.viewType === 'kanban'"
-          v-model="list"
-          :doctype="doctype"
-          @update="updateKanbanSettings"
-        />
-        <ColumnSettings
-          v-else-if="!options.hideColumnsButton"
-          v-model="list"
-          :doctype="doctype"
-          @update="(isDefault) => updateColumns(isDefault)"
-        />
+        <!-- Toolbar consolidation (design direction): Filter, Sort and
+             Columns/Kanban Settings floated as three separate pills; framed
+             together here they read as one instrument instead. See
+             `.v-toolbar-group` in index.css for the shared-frame styling. -->
+        <div class="v-toolbar-group">
+          <Filter
+            v-model="list"
+            :doctype="doctype"
+            :default_filters="filters"
+            @update="updateFilter"
+          />
+          <SortBy
+            v-if="route.params.viewType !== 'kanban'"
+            v-model="list"
+            :doctype="doctype"
+            @update="updateSort"
+          />
+          <KanbanSettings
+            v-if="route.params.viewType === 'kanban'"
+            v-model="list"
+            :doctype="doctype"
+            @update="updateKanbanSettings"
+          />
+          <ColumnSettings
+            v-else-if="!options.hideColumnsButton"
+            v-model="list"
+            :doctype="doctype"
+            @update="(isDefault) => updateColumns(isDefault)"
+          />
+        </div>
         <Dropdown
           v-if="route.params.viewType !== 'kanban' || isManager()"
           align="end"
@@ -348,7 +357,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { isMobileView } from '@/composables/settings'
 import Draggable from 'vuedraggable'
 import _ from 'lodash'
-import ImportIcon from '~icons/lucide/import'
+import { PhTrayArrowDown as ImportIcon } from '@phosphor-icons/vue'
 import { reportActionError } from '@/utils/reportActionError'
 
 const props = defineProps({
@@ -634,7 +643,13 @@ async function exportRows() {
     page_length = list.value.data.total_count
   }
 
-  let url = `/api/method/frappe.desk.reportview.export_query?file_format_type=${export_type.value}&title=${props.doctype}&doctype=${props.doctype}&fields=${fields}&filters=${encodeURIComponent(filters)}&order_by=${order_by}&page_length=${page_length}&start=0&view=Report&with_comment_count=1`
+  let url = `/api/method/frappe.desk.reportview.export_query?file_format_type=${
+    export_type.value
+  }&title=${props.doctype}&doctype=${
+    props.doctype
+  }&fields=${fields}&filters=${encodeURIComponent(
+    filters,
+  )}&order_by=${order_by}&page_length=${page_length}&start=0&view=Report&with_comment_count=1`
 
   // Add selected items parameter if rows are selected
   if (selectedRows.value?.length && !export_all.value) {

@@ -20,7 +20,7 @@
       >
         <template #trigger>
           <div
-            class="w-full min-h-12 flex flex-wrap items-center gap-1.5 p-1.5 pb-5 rounded-6 bg-surface-gray-2 cursor-text"
+            class="w-full min-h-12 flex flex-wrap items-center gap-1.5 p-1.5 pb-5 rounded-[var(--v-radius-control)] bg-surface-gray-2 cursor-text"
           >
             <Tooltip
               v-for="assignee in assignees"

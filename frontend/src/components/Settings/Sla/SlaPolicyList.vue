@@ -20,7 +20,7 @@
           :model-value="slaSearchQuery"
           :placeholder="__('Search')"
           type="text"
-          class="bg-surface-gray-2 hover:bg-surface-gray-2 focus:ring-0 border-outline-gray-2 rounded-4"
+          class="bg-surface-gray-2 hover:bg-surface-gray-2 focus:ring-0 border-outline-gray-2 rounded-[var(--v-radius-control)]"
           icon-left="lucide-search"
           debounce="300"
           inputClass="p-4 pr-12"
@@ -70,7 +70,7 @@
             :key="sla.name"
           >
             <div
-              class="grid grid-cols-7 items-center gap-4 cursor-pointer hover:bg-surface-sidebar rounded-4"
+              class="grid grid-cols-7 items-center gap-4 cursor-pointer hover:bg-surface-sidebar rounded-[var(--v-radius-control)]"
             >
               <div
                 class="w-full pl-2 col-span-5 flex items-center h-14 gap-2"
@@ -146,7 +146,7 @@
 <script setup>
 import SettingsLayoutBase from '@/components/Layouts/SettingsLayoutBase.vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
-import ShieldCheck from '~icons/lucide/shield-check'
+import { PhShieldCheck as ShieldCheck } from '@phosphor-icons/vue'
 import {
   Badge,
   Button,

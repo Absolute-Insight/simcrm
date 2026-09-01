@@ -16,6 +16,13 @@ EXCHANGE_RATE_LIMIT = 30
 
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+# The official ZAR fix, straight from the central bank. HomePageRates carries
+# the current "Rand per X" rate for exactly these counterparts, keyed by stable
+# timeseries codes (verified live 2026-09-01); anything else this provider does
+# not answer, and the free-provider chain takes over.
+SARB_HOME_PAGE_RATES_URL = "https://custom.resbank.co.za/SarbWebApi/WebIndicators/HomePageRates"
+SARB_ZAR_PER = {"USD": "EXCX135D", "GBP": "EXCZ001D", "EUR": "EXCZ002D", "JPY": "EXCZ120D"}
+
 
 def _validate_inputs(from_currency: str, to_currency: str, date: str):
 	"""Every value here is interpolated into a provider URL; only accept known
@@ -90,11 +97,46 @@ def _fetch_exchange_rate(from_currency: str, to_currency: str, date: str):
 		rate = _fetch_from_frankfurter(from_currency, to_currency, date)
 		return rate, "frankfurter"
 
+	if provider == "sarb":
+		# the central bank's own current ZAR fix; everything it does not answer
+		# (history, non-ZAR pairs, downtime) falls through the same free chain
+		# the other free providers use
+		rate = _fetch_from_sarb(from_currency, to_currency, date)
+		if rate is not None:
+			return rate, provider
+		rate = _fetch_from_frankfurter(from_currency, to_currency, date)
+		if rate is not None:
+			return rate, "frankfurter"
+		return _fetch_from_fawaz_api(from_currency, to_currency, date), "fawazahmed-exchange-api"
+
 	# Unknown provider — try both free ones
 	rate = _fetch_from_frankfurter(from_currency, to_currency, date)
 	if rate is not None:
 		return rate, "frankfurter"
 	return _fetch_from_fawaz_api(from_currency, to_currency, date), "fawazahmed-exchange-api"
+
+
+def _fetch_from_sarb(from_currency: str, to_currency: str, date: str):
+	"""ZAR pairs only, current rate only — the SARB publishes today's official
+	fix, not history, so a dated request is the fallback chain's to answer."""
+	if date != "latest":
+		return None
+	if from_currency == "ZAR" and to_currency in SARB_ZAR_PER:
+		code, invert = SARB_ZAR_PER[to_currency], True
+	elif to_currency == "ZAR" and from_currency in SARB_ZAR_PER:
+		code, invert = SARB_ZAR_PER[from_currency], False
+	else:
+		return None
+	try:
+		res = requests.get(SARB_HOME_PAGE_RATES_URL, timeout=5)
+		if not res.ok:
+			return None
+		value = next((row.get("Value") for row in res.json() if row.get("TimeseriesCode") == code), None)
+		if not value:  # a missing row and a zero rate are both unusable
+			return None
+		return 1 / value if invert else value
+	except Exception:
+		return None
 
 
 def _fetch_from_frankfurter(from_currency: str, to_currency: str, date: str):

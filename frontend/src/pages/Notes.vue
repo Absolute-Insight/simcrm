@@ -23,7 +23,7 @@
       defaultViewName: __('Notes View'),
     }"
   />
-  <div class="flex-1 overflow-y-auto">
+  <div class="v-lux-stage flex-1 overflow-y-auto">
     <!-- The EmptyState below used to be chained to the footer's v-if, which
          made "No Notes yet" the answer to a *failed* fetch as well as an empty
          one -- telling the user their CRM is empty when it is actually broken,
@@ -39,7 +39,7 @@
          grid as the real one, so nothing moves when the notes arrive. -->
     <div
       v-else-if="!notes.data"
-      class="grid grid-cols-1 gap-2 px-3 pb-2 sm:grid-cols-4 sm:gap-4 sm:px-5 sm:pb-3"
+      class="grid grid-cols-1 gap-2 px-3 pb-2 sm:grid-cols-4 sm:gap-4 sm:px-[var(--v-page-gutter)] sm:pb-3"
       role="status"
       aria-busy="true"
       :aria-label="__('Loading notes')"
@@ -49,17 +49,17 @@
         :key="n"
         shape="block"
         height="14rem"
-        rounded="12px"
+        rounded="var(--v-radius-card)"
       />
     </div>
     <div
       v-else-if="notes.data?.data?.length"
-      class="grid grid-cols-1 gap-2 px-3 pb-2 sm:grid-cols-4 sm:gap-4 sm:px-5 sm:pb-3"
+      class="grid grid-cols-1 gap-2 px-3 pb-2 sm:grid-cols-4 sm:gap-4 sm:px-[var(--v-page-gutter)] sm:pb-3"
     >
       <div
         v-for="note in notes.data.data"
         :key="note.name"
-        class="group flex h-56 cursor-pointer flex-col justify-between gap-2 rounded-6 border px-5 py-4 shadow-sm hover:bg-surface-sidebar"
+        class="v-glass v-glass-hover group flex h-56 cursor-pointer flex-col justify-between gap-2 rounded-[var(--v-radius-card)] px-5 py-4"
         @click="editNote(note.name)"
       >
         <div class="flex items-center justify-between">
@@ -115,7 +115,7 @@
   <ListFooter
     v-if="notes.data?.data?.length"
     v-model="notes.data.page_length_count"
-    class="border-t px-3 py-2 sm:px-5"
+    class="border-t px-3 py-2 sm:px-[var(--v-page-gutter)]"
     :options="{
       rowCount: notes.data.row_count,
       totalCount: notes.data.total_count,

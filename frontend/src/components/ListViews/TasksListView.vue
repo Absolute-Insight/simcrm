@@ -1,6 +1,10 @@
 <!-- eslint-disable vue/no-v-html -->
 <template>
   <ListView
+    :class="[
+      'v-glass v-list-card mx-3 sm:mx-[var(--v-page-gutter)]',
+      $attrs.class,
+    ]"
     :columns="columns"
     :rows="rows"
     :options="{
@@ -13,7 +17,7 @@
     @update:selections="(selections) => emit('selectionsChanged', selections)"
   >
     <ListHeader
-      class="v-list-header mx-3 sm:mx-5"
+      class="v-list-header"
       @columnWidthUpdated="emit('columnWidthUpdated')"
     >
       <ListHeaderItem
@@ -37,7 +41,6 @@
     </ListHeader>
     <ListRows
       v-slot="{ idx, column, item, row }"
-      class="v-list-header mx-3 sm:mx-5"
       :rows="rows"
       doctype="CRM Task"
     >
@@ -167,7 +170,7 @@
   </ListView>
   <ListFooter
     v-model="pageLengthCount"
-    class="border-t px-3 py-2 sm:px-5"
+    class="border-t px-3 py-2 sm:px-[var(--v-page-gutter)]"
     :options="{
       rowCount: options.rowCount,
       totalCount: options.totalCount,

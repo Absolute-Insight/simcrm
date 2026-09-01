@@ -1,0 +1,319 @@
+/* Vectora — website/login branding.
+ *
+ * Loaded through `web_include_css` (hooks.py), which applies to every website
+ * page, so every rule here is scoped under `body:has(.login-content)`. That
+ * class is on the card in each of Frappe's login sections (sign-in, sign-up,
+ * forgot-password, email-link), so the treatment follows the user through the
+ * whole flow rather than only the first screen.
+ *
+ * We do NOT override frappe/www/login.html. The markup is the vendor's; only
+ * its presentation is ours, which keeps the login logic upstream's problem.
+ */
+
+/* ── tokens ──────────────────────────────────────────────────────────────
+ * Sampled from the artwork rather than invented: the panel's vertical falloff
+ * is brand.jpeg's own top and bottom edge tone (#d0d7de / #a5adb7), and the
+ * inks are the flat lockup's wordmark navy and mark blue.
+ */
+body:has(.login-content) {
+  --v-metal-top: #d0d7de;
+  --v-metal-bottom: #a5adb7;
+  --v-ink: #18304c;
+  --v-ink-soft: #5b6b80; /* icons and other non-text marks */
+  /* Text inks for the metal ground -- see the secondary-text block below for
+     why these are darker than the greys Frappe ships. */
+  --v-ink-muted: #2f4055;
+  --v-ink-link: #26374b;
+  /* Light tint of the mark's blue, for the secondary action. */
+  --v-tint: #d9e8f3;
+  --v-tint-hover: #c9dded;
+  --v-tint-line: #b6cfe2;
+  --v-line: #dfe3ea;
+  --v-focus: #2f6d95;
+  --v-panel-w: 54vw;
+
+  /* Fallback under the fixed layers; matches the gradient's midpoint so a
+     paint before ::before lands is not a white flash. */
+  background: #bdc4cd;
+}
+
+/* ── the brand panel ─────────────────────────────────────────────────────
+ * Two fixed layers: a metal ground (::before) and the lockup (::after),
+ * feathered into it. Fixed rather than absolute so the artwork stays
+ * optically still while a longer form (sign-up) scrolls beside it.
+ */
+body:has(.login-content)::before,
+body:has(.login-content)::after {
+  content: "";
+  position: fixed;
+  pointer-events: none;
+}
+
+/* One continuous metal surface across the whole viewport -- the form sits on
+ * the same ground as the artwork rather than on a white column beside it. The
+ * gradient is vertical, so it carries across the full width with no seam.
+ *
+ * The highlight stays centred over the artwork (27% == the middle of the left
+ * panel, not the middle of the page), so the lockup keeps its sheen and the
+ * form side gets the softer falloff. */
+body:has(.login-content)::before {
+  inset: 0;
+  background: radial-gradient(
+      90% 90% at 27% 38%,
+      rgba(255, 255, 255, 0.55) 0%,
+      rgba(255, 255, 255, 0) 68%
+    ),
+    linear-gradient(180deg, var(--v-metal-top) 0%, var(--v-metal-bottom) 100%);
+  z-index: 0;
+}
+
+/* The artwork stays on its half. */
+body:has(.login-content)::after {
+  inset: 0 auto 0 0;
+  width: var(--v-panel-w);
+}
+
+/* The mask must be smaller than the artwork in BOTH axes, or whichever axis it
+ * overshoots keeps a hard edge. brand.jpeg is 1454x720, so at min(96%, 700px)
+ * wide it renders ~347px tall: half-extents of ~45% of the panel's width but
+ * only ~19% of its height. An earlier 30% vertical radius sat outside the
+ * image, which is why its top and bottom edges stayed visible however much the
+ * sides were feathered.
+ *
+ * (An attempt to solve this by blurring the same photograph as the ground was
+ * reverted: `filter` on a fixed pseudo-element cannot be clipped to the panel,
+ * so the blur bled across the form column.) */
+body:has(.login-content)::after {
+  background: url("/assets/crm/images/brand.jpeg") center center /
+    min(96%, 700px) auto no-repeat;
+  -webkit-mask-image: radial-gradient(
+    ellipse 44% 18% at 50% 50%,
+    #000 52%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    ellipse 44% 18% at 50% 50%,
+    #000 52%,
+    transparent 100%
+  );
+  z-index: 1;
+}
+
+/* ── the form column ─────────────────────────────────────────────────────*/
+body:has(.login-content) .page-content-wrapper {
+  margin-left: var(--v-panel-w);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+}
+
+body:has(.login-content) main.container {
+  max-width: 480px;
+  width: 100%;
+  padding: 40px 32px;
+}
+
+/* Flat, not floating: the panel beside it already carries the depth, and two
+ * competing elevations read as indecision. */
+body:has(.login-content) .login-content.page-card {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  max-width: none;
+  width: 100%;
+}
+
+body:has(.login-content) .app-logo {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 4px;
+}
+
+body:has(.login-content) .page-card-head-text h1,
+body:has(.login-content) .page-card-head-text .page-card-head-title {
+  color: var(--v-ink);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Secondary text has to be re-inked for this ground.
+ *
+ * Frappe's muted greys are tuned for a white page; on the metal they measured
+ * 2.25-3.22:1 -- the subtitle, both field labels and the "Forgot password?"
+ * link all failed AA the moment the form stopped sitting on white. These are
+ * the same hues pulled down until they clear 4.5:1 against the darkest point
+ * of the gradient (rgb(184,191,200), at the bottom of the column).
+ */
+body:has(.login-content) .page-card-subtitle,
+body:has(.login-content) .form-group label,
+body:has(.login-content) label.text-ink-gray-5 {
+  color: var(--v-ink-muted);
+}
+
+body:has(.login-content) a[href="#forgot"],
+body:has(.login-content) .sign-up-message,
+body:has(.login-content) .sign-up-message a {
+  color: var(--v-ink-link);
+}
+
+body:has(.login-content) a[href="#forgot"]:hover,
+body:has(.login-content) .sign-up-message a:hover {
+  color: var(--v-ink);
+}
+
+/* Frappe's web footer renders here as a 140px block whose every child measures
+ * zero height -- empty chrome. Left in place it pushes past the full-height
+ * wrapper and puts a scrollbar on a page that otherwise fits. */
+body:has(.login-content) .web-footer {
+  display: none;
+}
+
+/* ── controls ────────────────────────────────────────────────────────────
+ * Matched to the app's own control radius and focus treatment, so signing in
+ * and using the product feel like one product.
+ */
+
+/* The field wrappers size to their content by default, which left the inputs
+ * visibly narrower than the buttons beneath them once the column was
+ * constrained. Everything in the form shares one measure. */
+body:has(.login-content) .email-field,
+body:has(.login-content) .password-field {
+  width: 100%;
+}
+
+body:has(.login-content) .form-control {
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--v-line);
+  padding: 9px 12px;
+  font-size: 14px;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+body:has(.login-content) .form-control:focus,
+body:has(.login-content) .form-control:focus-visible {
+  border-color: var(--v-focus);
+  box-shadow: 0 0 0 3px rgba(47, 109, 149, 0.18);
+  outline: none;
+}
+
+/* The show/hide-password control is positioned by the vendor against a field
+ * box we have just re-sized, so we re-anchor it rather than let it fall
+ * beneath the input. Padding keeps typed text clear of it. */
+body:has(.login-content) .password-field {
+  position: relative;
+}
+
+body:has(.login-content) .password-field .form-control {
+  padding-right: 38px;
+}
+
+body:has(.login-content) .password-field .toggle-password {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  margin: 0;
+  cursor: pointer;
+  color: var(--v-ink-soft);
+}
+
+body:has(.login-content) .es-button[data-variant="solid"] {
+  background: var(--v-ink);
+  border-radius: 6px;
+  font-weight: 600;
+  padding: 10px 16px;
+  transition: background 120ms ease;
+}
+
+body:has(.login-content) .es-button[data-variant="solid"]:hover {
+  background: #22415f;
+}
+
+/* The secondary action takes a light tint of the mark's blue rather than the
+ * stock grey: on the metal ground a grey button reads as disabled. Navy label
+ * on the tint measures well clear of AA, and the fill is light enough that it
+ * still reads as secondary beside the solid navy primary. */
+body:has(.login-content) .btn-login-with-email-link,
+body:has(.login-content) .btn-login-option {
+  background: var(--v-tint);
+  border: 1px solid var(--v-tint-line);
+  color: var(--v-ink);
+  border-radius: 6px;
+  font-weight: 600;
+  padding: 10px 16px;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+body:has(.login-content) .btn-login-with-email-link:hover,
+body:has(.login-content) .btn-login-option:hover {
+  background: var(--v-tint-hover);
+  border-color: var(--v-focus);
+  color: var(--v-ink);
+}
+
+/* Keyboard focus must stay obvious on every actionable element, including the
+ * secondary link-buttons that carry no background of their own. */
+body:has(.login-content) .es-button:focus-visible,
+body:has(.login-content) a:focus-visible {
+  outline: 2px solid var(--v-focus);
+  outline-offset: 2px;
+}
+
+/* ── narrow screens ──────────────────────────────────────────────────────
+ * Below 900px the split stops earning its space: the panel becomes a short
+ * banner above the form rather than squeezing both into half a phone.
+ */
+@media (max-width: 900px) {
+  /* The ground still covers the whole page -- the form keeps the same surface
+   * it has on desktop. Only the artwork shrinks to a banner. */
+  body:has(.login-content)::before {
+    inset: 0;
+    width: auto;
+  }
+
+  /* No feather here: the banner is full-bleed, so the artwork has no free edge
+   * to give itself away. Feathering at this size actively hurt --
+   * brand.jpeg's lockup fills most of its frame, so there is almost no metal
+   * margin to fade into and the mask ate into the wordmark instead. `cover`
+   * crops a little top and bottom, which the lockup has room for. */
+  body:has(.login-content)::after {
+    position: absolute;
+    inset: 0 0 auto 0;
+    width: 100%;
+    height: 176px;
+    background-size: cover;
+    background-position: center;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  body:has(.login-content) .page-content-wrapper {
+    margin-left: 0;
+    min-height: auto;
+    align-items: flex-start;
+    padding-top: 176px; /* clears the absolutely-positioned banner above */
+  }
+
+  body:has(.login-content) main.container {
+    margin: 0 auto;
+    padding: 28px 20px 48px;
+  }
+}
+
+/* A fixed layer behaves like a parallax surface while the column scrolls.
+ * Someone who has asked for less motion should get a panel that scrolls with
+ * the page instead. */
+@media (prefers-reduced-motion: reduce) {
+  body:has(.login-content)::before,
+  body:has(.login-content)::after {
+    position: absolute;
+  }
+}

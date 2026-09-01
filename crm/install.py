@@ -37,9 +37,57 @@ def after_install(force=False):
 	seed_default_rules_and_mappings()
 	ensure_agent_role()
 	apply_endpoint_defaults()
+	ensure_zar_currency()
+	ensure_app_logo()
 	# install/migrate runs outside a request, so nothing else will commit the
 	# fixtures created above.
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
+
+
+def ensure_app_logo():
+	"""Point Frappe's login page at the Vectora mark.
+
+	``frappe/www/login.py`` renders the logo from ``get_app_logo()``, which
+	reads Navbar Settings -- site data, not a hook -- so ``app_icon_url`` in
+	hooks.py does not cover it. Without this, a freshly installed site shows the
+	Frappe Framework logo above "Sign In": the first screen anyone outside the
+	product ever sees, unbranded.
+
+	Only claims the field while it still holds a Frappe default. An operator who
+	has set their own logo keeps it.
+	"""
+	current = frappe.db.get_single_value("Navbar Settings", "app_logo") or ""
+	if current and not current.startswith("/assets/frappe/"):
+		return
+	frappe.db.set_single_value("Navbar Settings", "app_logo", "/assets/crm/images/logo.svg")
+
+
+def ensure_zar_currency():
+	"""Make ZAR selectable. The dashboard-currency picker (and every other
+	Currency link) only offers enabled currencies, and frappe ships ZAR
+	disabled.
+
+	Called from ``after_install`` *and* the ``enable_zar_currency`` patch,
+	because the two paths cover different sites: patches are marked executed --
+	never run -- on a fresh install, so the patch alone left brand-new sites
+	without ZAR (caught on the QA rehearsal stack), while an existing site
+	never re-runs after_install. Idempotent; creates the row for sites whose
+	currency fixture predates it."""
+	if frappe.db.exists("Currency", "ZAR"):
+		frappe.db.set_value("Currency", "ZAR", "enabled", 1)
+		return
+	frappe.get_doc(
+		{
+			"doctype": "Currency",
+			"currency_name": "ZAR",
+			"enabled": 1,
+			"fraction": "Cent",
+			"fraction_units": 100,
+			"smallest_currency_fraction_value": 0.01,
+			"symbol": "R",
+			"number_format": "#,###.##",
+		}
+	).insert(ignore_permissions=True)
 
 
 def add_default_lead_statuses():

@@ -33,7 +33,7 @@
         <div
           v-for="template in filteredTemplates"
           :key="template.name"
-          class="flex h-56 cursor-pointer flex-col gap-2 rounded-6 border p-3 hover:bg-surface-gray-2"
+          class="v-glass v-glass-hover flex h-56 cursor-pointer flex-col gap-2 rounded-[var(--v-radius-card)] p-3"
           @click="emit('send', template.name)"
         >
           <div

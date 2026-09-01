@@ -1,5 +1,7 @@
 <template>
-  <div class="rounded-5 border px-2 border-outline-gray-2 text-sm">
+  <div
+    class="rounded-[var(--v-radius-card)] border px-2 border-outline-gray-2 text-sm"
+  >
     <div
       class="grid p-2 px-4 items-center"
       style="grid-template-columns: 3fr 1fr"
