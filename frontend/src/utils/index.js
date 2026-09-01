@@ -315,9 +315,10 @@ export function website(url) {
 }
 
 export function htmlToText(html) {
-  const div = document.createElement('div')
-  div.innerHTML = html
-  return div.textContent || div.innerText || ''
+  // DOMParser never executes scripts or loads subresources, unlike setting
+  // innerHTML on a detached element, which still fires <img onerror>.
+  const doc = new DOMParser().parseFromString(html || '', 'text/html')
+  return doc.body.textContent || ''
 }
 
 export function isContentEmpty(html) {
@@ -451,9 +452,10 @@ export function parseColor(color) {
   return textColor
 }
 
+const EMOJI = new Set(gemoji.map((emoji) => emoji.emoji))
+
 export function isEmoji(str) {
-  const emojiList = gemoji.map((emoji) => emoji.emoji)
-  return emojiList.includes(str)
+  return EMOJI.has(str)
 }
 
 export function isTouchScreenDevice() {
@@ -893,9 +895,27 @@ export function isTranslatable(doctype) {
   return translatedDoctypes.includes(doctype)
 }
 
+// DOMPurify's defaults keep <style> and form controls, and leave
+// <a target="_blank"> without rel, so every caller gets these on top.
+const SANITIZE_DEFAULTS = {
+  FORBID_TAGS: ['style', 'form', 'input', 'button', 'select', 'textarea'],
+}
+
+let sanitizeHooksRegistered = false
+function registerSanitizeHooks() {
+  if (sanitizeHooksRegistered) return
+  sanitizeHooksRegistered = true
+  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+    if (node.tagName === 'A' && node.getAttribute('target')) {
+      node.setAttribute('rel', 'noopener noreferrer')
+    }
+  })
+}
+registerSanitizeHooks()
+
 export function sanitizeHTML(html = '', options = {}) {
   if (typeof html !== 'string') return html
-  return DOMPurify.sanitize(html, options)
+  return DOMPurify.sanitize(html, { ...SANITIZE_DEFAULTS, ...options })
 }
 
 export function sanitizeText(text = '') {
