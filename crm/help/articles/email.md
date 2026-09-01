@@ -37,4 +37,4 @@ With the assistant's model tier enabled (**Settings → Assistant**):
 
 Treat both as a first pass, not a verdict: they are generated from the thread,
 and the thread contains whatever the other party chose to write. Read before
-you trust, and always before you send. See **The Vectora assistant**.
+you trust, and always before you send. See **The Assistant** and **What Vectora does for you automatically**.

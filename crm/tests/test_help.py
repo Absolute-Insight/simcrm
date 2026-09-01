@@ -110,3 +110,40 @@ class ShippedArticlesTest(UnitTestCase):
 		payload = get_articles()
 		self.assertEqual(payload["categories"], CATEGORY_ORDER)
 		self.assertEqual(payload["articles"], load_articles())
+
+
+AI_AND_AUTOMATION_HEADINGS = (
+	"## What it does for you",
+	"## When it runs",
+	"## What it never does",
+)
+
+
+class AiAndAutomationArticlesTest(UnitTestCase):
+	"""The AI & automation articles share one skeleton, so a reader who has
+	learned it on one page finds the same three answers on every other."""
+
+	def test_the_category_order_is_the_documented_one(self):
+		self.assertEqual(
+			CATEGORY_ORDER,
+			[
+				"Getting started",
+				"Working with records",
+				"Proactive selling",
+				"Analytics & reporting",
+				"AI & automation",
+				"Customisation",
+			],
+		)
+
+	def test_every_ai_and_automation_article_has_the_three_headings_in_order(self):
+		articles = [a for a in load_articles() if a["category"] == "AI & automation"]
+		self.assertGreaterEqual(len(articles), 5)
+		for article in articles:
+			with self.subTest(article["name"]):
+				lines = article["content"].splitlines()
+				positions = []
+				for heading in AI_AND_AUTOMATION_HEADINGS:
+					self.assertIn(heading, lines, f"{article['name']} lacks {heading!r}")
+					positions.append(lines.index(heading))
+				self.assertEqual(positions, sorted(positions), f"{article['name']}: headings out of order")
