@@ -54,6 +54,15 @@ const routes = [
     component: () => import('@/pages/Reports.vue'),
   },
   {
+    path: '/analyst',
+    name: 'Analyst',
+    component: () => import('@/pages/Analyst.vue'),
+    // Administrators only, like the endpoint behind it. The global guard
+    // has awaited the users resource by the time this runs.
+    beforeEnter: () =>
+      usersStore().isAdmin() ? true : { name: 'Dashboard', replace: true },
+  },
+  {
     alias: '/leads',
     path: '/leads/view/:viewType?',
     name: 'Leads',

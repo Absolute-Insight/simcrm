@@ -24,6 +24,7 @@ from crm.agent.config import get_config, get_signal_config
 from crm.agent.context import build_thread_messages
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
 from crm.agent.schemas import AnalystAnswer, AnalystPlan, AssistantAnswer, ConnectionProbe, ThreadSummary
+from crm.api.dashboard import get_base_currency
 from crm.help import load_articles
 from crm.utils import sales_user_only, user_rate_limited
 
@@ -470,7 +471,7 @@ def ask_analyst(question: str, history: str | list | None = None) -> dict:
 		"tables": tables,
 		"period": period,
 		"sources": sources,
-		"currency": frappe.db.get_single_value("FCRM Settings", "currency") or "",
+		"currency": get_base_currency(),
 	}
 
 

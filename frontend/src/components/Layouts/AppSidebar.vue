@@ -239,6 +239,7 @@
 
 <script setup>
 import { PhBroom as BrushCleaningIcon } from '@phosphor-icons/vue'
+import { PhChartLineUp as AnalystIcon } from '@phosphor-icons/vue'
 import DashboardIcon from '@/components/Icons/DashboardIcon.vue'
 import PlannerIcon from '@/components/Icons/PlannerIcon.vue'
 import ReportsIcon from '@/components/Icons/ReportsIcon.vue'
@@ -354,6 +355,14 @@ const links = [
     label: 'Reports',
     icon: ReportsIcon,
     to: 'Reports',
+  },
+  {
+    label: 'Analyst',
+    icon: AnalystIcon,
+    to: 'Analyst',
+    // Administrators only: the page and its endpoint are both gated, and a
+    // Sales Manager would get a pane that answers nothing.
+    condition: () => isAdmin(),
   },
   {
     label: 'Leads',
@@ -534,7 +543,7 @@ function onSuggestionsClick(event) {
 
 // onboarding
 const { user } = sessionStore()
-const { users, isManager } = usersStore()
+const { users, isManager, isAdmin } = usersStore()
 const { isOnboardingStepsCompleted, setUp } = useOnboarding('frappecrm')
 
 async function getFirstLead() {
