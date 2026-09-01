@@ -39,7 +39,6 @@ body {
      right row height is something to measure on screen. */
   --v-row-h: 40px;
   --v-cell-px: 12px;
-  --v-section-gap: 20px;
   --v-page-gutter: 20px;
   --v-toolbar-h: 44px;
 }
@@ -731,8 +730,12 @@ input[type='checkbox']:checked {
    hard-codes `rounded-4` on its own root and inner button -- another corner
    the three-token system never reached. It is a nav row, so it takes the
    control token, same role as every other interactive row in the app.
-   Scoped to the vendor's own `.rounded-4` hook (not every child) so a
-   differently-rounded child -- an avatar, an icon badge -- is untouched. */
+   This is a plain descendant selector: it reaches the root itself (first
+   arm) plus any element at any depth inside it that carries the `.rounded-4`
+   class (second arm), not merely a direct child. That is exactly what is
+   wanted here, because it is keyed on the class name itself rather than
+   position -- a differently-rounded child -- an avatar, an icon badge --
+   carries no `.rounded-4` class and so is untouched regardless of depth. */
 [data-slot='sidebar-item'].rounded-4,
 [data-slot='sidebar-item'] .rounded-4 {
   border-radius: var(--v-radius-control);
