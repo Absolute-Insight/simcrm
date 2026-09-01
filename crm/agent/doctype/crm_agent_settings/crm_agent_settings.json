@@ -14,6 +14,10 @@
   "timeout",
   "max_tokens",
   "daily_call_budget",
+  "surfaces_section",
+  "assistant_reads_products",
+  "column_break_surfaces",
+  "analyst_enabled",
   "signals_section",
   "signals_enabled",
   "idle_deal_days",
@@ -80,6 +84,30 @@
    "label": "Daily Call Budget"
   },
   {
+   "description": "The three chat surfaces share the model above. These switches decide what each may read.",
+   "fieldname": "surfaces_section",
+   "fieldtype": "Section Break",
+   "label": "Assistant & Analyst"
+  },
+  {
+   "default": "0",
+   "description": "The Assistant may quote enabled CRM Products (name, code, description, standard rate) alongside the knowledge base.",
+   "fieldname": "assistant_reads_products",
+   "fieldtype": "Check",
+   "label": "Let the Assistant read the product catalogue"
+  },
+  {
+   "fieldname": "column_break_surfaces",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Administrators only. The Analyst runs Vectora's own calculations (and reads invoices and payments from a connected ERP) and narrates the figures. Off, it answers nothing.",
+   "fieldname": "analyst_enabled",
+   "fieldtype": "Check",
+   "label": "Allow the Analyst to read CRM and ERP data"
+  },
+  {
    "description": "Deterministic suggestions. These run with the agent tier off.",
    "fieldname": "signals_section",
    "fieldtype": "Section Break",
@@ -135,7 +163,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-21 08:45:00.000000",
+ "modified": "2026-09-01 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Agent",
  "name": "CRM Agent Settings",
