@@ -371,3 +371,16 @@ class TestEnableZarPatch(FrappeTestCase):
 		self.assertEqual(row.enabled, 1)
 		self.assertEqual(row.symbol, "R")
 		self.assertEqual(row.fraction, "Cent")
+
+
+class TestZarOnFreshInstalls(FrappeTestCase):
+	def test_after_install_makes_the_same_guarantee_as_the_patch(self):
+		"""Frappe marks patches as executed, never runs them, on a fresh
+		install -- so the patch alone left brand-new sites without ZAR, which
+		the QA rehearsal stack caught: a freshly created site on the develop
+		image still had ZAR disabled. after_install must enable it too."""
+		import inspect
+
+		from crm import install
+
+		self.assertIn("ensure_zar_currency()", inspect.getsource(install.after_install))

@@ -1,22 +1,8 @@
-import frappe
+from crm.install import ensure_zar_currency
 
 
 def execute():
-	"""Make ZAR selectable. The dashboard-currency picker (and every other
-	Currency link) only offers enabled currencies, and frappe ships ZAR
-	disabled. Idempotent; creates the row for sites whose fixture predates it."""
-	if frappe.db.exists("Currency", "ZAR"):
-		frappe.db.set_value("Currency", "ZAR", "enabled", 1)
-		return
-	frappe.get_doc(
-		{
-			"doctype": "Currency",
-			"currency_name": "ZAR",
-			"enabled": 1,
-			"fraction": "Cent",
-			"fraction_units": 100,
-			"smallest_currency_fraction_value": 0.01,
-			"symbol": "R",
-			"number_format": "#,###.##",
-		}
-	).insert(ignore_permissions=True)
+	"""Existing sites get ZAR on migrate; fresh installs get it from
+	``after_install``, which owns the shared implementation -- patches are
+	marked executed, never run, on a fresh install."""
+	ensure_zar_currency()
