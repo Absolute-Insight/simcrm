@@ -59,7 +59,7 @@ run reached rather than a state the item is stuck in. Items older than
 | `get_plan(week_start, user?)` | The week, its items, a rollup, and a `modified` token |
 | `save_plan(week_start, items, modified?)` | Upsert. Send `modified` back for optimistic concurrency (raises `TimestampMismatchError`); send surviving rows **with their `name`** so a reschedule keeps matcher state and its suggestion link |
 | `propose_week(week_start)` | Drafts from open suggestions, spread over the *remaining* weekdays. Writes nothing |
-| `mark_fulfilled(item, ...)` / `mark_missed(item)` / `clear_override(item)` | Manual override; the matcher then leaves the row alone |
+| `mark_fulfilled(item, ...)` / `mark_missed(item)` / `clear_override(item)` | Manual override; the matcher then leaves the row alone. A named fulfilment record is verified — it must exist, satisfy its kind's status filters, and belong to the caller |
 | `get_visible_reps()` | Exactly the reps whose plans the caller may open |
 
 ## Scheduling

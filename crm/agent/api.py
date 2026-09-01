@@ -12,6 +12,7 @@ point which triggers an outbound fetch is rate-limited -- here per user *and* pe
 from __future__ import annotations
 
 import time
+from contextlib import contextmanager
 
 import frappe
 from frappe.rate_limiter import rate_limit
@@ -89,21 +90,99 @@ def _budget_spent(cfg) -> bool:
 	site-wide counter is a redis key per day, so it costs one incr and expires
 	itself. A second counter per user keeps one account from spending the whole
 	site's day on its own -- see :func:`user_daily_call_budget`.
+
+	The user counter is charged first and a refusal is refunded: the site
+	counter used to be charged before the per-user check with no refund, so one
+	capped account's retries -- still permitted by the burst limiter -- kept
+	incrementing the site's day on calls that never reached the model, locking
+	everyone else out. A refused call must cost nobody anything.
 	"""
 	if cfg.daily_call_budget <= 0:
 		return False
 	try:
 		cache = frappe.cache()
-		key = budget_key()
-		spent = cache.incr(key)
-		cache.expire(key, 60 * 60 * 36)
 		user_key = user_budget_key()
 		user_spent = cache.incr(user_key)
 		cache.expire(user_key, 60 * 60 * 36)
+		if user_spent > user_daily_call_budget(cfg):
+			cache.decr(user_key)
+			return True
+		key = budget_key()
+		spent = cache.incr(key)
+		cache.expire(key, 60 * 60 * 36)
+		if spent > cfg.daily_call_budget:
+			cache.decr(key)
+			cache.decr(user_key)
+			return True
 	except Exception:
 		# a cache that is unavailable must not take the feature down with it
 		return False
-	return spent > cfg.daily_call_budget or user_spent > user_daily_call_budget(cfg)
+	return False
+
+
+def _refund_budget(cfg) -> None:
+	"""Give back the day-units :func:`_budget_spent` charged for a call that
+	was never made -- the slot said no after the budgets said yes. Without
+	this, a slow-model incident (exactly when the slots fill) burned the
+	site's day on refused retries and kept the tier dark after the model
+	recovered."""
+	if cfg.daily_call_budget <= 0:
+		return
+	try:
+		cache = frappe.cache()
+		cache.decr(user_budget_key())
+		cache.decr(budget_key())
+	except Exception:
+		pass
+
+
+# Bounds *simultaneous* model calls per site, where the rate limits bound calls
+# per minute: one call holds a web worker for up to timeout x client.MAX_ATTEMPTS,
+# so ten users each inside their burst limit can still occupy the whole gunicorn
+# pool at once. Four is half the shipped pool of eight (deploy compose), so the
+# site keeps answering while the model is slow. test_connection stays outside
+# the slots on purpose: it is System Manager only, 6/min, and its whole job is
+# probing the endpoint while the tier misbehaves.
+MAX_CONCURRENT_MODEL_CALLS = 4
+INFLIGHT_CACHE_KEY = "crm_agent_inflight"
+# TTL backstop: a worker killed between the incr and the finally leaks its slot;
+# the key expiring puts the count right again within this window.
+INFLIGHT_TTL_SECONDS = 600
+
+
+def _inflight_key() -> str:
+	"""Site-scoped like :func:`budget_key`, and for the same reason."""
+	return f"{INFLIGHT_CACHE_KEY}:{frappe.local.site}"
+
+
+@contextmanager
+def _model_call_slot():
+	"""Hold one of the site's model-call slots; yields False when all are taken."""
+	try:
+		cache = frappe.cache()
+		taken = cache.incr(_inflight_key())
+	except Exception:
+		# same rule as the budgets: a cache outage must not take the tier down
+		yield True
+		return
+	try:
+		if taken == 1:
+			# Armed once, at key creation: a slot leaked by a hard-killed worker
+			# then always clears within the window. Re-arming on every call kept
+			# a leaked slot alive for as long as traffic never paused this long.
+			try:
+				cache.expire(_inflight_key(), INFLIGHT_TTL_SECONDS)
+			except Exception:
+				pass
+		yield taken <= MAX_CONCURRENT_MODEL_CALLS
+	finally:
+		try:
+			if cache.decr(_inflight_key()) < 0:
+				# the key expired under a live call; a negative floor would make
+				# the limit more generous forever
+				cache.delete(_inflight_key())
+		except Exception:
+			pass
 
 
 def _throttled(cfg) -> bool:
@@ -131,11 +210,16 @@ def summarise_thread(reference_doctype: str, reference_name: str) -> dict:
 	thread = tools.read_thread(reference_doctype, reference_name)
 	messages = build_thread_messages(record, thread)
 
-	try:
-		summary = client.complete(cfg, ThreadSummary, messages)
-	except (AgentUnavailable, SchemaMismatch) as exc:
-		frappe.log_error(title="CRM agent summary failed", message=str(exc))
-		return {"status": "unavailable"}
+	with _model_call_slot() as free:
+		if not free:
+			# refused after the budgets were charged: a refused call costs nobody anything
+			_refund_budget(cfg)
+			return {"status": "unavailable"}
+		try:
+			summary = client.complete(cfg, ThreadSummary, messages)
+		except (AgentUnavailable, SchemaMismatch) as exc:
+			frappe.log_error(title="CRM agent summary failed", message=str(exc))
+			return {"status": "unavailable"}
 
 	return {"status": "ok", "summary": summary.model_dump()}
 
@@ -159,11 +243,16 @@ def draft_reply(reference_doctype: str, reference_name: str) -> dict:
 	record = tools.read_record(reference_doctype, reference_name)
 	thread = tools.read_thread(reference_doctype, reference_name)
 
-	try:
-		draft = actions.propose_reply(cfg, record, thread)
-	except (AgentUnavailable, SchemaMismatch) as exc:
-		frappe.log_error(title="CRM agent reply draft failed", message=str(exc))
-		return {"status": "unavailable"}
+	with _model_call_slot() as free:
+		if not free:
+			# refused after the budgets were charged: a refused call costs nobody anything
+			_refund_budget(cfg)
+			return {"status": "unavailable"}
+		try:
+			draft = actions.propose_reply(cfg, record, thread)
+		except (AgentUnavailable, SchemaMismatch) as exc:
+			frappe.log_error(title="CRM agent reply draft failed", message=str(exc))
+			return {"status": "unavailable"}
 
 	return {"status": "ok", "draft": draft.model_dump()}
 
@@ -195,11 +284,16 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 	selected = knowledge.select_articles(question, articles)
 	messages = knowledge.build_assistant_messages(question, selected, _parse_history(history))
 
-	try:
-		reply = client.complete(cfg, AssistantAnswer, messages)
-	except (AgentUnavailable, SchemaMismatch) as exc:
-		frappe.log_error(title="CRM assistant answer failed", message=str(exc))
-		return {"status": "unavailable"}
+	with _model_call_slot() as free:
+		if not free:
+			# refused after the budgets were charged: a refused call costs nobody anything
+			_refund_budget(cfg)
+			return {"status": "unavailable"}
+		try:
+			reply = client.complete(cfg, AssistantAnswer, messages)
+		except (AgentUnavailable, SchemaMismatch) as exc:
+			frappe.log_error(title="CRM assistant answer failed", message=str(exc))
+			return {"status": "unavailable"}
 
 	# The model cites articles by name; only names that actually exist survive,
 	# so an invented citation cannot become a dead link in the help center.

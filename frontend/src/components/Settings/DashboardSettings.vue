@@ -114,6 +114,10 @@
                 label: 'Fawaz Ahmed Exchange API',
                 value: 'fawazahmed-exchange-api',
               },
+              {
+                label: 'South African Reserve Bank (SARB)',
+                value: 'sarb',
+              },
               { label: 'Exchangerate Host', value: 'exchangerate.host' },
               { label: 'Exchangerate API', value: 'exchangerate-api' },
             ]"

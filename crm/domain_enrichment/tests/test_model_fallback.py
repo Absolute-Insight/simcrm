@@ -278,3 +278,13 @@ class DegradesQuietlyTest(UnitTestCase):
 		result = EnrichmentResult(website="https://acme.test")
 		with mock.patch.object(model_fallback.client, "complete", return_value=reply(company_name="   ")):
 			self.assertEqual(model_fallback.fill_gaps(result, [page()], config()), [])
+
+
+class PageTextSeparatorBudgetTest(UnitTestCase):
+	def test_the_budget_covers_the_join_separators_too(self):
+		"""Pages are joined with a blank line the budget never charged, so the
+		text could exceed max_chars by two chars per seam. 200 sits exactly in
+		that gap: four 49-char entries fit the budget, joined they are 202."""
+		pages = [page(url=f"https://p{i}.test/", text="x" * 30) for i in range(10)]
+		text = model_fallback.page_text(pages, 200)
+		self.assertLessEqual(len(text), 200)

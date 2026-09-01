@@ -389,7 +389,11 @@ def find_stale_plan_items(rows: list[dict], now: datetime) -> list[dict]:
 			continue
 		activity = row.get("activity_type") or "Task"
 		label = _label(row.get("note"), f"{activity} on {row['reference_docname']}")
-		late = (today - planned).days if planned else None
+		# floored at zero: the matcher can write a Missed item whose planned
+		# date is still ahead (a week boundary), and a negative lateness would
+		# subtract from the base score and render as "-2 days past the planned
+		# date"
+		late = max(0, (today - planned).days) if planned else None
 		out.append(
 			{
 				"signal": "stale_plan",
@@ -398,7 +402,10 @@ def find_stale_plan_items(rows: list[dict], now: datetime) -> list[dict]:
 				"reference_docname": row["reference_docname"],
 				"user": row.get("user"),
 				"suggested_action": ACTIVITY_TO_ACTION.get(activity, "create_task"),
-				"action_payload": {"title": label},
+				# the activity rides in the payload because the action mapping is
+				# lossy: propose_week rebuilds the item from it, and without this a
+				# missed Meeting came back as a Task
+				"action_payload": {"title": label, "activity_type": activity},
 				"rationale": (
 					f"You planned this {activity.lower()} for {planned} and it is still open."
 					if planned
@@ -450,20 +457,35 @@ def dedupe(
 	stretches their cooldown accordingly: the queue learns from the dismissals
 	instead of only recording them. Expired rows block for the shorter
 	EXPIRY_COOLDOWN_DAYS so the job cannot expire and re-create a row in a loop.
+
+	The key carries the user: two reps can both plan the same deal, and a key of
+	(signal, record) alone let one rep's open row block the other's candidate
+	forever. Candidates are also deduped against *each other* -- one run can
+	detect the same (signal, record, user) twice, a missed Call and a missed
+	Email on one deal both being stale_plan on it -- walked in rank order so the
+	duplicate that survives is deterministically the higher-ranked one.
 	"""
 	dismissals = dismissals or {}
-	by_key: dict[tuple[str, str], list[dict]] = {}
+
+	def key_of(row: dict) -> tuple[str, str, str]:
+		return (row["signal"], row["reference_docname"], row.get("user") or "")
+
+	by_key: dict[tuple[str, str, str], list[dict]] = {}
 	for row in existing:
-		by_key.setdefault((row["signal"], row["reference_docname"]), []).append(row)
+		by_key.setdefault(key_of(row), []).append(row)
 
 	out = []
-	for candidate in candidates:
-		key = (candidate["signal"], candidate["reference_docname"])
+	seen: set[tuple[str, str, str]] = set()
+	for candidate in sorted(candidates, key=_rank_key):
+		key = key_of(candidate)
+		if key in seen:
+			continue
 		cooldown = dismissal_cooldown(
 			cooldown_days, dismissals.get((candidate.get("user"), candidate["signal"]), 0)
 		)
 		if any(_blocks(row, now, cooldown) for row in by_key.get(key, ())):
 			continue
+		seen.add(key)
 		out.append(candidate)
 	return out
 
@@ -677,6 +699,11 @@ def _stale_plan_rows(now: datetime) -> list[dict]:
 			plan.user,
 		)
 		.where(item.status.isin(("Planned", "Missed")))
+		# a rep who corrected an item by hand owns it -- the same respect the
+		# matcher shows (_match_plan). mark_missed sets manual_override, so
+		# without this a rep who wrote an item off was nagged to do it within
+		# the hour, rationale and all.
+		.where(item.manual_override == 0)
 		.where(item.reference_docname.notnull())
 		.where(plan.week_start >= horizon)
 		.run(as_dict=True)
@@ -689,7 +716,7 @@ def _existing_suggestions(reference_docnames: list[str]) -> list[dict]:
 		rows += frappe.get_all(
 			"CRM Suggestion",
 			filters={"reference_docname": ("in", batch)},
-			fields=["signal", "reference_docname", "status", "modified"],
+			fields=["signal", "reference_docname", "user", "status", "modified"],
 		)
 	return rows
 
@@ -718,6 +745,46 @@ def _dismissal_counts(candidates: list[dict]) -> dict[tuple[str, str], int]:
 		.run(as_dict=True)
 	)
 	return {(row["user"], row["signal"]): row["dismissals"] for row in rows}
+
+
+def suggestion_blocked(
+	signal: str, reference_docname: str, user: str | None, now: datetime | None = None
+) -> bool:
+	"""Would :func:`dedupe` drop this (signal, record, user) right now?
+
+	For creators outside the hourly run -- the rule engine fires on save. Its
+	old Open-only exists check silently bypassed the dismiss/accept cooldowns
+	and the repeat-dismisser multiplier, so a suggestion the rep had just
+	dismissed came straight back on the next status flap. One candidate, the
+	same machinery.
+	"""
+	now = now or frappe.utils.now_datetime()
+	cfg = get_signal_config()
+	existing = frappe.get_all(
+		"CRM Suggestion",
+		filters={"signal": signal, "reference_docname": reference_docname},
+		fields=["signal", "reference_docname", "user", "status", "modified"],
+	)
+	candidate = {"signal": signal, "reference_docname": reference_docname, "user": user}
+	dismissals = _dismissal_counts([candidate]) if user else {}
+	return not dedupe([candidate], existing, now, cfg.dismiss_cooldown_days, dismissals)
+
+
+def user_at_open_cap(user: str | None, cap: int) -> bool:
+	"""Is this rep's (or the unowned bucket's) open queue already full?
+
+	``cap_per_user`` enforces the ceiling inside the hourly run; a creator
+	outside it has to ask the same question one row at a time, against the same
+	buckets -- the unowned rows share ``""`` here as they do everywhere else.
+	"""
+	from frappe.query_builder.functions import Count
+
+	table = frappe.qb.DocType("CRM Suggestion")
+	owner = (table.user.isnull() | (table.user == "")) if not user else table.user == user
+	count = (
+		frappe.qb.from_(table).select(Count(table.name)).where(table.status == "Open").where(owner).run()
+	)[0][0]
+	return count >= cap
 
 
 def expire_stale(now: datetime) -> int:
