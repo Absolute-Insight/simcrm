@@ -19,11 +19,11 @@ import frappe
 from frappe.rate_limiter import rate_limit
 from frappe.utils import strip_html_tags
 
-from crm.agent import actions, client, knowledge, tools
+from crm.agent import actions, analyst, analyst_data, client, knowledge, tools
 from crm.agent.config import get_config, get_signal_config
 from crm.agent.context import build_thread_messages
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
-from crm.agent.schemas import AssistantAnswer, ConnectionProbe, ThreadSummary
+from crm.agent.schemas import AnalystAnswer, AnalystPlan, AssistantAnswer, ConnectionProbe, ThreadSummary
 from crm.help import load_articles
 from crm.utils import sales_user_only, user_rate_limited
 
@@ -394,6 +394,84 @@ def _complete_chat(cfg, messages: list[dict], log_title: str) -> AssistantAnswer
 		except (AgentUnavailable, SchemaMismatch) as exc:
 			frappe.log_error(title=log_title, message=str(exc))
 			return None
+
+
+@frappe.whitelist()
+@rate_limit(limit=SUMMARISE_RATE_LIMIT, seconds=60)
+def ask_analyst(question: str, history: str | list | None = None) -> dict:
+	"""Answer an administrator's question about the business from computed figures.
+
+	Two model calls around one deterministic step: the model picks metrics
+	from the catalogue, code runs them under the admin's own session, the
+	model narrates the result. Returns ``{"status": "ok", "answer",
+	"highlights", "caveats", "tables", "period", "sources"}`` or a degrade
+	status; ``{"status": "disabled", "reason": "analyst_off"}`` when the
+	model tier is on but the admin has not granted the Analyst data access.
+
+	System Manager only, and checked first: nothing below runs for anyone
+	else. One budget unit per question although it costs two completions --
+	the second is worthless without the first, so they are one call for
+	accounting purposes.
+	"""
+	frappe.only_for("System Manager", True)
+	question = _clean_question(question)
+
+	cfg = get_config()
+	if not cfg.enabled:
+		return {"status": "disabled"}
+	if not cfg.analyst_enabled:
+		return {"status": "disabled", "reason": "analyst_off"}
+	if _throttled(cfg):
+		return {"status": "unavailable"}
+
+	erp = analyst_data.enabled_erp()
+	available = analyst.available_keys(erp_enabled=bool(erp))
+	today = frappe.utils.getdate()
+	turns = _parse_history(history)
+
+	with _model_call_slot() as free:
+		if not free:
+			_refund_budget(cfg)
+			return {"status": "unavailable"}
+
+		# The plan may fail: a small model that will not follow the schema still
+		# gets a keyword plan, because a question with no plan has no answer.
+		try:
+			raw_plan = client.complete(
+				cfg,
+				AnalystPlan,
+				analyst.build_plan_messages(question, analyst.catalogue_entries(available), today, turns),
+			)
+		except (AgentUnavailable, SchemaMismatch) as exc:
+			frappe.log_error(title="CRM analyst plan failed", message=str(exc))
+			raw_plan = None
+		plan = analyst.normalise_plan(raw_plan, available, today, question=question)
+
+		tables = analyst_data.run_plan(plan, erp)
+		period = {"from_date": plan["from_date"], "to_date": plan["to_date"]}
+
+		try:
+			reply = client.complete(
+				cfg, AnalystAnswer, analyst.build_answer_messages(question, tables, period, turns)
+			)
+		except (AgentUnavailable, SchemaMismatch) as exc:
+			frappe.log_error(title="CRM analyst answer failed", message=str(exc))
+			return {"status": "unavailable"}
+
+	sources = []
+	for table in tables:
+		if table["source"] not in sources:
+			sources.append(table["source"])
+	return {
+		"status": "ok",
+		"answer": reply.answer,
+		"highlights": reply.highlights,
+		"caveats": reply.caveats,
+		"tables": tables,
+		"period": period,
+		"sources": sources,
+		"currency": frappe.db.get_single_value("FCRM Settings", "currency") or "",
+	}
 
 
 def _parse_history(history) -> list[dict]:

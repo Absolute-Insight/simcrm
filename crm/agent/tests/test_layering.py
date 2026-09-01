@@ -35,7 +35,18 @@ ALLOWED_SIBLING_IMPORTS = {
 	# actions is the write-tier proposal layer: drafts only. It may reach the
 	# client but never frappe (test_actions enforces the frappe ban on top).
 	"actions": {"client", "config", "context", "schemas"},
-	"api": {"actions", "client", "config", "context", "errors", "knowledge", "schemas", "tools"},
+	"api": {
+		"actions",
+		"analyst",
+		"analyst_data",
+		"client",
+		"config",
+		"context",
+		"errors",
+		"knowledge",
+		"schemas",
+		"tools",
+	},
 	"install": set(),
 	# The deterministic tier: signals and predict must work with the agent
 	# disabled, so neither may import client (or anything that knows a model
@@ -49,6 +60,11 @@ ALLOWED_SIBLING_IMPORTS = {
 	# resolves it from config.
 	"signals": {"config"},
 	"predict": {"config", "signals"},
+	# The Analyst: analyst is the pure half (catalogue, plan taming, prompts,
+	# projection maths) and may not know a site exists; analyst_data runs the
+	# catalogue against the metrics layer and the ERP clients.
+	"analyst": set(),
+	"analyst_data": {"analyst", "config", "predict", "signals"},
 }
 
 

@@ -59,6 +59,32 @@ class AssistantAnswer(BaseModel):
 	related_articles: list[str] = Field(default_factory=list, max_length=3)
 
 
+class AnalystPlan(BaseModel):
+	"""Which catalogue calculations answer the question, and for what period.
+
+	The model chooses from a list it was shown; ``analyst.normalise_plan`` drops
+	anything it invented. ``metrics`` allows a little slack over the cap so a
+	model that over-selects is trimmed rather than rejected.
+	"""
+
+	model_config = ConfigDict(extra="forbid")
+
+	metrics: list[str] = Field(default_factory=list, max_length=6)
+	from_date: str = Field(default="", max_length=20)
+	to_date: str = Field(default="", max_length=20)
+	reasoning: str = Field(default="", max_length=300)
+
+
+class AnalystAnswer(BaseModel):
+	"""The narrative over computed figures. Plain text; the tables are shown by code."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	answer: str = Field(min_length=1, max_length=4000)
+	highlights: list[str] = Field(default_factory=list, max_length=5)
+	caveats: list[str] = Field(default_factory=list, max_length=3)
+
+
 class ReplyDraft(BaseModel):
 	"""A reply the rep can edit and send. A draft, never a sent message."""
 
