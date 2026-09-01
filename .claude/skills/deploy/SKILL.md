@@ -1,7 +1,6 @@
 ---
 name: deploy
 description: Bring up, upgrade, or verify the deploy/ compose stack (the published ghcr image). Use for first boot, a localhost rehearsal, or a version upgrade on a host.
-disable-model-invocation: true
 ---
 
 # Deploy / upgrade the compose stack

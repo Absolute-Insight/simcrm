@@ -1,7 +1,6 @@
 ---
 name: dev-up
 description: Bring up or verify the local Frappe dev environment (devcontainer bench + site + vite). Use when the user wants to start developing, when bench/yarn are missing, or when the dev site is not responding.
-disable-model-invocation: true
 ---
 
 # Start the dev environment
