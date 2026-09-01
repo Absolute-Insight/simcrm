@@ -39,6 +39,15 @@
     var(--brand-500) 55%,
     var(--brand-magenta) 100%
   );
+  --cta-from: #7fd4ff;
+  --cta-to: #21abfb;
+  --cta-ink: #0e1830;
+  --cta-edge: #1a86c9;
+  --cta-gradient: linear-gradient(
+    180deg,
+    var(--cta-from) 0%,
+    var(--cta-to) 100%
+  );
 
   /* Motion */
   --motion-fast: 90ms;
@@ -99,11 +108,6 @@
   --ink-gray-7: #26283b;
   --ink-gray-8: #141623;
   --ink-gray-9: #0c0e18;
-  --ink-alert-button-default: #141623;
-  --ink-alert-button-info: #141623;
-  --ink-alert-button-success: #141623;
-  --ink-alert-button-warning: #141623;
-  --ink-alert-button-error: #141623;
   --outline-gray-1: #e7e9f9;
   --outline-gray-2: #daddf1;
   --outline-gray-3: #bfc3dc;
@@ -127,17 +131,16 @@
   --outline-alpha-elevation-1: #0e0e1f12;
   --outline-alpha-elevation-2: #0e0e1f12;
   --surface-base: #fafbff;
-  --surface-elevation-1: #ffffff;
-  --surface-elevation-2: #ffffff;
-  --surface-elevation-3: #ffffff;
-  --surface-alert-button-default: #ffffff;
+  --surface-elevation-1: oklch(1 0 0);
+  --surface-elevation-2: oklch(1 0 0);
+  --surface-elevation-3: oklch(1 0 0);
   --surface-alpha-base: #fafbff;
-  --surface-alpha-elevation-1: #ffffff;
-  --surface-alpha-elevation-2: #ffffff;
-  --surface-alpha-elevation-3: #ffffff;
-  --ink-base: #ffffff;
-  --outline-base: #ffffff;
-  --outline-alpha-base: #ffffff;
+  --surface-alpha-elevation-1: oklch(1 0 0);
+  --surface-alpha-elevation-2: oklch(1 0 0);
+  --surface-alpha-elevation-3: oklch(1 0 0);
+  --ink-base: oklch(1 0 0);
+  --outline-base: oklch(1 0 0);
+  --outline-alpha-base: oklch(1 0 0);
   --focus-outline-default: 2px solid var(--brand-500);
   --focus-default: 0px 0px 0px 2px var(--brand-500);
   --brand-ink: var(--brand-600);
@@ -175,6 +178,15 @@
     var(--brand-sky) 0%,
     var(--brand-500) 55%,
     var(--brand-magenta) 100%
+  );
+  --cta-from: #7fd4ff;
+  --cta-to: #21abfb;
+  --cta-ink: #0e1830;
+  --cta-edge: #1a86c9;
+  --cta-gradient: linear-gradient(
+    180deg,
+    var(--cta-from) 0%,
+    var(--cta-to) 100%
   );
 
   /* Motion */
@@ -222,7 +234,6 @@
   --surface-elevation-1: #1c1e2c;
   --surface-elevation-2: #212332;
   --surface-elevation-3: #343749;
-  --surface-alert-button-default: #3e4154;
   --surface-alpha-base: #0e0e1f0a;
   --surface-alpha-gray-1: #ececf80e;
   --surface-alpha-gray-2: #ececf814;
@@ -248,7 +259,6 @@
   --ink-gray-7: #e0e3f3;
   --ink-gray-8: #d9dbe7;
   --ink-gray-9: #f6f7fe;
-  --ink-alert-button-default: #f6f7fe;
   --outline-base: #131521;
   --outline-gray-1: #212332;
   --outline-gray-2: #343749;
@@ -273,11 +283,7 @@
   --outline-alpha-gray-9: #ececf8f7;
   --outline-alpha-elevation-1: #ececf814;
   --outline-alpha-elevation-2: #ececf824;
-  --surface-sidebar: #ffffff00;
-  --ink-alert-button-info: #76bef9;
-  --ink-alert-button-success: #7dc5a2;
-  --ink-alert-button-warning: #e9a144;
-  --ink-alert-button-error: #ff7575;
+  --surface-sidebar: oklch(1 0 0 / 0);
   --focus-outline-default: 3px solid var(--brand-300);
   --focus-default: 0px 0px 0px 3px var(--brand-300);
   --brand-ink: var(--brand-300);

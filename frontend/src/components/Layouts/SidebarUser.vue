@@ -16,12 +16,16 @@
         size="sm"
         class="shrink-0"
       />
+      <!-- `flex-1` only while expanded. Left on unconditionally it still grows
+           when the name is zero-width and invisible -- `flex: 1 1 0%` claims
+           the free space regardless of content -- so it pushed the avatar off
+           the centre the row's `justify-center` was asking for. -->
       <div
-        class="flex-1 truncate text-left duration-300 ease-in-out"
+        class="truncate text-left duration-300 ease-in-out"
         :class="
           isCollapsed
-            ? 'ml-0 w-0 overflow-hidden opacity-0'
-            : 'ml-2 w-auto opacity-100'
+            ? 'ml-0 w-0 flex-none overflow-hidden opacity-0'
+            : 'ml-2 w-auto flex-1 opacity-100'
         "
       >
         <div class="truncate text-base leading-none text-ink-gray-8">

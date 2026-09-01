@@ -19,110 +19,60 @@
         <SidebarBrand
           :isCollapsed="isCollapsed"
           @toggle="isSidebarCollapsed = !isSidebarCollapsed"
-        />
+        >
+          <!-- Notifications and Suggestions are panels, not places, so they sit
+               with the collapse control rather than in the nav list below.
+
+               Icon-only costs the two states the labelled rows used to show: a
+               number, and the en dash that told "nothing waiting" apart from
+               "never managed to ask". The dot cannot carry either, so the
+               title/aria-label does instead -- that distinction was deliberate
+               and is not worth losing to a layout change. The dot appears only
+               for a count we actually have. -->
+          <template #actions>
+            <button
+              id="notifications-btn"
+              class="relative grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] hover:bg-surface-gray-2"
+              :class="
+                notificationsActive
+                  ? 'bg-surface-gray-3 text-ink-gray-9'
+                  : 'text-ink-gray-7'
+              "
+              :aria-label="notificationsLabel"
+              :title="notificationsLabel"
+              @click="onNotificationsClick"
+            >
+              <NotificationsIcon class="size-4 text-ink-blue-6" />
+              <span
+                v-if="unreadNotificationsCount"
+                class="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-surface-gray-9 ring-1 ring-[var(--surface-gray-1)]"
+              />
+            </button>
+            <button
+              id="suggestions-btn"
+              class="relative grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] hover:bg-surface-gray-2"
+              :class="
+                suggestionsActive
+                  ? 'bg-surface-gray-3 text-ink-gray-9'
+                  : 'text-ink-gray-7'
+              "
+              :aria-label="suggestionsLabel"
+              :title="suggestionsLabel"
+              @click="onSuggestionsClick"
+            >
+              <SuggestionsIcon class="size-4 text-ink-orange-6" />
+              <span
+                v-if="openSuggestionsCount"
+                class="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-surface-gray-9 ring-1 ring-[var(--surface-gray-1)]"
+              />
+            </button>
+          </template>
+        </SidebarBrand>
 
         <!-- overflow-y-auto forces overflow-x to clip too, which would slice the
              active row's shadow. Widen the scroll box to the sidebar edges and
              pad the content back in so the shadow has room. -->
         <div class="-mx-2 mt-2 flex flex-1 flex-col gap-1 overflow-y-auto px-2">
-          <SidebarItem
-            id="notifications-btn"
-            :label="__('Notifications')"
-            :to="mobile ? { name: 'Notifications' } : undefined"
-            :active="
-              mobile ? activeItem === 'Notifications' : notificationsVisible
-            "
-            @click="onNotificationsClick"
-          >
-            <template #prefix>
-              <span class="relative grid size-4 place-items-center">
-                <NotificationsIcon class="size-4 text-ink-gray-7" />
-                <span
-                  v-if="isCollapsed && unreadNotificationsCount"
-                  class="absolute -right-1 -top-1 size-1.5 rounded-full bg-surface-gray-9 ring-1 ring-[var(--surface-gray-1)]"
-                />
-              </span>
-            </template>
-            <template #suffix>
-              <!-- A badge that hides itself cannot tell "nothing waiting"
-                 apart from "never managed to ask", and on this sidebar the
-                 second one reads as the first. An en dash plus a tooltip says
-                 the count is unknown without claiming a number.
-                 The collapsed 6px dot below has no third state to offer, so it
-                 stays keyed on a count we actually have rather than asserting
-                 presence we cannot verify. -->
-              <Tooltip
-                v-if="unreadCountUnavailable"
-                :text="
-                  __('Unread count unavailable — could not reach the server')
-                "
-              >
-                <Badge class="mr-2" label="–" variant="subtle" />
-              </Tooltip>
-              <Badge
-                v-else-if="unreadNotificationsCount"
-                class="mr-2"
-                :label="unreadNotificationsCount"
-                variant="subtle"
-              />
-            </template>
-          </SidebarItem>
-
-          <!-- On mobile this routes to a page, exactly as Notifications above
-               does; on desktop it toggles the slide-over. The inbox is the
-               proactive surface, so a rep on a phone not having it at all was
-               the largest hole in mobile parity. -->
-          <SidebarItem
-            id="suggestions-btn"
-            :label="__('Suggestions')"
-            :to="mobile ? { name: 'Suggestions' } : undefined"
-            :active="mobile ? activeItem === 'Suggestions' : suggestionsVisible"
-            @click="onSuggestionsClick"
-          >
-            <template #prefix>
-              <span class="relative grid size-4 place-items-center">
-                <SuggestionsIcon class="size-4 text-ink-gray-7" />
-                <span
-                  v-if="isCollapsed && openSuggestionsCount"
-                  class="absolute -right-1 -top-1 size-1.5 rounded-full bg-surface-gray-9 ring-1 ring-[var(--surface-gray-1)]"
-                />
-              </span>
-            </template>
-            <template #suffix>
-              <Tooltip
-                v-if="openCountUnavailable"
-                :text="
-                  __(
-                    'Suggestion count unavailable — could not reach the server',
-                  )
-                "
-              >
-                <Badge class="mr-2" label="–" variant="subtle" />
-              </Tooltip>
-              <Badge
-                v-else-if="openSuggestionsCount"
-                class="mr-2"
-                :label="openSuggestionsCount"
-                variant="subtle"
-              />
-            </template>
-          </SidebarItem>
-
-          <!-- Desktop-only for now, like the panels below: on a phone the
-               slide-over has nowhere to slide from. The help center covers
-               the same questions on mobile. -->
-          <SidebarItem
-            v-if="!mobile"
-            id="assistant-btn"
-            :label="__('Assistant')"
-            :active="assistantVisible"
-            @click="toggleAssistant"
-          >
-            <template #prefix>
-              <SparkleIcon class="size-4 text-ink-gray-7" />
-            </template>
-          </SidebarItem>
-
           <CollapsibleSection
             v-for="section in allViews"
             :key="section.name"
@@ -151,14 +101,43 @@
             <nav class="flex flex-col gap-1">
               <SidebarItem
                 v-for="link in section.views"
+                :id="link.action ? link.action + '-btn' : undefined"
                 :key="link.key"
                 :to="link.to"
                 :label="__(link.label)"
-                :active="activeItem === link.key"
-                @click="selectItem($event, link.key)"
+                :active="
+                  link.action === 'assistant'
+                    ? assistantVisible
+                    : activeItem === link.key
+                "
+                @click="
+                  link.action === 'assistant'
+                    ? toggleAssistant()
+                    : selectItem($event, link.key)
+                "
               >
                 <template #prefix>
-                  <Icon :icon="link.icon" class="size-4 text-ink-gray-7" />
+                  <!-- Tints are the -6 step of each family. The ladder is a
+                       readability one rather than a lightness one -- it runs
+                       light-to-dark in light mode and dark-to-light in dark --
+                       so a single class is correct in both themes.
+                       -9 was the first choice and was wrong here: it is the
+                       most legible step but also the least saturated, and in
+                       dark mode it lands on a near-white pastel (mean HSV
+                       saturation 0.23) that reads as barely coloured at 16px.
+                       -6 measures 0.70 there for the same ten families, and
+                       still clears the floor a non-text mark needs on both
+                       canvases -- worst case 4.89:1 dark, 3.71:1 light against
+                       3:1. 3:1 is the right floor rather than 4.5:1 because
+                       every icon sits beside its own text label and never
+                       carries the meaning alone.
+                       Public and pinned views carry no tint and stay gray, so a
+                       coloured icon always means a built-in surface. -->
+                  <Icon
+                    :icon="link.icon"
+                    class="size-4"
+                    :class="link.tint || 'text-ink-gray-7'"
+                  />
                 </template>
                 <Tooltip
                   :text="__(link.label)"
@@ -198,7 +177,7 @@
           <SidebarItem
             v-if="isManager() && isDemoDataCreated"
             :label="__('Clear Demo Data')"
-            class="!text-ink-red-9 hover:!bg-surface-red-2"
+            class="!text-ink-red-6 hover:!bg-surface-red-2"
             @click="() => clearDemoData()"
           >
             <template #prefix>
@@ -334,76 +313,109 @@ const isFCSite = ref(window.is_fc_site)
 const isDemoSite = ref(window.is_demo_site)
 
 const links = [
+  // Order is product order, not alphabetical: what a rep opens first comes
+  // first. Dashboard is the landing surface, Assistant answers the question
+  // that sent them there, then the planning and pipeline surfaces, then the
+  // records they act on.
+  //
   // Dashboard, Planner and Reports are the surfaces Vectora is *for*, and they
   // were unreachable on a phone -- routed and rendering, just absent from the
   // one menu a mobile rep has. Each was checked at 390px: the dashboard stacks
   // its tiles, the planner falls back from a week grid to a day list, and the
   // reports table scrolls inside its own container. Calendar stays hidden
-  // below because it genuinely does not fit -- seven day-columns and a clipped
+  // because it genuinely does not fit -- seven day-columns and a clipped
   // toolbar.
+  //
+  // `tint` is the -9 step of a colour family. See the comment on the nav row in
+  // the template for why -9 and only -9.
   {
     label: 'Dashboard',
     icon: DashboardIcon,
     to: 'Dashboard',
+    tint: 'text-ink-blue-6',
+  },
+  // The one entry that is not a place. Assistant opens a slide-over, so it
+  // carries `action` instead of `to` and the row renders as a toggle -- it sits
+  // second because it is the surface a rep reaches for from the dashboard, not
+  // because it is a route. On mobile the panel has nowhere to slide from, the
+  // same condition it carried when it lived above this list.
+  {
+    label: 'Assistant',
+    icon: SparkleIcon,
+    action: 'assistant',
+    tint: 'text-ink-violet-6',
+    condition: () => !props.mobile,
   },
   {
     label: 'Planner',
     icon: PlannerIcon,
     to: 'Planner',
-  },
-  {
-    label: 'Reports',
-    icon: ReportsIcon,
-    to: 'Reports',
-  },
-  {
-    label: 'Analyst',
-    icon: AnalystIcon,
-    to: 'Analyst',
-    // Administrators only: the page and its endpoint are both gated, and a
-    // Sales Manager would get a pane that answers nothing.
-    condition: () => isAdmin(),
+    tint: 'text-ink-teal-6',
   },
   {
     label: 'Leads',
     icon: LeadsIcon,
     to: 'Leads',
+    tint: 'text-ink-orange-6',
   },
   {
     label: 'Deals',
     icon: DealsIcon,
     to: 'Deals',
+    tint: 'text-ink-green-6',
   },
   {
-    label: 'Contacts',
-    icon: ContactsIcon,
-    to: 'Contacts',
+    label: 'Reports',
+    icon: ReportsIcon,
+    to: 'Reports',
+    tint: 'text-ink-purple-6',
   },
+  // Analyst arrived with the AI surfaces after this order was specified. It is
+  // admin-only and it is an analytics surface, so it sits beside Reports rather
+  // than at the end where an unplaced item would otherwise land.
   {
-    label: 'Organizations',
-    icon: OrganizationsIcon,
-    to: 'Organizations',
+    label: 'Analyst',
+    icon: AnalystIcon,
+    to: 'Analyst',
+    tint: 'text-ink-cyan-6',
+    condition: () => isAdmin(),
   },
   {
     label: 'Notes',
     icon: NoteIcon,
     to: 'Notes',
+    tint: 'text-ink-yellow-6',
   },
   {
     label: 'Tasks',
     icon: TaskIcon,
     to: 'Tasks',
+    tint: 'text-ink-pink-6',
   },
   {
     label: 'Calendar',
     icon: CalendarIcon,
     to: 'Calendar',
+    tint: 'text-ink-red-6',
     condition: () => !props.mobile,
+  },
+  {
+    label: 'Organizations',
+    icon: OrganizationsIcon,
+    to: 'Organizations',
+    tint: 'text-ink-teal-6',
+  },
+  {
+    label: 'Contacts',
+    icon: ContactsIcon,
+    to: 'Contacts',
+    tint: 'text-ink-blue-6',
   },
   {
     label: 'Call Logs',
     icon: PhoneIcon,
     to: 'Call Logs',
+    tint: 'text-ink-orange-6',
   },
 ]
 
@@ -423,8 +435,13 @@ const allViews = computed(() => {
         .map((link) => ({
           label: link.label,
           icon: link.icon,
-          key: link.to,
-          to: { name: link.to },
+          tint: link.tint,
+          action: link.action,
+          // An action row has no route, so `to` must stay undefined -- passing
+          // `{ name: undefined }` makes SidebarItem render a RouterLink that
+          // resolves to nothing and swallows the click.
+          key: link.action || link.to,
+          to: link.action ? undefined : { name: link.to },
         })),
     },
   ]
@@ -525,9 +542,49 @@ router.afterEach((to, from, failure) => {
   if (failure) activeItem.value = currentRouteKey()
 })
 
+// The two panel toggles sit in the brand row now, as plain buttons rather than
+// SidebarItems. Everything SidebarItem used to supply for them -- the active
+// styling, the accessible name, and on mobile the navigation itself -- has to
+// be supplied here instead. `router` is the instance already imported above.
+const notificationsActive = computed(() =>
+  props.mobile
+    ? activeItem.value === 'Notifications'
+    : notificationsVisible.value,
+)
+const suggestionsActive = computed(() =>
+  props.mobile ? activeItem.value === 'Suggestions' : suggestionsVisible.value,
+)
+
+// Icon-only leaves nowhere to print the count, so the accessible name carries
+// it. That includes the "could not ask" case: a dot that simply stays hidden
+// reads exactly like "nothing waiting", and telling those two apart was the
+// point of the en-dash badge these buttons replaced.
+const notificationsLabel = computed(() => {
+  if (unreadCountUnavailable.value) {
+    return __('Notifications — unread count unavailable')
+  }
+  if (unreadNotificationsCount.value) {
+    return __('Notifications ({0} unread)', [unreadNotificationsCount.value])
+  }
+  return __('Notifications')
+})
+const suggestionsLabel = computed(() => {
+  if (openCountUnavailable.value) {
+    return __('Suggestions — count unavailable')
+  }
+  if (openSuggestionsCount.value) {
+    return __('Suggestions ({0} open)', [openSuggestionsCount.value])
+  }
+  return __('Suggestions')
+})
+
 function onNotificationsClick(event) {
   if (props.mobile) {
     selectItem(event, 'Notifications')
+    // A <button> has no href, so nothing navigates on its own any more -- and
+    // for the same reason the modifier-click case selectItem guards against
+    // cannot arise here.
+    router.push({ name: 'Notifications' })
   } else {
     toggleNotificationPanel()
   }
@@ -536,6 +593,7 @@ function onNotificationsClick(event) {
 function onSuggestionsClick(event) {
   if (props.mobile) {
     selectItem(event, 'Suggestions')
+    router.push({ name: 'Suggestions' })
   } else {
     toggleSuggestionsPanel()
   }
