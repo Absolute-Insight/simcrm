@@ -220,7 +220,7 @@ function confirmDelete(article) {
         label: __('Delete'),
         theme: 'red',
         variant: 'solid',
-        async onClick(close) {
+        async onClick({ close }) {
           try {
             await call('crm.api.knowledge.delete_article', {
               name: article.name,
@@ -248,7 +248,7 @@ function confirmImport() {
       {
         label: __('Import'),
         variant: 'solid',
-        async onClick(close) {
+        async onClick({ close }) {
           importing.value = true
           try {
             const result = await call('crm.api.knowledge.import_samples')
