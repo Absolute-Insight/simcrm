@@ -528,6 +528,23 @@ input[type='checkbox']:checked {
   background: transparent;
   border-radius: var(--v-radius-control);
 }
+/* Segmented pairs (SortBy's asc/desc toggle, Filter's clear-all X) mark their
+   own halves `rounded-l-none`/`rounded-r-none` so the pair reads as one
+   pill. Those utilities live in Tailwind's `utilities` layer, and an
+   unlayered rule always outranks a layered one regardless of specificity —
+   so the blanket reset above was beating them and squaring both halves back
+   into two separate chips. Re-zero just the corner each utility claims,
+   inside this same unlayered block, so the full var(--v-radius-control)
+   radius still applies everywhere else *and* the split pair still joins into
+   one pill. */
+.v-toolbar-group :where(button.rounded-l-none) {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.v-toolbar-group :where(button.rounded-r-none) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
 .v-toolbar-group :where(button):hover {
   background: var(--surface-gray-3);
 }
@@ -538,13 +555,19 @@ input[type='checkbox']:checked {
   position: relative;
   z-index: 1;
 }
-/* The divider targets the direct child AND its first real button descendant:
-   SortBy's unselected state renders its trigger through frappe-ui's Combobox,
-   whose own root is `display:contents` (an unpainted box), so a shadow on
-   that direct child alone never reaches the screen — the shadow has to land
-   on the actual button underneath it. */
-.v-toolbar-group > * + *,
-.v-toolbar-group > * + * :where(button) {
+/* The divider targets the direct child only, one hairline per boundary
+   between Filter / Sort / Columns. A prior version also targeted every
+   button descendant, meant (per its own comment) to reach "the first real
+   button descendant" when a direct child is an unpainted `display:contents`
+   wrapper — but a descendant-button selector matches every button inside
+   the child, not just the first, so it also painted the shadow onto both
+   halves of SortBy's and Filter's own internal segmented pairs: three
+   vertical lines where one belonged (F2). Dropped; the one known casualty is
+   SortBy's empty state (its trigger there is frappe-ui's Combobox, whose own
+   root is `display:contents` and so cannot paint the shadow itself) — it
+   shows no divider before Sort until a sort is applied, at which point its
+   root becomes a real `<div>` and the divider appears. */
+.v-toolbar-group > * + * {
   box-shadow: inset 1px 0 0 var(--v-glass-sm-border);
 }
 
