@@ -4,7 +4,7 @@
 
 **Goal:** Extend the Vectora Lux visual language from four surfaces to every surface of the CRM, replace Inter with Plus Jakarta Sans, and replace 119 hand-drawn icons with Phosphor.
 
-**Architecture:** Three foundation layers land first — type, icons, scale — each verified on its own. Then five surface tiers consume them. The icon swap goes through an *adapter*: every file in `src/components/Icons/` keeps its filename and intrinsic size, so all 90 consuming files change by zero lines. Only pure logic gets unit tests (this repo tests `src/utils/` and `src/composables/` only); everything else is verified in a browser in both themes, because that is what the change actually is.
+**Architecture:** Three foundation layers land first — type, icons, scale — each verified on its own. Then five surface tiers consume them. The icon swap goes through an _adapter_: every file in `src/components/Icons/` keeps its filename and intrinsic size, so all 90 consuming files change by zero lines. Only pure logic gets unit tests (this repo tests `src/utils/` and `src/composables/` only); everything else is verified in a browser in both themes, because that is what the change actually is.
 
 **Tech Stack:** Vue 3, frappe-ui 1.0.0-beta.55, Tailwind 4.3.3, vitest + happy-dom, `@phosphor-icons/vue` 2.2.1, `@fontsource-variable/plus-jakarta-sans` 5.3.0.
 
@@ -29,24 +29,24 @@
 
 **Created:**
 
-| File | Responsibility |
-|---|---|
-| `frontend/src/components/Icons/_phosphor.js` | The adapter factory + the intrinsic-size table. One place that knows how a legacy icon name becomes a Phosphor render. |
-| `frontend/tests/unit/phosphorAdapter.test.js` | Tests the pure parts of the adapter: size table completeness and prop derivation. |
-| `frontend/scripts/convert-icons.mjs` | One-shot codemod that rewrites the 106 simple icon files. Committed so the conversion is reproducible and reviewable. |
+| File                                          | Responsibility                                                                                                         |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `frontend/src/components/Icons/_phosphor.js`  | The adapter factory + the intrinsic-size table. One place that knows how a legacy icon name becomes a Phosphor render. |
+| `frontend/tests/unit/phosphorAdapter.test.js` | Tests the pure parts of the adapter: size table completeness and prop derivation.                                      |
+| `frontend/scripts/convert-icons.mjs`          | One-shot codemod that rewrites the 106 simple icon files. Committed so the conversion is reproducible and reviewable.  |
 
 **Modified:**
 
-| File | Change |
-|---|---|
-| `frontend/package.json` | Swap `@fontsource-variable/space-grotesk` → `@fontsource-variable/plus-jakarta-sans`; add `@phosphor-icons/vue` |
-| `frontend/src/index.css` | Font import + `:root` family override + pinned line-heights; radius/density tokens; `.v-glass-sm`; light-theme elevation and tint tokens |
-| `frontend/tailwind.config.js` | `fontFamily.sans` and `fontFamily.display` both resolve to Plus Jakarta Sans |
-| `frontend/src/utils/chartTheme.js` | Charts inherit the app font instead of frappe-ui's `InterVar` |
-| `frontend/src/main.js` | Phosphor global `weight` / `size` defaults via `provide` |
-| 106 files in `frontend/src/components/Icons/` | Become Phosphor wrappers, preserving intrinsic size |
-| `TaskStatusIcon.vue`, `TaskPriorityIcon.vue`, `LoadingIndicator.vue` | Hand-converted; `TaskPriorityIcon` also has a live bug fixed |
-| Tier 1–5 surface files | Consume the scale and elevation tokens |
+| File                                                                 | Change                                                                                                                                   |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `frontend/package.json`                                              | Swap `@fontsource-variable/space-grotesk` → `@fontsource-variable/plus-jakarta-sans`; add `@phosphor-icons/vue`                          |
+| `frontend/src/index.css`                                             | Font import + `:root` family override + pinned line-heights; radius/density tokens; `.v-glass-sm`; light-theme elevation and tint tokens |
+| `frontend/tailwind.config.js`                                        | `fontFamily.sans` and `fontFamily.display` both resolve to Plus Jakarta Sans                                                             |
+| `frontend/src/utils/chartTheme.js`                                   | Charts inherit the app font instead of frappe-ui's `InterVar`                                                                            |
+| `frontend/src/main.js`                                               | Phosphor global `weight` / `size` defaults via `provide`                                                                                 |
+| 106 files in `frontend/src/components/Icons/`                        | Become Phosphor wrappers, preserving intrinsic size                                                                                      |
+| `TaskStatusIcon.vue`, `TaskPriorityIcon.vue`, `LoadingIndicator.vue` | Hand-converted; `TaskPriorityIcon` also has a live bug fixed                                                                             |
+| Tier 1–5 surface files                                               | Consume the scale and elevation tokens                                                                                                   |
 
 **Untouched by decision:** `CRMLogo`, `ERPNextIcon`, `FrappeCloudIcon`, `GitHubIcon`, `GoogleIcon`, `FacebookIcon`, `TelegramIcon`, `WhatsAppIcon` (brand/product marks — Phosphor has no equivalent), `DotIcon`, `IndicatorIcon` (radius/fill-prop primitives Phosphor adds nothing to).
 
@@ -55,11 +55,13 @@
 ## Task 1: Type foundation
 
 **Files:**
+
 - Modify: `frontend/package.json`
 - Modify: `frontend/src/index.css:1-3` (imports), plus a new `:root` block
 - Modify: `frontend/tailwind.config.js:38-46` (`fontFamily.display`)
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `--v-font-sans` CSS variable, consumed by every later tier. (Task 2 deliberately does **not** consume it — ECharts renders to canvas and cannot resolve CSS custom properties, so the chart config carries the family as a literal.) `fontFamily.sans` / `fontFamily.display` Tailwind keys both resolving to `'Plus Jakarta Sans Variable'`.
 
@@ -92,9 +94,9 @@ yarn add @fontsource-variable/plus-jakarta-sans
 Replace line 2 (`@import '@fontsource-variable/space-grotesk';`) so the block reads:
 
 ```css
-@import 'frappe-ui/style.css';
-@import '@fontsource-variable/plus-jakarta-sans';
-@import './styles/vectora-theme.css';
+@import "frappe-ui/style.css";
+@import "@fontsource-variable/plus-jakarta-sans";
+@import "./styles/vectora-theme.css";
 ```
 
 - [ ] **Step 3: Add the family override immediately after the imports**
@@ -106,7 +108,7 @@ Replace line 2 (`@import '@fontsource-variable/space-grotesk';`) so the block re
    sufficient — almost everything inherits from :root rather than carrying a
    `font-sans` utility. */
 :root {
-  --v-font-sans: 'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', InterVar,
+  --v-font-sans: "Plus Jakarta Sans Variable", "Plus Jakarta Sans", InterVar,
     ui-sans-serif, system-ui, sans-serif;
   font-family: var(--v-font-sans);
   font-optical-sizing: auto;
@@ -146,17 +148,17 @@ In `frontend/tailwind.config.js`, replace the `display` entry and add `sans`:
 PJS's default line box is 1.26 em against Inter's 1.21 — **+4.1%**. Anything sized by its content grows unless the line-height is explicit. In the `@layer components` block of `index.css`, extend the existing type rule:
 
 ```css
-  .v-title-sm,
-  .v-title,
-  .font-display,
-  [class*='text-2xl-'],
-  [class*='text-3xl-'] {
-    font-family: theme(fontFamily.display);
-    letter-spacing: -0.02em;
-    /* PJS ships a 4.1% taller default line box than Inter. Display steps pin
+.v-title-sm,
+.v-title,
+.font-display,
+[class*="text-2xl-"],
+[class*="text-3xl-"] {
+  font-family: theme(fontFamily.display);
+  letter-spacing: -0.02em;
+  /* PJS ships a 4.1% taller default line box than Inter. Display steps pin
        their own leading so headings do not silently gain height. */
-    line-height: 1.15;
-  }
+  line-height: 1.15;
+}
 ```
 
 - [ ] **Step 6: Verify the face actually applied, in the browser**
@@ -164,9 +166,9 @@ PJS's default line box is 1.26 em against Inter's 1.21 — **+4.1%**. Anything s
 Start the dev server, then in the Playwright console on `localhost:8000/crm`:
 
 ```js
-getComputedStyle(document.documentElement).fontFamily
+getComputedStyle(document.documentElement).fontFamily;
 // Expected: starts with "Plus Jakarta Sans Variable"
-getComputedStyle(document.body).fontVariantNumeric
+getComputedStyle(document.body).fontVariantNumeric;
 // Expected: "tabular-nums"  (PJS carries tnum — verified from the woff2)
 ```
 
@@ -199,10 +201,12 @@ from :root rather than carrying a font-sans utility."
 ## Task 2: Charts inherit the app font
 
 **Files:**
+
 - Modify: `frontend/src/utils/chartTheme.js`
 - Test: `frontend/tests/unit/chartTheme.test.js`
 
 **Interfaces:**
+
 - Consumes: nothing. The font stack is repeated as a literal here on purpose: ECharts paints to canvas and never resolves `var(--v-font-sans)`. If Task 1's stack changes, this literal changes with it — the duplication is deliberate and the test below pins it.
 - Produces: `withVectoraLux(config)` output now carries `textStyle.fontFamily`.
 
@@ -213,18 +217,18 @@ from :root rather than carrying a font-sans utility."
 Append to `frontend/tests/unit/chartTheme.test.js`:
 
 ```js
-describe('chart typography', () => {
-  it('sets the app font family on the chart text style', () => {
-    const out = applyLuxChartTheme(axisConfig(), false)
-    expect(out.textStyle.fontFamily).toMatch(/Plus Jakarta Sans/)
-  })
+describe("chart typography", () => {
+  it("sets the app font family on the chart text style", () => {
+    const out = applyLuxChartTheme(axisConfig(), false);
+    expect(out.textStyle.fontFamily).toMatch(/Plus Jakarta Sans/);
+  });
 
-  it('does not override a font family the caller already chose', () => {
-    const config = axisConfig({ textStyle: { fontFamily: 'Courier New' } })
-    const out = applyLuxChartTheme(config, false)
-    expect(out.textStyle.fontFamily).toBe('Courier New')
-  })
-})
+  it("does not override a font family the caller already chose", () => {
+    const config = axisConfig({ textStyle: { fontFamily: "Courier New" } });
+    const out = applyLuxChartTheme(config, false);
+    expect(out.textStyle.fontFamily).toBe("Courier New");
+  });
+});
 ```
 
 - [ ] **Step 2: Run it and watch it fail**
@@ -240,16 +244,16 @@ Expected: FAIL — `out.textStyle` is undefined, so reading `.fontFamily` throws
 In `frontend/src/utils/chartTheme.js`, inside `applyLuxChartTheme`, before the return:
 
 ```js
-  // frappe-ui's charts default to CHART_FONT_FAMILY ('InterVar, Inter,
-  // sans-serif'), so without this every axis label and legend stays on Inter
-  // while the rest of the app is on Plus Jakarta Sans. Same contract as the
-  // rest of this module: never override what the caller already set.
-  const CHART_FONT =
-    "'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', InterVar, sans-serif"
-  out.textStyle = {
-    fontFamily: CHART_FONT,
-    ...(config.textStyle ?? {}),
-  }
+// frappe-ui's charts default to CHART_FONT_FAMILY ('InterVar, Inter,
+// sans-serif'), so without this every axis label and legend stays on Inter
+// while the rest of the app is on Plus Jakarta Sans. Same contract as the
+// rest of this module: never override what the caller already set.
+const CHART_FONT =
+  "'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', InterVar, sans-serif";
+out.textStyle = {
+  fontFamily: CHART_FONT,
+  ...(config.textStyle ?? {}),
+};
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -275,48 +279,50 @@ stayed on Inter after the body face changed."
 ## Task 3: Icon adapter foundation
 
 **Files:**
+
 - Create: `frontend/src/components/Icons/_phosphor.js`
 - Create: `frontend/tests/unit/phosphorAdapter.test.js`
 - Modify: `frontend/src/main.js`
 - Modify: `frontend/src/components/Icons/BellIcon.vue` (the pilot)
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces:
   - `INTRINSIC_SIZE: Record<string, [number, number]>` — legacy component name → `[width, height]`.
   - `intrinsicProps(name: string): { width: number, height: number }` — throws on an unknown name.
   - The wrapper shape every converted icon uses (Task 4 generates 105 more of these).
 
-**Why an adapter and not a rewrite:** Phosphor's compiled components call `mergeProps({...}, $attrs)` on the `<svg>` root and default `fill` to `currentColor`, so existing `class="h-4"` and `text-ink-gray-5` call sites keep working untouched. What does *not* survive automatically is intrinsic size: Phosphor defaults to `size="1em"`, but the legacy set is 79 icons at 16×16, 24 at 24×24, and the rest at 18/12/20/32/40/64/300/666. The 40 call sites that pass only `h-4` rely on intrinsic width, so each wrapper must restate its own size.
+**Why an adapter and not a rewrite:** Phosphor's compiled components call `mergeProps({...}, $attrs)` on the `<svg>` root and default `fill` to `currentColor`, so existing `class="h-4"` and `text-ink-gray-5` call sites keep working untouched. What does _not_ survive automatically is intrinsic size: Phosphor defaults to `size="1em"`, but the legacy set is 79 icons at 16×16, 24 at 24×24, and the rest at 18/12/20/32/40/64/300/666. The 40 call sites that pass only `h-4` rely on intrinsic width, so each wrapper must restate its own size.
 
 - [ ] **Step 1: Write the failing test**
 
 ```js
-import { describe, expect, it } from 'vitest'
-import { INTRINSIC_SIZE, intrinsicProps } from '@/components/Icons/_phosphor'
+import { describe, expect, it } from "vitest";
+import { INTRINSIC_SIZE, intrinsicProps } from "@/components/Icons/_phosphor";
 
-describe('intrinsicProps', () => {
-  it('returns the legacy intrinsic size for a known icon', () => {
-    expect(intrinsicProps('BellIcon')).toEqual({ width: 16, height: 16 })
-  })
+describe("intrinsicProps", () => {
+  it("returns the legacy intrinsic size for a known icon", () => {
+    expect(intrinsicProps("BellIcon")).toEqual({ width: 16, height: 16 });
+  });
 
-  it('preserves the 24px icons rather than flattening everything to 16', () => {
-    expect(intrinsicProps('DocumentIcon')).toEqual({ width: 24, height: 24 })
-  })
+  it("preserves the 24px icons rather than flattening everything to 16", () => {
+    expect(intrinsicProps("DocumentIcon")).toEqual({ width: 24, height: 24 });
+  });
 
-  it('throws on an unknown icon rather than guessing a size', () => {
-    expect(() => intrinsicProps('NotAnIcon')).toThrow(/NotAnIcon/)
-  })
-})
+  it("throws on an unknown icon rather than guessing a size", () => {
+    expect(() => intrinsicProps("NotAnIcon")).toThrow(/NotAnIcon/);
+  });
+});
 
-describe('INTRINSIC_SIZE', () => {
-  it('has no zero or negative dimensions', () => {
+describe("INTRINSIC_SIZE", () => {
+  it("has no zero or negative dimensions", () => {
     for (const [name, [w, h]] of Object.entries(INTRINSIC_SIZE)) {
-      expect(w, name).toBeGreaterThan(0)
-      expect(h, name).toBeGreaterThan(0)
+      expect(w, name).toBeGreaterThan(0);
+      expect(h, name).toBeGreaterThan(0);
     }
-  })
-})
+  });
+});
 ```
 
 - [ ] **Step 2: Run it and watch it fail**
@@ -342,19 +348,19 @@ export const INTRINSIC_SIZE = {
   ActivityIcon: [16, 16],
   AddressIcon: [16, 16],
   // ... one entry per converted icon; generated by scripts/convert-icons.mjs
-}
+};
 
 export function intrinsicProps(name) {
-  const size = INTRINSIC_SIZE[name]
+  const size = INTRINSIC_SIZE[name];
   if (!size) {
     throw new Error(
       `No intrinsic size recorded for icon "${name}". Add it to INTRINSIC_SIZE ` +
         `in components/Icons/_phosphor.js — guessing a size silently shifts ` +
         `every call site that passes only a height class.`,
-    )
+    );
   }
-  const [width, height] = size
-  return { width, height }
+  const [width, height] = size;
+  return { width, height };
 }
 ```
 
@@ -370,8 +376,8 @@ In `frontend/src/main.js`, after the app is created and before `app.mount`:
 // reserved for active nav items and status dots, and `duotone` for empty
 // states, both opted into per call site. A set that uses every weight looks
 // like a set with no rules.
-app.provide('weight', 'regular')
-app.provide('color', 'currentColor')
+app.provide("weight", "regular");
+app.provide("color", "currentColor");
 ```
 
 - [ ] **Step 5: Convert the pilot icon**
@@ -384,8 +390,8 @@ Replace the whole of `frontend/src/components/Icons/BellIcon.vue`:
 </template>
 
 <script setup>
-import { PhBell } from '@phosphor-icons/vue'
-import { intrinsicProps } from './_phosphor'
+import { PhBell } from "@phosphor-icons/vue";
+import { intrinsicProps } from "./_phosphor";
 </script>
 ```
 
@@ -421,71 +427,73 @@ would have shifted the 40 call sites that pass only a height class."
 ## Task 4: Convert the 106 simple icons
 
 **Files:**
+
 - Create: `frontend/scripts/convert-icons.mjs`
 - Modify: 105 files in `frontend/src/components/Icons/` (BellIcon done in Task 3)
 - Modify: `frontend/src/components/Icons/_phosphor.js` (generated table)
 
 **Interfaces:**
+
 - Consumes: `intrinsicProps` from Task 3.
 - Produces: 106 icon components with unchanged public shape (name, intrinsic size, `currentColor`, `$attrs` passthrough).
 
 **The mapping.** All 119 icons are accounted for: **106 convert**, **10 keep**, **3 special** (Task 5). Every Phosphor name below was verified to exist in `@phosphor-icons/vue` 2.2.1's 1530 exports.
 
-| Legacy | Phosphor | | Legacy | Phosphor |
-|---|---|---|---|---|
-| `ActivityIcon` | `PhPulse` | | `MapIcon` | `PhMapTrifold` |
-| `AddressIcon` | `PhMapPinLine` | | `MarkAsDoneIcon` | `PhCheckCircle` |
-| `AppsIcon` | `PhSquaresFour` | | `MaximizeIcon` | `PhCornersOut` |
-| `ArrowUpRightIcon` | `PhArrowUpRight` | | `MenuIcon` | `PhList` |
-| `AscendingIcon` | `PhSortAscending` | | `MinimizeIcon` | `PhCornersIn` |
-| `AttachmentIcon` | `PhPaperclip` | | `MissedCallIcon` | `PhPhoneSlash` |
-| `AvatarIcon` | `PhUserCircle` | | `MoneyIcon` | `PhCurrencyDollar` |
-| `BellIcon` | `PhBell` | | `MuteIcon` | `PhSpeakerSlash` |
-| `CalendarIcon` | `PhCalendarBlank` | | `NoteIcon` | `PhNote` |
-| `CameraIcon` | `PhCamera` | | `NotificationsIcon` | `PhBell` |
-| `CertificateIcon` | `PhCertificate` | | `OrganizationsIcon` | `PhBuildings` |
-| `CheckCircleIcon` | `PhCheckCircle` | | `OutboundCallIcon` | `PhPhoneOutgoing` |
-| `CheckIcon` | `PhCheck` | | `PauseIcon` | `PhPause` |
-| `CollapseSidebar` | `PhSidebarSimple` | | `PeopleIcon` | `PhUsers` |
-| `ColumnsIcon` | `PhColumns` | | `PhoneIcon` | `PhPhone` |
-| `CommentIcon` | `PhChatCircle` | | `PinIcon` | `PhPushPin` |
-| `ContactIcon` | `PhUser` | | `PlannerIcon` | `PhCalendarDots` |
-| `ContactsIcon` | `PhAddressBook` | | `PlayIcon` | `PhPlay` |
-| `ConvertIcon` | `PhArrowsLeftRight` | | `PlaybackSpeedIcon` | `PhGauge` |
-| `DashboardIcon` | `PhSquaresFour` | | `QuickFilterIcon` | `PhFunnel` |
-| `DealsIcon` | `PhHandshake` | | `ReactIcon` | `PhSmiley` |
-| `DeclinedCallIcon` | `PhPhoneX` | | `RefreshIcon` | `PhArrowsClockwise` |
-| `DescriptionIcon` | `PhTextAlignLeft` | | `ReloadIcon` | `PhArrowCounterClockwise` |
-| `DesendingIcon` | `PhSortDescending` | | `ReplyAllIcon` | `PhArrowBendDoubleUpLeft` |
-| `DetailsIcon` | `PhInfo` | | `ReplyIcon` | `PhArrowBendUpLeft` |
-| `DialpadIcon` | `PhDotsNine` | | `ReportsIcon` | `PhChartBar` |
-| `DocumentIcon` | `PhFileText` | | `RightSideLayoutIcon` | `PhSidebarSimple` |
-| `DoubleCheckIcon` | `PhChecks` | | `SelectIcon` | `PhSelection` |
-| `DragIcon` | `PhDotsSixVertical` | | `SettingsIcon` | `PhGear` |
-| `DragVerticalIcon` | `PhDotsSixVertical` | | `SettingsIcon2` | `PhGear` |
-| `DuplicateIcon` | `PhCopy` | | `ShieldIcon` | `PhShield` |
-| `DurationIcon` | `PhTimer` | | `SlidersIcon` | `PhSlidersHorizontal` |
-| `EditIcon` | `PhPencilSimple` | | `SmileIcon` | `PhSmiley` |
-| `Email2Icon` | `PhEnvelopeSimple` | | `SortIcon` | `PhArrowsDownUp` |
-| `EmailAtIcon` | `PhAt` | | `SparkleIcon` | `PhSparkle` |
-| `EmailIcon` | `PhEnvelope` | | `SquareAsterisk` | `PhAsterisk` |
-| `EmailTemplateIcon` | `PhEnvelopeSimple` | | `StepsIcon` | `PhSteps` |
-| `EventIcon` | `PhCalendarCheck` | | `SuccessIcon` | `PhCheckCircle` |
-| `ExportIcon` | `PhDownloadSimple` | | `SuggestionsIcon` | `PhLightning` |
-| `ExternalLinkIcon` | `PhArrowSquareOut` | | `TaskIcon` | `PhListChecks` |
-| `FileAudioIcon` | `PhMusicNote` | | `TerritoryIcon` | `PhGlobe` |
-| `FileIcon` | `PhFile` | | `UnpinIcon` | `PhPushPinSlash` |
-| `FileImageIcon` | `PhImage` | | `VolumnHighIcon` | `PhSpeakerHigh` |
-| `FileSpreadsheetIcon` | `PhFileXls` | | `VolumnLowIcon` | `PhSpeakerLow` |
-| `FileTextIcon` | `PhFileText` | | `WebsiteIcon` | `PhGlobe` |
-| `FileTypeIcon` | `PhFile` | | `FilterIcon` | `PhFunnelSimple` |
-| `FileVideoIcon` | `PhVideo` | | `GenderIcon` | `PhGenderIntersex` |
-| `GroupByIcon` | `PhStack` | | `HeartIcon` | `PhHeart` |
-| `HelpIcon` | `PhQuestion` | | `InboundCallIcon` | `PhPhoneIncoming` |
-| `InboxIcon` | `PhTray` | | `InviteIcon` | `PhUserPlus` |
-| `KanbanIcon` | `PhKanban` | | `LeadsIcon` | `PhTarget` |
-| `LightningIcon` | `PhLightning` | | `LinkIcon` | `PhLink` |
-| `ListIcon` | `PhListBullets` | | `LocationIcon` | `PhMapPin` |
+| Legacy                | Phosphor            |     | Legacy                | Phosphor                  |
+| --------------------- | ------------------- | --- | --------------------- | ------------------------- |
+| `ActivityIcon`        | `PhPulse`           |     | `MapIcon`             | `PhMapTrifold`            |
+| `AddressIcon`         | `PhMapPinLine`      |     | `MarkAsDoneIcon`      | `PhCheckCircle`           |
+| `AppsIcon`            | `PhSquaresFour`     |     | `MaximizeIcon`        | `PhCornersOut`            |
+| `ArrowUpRightIcon`    | `PhArrowUpRight`    |     | `MenuIcon`            | `PhList`                  |
+| `AscendingIcon`       | `PhSortAscending`   |     | `MinimizeIcon`        | `PhCornersIn`             |
+| `AttachmentIcon`      | `PhPaperclip`       |     | `MissedCallIcon`      | `PhPhoneSlash`            |
+| `AvatarIcon`          | `PhUserCircle`      |     | `MoneyIcon`           | `PhCurrencyDollar`        |
+| `BellIcon`            | `PhBell`            |     | `MuteIcon`            | `PhSpeakerSlash`          |
+| `CalendarIcon`        | `PhCalendarBlank`   |     | `NoteIcon`            | `PhNote`                  |
+| `CameraIcon`          | `PhCamera`          |     | `NotificationsIcon`   | `PhBell`                  |
+| `CertificateIcon`     | `PhCertificate`     |     | `OrganizationsIcon`   | `PhBuildings`             |
+| `CheckCircleIcon`     | `PhCheckCircle`     |     | `OutboundCallIcon`    | `PhPhoneOutgoing`         |
+| `CheckIcon`           | `PhCheck`           |     | `PauseIcon`           | `PhPause`                 |
+| `CollapseSidebar`     | `PhSidebarSimple`   |     | `PeopleIcon`          | `PhUsers`                 |
+| `ColumnsIcon`         | `PhColumns`         |     | `PhoneIcon`           | `PhPhone`                 |
+| `CommentIcon`         | `PhChatCircle`      |     | `PinIcon`             | `PhPushPin`               |
+| `ContactIcon`         | `PhUser`            |     | `PlannerIcon`         | `PhCalendarDots`          |
+| `ContactsIcon`        | `PhAddressBook`     |     | `PlayIcon`            | `PhPlay`                  |
+| `ConvertIcon`         | `PhArrowsLeftRight` |     | `PlaybackSpeedIcon`   | `PhGauge`                 |
+| `DashboardIcon`       | `PhSquaresFour`     |     | `QuickFilterIcon`     | `PhFunnel`                |
+| `DealsIcon`           | `PhHandshake`       |     | `ReactIcon`           | `PhSmiley`                |
+| `DeclinedCallIcon`    | `PhPhoneX`          |     | `RefreshIcon`         | `PhArrowsClockwise`       |
+| `DescriptionIcon`     | `PhTextAlignLeft`   |     | `ReloadIcon`          | `PhArrowCounterClockwise` |
+| `DesendingIcon`       | `PhSortDescending`  |     | `ReplyAllIcon`        | `PhArrowBendDoubleUpLeft` |
+| `DetailsIcon`         | `PhInfo`            |     | `ReplyIcon`           | `PhArrowBendUpLeft`       |
+| `DialpadIcon`         | `PhDotsNine`        |     | `ReportsIcon`         | `PhChartBar`              |
+| `DocumentIcon`        | `PhFileText`        |     | `RightSideLayoutIcon` | `PhSidebarSimple`         |
+| `DoubleCheckIcon`     | `PhChecks`          |     | `SelectIcon`          | `PhSelection`             |
+| `DragIcon`            | `PhDotsSixVertical` |     | `SettingsIcon`        | `PhGear`                  |
+| `DragVerticalIcon`    | `PhDotsSixVertical` |     | `SettingsIcon2`       | `PhGear`                  |
+| `DuplicateIcon`       | `PhCopy`            |     | `ShieldIcon`          | `PhShield`                |
+| `DurationIcon`        | `PhTimer`           |     | `SlidersIcon`         | `PhSlidersHorizontal`     |
+| `EditIcon`            | `PhPencilSimple`    |     | `SmileIcon`           | `PhSmiley`                |
+| `Email2Icon`          | `PhEnvelopeSimple`  |     | `SortIcon`            | `PhArrowsDownUp`          |
+| `EmailAtIcon`         | `PhAt`              |     | `SparkleIcon`         | `PhSparkle`               |
+| `EmailIcon`           | `PhEnvelope`        |     | `SquareAsterisk`      | `PhAsterisk`              |
+| `EmailTemplateIcon`   | `PhEnvelopeSimple`  |     | `StepsIcon`           | `PhSteps`                 |
+| `EventIcon`           | `PhCalendarCheck`   |     | `SuccessIcon`         | `PhCheckCircle`           |
+| `ExportIcon`          | `PhDownloadSimple`  |     | `SuggestionsIcon`     | `PhLightning`             |
+| `ExternalLinkIcon`    | `PhArrowSquareOut`  |     | `TaskIcon`            | `PhListChecks`            |
+| `FileAudioIcon`       | `PhMusicNote`       |     | `TerritoryIcon`       | `PhGlobe`                 |
+| `FileIcon`            | `PhFile`            |     | `UnpinIcon`           | `PhPushPinSlash`          |
+| `FileImageIcon`       | `PhImage`           |     | `VolumnHighIcon`      | `PhSpeakerHigh`           |
+| `FileSpreadsheetIcon` | `PhFileXls`         |     | `VolumnLowIcon`       | `PhSpeakerLow`            |
+| `FileTextIcon`        | `PhFileText`        |     | `WebsiteIcon`         | `PhGlobe`                 |
+| `FileTypeIcon`        | `PhFile`            |     | `FilterIcon`          | `PhFunnelSimple`          |
+| `FileVideoIcon`       | `PhVideo`           |     | `GenderIcon`          | `PhGenderIntersex`        |
+| `GroupByIcon`         | `PhStack`           |     | `HeartIcon`           | `PhHeart`                 |
+| `HelpIcon`            | `PhQuestion`        |     | `InboundCallIcon`     | `PhPhoneIncoming`         |
+| `InboxIcon`           | `PhTray`            |     | `InviteIcon`          | `PhUserPlus`              |
+| `KanbanIcon`          | `PhKanban`          |     | `LeadsIcon`           | `PhTarget`                |
+| `LightningIcon`       | `PhLightning`       |     | `LinkIcon`            | `PhLink`                  |
+| `ListIcon`            | `PhListBullets`     |     | `LocationIcon`        | `PhMapPin`                |
 
 **Kept hand-drawn (10):** `CRMLogo`, `ERPNextIcon`, `FrappeCloudIcon`, `GitHubIcon`, `GoogleIcon`, `FacebookIcon`, `TelegramIcon`, `WhatsAppIcon` — brand and product marks, which Phosphor does not carry and whose official forms must not be approximated. `DotIcon` and `IndicatorIcon` are radius/fill-prop primitives that Phosphor adds nothing to.
 
@@ -497,62 +505,62 @@ Create `frontend/scripts/convert-icons.mjs`. It reads each legacy icon's `width`
 // One-shot conversion of the legacy hand-drawn icons to Phosphor wrappers.
 // Committed rather than run-and-deleted so the mapping is reviewable and the
 // conversion is reproducible if the icon set is revisited.
-import fs from 'node:fs'
-import path from 'node:path'
+import fs from "node:fs";
+import path from "node:path";
 
 const MAP = {
-  ActivityIcon: 'PhPulse',
-  AddressIcon: 'PhMapPinLine',
+  ActivityIcon: "PhPulse",
+  AddressIcon: "PhMapPinLine",
   // ... all 106 pairs from the table above
-}
+};
 
-const DIR = new URL('../src/components/Icons/', import.meta.url).pathname
-const sizes = {}
+const DIR = new URL("../src/components/Icons/", import.meta.url).pathname;
+const sizes = {};
 
 // Two passes on purpose: read every size BEFORE writing anything. A
 // single-pass loop that writes as it goes will leave the directory
 // half-converted if it throws partway, and the files it already rewrote no
 // longer carry the sizes it still needs.
 for (const [name] of Object.entries(MAP)) {
-  const file = path.join(DIR, `${name}.vue`)
-  const src = fs.readFileSync(file, 'utf8')
-  const w = src.match(/width="(\d+)"/)
-  const h = src.match(/height="(\d+)"/)
+  const file = path.join(DIR, `${name}.vue`);
+  const src = fs.readFileSync(file, "utf8");
+  const w = src.match(/width="(\d+)"/);
+  const h = src.match(/height="(\d+)"/);
   // Fall back to the viewBox when the svg carried no explicit width/height.
-  const vb = src.match(/viewBox="0 0 (\d+) (\d+)"/)
+  const vb = src.match(/viewBox="0 0 (\d+) (\d+)"/);
   // An icon converted by an earlier task is already a Phosphor wrapper and
   // carries no width/height to scrape — read its size from the table it
   // already contributed to rather than crashing the run.
-  const already = src.includes('@phosphor-icons/vue')
+  const already = src.includes("@phosphor-icons/vue")
     ? PREVIOUSLY_CONVERTED[name]
-    : null
-  const width = already?.[0] ?? Number(w?.[1] ?? vb?.[1])
-  const height = already?.[1] ?? Number(h?.[1] ?? vb?.[2])
-  if (!width || !height) throw new Error(`No size found for ${name}`)
-  sizes[name] = [width, height]
+    : null;
+  const width = already?.[0] ?? Number(w?.[1] ?? vb?.[1]);
+  const height = already?.[1] ?? Number(h?.[1] ?? vb?.[2]);
+  if (!width || !height) throw new Error(`No size found for ${name}`);
+  sizes[name] = [width, height];
 }
 
 // Second pass: every size is now captured, so writing cannot lose one.
 for (const [name, phosphor] of Object.entries(MAP)) {
-  const file = path.join(DIR, `${name}.vue`)
+  const file = path.join(DIR, `${name}.vue`);
   fs.writeFileSync(
     file,
     `<template>\n  <${phosphor} v-bind="intrinsicProps('${name}')" />\n` +
       `</template>\n\n<script setup>\n` +
       `import { ${phosphor} } from '@phosphor-icons/vue'\n` +
       `import { intrinsicProps } from './_phosphor'\n</script>\n`,
-  )
+  );
 }
 
 const entries = Object.entries(sizes)
   .map(([k, [w, h]]) => `  ${k}: [${w}, ${h}],`)
-  .join('\n')
-console.log(`Converted ${entries.split('\n').length} icons.`)
+  .join("\n");
+console.log(`Converted ${entries.split("\n").length} icons.`);
 fs.writeFileSync(
-  path.join(DIR, '_sizes.generated.js'),
+  path.join(DIR, "_sizes.generated.js"),
   `// Generated by scripts/convert-icons.mjs — do not hand-edit.\n` +
     `export const INTRINSIC_SIZE = {\n${entries}\n}\n`,
-)
+);
 ```
 
 - [ ] **Step 2: Point `_phosphor.js` at the generated table**
@@ -563,8 +571,8 @@ Replace the hand-written `INTRINSIC_SIZE` in `_phosphor.js` so the table has exa
 // `export { X } from './y'` re-exports without creating a local binding, so
 // intrinsicProps below would throw ReferenceError on every icon. Import it
 // into scope first, then re-export.
-import { INTRINSIC_SIZE } from './_sizes.generated'
-export { INTRINSIC_SIZE }
+import { INTRINSIC_SIZE } from "./_sizes.generated";
+export { INTRINSIC_SIZE };
 ```
 
 - [ ] **Step 3: Run the codemod**
@@ -590,9 +598,9 @@ git status --porcelain src/ | grep -v 'src/components/Icons/' | grep -v 'src/mai
 Append to `frontend/tests/unit/phosphorAdapter.test.js`:
 
 ```js
-it('covers every icon the codemod converts', () => {
-  expect(Object.keys(INTRINSIC_SIZE).length).toBe(106)
-})
+it("covers every icon the codemod converts", () => {
+  expect(Object.keys(INTRINSIC_SIZE).length).toBe(106);
+});
 ```
 
 Then run the full suite:
@@ -623,11 +631,13 @@ hand-drawn; the three prop-driven icons are handled separately."
 ## Task 5: The three special icons
 
 **Files:**
+
 - Modify: `frontend/src/components/Icons/TaskStatusIcon.vue`
 - Modify: `frontend/src/components/Icons/TaskPriorityIcon.vue`
 - Modify: `frontend/src/components/Icons/LoadingIndicator.vue`
 
 **Interfaces:**
+
 - Consumes: `intrinsicProps` from Task 3.
 - Produces: unchanged public props — `TaskStatusIcon` takes `status: String`, `TaskPriorityIcon` takes `priority: String`, `LoadingIndicator` takes none.
 
@@ -654,8 +664,8 @@ import {
   PhCircleDashed,
   PhCircleHalf,
   PhXCircle,
-} from '@phosphor-icons/vue'
-import { intrinsicProps } from './_phosphor'
+} from "@phosphor-icons/vue";
+import { intrinsicProps } from "./_phosphor";
 
 // The legacy glyphs read as a progress ladder: dashed ring (Backlog), empty
 // ring (Todo), half-filled (In Progress), tick (Done), cross (Canceled -- single L, which is the status string this app actually uses).
@@ -663,12 +673,12 @@ import { intrinsicProps } from './_phosphor'
 const GLYPH = {
   Backlog: PhCircleDashed,
   Todo: PhCircle,
-  'In Progress': PhCircleHalf,
+  "In Progress": PhCircleHalf,
   Done: PhCheckCircle,
   Canceled: PhXCircle,
-}
+};
 
-defineProps({ status: { type: String, required: true } })
+defineProps({ status: { type: String, required: true } });
 </script>
 ```
 
@@ -680,7 +690,7 @@ The current class binding is a JavaScript **comma expression**:
 ({ 'bg-red-500': priority === 'High', ... }, $attrs.class)
 ```
 
-The object literal is evaluated and thrown away; the expression's value is always `$attrs.class`. **The priority colours have never applied** — every priority dot renders unstyled. The colours it *intended* are also wrong for this repo: raw `bg-red-500` / `bg-yellow-500` bypass the ink tokens, and AGENTS.md forbids amber/yellow for warnings because no amber step clears 4.5:1 on a light surface.
+The object literal is evaluated and thrown away; the expression's value is always `$attrs.class`. **The priority colours have never applied** — every priority dot renders unstyled. The colours it _intended_ are also wrong for this repo: raw `bg-red-500` / `bg-yellow-500` bypass the ink tokens, and AGENTS.md forbids amber/yellow for warnings because no amber step clears 4.5:1 on a light surface.
 
 ```vue
 <template>
@@ -693,7 +703,7 @@ The object literal is evaluated and thrown away; the expression's value is alway
 </template>
 
 <script setup>
-defineOptions({ inheritAttrs: false })
+defineOptions({ inheritAttrs: false });
 
 // Was `({...}, $attrs.class)` — a comma expression, so the object was
 // discarded and the priority colour never applied.
@@ -706,12 +716,12 @@ defineOptions({ inheritAttrs: false })
 // Orange rather than yellow, and the -9 step: no amber step clears 4.5:1 on a
 // light surface (AGENTS.md, Design system).
 const COLOR = {
-  High: 'text-ink-red-9',
-  Medium: 'text-ink-orange-9',
-  Low: 'text-ink-gray-5',
-}
+  High: "text-ink-red-9",
+  Medium: "text-ink-orange-9",
+  Low: "text-ink-gray-5",
+};
 
-defineProps({ priority: { type: String, required: true } })
+defineProps({ priority: { type: String, required: true } });
 </script>
 ```
 
@@ -726,8 +736,8 @@ defineProps({ priority: { type: String, required: true } })
 </template>
 
 <script setup>
-import { PhCircleNotch } from '@phosphor-icons/vue'
-import { intrinsicProps } from './_phosphor'
+import { PhCircleNotch } from "@phosphor-icons/vue";
+import { intrinsicProps } from "./_phosphor";
 </script>
 ```
 
@@ -741,7 +751,7 @@ const SPECIAL_SIZES = {
   TaskStatusIcon: [16, 16],
   TaskPriorityIcon: [12, 12],
   LoadingIndicator: [24, 24],
-}
+};
 ```
 
 Merge `SPECIAL_SIZES` into `sizes` before the file is written, re-run `node scripts/convert-icons.mjs`, and update the count assertion in `tests/unit/phosphorAdapter.test.js` from `106` to `109`.
@@ -768,9 +778,11 @@ rule. Also converts the two remaining prop-driven icons to Phosphor."
 ## Task 6: Scale and elevation tokens
 
 **Files:**
+
 - Modify: `frontend/src/index.css`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: CSS custom properties consumed by every tier — `--v-radius-control`, `--v-radius-card`, `--v-radius-overlay`, `--v-row-h`, `--v-cell-px`, `--v-section-gap`, `--v-page-gutter`, `--v-toolbar-h`; and the `.v-glass-sm` class.
 
@@ -805,15 +817,15 @@ In `frontend/src/index.css`, alongside the existing `:root` token blocks:
 In the `@layer components` block, next to `.v-glass`:
 
 ```css
-  /* Row- and inline-level lift, for surfaces that need to sit above the
+/* Row- and inline-level lift, for surfaces that need to sit above the
      canvas without becoming a full card. No blur even in dark: blur is
      reserved for .v-glass, and nesting blurs is what makes a page expensive
      to paint. */
-  .v-glass-sm {
-    background: var(--v-glass-sm-bg);
-    border: 1px solid var(--v-glass-sm-border);
-    border-radius: var(--v-radius-control);
-  }
+.v-glass-sm {
+  background: var(--v-glass-sm-bg);
+  border: 1px solid var(--v-glass-sm-border);
+  border-radius: var(--v-radius-control);
+}
 ```
 
 - [ ] **Step 3: Give both themes their values**
@@ -824,10 +836,14 @@ The light theme is being lifted in this pass, so it gets tinted surfaces and lay
 :root {
   /* Light: a tint off pure white, so cards read as paper on a surface rather
      than as holes punched in it. */
-  --v-glass-sm-bg: color-mix(in srgb, var(--surface-base) 97%, var(--brand-500));
+  --v-glass-sm-bg: color-mix(
+    in srgb,
+    var(--surface-base) 97%,
+    var(--brand-500)
+  );
   --v-glass-sm-border: var(--outline-gray-1);
 }
-[data-theme='dark'] {
+[data-theme="dark"] {
   --v-glass-sm-bg: rgba(255, 255, 255, 0.03);
   --v-glass-sm-border: rgba(255, 255, 255, 0.07);
 }
@@ -838,9 +854,13 @@ The light theme is being lifted in this pass, so it gets tinted surfaces and lay
 In the browser console:
 
 ```js
-const s = getComputedStyle(document.documentElement)
-;['--v-radius-control', '--v-radius-card', '--v-radius-overlay', '--v-row-h']
-  .map((k) => [k, s.getPropertyValue(k).trim()])
+const s = getComputedStyle(document.documentElement);
+[
+  "--v-radius-control",
+  "--v-radius-card",
+  "--v-radius-overlay",
+  "--v-row-h",
+].map((k) => [k, s.getPropertyValue(k).trim()]);
 // Expected: all four non-empty
 ```
 
@@ -859,9 +879,11 @@ rounded-1/4/5/6/8/lg and the per-surface padding choices."
 ## Task 7: Tier 1 — the shell
 
 **Files:**
+
 - Modify: `frontend/src/components/Layouts/AppSidebar.vue`, `AppHeader.vue`, `SidebarBrand.vue`, `SidebarUser.vue`, `DesktopLayout.vue`, `MobileLayout.vue`, `SettingsLayoutBase.vue`, `frontend/src/components/ViewBreadcrumbs.vue`
 
 **Interfaces:**
+
 - Consumes: the scale and elevation tokens from Task 6 (`--v-radius-control`, `--v-radius-card`, `--v-radius-overlay`, `--v-row-h`, `--v-cell-px`, `--v-section-gap`, `--v-page-gutter`, `--v-toolbar-h`, `.v-glass`, `.v-glass-sm`); the type system from Task 1; the converted icons from Tasks 4–5.
 - Produces: no new interface. `--v-toolbar-h` is consumed here (header and sidebar rows) — it is defined in Task 6 and this is its first real use.
 
@@ -898,9 +920,11 @@ git commit -m "feat: apply the Lux scale and elevation to tier 1 — the shell"
 ## Task 8: Tier 2 — the list surfaces
 
 **Files:**
+
 - Modify: `frontend/src/components/ListViews/*.vue` (9 files, including `ListRows.vue` and `EmptyState.vue`), `frontend/src/components/Kanban/KanbanView.vue`, the filter/sort/toolbar controls under `frontend/src/components/Controls/`
 
 **Interfaces:**
+
 - Consumes: the scale and elevation tokens from Task 6 (`--v-radius-control`, `--v-radius-card`, `--v-radius-overlay`, `--v-row-h`, `--v-cell-px`, `--v-section-gap`, `--v-page-gutter`, `--v-toolbar-h`, `.v-glass`, `.v-glass-sm`); the type system from Task 1; the converted icons from Tasks 4–5.
 - Produces: no new interface. `--v-row-h` and `--v-cell-px` are consumed here.
 
@@ -952,9 +976,11 @@ git commit -m "feat: apply the Lux scale and elevation to tier 2 — the list su
 ## Task 9: Tier 3 — the detail pages
 
 **Files:**
+
 - Modify: `frontend/src/pages/Lead.vue`, `Deal.vue`, `Contact.vue`, `Organization.vue`, `Tasks.vue`, `Notes.vue`, `CallLogs.vue`, `Calendar.vue`, `frontend/src/components/Activities/*.vue`, `frontend/src/components/FieldLayout/Section.vue`
 
 **Interfaces:**
+
 - Consumes: the scale and elevation tokens from Task 6 (`--v-radius-control`, `--v-radius-card`, `--v-radius-overlay`, `--v-row-h`, `--v-cell-px`, `--v-section-gap`, `--v-page-gutter`, `--v-toolbar-h`, `.v-glass`, `.v-glass-sm`); the type system from Task 1; the converted icons from Tasks 4–5.
 - Produces: no new interface. `--v-section-gap` is consumed here (the gap between FieldLayout sections).
 
@@ -989,9 +1015,11 @@ git commit -m "feat: apply the Lux scale and elevation to tier 3 — the detail 
 ## Task 10: Tier 4 — modals and settings
 
 **Files:**
+
 - Modify: all of `frontend/src/components/Modals/`, all of `frontend/src/components/Settings/`
 
 **Interfaces:**
+
 - Consumes: the scale and elevation tokens from Task 6 (`--v-radius-control`, `--v-radius-card`, `--v-radius-overlay`, `--v-row-h`, `--v-cell-px`, `--v-section-gap`, `--v-page-gutter`, `--v-toolbar-h`, `.v-glass`, `.v-glass-sm`); the type system from Task 1; the converted icons from Tasks 4–5.
 - Produces: no new interface. `--v-radius-overlay` and `--v-toolbar-h` (dialog headers) are consumed here.
 
@@ -1026,9 +1054,11 @@ git commit -m "feat: apply the Lux scale and elevation to tier 4 — modals and 
 ## Task 11: Tier 5 — mobile and the remaining pages
 
 **Files:**
+
 - Modify: `frontend/src/pages/Mobile*.vue`, `frontend/src/components/Mobile/`, `frontend/src/pages/Welcome.vue`, `DataImport.vue`, `PersonaForm.vue`, `InvalidPage.vue`, `NotPermitted.vue`
 
 **Interfaces:**
+
 - Consumes: the scale and elevation tokens from Task 6 (`--v-radius-control`, `--v-radius-card`, `--v-radius-overlay`, `--v-row-h`, `--v-cell-px`, `--v-section-gap`, `--v-page-gutter`, `--v-toolbar-h`, `.v-glass`, `.v-glass-sm`); the type system from Task 1; the converted icons from Tasks 4–5.
 - Produces: no new interface. Radius tokens are consumed here; density values are overridden for touch.
 
@@ -1076,21 +1106,24 @@ For body text, muted labels and coloured deltas on each new surface, in **both**
 // Run in the Playwright console on each tier.
 function contrast(el) {
   const lum = (c) => {
-    const [r, g, b] = c.match(/\d+\.?\d*/g).slice(0, 3).map((v) => {
-      v = v / 255
-      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
-    })
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
-  }
-  const s = getComputedStyle(el)
+    const [r, g, b] = c
+      .match(/\d+\.?\d*/g)
+      .slice(0, 3)
+      .map((v) => {
+        v = v / 255;
+        return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const s = getComputedStyle(el);
   let bg = el,
-    bgc = getComputedStyle(bg).backgroundColor
-  while (bgc === 'rgba(0, 0, 0, 0)' && bg.parentElement) {
-    bg = bg.parentElement
-    bgc = getComputedStyle(bg).backgroundColor
+    bgc = getComputedStyle(bg).backgroundColor;
+  while (bgc === "rgba(0, 0, 0, 0)" && bg.parentElement) {
+    bg = bg.parentElement;
+    bgc = getComputedStyle(bg).backgroundColor;
   }
-  const [a, b] = [lum(s.color), lum(bgc)].sort((x, y) => y - x)
-  return ((a + 0.05) / (b + 0.05)).toFixed(2)
+  const [a, b] = [lum(s.color), lum(bgc)].sort((x, y) => y - x);
+  return ((a + 0.05) / (b + 0.05)).toFixed(2);
 }
 ```
 
@@ -1099,11 +1132,11 @@ Expected: ≥ 4.5 for all body and label text. Anything below is a bug in this p
 - [ ] **Step 3: Confirm light mode took no dark-theme treatment**
 
 ```js
-document.documentElement.setAttribute('data-theme', 'light')
-;[...document.querySelectorAll('*')].filter((el) => {
-  const s = getComputedStyle(el)
-  return s.backdropFilter !== 'none' && s.backdropFilter !== ''
-}).length
+document.documentElement.setAttribute("data-theme", "light");
+[...document.querySelectorAll("*")].filter((el) => {
+  const s = getComputedStyle(el);
+  return s.backdropFilter !== "none" && s.backdropFilter !== "";
+}).length;
 // Expected: 0 — blur is dark-theme only
 ```
 
@@ -1145,10 +1178,12 @@ measured on real screens with every surface consuming them."
 **Execution order:** run this immediately after Task 5 and before Task 6. It is numbered 13 only because renumbering the existing tasks would invalidate every brief already extracted.
 
 **Files:**
+
 - Modify: the 31 files under `frontend/src` that import from `~icons/lucide/…` (90 import lines, 67 distinct icons)
 - Do **not** touch: `frontend/src/components/Icon.vue`, `frontend/src/main.js`'s `spritePlugin` registration, or anything the IconPicker reads
 
 **Interfaces:**
+
 - Consumes: `intrinsicProps` and the adapter conventions from Task 3.
 - Produces: no new interface. After this task, every icon the app itself draws is Phosphor.
 
@@ -1160,47 +1195,47 @@ measured on real screens with every surface consuming them."
 
 ```js
 // before
-import LogOutIcon from '~icons/lucide/log-out'
+import LogOutIcon from "~icons/lucide/log-out";
 // after
-import { PhSignOut as LogOutIcon } from '@phosphor-icons/vue'
+import { PhSignOut as LogOutIcon } from "@phosphor-icons/vue";
 ```
 
 Keeping the alias means call sites (`<LogOutIcon class="h-4" />`) are untouched. Note these Lucide components size from CSS classes, not intrinsic width/height, so check each call site still renders at the intended size — Phosphor defaults to `1em`, which is NOT the same as Lucide's 24×24 default. Where a call site passed only a height class, add the matching width so the glyph stays square.
 
 **Mapping.** These are unambiguous — use them verbatim:
 
-| Lucide | Phosphor | | Lucide | Phosphor |
-|---|---|---|---|---|
-| `alert-triangle` | `PhWarning` | | `pencil` | `PhPencilSimple` |
-| `align-left` | `PhTextAlignLeft` | | `pen-line` | `PhPencilLine` |
-| `arrow-big-up` | `PhArrowFatUp` | | `percent` | `PhPercent` |
-| `arrow-up-right` | `PhArrowUpRight` | | `phone` | `PhPhone` |
-| `book-open` | `PhBookOpen` | | `plus` | `PhPlus` |
-| `brush-cleaning` | `PhBroom` | | `printer` | `PhPrinter` |
-| `bug` | `PhBug` | | `refresh-ccw` | `PhArrowCounterClockwise` |
-| `calendar` | `PhCalendarBlank` | | `rotate-cw` | `PhArrowClockwise` |
-| `check` | `PhCheck` | | `search` | `PhMagnifyingGlass` |
-| `chevron-down` | `PhCaretDown` | | `settings` | `PhGear` |
-| `chevron-right` | `PhCaretRight` | | `share-2` | `PhShareNetwork` |
-| `chevrons-up-down` | `PhCaretUpDown` | | `shield-check` | `PhShieldCheck` |
-| `circle-alert` | `PhWarningCircle` | | `sparkles` | `PhSparkle` |
-| `circle-check` | `PhCheckCircle` | | `square-check` | `PhCheckSquare` |
-| `circle-question-mark` | `PhQuestion` | | `target` | `PhTarget` |
-| `clock` | `PhClock` | | `text-cursor-input` | `PhCursorText` |
-| `cloud-off` | `PhCloudSlash` | | `triangle-alert` | `PhWarning` |
-| `command` | `PhCommand` | | `type` | `PhTextT` |
-| `copy` | `PhCopy` | | `undo-2` | `PhArrowUUpLeft` |
-| `download` | `PhDownloadSimple` | | `user-check` | `PhUserCheck` |
-| `external-link` | `PhArrowSquareOut` | | `workflow` | `PhFlowArrow` |
-| `eye` | `PhEye` | | `x` | `PhX` |
-| `eye-off` | `PhEyeSlash` | | `hash` | `PhHash` |
-| `group` | `PhStack` | | `image` | `PhImage` |
-| `info` | `PhInfo` | | `lock` | `PhLock` |
-| `layout-dashboard` | `PhSquaresFour` | | `lock-keyhole` | `PhLockKey` |
-| `layout-list` | `PhListDashes` | | `log-out` | `PhSignOut` |
-| `link` | `PhLink` | | `mail` | `PhEnvelope` |
-| `loader-circle` | `PhCircleNotch` | | `palette` | `PhPalette` |
-| `network` | `PhNetwork` | | `monitor-cog` | `PhMonitor` |
+| Lucide                 | Phosphor           |     | Lucide              | Phosphor                  |
+| ---------------------- | ------------------ | --- | ------------------- | ------------------------- |
+| `alert-triangle`       | `PhWarning`        |     | `pencil`            | `PhPencilSimple`          |
+| `align-left`           | `PhTextAlignLeft`  |     | `pen-line`          | `PhPencilLine`            |
+| `arrow-big-up`         | `PhArrowFatUp`     |     | `percent`           | `PhPercent`               |
+| `arrow-up-right`       | `PhArrowUpRight`   |     | `phone`             | `PhPhone`                 |
+| `book-open`            | `PhBookOpen`       |     | `plus`              | `PhPlus`                  |
+| `brush-cleaning`       | `PhBroom`          |     | `printer`           | `PhPrinter`               |
+| `bug`                  | `PhBug`            |     | `refresh-ccw`       | `PhArrowCounterClockwise` |
+| `calendar`             | `PhCalendarBlank`  |     | `rotate-cw`         | `PhArrowClockwise`        |
+| `check`                | `PhCheck`          |     | `search`            | `PhMagnifyingGlass`       |
+| `chevron-down`         | `PhCaretDown`      |     | `settings`          | `PhGear`                  |
+| `chevron-right`        | `PhCaretRight`     |     | `share-2`           | `PhShareNetwork`          |
+| `chevrons-up-down`     | `PhCaretUpDown`    |     | `shield-check`      | `PhShieldCheck`           |
+| `circle-alert`         | `PhWarningCircle`  |     | `sparkles`          | `PhSparkle`               |
+| `circle-check`         | `PhCheckCircle`    |     | `square-check`      | `PhCheckSquare`           |
+| `circle-question-mark` | `PhQuestion`       |     | `target`            | `PhTarget`                |
+| `clock`                | `PhClock`          |     | `text-cursor-input` | `PhCursorText`            |
+| `cloud-off`            | `PhCloudSlash`     |     | `triangle-alert`    | `PhWarning`               |
+| `command`              | `PhCommand`        |     | `type`              | `PhTextT`                 |
+| `copy`                 | `PhCopy`           |     | `undo-2`            | `PhArrowUUpLeft`          |
+| `download`             | `PhDownloadSimple` |     | `user-check`        | `PhUserCheck`             |
+| `external-link`        | `PhArrowSquareOut` |     | `workflow`          | `PhFlowArrow`             |
+| `eye`                  | `PhEye`            |     | `x`                 | `PhX`                     |
+| `eye-off`              | `PhEyeSlash`       |     | `hash`              | `PhHash`                  |
+| `group`                | `PhStack`          |     | `image`             | `PhImage`                 |
+| `info`                 | `PhInfo`           |     | `lock`              | `PhLock`                  |
+| `layout-dashboard`     | `PhSquaresFour`    |     | `lock-keyhole`      | `PhLockKey`               |
+| `layout-list`          | `PhListDashes`     |     | `log-out`           | `PhSignOut`               |
+| `link`                 | `PhLink`           |     | `mail`              | `PhEnvelope`              |
+| `loader-circle`        | `PhCircleNotch`    |     | `palette`           | `PhPalette`               |
+| `network`              | `PhNetwork`        |     | `monitor-cog`       | `PhMonitor`               |
 
 **Seven need your judgment — do not force them.** Phosphor has no exact equivalent for `mail-check`, `search-x`, `ungroup`, `import`, `option`, `image-up`, `calendar-clock`. For each: pick the closest honest glyph if one exists, and if none does, **leave that single `~icons/lucide/…` import in place** and record why in your report. One deliberately retained Lucide import is far better than a glyph that says the wrong thing. Name every choice you made in the report.
 

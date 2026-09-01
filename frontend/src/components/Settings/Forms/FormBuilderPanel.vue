@@ -230,7 +230,9 @@
                   <LucideEyeOff class="h-3.5 w-3.5 text-ink-gray-5" />
                   {{ __('Hidden required fields') }}
                 </div>
-                <div class="rounded-[var(--v-radius-control)] bg-surface-gray-2 p-2.5">
+                <div
+                  class="rounded-[var(--v-radius-control)] bg-surface-gray-2 p-2.5"
+                >
                   <p class="mb-2.5 text-p-sm text-ink-gray-5">
                     {{
                       __(
@@ -1009,7 +1011,11 @@ const invalidEmbeddingDomains = computed(() =>
 
 const iframeSnippet = computed(
   () =>
-    `<iframe src="${publicUrl.value}?embed=1" width="100%" height="640" style="border:0" title="${form.title || 'Web form'}"></iframe>`,
+    `<iframe src="${
+      publicUrl.value
+    }?embed=1" width="100%" height="640" style="border:0" title="${
+      form.title || 'Web form'
+    }"></iframe>`,
 )
 
 // every edit funnels through markDirty(), which just flags unsaved changes;

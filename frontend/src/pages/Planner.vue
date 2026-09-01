@@ -554,7 +554,9 @@ const isCurrentWeek = computed(() => weekStart.value === mondayOf(today.value))
 
 const weekLabel = computed(() => {
   const start = dayjs(weekStart.value)
-  return `${start.format('D MMM')} – ${start.add(6, 'day').format('D MMM YYYY')}`
+  return `${start.format('D MMM')} – ${start
+    .add(6, 'day')
+    .format('D MMM YYYY')}`
 })
 
 const weekDays = computed(() => weekDayCells(weekStart.value, today.value))

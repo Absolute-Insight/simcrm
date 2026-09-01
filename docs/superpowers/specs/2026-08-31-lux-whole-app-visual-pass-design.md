@@ -19,27 +19,27 @@ body typeface and the 119 hand-drawn icons.
 
 ## Decisions (settled with the user)
 
-| Question | Decision |
-|---|---|
-| Depth of change | **Skin + density.** Token language, font and icons applied to existing layouts, *plus* a normalized spacing scale, radius scale, list-row density, toolbar heights, and empty/loading states. Layout structure and information architecture stay as they are. |
-| Icon set | **Phosphor** (`@phosphor-icons/vue` 2.2.1, MIT), applied through an adapter layer rather than a rewrite. |
-| Typeface | **Plus Jakarta Sans throughout** (`@fontsource-variable/plus-jakarta-sans`, wght 200–800). One family for body and display. |
-| Space Grotesk | **Dropped entirely.** The wordmark moves to PJS 800 at tight tracking. |
-| Light theme | **Lifted, not left behind.** Still no blur and no glow — but it gets layered elevation, tinted (not flat-white) surfaces, refined hairlines, and the same density and type system. Light stops reading as the fallback theme. |
-| Review cadence | **Run the whole pass, review at the end.** No intermediate approval gates. |
+| Question        | Decision                                                                                                                                                                                                                                                      |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Depth of change | **Skin + density.** Token language, font and icons applied to existing layouts, _plus_ a normalized spacing scale, radius scale, list-row density, toolbar heights, and empty/loading states. Layout structure and information architecture stay as they are. |
+| Icon set        | **Phosphor** (`@phosphor-icons/vue` 2.2.1, MIT), applied through an adapter layer rather than a rewrite.                                                                                                                                                      |
+| Typeface        | **Plus Jakarta Sans throughout** (`@fontsource-variable/plus-jakarta-sans`, wght 200–800). One family for body and display.                                                                                                                                   |
+| Space Grotesk   | **Dropped entirely.** The wordmark moves to PJS 800 at tight tracking.                                                                                                                                                                                        |
+| Light theme     | **Lifted, not left behind.** Still no blur and no glow — but it gets layered elevation, tinted (not flat-white) surfaces, refined hairlines, and the same density and type system. Light stops reading as the fallback theme.                                 |
+| Review cadence  | **Run the whole pass, review at the end.** No intermediate approval gates.                                                                                                                                                                                    |
 
 ## Measured inputs
 
 Font metrics were measured from the actual `woff2` files with `fontTools`,
 not assumed:
 
-| Metric | Inter (today) | Plus Jakarta Sans | Δ |
-|---|---|---|---|
-| x-height / em | 0.546 | 0.536 | −1.8% |
-| cap-height / em | 0.728 | 0.745 | +2.4% |
-| default line box / em | 1.21 | 1.26 | **+4.1%** |
-| lowercase `n` advance | 0.591 | 0.573 | −3.0% |
-| **tabular digit advance** | 0.648 | 0.600 | **−7.5%** |
+| Metric                    | Inter (today) | Plus Jakarta Sans | Δ         |
+| ------------------------- | ------------- | ----------------- | --------- |
+| x-height / em             | 0.546         | 0.536             | −1.8%     |
+| cap-height / em           | 0.728         | 0.745             | +2.4%     |
+| default line box / em     | 1.21          | 1.26              | **+4.1%** |
+| lowercase `n` advance     | 0.591         | 0.573             | −3.0%     |
+| **tabular digit advance** | 0.648         | 0.600             | **−7.5%** |
 
 Three consequences drive the design:
 
@@ -47,7 +47,7 @@ Three consequences drive the design:
    keeps working. This mattered enough to block on: the repo relies on it for
    currency and timestamps.
 2. **Tabular digits are 7.5% narrower**, not wider. (The proportional `0` glyph
-   *is* 16% wider than Inter's, but this app never renders it.) Numeric columns
+   _is_ 16% wider than Inter's, but this app never renders it.) Numeric columns
    gain headroom; there is no truncation risk from the swap.
 3. **The default line box is 4.1% taller.** Anything sized by its content —
    buttons, list rows, badges — grows ~4% unless line-heights are set
@@ -82,11 +82,11 @@ Explicit line-heights are set per type step to absorb the +4.1% line box.
 spec said the app had 119 hand-drawn icons and no icon library. It has three
 icon systems:
 
-| Source | Scale | Role |
-|---|---|---|
-| Local `.vue` icons | 119 files, 90 consumers | The hand-drawn set |
-| Lucide via `unplugin-icons` (`~icons/lucide/…`) | 67 distinct icons, 90 imports, 31 files | App chrome — includes the sidebar and user menu |
-| Lucide SVG sprite via frappe-ui's `spritePlugin` | `Icon.vue`, 22 usages | The user-facing IconPicker |
+| Source                                           | Scale                                   | Role                                            |
+| ------------------------------------------------ | --------------------------------------- | ----------------------------------------------- |
+| Local `.vue` icons                               | 119 files, 90 consumers                 | The hand-drawn set                              |
+| Lucide via `unplugin-icons` (`~icons/lucide/…`)  | 67 distinct icons, 90 imports, 31 files | App chrome — includes the sidebar and user menu |
+| Lucide SVG sprite via frappe-ui's `spritePlugin` | `Icon.vue`, 22 usages                   | The user-facing IconPicker                      |
 
 The library search missed the second and third because the imports are virtual
 and the sprite ships from `frappe-ui/experimental`, so neither appears in
@@ -99,13 +99,11 @@ database**, resolved against a vendor-owned sprite. Converting only the local
 same sidebar — the exact inconsistency this pass exists to remove.
 
 **Decision (settled with the user):** Phosphor owns everything the app itself
-draws — the 119 local icons *and* the 67 Lucide chrome imports. The Lucide
+draws — the 119 local icons _and_ the 67 Lucide chrome imports. The Lucide
 sprite stays exactly as it is for the IconPicker, because those names are user
 data rather than design, and replacing them would mean a schema migration and
 fighting a frappe-ui-owned sprite for no visual gain. The one place the two
 sets meet is a picker whose contents the user chose.
-
-
 
 `@phosphor-icons/vue` merges `$attrs` onto its `<svg>` root and defaults
 `fill="currentColor"` (verified in the compiled package source). That means
@@ -156,7 +154,7 @@ surfaces that need lift without becoming a full card have something to use.
 Light theme gains its own layered elevation and tinted surface tokens under the
 same class names — no blur, no glow, per the constraint below.
 
-**On concrete values.** This spec fixes the *structure* of the radius and
+**On concrete values.** This spec fixes the _structure_ of the radius and
 density scales — how many steps there are, what each one means, and that they
 are driven from one place. It deliberately does not fix the numbers. Those are
 set in the implementation plan and tuned against screenshots in both themes,
@@ -171,13 +169,13 @@ the finished pass rather than each stage. They order the work so that the shell
 settles before the surfaces inside it, and they give the implementation plan its
 commit boundaries.
 
-| Tier | Surfaces |
-|---|---|
-| 1 · Shell | `AppSidebar`, `AppHeader`, `SidebarBrand`, `SidebarUser`, `DesktopLayout`, `MobileLayout`, `SettingsLayoutBase`, `ViewBreadcrumbs` |
-| 2 · Lists | `ListRows`, `ListHeader`, the 8 `*ListView.vue`, `EmptyState`, Kanban, filter/sort/toolbar controls |
-| 3 · Detail | `Lead`, `Deal`, `Contact`, `Organization`, `Tasks`, `Notes`, `CallLogs`, `Calendar`, Activities panels, FieldLayout sections |
-| 4 · Modals & Settings | all of `components/Modals/`, all of `components/Settings/` |
-| 5 · Mobile & misc | mobile pages, `Welcome`, `DataImport`, `PersonaForm`, `InvalidPage`, `NotPermitted` |
+| Tier                  | Surfaces                                                                                                                           |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 1 · Shell             | `AppSidebar`, `AppHeader`, `SidebarBrand`, `SidebarUser`, `DesktopLayout`, `MobileLayout`, `SettingsLayoutBase`, `ViewBreadcrumbs` |
+| 2 · Lists             | `ListRows`, `ListHeader`, the 8 `*ListView.vue`, `EmptyState`, Kanban, filter/sort/toolbar controls                                |
+| 3 · Detail            | `Lead`, `Deal`, `Contact`, `Organization`, `Tasks`, `Notes`, `CallLogs`, `Calendar`, Activities panels, FieldLayout sections       |
+| 4 · Modals & Settings | all of `components/Modals/`, all of `components/Settings/`                                                                         |
+| 5 · Mobile & misc     | mobile pages, `Welcome`, `DataImport`, `PersonaForm`, `InvalidPage`, `NotPermitted`                                                |
 
 ### 5. Known fragility
 
@@ -209,7 +207,7 @@ From `AGENTS.md`, non-negotiable:
 
 - **Coloured text uses the `-9` ink step.** The `--ink-{green,red,orange}-*`
   ramps are readability ladders, not lightness ladders — a low step is a
-  background tint in *both* themes. `-8` grazes the AA floor on a tinted tile.
+  background tint in _both_ themes. `-8` grazes the AA floor on a tinted tile.
 - **Orange, not amber, for warnings.** No amber step clears 4.5:1 against a
   light surface.
 - **Both themes are verified in a browser.** The generator's floors cover only
@@ -238,10 +236,10 @@ From `AGENTS.md`, non-negotiable:
 
 ## Risks
 
-| Risk | Handling |
-|---|---|
-| PJS's +4.1% line box silently grows content-sized controls | Explicit line-heights per type step; screenshot diff of shell and list rows |
+| Risk                                                                                       | Handling                                                                                                         |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| PJS's +4.1% line box silently grows content-sized controls                                 | Explicit line-heights per type step; screenshot diff of shell and list rows                                      |
 | Phosphor's 256-unit grid reads optically lighter than the current mixed-weight set at 16px | Visual check at real size before rolling past tier 1; `weight` is a one-line global change if it reads too light |
-| Some of the 119 icons have no honest Phosphor equivalent | Those stay hand-drawn rather than being mapped to an approximation |
-| frappe-ui upgrade breaks the ListView density overrides | Zero-specificity `:where()` under an owned wrapper class, commented at the site |
-| Light-theme lift drifts toward the dark treatment | Constraint is explicit: no blur, no glow; verified per tier in both themes |
+| Some of the 119 icons have no honest Phosphor equivalent                                   | Those stay hand-drawn rather than being mapped to an approximation                                               |
+| frappe-ui upgrade breaks the ListView density overrides                                    | Zero-specificity `:where()` under an owned wrapper class, commented at the site                                  |
+| Light-theme lift drifts toward the dark treatment                                          | Constraint is explicit: no blur, no glow; verified per tier in both themes                                       |

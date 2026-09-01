@@ -932,7 +932,11 @@ const PANEL_CATALOGUE = computed(() => {
       cell: (row) =>
         teamPipeline.data?.notice
           ? `${row.deals}`
-          : `${row.deals} · ${formatCell(row.total_value, 'currency', baseCurrency.value)}`,
+          : `${row.deals} · ${formatCell(
+              row.total_value,
+              'currency',
+              baseCurrency.value,
+            )}`,
     },
     {
       id: 'quota',

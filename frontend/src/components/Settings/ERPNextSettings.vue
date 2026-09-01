@@ -575,7 +575,9 @@ const unsyncedSummary = computed(() => {
   }
   if (data.sync_products && data.products) {
     parts.push(
-      `${data.products} ${data.products === 1 ? __('product') : __('products')}`,
+      `${data.products} ${
+        data.products === 1 ? __('product') : __('products')
+      }`,
     )
   }
   if (!parts.length) return ''
@@ -734,7 +736,9 @@ function getSyncRowId(row) {
 function getDeskUrl(row) {
   const doctype = getDeskDoctype()
   if (!doctype || !row.name) return ''
-  return `${window.location.origin}/app/${doctype}/${encodeURIComponent(row.name)}`
+  return `${window.location.origin}/app/${doctype}/${encodeURIComponent(
+    row.name,
+  )}`
 }
 
 function getDeskDoctype() {
