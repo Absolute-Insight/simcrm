@@ -9,7 +9,26 @@ def enable_product_sync():
 
 	Mirrors what configuring the integration does, so the sync hooks and the
 	``erpnext_item_code`` / ``crm_product_code`` custom fields are in place.
+
+	Acumatica is switched off first because the two are mutually exclusive:
+	``crm.integrations.acumatica.install.block_dual_erp`` is wired onto this
+	Single's ``validate`` and refuses the save below while Acumatica is on. That
+	is not hypothetical ordering paranoia -- Acumatica's own test helper enables
+	it with a real Single save, whose ``on_update`` runs ``ensure_custom_fields``
+	and issues DDL, which implicitly commits, so ``enabled=1`` outlives that
+	test's rollback (the reason ``_disable()`` in
+	``crm/integrations/acumatica/test_outbound.py`` commits its zero). These
+	tests only run where ERPNext is installed, which is the release lane alone,
+	so the collision showed up there and nowhere else: 18 errors, every one of
+	them this setUp (#145).
+
+	Not committed, unlike theirs. This runs at the top of each setUp that needs
+	it, so an in-transaction write is enough for the save that follows, and
+	rolling back leaves the site exactly as this test found it.
 	"""
+	frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
+	frappe.clear_cache(doctype="CRM Acumatica Settings")
+
 	settings = frappe.get_single("ERPNext CRM Settings")
 	settings.enabled = 1
 	settings.is_erpnext_in_different_site = 0
