@@ -44,6 +44,7 @@
         </div>
       </template>
       <a
+        v-if="isSafeHref"
         class="block min-w-0 truncate text-ink-gray-8 hover:underline"
         :href="value"
         target="_blank"
@@ -51,6 +52,9 @@
       >
         {{ filename }}
       </a>
+      <span v-else class="block min-w-0 truncate text-ink-gray-8">
+        {{ filename }}
+      </span>
     </Tooltip>
     <button
       v-if="!disabled"
@@ -83,6 +87,10 @@ defineOptions({ inheritAttrs: false })
 const IMAGE_EXTENSIONS =
   /\.(jpe?g|png|gif|webp|svg|avif|bmp|ico|tiff?)(\?.*)?$/i
 
+// Only file paths and http(s) URLs get a link; anything else (javascript:,
+// data:, a bare string) is shown as text so the field cannot host a payload.
+const SAFE_HREF = /^(\/files\/|\/private\/files\/|https?:\/\/)/i
+
 const props = defineProps({
   value: { type: String, default: null },
   doctype: { type: String, default: '' },
@@ -96,6 +104,8 @@ const emit = defineEmits(['change'])
 const attrs = useAttrs()
 
 const showUploader = ref(false)
+
+const isSafeHref = computed(() => SAFE_HREF.test(props.value || ''))
 
 // Mirror frappe-ui TextInput size classes
 const sizeClasses = computed(

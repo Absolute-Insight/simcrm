@@ -21,8 +21,8 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-SYSTEM_PROMPT = (
-	"You are the in-app assistant for Vectora, a proactive CRM. You answer questions "
+MENTOR_SYSTEM_PROMPT = (
+	"You are the Mentor for Vectora, a proactive CRM. You answer questions "
 	"about how to use Vectora: its screens, settings, and how its numbers are computed. "
 	"Ground every answer in the product documentation provided below; when the "
 	"documentation does not answer the question, say so plainly instead of guessing. "
@@ -37,6 +37,27 @@ SYSTEM_PROMPT = (
 NO_MATCH_NOTE = (
 	"No documentation matched this question. Say that you do not have material on it "
 	"and suggest opening the help center for the full manual."
+)
+
+# The Assistant answers a rep's questions about the company's own offering from
+# the knowledge base an administrator curates. Same grounding, different
+# register: a rep may be reading this on a call, and a guessed rating or price
+# is worse than no answer.
+ASSISTANT_SYSTEM_PROMPT = (
+	"You are the sales assistant for {company}'s sales reps. A rep asks you what a customer "
+	"might ask them: about the company's products, models, materials, ratings, standards, and "
+	"which industries and applications use what. Answer only from the knowledge base provided "
+	"below. When it does not cover the question, say so plainly and suggest checking with "
+	"engineering -- never guess a specification, rating, price or delivery time. "
+	"Be concise and concrete; the rep may be on a call. "
+	"Reply only with JSON matching the provided schema. `answer` is plain text, no HTML "
+	"or markdown headings. `related_articles` names up to 3 of the provided articles "
+	"(by their `name`) that the answer relied on; leave it empty if none apply."
+)
+
+ASSISTANT_NO_MATCH_NOTE = (
+	"Nothing in the knowledge base matched this question. Say that the knowledge base has "
+	"no material on it and suggest the rep checks with engineering."
 )
 
 # How many articles a question may pull into the prompt, and how much of each.
@@ -79,7 +100,8 @@ def score_article(question: str, article: dict) -> float:
 	question_tokens = set(_tokens(question))
 	if not question_tokens:
 		return 0.0
-	title_tokens = set(_tokens(article.get("title", "")))
+	# Tags are the words customers use for the thing; they count like the title.
+	title_tokens = set(_tokens(f"{article.get('title', '')} {article.get('tags', '')}"))
 	content_counts = Counter(_tokens(article.get("content", "")))
 	score = 0.0
 	for token in question_tokens:
@@ -105,33 +127,64 @@ def select_articles(question: str, articles: list[dict], limit: int = DEFAULT_LI
 
 
 def build_assistant_messages(
-	question: str, articles: list[dict], history: list[dict] | None = None
+	question: str,
+	articles: list[dict],
+	history: list[dict] | None = None,
+	system_prompt: str = MENTOR_SYSTEM_PROMPT,
+	no_match_note: str = NO_MATCH_NOTE,
+	heading: str = "Product documentation",
 ) -> list[dict]:
 	"""System + prior turns + the question, with the selected articles in the system message.
 
 	``articles`` is the *selected* set (see :func:`select_articles`) -- the
 	caller chooses what the prompt may quote. ``history`` is prior chat turns as
 	``{"role": "user"|"assistant", "content": str}``; anything else is dropped
-	rather than trusted, and only the most recent turns are kept.
+	rather than trusted, and only the most recent turns are kept. The Mentor
+	and the Assistant share this builder and differ only in the persona and
+	the source they are handed.
 	"""
-	documentation = _documentation_block(articles)
-	messages = [{"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{documentation}"}]
+	documentation = _documentation_block(articles, no_match_note, heading)
+	messages = [{"role": "system", "content": f"{system_prompt}\n\n{documentation}"}]
 	for turn in _usable_history(history):
 		messages.append(turn)
 	messages.append({"role": "user", "content": question})
 	return messages
 
 
-def _documentation_block(articles: list[dict]) -> str:
+def article_from_product(row: dict, currency: str) -> dict:
+	"""A ``CRM Product`` row in the article shape the scorer and the prompt read.
+
+	``description`` arrives as the editor's HTML; the caller strips it before
+	handing the row here so this stays frappe-free. The name is prefixed so a
+	product can never collide with a knowledge article's ``KB-`` name and a
+	citation of it is recognisable in ``sources``.
+	"""
+	code = row.get("product_code") or ""
+	description = (row.get("description") or "").strip()
+	rate = row.get("standard_rate")
+	parts = [f"Product code {code}." if code else "", description]
+	if rate:
+		parts.append(f"Standard rate {rate:,.2f} {currency}.")
+	return {
+		"name": f"product:{row.get('name', '')}",
+		"title": row.get("product_name") or code or row.get("name", ""),
+		"tags": code,
+		"content": " ".join(part for part in parts if part).strip() or "No description.",
+	}
+
+
+def _documentation_block(
+	articles: list[dict], no_match_note: str = NO_MATCH_NOTE, heading: str = "Product documentation"
+) -> str:
 	if not articles:
-		return f"# Product documentation\n\n{NO_MATCH_NOTE}"
+		return f"# {heading}\n\n{no_match_note}"
 	sections = []
 	for article in articles:
 		content = article.get("content", "")
 		if len(content) > ARTICLE_CHAR_CAP:
 			content = content[: ARTICLE_CHAR_CAP - len(TRUNCATION_NOTE)] + TRUNCATION_NOTE
 		sections.append(f"## Article `{article.get('name', '')}`: {article.get('title', '')}\n{content}")
-	return "# Product documentation\n\n" + "\n\n".join(sections)
+	return f"# {heading}\n\n" + "\n\n".join(sections)
 
 
 def _usable_history(history: list[dict] | None) -> list[dict]:

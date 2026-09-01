@@ -18,8 +18,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import frappe
-
 from crm.agent import client
 from crm.agent.config import AgentConfig, get_config
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
@@ -193,9 +191,12 @@ def format_report(results, cfg: AgentConfig) -> str:
 	return "\n".join(lines)
 
 
-@frappe.whitelist()
 def run_and_print():
-	"""``bench --site <site> execute crm.domain_enrichment.evals.runner.run_and_print``"""
+	"""``bench --site <site> execute crm.domain_enrichment.evals.runner.run_and_print``
+
+	A ``bench execute`` helper, deliberately not whitelisted: it drives a live
+	model endpoint and prints to stdout, neither of which belongs on an HTTP route.
+	"""
 	cfg = get_config()
 	if not cfg.enabled:
 		print(

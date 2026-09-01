@@ -5,7 +5,7 @@
       <p class="text-p-sm text-ink-gray-5">
         {{
           __(
-            'The assistant drafts replies and summarises threads. Everything else — signals, deal health, the planner, digests and automation rules — keeps working with it switched off.',
+            'One model endpoint behind the Mentor, the Assistant, the Analyst, thread summaries and reply drafts. Everything else — signals, deal health, the planner, digests and automation rules — keeps working with it switched off.',
           )
         }}
       </p>
@@ -110,6 +110,49 @@
             )
           }}
         </p>
+      </section>
+
+      <!-- What each chat surface may read. The Mentor reads the manual and
+           needs no switch; these two are the grants an admin makes. -->
+      <section class="flex flex-col gap-4 border-t border-outline-gray-1 pt-5">
+        <div class="flex flex-col gap-1">
+          <h3 class="text-base font-medium text-ink-gray-8">
+            {{ __('Assistant & Analyst') }}
+          </h3>
+          <p class="text-p-sm text-ink-gray-5">
+            {{
+              __(
+                'The Assistant answers reps from Settings → Knowledge. The Analyst answers administrators from Vectora’s own calculations, and from a connected ERP’s invoices and payments.',
+              )
+            }}
+          </p>
+        </div>
+        <div class="flex flex-col gap-3">
+          <Switch
+            :model-value="!!draft.assistant_reads_products"
+            size="sm"
+            :label="__('Let the Assistant read the product catalogue')"
+            :description="
+              __(
+                'Enabled products (name, code, description, standard rate) join the knowledge base when a rep asks.',
+              )
+            "
+            @update:model-value="
+              draft.assistant_reads_products = $event ? 1 : 0
+            "
+          />
+          <Switch
+            :model-value="!!draft.analyst_enabled"
+            size="sm"
+            :label="__('Allow the Analyst to read CRM and ERP data')"
+            :description="
+              __(
+                'Administrators only. Off, the Analyst page answers nothing. It never writes, and every figure it shows is computed by Vectora, not by the model.',
+              )
+            "
+            @update:model-value="draft.analyst_enabled = $event ? 1 : 0"
+          />
+        </div>
       </section>
 
       <!-- Signals: deliberately on the same page, and deliberately separate.
@@ -283,6 +326,8 @@ const FIELDS = [
   'timeout',
   'max_tokens',
   'daily_call_budget',
+  'assistant_reads_products',
+  'analyst_enabled',
   'signals_enabled',
   'idle_deal_days',
   'close_horizon_days',

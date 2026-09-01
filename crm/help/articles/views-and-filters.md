@@ -1,6 +1,6 @@
 ---
 title: Views, filters and saved lists
-category: Assistant & customisation
+category: Customisation
 order: 2
 ---
 

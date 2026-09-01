@@ -59,6 +59,30 @@ class TestCRMInvitation(FrappeTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			invitation.accept()
 
+	def test_expire_invitations_survives_one_row_that_will_not_save(self):
+		"""One bad row is logged and skipped; the others still expire."""
+		from crm.fcrm.doctype.crm_invitation.crm_invitation import CRMInvitation, expire_invitations
+
+		stale = add_days(now(), -4)
+		bad = self.make_invitation(email="bad-invitee@example.com")
+		good = self.make_invitation(email="good-invitee@example.com")
+		for name in (bad.name, good.name):
+			frappe.db.set_value("CRM Invitation", name, "creation", stale, update_modified=False)
+
+		real_save = CRMInvitation.save
+
+		def save(doc, *args, **kwargs):
+			if doc.name == bad.name:
+				raise frappe.ValidationError("cannot save this one")
+			return real_save(doc, *args, **kwargs)
+
+		with patch.object(CRMInvitation, "save", save), patch.object(frappe, "log_error") as log_error:
+			expire_invitations()
+
+		self.assertEqual(frappe.db.get_value("CRM Invitation", good.name, "status"), "Expired")
+		self.assertEqual(frappe.db.get_value("CRM Invitation", bad.name, "status"), "Pending")
+		log_error.assert_called_once()
+
 	def test_accept_reports_newly_created_user(self):
 		invitation = self.make_invitation(email="brand-new@example.com")
 

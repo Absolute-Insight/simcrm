@@ -118,6 +118,16 @@ def expire_invitations():
 		"CRM Invitation", filters={"status": "Pending", "creation": ["<", add_days(now(), -days)]}
 	)
 	for invitation in invitations_to_expire:
-		invitation = frappe.get_doc("CRM Invitation", invitation.name)
-		invitation.status = "Expired"
-		invitation.save(ignore_permissions=True)
+		# Isolated per row: one invitation that will not save (a validation it
+		# no longer passes, a user row gone) must not stop the rest expiring.
+		frappe.db.savepoint("crm_invitation_expire")
+		try:
+			doc = frappe.get_doc("CRM Invitation", invitation.name)
+			doc.status = "Expired"
+			doc.save(ignore_permissions=True)
+		except Exception:
+			frappe.db.rollback(save_point="crm_invitation_expire")
+			frappe.log_error(
+				title="CRM Invitation: expiry failed",
+				message=f"{invitation.name}: {frappe.get_traceback()}",
+			)

@@ -64,8 +64,10 @@
           <div
             class="text-p-sm text-ink-gray-5"
             v-html="
-              __(
-                'Reminders will be sent <b>before the event starts</b>, based on the configured time',
+              sanitizeHTML(
+                __(
+                  'Reminders will be sent <b>before the event starts</b>, based on the configured time',
+                ),
               )
             "
           />
@@ -160,8 +162,10 @@
           <div
             class="text-p-sm text-ink-gray-5"
             v-html="
-              __(
-                'For all-day events, <b>set a time</b> to send reminders before the event starts',
+              sanitizeHTML(
+                __(
+                  'For all-day events, <b>set a time</b> to send reminders before the event starts',
+                ),
               )
             "
           />
@@ -260,6 +264,7 @@ import { getSettings } from '@/stores/settings'
 import { showSettings } from '@/composables/settings'
 import { min, max, handleIntervalChange } from '@/components/Calendar/utils'
 import { FormControl, TimePicker } from 'frappe-ui'
+import { sanitizeHTML } from '@/utils'
 import { computed } from 'vue'
 
 const { _settings: settings } = getSettings()

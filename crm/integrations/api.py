@@ -6,10 +6,53 @@ import frappe
 import requests
 from frappe import _
 from frappe.query_builder import Order
+from frappe.rate_limiter import rate_limit
 from pypika.functions import Replace
 from werkzeug.wrappers import Response
 
-from crm.utils import are_same_phone_number, parse_phone_number, sales_user_only
+from crm.utils import are_same_phone_number, parse_phone_number, sales_user_only, user_rate_limited
+
+# Per user and per minute. A recording plays once per click and the browser issues
+# a handful of Range requests per play; 30 is well above that and well below what
+# a script needs to walk every call log's recording through the proxy.
+RECORDING_RATE_LIMIT = 30
+RECORDING_RATE_SCOPE = "recording_url"
+
+TWILIO_RECORDING_DOMAIN = ".twilio.com"
+EXOTEL_RECORDING_DOMAIN = ".exotel.com"
+
+
+def _configured_exotel_host() -> str:
+	"""The host an admin typed into CRM Exotel Settings' ``subdomain``, normalised.
+
+	The field is used as a bare host (``https://{subdomain}/v1/...``), but admins
+	paste what the Exotel console shows, which is sometimes a full URL.
+	"""
+	raw = (frappe.db.get_single_value("CRM Exotel Settings", "subdomain") or "").strip().lower()
+	if not raw:
+		return ""
+	if "://" in raw:
+		return urlparse(raw).hostname or ""
+	return raw.split("/", 1)[0]
+
+
+def _recording_host_is_provider(telephony_medium: str, url: str) -> bool:
+	"""True when ``url`` names a host the provider's credentials are meant for.
+
+	``recording_url`` is a plain writable field on CRM Call Log, so anyone who can
+	edit a log can point it anywhere. The proxy still fetches it (through the SSRF
+	guard), but the provider's API key and secret go only to the provider: a URL
+	on any other host is fetched with no auth at all.
+	"""
+	host = (urlparse(url or "").hostname or "").lower()
+	if not host:
+		return False
+	if telephony_medium == "Twilio":
+		return host == "api.twilio.com" or host.endswith(TWILIO_RECORDING_DOMAIN)
+	if telephony_medium == "Exotel":
+		configured = _configured_exotel_host()
+		return (bool(configured) and host == configured) or host.endswith(EXOTEL_RECORDING_DOMAIN)
+	return False
 
 
 def _get_recording_credentials(telephony_medium: str) -> tuple | None:
@@ -290,13 +333,20 @@ def _fetch_recording(url: str, auth, headers: dict):
 
 
 @frappe.whitelist()
+@rate_limit(limit=RECORDING_RATE_LIMIT, seconds=60)
 def get_recording_url(call_log_name: str):
 	"""Proxy a call recording (authenticating with the provider) so it plays in the browser.
 
 	Forwards the browser's Range request to the provider and passes the response back with
 	Accept-Ranges/Content-Length set. Without range support the HTML <audio> element can't
 	read the recording's duration (shows 0:00) or seek within it.
+
+	Limited twice: ``@rate_limit`` keys on the request IP, ``user_rate_limited`` on the
+	session user, so neither an office NAT nor a user with many addresses defeats it.
 	"""
+	if user_rate_limited(RECORDING_RATE_SCOPE, RECORDING_RATE_LIMIT):
+		frappe.throw(_("Too many recording requests. Try again shortly."), frappe.ValidationError)
+
 	if not call_log_name or not frappe.db.exists("CRM Call Log", call_log_name):
 		frappe.throw(_("Call log not found"), frappe.DoesNotExistError)
 
@@ -306,7 +356,11 @@ def get_recording_url(call_log_name: str):
 	if not log.recording_url:
 		frappe.throw(_("Recording URL not found"), frappe.DoesNotExistError)
 
-	auth = _get_recording_credentials(log.telephony_medium)
+	# Credentials only for the provider's own host: a recording_url edited to point
+	# elsewhere is fetched anonymously rather than handing that host the API secret.
+	auth = None
+	if _recording_host_is_provider(log.telephony_medium, log.recording_url):
+		auth = _get_recording_credentials(log.telephony_medium)
 	# forward the browser's Range header so the provider (Twilio/Exotel CDN) can return
 	# just the requested bytes; falls back to the full file if it doesn't support ranges
 	req_headers = {}

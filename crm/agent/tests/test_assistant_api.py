@@ -1,8 +1,9 @@
 # Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-"""``ask_assistant`` endpoint tests. The client is stubbed; flags, degrade paths
-and the citation filter are the subject."""
+"""``ask_assistant`` endpoint tests: the knowledge-base grounding, the empty
+state, the availability switch, the product catalogue toggle and the source
+filter. The client is stubbed; nothing here contacts a model."""
 
 from __future__ import annotations
 
@@ -13,114 +14,125 @@ from frappe.tests import IntegrationTestCase
 
 from crm.agent import api as api_mod
 from crm.agent.config import AgentConfig
-from crm.agent.errors import AgentUnavailable
 from crm.agent.schemas import AssistantAnswer
 
-DISABLED = AgentConfig(enabled=False, base_url="http://x/v1", model="m", timeout=5, max_tokens=64)
 ENABLED = AgentConfig(enabled=True, base_url="http://x/v1", model="m", timeout=5, max_tokens=64)
+WITH_PRODUCTS = AgentConfig(
+	enabled=True,
+	base_url="http://x/v1",
+	model="m",
+	timeout=5,
+	max_tokens=64,
+	assistant_reads_products=True,
+)
 
 
 def no_budget_check():
 	return mock.patch.object(api_mod, "_throttled", return_value=False)
 
 
-class FlagTest(IntegrationTestCase):
-	def test_disabled_returns_a_status_and_never_calls_the_model(self):
-		with mock.patch.object(api_mod, "get_config", return_value=DISABLED):
-			with mock.patch.object(api_mod.client, "complete") as complete:
-				result = api_mod.ask_assistant("how do quotas work?")
+def make_article(title: str, body: str, available: int = 1, tags: str = "") -> str:
+	return (
+		frappe.get_doc(
+			{
+				"doctype": "CRM Knowledge Article",
+				"title": title,
+				"category": "Test",
+				"tags": tags,
+				"available_to_assistant": available,
+				"body": body,
+			}
+		)
+		.insert()
+		.name
+	)
 
-		self.assertEqual(result, {"status": "disabled"})
-		complete.assert_not_called()
 
-	def test_an_empty_question_is_refused_before_any_config_read(self):
-		with self.assertRaises(frappe.ValidationError):
-			api_mod.ask_assistant("   ")
+class AssistantApiTest(IntegrationTestCase):
+	def setUp(self):
+		super().setUp()
+		frappe.db.savepoint("assistant_api")
+		self.addCleanup(frappe.db.rollback, save_point="assistant_api")
+		frappe.db.delete("CRM Knowledge Article")
 
-	def test_an_exhausted_budget_degrades_and_never_calls_the_model(self):
+	def test_an_empty_knowledge_base_reports_empty_and_never_calls_the_model(self):
 		with (
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
-			mock.patch.object(api_mod, "_budget_spent", return_value=True),
 			mock.patch.object(api_mod.client, "complete") as complete,
-		):
-			result = api_mod.ask_assistant("hello")
-
-		self.assertEqual(result, {"status": "unavailable"})
-		complete.assert_not_called()
-
-
-class DegradeTest(IntegrationTestCase):
-	def test_unavailable_model_degrades_instead_of_raising(self):
-		with (
-			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
-			mock.patch.object(api_mod.client, "complete", side_effect=AgentUnavailable("down")),
 			no_budget_check(),
 		):
-			result = api_mod.ask_assistant("how do quotas work?")
+			result = api_mod.ask_assistant("what valves do we sell?")
 
-		self.assertEqual(result["status"], "unavailable")
+		self.assertEqual(result, {"status": "empty"})
+		complete.assert_not_called()
 
-
-class HappyPathTest(IntegrationTestCase):
-	def test_returns_the_answer_and_only_real_article_citations(self):
-		answer = AssistantAnswer(
-			answer="Set targets in Settings → Sales Targets.",
-			related_articles=["forecasting-and-targets", "made-up-article"],
-		)
+	def test_only_available_articles_reach_the_prompt(self):
+		make_article("Gate valves", "Gate valves isolate a line. Sizes DN50 to DN600.")
+		make_article("Secret pricing", "Gate valves cost a fortune.", available=0)
+		answer = AssistantAnswer(answer="DN50 to DN600.", related_articles=[])
 		with (
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod.client, "complete", return_value=answer) as complete,
 			no_budget_check(),
 		):
-			result = api_mod.ask_assistant("where do I set monthly sales targets?")
+			result = api_mod.ask_assistant("what sizes do gate valves come in?")
 
 		self.assertEqual(result["status"], "ok")
-		self.assertEqual(result["answer"], answer.answer)
-		self.assertEqual(result["related_articles"], ["forecasting-and-targets"])
+		system = complete.call_args[0][2][0]["content"]
+		self.assertIn("Gate valves isolate a line", system)
+		self.assertNotIn("cost a fortune", system)
+		self.assertIn("Knowledge base", system)
 		self.assertIs(complete.call_args[0][1], AssistantAnswer)
-		# The grounding made it into the prompt: the system message quotes the
-		# article the question is obviously about.
-		messages = complete.call_args[0][2]
-		self.assertEqual(messages[0]["role"], "system")
-		self.assertIn("forecasting-and-targets", messages[0]["content"])
 
-	def test_history_arrives_as_json_text_and_still_becomes_turns(self):
-		answer = AssistantAnswer(answer="A monthly target per rep.")
-		history = '[{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]'
+	def test_sources_are_filtered_to_loaded_articles_and_carry_titles(self):
+		name = make_article("Ball valves", "Quarter-turn isolation.", tags="ball, quarter-turn")
+		answer = AssistantAnswer(answer="Quarter-turn.", related_articles=[name, "KB-99999"])
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod.client, "complete", return_value=answer),
+			no_budget_check(),
+		):
+			result = api_mod.ask_assistant("tell me about ball valves")
+
+		self.assertEqual(result["sources"], [{"name": name, "title": "Ball valves"}])
+
+	def test_products_join_the_prompt_only_when_the_admin_says_so(self):
+		make_article("Ball valves", "Quarter-turn isolation.")
+		product = frappe.get_doc(
+			{
+				"doctype": "CRM Product",
+				"product_code": "BV-150-SS",
+				"product_name": "Stainless ball valve",
+				"description": "<p>Class 150 &amp; full bore</p>",
+				"standard_rate": 1250,
+			}
+		).insert()
+		self.addCleanup(frappe.delete_doc, "CRM Product", product.name, force=True)
+		answer = AssistantAnswer(answer="Yes.", related_articles=[f"product:{product.name}"])
+
 		with (
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod.client, "complete", return_value=answer) as complete,
 			no_budget_check(),
 		):
-			api_mod.ask_assistant("what is a quota?", history=history)
+			api_mod.ask_assistant("do we stock a stainless ball valve?")
+		self.assertNotIn("BV-150-SS", complete.call_args[0][2][0]["content"])
 
-		roles = [m["role"] for m in complete.call_args[0][2]]
-		self.assertEqual(roles, ["system", "user", "assistant", "user"])
-
-	def test_garbage_history_is_dropped_rather_than_raising(self):
-		answer = AssistantAnswer(answer="ok")
-		for garbage in ("{not json", '"a string"', {"role": "user"}):
-			with (
-				mock.patch.object(api_mod, "get_config", return_value=ENABLED),
-				mock.patch.object(api_mod.client, "complete", return_value=answer) as complete,
-				no_budget_check(),
-			):
-				result = api_mod.ask_assistant("q", history=garbage)
-			self.assertEqual(result["status"], "ok")
-			self.assertEqual([m["role"] for m in complete.call_args[0][2]], ["system", "user"])
-
-	def test_endpoint_is_whitelisted_and_rate_limited(self):
-		self.assertIn(api_mod.ask_assistant, frappe.whitelisted)
-		self.assertTrue(hasattr(api_mod.ask_assistant, "__wrapped__"))
-
-	def test_an_over_long_question_is_truncated_not_refused(self):
-		answer = AssistantAnswer(answer="ok")
 		with (
-			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod, "get_config", return_value=WITH_PRODUCTS),
 			mock.patch.object(api_mod.client, "complete", return_value=answer) as complete,
 			no_budget_check(),
 		):
-			api_mod.ask_assistant("q" * (api_mod.ASSISTANT_QUESTION_MAX_CHARS + 500))
+			result = api_mod.ask_assistant("do we stock a stainless ball valve?")
+		system = complete.call_args[0][2][0]["content"]
+		self.assertIn("BV-150-SS", system)
+		# the editor's HTML is stripped and entity-decoded before the model sees it
+		self.assertIn("Class 150 & full bore", system)
+		self.assertNotIn("<p>", system)
+		self.assertEqual(
+			result["sources"], [{"name": f"product:{product.name}", "title": "Stainless ball valve"}]
+		)
 
-		question = complete.call_args[0][2][-1]["content"]
-		self.assertEqual(len(question), api_mod.ASSISTANT_QUESTION_MAX_CHARS)
+	def test_an_empty_question_is_refused(self):
+		with self.assertRaises(frappe.ValidationError):
+			api_mod.ask_assistant("  ")

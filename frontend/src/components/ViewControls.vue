@@ -356,7 +356,7 @@ import {
 import { useRouter, useRoute } from 'vue-router'
 import { isMobileView } from '@/composables/settings'
 import Draggable from 'vuedraggable'
-import _ from 'lodash'
+import isEqual from 'lodash/isEqual'
 import { PhTrayArrowDown as ImportIcon } from '@phosphor-icons/vue'
 import { reportActionError } from '@/utils/reportActionError'
 
@@ -1447,7 +1447,7 @@ defineExpose({
 watch(
   () => getView(route.query.view, route.params.viewType, props.doctype),
   (value, old_value) => {
-    if (_.isEqual(value, old_value)) return
+    if (isEqual(value, old_value)) return
     reload()
   },
   { deep: true },

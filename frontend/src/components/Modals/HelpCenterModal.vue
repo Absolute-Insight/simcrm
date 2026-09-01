@@ -8,6 +8,30 @@
           <div class="v-title-sm px-3 pb-2 pt-[15px] text-ink-gray-8">
             {{ __('Help center') }}
           </div>
+          <!-- The Mentor sits above the search: same question, two ways to
+               ask it. Enter sends; the answer takes over the right pane. -->
+          <div class="px-2 pb-2">
+            <TextInput
+              v-model="mentorDraft"
+              type="text"
+              :placeholder="__('Ask the mentor how Vectora works')"
+              @keydown.enter.prevent="sendToMentor"
+            >
+              <template #prefix>
+                <SparkleIcon class="size-4 text-ink-gray-5" />
+              </template>
+              <template #suffix>
+                <button
+                  v-if="mentorMessages.length && !mentorOpen"
+                  type="button"
+                  class="text-xs text-ink-gray-5 hover:text-ink-gray-8"
+                  @click="mentorOpen = true"
+                >
+                  {{ __('Back to the mentor') }}
+                </button>
+              </template>
+            </TextInput>
+          </div>
           <div class="px-2 pb-2">
             <!-- No debounce, deliberately: the search is client-side over a
                  dozen small articles, and a debounced emit races the click on
@@ -71,7 +95,7 @@
                       article.name !== shownArticle?.name &&
                       'hover:!bg-surface-gray-3'
                     "
-                    @click="activeHelpArticle = article.name"
+                    @click="showArticle(article.name)"
                   />
                 </nav>
               </div>
@@ -82,7 +106,67 @@
         <div
           class="flex flex-1 flex-col overflow-y-auto bg-surface-elevation-2"
         >
-          <div v-if="helpContent.loading" class="flex flex-col gap-3 p-8">
+          <div
+            v-if="mentorOpen && mentorMessages.length"
+            class="flex h-full min-h-0 flex-col"
+          >
+            <div class="flex items-center justify-between px-4 pt-3">
+              <div class="flex items-center gap-2">
+                <SparkleIcon class="size-4 text-ink-gray-7" />
+                <span class="v-title-sm text-ink-gray-8">{{
+                  __('Mentor')
+                }}</span>
+              </div>
+              <Button
+                :tooltip="__('Clear the conversation')"
+                :aria-label="__('Clear the conversation')"
+                icon="lucide-eraser"
+                variant="ghost"
+                @click="clearMentorAndClose"
+              />
+            </div>
+            <AgentChat
+              compact
+              :messages="mentorMessages"
+              :asking="mentorAsking"
+              :failure="mentorFailure"
+              :placeholder="__('Ask a follow-up…')"
+              :focus-when="mentorOpen"
+              @send="askMentor"
+              @retry="retryMentor"
+            >
+              <template #message-extra="{ message }">
+                <div
+                  v-if="message.relatedArticles?.length"
+                  class="flex flex-wrap gap-1.5"
+                >
+                  <Button
+                    v-for="name in message.relatedArticles"
+                    :key="name"
+                    variant="subtle"
+                    size="sm"
+                    :label="articleTitle(name)"
+                    :iconLeft="LucideBookOpen"
+                    @click="showArticle(name)"
+                  />
+                </div>
+              </template>
+              <template #failure="{ failure }">
+                <p class="text-sm text-ink-gray-6">
+                  {{
+                    failure === 'disabled'
+                      ? __(
+                          'The mentor is switched off for this site. The manual on the left works either way.',
+                        )
+                      : __(
+                          'The mentor could not be reached right now. Your question was not lost — try again in a moment.',
+                        )
+                  }}
+                </p>
+              </template>
+            </AgentChat>
+          </div>
+          <div v-else-if="helpContent.loading" class="flex flex-col gap-3 p-8">
             <Skeleton class="h-7 w-64" />
             <Skeleton class="h-4 w-full" />
             <Skeleton class="h-4 w-5/6" />
@@ -116,6 +200,9 @@
 
 <script setup>
 import { PhMagnifyingGlass as LucideSearch } from '@phosphor-icons/vue'
+import { PhBookOpen as LucideBookOpen } from '@phosphor-icons/vue'
+import AgentChat from '@/components/AgentChat.vue'
+import SparkleIcon from '@/components/Icons/SparkleIcon.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import {
@@ -123,6 +210,15 @@ import {
   helpCenterVisible,
   helpContent,
 } from '@/stores/help'
+import {
+  askMentor,
+  clearMentor,
+  mentorAsking,
+  mentorFailure,
+  mentorMessages,
+  mentorOpen,
+  retryMentor,
+} from '@/stores/mentor'
 import { sanitizeHTML } from '@/utils'
 import {
   groupArticles,
@@ -133,6 +229,31 @@ import { Dialog, SidebarItem, TextInput } from 'frappe-ui'
 import { computed, ref, watch } from 'vue'
 
 const search = ref('')
+const mentorDraft = ref('')
+
+function sendToMentor() {
+  const question = mentorDraft.value.trim()
+  if (!question) return
+  mentorDraft.value = ''
+  askMentor(question)
+}
+
+/* Chip labels come from the catalogue; the article name, de-kebabed, is
+   honest enough for a button before it loads. */
+function articleTitle(name) {
+  const article = articles.value.find((a) => a.name === name)
+  return article ? article.title : name.replaceAll('-', ' ')
+}
+
+function showArticle(name) {
+  activeHelpArticle.value = name
+  mentorOpen.value = false
+}
+
+function clearMentorAndClose() {
+  clearMentor()
+  mentorOpen.value = false
+}
 
 const articles = computed(() => helpContent.data?.articles || [])
 const groups = computed(() =>
@@ -155,13 +276,18 @@ const shownArticleHtml = computed(() =>
 )
 
 function openResult(name) {
-  activeHelpArticle.value = name
+  showArticle(name)
   search.value = ''
 }
 
-// A fresh open should read as a fresh open, not resume a stale search.
+// A fresh open should read as a fresh open, not resume a stale search. The
+// mentor transcript survives (it is the reader's own conversation), but the
+// pane opens on the article the caller asked for.
 watch(helpCenterVisible, (open) => {
-  if (open) search.value = ''
+  if (open) {
+    search.value = ''
+    mentorOpen.value = false
+  }
 })
 </script>
 

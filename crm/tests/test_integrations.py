@@ -1,14 +1,19 @@
 # Copyright (c) 2024, Frappe Technologies Pvt. Ltd. and Contributors
 # See license.txt
 
+from unittest.mock import MagicMock, patch
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from crm.integrations import api as integrations_api
 from crm.integrations.api import (
+	_recording_host_is_provider,
 	add_note_to_call_log,
 	add_task_to_call_log,
 	get_contact_by_phone_number,
 	get_contact_lead_or_deal_from_number,
+	get_recording_url,
 	get_user_default_calling_medium,
 	is_call_integration_enabled,
 	set_default_calling_medium,
@@ -494,6 +499,79 @@ class TestIntegrations(IntegrationTestCase):
 		# Should return None since lead is converted
 		self.assertIsNone(docname)
 		self.assertIsNone(doctype)
+
+
+class TestRecordingProxyCredentials(IntegrationTestCase):
+	"""The provider's API secret goes to the provider's host and nowhere else.
+
+	``recording_url`` is a plain writable field on the call log, so anyone who can
+	edit a log can point it at a host they control. The proxy still fetches it, but
+	must do so with no auth attached.
+	"""
+
+	CREDENTIALS = ("ACxxxxxxxx", "twilio_secret")
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _fake_upstream(self):
+		resp = MagicMock()
+		resp.is_redirect = False
+		resp.status_code = 200
+		resp.headers = {"Content-Type": "audio/mpeg", "Content-Length": "3"}
+		resp.iter_content.return_value = iter([b"abc"])
+		return resp, MagicMock()
+
+	def _proxy(self, recording_url, medium="Twilio"):
+		log = create_test_call_log(recording_url=recording_url, telephony_medium=medium)
+		with (
+			patch.object(integrations_api, "_safe_get", return_value=self._fake_upstream()) as safe_get,
+			patch.object(integrations_api, "_get_recording_credentials", return_value=self.CREDENTIALS),
+			patch.object(frappe, "get_request_header", return_value=None),
+		):
+			response = get_recording_url(log.name)
+			b"".join(response.response)  # drain the stream so the session is closed
+		return safe_get
+
+	def test_a_foreign_host_is_fetched_without_provider_credentials(self):
+		safe_get = self._proxy("https://attacker.example/a.mp3")
+		safe_get.assert_called_once()
+		self.assertIsNone(safe_get.call_args[0][1])
+
+	def test_the_provider_host_gets_the_credentials(self):
+		safe_get = self._proxy("https://api.twilio.com/2010-04-01/Accounts/AC1/Recordings/RE1.mp3")
+		safe_get.assert_called_once()
+		self.assertEqual(safe_get.call_args[0][1], self.CREDENTIALS)
+
+	def test_host_matching_is_per_provider(self):
+		self.assertTrue(_recording_host_is_provider("Twilio", "https://api.twilio.com/x.mp3"))
+		self.assertTrue(_recording_host_is_provider("Twilio", "https://media.twilio.com/x.mp3"))
+		self.assertFalse(_recording_host_is_provider("Twilio", "https://api.twilio.com.evil.example/x"))
+		self.assertFalse(_recording_host_is_provider("Twilio", "https://api.exotel.com/x.mp3"))
+		self.assertFalse(_recording_host_is_provider("Manual", "https://api.twilio.com/x.mp3"))
+		self.assertFalse(_recording_host_is_provider("Twilio", ""))
+		with patch.object(integrations_api, "_configured_exotel_host", return_value="ccm.example.net"):
+			self.assertTrue(_recording_host_is_provider("Exotel", "https://ccm.example.net/rec.mp3"))
+			self.assertTrue(_recording_host_is_provider("Exotel", "https://recordings.exotel.com/rec.mp3"))
+			self.assertFalse(_recording_host_is_provider("Exotel", "https://attacker.example/rec.mp3"))
+
+	def test_the_configured_exotel_subdomain_is_normalised_to_a_host(self):
+		with patch.object(frappe.db, "get_single_value", return_value="https://ccm-api.exotel.com/"):
+			self.assertEqual(integrations_api._configured_exotel_host(), "ccm-api.exotel.com")
+		with patch.object(frappe.db, "get_single_value", return_value="API.Exotel.com/v1"):
+			self.assertEqual(integrations_api._configured_exotel_host(), "api.exotel.com")
+		with patch.object(frappe.db, "get_single_value", return_value=None):
+			self.assertEqual(integrations_api._configured_exotel_host(), "")
+
+	def test_the_proxy_is_rate_limited_per_user(self):
+		log = create_test_call_log(recording_url="https://api.twilio.com/x.mp3", telephony_medium="Twilio")
+		with (
+			patch.object(integrations_api, "user_rate_limited", return_value=True),
+			patch.object(integrations_api, "_safe_get") as safe_get,
+		):
+			with self.assertRaises(frappe.ValidationError):
+				get_recording_url(log.name)
+		safe_get.assert_not_called()
 
 
 def create_test_call_log(**kwargs):

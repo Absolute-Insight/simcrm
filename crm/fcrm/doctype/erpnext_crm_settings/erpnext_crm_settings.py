@@ -1,6 +1,7 @@
 # Copyright (c) 2024, Frappe and contributors
 # For license information, please see license.txt
 
+import functools
 import json
 
 import frappe
@@ -11,6 +12,14 @@ from frappe.frappeclient import FrappeClient
 from frappe.model.document import Document
 from frappe.utils import get_url_to_form, get_url_to_list
 
+from crm.utils import user_rate_limited
+
+# Per user and per minute on the endpoints that reach the remote ERPNext site.
+# Each one is a click in the deal page; 30 is well above that and well below
+# what a script needs to drive the remote site through this one.
+ERPNEXT_LINK_RATE_LIMIT = 30
+ERPNEXT_LINK_RATE_SCOPE = "erpnext_link"
+
 
 def _is_erpnext_installed():
 	return "erpnext" in frappe.get_installed_apps()
@@ -19,6 +28,11 @@ def _is_erpnext_installed():
 def _log_and_throw(message: str, title: str | None = None):
 	frappe.log_error(frappe.get_traceback(), title or message)
 	frappe.throw(_(message))
+
+
+def _check_user_rate_limit() -> None:
+	if user_rate_limited(ERPNEXT_LINK_RATE_SCOPE, ERPNEXT_LINK_RATE_LIMIT):
+		frappe.throw(_("Too many ERPNext requests. Try again shortly."), frappe.ValidationError)
 
 
 def _get_enabled_settings():
@@ -338,7 +352,12 @@ def get_erpnext_site_client(erpnext_crm_settings):
 	api_key = erpnext_crm_settings.api_key
 	api_secret = erpnext_crm_settings.get_password("api_secret", raise_exception=False)
 
-	return FrappeClient(site_url, api_key=api_key, api_secret=api_secret)
+	client = FrappeClient(site_url, api_key=api_key, api_secret=api_secret)
+	# FrappeClient never passes a timeout, so an unresponsive remote site held a
+	# web worker indefinitely. 5s to connect, 30s per read, on every request the
+	# session makes.
+	client.session.request = functools.partial(client.session.request, timeout=(5, 30))
+	return client
 
 
 def get_local_customer(crm_deal: str):
@@ -350,6 +369,7 @@ def get_local_customer(crm_deal: str):
 
 @frappe.whitelist()
 def get_customer_link(crm_deal: str):
+	_check_user_rate_limit()
 	frappe.has_permission("CRM Deal", "read", doc=crm_deal, throw=True)
 	erpnext_crm_settings = _get_enabled_settings()
 
@@ -377,6 +397,7 @@ def get_customer_link(crm_deal: str):
 
 @frappe.whitelist()
 def get_quotation_url(crm_deal: str, organization: str | None = None):
+	_check_user_rate_limit()
 	frappe.has_permission("CRM Deal", "write", doc=crm_deal, throw=True)
 	erpnext_crm_settings = _get_enabled_settings()
 
@@ -450,6 +471,7 @@ def create_prospect_in_remote_site(crm_deal, erpnext_crm_settings):
 
 @frappe.whitelist()
 def prefill_quotation_items(crm_deal: str):
+	_check_user_rate_limit()
 	if not frappe.db.exists("CRM Deal", crm_deal):
 		return []
 	frappe.has_permission("CRM Deal", "read", doc=crm_deal, throw=True)
@@ -559,6 +581,9 @@ def check_customer_for_quotation(quotation: str):
 	crm_deal = frappe.db.get_value("Quotation", quotation, "crm_deal")
 	if not crm_deal:
 		return None
+	# Creates a Customer from the deal, so it needs the same right get_quotation_url
+	# asks for: any quotation name used to be enough to read and act on the deal.
+	frappe.has_permission("CRM Deal", "write", doc=crm_deal, throw=True)
 	return check_customer_for_deal(crm_deal)
 
 

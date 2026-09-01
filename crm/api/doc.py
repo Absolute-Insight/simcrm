@@ -7,12 +7,17 @@ from frappe.desk.form.assign_to import set_status
 from frappe.model import no_value_fields
 from frappe.model.delete_doc import get_dynamic_linked_docs, get_linked_docs
 from frappe.model.document import get_controller
-from frappe.utils import make_filter_tuple
+from frappe.utils import cint, make_filter_tuple
 from pypika import Criterion
 
 from crm.api.views import get_views
 from crm.fcrm.doctype.crm_form_script.crm_form_script import get_form_script
 from crm.utils import is_frappe_version
+
+# Hard ceilings on what one list or kanban request may pull; the client's
+# "load more" steps below these, and a crafted page_length no longer does.
+MAX_PAGE_LENGTH = 1000
+MAX_KANBAN_COLUMN_PAGE_LENGTH = 500
 
 COUNT_NAME = (
 	{"COUNT": "name", "as": "total_count"}
@@ -23,6 +28,7 @@ COUNT_NAME = (
 
 @frappe.whitelist()
 def sort_options(doctype: str):
+	frappe.has_permission(doctype, "read", throw=True)
 	fields = frappe.get_meta(doctype).fields
 	fields = [field for field in fields if field.fieldtype not in no_value_fields]
 	fields = [
@@ -72,6 +78,7 @@ def get_filterable_fields(doctype: str):
 		"Datetime",
 	]
 
+	frappe.has_permission(doctype, "read", throw=True)
 	c = get_controller(doctype)
 	restricted_fields = []
 	if hasattr(c, "get_non_filterable_fields"):
@@ -125,6 +132,7 @@ def get_group_by_fields(doctype: str):
 		"Datetime",
 	]
 
+	frappe.has_permission(doctype, "read", throw=True)
 	fields = frappe.get_meta(doctype).fields
 	fields = [
 		field
@@ -162,6 +170,7 @@ def get_group_by_fields(doctype: str):
 
 @frappe.whitelist()
 def get_quick_filters(doctype: str, cached: bool = True):
+	frappe.has_permission(doctype, "read", throw=True)
 	meta = frappe.get_meta(doctype, cached)
 	quick_filters = []
 
@@ -271,6 +280,8 @@ def get_data(
 	default_filters: dict | None = None,
 ):
 	custom_view = False
+	page_length = min(cint(page_length) or 20, MAX_PAGE_LENGTH)
+	page_length_count = min(cint(page_length_count) or 20, MAX_PAGE_LENGTH)
 	filters = frappe._dict(filters)
 	rows = frappe.parse_json(rows or "[]")
 	columns = frappe.parse_json(columns or "[]")
@@ -426,7 +437,9 @@ def get_data(
 			if kc.get("delete"):
 				column_data = []
 			else:
-				page_length = kc.get("page_length", 20)
+				page_length = min(cint(kc.get("page_length")) or 20, MAX_KANBAN_COLUMN_PAGE_LENGTH)
+				if "page_length" in kc:
+					kc["page_length"] = page_length
 
 				if order:
 					column_data = get_records_based_on_order(
@@ -665,6 +678,7 @@ def get_fields(doctype: str, allow_all_fieldtypes: bool = False):
 	not_allowed_fieldtypes = [*list(frappe.model.no_value_fields), "Read Only"]
 	if allow_all_fieldtypes:
 		not_allowed_fieldtypes = []
+	frappe.has_permission(doctype, "read", throw=True)
 	fields = frappe.get_meta(doctype).fields
 
 	_fields = []
@@ -709,6 +723,35 @@ def getCounts(d, doctype):
 	return d
 
 
+# Linked-doc titles are read per reference doctype in one permission-aware
+# list query, not one get_doc + has_permission per row. Special cases keep the
+# titles the modal has always shown.
+_LINKED_DOC_TITLE_FIELDS = {
+	"CRM Call Log": ["from", "to"],
+	"CRM Deal": ["organization"],
+	"CRM Notification": ["message"],
+}
+
+
+def _linked_doc_title_fields(doctype: str) -> list[str]:
+	if doctype in _LINKED_DOC_TITLE_FIELDS:
+		return _LINKED_DOC_TITLE_FIELDS[doctype]
+	meta = frappe.get_meta(doctype)
+	for fieldname in ("title", meta.title_field):
+		if fieldname and fieldname != "name" and meta.has_field(fieldname):
+			return [fieldname]
+	return []
+
+
+def _linked_doc_title(doctype: str, row: dict) -> str:
+	if doctype == "CRM Call Log":
+		return f"Call from {row.get('from')} to {row.get('to')}"
+	for fieldname in _linked_doc_title_fields(doctype):
+		if row.get(fieldname):
+			return row[fieldname]
+	return row["name"]
+
+
 @frappe.whitelist()
 def get_linked_docs_of_document(doctype: str, docname: str):
 	try:
@@ -723,33 +766,32 @@ def get_linked_docs_of_document(doctype: str, docname: str):
 	linked_docs.extend(dynamic_linked_docs)
 	linked_docs = list({doc["reference_docname"]: doc for doc in linked_docs}.values())
 
-	docs_data = []
+	names_by_doctype: dict[str, list[str]] = {}
 	for doc in linked_docs:
 		if not doc.get("reference_doctype") or not doc.get("reference_docname"):
 			continue
+		names_by_doctype.setdefault(doc["reference_doctype"], []).append(doc["reference_docname"])
 
-		try:
-			data = frappe.get_doc(doc["reference_doctype"], doc["reference_docname"])
-		except (frappe.DoesNotExistError, frappe.ValidationError):
+	# One permission-aware list per reference doctype: rows the user cannot
+	# read, and rows that no longer exist, simply do not come back.
+	rows_by_key: dict[tuple[str, str], dict] = {}
+	for reference_doctype, names in names_by_doctype.items():
+		if not frappe.db.exists("DocType", reference_doctype):
 			continue
+		fields = ["name", *_linked_doc_title_fields(reference_doctype)]
+		for row in frappe.get_list(reference_doctype, filters={"name": ("in", names)}, fields=fields):
+			rows_by_key[(reference_doctype, row["name"])] = row
 
-		if not frappe.has_permission(data.doctype, "read", doc=data):
+	docs_data = []
+	for doc in linked_docs:
+		row = rows_by_key.get((doc.get("reference_doctype"), doc.get("reference_docname")))
+		if row is None:
 			continue
-
-		title = data.get("title")
-		if data.doctype == "CRM Call Log":
-			title = f"Call from {data.get('from')} to {data.get('to')}"
-
-		if data.doctype == "CRM Deal":
-			title = data.get("organization")
-
-		if data.doctype == "CRM Notification":
-			title = data.get("message")
 
 		docs_data.append(
 			{
-				"doc": data.doctype,
-				"title": title or data.get("name"),
+				"doc": doc["reference_doctype"],
+				"title": _linked_doc_title(doc["reference_doctype"], row),
 				"reference_docname": doc["reference_docname"],
 				"reference_doctype": doc["reference_doctype"],
 			}
@@ -844,20 +886,10 @@ def remove_linked_doc_reference(items: str | list, remove_contact: bool = False,
 	return {"unlinked": unlinked, "skipped": skipped}
 
 
-@frappe.whitelist()
-def delete_bulk_docs(doctype: str, items: str | list, delete_linked: bool = False):
-	from frappe.desk.reportview import delete_bulk
+BULK_DELETE_LIMIT = 500
 
-	if not doctype:
-		frappe.throw(_("Doctype is required"))
 
-	if not items:
-		frappe.throw(_("Items are required"))
-
-	items = frappe.parse_json(items)
-	if not isinstance(items, list):
-		frappe.throw(_("Items must be a list"))
-
+def _unlink_linked_docs(doctype: str, items: list, delete_linked: bool = False):
 	for doc in items:
 		try:
 			if not frappe.db.exists(doctype, doc):
@@ -882,13 +914,50 @@ def delete_bulk_docs(doctype: str, items: str | list, delete_linked: bool = Fals
 		except Exception as e:
 			frappe.log_error(f"Error processing linked docs for {doctype} {doc}: {e!s}", "Bulk Delete Error")
 
-	# Over ten, frappe does the delete in a worker. Saying "success" for that was
-	# the same word used for "these are gone", so a rep watched a list reload with
-	# every record still on it and no reason given. `queued` lets the caller say
+
+def delete_bulk_docs_job(doctype: str, items: list, delete_linked: bool = False):
+	"""The background half of delete_bulk_docs: unlink, then delete, as the enqueuing user."""
+	from frappe.desk.reportview import delete_bulk
+
+	_unlink_linked_docs(doctype, items, delete_linked)
+	delete_bulk(doctype, items)
+
+
+@frappe.whitelist()
+def delete_bulk_docs(doctype: str, items: str | list, delete_linked: bool = False):
+	from frappe.desk.reportview import delete_bulk
+
+	if not doctype:
+		frappe.throw(_("Doctype is required"))
+
+	if not items:
+		frappe.throw(_("Items are required"))
+
+	items = frappe.parse_json(items)
+	if not isinstance(items, list):
+		frappe.throw(_("Items must be a list"))
+
+	if len(items) > BULK_DELETE_LIMIT:
+		frappe.throw(
+			_("You can delete at most {0} records at once; {1} were selected.").format(
+				BULK_DELETE_LIMIT, len(items)
+			)
+		)
+
+	# Over ten, the unlinking and the delete both happen in a worker, so the
+	# request path only enqueues. Saying "success" for that was the same word
+	# used for "these are gone", so a rep watched a list reload with every
+	# record still on it and no reason given. `queued` lets the caller say
 	# "deleting in the background" instead of implying it is already done.
 	if len(items) > 10:
-		frappe.enqueue("frappe.desk.reportview.delete_bulk", doctype=doctype, items=items)
+		frappe.enqueue(
+			"crm.api.doc.delete_bulk_docs_job",
+			doctype=doctype,
+			items=items,
+			delete_linked=delete_linked,
+		)
 		return {"queued": True, "count": len(items)}
 
+	_unlink_linked_docs(doctype, items, delete_linked)
 	delete_bulk(doctype, items)
 	return {"queued": False, "count": len(items)}

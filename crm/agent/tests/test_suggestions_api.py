@@ -156,6 +156,18 @@ class SuggestionApiTest(IntegrationTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			get_dismissal_stats(user=OWNER)
 
+	def test_an_in_tree_manager_cannot_read_dismissals_outside_their_subtree(self):
+		"""A flat "is a manager" test let any Sales Manager read every rep's
+		dismissals; the check is now the same subtree that scopes the inbox."""
+		manager = "suggestion-manager@crmtest.test"
+		make_sales_user(manager, "Suggestion Manager")
+		frappe.get_doc("User", manager).add_roles("Sales Manager")
+		self.make_hierarchy(manager, OWNER)
+		frappe.set_user(manager)
+		self.assertEqual(get_dismissal_stats(user=OWNER), [])
+		with self.assertRaises(frappe.PermissionError):
+			get_dismissal_stats(user=INTRUDER)
+
 	def test_the_open_count_is_scoped_like_the_list(self):
 		make_suggestion(OWNER, self.deal)
 		make_suggestion(INTRUDER, self.deal, title="Someone else's")

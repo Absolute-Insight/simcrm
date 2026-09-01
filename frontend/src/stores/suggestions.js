@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { call, createResource, toast } from 'frappe-ui'
 import { neverLoaded } from '@/utils/resourceState'
 import { quiet } from '@/utils/quiet'
+import { sanitizeHTML } from '@/utils'
 import { computed, reactive, ref } from 'vue'
 import { formatCompactNumber } from '@/utils/numberFormat.js'
 import { renderFieldLayoutDialog } from '@/utils/renderFieldLayoutDialog'
@@ -305,7 +306,7 @@ export const suggestionsStore = defineStore('crm-suggestions', () => {
       defaults: {
         recipients: payload.recipients || '',
         subject: draft?.subject || payload.title || suggestion.title,
-        content: draft?.body || '',
+        content: sanitizeHTML(draft?.body || ''),
       },
       submitLabel: __('Send email'),
       cancelLabel: __('Cancel'),

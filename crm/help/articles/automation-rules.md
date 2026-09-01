@@ -1,12 +1,33 @@
 ---
 title: Automation rules
-category: Proactive selling
-order: 4
+category: AI & automation
+order: 6
 ---
 
 Automation rules are deterministic if-this-then-that rules an admin defines in
 **Settings → Automation Rules**. They run on record changes and never depend
 on the model tier — a rule fires the same way every time, model on or off.
+
+## What it does for you
+
+Turns a policy you would otherwise have to remember into something that
+happens by itself: a task appears, or a suggestion lands in the owner's inbox,
+the moment a record is created or changes status and your condition holds.
+
+## When it runs
+
+On the record change itself — the instant a lead or deal is created or its
+status changes — not on a schedule. Rules fire whether or not the model is
+enabled.
+
+## What it never does
+
+- It never calls a model. A rule is plain logic over the record's own fields.
+- It never edits the record that triggered it, sends email or changes
+  settings. Its only actions are creating a task or raising a suggestion,
+  which a person then acts on.
+- It never guesses. A rule whose condition is false, or whose **To Status**
+  does not match exactly, does nothing.
 
 ## What a rule is
 

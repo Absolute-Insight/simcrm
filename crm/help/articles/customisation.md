@@ -1,6 +1,6 @@
 ---
 title: Customising Vectora
-category: Assistant & customisation
+category: Customisation
 order: 3
 ---
 

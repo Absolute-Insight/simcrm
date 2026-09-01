@@ -1,6 +1,6 @@
 ---
 title: Form scripts
-category: Assistant & customisation
+category: Customisation
 order: 4
 ---
 

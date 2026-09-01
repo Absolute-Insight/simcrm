@@ -287,3 +287,82 @@ class QuotaPermissionTest(IntegrationTestCase):
 		# get_list, not get_all: get_all deliberately bypasses permissions
 		visible = frappe.get_list("CRM Quota", pluck="user")
 		self.assertIn(OTHER, visible)
+
+
+class QuotaScopeTest(IntegrationTestCase):
+	"""A manager inside the sales hierarchy administers their subtree, not the site.
+
+	Hierarchy used here:
+	  quota-manager@crmtest.test  (Sales Manager, root)
+	  └── quota-rep@crmtest.test
+	  quota-other@crmtest.test    (not in the tree)
+	"""
+
+	MANAGER = "quota-manager@crmtest.test"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		ensure_user(USER, "Quota Rep")
+		ensure_user(OTHER, "Quota Other")
+		ensure_user(self.MANAGER, "Quota Manager")
+		frappe.get_doc("User", self.MANAGER).add_roles("Sales Manager")
+		frappe.db.delete("CRM Quota", {"user": ("in", [USER, OTHER, self.MANAGER])})
+		self.addCleanup(frappe.db.delete, "CRM Quota", {"user": ("in", [USER, OTHER, self.MANAGER])})
+		self.addCleanup(frappe.set_user, "Administrator")
+		self.make_quota(OTHER, "2026-03-01", 70_000)
+		self.make_hierarchy(self.MANAGER, USER)
+
+	def make_quota(self, user: str, period_start: str, amount: float):
+		frappe.get_doc(
+			{"doctype": "CRM Quota", "user": user, "period_start": period_start, "amount": amount}
+		).insert(ignore_permissions=True)
+
+	def make_hierarchy(self, manager: str, *reports: str):
+		"""A one-level sales tree, the same structure that scopes leads and deals."""
+		was_enabled = frappe.db.get_single_value("FCRM Settings", "enable_sales_hierarchy")
+		self.addCleanup(
+			frappe.db.set_single_value, "FCRM Settings", "enable_sales_hierarchy", was_enabled or 0
+		)
+		self.addCleanup(frappe.cache.delete_value, "crm_sales_hierarchy_subtree")
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+		frappe.db.delete("CRM Sales Hierarchy", {"user": ("in", [manager, *reports, OTHER])})
+		self.addCleanup(frappe.db.delete, "CRM Sales Hierarchy", {"user": ("in", [manager, *reports])})
+		top = frappe.get_doc(
+			{"doctype": "CRM Sales Hierarchy", "user": manager, "full_name": "Quota Manager"}
+		).insert(ignore_permissions=True)
+		for report in reports:
+			frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": report, "reports_to": top.name}).insert(
+				ignore_permissions=True
+			)
+		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
+
+	def test_an_in_tree_manager_cannot_set_a_target_outside_their_subtree(self):
+		frappe.set_user(self.MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			quota_api.set_quota(OTHER, "2026-03-01", 99_000)
+		self.assertEqual(
+			frappe.db.get_value("CRM Quota", {"user": OTHER, "period_start": "2026-03-01"}, "amount"),
+			70_000,
+		)
+
+	def test_an_in_tree_manager_cannot_copy_a_target_outside_their_subtree(self):
+		frappe.set_user(self.MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			quota_api.copy_quota_forward(OTHER, "2026-03-01", 3)
+		self.assertEqual(frappe.db.count("CRM Quota", {"user": OTHER}), 1)
+
+	def test_an_in_tree_manager_sets_and_lists_their_own_subtree(self):
+		frappe.set_user(self.MANAGER)
+		self.assertEqual(quota_api.set_quota(USER, "2026-03-01", 20_000), {"amount": 20_000})
+		rows = {r["user"]: r for r in quota_api.get_quota_grid(2026)["rows"]}
+		self.assertIn(USER, rows)
+		self.assertEqual(rows[USER]["quota"]["2026-03-01"], 20_000)
+		self.assertNotIn(OTHER, rows)
+
+	def test_a_manager_outside_the_tree_still_sees_everyone(self):
+		frappe.db.delete("CRM Sales Hierarchy", {"user": self.MANAGER})
+		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
+		frappe.set_user(self.MANAGER)
+		self.assertIn(OTHER, [r["user"] for r in quota_api.get_quota_grid(2026)["rows"]])
+		self.assertEqual(quota_api.set_quota(OTHER, "2026-04-01", 5_000), {"amount": 5_000})

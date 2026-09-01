@@ -19,6 +19,9 @@ def sync_leads_from_all_enabled_sources(frequency: str | None = None) -> None:
 		try:
 			lead_sync_source._sync_leads()
 		except Exception as _:
+			# One source's half-written leads must not ride along with -- or
+			# abort -- the next source's transaction.
+			frappe.db.rollback()
 			frappe.log_error(f"Error syncing leads for source {source}")
 
 

@@ -33,7 +33,8 @@ CATEGORY_ORDER = [
 	"Working with records",
 	"Proactive selling",
 	"Analytics & reporting",
-	"Assistant & customisation",
+	"AI & automation",
+	"Customisation",
 ]
 
 FRONTMATTER_DELIMITER = "---"

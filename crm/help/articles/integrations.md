@@ -1,6 +1,6 @@
 ---
 title: Integrations
-category: Getting started
+category: Customisation
 order: 5
 ---
 

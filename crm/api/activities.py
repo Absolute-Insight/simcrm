@@ -118,6 +118,7 @@ def get_deal_activities(name: str):
 		}
 		activities.append(activity)
 
+	comment_attachments = get_attachments_by_name("Comment", [c.name for c in docinfo.comments])
 	for comment in docinfo.comments:
 		activity = {
 			"name": comment.name,
@@ -125,12 +126,14 @@ def get_deal_activities(name: str):
 			"creation": comment.creation,
 			"owner": comment.owner,
 			"content": comment.content,
-			"attachments": get_attachments("Comment", comment.name),
+			"attachments": comment_attachments.get(comment.name, []),
 			"is_lead": False,
 		}
 		activities.append(activity)
 
-	for communication in docinfo.communications + docinfo.automated_messages:
+	communications = docinfo.communications + docinfo.automated_messages
+	communication_attachments = get_attachments_by_name("Communication", [c.name for c in communications])
+	for communication in communications:
 		activity = {
 			"activity_type": "communication",
 			"communication_type": communication.communication_type,
@@ -144,7 +147,7 @@ def get_deal_activities(name: str):
 				"recipients": communication.recipients,
 				"cc": communication.cc,
 				"bcc": communication.bcc,
-				"attachments": get_attachments("Communication", communication.name),
+				"attachments": communication_attachments.get(communication.name, []),
 				"read_by_recipient": communication.read_by_recipient,
 				"delivery_status": communication.delivery_status,
 			},
@@ -163,9 +166,10 @@ def get_deal_activities(name: str):
 		}
 		activities.append(activity)
 
-	calls = calls + get_linked_calls(name).get("calls", [])
-	notes = notes + get_linked_notes(name) + get_linked_calls(name).get("notes", [])
-	tasks = tasks + get_linked_tasks(name) + get_linked_calls(name).get("tasks", [])
+	linked_calls = get_linked_calls(name)
+	calls = calls + linked_calls.get("calls", [])
+	notes = notes + get_linked_notes(name) + linked_calls.get("notes", [])
+	tasks = tasks + get_linked_tasks(name) + linked_calls.get("tasks", [])
 	attachments = attachments + get_attachments("CRM Deal", name)
 
 	activities.sort(key=lambda x: x["creation"], reverse=True)
@@ -259,6 +263,7 @@ def get_lead_activities(name: str):
 		}
 		activities.append(activity)
 
+	comment_attachments = get_attachments_by_name("Comment", [c.name for c in docinfo.comments])
 	for comment in docinfo.comments:
 		activity = {
 			"name": comment.name,
@@ -266,12 +271,14 @@ def get_lead_activities(name: str):
 			"creation": comment.creation,
 			"owner": comment.owner,
 			"content": comment.content,
-			"attachments": get_attachments("Comment", comment.name),
+			"attachments": comment_attachments.get(comment.name, []),
 			"is_lead": True,
 		}
 		activities.append(activity)
 
-	for communication in docinfo.communications + docinfo.automated_messages:
+	communications = docinfo.communications + docinfo.automated_messages
+	communication_attachments = get_attachments_by_name("Communication", [c.name for c in communications])
+	for communication in communications:
 		activity = {
 			"activity_type": "communication",
 			"communication_type": communication.communication_type,
@@ -285,7 +292,7 @@ def get_lead_activities(name: str):
 				"recipients": communication.recipients,
 				"cc": communication.cc,
 				"bcc": communication.bcc,
-				"attachments": get_attachments("Communication", communication.name),
+				"attachments": communication_attachments.get(communication.name, []),
 				"read_by_recipient": communication.read_by_recipient,
 				"delivery_status": communication.delivery_status,
 			},
@@ -304,9 +311,10 @@ def get_lead_activities(name: str):
 		}
 		activities.append(activity)
 
-	calls = get_linked_calls(name).get("calls", [])
-	notes = get_linked_notes(name) + get_linked_calls(name).get("notes", [])
-	tasks = get_linked_tasks(name) + get_linked_calls(name).get("tasks", [])
+	linked_calls = get_linked_calls(name)
+	calls = linked_calls.get("calls", [])
+	notes = get_linked_notes(name) + linked_calls.get("notes", [])
+	tasks = get_linked_tasks(name) + linked_calls.get("tasks", [])
 	attachments = get_attachments("CRM Lead", name)
 
 	activities.sort(key=lambda x: x["creation"], reverse=True)
@@ -315,25 +323,49 @@ def get_lead_activities(name: str):
 	return activities, calls, notes, tasks, attachments
 
 
+ATTACHMENT_FIELDS = [
+	"name",
+	"file_name",
+	"file_type",
+	"file_url",
+	"file_size",
+	"is_private",
+	"modified",
+	"creation",
+	"owner",
+]
+
+
 def get_attachments(doctype: str, name: str):
 	return (
 		frappe.db.get_all(
 			"File",
 			filters={"attached_to_doctype": doctype, "attached_to_name": name},
-			fields=[
-				"name",
-				"file_name",
-				"file_type",
-				"file_url",
-				"file_size",
-				"is_private",
-				"modified",
-				"creation",
-				"owner",
-			],
+			fields=ATTACHMENT_FIELDS,
 		)
 		or []
 	)
+
+
+def get_attachments_by_name(doctype: str, names: list[str]) -> dict[str, list]:
+	"""Attachments for many records of one doctype in a single query, keyed by record name.
+
+	Each list has the same rows, fields and order `get_attachments` returns for
+	that record; a record with no files is simply absent.
+	"""
+	if not names:
+		return {}
+
+	grouped: dict[str, list] = {}
+	for row in frappe.db.get_all(
+		"File",
+		filters={"attached_to_doctype": doctype, "attached_to_name": ("in", names)},
+		fields=[*ATTACHMENT_FIELDS, "attached_to_name"],
+		order_by="modified desc",
+	):
+		attached_to = row.pop("attached_to_name")
+		grouped.setdefault(attached_to, []).append(row)
+	return grouped
 
 
 def handle_multiple_versions(versions: list):

@@ -1714,7 +1714,7 @@ def get_base_currency_symbol():
 	"""
 	Get the base currency symbol from the system settings.
 	"""
-	return frappe.db.get_value("Currency", get_base_currency(), "symbol") or ""
+	return frappe.get_cached_value("Currency", get_base_currency(), "symbol") or ""
 
 
 def get_deal_status_change_counts(

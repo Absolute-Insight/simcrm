@@ -38,6 +38,11 @@ DEFAULT_SETTINGS = {
 	# "unavailable" for what is really a budget too small to finish the object.
 	"max_tokens": 2048,
 	"daily_call_budget": 500,
+	# What the chat surfaces may read beyond their own source. Both off by
+	# default: the product catalogue is a second thing the Assistant can say,
+	# and the Analyst reading the site's figures is a grant an admin makes.
+	"assistant_reads_products": 0,
+	"analyst_enabled": 0,
 }
 
 # The deterministic tier's thresholds. Kept apart from DEFAULT_SETTINGS because they
@@ -79,6 +84,8 @@ class AgentConfig:
 	timeout: int
 	max_tokens: int
 	daily_call_budget: int = DEFAULT_SETTINGS["daily_call_budget"]
+	assistant_reads_products: bool = False
+	analyst_enabled: bool = False
 	api_key: str = ""
 
 	@classmethod
@@ -104,6 +111,8 @@ class AgentConfig:
 			timeout=to_int("timeout", DEFAULT_SETTINGS["timeout"]),
 			max_tokens=to_int("max_tokens", DEFAULT_SETTINGS["max_tokens"]),
 			daily_call_budget=to_int("daily_call_budget", DEFAULT_SETTINGS["daily_call_budget"]),
+			assistant_reads_products=bool(to_int("assistant_reads_products", 0)),
+			analyst_enabled=bool(to_int("analyst_enabled", 0)),
 			api_key=str(merged.get("api_key") or ""),
 		)
 

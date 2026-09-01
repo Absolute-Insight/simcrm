@@ -201,7 +201,7 @@ const list = defineModel({ type: Object })
 const { capture } = useTelemetry()
 
 function openFileInAnotherTab(url) {
-  window.open(url, '_blank')
+  window.open(url, '_blank', 'noopener')
 }
 
 function formatWhatsAppMessage(message) {

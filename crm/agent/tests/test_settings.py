@@ -42,7 +42,7 @@ class AgentSettingsTest(IntegrationTestCase):
 		two copies in step: assert every field agrees, or the flag could ship on in one
 		place and off in the other."""
 		meta = frappe.get_meta("CRM Agent Settings")
-		self.assertEqual(len(DEFAULT_SETTINGS), 6)
+		self.assertEqual(len(DEFAULT_SETTINGS), 8)
 		self.assertEqual(len(SIGNAL_DEFAULTS), 6)
 		for fieldname, default in {**DEFAULT_SETTINGS, **SIGNAL_DEFAULTS}.items():
 			field = meta.get_field(fieldname)

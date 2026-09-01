@@ -59,6 +59,7 @@ import { PhNetwork as LucideNetwork } from '@phosphor-icons/vue'
 import { PhTarget as LucideTarget } from '@phosphor-icons/vue'
 import { PhFlowArrow as LucideWorkflow } from '@phosphor-icons/vue'
 import { PhSparkle as LucideSparkles } from '@phosphor-icons/vue'
+import { PhBookOpenText as LucideBookOpenText } from '@phosphor-icons/vue'
 // Phosphor has no envelope+checkmark combo glyph, but Report Digests is
 // just "email, periodically" — the checkmark was decorative, not load-
 // bearing meaning — so the plain envelope family already used for every
@@ -83,6 +84,7 @@ import Hierarchy from '@/components/Settings/Hierarchy/Hierarchy.vue'
 import Quotas from '@/components/Settings/Quotas.vue'
 import AutomationRules from '@/components/Settings/AutomationRules.vue'
 import AssistantSettings from '@/components/Settings/AssistantSettings.vue'
+import KnowledgeSettings from '@/components/Settings/KnowledgeSettings.vue'
 import ReportDigests from '@/components/Settings/ReportDigests.vue'
 import InviteUserPage from '@/components/Settings/InviteUserPage.vue'
 import ProfilePage from '@/components/Settings/Profile/ProfilePage.vue'
@@ -245,6 +247,14 @@ const tabs = computed(() => {
           // CRM Agent Settings grants read and write to System Manager only,
           // so showing this to a Sales Manager would be a pane that errors on
           // load. isManager() includes them; isAdmin() is the right gate.
+          condition: () => isAdmin(),
+        },
+        {
+          label: __('Knowledge'),
+          icon: markRaw(h(LucideBookOpenText)),
+          component: markRaw(KnowledgeSettings),
+          // Writes are System Manager only; reads are open, but a page that
+          // is all disabled controls is not worth showing a Sales Manager.
           condition: () => isAdmin(),
         },
         {

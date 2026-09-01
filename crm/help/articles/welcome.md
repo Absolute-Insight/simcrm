@@ -17,7 +17,7 @@ attention and why*, not with an empty list.
 | **Planner** | Your week as concrete activities. Vectora can propose the week from your suggestion queue; a daily job then matches each planned item against what actually happened. |
 | **Leads, Deals, Contacts, Organizations** | The records themselves, in list, kanban and group-by views you can save and share. |
 | **Reports** | Built-in reports over the same numbers the dashboard shows, with CSV export, print view, and scheduled email digests. |
-| **Assistant** | An in-app helper you can chat with about how Vectora works, plus thread summaries and reply drafts on records (when your administrator enables the model tier). |
+| **Mentor, Assistant and Analyst** | Three places to ask a question in plain language, when your administrator enables the model: the Mentor answers how Vectora works, the Assistant answers what your company sells, the Analyst (administrators only) answers how the business is doing from Vectora's own figures. |
 
 ## The ideas behind it
 
@@ -42,3 +42,5 @@ a feature this build does not have.
   you administer the site, or jump to **Leads** and **Deals** to learn the
   day-to-day flow.
 - Curious what the badge on the sidebar means? See **The suggestions inbox**.
+- Wondering what runs on its own, and which of it uses a model? See **What
+  Vectora does for you automatically**.

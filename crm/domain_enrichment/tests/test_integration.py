@@ -174,6 +174,21 @@ class ApiPermissionTest(IntegrationTestCase):
 		for fn in (api.enrich, api.retry, api.enrich_preview):
 			self.assertTrue(hasattr(fn, "__wrapped__"), fn.__name__)
 
+	def test_enrich_routes_are_rate_limited_per_user_too(self):
+		"""``@rate_limit`` keys on the IP; the user-keyed layer refuses before any
+		permission check or fetch, and covers all three entry points."""
+		from unittest import mock
+
+		from crm.domain_enrichment import api
+
+		with mock.patch.object(api, "user_rate_limited", return_value=True):
+			with self.assertRaises(frappe.ValidationError):
+				api.enrich("CRM Organization", "does-not-matter")
+			with self.assertRaises(frappe.ValidationError):
+				api.retry("does-not-matter")
+			with self.assertRaises(frappe.ValidationError):
+				api.enrich_preview("https://acme.example")
+
 
 class CrossRecordCopyTest(IntegrationTestCase):
 	def setUp(self):

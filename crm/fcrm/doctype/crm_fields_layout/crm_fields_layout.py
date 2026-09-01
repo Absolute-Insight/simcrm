@@ -28,6 +28,7 @@ class CRMFieldsLayout(Document):
 
 @frappe.whitelist()
 def get_fields_layout(doctype: str, type: str, parent_doctype: str | None = None):
+	frappe.has_permission(doctype, "read", throw=True)
 	tabs = []
 	layout = None
 
@@ -111,6 +112,7 @@ def get_fields_layout(doctype: str, type: str, parent_doctype: str | None = None
 
 @frappe.whitelist()
 def get_sidepanel_sections(doctype: str):
+	frappe.has_permission(doctype, "read", throw=True)
 	if not frappe.db.exists("CRM Fields Layout", {"dt": doctype, "type": "Side Panel"}):
 		return []
 	layout = frappe.get_doc("CRM Fields Layout", {"dt": doctype, "type": "Side Panel"}).layout

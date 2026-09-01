@@ -41,7 +41,7 @@ You need a manager or administrator role for most of it.
 - **Settings → Automation Rules** — deterministic if-this-then-that rules.
 - **Settings → Assistant** — enable the optional model tier (thread summaries,
   reply drafts, the chat assistant) by pointing it at your own inference
-  endpoint. See **The Vectora assistant** for what this does and does not do.
+  endpoint. See **What Vectora does for you automatically** for what this does and does not do.
 
 ## Branding
 

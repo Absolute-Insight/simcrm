@@ -186,6 +186,22 @@ class TestGetExchangeRate(FrappeTestCase):
 		with self.assertRaises(frappe.exceptions.ValidationError):
 			get_exchange_rate("USD", "XYZ")
 
+	@patch("crm.api.exchange_rate.user_rate_limited", return_value=True)
+	@patch("crm.api.exchange_rate._fetch_exchange_rate")
+	def test_a_rate_limited_user_gets_no_fetch(self, mock_fetch, _limited):
+		"""The user-keyed limit sits between the cache and the providers: a cached
+		pair still answers, an uncached one refuses before reaching the network."""
+		with self.assertRaises(frappe.exceptions.ValidationError):
+			get_exchange_rate("USD", "INR")
+		mock_fetch.assert_not_called()
+
+	@patch("crm.api.exchange_rate.user_rate_limited", return_value=True)
+	@patch("crm.api.exchange_rate._fetch_exchange_rate")
+	def test_a_cached_rate_is_served_even_when_rate_limited(self, mock_fetch, _limited):
+		frappe.cache().set_value(f"exchange_rate_USD_INR_{frappe.utils.today()}", 83.5)
+		self.assertEqual(get_exchange_rate("USD", "INR"), 83.5)
+		mock_fetch.assert_not_called()
+
 
 class TestDealSurvivesAnUnreachableProvider(FrappeTestCase):
 	"""A deal must save when the FX providers are down.

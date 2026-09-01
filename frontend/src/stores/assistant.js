@@ -1,92 +1,35 @@
 /**
- * The global assistant panel's state: a session-local chat over
- * `crm.agent.api.ask_assistant`.
+ * The sidebar Assistant panel's state: a session-local chat over
+ * `crm.agent.api.ask_assistant`, which answers from the knowledge base an
+ * administrator curates in Settings → Knowledge.
  *
- * The transcript lives in memory only — the assistant answers questions about
- * the product, and a manual you can re-ask beats a chat log that needs a
- * doctype. Module-level refs, the same shape the other shell panels use.
- *
- * Model output discipline: answers are rendered as plain text, never HTML,
- * and `relatedArticles` only ever contains names the server has already
- * checked against the real article catalogue.
+ * One instance of the shared chat store (see `agentChat.js`). Answers are
+ * rendered as plain text, never HTML, and `sources` only ever contains
+ * articles the server actually loaded.
  */
-import { call } from 'frappe-ui'
+import { createChatStore } from '@/stores/agentChat'
 import { plainTextAnswer } from '@/utils/assistantText'
-import { ref } from 'vue'
 
-export const assistantVisible = ref(false)
+const store = createChatStore({
+  method: 'crm.agent.api.ask_assistant',
+  mapResult: (result) => ({
+    content: plainTextAnswer(result.answer),
+    sources: result.sources || [],
+  }),
+})
 
-/** `{ role: 'user'|'assistant', content: string, relatedArticles?: string[] }` */
-export const assistantMessages = ref([])
+export { HISTORY_TURNS_SENT } from '@/stores/agentChat'
 
-export const assistantAsking = ref(false)
+export const assistantVisible = store.visible
 
-/**
- * Why the last question got no answer: '' | 'disabled' | 'unavailable'.
- * Cleared on the next attempt. 'disabled' is configuration (the tier is off);
- * 'unavailable' is weather (endpoint down, budget spent) and worth retrying.
- */
-export const assistantFailure = ref('')
+/** `{ role: 'user'|'assistant', content: string, sources?: [{name,title}] }` */
+export const assistantMessages = store.messages
 
-export function toggleAssistant() {
-  assistantVisible.value = !assistantVisible.value
-}
+export const assistantAsking = store.asking
+export const assistantFailure = store.failure
+export const assistantFailureReason = store.failureReason
 
-export function clearAssistant() {
-  assistantMessages.value = []
-  assistantFailure.value = ''
-}
-
-/** How many prior turns accompany a question. The server trims again anyway. */
-export const HISTORY_TURNS_SENT = 8
-
-/**
- * Re-send the question that got no answer. Only meaningful when the
- * transcript ends with an unanswered user turn — the failed states render
- * the button, so the guard is belt and braces.
- */
-export function retryLastQuestion() {
-  const last = assistantMessages.value[assistantMessages.value.length - 1]
-  if (!last || last.role !== 'user' || assistantAsking.value) return
-  assistantMessages.value.pop()
-  return askAssistant(last.content)
-}
-
-export async function askAssistant(question) {
-  const trimmed = (question || '').trim()
-  if (!trimmed || assistantAsking.value) return
-
-  // History is captured before the new question is appended: the question
-  // travels in its own parameter, and sending it twice reads to the model as
-  // the user repeating themselves.
-  const history = assistantMessages.value
-    .slice(-HISTORY_TURNS_SENT)
-    .map(({ role, content }) => ({ role, content }))
-
-  assistantMessages.value.push({ role: 'user', content: trimmed })
-  assistantAsking.value = true
-  assistantFailure.value = ''
-
-  try {
-    const result = await call('crm.agent.api.ask_assistant', {
-      question: trimmed,
-      history,
-    })
-    if (result?.status === 'ok') {
-      assistantMessages.value.push({
-        role: 'assistant',
-        content: plainTextAnswer(result.answer),
-        relatedArticles: result.related_articles || [],
-      })
-    } else {
-      assistantFailure.value =
-        result?.status === 'disabled' ? 'disabled' : 'unavailable'
-    }
-  } catch {
-    // A thrown call (network, rate limit) is the same story as a degraded
-    // status for the person reading the panel: no answer, try again.
-    assistantFailure.value = 'unavailable'
-  } finally {
-    assistantAsking.value = false
-  }
-}
+export const toggleAssistant = store.toggle
+export const clearAssistant = store.clear
+export const askAssistant = store.ask
+export const retryLastQuestion = store.retry

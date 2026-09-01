@@ -76,8 +76,11 @@ they run as evaluated strings in the browser.
 | `frontend/src/pages/Dashboard.vue` | Role-aware dashboard (rep home / manager view) |
 | `frontend/src/components/Settings/Quotas.vue` | Sales targets: rep × month grid |
 | `frontend/src/components/Settings/AutomationRules.vue` | Automation rule admin |
-| `frontend/src/components/Modals/HelpCenterModal.vue` | In-app help center (articles from `crm/help/`) |
-| `frontend/src/components/Assistant.vue` | Global assistant chat panel (`crm.agent.api.ask_assistant`) |
+| `frontend/src/components/Modals/HelpCenterModal.vue` | In-app help center (articles from `crm/help/`) with the Mentor box (`crm.agent.api.ask_mentor`) |
+| `frontend/src/components/Assistant.vue` | Sidebar assistant panel over the admin-curated knowledge base (`crm.agent.api.ask_assistant`) |
+| `frontend/src/pages/Analyst.vue` | Admin-only analyst page: model narrative beside computed tables (`crm.agent.api.ask_analyst`) |
+| `frontend/src/components/AgentChat.vue` | The transcript/input shared by the three chat surfaces; stores come from `stores/agentChat.js` |
+| `frontend/src/components/Settings/KnowledgeSettings.vue` | Settings → Knowledge: what the Assistant may quote (`crm/api/knowledge.py`, `crm/knowledge/samples/`) |
 
 ### Design system
 | File | Role |

@@ -1,8 +1,8 @@
-# In-app help center & assistant chat
+# In-app help center & the Mentor
 
-> The manual ships with the app, and the assistant answers from the same
-> files. One knowledge source, two surfaces: edit an article and both change
-> in the same commit.
+> The manual ships with the app, and the Mentor answers from the same files.
+> One knowledge source, two surfaces: edit an article and both change in the
+> same commit.
 
 ## What the user sees
 
@@ -10,10 +10,18 @@
   category tree, client-side search (title hits ranked above body hits, with a
   snippet), and articles rendered in-app. Nothing is hosted elsewhere; it
   works offline and is versioned with the code it documents.
-- **Assistant** in the sidebar opens a slide-out chat panel (desktop shell,
-  same pattern as Suggestions). It answers questions about the product,
-  grounded on the help articles, and cites the ones it used as chips that
-  deep-link into the help center.
+- **Mentor** is a box above the search field in the help center. It answers
+  questions about the product, grounded on the help articles, and cites the
+  ones it used as chips that deep-link into the help center. Sending a
+  question switches the right pane to the transcript; a chip or a tree click
+  switches back and keeps it.
+- **Assistant** in the sidebar (the slide-out panel, same pattern as
+  Suggestions) is a different surface with a different knowledge source: the
+  admin-curated `CRM Knowledge Article` records from **Settings → Knowledge**,
+  optionally the product catalogue. **Analyst** is a third, admin-only page
+  over the metrics layer. Both are described in
+  `docs/superpowers/specs/2026-09-01-ai-surfaces-design.md`; the help center
+  article for each is under the **AI & automation** category.
 
 ## Content
 
@@ -27,12 +35,14 @@
 and the client searches locally; there is deliberately no per-article endpoint
 and no server-side search.
 
-## The assistant tier
+## The mentor tier
 
-`crm.agent.api.ask_assistant(question, history)` — the third model-tier
-endpoint, built on the same skeleton as `summarise_thread`/`draft_reply`:
-per-user rate limit, daily budget, `disabled`/`unavailable` degrade statuses,
-guided decoding into `AssistantAnswer`.
+`crm.agent.api.ask_mentor(question, history)` — the model-tier endpoint
+behind the help center box (it was `ask_assistant` until the Assistant moved
+to the knowledge base), built on the same skeleton as
+`summarise_thread`/`draft_reply`: per-user rate limit, daily budget,
+`disabled`/`unavailable` degrade statuses, guided decoding into
+`AssistantAnswer`.
 
 What makes this tier different from the thread tiers:
 
@@ -68,9 +78,9 @@ happy-dom, so sanitization lives at the component like every other HTML path.
 | `crm/help/articles/` | The manual, one markdown file per article |
 | `crm/api/help.py` | `get_articles` endpoint |
 | `crm/agent/knowledge.py` | Pure grounding: selection scoring + prompt building |
-| `crm/agent/api.py::ask_assistant` | The chat endpoint |
+| `crm/agent/api.py::ask_mentor` | The Mentor endpoint |
 | `frontend/src/stores/help.js` | Modal visibility, article deep-link, content resource |
-| `frontend/src/stores/assistant.js` | Panel state, transcript, ask/retry |
-| `frontend/src/components/Modals/HelpCenterModal.vue` | The help center dialog |
-| `frontend/src/components/Assistant.vue` | The chat panel |
+| `frontend/src/stores/mentor.js` | Mentor transcript, ask/retry |
+| `frontend/src/components/Modals/HelpCenterModal.vue` | The help center dialog, with the Mentor block |
+| `frontend/src/components/AgentChat.vue` | The shared transcript/input component the three surfaces render |
 | `frontend/src/utils/helpCenter.js` | Pure search/group/render helpers (unit-tested) |

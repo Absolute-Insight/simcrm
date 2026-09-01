@@ -137,8 +137,13 @@ def get_dismissal_stats(user: str | None = None):
 	so an administrator tuning ``CRM Agent Settings`` can see which threshold is
 	being rejected rather than guessing at it.
 	"""
+	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
+
 	user = user or frappe.session.user
-	if user != frappe.session.user and not _is_manager():
+	# the same subtree that scopes the inbox: an in-tree manager reads their
+	# team's dismissals, not every rep's on the site
+	users = visible_users()
+	if users is not None and user not in users:
 		frappe.throw(_("Only managers can read another user's dismissals."), frappe.PermissionError)
 
 	rows = frappe.get_all(

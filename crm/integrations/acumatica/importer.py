@@ -155,12 +155,18 @@ def run_backfill(modified_since: str | None = None) -> dict:
 	for entity, upsert, counter in _ENTITIES:
 		done_in_entity = 0
 		for rec in client.iter_all(entity, filter=filter_):
+			# One savepoint per record: a failing upsert can leave half a document
+			# written, and without the rollback that half rides along in the same
+			# transaction as every good record until the next commit -- or aborts
+			# the transaction outright, which took the whole page with it.
+			frappe.db.savepoint("acumatica_rec")
 			try:
 				if not v(rec, "NoteID"):
 					raise ValueError("record has no NoteID")
 				if upsert(rec) is not None:
 					counts[counter] += 1
 			except Exception as e:
+				frappe.db.rollback(save_point="acumatica_rec")
 				counts["issues"] += 1
 				try:
 					record_sync_issue(
