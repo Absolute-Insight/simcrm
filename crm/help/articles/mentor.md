@@ -4,7 +4,7 @@ category: AI & automation
 order: 2
 ---
 
-The Mentor is the box above the search field in this help center. Type a
+The Mentor is the sparkle next to the Help Center title. Click it and type a
 question about Vectora in your own words — "how does plan adherence get
 counted?", "where do I set targets?", "why did this deal get flagged?" — and
 it answers from these help articles, showing the ones it drew on as chips

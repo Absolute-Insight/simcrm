@@ -26,9 +26,9 @@ lists both kinds side by side, so you always know which one you are looking at.
 | **Currency rates** | Automatic rule | Converts deals in other currencies to the base currency at a fetched rate; each deal keeps the rate it was converted at | Every monetary figure on the dashboard and in reports |
 | **Thread summaries** | Uses a model | Condenses a record's email thread into a summary, suggested next steps and a sentiment | **Summarise thread** on a lead or deal |
 | **Reply drafts** | Uses a model | Proposes a reply to the latest inbound message and opens it in the compose window for you to edit | **Draft reply** on a lead or deal |
-| **The Mentor** | Uses a model | Answers "how does Vectora work?" from these help articles, and cites the ones it used | The box above the search field in this help center |
+| **The Mentor** | Uses a model | Answers "how does Vectora work?" from these help articles, and cites the ones it used | The sparkle next to the Help Center title |
 | **The Assistant** | Uses a model | Answers questions about your company's products, materials, standards and industries from a knowledge base your administrator curates | The sparkle **Assistant** entry in the sidebar |
-| **The Analyst** | Uses a model | Turns a plain-language question about the business into one of Vectora's own calculations, then writes a narrative over the figures | The **Analyst** page in the sidebar, administrators only |
+| **The Analyst** | Uses a model | Turns a plain-language question about the business into one of Vectora's own calculations, then writes a narrative over the figures | The **Analyst** AI agent in the sidebar, administrators only |
 
 ## What it does for you
 
