@@ -78,13 +78,17 @@ def check_app_permission():
 @frappe.whitelist(allow_guest=True)  # nosemgrep: guest-whitelisted-method
 @rate_limit(limit=10, seconds=60 * 60)
 def accept_invitation(key: str | None = None):
-	if not key:
-		frappe.throw(_("Invalid or expired key"))
-
-	result = frappe.db.get_all("CRM Invitation", filters={"key": key}, pluck="name")
+	# A guest follows this link from an email. Anything that throws here is
+	# rendered by frappe as "Server Error 417: Uncaught Exception", which tells
+	# the person nothing they can act on -- a cancelled invitation, an expired
+	# one, or a link pasted with a character missing all look like an outage.
+	# So the failure is a plain page with the one useful sentence instead.
+	result = frappe.db.get_all("CRM Invitation", filters={"key": key}, pluck="name") if key else []
 	if not result:
-		frappe.throw(_("Invalid or expired key"))
+		return _invitation_unavailable()
 	invitation = frappe.get_doc("CRM Invitation", result[0])
+	if invitation.status != "Pending":
+		return _invitation_unavailable()
 	is_new_user = invitation.accept()
 	invitation.reload()
 
@@ -101,6 +105,20 @@ def accept_invitation(key: str | None = None):
 		else:
 			frappe.local.login_manager.login_as(invitation.email)
 			frappe.local.response["location"] = "/crm"
+
+
+def _invitation_unavailable():
+	frappe.respond_as_web_page(
+		_("This invitation link is no longer valid"),
+		_(
+			"The invitation was cancelled, has expired, or has already been used. "
+			"Ask your administrator to send a new invitation."
+		),
+		http_status_code=410,
+		indicator_color="red",
+		primary_action="/login",
+		primary_label=_("Go to login"),
+	)
 
 
 @frappe.whitelist()
