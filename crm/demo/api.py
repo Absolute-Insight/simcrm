@@ -12,6 +12,7 @@ DEMO_TASKS_KEY = "crm_demo_tasks"
 DEMO_CALL_LOGS_KEY = "crm_demo_call_logs"
 DEMO_ACTIVITIES_KEY = "crm_demo_activities"
 DEMO_DEALS_KEY = "crm_demo_deals"
+DEMO_HISTORY_KEY = "crm_demo_history"
 
 
 def seed_demo_data_if_enabled(_args: dict | None = None):
@@ -58,6 +59,13 @@ def create_demo_data(_args: dict | None = None):
 	rebackdate_demo_leads(lead_names, demo_users)
 
 	deal_data = create_demo_deals(lead_names, demo_users)
+	# Two years of pipeline behind the hand-written records, so every
+	# dashboard, report and forecast has a series to draw. Tracked by name and
+	# removed with the rest.
+	from crm.demo.history import create_demo_history
+
+	history = create_demo_history(demo_users)
+	frappe.db.set_default(DEMO_HISTORY_KEY, json.dumps(history))
 	frappe.db.set_default(DEMO_LEADS_KEY, json.dumps(lead_names))
 	frappe.db.set_default(DEMO_NOTES_KEY, json.dumps(note_names))
 	frappe.db.set_default(DEMO_TASKS_KEY, json.dumps(task_names))
@@ -83,6 +91,7 @@ def clear_demo_data():
 	from crm.demo.activities import delete_demo_activities
 	from crm.demo.call_logs import delete_demo_call_logs
 	from crm.demo.deals import delete_demo_deals
+	from crm.demo.history import delete_demo_history
 	from crm.demo.leads import delete_demo_leads
 	from crm.demo.notes import delete_demo_notes
 	from crm.demo.tasks import delete_demo_tasks
@@ -94,9 +103,11 @@ def clear_demo_data():
 	call_log_names = json.loads(frappe.db.get_default(DEMO_CALL_LOGS_KEY) or "[]")
 	activity_data = json.loads(frappe.db.get_default(DEMO_ACTIVITIES_KEY) or "{}")
 	deal_data = json.loads(frappe.db.get_default(DEMO_DEALS_KEY) or "{}")
+	history = json.loads(frappe.db.get_default(DEMO_HISTORY_KEY) or "{}")
 	# Before the base records go: the derived tier is keyed on their names, and
 	# once a deal is deleted there is nothing left to match a suggestion against.
-	delete_derived_demo_records(lead_names, deal_data, DEMO_USER_EMAILS)
+	delete_derived_demo_records(lead_names + list(history.get("leads", [])), deal_data, DEMO_USER_EMAILS)
+	delete_demo_history(history)
 	delete_demo_deals(deal_data, lead_names)
 	delete_demo_activities(activity_data)
 	delete_demo_notes(note_names)
@@ -110,6 +121,7 @@ def clear_demo_data():
 	frappe.db.set_default(DEMO_CALL_LOGS_KEY, None)
 	frappe.db.set_default(DEMO_ACTIVITIES_KEY, None)
 	frappe.db.set_default(DEMO_DEALS_KEY, None)
+	frappe.db.set_default(DEMO_HISTORY_KEY, None)
 	frappe.db.set_default(DEMO_CREATED_AT_KEY, None)
 	frappe.db.set_default(DEMO_STATE_KEY, None)
 
