@@ -115,10 +115,17 @@ export default defineConfig(async ({ mode }) => {
         scope: '/crm',
         workbox: {
           maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
-          // The worker's scope already confines it to /crm. This is the second
-          // lock: it stops the precached shell answering a navigation to /app,
-          // /login or /api if that scope is ever widened.
-          navigateFallbackAllowlist: [/^\/crm(?:\/|$)/],
+          // Never answer a navigation from the cache. The built index.html is
+          // a Jinja template: Frappe renders it as /crm with the session's
+          // boot -- csrf_token, user, translations -- inlined. Precaching it
+          // and serving it as the navigation fallback handed every reload the
+          // *raw* file: `{% for key in boot %}` failed to parse, window had no
+          // csrf_token, and every POST answered CSRFTokenError until the
+          // worker's cache was cleared by hand. Observed on production within
+          // hours of the worker first claiming /crm. The shell must always
+          // come from the server; only the hashed assets are cacheable.
+          navigateFallback: null,
+          globIgnores: ['**/index.html'],
         },
         devOptions: {
           enabled: true,

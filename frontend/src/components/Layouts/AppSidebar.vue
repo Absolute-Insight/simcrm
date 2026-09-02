@@ -346,6 +346,15 @@ const links = [
     tint: 'text-ink-violet-6',
     condition: () => !props.mobile,
   },
+  // The Analyst is the second AI agent, admin-only: it sits with the
+  // Assistant, ahead of the planning and pipeline surfaces.
+  {
+    label: 'Analyst',
+    icon: AnalystIcon,
+    to: 'Analyst',
+    tint: 'text-ink-cyan-6',
+    condition: () => isAdmin(),
+  },
   {
     label: 'Planner',
     icon: PlannerIcon,
@@ -369,16 +378,6 @@ const links = [
     icon: ReportsIcon,
     to: 'Reports',
     tint: 'text-ink-purple-6',
-  },
-  // Analyst arrived with the AI surfaces after this order was specified. It is
-  // admin-only and it is an analytics surface, so it sits beside Reports rather
-  // than at the end where an unplaced item would otherwise land.
-  {
-    label: 'Analyst',
-    icon: AnalystIcon,
-    to: 'Analyst',
-    tint: 'text-ink-cyan-6',
-    condition: () => isAdmin(),
   },
   {
     label: 'Notes',

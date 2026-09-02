@@ -4,14 +4,14 @@ category: AI & automation
 order: 4
 ---
 
-The Analyst is a page in the sidebar for administrators. You ask a question
+The Analyst is an AI agent in the sidebar for administrators. You ask a question
 about the business in plain language — "How did revenue grow over the last six
 months?", "Which reps are behind quota this quarter?", "Which deals and
 accounts are likely to go quiet?", "Project revenue for the next quarter" —
 and it answers with Vectora's own figures and a short narrative over them.
 
 It reads nothing at all until an administrator switches on **Allow the analyst
-to read CRM and ERP data** in **Settings → Assistant**. Until then the page
+to read CRM and ERP data** in **Settings → Assistant**. Until then the agent
 shows that the grant is off and links to the setting.
 
 ## What it does for you

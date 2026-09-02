@@ -10,7 +10,7 @@
   category tree, client-side search (title hits ranked above body hits, with a
   snippet), and articles rendered in-app. Nothing is hosted elsewhere; it
   works offline and is versioned with the code it documents.
-- **Mentor** is a box above the search field in the help center. It answers
+- **Mentor** is the sparkle next to the Help Center title. It answers
   questions about the product, grounded on the help articles, and cites the
   ones it used as chips that deep-link into the help center. Sending a
   question switches the right pane to the transcript; a chip or a tree click

@@ -147,7 +147,7 @@
             :label="__('Allow the Analyst to read CRM and ERP data')"
             :description="
               __(
-                'Administrators only. Off, the Analyst page answers nothing. It never writes, and every figure it shows is computed by Vectora, not by the model.',
+                'Administrators only. Off, the Analyst answers nothing. It never writes, and every figure it shows is computed by Vectora, not by the model.',
               )
             "
             @update:model-value="draft.analyst_enabled = $event ? 1 : 0"

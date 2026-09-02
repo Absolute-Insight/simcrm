@@ -48,20 +48,22 @@
       :class="isCollapsed ? 'flex-col gap-1' : 'flex-row gap-1'"
     >
       <slot name="actions" />
-      <button
-        class="grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
-        :aria-label="
-          isCollapsed ? __('Expand sidebar') : __('Collapse sidebar')
-        "
-        :title="isCollapsed ? __('Expand sidebar') : __('Collapse sidebar')"
-        @click="emit('toggle')"
-      >
-        <CollapseSidebar
-          class="size-4 duration-300 ease-in-out"
-          :class="isCollapsed && '[transform:rotateY(180deg)]'"
-        />
-      </button>
     </div>
+    <!-- Collapsed, the control that reopens the rail sits first, above the
+         logo, where a hand looking for it lands; expanded it stays at the end
+         of the row. One element, ordered by the flex container. -->
+    <button
+      class="grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
+      :class="isCollapsed ? 'order-first mb-1' : 'ml-1'"
+      :aria-label="isCollapsed ? __('Expand sidebar') : __('Collapse sidebar')"
+      :title="isCollapsed ? __('Expand sidebar') : __('Collapse sidebar')"
+      @click="emit('toggle')"
+    >
+      <CollapseSidebar
+        class="size-4 duration-300 ease-in-out"
+        :class="isCollapsed && '[transform:rotateY(180deg)]'"
+      />
+    </button>
   </div>
 </template>
 

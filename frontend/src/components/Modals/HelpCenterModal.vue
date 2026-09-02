@@ -5,32 +5,22 @@
         <div
           class="m-1 flex w-64 shrink-0 flex-col rounded-l-[var(--v-radius-card)] bg-surface-gray-1"
         >
-          <div class="v-title-sm px-3 pb-2 pt-[15px] text-ink-gray-8">
-            {{ __('Help center') }}
-          </div>
-          <!-- The Mentor sits above the search: same question, two ways to
-               ask it. Enter sends; the answer takes over the right pane. -->
-          <div class="px-2 pb-2">
-            <TextInput
-              v-model="mentorDraft"
-              type="text"
-              :placeholder="__('Ask the mentor how Vectora works')"
-              @keydown.enter.prevent="sendToMentor"
+          <!-- The Mentor is the sparkle opposite the title: one click opens
+               the conversation in the right pane, with its own examples. -->
+          <div class="flex items-center justify-between px-3 pb-2 pt-[11px]">
+            <div class="v-title-sm text-ink-gray-8">
+              {{ __('Help Center') }}
+            </div>
+            <button
+              type="button"
+              class="grid size-7 place-items-center rounded-[var(--v-radius-control)] hover:bg-surface-gray-3"
+              :class="mentorOpen ? 'bg-surface-gray-3' : ''"
+              :aria-label="__('Ask the Mentor')"
+              :title="__('Ask the Mentor')"
+              @click="mentorOpen = true"
             >
-              <template #prefix>
-                <SparkleIcon class="size-4 text-ink-gray-5" />
-              </template>
-              <template #suffix>
-                <button
-                  v-if="mentorMessages.length && !mentorOpen"
-                  type="button"
-                  class="text-xs text-ink-gray-5 hover:text-ink-gray-8"
-                  @click="mentorOpen = true"
-                >
-                  {{ __('Back to the mentor') }}
-                </button>
-              </template>
-            </TextInput>
+              <SparkleIcon class="size-4 text-ink-violet-6" />
+            </button>
           </div>
           <div class="px-2 pb-2">
             <!-- No debounce, deliberately: the search is client-side over a
@@ -40,12 +30,8 @@
             <TextInput
               v-model="search"
               type="text"
-              :placeholder="__('Search the manual')"
-            >
-              <template #prefix>
-                <LucideSearch class="size-4 text-ink-gray-5" />
-              </template>
-            </TextInput>
+              :placeholder="__('Search')"
+            />
           </div>
 
           <div class="flex-1 overflow-y-auto px-1 pb-2">
@@ -106,10 +92,7 @@
         <div
           class="flex flex-1 flex-col overflow-y-auto bg-surface-elevation-2"
         >
-          <div
-            v-if="mentorOpen && mentorMessages.length"
-            class="flex h-full min-h-0 flex-col"
-          >
+          <div v-if="mentorOpen" class="flex h-full min-h-0 flex-col">
             <div class="flex items-center justify-between px-4 pt-3">
               <div class="flex items-center gap-2">
                 <SparkleIcon class="size-4 text-ink-gray-7" />
@@ -117,20 +100,32 @@
                   __('Mentor')
                 }}</span>
               </div>
-              <Button
-                :tooltip="__('Clear the conversation')"
-                :aria-label="__('Clear the conversation')"
-                icon="lucide-eraser"
-                variant="ghost"
-                @click="clearMentorAndClose"
-              />
+              <div class="flex items-center gap-1">
+                <Button
+                  v-if="mentorMessages.length"
+                  :tooltip="__('Clear the conversation')"
+                  :aria-label="__('Clear the conversation')"
+                  icon="lucide-eraser"
+                  variant="ghost"
+                  @click="clearMentor"
+                />
+                <Button
+                  :tooltip="__('Back to the manual')"
+                  :aria-label="__('Back to the manual')"
+                  icon="lucide-x"
+                  variant="ghost"
+                  @click="mentorOpen = false"
+                />
+              </div>
             </div>
             <AgentChat
               compact
               :messages="mentorMessages"
               :asking="mentorAsking"
               :failure="mentorFailure"
-              :placeholder="__('Ask a follow-up…')"
+              :intro="mentorIntro"
+              :examples="mentorExamples"
+              :placeholder="__('Ask how Vectora works…')"
               :focus-when="mentorOpen"
               @send="askMentor"
               @retry="retryMentor"
@@ -199,7 +194,6 @@
 </template>
 
 <script setup>
-import { PhMagnifyingGlass as LucideSearch } from '@phosphor-icons/vue'
 import { PhBookOpen as LucideBookOpen } from '@phosphor-icons/vue'
 import AgentChat from '@/components/AgentChat.vue'
 import SparkleIcon from '@/components/Icons/SparkleIcon.vue'
@@ -229,14 +223,15 @@ import { Dialog, SidebarItem, TextInput } from 'frappe-ui'
 import { computed, ref, watch } from 'vue'
 
 const search = ref('')
-const mentorDraft = ref('')
 
-function sendToMentor() {
-  const question = mentorDraft.value.trim()
-  if (!question) return
-  mentorDraft.value = ''
-  askMentor(question)
-}
+const mentorIntro = __(
+  'Ask how Vectora works — screens, settings, and how the numbers are computed. The Mentor answers from this manual and cannot read or change your records.',
+)
+const mentorExamples = [
+  __('What makes a deal show up as needing attention?'),
+  __('How is quota attainment measured?'),
+  __('What does the Analyst never do?'),
+]
 
 /* Chip labels come from the catalogue; the article name, de-kebabed, is
    honest enough for a button before it loads. */
@@ -247,11 +242,6 @@ function articleTitle(name) {
 
 function showArticle(name) {
   activeHelpArticle.value = name
-  mentorOpen.value = false
-}
-
-function clearMentorAndClose() {
-  clearMentor()
   mentorOpen.value = false
 }
 
