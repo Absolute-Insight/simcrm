@@ -137,7 +137,11 @@ export default defineConfig(async ({ mode }) => {
           short_name: 'Vectora',
           start_url: '/crm',
           description: 'Vectora — proactive, open-source CRM',
-          theme_color: '#5B5FE8',
+          // The installed app paints its title bar with this. The brand indigo
+          // (#5B5FE8) read as a bright purple strip over the dark shell; this
+          // is --cta-ink, the deep navy the design system already uses for
+          // ink on the CTA gradient, and it sits well over both themes.
+          theme_color: '#0e1830',
           background_color: '#ffffff',
           icons: [
             {
