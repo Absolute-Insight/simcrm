@@ -1348,7 +1348,6 @@
 
 "@framework/ui@link:../../frappe/ui":
   version "0.0.0"
-  uid ""
 
 "@headlessui/vue@^1.7.23":
   version "1.7.23"
@@ -1998,10 +1997,10 @@
   dependencies:
     "@tanstack/virtual-core" "3.13.23"
 
-"@tiptap/core@^3.26.0", "@tiptap/core@^3.27.0", "@tiptap/core@^3.30.2":
-  version "3.30.2"
-  resolved "https://registry.yarnpkg.com/@tiptap/core/-/core-3.30.2.tgz#2d32b216cdda805e7649092023b2e6fdf626ca2b"
-  integrity sha512-QbZC/s1OOqcoUdkhIY16TjR/gCtR0qAk9e4bJwUqOJqZuv5ozqCL5hzWm22jjTPp6c6Ei2tPd6t30VwfIKW4lQ==
+"@tiptap/core@^3.26.0", "@tiptap/core@^3.27.0", "@tiptap/core@^3.30.4":
+  version "3.30.4"
+  resolved "https://registry.yarnpkg.com/@tiptap/core/-/core-3.30.4.tgz#9e0847c5f4dd53750ae3accc6b83223e37f693b3"
+  integrity sha512-V9yKuUfV8qC9WBrnVxkFWmYLBomc3d1CwXoFSjED5DRu5q2oyxv07F+jOJSRogJAY+feHjuxvjhixwxeHm2DXQ==
 
 "@tiptap/extension-blockquote@^3.26.0", "@tiptap/extension-blockquote@^3.27.0":
   version "3.27.0"

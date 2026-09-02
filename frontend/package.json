@@ -20,7 +20,7 @@
     "@framework/ui": "link:../../frappe/ui",
     "@headlessui/vue": "^1.7.23",
     "@phosphor-icons/vue": "^2.2.1",
-    "@tiptap/core": "^3.30.2",
+    "@tiptap/core": "^3.30.4",
     "@tiptap/extension-paragraph": "^3.30.2",
     "@tiptap/pm": "^3.30.2",
     "@tiptap/vue-3": "^3.30.2",
