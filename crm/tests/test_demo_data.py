@@ -213,8 +213,9 @@ class TestDerivedDemoCleanup(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 		self.addCleanup(
-			lambda n=deal.name: frappe.db.exists("CRM Deal", n)
-			and frappe.delete_doc("CRM Deal", n, force=True)
+			lambda n=deal.name: (
+				frappe.db.exists("CRM Deal", n) and frappe.delete_doc("CRM Deal", n, force=True)
+			)
 		)
 		return deal.name
 
@@ -248,8 +249,9 @@ class TestDerivedDemoCleanup(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 		self.addCleanup(
-			lambda n=doc.name: frappe.db.exists("CRM Suggestion", n)
-			and frappe.delete_doc("CRM Suggestion", n, force=True)
+			lambda n=doc.name: (
+				frappe.db.exists("CRM Suggestion", n) and frappe.delete_doc("CRM Suggestion", n, force=True)
+			)
 		)
 		return doc.name
 
@@ -330,3 +332,44 @@ class TestDerivedDemoCleanup(IntegrationTestCase):
 		self.clear(created_at=None)
 		self.assertFalse(frappe.db.exists("CRM Forecast Snapshot", site))
 		self.assertTrue(frappe.db.exists("CRM Forecast Snapshot", rep))
+
+
+class TestDemoSeedWithForecastingOn(IntegrationTestCase):
+	"""Forecasting makes expected value and closure date mandatory on every deal.
+
+	Production had it on, and the seed raised MandatoryError halfway through
+	-- after Clear Demo Data had already emptied the site. Every hand-written
+	demo deal now carries a closure date, so seeding must succeed either way.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		from crm.demo.api import clear_demo_data
+
+		clear_demo_data()
+		self.previous = frappe.db.get_single_value("FCRM Settings", "enable_forecasting")
+		frappe.db.set_single_value("FCRM Settings", "enable_forecasting", 1)
+		frappe.clear_cache()
+		# The seed commits as it goes, so the flag has to be committed too --
+		# and restored with a commit, or the framework's rollback would leave
+		# forecasting on for every test that runs after this one.
+		frappe.db.commit()
+
+	def tearDown(self):
+		from crm.demo.api import clear_demo_data
+
+		clear_demo_data()
+		frappe.db.set_single_value("FCRM Settings", "enable_forecasting", self.previous or 0)
+		frappe.clear_cache()
+		frappe.db.commit()
+		super().tearDown()
+
+	def test_the_seed_survives_forecasting_being_on(self):
+		from crm.demo.api import create_demo_data
+
+		create_demo_data()
+		self.assertTrue(frappe.db.get_default("crm_demo_data_created"))
+		demo_deals = json.loads(frappe.db.get_default("crm_demo_deals") or "{}").get("deals") or []
+		self.assertEqual(len(demo_deals), 7)
+		for name in demo_deals:
+			self.assertIsNotNone(frappe.db.get_value("CRM Deal", name, "expected_closure_date"), name)
