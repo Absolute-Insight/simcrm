@@ -72,23 +72,31 @@
     </div>
 
     <div v-else class="min-h-0 flex-1 overflow-auto">
-      <table class="w-full border-separate border-spacing-0 text-base">
+      <!-- min-w-full, not w-full: with twelve months plus two sticky columns
+           a settings pane is narrower than the content. w-full made the table
+           fit anyway, so month cells shrank below their figures ("1.5M" read
+           "1.5N") and the sticky Year column painted over November. The
+           container scrolls; the table keeps its width. The sticky cells sit
+           on bg-surface-elevation-2, the pane's own surface: bg-surface-white
+           is transparent in the dark theme, so the months scrolling underneath
+           the Year column showed through it. -->
+      <table class="min-w-full border-separate border-spacing-0 text-base">
         <thead>
           <tr>
             <th
-              class="sticky left-0 top-0 z-20 border-b border-outline-gray-1 bg-surface-white px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-ink-gray-5"
+              class="sticky left-0 top-0 z-20 border-b border-outline-gray-1 bg-surface-elevation-2 px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-ink-gray-5"
             >
               {{ __('Rep') }}
             </th>
             <th
               v-for="(month, i) in grid.data.months"
               :key="month"
-              class="sticky top-0 z-10 border-b border-outline-gray-1 bg-surface-white px-1 py-2 text-right text-xs font-medium uppercase tracking-wider text-ink-gray-5"
+              class="sticky top-0 z-10 min-w-[4rem] border-b border-outline-gray-1 bg-surface-elevation-2 px-1 py-2 text-right text-xs font-medium uppercase tracking-wider text-ink-gray-5"
             >
               {{ monthLabels[i] }}
             </th>
             <th
-              class="sticky right-0 top-0 z-20 border-b border-l border-outline-gray-1 bg-surface-white px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-ink-gray-5"
+              class="sticky right-0 top-0 z-20 whitespace-nowrap border-b border-l border-outline-gray-1 bg-surface-elevation-2 px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-ink-gray-5"
             >
               {{ __('Year') }}
             </th>
@@ -97,7 +105,7 @@
         <tbody>
           <tr v-for="row in rows" :key="row.user" class="group">
             <td
-              class="sticky left-0 z-10 border-b border-outline-gray-1 bg-surface-white px-3 py-1.5"
+              class="sticky left-0 z-10 whitespace-nowrap border-b border-outline-gray-1 bg-surface-elevation-2 px-3 py-1.5"
             >
               <div class="flex items-center gap-2">
                 <span class="truncate text-ink-gray-8">{{
@@ -117,7 +125,7 @@
             <td
               v-for="month in grid.data.months"
               :key="month"
-              class="border-b border-outline-gray-1 px-0.5 py-1"
+              class="min-w-[4rem] border-b border-outline-gray-1 px-0.5 py-1"
             >
               <input
                 v-if="editable"
@@ -140,27 +148,27 @@
               </div>
             </td>
             <td
-              class="sticky right-0 z-10 border-b border-l border-outline-gray-1 bg-surface-white px-3 py-1.5 text-right text-sm font-medium tabular-nums text-ink-gray-8"
+              class="sticky right-0 z-10 whitespace-nowrap border-b border-l border-outline-gray-1 bg-surface-elevation-2 px-3 py-1.5 text-right text-sm font-medium tabular-nums text-ink-gray-8"
             >
               {{ exactMoney(rowTotal(row)) }}
             </td>
           </tr>
           <tr>
             <td
-              class="sticky left-0 z-10 bg-surface-white px-3 py-2 text-sm font-medium text-ink-gray-6"
+              class="sticky left-0 z-10 bg-surface-elevation-2 px-3 py-2 text-sm font-medium text-ink-gray-6"
             >
               {{ __('Team') }}
             </td>
             <td
               v-for="month in grid.data.months"
               :key="month"
-              class="px-1.5 py-2 text-right text-sm tabular-nums text-ink-gray-6"
+              class="min-w-[4rem] px-1.5 py-2 text-right text-sm tabular-nums text-ink-gray-6"
               :title="exactTitle(columnTotal(month))"
             >
               {{ money(columnTotal(month)) }}
             </td>
             <td
-              class="sticky right-0 z-10 border-l border-outline-gray-1 bg-surface-white px-3 py-2 text-right text-sm font-semibold tabular-nums text-ink-gray-8"
+              class="sticky right-0 z-10 whitespace-nowrap border-l border-outline-gray-1 bg-surface-elevation-2 px-3 py-2 text-right text-sm font-semibold tabular-nums text-ink-gray-8"
             >
               {{ exactMoney(grandTotal) }}
             </td>
