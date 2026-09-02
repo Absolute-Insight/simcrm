@@ -175,3 +175,29 @@ class TestCRMInvitation(FrappeTestCase):
 		user_roles = {r.role for r in user.roles}
 		self.assertIn("Sales Manager", user_roles)
 		self.assertIn("Sales User", user_roles)
+
+	def test_a_dead_key_gets_a_plain_page_not_an_exception(self):
+		"""A cancelled or mistyped link used to surface as 'Server Error 417:
+		Uncaught Exception' -- frappe's generic page for a guest GET that throws.
+		The person holding the link cannot act on that; they can act on a
+		sentence telling them to ask for a new invitation."""
+		from crm.api import accept_invitation
+
+		accept_invitation(key="no-such-key")
+
+		self.assertEqual(frappe.local.response["type"], "page")
+		self.assertEqual(frappe.local.response["http_status_code"], 410)
+		self.assertIn("no longer valid", frappe.local.message_title)
+		self.assertIn("new invitation", frappe.local.message)
+
+	def test_an_already_accepted_key_gets_the_same_page(self):
+		from crm.api import accept_invitation
+
+		invitation = self.make_invitation(email="twice@example.com")
+		key = invitation.key
+		invitation.accept()
+
+		accept_invitation(key=key)
+
+		self.assertEqual(frappe.local.response["type"], "page")
+		self.assertEqual(frappe.local.response["http_status_code"], 410)
