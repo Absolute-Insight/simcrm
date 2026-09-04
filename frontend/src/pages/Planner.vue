@@ -1043,7 +1043,17 @@ async function logVisit() {
     // The visit may belong to a different week than the one on screen; only
     // adopt the payload when it is this week, otherwise just say where it went.
     if (plan.week_start === weekStart.value) {
-      adoptServerPlan(plan)
+      // Logging a visit is not a reason to lose the week the rep is drafting,
+      // so the response is merged rather than adopted; the visit itself is a
+      // row the buffer has never seen, which is what the append is for.
+      mergeServerPlan(plan)
+      const known = new Set(
+        localItems.list.filter((i) => i.name).map((i) => String(i.name)),
+      )
+      const added = server.items.filter((i) => !known.has(String(i.name)))
+      if (added.length) {
+        localItems.list = [...localItems.list, ...added.map(withUid)]
+      }
       loadReferenceTitles(plan.items)
     }
     toast.success(__('Visit logged for the week of {0}', [plan.week_start]))
