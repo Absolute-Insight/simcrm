@@ -643,11 +643,35 @@ class ImportWorkbooksTest(SpreadsheetImportTestCase):
 		self.owners = self.dir / "owners.json"
 		self.owners.write_text(json.dumps(OWNERS))
 		frappe.db.set_single_value("FCRM Settings", "currency", "ZAR")
+		# a real run refuses unless emails are muted (test_a_real_run_refuses_...
+		# below covers that refusal directly); every other test here runs a real
+		# import and must not depend on the site's own mute_emails config.
+		frappe.flags.mute_emails = True
+
+	def tearDown(self):
+		frappe.flags.mute_emails = False
+		super().tearDown()
 
 	def test_refuses_to_run_unless_the_base_currency_is_zar(self):
 		frappe.db.set_single_value("FCRM Settings", "currency", "USD")
 		with self.assertRaisesRegex(ValueError, "base currency"):
 			ss.import_workbooks(self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2})
+
+	def test_a_real_run_refuses_unless_emails_are_muted(self):
+		with patch("frappe.are_emails_muted", return_value=False):
+			with self.assertRaisesRegex(ValueError, "not muted"):
+				ss.import_workbooks(
+					self.customers,
+					self.orders,
+					self.invoices,
+					self.owners,
+					rates={"USD": 18.2},
+					dry_run=False,
+				)
+			# the dry run does not send any email itself, so it is unaffected
+			ss.import_workbooks(
+				self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2}, dry_run=True
+			)
 
 	def test_dry_run_writes_nothing_and_still_reports(self):
 		summary = ss.import_workbooks(

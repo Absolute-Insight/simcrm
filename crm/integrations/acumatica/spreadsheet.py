@@ -548,6 +548,14 @@ def import_workbooks(
 		raise ValueError(
 			f"base currency is {base_currency!r}; set FCRM Settings.currency to ZAR before importing"
 		)
+	if not dry_run and not frappe.are_emails_muted():
+		# every imported deal is assigned to its owner, and frappe emails each
+		# assignment: thousands of messages from the live account, enqueued every
+		# COMMIT_EVERY rows. The dry run cannot show this -- its rollback resets
+		# the after-commit queue -- so a real run refuses unless the site says so.
+		raise ValueError(
+			"emails are not muted; run `bench --site <site> set-config mute_emails 1` before a real import (see the runbook)"
+		)
 	dry = dry_run
 	owners_map = _load_owners(owners)
 	rejects = Rejects()
