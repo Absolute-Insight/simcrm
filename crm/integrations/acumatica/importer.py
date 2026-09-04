@@ -7,12 +7,23 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 	record_sync_issue,
 )
 from crm.integrations.acumatica.client import AcumaticaClient, v
+from crm.integrations.acumatica.names import normalise_account_name
 
 COMMIT_EVERY = 50  # keep transactions short; a 50k-customer backfill must not hold one tx
 
 
 def _find_by_noteid(doctype, noteid):
+	if not noteid:
+		# {"acumatica_noteid": None} is `IS NULL` -- it would return whichever record
+		# happens to have no NoteID, which is every record a spreadsheet import wrote.
+		return None
 	return frappe.db.get_value(doctype, {"acumatica_noteid": noteid}, "name")
+
+
+def _find_by_acumatica_id(doctype, acumatica_id):
+	if not acumatica_id:
+		return None
+	return frappe.db.get_value(doctype, {"acumatica_id": acumatica_id}, "name")
 
 
 def _adopt(doctype, name, noteid):
@@ -23,26 +34,41 @@ def _adopt(doctype, name, noteid):
 	never linked, so the outbound hook later PUTs a SECOND Customer into the client's ERP.
 
 	A record already carrying a DIFFERENT NoteID is somebody else's: adopting it would
-	steal the link, so raise instead and let the caller log a sync issue."""
+	steal the link, so raise instead and let the caller log a sync issue. A caller with
+	no NoteID at all (the spreadsheet import) makes no claim and cannot steal one."""
 	if not name:
 		return None
 	claimed = frappe.db.get_value(doctype, name, "acumatica_noteid")
-	if claimed and claimed != noteid:
+	if claimed and noteid and claimed != noteid:
 		raise ValueError(f"{doctype} {name} is already linked to Acumatica NoteID {claimed}")
 	return name
 
 
 def upsert_organization(rec) -> str:
 	noteid = v(rec, "NoteID")
+	customer_id = v(rec, "CustomerID")
 	name = _find_by_noteid("CRM Organization", noteid)
-	organization_name = v(rec, "CustomerName") or v(rec, "CustomerID")
+	organization_name = normalise_account_name(v(rec, "CustomerName") or customer_id or "")
+	if not name:
+		# The spreadsheet import has no NoteID, so the human-readable ID is its key;
+		# a later live sync then finds the imported row here before it can create a rival.
+		name = _adopt("CRM Organization", _find_by_acumatica_id("CRM Organization", customer_id), noteid)
 	if not name and organization_name:
 		# CRM Organization autonames on `field:organization_name`, so the docname IS the name.
-		name = _adopt("CRM Organization", frappe.db.exists("CRM Organization", organization_name), noteid)
+		existing = frappe.db.exists("CRM Organization", organization_name)
+		if existing and customer_id:
+			other = frappe.db.get_value("CRM Organization", existing, "acumatica_id")
+			if other and other != customer_id:
+				# a differently-linked customer already holds this exact name -- adopting it
+				# would silently merge two Acumatica customers into one CRM Organization
+				raise ValueError(f"CRM Organization {existing} already belongs to Acumatica customer {other}")
+		name = _adopt("CRM Organization", existing, noteid)
 	doc = frappe.get_doc("CRM Organization", name) if name else frappe.new_doc("CRM Organization")
 	doc.organization_name = organization_name
-	doc.acumatica_noteid = noteid
-	doc.acumatica_id = v(rec, "CustomerID")
+	if noteid:
+		# never let a NoteID-less caller blank out a link the live sync wrote
+		doc.acumatica_noteid = noteid
+	doc.acumatica_id = customer_id
 	currency = v(rec, "CurrencyID")
 	if currency and frappe.db.exists("Currency", currency):
 		doc.currency = currency
