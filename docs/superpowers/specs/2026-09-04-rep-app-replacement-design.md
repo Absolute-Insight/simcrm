@@ -167,7 +167,18 @@ reported as a search bug rather than a setup one.
 
 So G6 carries two requirements beyond the search itself. The field's absence must
 be **detected and surfaced** rather than degrading to no results — a search by
-code on a site without the column says so. And G6 must not ship with an
+code on a site without the column says so.
+
+That detection is a null check, not a schema-introspection layer, and the spec
+says so explicitly because the requirement reads heavier than it is.
+`frappe.get_meta("CRM Organization").get_field("acumatica_id")` returning `None`
+is a sufficient and reliable probe at the top of the search handler. Verified
+against the framework: `create_custom_fields` collects every doctype it actually
+changed and ends with `frappe.clear_cache(doctype=...)` **and**
+`frappe.db.updatedb(doctype)` for each — the meta cache and the DDL are
+synchronised in the same loop, so meta cannot be stale behind the column. A
+doctype it did not change is absent from that set, but then meta already matched
+reality. No manual cache clear, no `information_schema` query. And G6 must not ship with an
 undocumented manual precondition, which is the argument for fixing
 [#166](https://github.com/Absolute-Insight/simcrm/issues/166) by separating
 schema install from activation rather than by adding an on-disable path: the
