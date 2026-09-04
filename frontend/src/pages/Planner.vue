@@ -382,6 +382,7 @@
 // activity. There is no same-family Phosphor substitute that keeps that
 // meaning intact.
 import LucideCalendarClock from '~icons/lucide/calendar-clock'
+import LucideMapPin from '~icons/lucide/map-pin'
 import { PhCheckCircle as LucideCircleCheck } from '@phosphor-icons/vue'
 import { PhEnvelope as LucideMail } from '@phosphor-icons/vue'
 import { PhPhone as LucidePhone } from '@phosphor-icons/vue'
@@ -683,6 +684,7 @@ function typeIcon(type) {
       Meeting: LucideCalendarClock,
       Task: LucideCircleCheck,
       Email: LucideMail,
+      Visit: LucideMapPin,
     }[type] || LucideCircleCheck
   )
 }
@@ -758,7 +760,7 @@ function itemDialogFields() {
       fieldname: 'activity_type',
       fieldtype: 'Select',
       label: __('Activity'),
-      options: 'Call\nMeeting\nTask\nEmail',
+      options: 'Call\nMeeting\nTask\nEmail\nVisit',
     },
     { fieldname: 'planned_date', fieldtype: 'Date', label: __('Day') },
     { fieldname: 'note', fieldtype: 'Data', label: __('Note') },
