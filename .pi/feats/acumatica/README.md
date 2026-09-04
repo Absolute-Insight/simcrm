@@ -53,3 +53,42 @@ create-vs-update, which is why writes key on NoteID.
   address changes in Acumatica, the old one stays primary in the CRM and the new
   one lands beside it. Fix the primary flag by hand until the importer learns to
   re-point it.
+
+## Spreadsheet import (one-way, integration off)
+
+`crm/integrations/acumatica/spreadsheet.py` loads Acumatica's Excel exports
+without enabling the integration. Design and every mapping decision:
+`docs/superpowers/specs/2026-09-03-mbp-acumatica-import-design.md`.
+
+**Do not enable CRM Acumatica Settings to get the custom fields** — see the
+spec's Prerequisite 1 and issue #166. Call the function directly:
+
+```
+bench --site <site> execute crm.integrations.acumatica.install.ensure_custom_fields
+```
+
+Put the workbooks and an `owners.json` (`{"018": "rep@example.com", ...}`)
+under the site's private files, then dry-run:
+
+```
+bench --site <site> execute crm.integrations.acumatica.spreadsheet.import_workbooks --kwargs '{
+  "customers": "sites/<site>/private/files/mbp/Customers 20260902.xlsx",
+  "sales_orders": "sites/<site>/private/files/mbp/Sales Orders 20260902.xlsx",
+  "invoices": "sites/<site>/private/files/mbp/Invoices 20260902.xlsx",
+  "owners": "sites/<site>/private/files/mbp/owners.json",
+  "rates": {"USD": 18.2},
+  "window_days": 90,
+  "quote_validity_days": 30,
+  "dry_run": true
+}'
+```
+
+Read the reject rows in the output. When they are all expected, run again
+with `"dry_run": false`. Re-running is safe: organizations key on
+`acumatica_id`, deals on `acumatica_sales_quote`, and `import-manifest.json`
+next to the Sales Orders file stops a re-run resurrecting a deal a rep
+deleted. Purchase Orders are not imported (no customer link). A dry run never commits — the importer suppresses its periodic commits for the duration and rolls everything back at the end — and a run that raises part-way rolls back rather than committing partial work.
+
+Preconditions, in order: custom fields exist; the owner users exist;
+`FCRM Settings.currency` is ZAR; a manual `bench backup --with-files`;
+`clear_demo_data()` has run.
