@@ -54,7 +54,14 @@ def upsert_organization(rec) -> str:
 		name = _adopt("CRM Organization", _find_by_acumatica_id("CRM Organization", customer_id), noteid)
 	if not name and organization_name:
 		# CRM Organization autonames on `field:organization_name`, so the docname IS the name.
-		name = _adopt("CRM Organization", frappe.db.exists("CRM Organization", organization_name), noteid)
+		existing = frappe.db.exists("CRM Organization", organization_name)
+		if existing and customer_id:
+			other = frappe.db.get_value("CRM Organization", existing, "acumatica_id")
+			if other and other != customer_id:
+				# a differently-linked customer already holds this exact name -- adopting it
+				# would silently merge two Acumatica customers into one CRM Organization
+				raise ValueError(f"CRM Organization {existing} already belongs to Acumatica customer {other}")
+		name = _adopt("CRM Organization", existing, noteid)
 	doc = frappe.get_doc("CRM Organization", name) if name else frappe.new_doc("CRM Organization")
 	doc.organization_name = organization_name
 	if noteid:

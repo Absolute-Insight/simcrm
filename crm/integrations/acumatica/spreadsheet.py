@@ -176,11 +176,20 @@ def dedupe_customers(rows: list[dict]) -> list[dict]:
 	return list(by_id.values())
 
 
-def shape_customer(row: dict, countries: dict[str, str] | None = None) -> dict:
+def shape_customer(
+	row: dict, countries: dict[str, str] | None = None, shared_names: frozenset[str] = frozenset()
+) -> dict:
 	"""One export row -> what the upserts take. ``countries`` is the ISO-2 table; pass None
-	to leave the country unresolved (the pure tests do)."""
+	to leave the country unresolved (the pure tests do). ``shared_names`` is the set of
+	normalised names used by more than one Customer ID -- nine names cover 20 Customer IDs
+	in the MBP export, one company holding several Acumatica accounts, and CRM Organization
+	autonames on organization_name, so two rows with the same name would collide (Frappe
+	would silently rename the second to "... -1"). Disambiguate with the customer ID instead,
+	which is meaningful to an MBP rep."""
 	countries = countries or {}
 	name = normalise_account_name(row.get("Customer Name") or "")
+	if name in shared_names:
+		name = f"{name} ({row.get('Customer ID')})"
 	rec = {
 		"CustomerID": {"value": row.get("Customer ID")},
 		"CustomerName": {"value": name},
@@ -437,10 +446,17 @@ def import_customers(path, rejects: Rejects) -> dict:
 	counts = {"organizations": 0, "addresses": 0, "skipped_inactive": 0, "addresses_skipped": 0}
 	countries = _country_table()
 	rows = dedupe_customers(read_sheet(path))
+	names_by_customer_id: dict[str, str] = {
+		row.get("Customer ID"): normalise_account_name(row.get("Customer Name") or "") for row in rows
+	}
+	name_counts: dict[str, int] = defaultdict(int)
+	for name in names_by_customer_id.values():
+		name_counts[name] += 1
+	shared_names = frozenset(name for name, count in name_counts.items() if count > 1)
 	for done, row in enumerate(rows, 1):
 		_commit_every(done)
 		try:
-			shaped = shape_customer(row, countries)
+			shaped = shape_customer(row, countries, shared_names)
 		except Exception as e:
 			rejects.add("customers", row.get("Customer ID"), str(e))
 			continue

@@ -107,6 +107,11 @@ class TestUpserts(ImporterTestCase):
 			frappe.db.get_value("CRM Organization", first, "organization_name"), "Repeat Limited"
 		)
 
+	def test_a_name_collision_with_another_customer_is_refused(self):
+		importer.upsert_organization(C(CustomerID="C-A", CustomerName="Twin Ltd"))
+		with self.assertRaisesRegex(ValueError, "already belongs"):
+			importer.upsert_organization(C(CustomerID="C-B", CustomerName="Twin Ltd"))
+
 	def test_a_record_without_noteid_does_not_erase_a_synced_noteid(self):
 		importer.upsert_organization(C(NoteID="guid-keep", CustomerID="C-KEEP1", CustomerName="Keeper Ltd"))
 		importer.upsert_organization(C(CustomerID="C-KEEP1", CustomerName="Keeper Ltd"))

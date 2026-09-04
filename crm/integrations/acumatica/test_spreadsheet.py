@@ -288,6 +288,34 @@ class ImportCustomersTest(SpreadsheetImportTestCase):
 		self.assertFalse(org.address)
 		self.assertTrue(rejects.rows[0]["reason"].startswith("address: unknown country code"))
 
+	def test_shared_names_are_disambiguated_by_customer_id(self):
+		path = write_workbook(
+			self.dir / "customers.xlsx",
+			CUSTOMER_HEADER,
+			[
+				customer(
+					**{
+						"Customer ID": "C-SIB001",
+						"Customer Name": "Sibanye Rustenburg Platinum Mines (Pty) Ltd",
+					}
+				),
+				customer(
+					**{
+						"Customer ID": "C-SIB004",
+						"Customer Name": "Sibanye Rustenburg Platinum Mines (Pty) Ltd",
+					}
+				),
+			],
+		)
+		rejects = ss.Rejects()
+		counts = ss.import_customers(path, rejects)
+		self.assertEqual(len(rejects), 0, rejects.rows)
+		self.assertEqual(counts["organizations"], 2)
+		first = frappe.get_doc("CRM Organization", "Sibanye Rustenburg Platinum Mines (Pty) Ltd (C-SIB001)")
+		second = frappe.get_doc("CRM Organization", "Sibanye Rustenburg Platinum Mines (Pty) Ltd (C-SIB004)")
+		self.assertEqual(first.acumatica_id, "C-SIB001")
+		self.assertEqual(second.acumatica_id, "C-SIB004")
+
 	def test_a_malformed_cell_rejects_one_row_and_the_run_continues(self):
 		path = write_workbook(
 			self.dir / "customers.xlsx",
