@@ -69,9 +69,9 @@ Managers set targets in **Settings → Sales Targets** (a rep × month grid with
 
 ## Reports
 
-Six built-ins, all registry entries over the metrics layer:
+Seven built-ins, all registry entries over the metrics layer:
 pipeline by stage, funnel conversion, plan adherence by rep, forecast vs actual,
-quota attainment by rep, client reliability.
+pipeline by segment, quota attainment by rep, client reliability.
 
 Registry strings are untranslated literals with `_()` applied **per request** —
 a module is imported once per worker, so translating at import time would freeze
