@@ -88,6 +88,26 @@ class TestUpserts(ImporterTestCase):
 		self.assertEqual(frappe.db.get_value("CRM Product", name, "product_code"), "NEWCODE")
 		self.assertEqual(frappe.db.get_value("CRM Product", name, "product_name"), "New")
 
+	def test_a_record_without_noteid_never_adopts_a_stranger(self):
+		# an unrelated org with no NoteID must not be returned by a NULL lookup
+		frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Bystander Ltd"}).insert()
+		name = importer.upsert_organization(C(CustomerID="C-NEW01", CustomerName="Newcomer Ltd"))
+		self.assertEqual(name, "Newcomer Ltd")
+		self.assertIsNone(frappe.db.get_value("CRM Organization", "Bystander Ltd", "acumatica_id"))
+
+	def test_a_record_without_noteid_reuses_the_org_with_its_customer_id(self):
+		first = importer.upsert_organization(C(CustomerID="C-REP01", CustomerName="Repeat Ltd"))
+		second = importer.upsert_organization(C(CustomerID="C-REP01", CustomerName="Repeat Ltd"))
+		self.assertEqual(first, second)
+		self.assertEqual(frappe.db.count("CRM Organization", {"acumatica_id": "C-REP01"}), 1)
+
+	def test_a_record_without_noteid_does_not_erase_a_synced_noteid(self):
+		importer.upsert_organization(C(NoteID="guid-keep", CustomerID="C-KEEP1", CustomerName="Keeper Ltd"))
+		importer.upsert_organization(C(CustomerID="C-KEEP1", CustomerName="Keeper Ltd"))
+		self.assertEqual(
+			frappe.db.get_value("CRM Organization", "Keeper Ltd", "acumatica_noteid"), "guid-keep"
+		)
+
 
 class TestAdoptOnMatch(ImporterTestCase):
 	"""A backfill onto a CRM that already holds the same customers must claim those
