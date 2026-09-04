@@ -74,7 +74,7 @@
                   <span class="font-medium">{{ change.label }}</span
                   >:
                   <span
-                    v-if="change.old"
+                    v-if="change.old != null && change.old !== ''"
                     class="text-ink-gray-5 line-through"
                     >{{ change.old }}</span
                   >
