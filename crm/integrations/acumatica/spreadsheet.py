@@ -217,6 +217,199 @@ def upsert_address(organization: str, fields: dict) -> str:
 	return doc.name
 
 
+LOST_REASON = "Not recorded in Acumatica"
+
+
+def _ensure_lost_reason() -> None:
+	# validate_lost_reason() refuses a Lost deal without one; the file never says why
+	if not frappe.db.exists("CRM Lost Reason", LOST_REASON):
+		frappe.get_doc({"doctype": "CRM Lost Reason", "lost_reason": LOST_REASON}).insert(
+			ignore_permissions=True
+		)
+
+
+def _rate_for(currency: str, rates: dict[str, Decimal], base_currency: str) -> Decimal | None:
+	"""1 for the base currency, the supplied rate otherwise, None when none was supplied."""
+	if currency == base_currency:
+		return Decimal("1")
+	rate = rates.get(currency)
+	return Decimal(str(rate)) if rate is not None else None
+
+
+def shape_sales_order(
+	row: dict,
+	*,
+	as_of: date,
+	window_days: int,
+	quote_validity_days: int,
+	owners: dict[str, str],
+	default_owner: str | None,
+	rates: dict[str, Decimal],
+	base_currency: str,
+) -> dict:
+	"""One export row -> a deal, a skip, or a reject. Pure: every decision the spec
+	argues about is visible here and nowhere else."""
+	nbr = row.get("Order Nbr.")
+	order_type = row.get("Order Type")
+	if order_type != "QT":
+		# fulfilment records, branch transfers and credit memos are not opportunities
+		return {"skip": f"order type {order_type}"}
+
+	status = map_deal_status(row.get("Status"), row.get("Quote Outcome"))
+	if status is None:
+		return {
+			"reject": f"unknown quote status {row.get('Status')} / {row.get('Quote Outcome')}",
+			"key": nbr,
+		}
+
+	quote_date = row["Date"].date() if hasattr(row.get("Date"), "date") else row.get("Date")
+	if not quote_date:
+		return {"reject": "no date", "key": nbr}
+	if status == OPEN_STATUS and not within_window(quote_date, as_of, window_days):
+		return {"skip": "outside window"}
+
+	code = row.get("Default Salesperson")
+	if code:
+		owner = owners.get(str(code).strip())
+		if not owner:
+			return {"reject": f"unmapped salesperson {code}", "key": nbr}
+	elif default_owner:
+		owner = default_owner
+	else:
+		return {"reject": "no salesperson", "key": nbr}
+
+	currency = row.get("Currency") or base_currency
+	rate = _rate_for(currency, rates, base_currency)
+	if rate is None:
+		return {"reject": f"no exchange rate supplied for {currency}", "key": nbr}
+
+	closed = status in ("Won", "Lost")
+	return {
+		"order_nbr": nbr,
+		"customer_id": row.get("Customer"),
+		"status": status,
+		"value": to_decimal(row.get("Order Total")),
+		"currency": currency,
+		"exchange_rate": rate,
+		"owner": owner,
+		"quote_date": quote_date,
+		"closed_date": quote_date if closed else None,
+		# a closed quote closed on its date; an open one is assumed good for its validity
+		"expected_closure_date": quote_date if closed else quote_date + timedelta(days=quote_validity_days),
+	}
+
+
+def upsert_deal(deal: dict, organization: str) -> str:
+	name = frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": deal["order_nbr"]}, "name")
+	doc = frappe.get_doc("CRM Deal", name) if name else frappe.new_doc("CRM Deal")
+	doc.organization = organization
+	doc.status = deal["status"]
+	doc.deal_value = float(deal["value"])
+	# validate_forecasting_fields() throws without these when forecasting is on
+	doc.expected_deal_value = float(deal["value"])
+	doc.expected_closure_date = deal["expected_closure_date"]
+	doc.currency = deal["currency"]
+	doc.exchange_rate = float(deal["exchange_rate"])
+	doc.deal_owner = deal["owner"]
+	doc.acumatica_sales_quote = deal["order_nbr"]
+	doc.acumatica_customer = deal["customer_id"]
+	if deal["status"] == "Lost":
+		doc.lost_reason = LOST_REASON
+	doc.save(ignore_permissions=True)
+
+	after = {}
+	if deal["closed_date"]:
+		# validate() stamps closed_date = today on any transition into Won; the file
+		# knows the real date, so write it through after the controller has run
+		after["closed_date"] = deal["closed_date"]
+	if deal["exchange_rate"] != 1:
+		# update_exchange_rate() tries a live fetch for a non-base currency on insert
+		# and may have replaced the supplied rate; the supplied rate is the record
+		after["exchange_rate"] = float(deal["exchange_rate"])
+	if after:
+		doc.db_set(after, update_modified=False)
+	return doc.name
+
+
+def import_sales_orders(
+	path,
+	rejects: Rejects,
+	*,
+	owners: dict[str, str],
+	rates: dict[str, Decimal] | None = None,
+	window_days: int = 90,
+	quote_validity_days: int = 30,
+	default_owner: str | None = None,
+	manifest: set[str] | None = None,
+) -> dict:
+	"""``manifest`` is the set of order numbers an earlier run created. One of those
+	with no deal on the site was deleted by a rep, and a re-run must not bring it back."""
+	rows = read_sheet(path)
+	if not rows:
+		return {"deals": 0, "as_of": None}
+	as_of = max(r["Date"] for r in rows if r.get("Date")).date()
+	base_currency = frappe.db.get_single_value("FCRM Settings", "currency") or "USD"
+	rates = {k: Decimal(str(v)) for k, v in (rates or {}).items()}
+	manifest = manifest if manifest is not None else set()
+	_ensure_lost_reason()
+
+	counts = {
+		"deals": 0,
+		"won": 0,
+		"lost": 0,
+		"open": 0,
+		"outside_window": 0,
+		"skipped_deleted": 0,
+		"excluded": {},
+		"as_of": as_of,
+	}
+	for owner in set(owners.values()) | ({default_owner} if default_owner else set()):
+		if not frappe.db.exists("User", owner):
+			raise ValueError(f"owner {owner} is not a User on this site; create the users first")
+
+	for done, row in enumerate(rows, 1):
+		deal = shape_sales_order(
+			row,
+			as_of=as_of,
+			window_days=window_days,
+			quote_validity_days=quote_validity_days,
+			owners=owners,
+			default_owner=default_owner,
+			rates=rates,
+			base_currency=base_currency,
+		)
+		if "skip" in deal:
+			if deal["skip"] == "outside window":
+				counts["outside_window"] += 1
+			else:
+				counts["excluded"][deal["skip"]] = counts["excluded"].get(deal["skip"], 0) + 1
+			continue
+		if "reject" in deal:
+			rejects.add("sales_orders", deal["key"], deal["reject"])
+			continue
+		nbr = deal["order_nbr"]
+		if nbr in manifest and not frappe.db.exists("CRM Deal", {"acumatica_sales_quote": nbr}):
+			counts["skipped_deleted"] += 1
+			continue
+
+		frappe.db.savepoint("ss_deal")
+		try:
+			organization = frappe.db.get_value(
+				"CRM Organization", {"acumatica_id": deal["customer_id"]}, "name"
+			)
+			if not organization:
+				raise ValueError(f"customer {deal['customer_id']} has no organization on the site")
+			upsert_deal(deal, organization)
+			manifest.add(nbr)
+			counts["deals"] += 1
+			counts[{"Won": "won", "Lost": "lost"}.get(deal["status"], "open")] += 1
+		except Exception as e:
+			frappe.db.rollback(save_point="ss_deal")
+			rejects.add("sales_orders", nbr, str(e))
+		_commit_every(done)
+	return counts
+
+
 def import_customers(path, rejects: Rejects) -> dict:
 	counts = {"organizations": 0, "addresses": 0, "skipped_inactive": 0, "addresses_skipped": 0}
 	countries = _country_table()

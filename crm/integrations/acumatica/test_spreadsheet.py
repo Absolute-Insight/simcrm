@@ -300,3 +300,190 @@ class ImportCustomersTest(SpreadsheetImportTestCase):
 		self.assertEqual(len(rejects), 1)
 		self.assertEqual(rejects.rows[0]["key"], "C-BAD")
 		self.assertTrue(frappe.db.exists("CRM Organization", "Good Ltd"))
+
+
+ORDER_HEADER = [
+	"Order Type",
+	"Order Nbr.",
+	"Status",
+	"Date",
+	"Sched. Shipment",
+	"Quote Outcome",
+	"Created By",
+	"Default Salesperson",
+	"Customer",
+	"Customer Name",
+	"Ordered Qty.",
+	"Order Total",
+	"Currency",
+	"Created On",
+	"Est. Margin (%)",
+]
+AS_OF = date(2026, 9, 2)
+OWNERS = {"018": "annmari@crmtest.test", "003": "simon@crmtest.test"}
+RATES = {"USD": Decimal("18.2")}
+
+
+def order(**over):
+	row = {
+		"Order Type": "QT",
+		"Order Nbr.": "QT103012",
+		"Status": "Open",
+		"Date": datetime(2026, 9, 2),
+		"Sched. Shipment": datetime(2026, 9, 2),
+		"Quote Outcome": None,
+		"Created By": "ReneO@mbpeng.co.za",
+		"Default Salesperson": "018",
+		"Customer": "C-PRO004",
+		"Customer Name": "Proserve (Pty) Ltd",
+		"Ordered Qty.": 30,
+		"Order Total": 20359.6,
+		"Currency": "ZAR",
+		"Created On": datetime(2026, 9, 2, 13, 53),
+		"Est. Margin (%)": 33.82,
+	}
+	row.update(over)
+	return row
+
+
+def shape(**over):
+	return ss.shape_sales_order(
+		order(**over),
+		as_of=AS_OF,
+		window_days=90,
+		quote_validity_days=30,
+		owners=OWNERS,
+		default_owner=None,
+		rates=RATES,
+		base_currency="ZAR",
+	)
+
+
+class ShapeSalesOrderTest(UnitTestCase):
+	def test_non_quote_rows_are_skipped_not_rejected(self):
+		for order_type in ("SO", "TR", "CM"):
+			self.assertIn("skip", shape(**{"Order Type": order_type}))
+
+	def test_an_open_quote_becomes_an_open_deal_with_a_validity_close_date(self):
+		deal = shape()
+		self.assertEqual(deal["status"], ss.OPEN_STATUS)
+		self.assertEqual(deal["value"], Decimal("20359.6"))
+		self.assertEqual(deal["owner"], "annmari@crmtest.test")
+		self.assertEqual(deal["expected_closure_date"], date(2026, 10, 2))
+		self.assertIsNone(deal["closed_date"])
+		self.assertEqual(deal["exchange_rate"], Decimal("1"))
+
+	def test_a_completed_quote_is_won_on_its_own_date(self):
+		deal = shape(**{"Status": "Completed", "Date": datetime(2026, 5, 1)})
+		self.assertEqual(deal["status"], "Won")
+		self.assertEqual(deal["closed_date"], date(2026, 5, 1))
+		self.assertEqual(deal["expected_closure_date"], date(2026, 5, 1))
+
+	def test_won_and_lost_ignore_the_window_but_open_does_not(self):
+		old = {"Date": datetime(2026, 1, 15)}
+		self.assertEqual(shape(**{"Status": "Completed", **old})["status"], "Won")
+		self.assertEqual(shape(**{"Quote Outcome": "Lost", **old})["status"], "Lost")
+		self.assertEqual(shape(**old), {"skip": "outside window"})
+
+	def test_usd_rows_carry_their_rate_and_unknown_currencies_reject(self):
+		self.assertEqual(shape(**{"Currency": "USD"})["exchange_rate"], Decimal("18.2"))
+		self.assertIn("reject", shape(**{"Currency": "EUR"}))
+
+	def test_unmapped_or_missing_salesperson_rejects_unless_a_default_is_given(self):
+		self.assertEqual(shape(**{"Default Salesperson": "022"})["reject"], "unmapped salesperson 022")
+		self.assertEqual(shape(**{"Default Salesperson": None})["reject"], "no salesperson")
+		with_default = ss.shape_sales_order(
+			order(**{"Default Salesperson": None}),
+			as_of=AS_OF,
+			window_days=90,
+			quote_validity_days=30,
+			owners=OWNERS,
+			default_owner="manager@crmtest.test",
+			rates=RATES,
+			base_currency="ZAR",
+		)
+		self.assertEqual(with_default["owner"], "manager@crmtest.test")
+
+	def test_an_unknown_status_rejects_with_the_values_seen(self):
+		self.assertEqual(shape(**{"Status": "Shipping"})["reject"], "unknown quote status Shipping / None")
+
+
+class ImportSalesOrdersTest(SpreadsheetImportTestCase):
+	def setUp(self):
+		super().setUp()
+		# base_currency comes from FCRM Settings.currency (or "USD" undefaults); a fresh
+		# test_site never sets it, and the fixtures below are ZAR-denominated. Task 7's
+		# brief hits the same gap and sets this explicitly for the same reason.
+		frappe.db.set_single_value("FCRM Settings", "currency", "ZAR")
+		for email, first in (("annmari@crmtest.test", "Ann-Mari"), ("simon@crmtest.test", "Simon")):
+			if not frappe.db.exists("User", email):
+				user = frappe.get_doc(
+					{"doctype": "User", "email": email, "first_name": first, "send_welcome_email": 0}
+				)
+				user.insert(ignore_permissions=True)
+				user.add_roles("Sales User")
+		frappe.get_doc(
+			{
+				"doctype": "CRM Organization",
+				"organization_name": "Proserve (Pty) Ltd",
+				"acumatica_id": "C-PRO004",
+			}
+		).insert()
+
+	def rows(self, *rows):
+		return write_workbook(
+			self.dir / "orders.xlsx", ORDER_HEADER, [[r[h] for h in ORDER_HEADER] for r in rows]
+		)
+
+	def test_open_won_and_lost_land_with_real_dates_and_reasons(self):
+		path = self.rows(
+			order(),
+			order(**{"Order Nbr.": "QT100001", "Status": "Completed", "Date": datetime(2026, 5, 1)}),
+			order(**{"Order Nbr.": "QT100002", "Quote Outcome": "Lost", "Date": datetime(2026, 4, 1)}),
+		)
+		rejects = ss.Rejects()
+		counts = ss.import_sales_orders(path, rejects, owners=OWNERS, rates=RATES)
+		self.assertEqual(len(rejects), 0, rejects.rows)
+		self.assertEqual((counts["open"], counts["won"], counts["lost"]), (1, 1, 1))
+		won = frappe.get_doc("CRM Deal", {"acumatica_sales_quote": "QT100001"})
+		self.assertEqual(won.status, "Won")
+		self.assertEqual(
+			str(won.closed_date), "2026-05-01"
+		)  # not today: validate() stamps today, we write it back
+		self.assertEqual(won.deal_owner, "annmari@crmtest.test")
+		self.assertEqual(won.organization, "Proserve (Pty) Ltd")
+		lost = frappe.get_doc("CRM Deal", {"acumatica_sales_quote": "QT100002"})
+		self.assertEqual(lost.lost_reason, ss.LOST_REASON)
+		open_deal = frappe.get_doc("CRM Deal", {"acumatica_sales_quote": "QT103012"})
+		self.assertEqual(str(open_deal.expected_closure_date), "2026-10-02")
+		self.assertEqual(open_deal.expected_deal_value, open_deal.deal_value)
+
+	def test_a_usd_deal_keeps_the_supplied_rate(self):
+		path = self.rows(order(**{"Currency": "USD", "Order Total": 1000}))
+		ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+		deal = frappe.get_doc("CRM Deal", {"acumatica_sales_quote": "QT103012"})
+		self.assertEqual(deal.currency, "USD")
+		self.assertAlmostEqual(deal.exchange_rate, 18.2)
+
+	def test_rerun_updates_and_never_duplicates(self):
+		path = self.rows(order())
+		ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+		path = self.rows(order(**{"Order Total": 999}))
+		ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+		self.assertEqual(frappe.db.count("CRM Deal", {"acumatica_sales_quote": "QT103012"}), 1)
+		self.assertEqual(
+			frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": "QT103012"}, "deal_value"), 999
+		)
+
+	def test_a_deal_in_the_manifest_but_gone_from_the_site_is_not_resurrected(self):
+		path = self.rows(order())
+		manifest = {"QT103012"}  # created by an earlier run, then deleted by a rep
+		counts = ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES, manifest=manifest)
+		self.assertEqual(counts["skipped_deleted"], 1)
+		self.assertFalse(frappe.db.exists("CRM Deal", {"acumatica_sales_quote": "QT103012"}))
+
+	def test_a_missing_organization_rejects_the_row(self):
+		path = self.rows(order(**{"Customer": "C-NOPE"}))
+		rejects = ss.Rejects()
+		ss.import_sales_orders(path, rejects, owners=OWNERS, rates=RATES)
+		self.assertEqual(rejects.rows[0]["reason"], "customer C-NOPE has no organization on the site")
