@@ -124,7 +124,11 @@ def ensure_visit_event_category():
 	meeting. Frappe stores the FIRST option ("Event") for any event saved without a
 	category, so the discriminator has to be a value nothing else ever sets. Property
 	Setter rather than a JSON edit because Event is a core doctype. Idempotent; called
-	from after_install and the add_visit_event_category patch."""
+	from after_install and the add_visit_event_category patch.
+
+	The Property Setter freezes the option list as it stood when this first ran, so a
+	core Frappe release that adds an ``event_category`` option will not show it on this
+	site until the setter is refreshed -- delete it and re-run, or widen the patch."""
 	from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 
 	options = frappe.get_meta("Event").get_field("event_category").options or ""
