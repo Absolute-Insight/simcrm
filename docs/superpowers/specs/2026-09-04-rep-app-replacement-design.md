@@ -157,6 +157,23 @@ Plan an Activity search on *"Customer or Sub Code"* — the `C-IMP003E` identifi
 Reps know their accounts by that code. Organization search must match on
 `acumatica_id`, which the import spec's Prerequisite 1 creates.
 
+This gap changes what that custom field *is*. Until now `acumatica_id` has been
+sync bookkeeping, and an absent one is invisible — nothing user-facing reads it.
+Make it a search key and its absence stops being invisible and starts being
+**silent**: a rep types `C-IMP003E` on a site that never had the field created
+and gets an empty result set, not an error. That reads as "search is broken",
+which is the worst way for a missing-schema problem to surface, and it will be
+reported as a search bug rather than a setup one.
+
+So G6 carries two requirements beyond the search itself. The field's absence must
+be **detected and surfaced** rather than degrading to no results — a search by
+code on a site without the column says so. And G6 must not ship with an
+undocumented manual precondition, which is the argument for fixing
+[#166](https://github.com/Absolute-Insight/simcrm/issues/166) by separating
+schema install from activation rather than by adding an on-disable path: the
+first makes the direct `ensure_custom_fields()` call unnecessary, the second only
+makes it reversible. **Worth deciding before G6 is built, not after.**
+
 **G7 — Surface the activity's edit history.** Frappe already records it; the old
 app shows it inline in the edit dialog alongside the note that accompanied each
 change. Surface the existing versions rather than building a parallel log.
@@ -216,3 +233,6 @@ Following the repo convention that pure logic is unit-tested:
   `test_the_grouped_reads_agree_with_the_per_rep_ones` already establishes.
 - Cancellation counts must not change existing adherence numbers — a regression
   test on `plan_adherence` before and after.
+- G6 on a site **without** `acumatica_id`: a code search must surface the missing
+  column, not return an empty list. This is the case that will otherwise reach a
+  user as a phantom search bug.
