@@ -23,10 +23,7 @@ import frappe
 from openpyxl import load_workbook
 
 from crm.integrations.acumatica.importer import COMMIT_EVERY, upsert_organization
-
-# Payment terms leaking into the customer name. Only this suffix is stripped:
-# "- Shaft 10", "- Driefontein Division" and the like are real delivery sites.
-_COD_SUFFIX = re.compile(r"\s-\s[Cc][Oo][Dd]\s*$")
+from crm.integrations.acumatica.names import normalise_account_name
 
 PLACEHOLDER_EMAILS = {"no@email.co.za"}
 
@@ -36,10 +33,6 @@ OPEN_STATUS = "Proposal/Quotation"
 
 _OPEN_STATUSES = {"Open", "On Hold", "Pending Approval"}
 _LOST_STATUSES = {"Canceled", "Rejected"}
-
-
-def normalise_account_name(name: str) -> str:
-	return _COD_SUFFIX.sub("", (name or "").strip()).strip()
 
 
 def usable_email(value) -> str | None:

@@ -7,6 +7,7 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 	record_sync_issue,
 )
 from crm.integrations.acumatica.client import AcumaticaClient, v
+from crm.integrations.acumatica.names import normalise_account_name
 
 COMMIT_EVERY = 50  # keep transactions short; a 50k-customer backfill must not hold one tx
 
@@ -47,7 +48,7 @@ def upsert_organization(rec) -> str:
 	noteid = v(rec, "NoteID")
 	customer_id = v(rec, "CustomerID")
 	name = _find_by_noteid("CRM Organization", noteid)
-	organization_name = v(rec, "CustomerName") or customer_id
+	organization_name = normalise_account_name(v(rec, "CustomerName") or customer_id or "")
 	if not name:
 		# The spreadsheet import has no NoteID, so the human-readable ID is its key;
 		# a later live sync then finds the imported row here before it can create a rival.
