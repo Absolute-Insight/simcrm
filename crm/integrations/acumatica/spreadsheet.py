@@ -148,7 +148,10 @@ class Rejects:
 def _commit_every(done: int) -> None:
 	# Same reasoning as run_backfill: a 10k-row import must not hold one transaction.
 	# Under test the whole run is one rolled-back transaction, so never commit there.
-	if done % COMMIT_EVERY == 0 and not frappe.flags.in_test:
+	# A dry run must never commit either -- the entry point sets this flag for its
+	# duration, otherwise a large sheet would commit full batches before the closing
+	# rollback ever runs.
+	if done % COMMIT_EVERY == 0 and not (frappe.flags.in_test or frappe.flags.spreadsheet_import_dry_run):
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 
@@ -553,6 +556,7 @@ def import_workbooks(
 	warnings: list[str] = []
 
 	summary = {"dry_run": dry, "warnings": warnings}
+	frappe.flags.spreadsheet_import_dry_run = dry
 	try:
 		summary["customers"] = import_customers(customers, rejects)
 		summary["sales_orders"] = import_sales_orders(
@@ -572,11 +576,18 @@ def import_workbooks(
 			warnings.append(
 				f"{with_sla} imported deals picked up a Service Level Agreement; response timers are now running on them"
 			)
-	finally:
+	except Exception:
+		# whatever was written since the last commit goes; the entry point never
+		# commits partial work, and a re-run is idempotent
+		frappe.db.rollback()
+		raise
+	else:
 		if dry:
 			frappe.db.rollback()
 		elif not frappe.flags.in_test:
 			frappe.db.commit()  # nosemgrep: frappe-manual-commit
+	finally:
+		frappe.flags.spreadsheet_import_dry_run = False
 
 	summary["rejects"] = len(rejects)
 	if not dry:

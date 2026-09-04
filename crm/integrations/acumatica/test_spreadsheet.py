@@ -597,6 +597,22 @@ class ImportInvoicesTest(SpreadsheetImportTestCase):
 		self.assertEqual(rejects.rows[0]["key"], "C-SURE01")
 
 
+class CommitCadenceTest(UnitTestCase):
+	def test_a_dry_run_never_commits(self):
+		with patch.object(frappe.db, "commit") as commit:
+			frappe.flags.in_test = False
+			try:
+				frappe.flags.spreadsheet_import_dry_run = True
+				ss._commit_every(50)
+				self.assertEqual(commit.call_count, 0)
+				frappe.flags.spreadsheet_import_dry_run = False
+				ss._commit_every(50)
+				self.assertEqual(commit.call_count, 1)
+			finally:
+				frappe.flags.in_test = True
+				frappe.flags.spreadsheet_import_dry_run = False
+
+
 class ImportWorkbooksTest(SpreadsheetImportTestCase):
 	def setUp(self):
 		super().setUp()
@@ -663,3 +679,21 @@ class ImportWorkbooksTest(SpreadsheetImportTestCase):
 			self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2}
 		)
 		self.assertEqual(summary["sales_orders"]["skipped_deleted"], 1)
+
+	def test_the_dry_run_flag_is_cleared_afterwards(self):
+		ss.import_workbooks(
+			self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2}, dry_run=True
+		)
+		self.assertFalse(frappe.flags.spreadsheet_import_dry_run)
+
+	def test_an_exception_mid_run_commits_nothing_and_writes_no_files(self):
+		with patch(
+			"crm.integrations.acumatica.spreadsheet.import_sales_orders", side_effect=RuntimeError("boom")
+		):
+			with self.assertRaises(RuntimeError):
+				ss.import_workbooks(
+					self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2}
+				)
+		self.assertFalse(frappe.db.exists("CRM Organization", "Proserve (Pty) Ltd"))
+		self.assertFalse((self.dir / "import-manifest.json").exists())
+		self.assertFalse(frappe.flags.spreadsheet_import_dry_run)
