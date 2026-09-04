@@ -12,6 +12,7 @@ ones with direct tests.
 
 from __future__ import annotations
 
+import json
 import re
 from collections import defaultdict
 from datetime import date, timedelta
@@ -502,3 +503,89 @@ def import_invoices(path, rejects: Rejects, *, rates: dict | None = None) -> dic
 		counts["organizations"] += 1
 		counts["total"] += total
 	return counts
+
+
+def _load_owners(owners) -> dict[str, str]:
+	if isinstance(owners, dict):
+		return {str(k): v for k, v in owners.items()}
+	return {str(k): v for k, v in json.loads(Path(owners).read_text()).items()}
+
+
+def _manifest_path(sales_orders) -> Path:
+	return Path(sales_orders).with_name("import-manifest.json")
+
+
+def _read_manifest(path: Path) -> set[str]:
+	if not path.exists():
+		return set()
+	return set(json.loads(path.read_text()).get("deals", []))
+
+
+def import_workbooks(
+	customers,
+	sales_orders,
+	invoices,
+	owners,
+	rates: dict | None = None,
+	window_days: int = 90,
+	quote_validity_days: int = 30,
+	default_owner: str | None = None,
+	dry_run: bool = False,
+) -> dict:
+	"""Entry point for ``bench --site <site> execute
+	crm.integrations.acumatica.spreadsheet.import_workbooks --kwargs '{...}'``.
+
+	Order is forced: organizations first (deals link to them), then deals, then
+	revenue. A dry run does all the work inside the transaction and rolls it back,
+	so the reject report is real. Everything else is re-runnable."""
+	base_currency = frappe.db.get_single_value("FCRM Settings", "currency")
+	if base_currency != "ZAR":
+		# the deal controller fetches a live rate for anything not in the base
+		# currency, so with the wrong base every ZAR row would hit the network
+		raise ValueError(
+			f"base currency is {base_currency!r}; set FCRM Settings.currency to ZAR before importing"
+		)
+	dry = dry_run
+	owners_map = _load_owners(owners)
+	rejects = Rejects()
+	manifest_path = _manifest_path(sales_orders)
+	manifest = _read_manifest(manifest_path)
+	warnings: list[str] = []
+
+	summary = {"dry_run": dry, "warnings": warnings}
+	try:
+		summary["customers"] = import_customers(customers, rejects)
+		summary["sales_orders"] = import_sales_orders(
+			sales_orders,
+			rejects,
+			owners=owners_map,
+			rates=rates,
+			window_days=window_days,
+			quote_validity_days=quote_validity_days,
+			default_owner=default_owner,
+			manifest=manifest,
+		)
+		summary["invoices"] = import_invoices(invoices, rejects, rates=rates)
+
+		with_sla = frappe.db.count("CRM Deal", {"acumatica_sales_quote": ("is", "set"), "sla": ("is", "set")})
+		if with_sla:
+			warnings.append(
+				f"{with_sla} imported deals picked up a Service Level Agreement; response timers are now running on them"
+			)
+	finally:
+		if dry:
+			frappe.db.rollback()
+		elif not frappe.flags.in_test:
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit
+
+	summary["rejects"] = len(rejects)
+	if not dry:
+		manifest_path.write_text(json.dumps({"deals": sorted(manifest)}, indent=1))
+		manifest_path.with_name("import-rejects.json").write_text(json.dumps(rejects.rows, indent=1))
+	summary["reject_rows"] = rejects.rows
+	# bench execute prints the return value; make the numbers readable
+	for section in ("customers", "sales_orders", "invoices"):
+		for key, value in list(summary.get(section, {}).items()):
+			if isinstance(value, (Decimal, date)):
+				summary[section][key] = str(value)
+	return summary

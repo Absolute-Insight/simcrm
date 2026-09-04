@@ -8,6 +8,7 @@ client's data and are never committed.
 
 from __future__ import annotations
 
+import json
 import tempfile
 from datetime import date, datetime
 from decimal import Decimal
@@ -594,3 +595,71 @@ class ImportInvoicesTest(SpreadsheetImportTestCase):
 		rejects = ss.Rejects()
 		ss.import_invoices(path, rejects, rates=RATES)
 		self.assertEqual(rejects.rows[0]["key"], "C-SURE01")
+
+
+class ImportWorkbooksTest(SpreadsheetImportTestCase):
+	def setUp(self):
+		super().setUp()
+		# OWNERS (below) has both salespeople, and import_sales_orders pre-validates
+		# every value in the owners map as an existing User -- not just ones a row
+		# references -- so both must exist even though this fixture's one order row
+		# only names "018". Mirrors ImportSalesOrdersTest.setUp above.
+		for email, first in (("annmari@crmtest.test", "Ann-Mari"), ("simon@crmtest.test", "Simon")):
+			if not frappe.db.exists("User", email):
+				user = frappe.get_doc(
+					{"doctype": "User", "email": email, "first_name": first, "send_welcome_email": 0}
+				)
+				user.insert(ignore_permissions=True)
+				user.add_roles("Sales User")
+		self.customers = write_workbook(
+			self.dir / "Customers.xlsx",
+			CUSTOMER_HEADER,
+			[customer(**{"Customer ID": "C-PRO004", "Customer Name": "Proserve (Pty) Ltd"})],
+		)
+		self.orders = write_workbook(
+			self.dir / "Sales Orders.xlsx", ORDER_HEADER, [[order()[h] for h in ORDER_HEADER]]
+		)
+		self.invoices = write_workbook(
+			self.dir / "Invoices.xlsx",
+			INVOICE_HEADER,
+			[[invoice(**{"Customer": "C-PRO004"})[h] for h in INVOICE_HEADER]],
+		)
+		self.owners = self.dir / "owners.json"
+		self.owners.write_text(json.dumps(OWNERS))
+		frappe.db.set_single_value("FCRM Settings", "currency", "ZAR")
+
+	def test_refuses_to_run_unless_the_base_currency_is_zar(self):
+		frappe.db.set_single_value("FCRM Settings", "currency", "USD")
+		with self.assertRaisesRegex(ValueError, "base currency"):
+			ss.import_workbooks(self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2})
+
+	def test_dry_run_writes_nothing_and_still_reports(self):
+		summary = ss.import_workbooks(
+			self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2}, dry_run=True
+		)
+		self.assertEqual(summary["customers"]["organizations"], 1)
+		self.assertEqual(summary["sales_orders"]["deals"], 1)
+		self.assertTrue(summary["dry_run"])
+		self.assertFalse(frappe.db.exists("CRM Organization", "Proserve (Pty) Ltd"))
+		self.assertFalse((self.dir / "import-manifest.json").exists())
+
+	def test_a_real_run_writes_the_manifest_and_reject_report(self):
+		summary = ss.import_workbooks(
+			self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2}
+		)
+		self.assertTrue(frappe.db.exists("CRM Deal", {"acumatica_sales_quote": "QT103012"}))
+		self.assertEqual(json.loads((self.dir / "import-manifest.json").read_text())["deals"], ["QT103012"])
+		self.assertEqual(json.loads((self.dir / "import-rejects.json").read_text()), [])
+		self.assertEqual(summary["warnings"], [])
+
+	def test_the_manifest_is_read_back_on_the_next_run(self):
+		ss.import_workbooks(self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2})
+		frappe.delete_doc(
+			"CRM Deal",
+			frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": "QT103012"}, "name"),
+			force=True,
+		)
+		summary = ss.import_workbooks(
+			self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2}
+		)
+		self.assertEqual(summary["sales_orders"]["skipped_deleted"], 1)
