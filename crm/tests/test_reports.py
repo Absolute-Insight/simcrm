@@ -14,6 +14,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from crm.api.dashboard import activity_cancellations, client_reliability, plan_adherence
+from crm.api.rep_plan import log_unplanned_visit
 from crm.api.reports import REPORTS, get_report, list_reports
 from crm.install import ensure_sa_provinces
 
@@ -337,6 +338,41 @@ class ClientReliabilityTest(IntegrationTestCase):
 		)
 		self.assertEqual(rows[1]["organization"], "Solid Works")
 		self.assertEqual(rows[1]["done"], 1)
+
+	def test_an_unplanned_visit_counts_for_its_organization(self):
+		"""A logged visit names its organization as an event participant and has no
+		deal, so the deal join alone never saw it -- the client whose site the rep
+		actually drove to was missing from the report about that client."""
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(self.USER)
+		log_unplanned_visit(self.solid.name, "Called to site for a breakdown")
+		frappe.set_user("Administrator")
+
+		today = frappe.utils.nowdate()
+		rows = client_reliability(today, today, user=self.USER)
+		row = next(r for r in rows if r["organization"] == self.solid.name)
+		self.assertEqual((row["done"], row["total"]), (1, 1))
+
+	def test_a_cancelled_deal_event_counts(self):
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(self.USER)
+		frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "Site meeting",
+				"starts_on": frappe.utils.now_datetime(),
+				"event_type": "Private",
+				"status": "Cancelled",
+				"reference_doctype": "CRM Deal",
+				"reference_docname": self.flaky_deal.name,
+			}
+		).insert(ignore_permissions=True)
+		frappe.set_user("Administrator")
+
+		today = frappe.utils.nowdate()
+		rows = client_reliability(today, today, user=self.USER)
+		row = next(r for r in rows if r["organization"] == self.flaky.name)
+		self.assertEqual((row["cancelled"], row["rescheduled"], row["total"]), (1, 0, 1))
 
 	def test_the_report_is_the_aggregate(self):
 		self._task(self.flaky_deal, "Canceled")

@@ -1853,10 +1853,14 @@ def client_reliability(from_date: str | None = None, to_date: str | None = None,
 
 	The one genuinely new idea in the old rep app: which customers move and
 	cancel the team's visits. A task reaches its organization through the deal
-	it references; a calendar event the same way. Sorted by rescheduled plus
-	cancelled so the clients that cost the most time are at the top."""
+	it references, and so does a calendar event -- but a logged visit names the
+	organization directly as an event participant and often has no deal at all,
+	which is the third source. Activity on a *lead* is not counted: a lead's
+	organization is free text, not a link. Sorted by rescheduled plus cancelled
+	so the clients that cost the most time are at the top."""
 	Task = DocType("CRM Task")
 	Event = DocType("Event")
+	Participant = DocType("Event Participants")
 	Deal = DocType("CRM Deal")
 	end = add_days(to_date, 1)
 
@@ -1878,6 +1882,8 @@ def client_reliability(from_date: str | None = None, to_date: str | None = None,
 		)
 		.groupby(Deal.organization)
 	)
+	# An event is either done or cancelled: there is no rescheduled state to
+	# select, so both event queries omit the column and the merge defaults it.
 	events = (
 		frappe.qb.from_(Event)
 		.join(Deal)
@@ -1888,22 +1894,38 @@ def client_reliability(from_date: str | None = None, to_date: str | None = None,
 			Deal.organization.as_("organization"),
 			Count(Event.name).as_("total"),
 			(flag(Event.status, "Completed") + flag(Event.status, "Closed")).as_("done"),
-			Sum(Case().when(Event.status == "Cancelled", 0).else_(0)).as_("rescheduled"),
 			flag(Event.status, "Cancelled").as_("cancelled"),
 		)
 		.groupby(Deal.organization)
 	)
+	# The visits a rep logs from the planner name the organization as a
+	# participant and need no deal, so the deal join never sees them.
+	visits = (
+		frappe.qb.from_(Event)
+		.join(Participant)
+		.on((Participant.parent == Event.name) & (Participant.reference_doctype == "CRM Organization"))
+		.where((Event.starts_on >= from_date) & (Event.starts_on < end))
+		.select(
+			Participant.reference_docname.as_("organization"),
+			Count(Event.name).as_("total"),
+			(flag(Event.status, "Completed") + flag(Event.status, "Closed")).as_("done"),
+			flag(Event.status, "Cancelled").as_("cancelled"),
+		)
+		.groupby(Participant.reference_docname)
+	)
 	if user:
 		tasks = tasks.where(Task.assigned_to == user)
 		events = events.where(Event.owner == user)
+		visits = visits.where(Event.owner == user)
 	else:
 		reps = visible_reps()
 		if reps is not None:
 			tasks = tasks.where(Task.assigned_to.isin(reps))
 			events = events.where(Event.owner.isin(reps))
+			visits = visits.where(Event.owner.isin(reps))
 
 	merged: dict[str, dict] = {}
-	for row in tasks.run(as_dict=True) + events.run(as_dict=True):
+	for row in tasks.run(as_dict=True) + events.run(as_dict=True) + visits.run(as_dict=True):
 		bucket = merged.setdefault(
 			row.organization,
 			{"organization": row.organization, "total": 0, "done": 0, "rescheduled": 0, "cancelled": 0},

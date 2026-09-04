@@ -38,7 +38,10 @@ pattern.
   counts them directly and `plan_adherence` carries the number alongside
   planned/done/missed without changing any of those.
 - **Client reliability reaches an organization through the deal an activity
-  references.** Sorted by rescheduled + cancelled, worst first.
+  references, or — for a calendar event — through an `Event Participants` row
+  naming the organization,** which is how the visits a rep logs from the planner
+  count without a deal. Activity on a lead is not counted — a lead's
+  organization is free text. Sorted by rescheduled + cancelled, worst first.
 - **Client reliability ignores the territory picker, like plan adherence and
   quota attainment, and is listed in `TERRITORY_BLIND` so the report says so.**
 
