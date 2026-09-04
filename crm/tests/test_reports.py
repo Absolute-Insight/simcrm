@@ -269,3 +269,8 @@ class CancellationsTest(IntegrationTestCase):
 
 		report = get_report("plan_adherence_by_rep", today, today, self.USER)
 		self.assertIn({"key": "cancelled", "label": "Cancelled", "type": "number"}, report["columns"])
+
+		row = next(r for r in report["rows"] if r["user"] == self.USER)
+		self.assertEqual(row["cancelled"], 3)
+		self.assertIsNone(row["adherence"])
+		self.assertEqual(row["planned"], 0)

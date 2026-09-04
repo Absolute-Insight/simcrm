@@ -1910,7 +1910,7 @@ def plan_adherence(
 			if u not in seen:
 				rows.append(
 					frappe._dict(
-						{"user": u, "planned": 0, "done": 0, "missed": 0, "adherence": 0, "cancelled": n}
+						{"user": u, "planned": 0, "done": 0, "missed": 0, "adherence": None, "cancelled": n}
 					)
 				)
 	else:
