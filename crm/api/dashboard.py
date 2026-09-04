@@ -1848,6 +1848,73 @@ def activity_cancellations(
 	return [frappe._dict({"cancelled": sum(totals.values())})]
 
 
+def client_reliability(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+	"""Activity outcomes grouped by the client they were for, worst first.
+
+	The one genuinely new idea in the old rep app: which customers move and
+	cancel the team's visits. A task reaches its organization through the deal
+	it references; a calendar event the same way. Sorted by rescheduled plus
+	cancelled so the clients that cost the most time are at the top."""
+	Task = DocType("CRM Task")
+	Event = DocType("Event")
+	Deal = DocType("CRM Deal")
+	end = add_days(to_date, 1)
+
+	def flag(column, value):
+		return Sum(Case().when(column == value, 1).else_(0))
+
+	tasks = (
+		frappe.qb.from_(Task)
+		.join(Deal)
+		.on((Task.reference_doctype == "CRM Deal") & (Task.reference_docname == Deal.name))
+		.where((Task.modified >= from_date) & (Task.modified < end))
+		.where(Deal.organization.isnotnull())
+		.select(
+			Deal.organization.as_("organization"),
+			Count(Task.name).as_("total"),
+			flag(Task.status, "Done").as_("done"),
+			flag(Task.status, "Rescheduled").as_("rescheduled"),
+			flag(Task.status, "Canceled").as_("cancelled"),
+		)
+		.groupby(Deal.organization)
+	)
+	events = (
+		frappe.qb.from_(Event)
+		.join(Deal)
+		.on((Event.reference_doctype == "CRM Deal") & (Event.reference_docname == Deal.name))
+		.where((Event.starts_on >= from_date) & (Event.starts_on < end))
+		.where(Deal.organization.isnotnull())
+		.select(
+			Deal.organization.as_("organization"),
+			Count(Event.name).as_("total"),
+			(flag(Event.status, "Completed") + flag(Event.status, "Closed")).as_("done"),
+			Sum(Case().when(Event.status == "Cancelled", 0).else_(0)).as_("rescheduled"),
+			flag(Event.status, "Cancelled").as_("cancelled"),
+		)
+		.groupby(Deal.organization)
+	)
+	if user:
+		tasks = tasks.where(Task.assigned_to == user)
+		events = events.where(Event.owner == user)
+	else:
+		reps = visible_reps()
+		if reps is not None:
+			tasks = tasks.where(Task.assigned_to.isin(reps))
+			events = events.where(Event.owner.isin(reps))
+
+	merged: dict[str, dict] = {}
+	for row in tasks.run(as_dict=True) + events.run(as_dict=True):
+		bucket = merged.setdefault(
+			row.organization,
+			{"organization": row.organization, "total": 0, "done": 0, "rescheduled": 0, "cancelled": 0},
+		)
+		for key in ("total", "done", "rescheduled", "cancelled"):
+			bucket[key] += int(row.get(key) or 0)
+	rows = [frappe._dict(b) for b in merged.values()]
+	rows.sort(key=lambda r: (-(r["rescheduled"] + r["cancelled"]), r["organization"]))
+	return rows
+
+
 def plan_adherence(
 	from_date: str | None = None,
 	to_date: str | None = None,

@@ -182,6 +182,12 @@ def _quota_attainment_by_rep(from_date, to_date, user, territory=None):
 	return _rep_display(rows)
 
 
+def _client_reliability(from_date, to_date, user, territory=None):
+	from crm.api.dashboard import client_reliability
+
+	return client_reliability(from_date, to_date, user)
+
+
 REPORTS = {
 	"pipeline_by_stage": {
 		"title": "Pipeline by stage",
@@ -264,6 +270,18 @@ REPORTS = {
 			{"key": "attainment", "label": "Attainment %", "type": "percent"},
 		],
 		"get_rows": _quota_attainment_by_rep,
+	},
+	"client_reliability": {
+		"title": "Client reliability",
+		"description": "Activity outcomes by client, most rescheduled and cancelled first",
+		"columns": [
+			{"key": "organization", "label": "Client", "type": "text"},
+			{"key": "total", "label": "Activities", "type": "number"},
+			{"key": "done", "label": "Done", "type": "number"},
+			{"key": "rescheduled", "label": "Rescheduled", "type": "number"},
+			{"key": "cancelled", "label": "Cancelled", "type": "number"},
+		],
+		"get_rows": _client_reliability,
 	},
 }
 

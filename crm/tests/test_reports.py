@@ -13,7 +13,7 @@ from __future__ import annotations
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from crm.api.dashboard import activity_cancellations, plan_adherence
+from crm.api.dashboard import activity_cancellations, client_reliability, plan_adherence
 from crm.api.reports import REPORTS, get_report, list_reports
 
 USER = "reports-rep@crmtest.test"
@@ -274,3 +274,70 @@ class CancellationsTest(IntegrationTestCase):
 		self.assertEqual(row["cancelled"], 3)
 		self.assertIsNone(row["adherence"])
 		self.assertEqual(row["planned"], 0)
+
+
+class ClientReliabilityTest(IntegrationTestCase):
+	USER = "reliab-rep@crmtest.test"
+
+	def setUp(self):
+		super().setUp()
+		if not frappe.db.exists("User", self.USER):
+			user = frappe.get_doc(
+				{"doctype": "User", "email": self.USER, "first_name": "Reliab Rep", "send_welcome_email": 0}
+			)
+			user.insert(ignore_permissions=True)
+			user.add_roles("Sales User")
+		self.flaky = frappe.get_doc(
+			{"doctype": "CRM Organization", "organization_name": "Flaky Mine"}
+		).insert()
+		self.solid = frappe.get_doc(
+			{"doctype": "CRM Organization", "organization_name": "Solid Works"}
+		).insert()
+		self.flaky_deal = frappe.get_doc(
+			{"doctype": "CRM Deal", "organization": self.flaky.name, "deal_owner": self.USER}
+		).insert()
+		self.solid_deal = frappe.get_doc(
+			{"doctype": "CRM Deal", "organization": self.solid.name, "deal_owner": self.USER}
+		).insert()
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _task(self, deal, status):
+		task = frappe.get_doc(
+			{
+				"doctype": "CRM Task",
+				"title": "t",
+				"status": "Todo",
+				"assigned_to": self.USER,
+				"reference_doctype": "CRM Deal",
+				"reference_docname": deal.name,
+			}
+		).insert()
+		# assign_to() (after_insert) sets `assigned_to` via frappe.db.set_value, which bumps
+		# `modified` in the database without updating this in-memory copy — reload or save()
+		# below trips check_if_latest's TimestampMismatchError.
+		task.reload()
+		task.status = status
+		task.closing_note = "n"
+		task.save()
+
+	def test_clients_are_ranked_by_how_often_they_move_or_drop_activities(self):
+		self._task(self.flaky_deal, "Rescheduled")
+		self._task(self.flaky_deal, "Canceled")
+		self._task(self.flaky_deal, "Done")
+		self._task(self.solid_deal, "Done")
+		today = frappe.utils.nowdate()
+		rows = client_reliability(today, today, user=self.USER)
+		self.assertEqual(rows[0]["organization"], "Flaky Mine")
+		self.assertEqual(
+			(rows[0]["rescheduled"], rows[0]["cancelled"], rows[0]["done"], rows[0]["total"]), (1, 1, 1, 3)
+		)
+		self.assertEqual(rows[1]["organization"], "Solid Works")
+		self.assertEqual(rows[1]["done"], 1)
+
+	def test_the_report_is_the_aggregate(self):
+		self._task(self.flaky_deal, "Canceled")
+		today = frappe.utils.nowdate()
+		report = get_report("client_reliability", today, today, self.USER)
+		self.assertEqual(report["rows"], client_reliability(today, today, user=self.USER))
