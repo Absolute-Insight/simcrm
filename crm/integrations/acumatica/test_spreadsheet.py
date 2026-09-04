@@ -12,6 +12,7 @@ import tempfile
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
@@ -407,6 +408,10 @@ class ShapeSalesOrderTest(UnitTestCase):
 	def test_an_unknown_status_rejects_with_the_values_seen(self):
 		self.assertEqual(shape(**{"Status": "Shipping"})["reject"], "unknown quote status Shipping / None")
 
+	def test_a_date_only_cell_is_accepted(self):
+		deal = shape(**{"Date": date(2026, 9, 1)})
+		self.assertEqual(deal["quote_date"], date(2026, 9, 1))
+
 
 class ImportSalesOrdersTest(SpreadsheetImportTestCase):
 	def setUp(self):
@@ -487,3 +492,23 @@ class ImportSalesOrdersTest(SpreadsheetImportTestCase):
 		rejects = ss.Rejects()
 		ss.import_sales_orders(path, rejects, owners=OWNERS, rates=RATES)
 		self.assertEqual(rejects.rows[0]["reason"], "customer C-NOPE has no organization on the site")
+
+	def test_an_empty_sheet_returns_the_full_shape(self):
+		path = self.rows()
+		counts = ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+		for key in ("deals", "won", "lost", "open", "outside_window", "skipped_deleted", "excluded", "as_of"):
+			self.assertIn(key, counts)
+		for key in ("deals", "won", "lost", "open", "outside_window", "skipped_deleted"):
+			self.assertEqual(counts[key], 0)
+		self.assertEqual(counts["excluded"], {})
+		self.assertIsNone(counts["as_of"])
+
+	def test_every_row_reaches_the_commit_cadence(self):
+		path = self.rows(
+			order(),
+			order(**{"Order Type": "SO", "Order Nbr.": "SO-1"}),
+			order(**{"Order Type": "TR", "Order Nbr.": "SO-2", "Customer": "JHB"}),
+		)
+		with patch("crm.integrations.acumatica.spreadsheet._commit_every") as commit:
+			ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+		self.assertEqual(commit.call_count, 3)

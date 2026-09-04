@@ -84,6 +84,13 @@ def to_decimal(value) -> Decimal:
 	return Decimal(str(value))
 
 
+def _as_date(value) -> date | None:
+	"""openpyxl hands back datetime for any Excel date; a date-only cell or a caller passing a date must work too."""
+	if value is None:
+		return None
+	return value.date() if hasattr(value, "date") else value
+
+
 def map_deal_status(status: str, outcome) -> str | None:
 	"""For ``Order Type = QT`` rows only. ``Quote Outcome`` records only failure, so it wins;
 	``Completed`` is read as converted to an order. Unknown combinations return None
@@ -262,7 +269,7 @@ def shape_sales_order(
 			"key": nbr,
 		}
 
-	quote_date = row["Date"].date() if hasattr(row.get("Date"), "date") else row.get("Date")
+	quote_date = _as_date(row.get("Date"))
 	if not quote_date:
 		return {"reject": "no date", "key": nbr}
 	if status == OPEN_STATUS and not within_window(quote_date, as_of, window_days):
@@ -345,14 +352,6 @@ def import_sales_orders(
 	"""``manifest`` is the set of order numbers an earlier run created. One of those
 	with no deal on the site was deleted by a rep, and a re-run must not bring it back."""
 	rows = read_sheet(path)
-	if not rows:
-		return {"deals": 0, "as_of": None}
-	as_of = max(r["Date"] for r in rows if r.get("Date")).date()
-	base_currency = frappe.db.get_single_value("FCRM Settings", "currency") or "USD"
-	rates = {k: Decimal(str(v)) for k, v in (rates or {}).items()}
-	manifest = manifest if manifest is not None else set()
-	_ensure_lost_reason()
-
 	counts = {
 		"deals": 0,
 		"won": 0,
@@ -361,13 +360,23 @@ def import_sales_orders(
 		"outside_window": 0,
 		"skipped_deleted": 0,
 		"excluded": {},
-		"as_of": as_of,
+		"as_of": None,
 	}
+	if not rows:
+		return counts
+	as_of = max(_as_date(r["Date"]) for r in rows if r.get("Date"))
+	counts["as_of"] = as_of
+	base_currency = frappe.db.get_single_value("FCRM Settings", "currency") or "USD"
+	rates = {k: Decimal(str(v)) for k, v in (rates or {}).items()}
+	manifest = manifest if manifest is not None else set()
+	_ensure_lost_reason()
+
 	for owner in set(owners.values()) | ({default_owner} if default_owner else set()):
 		if not frappe.db.exists("User", owner):
 			raise ValueError(f"owner {owner} is not a User on this site; create the users first")
 
 	for done, row in enumerate(rows, 1):
+		_commit_every(done)
 		deal = shape_sales_order(
 			row,
 			as_of=as_of,
@@ -406,7 +415,6 @@ def import_sales_orders(
 		except Exception as e:
 			frappe.db.rollback(save_point="ss_deal")
 			rejects.add("sales_orders", nbr, str(e))
-		_commit_every(done)
 	return counts
 
 
@@ -415,6 +423,7 @@ def import_customers(path, rejects: Rejects) -> dict:
 	countries = _country_table()
 	rows = dedupe_customers(read_sheet(path))
 	for done, row in enumerate(rows, 1):
+		_commit_every(done)
 		try:
 			shaped = shape_customer(row, countries)
 		except Exception as e:
@@ -448,5 +457,4 @@ def import_customers(path, rejects: Rejects) -> dict:
 					counts["addresses"] += 1
 			else:
 				counts["addresses_skipped"] += 1
-		_commit_every(done)
 	return counts
