@@ -33,6 +33,14 @@ pattern.
   would mark this morning's completed call as missed.
 - **A settled month with nothing closed reports 0, not blank.** Only genuinely
   future months are null, so "zero pipeline" and "no data" stay distinguishable.
+- **Cancellations are counted from the records, not the plan.** A cancelled
+  task or event fulfils nothing, so the matcher never sees it; `activity_cancellations`
+  counts them directly and `plan_adherence` carries the number alongside
+  planned/done/missed without changing any of those.
+- **Client reliability reaches an organization through the deal an activity
+  references.** Sorted by rescheduled + cancelled, worst first.
+- **Client reliability ignores the territory picker, like plan adherence and
+  quota attainment, and is listed in `TERRITORY_BLIND` so the report says so.**
 
 ## Scoping
 
@@ -61,9 +69,9 @@ Managers set targets in **Settings → Sales Targets** (a rep × month grid with
 
 ## Reports
 
-Five built-ins, all registry entries over the metrics layer:
+Six built-ins, all registry entries over the metrics layer:
 pipeline by stage, funnel conversion, plan adherence by rep, forecast vs actual,
-quota attainment by rep.
+quota attainment by rep, client reliability.
 
 Registry strings are untranslated literals with `_()` applied **per request** —
 a module is imported once per worker, so translating at import time would freeze

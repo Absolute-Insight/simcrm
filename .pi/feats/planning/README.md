@@ -46,6 +46,16 @@ Where each activity's actuals come from is a table (`ACTUAL_SOURCES`), not an
 | Call | `CRM Call Log` | `start_time`, falling back to `creation` | `status = Completed`, matched on **caller or receiver** — a telephony log is owned by the integration user, not the rep |
 | Email | `Communication` | `creation` | `Sent` + `communication_type = Communication` + `medium = Email` |
 | Meeting | `Event` | start time | not `Cancelled`; **keeps its reference** |
+| Visit | `Event` | `starts_on` | `event_category = "Visit"`, not `Cancelled` |
+
+A visit and a meeting are both calendar events; the category tells them apart.
+"Visit" is added to `Event.event_category` by a Property Setter
+(`ensure_visit_event_category`), and Meeting excludes it, so one event is
+emitted under exactly one kind. Frappe stores the first option ("Event") for
+any event saved without a category, so every existing event stays a Meeting.
+`log_unplanned_visit` records a visit that was never planned — a rep called
+to site for a breakdown — as an Event in that category plus a plan item
+already Done and flagged `manual_override`, in one call.
 
 Every run re-derives the whole horizon instead of appending to it, so deleting
 the call behind an item takes its Done away again and `Missed` is a verdict the
@@ -61,6 +71,7 @@ run reached rather than a state the item is stuck in. Items older than
 | `propose_week(week_start)` | Drafts from open suggestions, spread over the *remaining* weekdays. Writes nothing |
 | `mark_fulfilled(item, ...)` / `mark_missed(item)` / `clear_override(item)` | Manual override; the matcher then leaves the row alone. A named fulfilment record is verified — it must exist, satisfy its kind's status filters, and belong to the caller |
 | `get_visible_reps()` | Exactly the reps whose plans the caller may open |
+| `log_unplanned_visit(organization, note, when?, reference?)` | The Event and the fulfilled, overridden item, in one step. A note is required — closing anything without saying why is the habit the old rep app enforced and the one reps notice first |
 
 ## Scheduling
 
