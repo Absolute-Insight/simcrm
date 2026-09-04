@@ -114,7 +114,9 @@ def read_sheet(path, sheet: str = "Data") -> list[dict]:
 		ws = wb[sheet]
 		rows_iter = ws.iter_rows(values_only=True)
 		header = [str(h).strip() if h is not None else "" for h in next(rows_iter)]
-		return [dict(zip(header, row, strict=True)) for row in rows_iter if any(cell is not None for cell in row)]
+		return [
+			dict(zip(header, row, strict=True)) for row in rows_iter if any(cell is not None for cell in row)
+		]
 	finally:
 		wb.close()
 
@@ -147,3 +149,98 @@ def _country_table() -> dict[str, str]:
 		for row in frappe.get_all("Country", fields=["name", "code"])
 		if row.code
 	}
+
+
+def dedupe_customers(rows: list[dict]) -> list[dict]:
+	"""Two customer IDs appear twice in the export; the second would silently overwrite
+	the first. Keep the row flagged Default, else the first seen."""
+	by_id: dict[str, dict] = {}
+	for row in rows:
+		cid = row.get("Customer ID")
+		if not cid:
+			continue
+		if cid not in by_id or str(row.get("Default")) == "True":
+			by_id[cid] = row
+	return list(by_id.values())
+
+
+def shape_customer(row: dict, countries: dict[str, str] | None = None) -> dict:
+	"""One export row -> what the upserts take. ``countries`` is the ISO-2 table; pass None
+	to leave the country unresolved (the pure tests do)."""
+	countries = countries or {}
+	name = normalise_account_name(row.get("Customer Name") or "")
+	rec = {
+		"CustomerID": {"value": row.get("Customer ID")},
+		"CustomerName": {"value": name},
+		"CurrencyID": {"value": row.get("Currency ID")},
+	}
+	line1 = (row.get("Address Line 1") or "").strip()
+	city = (row.get("City") or "").strip()
+	address = None
+	if line1 and city:
+		address = {
+			"address_line1": line1,
+			"address_line2": (row.get("Address Line 2") or "").strip() or None,
+			"city": city,
+			"state": (row.get("State") or "").strip() or None,
+			"pincode": str(row.get("Postal Code") or "").strip() or None,
+			"country": map_country(row.get("Country"), countries),
+			"email_id": usable_email(row.get("Email")),
+			"phone": normalise_phone(row.get("Phone 1")),
+		}
+	return {
+		"customer_id": row.get("Customer ID"),
+		"status": row.get("Customer Status"),
+		"rec": rec,
+		"address": address,
+	}
+
+
+def upsert_address(organization: str, fields: dict) -> str:
+	"""Keyed on the Dynamic Link back to the organization, so a re-run edits the same row."""
+	existing = frappe.db.get_value(
+		"Dynamic Link",
+		{"link_doctype": "CRM Organization", "link_name": organization, "parenttype": "Address"},
+		"parent",
+	)
+	doc = frappe.get_doc("Address", existing) if existing else frappe.new_doc("Address")
+	doc.update({k: v for k, v in fields.items() if v is not None})
+	for key, value in fields.items():
+		if value is None:
+			doc.set(key, None)
+	doc.address_title = organization
+	doc.address_type = "Billing"
+	if not existing:
+		doc.append("links", {"link_doctype": "CRM Organization", "link_name": organization})
+	doc.save(ignore_permissions=True)
+	frappe.db.set_value("CRM Organization", organization, "address", doc.name, update_modified=False)
+	return doc.name
+
+
+def import_customers(path, rejects: Rejects) -> dict:
+	counts = {"organizations": 0, "addresses": 0, "skipped_inactive": 0, "addresses_skipped": 0}
+	countries = _country_table()
+	rows = dedupe_customers(read_sheet(path))
+	for done, row in enumerate(rows, 1):
+		shaped = shape_customer(row, countries)
+		if shaped["status"] == "Inactive":
+			counts["skipped_inactive"] += 1
+			continue
+		frappe.db.savepoint("ss_customer")
+		try:
+			if not shaped["rec"]["CustomerName"]["value"]:
+				raise ValueError("no customer name")
+			org = upsert_organization(shaped["rec"])
+			counts["organizations"] += 1
+			if shaped["address"]:
+				if shaped["address"]["country"] is None and row.get("Country"):
+					raise ValueError(f"unknown country code {row.get('Country')!r}")
+				upsert_address(org, shaped["address"])
+				counts["addresses"] += 1
+			else:
+				counts["addresses_skipped"] += 1
+		except Exception as e:
+			frappe.db.rollback(save_point="ss_customer")
+			rejects.add("customers", shaped["customer_id"], str(e))
+		_commit_every(done)
+	return counts

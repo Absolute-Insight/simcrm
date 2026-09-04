@@ -13,10 +13,12 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from frappe.tests import UnitTestCase
+import frappe
+from frappe.tests import IntegrationTestCase, UnitTestCase
 from openpyxl import Workbook
 
 from crm.integrations.acumatica import spreadsheet as ss
+from crm.integrations.acumatica.install import ensure_custom_fields
 
 COUNTRIES = {"za": "South Africa", "na": "Namibia", "mz": "Mozambique"}
 
@@ -129,4 +131,147 @@ class RejectsTest(UnitTestCase):
 		self.assertEqual(len(rejects), 2)
 		self.assertEqual(
 			rejects.rows[0], {"file": "sales_orders", "key": "QT1", "reason": "unmapped salesperson 022"}
+		)
+
+
+CUSTOMER_HEADER = [
+	"Customer ID",
+	"Customer Name",
+	"Customer Class",
+	"Address Line 1",
+	"State",
+	"City",
+	"Postal Code",
+	"Country",
+	"Currency ID",
+	"Customer Status",
+	"Email",
+	"Salesperson ID",
+	"Sales Person",
+	"Phone 1",
+	"Default",
+	"Created On",
+	"Address Line 2",
+]
+
+
+def customer(**over):
+	row = {
+		"Customer ID": "C-2HK001",
+		"Customer Name": "2HK Trading & Projects (Pty) Ltd - COD",
+		"Customer Class": "COD",
+		"Address Line 1": "5 Springbok Avenue",
+		"State": "EC",
+		"City": "Olifantsfontein - EC",
+		"Postal Code": "1666",
+		"Country": "ZA",
+		"Currency ID": "ZAR",
+		"Customer Status": "Active",
+		"Email": "no@email.co.za",
+		"Salesperson ID": "003",
+		"Sales Person": "Simon Mofokeng",
+		"Phone 1": "0792530729",
+		"Default": "True",
+		"Created On": datetime(2025, 10, 20, 9, 53, 43),
+		"Address Line 2": "Clayville East",
+	}
+	row.update(over)
+	return [row[h] for h in CUSTOMER_HEADER]
+
+
+class DedupeTest(UnitTestCase):
+	def test_duplicate_ids_keep_the_default_row(self):
+		a = dict(
+			zip(
+				CUSTOMER_HEADER,
+				customer(**{"Customer ID": "C-MET006", "Default": None, "Salesperson ID": None}),
+				strict=True,
+			)
+		)
+		b = dict(
+			zip(
+				CUSTOMER_HEADER,
+				customer(**{"Customer ID": "C-MET006", "Default": "True", "Salesperson ID": "030"}),
+				strict=True,
+			)
+		)
+		out = ss.dedupe_customers([a, b])
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]["Salesperson ID"], "030")
+
+	def test_identical_duplicates_collapse_to_one(self):
+		a = dict(zip(CUSTOMER_HEADER, customer(), strict=True))
+		self.assertEqual(len(ss.dedupe_customers([a, dict(a)])), 1)
+
+
+class SpreadsheetImportTestCase(IntegrationTestCase):
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		ensure_custom_fields()  # acumatica_id / acumatica_sales_quote: absent on a fresh site
+
+	def setUp(self):
+		super().setUp()
+		self.dir = Path(tempfile.mkdtemp())
+
+	def tearDown(self):
+		frappe.db.rollback()
+		super().tearDown()
+
+
+class ImportCustomersTest(SpreadsheetImportTestCase):
+	def test_creates_organization_and_address_with_filtered_contact_details(self):
+		path = write_workbook(self.dir / "customers.xlsx", CUSTOMER_HEADER, [customer()])
+		rejects = ss.Rejects()
+		counts = ss.import_customers(path, rejects)
+		self.assertEqual(len(rejects), 0)
+		self.assertEqual(counts["organizations"], 1)
+		org = frappe.get_doc("CRM Organization", "2HK Trading & Projects (Pty) Ltd")  # COD stripped
+		self.assertEqual(org.acumatica_id, "C-2HK001")
+		self.assertEqual(org.currency, "ZAR")
+		address = frappe.get_doc("Address", org.address)
+		self.assertEqual(address.country, "South Africa")
+		self.assertEqual(address.address_line2, "Clayville East")
+		self.assertEqual(address.phone, "+27792530729")
+		self.assertFalse(address.email_id)  # placeholder dropped
+		self.assertEqual(address.links[0].link_name, org.name)
+
+	def test_inactive_customers_are_skipped_and_on_hold_kept(self):
+		path = write_workbook(
+			self.dir / "customers.xlsx",
+			CUSTOMER_HEADER,
+			[
+				customer(**{"Customer ID": "C-A", "Customer Name": "A Ltd", "Customer Status": "Inactive"}),
+				customer(**{"Customer ID": "C-B", "Customer Name": "B Ltd", "Customer Status": "On Hold"}),
+			],
+		)
+		counts = ss.import_customers(path, ss.Rejects())
+		self.assertEqual(counts["skipped_inactive"], 1)
+		self.assertFalse(frappe.db.exists("CRM Organization", "A Ltd"))
+		self.assertTrue(frappe.db.exists("CRM Organization", "B Ltd"))
+
+	def test_rerun_updates_in_place(self):
+		path = write_workbook(self.dir / "customers.xlsx", CUSTOMER_HEADER, [customer()])
+		ss.import_customers(path, ss.Rejects())
+		ss.import_customers(path, ss.Rejects())
+		self.assertEqual(frappe.db.count("CRM Organization", {"acumatica_id": "C-2HK001"}), 1)
+		self.assertEqual(
+			frappe.db.count(
+				"Dynamic Link",
+				{
+					"link_doctype": "CRM Organization",
+					"link_name": "2HK Trading & Projects (Pty) Ltd",
+					"parenttype": "Address",
+				},
+			),
+			1,
+		)
+
+	def test_missing_street_or_city_skips_the_address_not_the_organization(self):
+		path = write_workbook(self.dir / "customers.xlsx", CUSTOMER_HEADER, [customer(**{"City": None})])
+		counts = ss.import_customers(path, ss.Rejects())
+		self.assertEqual(counts["organizations"], 1)
+		self.assertEqual(counts["addresses_skipped"], 1)
+		self.assertFalse(
+			frappe.db.get_value("CRM Organization", "2HK Trading & Projects (Pty) Ltd", "address")
 		)
