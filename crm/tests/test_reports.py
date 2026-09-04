@@ -13,6 +13,7 @@ from __future__ import annotations
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from crm.api.dashboard import activity_cancellations, plan_adherence
 from crm.api.reports import REPORTS, get_report, list_reports
 
 USER = "reports-rep@crmtest.test"
@@ -209,3 +210,62 @@ class TestForecastNotice(IntegrationTestCase):
 			get_report("forecast_vs_actual", self.today(), self.today())["notice"],
 			forecast_empty_state(),
 		)
+
+
+class CancellationsTest(IntegrationTestCase):
+	USER = "cancel-rep@crmtest.test"
+
+	def setUp(self):
+		super().setUp()
+		if not frappe.db.exists("User", self.USER):
+			user = frappe.get_doc(
+				{"doctype": "User", "email": self.USER, "first_name": "Cancel Rep", "send_welcome_email": 0}
+			)
+			user.insert(ignore_permissions=True)
+			user.add_roles("Sales User")
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _task(self, status):
+		task = frappe.get_doc(
+			{"doctype": "CRM Task", "title": "t", "status": "Todo", "assigned_to": self.USER}
+		).insert()
+		# assign_to() (after_insert) sets `assigned_to` via frappe.db.set_value, which bumps
+		# `modified` in the database without updating this in-memory copy — reload or save()
+		# below trips check_if_latest's TimestampMismatchError.
+		task.reload()
+		task.status = status
+		task.closing_note = "n"
+		task.save()
+		return task
+
+	def test_cancelled_tasks_and_events_are_counted_per_rep_and_reported(self):
+		self._task("Canceled")
+		self._task("Canceled")
+		self._task("Done")
+
+		frappe.set_user(self.USER)
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "e",
+				"starts_on": frappe.utils.now_datetime(),
+				"event_type": "Private",
+				"status": "Cancelled",
+				"owner": self.USER,
+			}
+		).insert(ignore_permissions=True)
+		frappe.set_user("Administrator")
+
+		today = frappe.utils.nowdate()
+		rows = activity_cancellations(today, today, user=self.USER)
+		self.assertEqual(rows[0]["cancelled"], 3)
+
+		adherence = plan_adherence(today, today, user=self.USER)
+		self.assertEqual(adherence[0]["cancelled"], 3)
+		self.assertEqual(adherence[0]["planned"], 0)  # unchanged: no plan items exist
+
+		report = get_report("plan_adherence_by_rep", today, today, self.USER)
+		self.assertIn({"key": "cancelled", "label": "Cancelled", "type": "number"}, report["columns"])

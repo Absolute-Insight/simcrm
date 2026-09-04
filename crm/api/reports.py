@@ -226,6 +226,7 @@ REPORTS = {
 			{"key": "planned", "label": "Planned (due)", "type": "number"},
 			{"key": "done", "label": "Done", "type": "number"},
 			{"key": "missed", "label": "Missed", "type": "number"},
+			{"key": "cancelled", "label": "Cancelled", "type": "number"},
 			{"key": "adherence", "label": "Adherence %", "type": "percent"},
 		],
 		"get_rows": _plan_adherence_by_rep,

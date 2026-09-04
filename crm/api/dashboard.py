@@ -1800,6 +1800,54 @@ def lost_deal_count(
 	return rows[0].count if rows else 0
 
 
+def activity_cancellations(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	group_by_user: bool = False,
+):
+	"""Tasks cancelled and calendar events cancelled in the period, per rep.
+
+	The old rep app's admin view charted cancellations per user next to
+	completions; the matcher never counts them because a cancellation fulfils
+	nothing. Tasks are dated by ``modified`` for the same reason the matcher is
+	(no completion timestamp exists); events by when they were to happen."""
+	Task = DocType("CRM Task")
+	Event = DocType("Event")
+	end = add_days(to_date, 1)
+
+	tasks = (
+		frappe.qb.from_(Task)
+		.where(Task.status == "Canceled")
+		.where((Task.modified >= from_date) & (Task.modified < end))
+		.select(Task.assigned_to.as_("user"), Count(Task.name).as_("cancelled"))
+		.groupby(Task.assigned_to)
+	)
+	events = (
+		frappe.qb.from_(Event)
+		.where(Event.status == "Cancelled")
+		.where((Event.starts_on >= from_date) & (Event.starts_on < end))
+		.select(Event.owner.as_("user"), Count(Event.name).as_("cancelled"))
+		.groupby(Event.owner)
+	)
+	if user:
+		tasks = tasks.where(Task.assigned_to == user)
+		events = events.where(Event.owner == user)
+	else:
+		reps = visible_reps()
+		if reps is not None:
+			tasks = tasks.where(Task.assigned_to.isin(reps))
+			events = events.where(Event.owner.isin(reps))
+
+	totals: dict[str, int] = {}
+	for row in tasks.run(as_dict=True) + events.run(as_dict=True):
+		totals[row.user] = totals.get(row.user, 0) + (row.cancelled or 0)
+
+	if group_by_user:
+		return [frappe._dict({"user": u, "cancelled": n}) for u, n in sorted(totals.items())]
+	return [frappe._dict({"cancelled": sum(totals.values())})]
+
+
 def plan_adherence(
 	from_date: str | None = None,
 	to_date: str | None = None,
@@ -1850,6 +1898,24 @@ def plan_adherence(
 		row["done"] = row["done"] or 0
 		row["missed"] = row["missed"] or 0
 		row["adherence"] = round(row["done"] / row["planned"] * 100) if row["planned"] else 0
+
+	cancellations = activity_cancellations(from_date, to_date, user, group_by_user)
+	if group_by_user:
+		by_user = {row["user"]: row["cancelled"] for row in cancellations}
+		seen = {row["user"] for row in rows}
+		for row in rows:
+			row["cancelled"] = by_user.get(row["user"], 0)
+		# a rep with cancellations and no plan items still has a row to show them on
+		for u, n in by_user.items():
+			if u not in seen:
+				rows.append(
+					frappe._dict(
+						{"user": u, "planned": 0, "done": 0, "missed": 0, "adherence": 0, "cancelled": n}
+					)
+				)
+	else:
+		rows[0]["cancelled"] = cancellations[0]["cancelled"]
+
 	return rows
 
 
