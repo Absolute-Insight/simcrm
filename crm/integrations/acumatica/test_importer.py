@@ -96,10 +96,16 @@ class TestUpserts(ImporterTestCase):
 		self.assertIsNone(frappe.db.get_value("CRM Organization", "Bystander Ltd", "acumatica_id"))
 
 	def test_a_record_without_noteid_reuses_the_org_with_its_customer_id(self):
+		# a different CustomerName on the second call means the organization_name
+		# fallback would find a DIFFERENT (nonexistent) row -- only the acumatica_id
+		# lookup can make this reuse the first call's org rather than duplicate it.
 		first = importer.upsert_organization(C(CustomerID="C-REP01", CustomerName="Repeat Ltd"))
-		second = importer.upsert_organization(C(CustomerID="C-REP01", CustomerName="Repeat Ltd"))
+		second = importer.upsert_organization(C(CustomerID="C-REP01", CustomerName="Repeat Limited"))
 		self.assertEqual(first, second)
 		self.assertEqual(frappe.db.count("CRM Organization", {"acumatica_id": "C-REP01"}), 1)
+		self.assertEqual(
+			frappe.db.get_value("CRM Organization", first, "organization_name"), "Repeat Limited"
+		)
 
 	def test_a_record_without_noteid_does_not_erase_a_synced_noteid(self):
 		importer.upsert_organization(C(NoteID="guid-keep", CustomerID="C-KEEP1", CustomerName="Keeper Ltd"))
