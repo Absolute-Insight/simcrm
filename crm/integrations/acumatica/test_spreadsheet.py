@@ -275,3 +275,28 @@ class ImportCustomersTest(SpreadsheetImportTestCase):
 		self.assertFalse(
 			frappe.db.get_value("CRM Organization", "2HK Trading & Projects (Pty) Ltd", "address")
 		)
+
+	def test_a_bad_address_rejects_the_address_and_keeps_the_organization(self):
+		path = write_workbook(self.dir / "customers.xlsx", CUSTOMER_HEADER, [customer(**{"Country": "XX"})])
+		rejects = ss.Rejects()
+		counts = ss.import_customers(path, rejects)
+		self.assertEqual(counts["organizations"], 1)
+		self.assertEqual(counts["addresses"], 0)
+		org = frappe.get_doc("CRM Organization", "2HK Trading & Projects (Pty) Ltd")
+		self.assertFalse(org.address)
+		self.assertTrue(rejects.rows[0]["reason"].startswith("address: unknown country code"))
+
+	def test_a_malformed_cell_rejects_one_row_and_the_run_continues(self):
+		path = write_workbook(
+			self.dir / "customers.xlsx",
+			CUSTOMER_HEADER,
+			[
+				customer(**{"Customer ID": "C-BAD", "City": 123}),
+				customer(**{"Customer ID": "C-GOOD", "Customer Name": "Good Ltd"}),
+			],
+		)
+		rejects = ss.Rejects()
+		ss.import_customers(path, rejects)
+		self.assertEqual(len(rejects), 1)
+		self.assertEqual(rejects.rows[0]["key"], "C-BAD")
+		self.assertTrue(frappe.db.exists("CRM Organization", "Good Ltd"))

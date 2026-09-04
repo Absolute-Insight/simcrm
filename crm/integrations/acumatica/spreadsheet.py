@@ -222,25 +222,38 @@ def import_customers(path, rejects: Rejects) -> dict:
 	countries = _country_table()
 	rows = dedupe_customers(read_sheet(path))
 	for done, row in enumerate(rows, 1):
-		shaped = shape_customer(row, countries)
+		try:
+			shaped = shape_customer(row, countries)
+		except Exception as e:
+			rejects.add("customers", row.get("Customer ID"), str(e))
+			continue
 		if shaped["status"] == "Inactive":
 			counts["skipped_inactive"] += 1
 			continue
-		frappe.db.savepoint("ss_customer")
+		customer_id = shaped["customer_id"]
+		frappe.db.savepoint("ss_customer_org")
+		org = None
 		try:
 			if not shaped["rec"]["CustomerName"]["value"]:
 				raise ValueError("no customer name")
 			org = upsert_organization(shaped["rec"])
+		except Exception as e:
+			frappe.db.rollback(save_point="ss_customer_org")
+			rejects.add("customers", customer_id, str(e))
+		else:
 			counts["organizations"] += 1
 			if shaped["address"]:
-				if shaped["address"]["country"] is None and row.get("Country"):
-					raise ValueError(f"unknown country code {row.get('Country')!r}")
-				upsert_address(org, shaped["address"])
-				counts["addresses"] += 1
+				frappe.db.savepoint("ss_customer_address")
+				try:
+					if shaped["address"]["country"] is None and row.get("Country"):
+						raise ValueError(f"unknown country code {row.get('Country')!r}")
+					upsert_address(org, shaped["address"])
+				except Exception as e:
+					frappe.db.rollback(save_point="ss_customer_address")
+					rejects.add("customers", customer_id, f"address: {e}")
+				else:
+					counts["addresses"] += 1
 			else:
 				counts["addresses_skipped"] += 1
-		except Exception as e:
-			frappe.db.rollback(save_point="ss_customer")
-			rejects.add("customers", shaped["customer_id"], str(e))
 		_commit_every(done)
 	return counts
