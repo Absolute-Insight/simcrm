@@ -113,7 +113,7 @@ import { globalStore } from '@/stores/global'
 import { usersStore } from '@/stores/users'
 import { showQuickEntryModal, quickEntryProps } from '@/composables/modals'
 import { isMobileView } from '@/composables/settings'
-import { setupCustomizations } from '@/utils'
+import { setupCustomizations, formatDate } from '@/utils'
 import { call, createResource, toast } from 'frappe-ui'
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
@@ -130,10 +130,6 @@ const history = createResource({
   params: { name: props.docname },
   auto: props.doctype === 'CRM Task' && !!props.docname,
 })
-
-function formatDate(value) {
-  return new Date(value).toLocaleString()
-}
 
 const show = defineModel({ type: Boolean })
 
