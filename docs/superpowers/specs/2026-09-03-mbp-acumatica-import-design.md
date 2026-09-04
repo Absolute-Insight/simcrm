@@ -428,8 +428,21 @@ salesperson at all.** Ownership drives every scoped metric — `scope_deals`,
 `visible_reps`, quota attainment, who sees which suggestions — so a third of the
 pipeline invisible to its owner would undercut the trial badly.
 
-**This is the one blocking ask.** A 22-row list of code → name → email. Nothing
-else in the plan is gated on MBP.
+**A rep roster arrived on 2026-09-04** in `mbp_reps.eml` (Bianca van der
+Westhuizen's overview of MBP's existing rep app, forwarded via Yield Group). Its
+Admin View charts name eight active reps, three of whom — **Koma Mofokeng, Janca
+Meiring, Khomotso Sekgot…** — appear nowhere in the Acumatica Customers export.
+Combining that roster with the code→name pairs Acumatica does supply and the
+`Created By` correlation gives a *candidate* mapping (appendix below) that
+narrows the genuinely unknown set to four codes and 433 orders — 4.7%.
+
+**This changes the ask from construction to confirmation.** Instead of asking MBP
+to build a 22-row mapping, send them the candidate table and ask them to correct
+it. That is a five-minute reply rather than a research task, and it is the
+difference between the trial starting this week and next.
+
+It remains blocking — the candidates are hypotheses, and the weak ones especially
+must not be imported as fact. But nothing else in the plan is gated on MBP.
 
 **There are no people in any file.** Not one first or last name across 16,210
 rows. Vectora's proposition — suggestions, "needs attention", propose-my-week,
@@ -437,11 +450,25 @@ call and email activity — keys on contacts. Organizations carrying order total
 with no humans attached give reps a pipeline they cannot act on, and would judge
 the product on its weakest showing.
 
-Acumatica has a Contacts entity and `upsert_contact` already handles exactly its
-shape (`FirstName`, `LastName`, `Email`, `Phone1`, `BusinessAccount`). **A
-Contacts export is the highest-value thing to request** and it needs no new
-mapping work. The customer `Email` column is not a substitute — a third of it is
-a placeholder and much of the rest is AP distribution lists.
+**But MBP already holds them, in their rep app.** `mbp_reps.eml` shows that app
+has a "Company & Contact Manager", and its activity history lists real contact
+people against the same company names as the Acumatica export — `Lisa` at
+4D Union Section, `Piet Fourie` at Rust Plat, `Monica Grobler` at Abrasive Flow
+Solutions PTY LTD - COD. Both that manager and the "Plan an Activity" form search
+on **"Customer or Sub Code"**, which is the same `C-IMP003E`-style identifier
+Acumatica uses — so those contacts join to the organizations this import creates
+on an exact key, with no fuzzy name matching.
+
+The app is Firestore-backed (its own reports name the `Scheduled_Activity_new`
+collection), so an export is a routine operation for whoever maintains it.
+
+So the ask has two possible sources and should name both: **Acumatica's Contacts
+entity** — `upsert_contact` already handles exactly its shape (`FirstName`,
+`LastName`, `Email`, `Phone1`, `BusinessAccount`) and needs no new mapping work —
+**or the rep app's company/contact collection**, which has the advantage of being
+demonstrably populated with people the reps actually deal with. The customer
+`Email` column is not a substitute either way: a third of it is a placeholder and
+much of the rest is AP distribution lists.
 
 **Two questions, neither blocking:**
 
@@ -600,3 +627,53 @@ fixtures typed from the rows quoted in this document.
    from *Decision 4* raised first rather than discovered.
 
 Steps 5–7 are re-runnable by design; step 4 is not.
+
+## Appendix — candidate salesperson mapping
+
+**Not authoritative. Send to MBP for correction; do not import as fact.**
+
+Three sources are combined: the code→name pairs in the Customers export
+(authoritative), the rep roster in `mbp_reps.eml` (names only, no codes), and the
+correlation between `Default Salesperson` and `Created By` across 9,247
+non-transfer orders (suggestive only — `Created By` is the sales-desk person who
+captured the quote, so a high share can equally mean one desk person works
+consistently for one rep).
+
+| Code | Orders | Acumatica name | Top `Created By` | Share | Status |
+|---|---|---|---|---|---|
+| 018 | 1,558 | Ann-Mari Prins | annmari@ | 39% | confirmed |
+| 022 | 1,301 | — | candice@ | 62% | **weak — ask** |
+| 035 | 1,059 | — | Janca@ | 90% | strong → Janca Meiring |
+| 024 | 1,016 | Kevin Purdon | Cindy@ | 54% | confirmed |
+| 007 | 1,012 | Tamryn Barnard | Tamryn@ | 38% | confirmed |
+| 034 | 885 | — | Liesel@ | 71% | **weak — ask** |
+| 040 | 469 | Kewan van Deventer | Kewan@ | 84% | confirmed |
+| 003 | 387 | Simon Mofokeng | Simon@ | 48% | confirmed |
+| 029 | 336 | — | Lilly@ | 37% | **unresolved — ask** |
+| 038 | 275 | Lilly de Villiers | Isabella@ | 37% | confirmed |
+| 036 | 227 | — | Mbali@ | 97% | strong → Mbali Motloung |
+| 032 | 201 | Izaan Olivier | Lilly@ | 38% | confirmed |
+| 039 | 144 | Isabella Matthhee | Isabella@ | 92% | confirmed |
+| 019 | 103 | Rob Preston | Lilly@ | 53% | confirmed |
+| 027 | 87 | — | Janca@ | 38% | **unresolved — ask** |
+| 041 | 84 | — | Khomotso@ | 95% | strong → Khomotso Sekgot… |
+| 017 | 55 | Admin | bernice@ | 65% | confirmed — a system account, not a rep |
+| 030 | 34 | Vic Bester | Cindy@ | 32% | confirmed |
+| 999 | 8 | — | candice@ | 38% | **unresolved — ask** |
+| 042 | 4 | — | ReneO@ | 100% | strong → René O… |
+| 031 | 2 | — | Lilly@ | 50% | **unresolved — ask** |
+
+Coverage: 5,254 orders on confirmed codes, 1,374 on strong candidates, 2,186 on
+weak ones, **433 (4.7%) genuinely unknown**.
+
+Two things to put to MBP directly:
+
+- **`Koma Mofokeng` (rep app) vs `Simon Mofokeng` (Acumatica code 003)** — same
+  surname, different first name. Two people, or one person recorded twice?
+- **Code `017` is named "Admin"** and `999` looks like a catch-all. Neither
+  should become a deal owner; confirm what they represent.
+
+Also unmapped in the other direction: `Koma Mofokeng` uses the rep app heavily
+(89 activities scheduled in a month) but has no Acumatica salesperson code at
+all. If they own quotes, the code is missing from the export; if they do not,
+they are a visit-only rep and the trial should still give them a login.
