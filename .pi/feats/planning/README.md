@@ -30,6 +30,13 @@
 Concrete items are the source of truth; rollups are derived, so "planned 30
 calls" and the 30 planned call items can never disagree.
 
+A **Rescheduled** task is still open: it needs a new due date and stays in every
+"open task" query until it is Done or Canceled. Moving a task to Rescheduled —
+on the board or on the form — asks for the closing note and the new date, the
+same as the two statuses that do end it. `crm_task.NOTE_REQUIRED_STATUSES` is
+the list that must say why; `TERMINAL_STATUSES` is the shorter list that ends
+the task, and it is the one the open-task queries filter on.
+
 ## Matching
 
 `crm/rep_planning.py`. `match_items` is pure: item rows and actual rows in, an

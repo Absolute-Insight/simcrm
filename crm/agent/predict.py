@@ -34,6 +34,7 @@ from frappe.query_builder import Order
 
 from crm.agent.config import get_signal_config
 from crm.agent.signals import CLOSE_HORIZON_DAYS, EARLY_STAGE_PROBABILITY, cadence_ratio
+from crm.fcrm.doctype.crm_task.crm_task import TERMINAL_STATUSES
 
 IDLE_GRACE_DAYS = 3
 STAGE_GRACE_DAYS = 21
@@ -239,7 +240,7 @@ def get_deal_health(name: str) -> dict:
 			filters={
 				"reference_doctype": "CRM Deal",
 				"reference_docname": name,
-				"status": ("not in", ("Done", "Canceled")),
+				"status": ("not in", TERMINAL_STATUSES),
 			},
 			limit=1,
 		)

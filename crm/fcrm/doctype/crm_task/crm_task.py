@@ -7,10 +7,17 @@ from frappe.desk.form.assign_to import add as assign
 from frappe.desk.form.assign_to import remove as unassign
 from frappe.model.document import Document
 
-# A closed task must say why. The old rep app refused to close a call without a
-# comment and that discipline is what made its history worth reading; losing it
-# would be the first regression reps notice.
-CLOSED_STATUSES = ("Done", "Canceled", "Rescheduled")
+# A task may not be *left* in any of these without saying why. The old rep app
+# refused to close a call without a comment and that discipline is what made its
+# history worth reading; losing it would be the first regression reps notice.
+# Rescheduled is on this list but is not an ending: the visit still has to
+# happen, so the task stays open and only picks up a new due date.
+NOTE_REQUIRED_STATUSES = ("Done", "Canceled", "Rescheduled")
+
+# The statuses that end a task. Every "still open" query in the app filters on
+# these, so they live here rather than as a literal repeated in four modules
+# where a fifth status would only be added to three of them.
+TERMINAL_STATUSES = ("Done", "Canceled")
 
 
 class CRMTask(Document):
@@ -48,9 +55,9 @@ class CRMTask(Document):
 			self.assign_to()
 
 	def require_closing_note(self):
-		"""On the transition into a closed status only. A task created already closed
-		(seeding, fixtures) or edited while closed is not the moment the rule is for."""
-		if self.status not in CLOSED_STATUSES or self.is_new():
+		"""On the transition into a note-requiring status only. A task created already
+		there (seeding, fixtures) or edited while there is not the moment the rule is for."""
+		if self.status not in NOTE_REQUIRED_STATUSES or self.is_new():
 			return
 		before = self.get_doc_before_save()
 		if before and before.status == self.status:
