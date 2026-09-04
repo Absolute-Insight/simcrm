@@ -497,12 +497,37 @@ class ImportSalesOrdersTest(SpreadsheetImportTestCase):
 	def test_an_empty_sheet_returns_the_full_shape(self):
 		path = self.rows()
 		counts = ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
-		for key in ("deals", "won", "lost", "open", "outside_window", "skipped_deleted", "excluded", "as_of"):
+		for key in (
+			"deals",
+			"won",
+			"lost",
+			"open",
+			"outside_window",
+			"skipped_deleted",
+			"left_alone",
+			"excluded",
+			"as_of",
+		):
 			self.assertIn(key, counts)
-		for key in ("deals", "won", "lost", "open", "outside_window", "skipped_deleted"):
+		for key in ("deals", "won", "lost", "open", "outside_window", "skipped_deleted", "left_alone"):
 			self.assertEqual(counts[key], 0)
 		self.assertEqual(counts["excluded"], {})
 		self.assertIsNone(counts["as_of"])
+
+	def test_a_rerun_leaves_a_rep_edited_deal_alone(self):
+		path = self.rows(order())
+		ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+		deal_name = frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": "QT103012"}, "name")
+		frappe.db.set_value(
+			"CRM Deal", deal_name, "modified_by", "annmari@crmtest.test", update_modified=False
+		)
+
+		path = self.rows(order(**{"Order Total": 999}))
+		counts = ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal_name, "deal_value"), 20359.6)
+		self.assertEqual(counts["left_alone"], 1)
+		self.assertEqual(counts["deals"], 0)
 
 	def test_every_row_reaches_the_commit_cadence(self):
 		path = self.rows(

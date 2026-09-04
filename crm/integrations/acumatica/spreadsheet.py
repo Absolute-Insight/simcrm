@@ -311,8 +311,14 @@ def shape_sales_order(
 	}
 
 
-def upsert_deal(deal: dict, organization: str) -> str:
+def upsert_deal(deal: dict, organization: str) -> str | None:
+	"""``None`` means the deal already exists and a rep, not this importer, last
+	touched it -- widening the window later must add deals without disturbing
+	those already present, including any a rep has edited, so a re-run leaves
+	a rep-edited deal alone rather than overwriting their changes."""
 	name = frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": deal["order_nbr"]}, "name")
+	if name and frappe.db.get_value("CRM Deal", name, "modified_by") != frappe.session.user:
+		return None
 	doc = frappe.get_doc("CRM Deal", name) if name else frappe.new_doc("CRM Deal")
 	doc.organization = organization
 	doc.status = deal["status"]
@@ -364,6 +370,7 @@ def import_sales_orders(
 		"open": 0,
 		"outside_window": 0,
 		"skipped_deleted": 0,
+		"left_alone": 0,
 		"excluded": {},
 		"as_of": None,
 	}
@@ -413,10 +420,13 @@ def import_sales_orders(
 			)
 			if not organization:
 				raise ValueError(f"customer {deal['customer_id']} has no organization on the site")
-			upsert_deal(deal, organization)
+			written = upsert_deal(deal, organization)
 			manifest.add(nbr)
-			counts["deals"] += 1
-			counts[{"Won": "won", "Lost": "lost"}.get(deal["status"], "open")] += 1
+			if written is None:
+				counts["left_alone"] += 1
+			else:
+				counts["deals"] += 1
+				counts[{"Won": "won", "Lost": "lost"}.get(deal["status"], "open")] += 1
 		except Exception as e:
 			frappe.db.rollback(save_point="ss_deal")
 			rejects.add("sales_orders", nbr, str(e))
