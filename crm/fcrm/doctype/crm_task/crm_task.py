@@ -24,7 +24,7 @@ class CRMTask(Document):
 		reference_docname: DF.DynamicLink | None
 		reference_doctype: DF.Link | None
 		start_date: DF.Date | None
-		status: DF.Literal["Backlog", "Todo", "In Progress", "Done", "Canceled"]
+		status: DF.Literal["Backlog", "Todo", "In Progress", "Rescheduled", "Done", "Canceled"]
 		title: DF.Data
 	# end: auto-generated types
 

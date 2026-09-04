@@ -220,6 +220,13 @@ class TestCRMTask(IntegrationTestCase):
 		self.assertEqual(len(assignees_after), initial_count)
 		self.assertIn("Administrator", assignees_after)
 
+	def test_a_task_can_be_rescheduled(self):
+		task = create_test_task(title="Site visit", status="Todo")
+		task.status = "Rescheduled"
+		task.closing_note = "Client moved it to next week"  # Task 4 requires this; harmless before
+		task.save()
+		self.assertEqual(frappe.db.get_value("CRM Task", task.name, "status"), "Rescheduled")
+
 
 def create_test_task(**kwargs):
 	"""Helper function to create a CRM Task for testing"""

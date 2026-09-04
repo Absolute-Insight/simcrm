@@ -9,6 +9,7 @@
 
 <script setup>
 import {
+  PhArrowsClockwise,
   PhCheckCircle,
   PhCircle,
   PhCircleDashed,
@@ -28,6 +29,8 @@ const GLYPH = {
   Backlog: PhCircleDashed,
   Todo: PhCircle,
   'In Progress': PhCircleHalf,
+  // the client moved it: neither done nor dropped, and worth counting as its own thing
+  Rescheduled: PhArrowsClockwise,
   Done: PhCheckCircle,
   Canceled: PhXCircle,
 }
