@@ -381,6 +381,27 @@ class MatchActualsJobTest(IntegrationTestCase):
 		plan.reload()
 		self.assertEqual(plan.items[0].status, "Planned")
 
+	def test_a_meeting_recategorised_as_a_visit_releases_the_item(self):
+		plan = self.make_plan({"activity_type": "Meeting"})
+		event = frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "Slipping",
+				"starts_on": frappe.utils.now_datetime(),
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.set_value("Event", event.name, "owner", self.USER)
+		match_actuals()
+		plan.reload()
+		self.assertEqual(plan.items[0].status, "Done")
+		self.assertEqual(plan.items[0].fulfilled_by, event.name)
+
+		frappe.db.set_value("Event", event.name, "event_category", "Visit")
+		match_actuals()
+		plan.reload()
+		self.assertEqual(plan.items[0].status, "Planned")
+		self.assertFalse(plan.items[0].fulfilled_by)
+
 	def test_a_missed_item_is_reconsidered_once_the_record_shows_up(self):
 		last_monday = frappe.utils.add_days(self.monday, -7)
 		plan = frappe.get_doc(

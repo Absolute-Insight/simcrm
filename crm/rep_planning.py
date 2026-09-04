@@ -251,14 +251,20 @@ def _fulfilment_holds(
 	fetched; it answers the question without a query. A Task holds regardless
 	of when it was last touched (``when_is_activity_time`` is False), which is
 	fine to read from the window too: ``modified`` only ever moves forward, and
-	a task matched into a week inside the horizon was touched inside it.
+	a task matched into a week inside the horizon was touched inside it. Two
+	kinds can share a doctype (Event backs both Meeting and Visit), so kind is
+	part of a record's identity here, not just its doctype and name.
 	"""
 	source = ACTUAL_SOURCES.get(item["activity_type"])
 	if not source or not item["fulfilled_by"] or item["fulfilled_by_doctype"] != source["doctype"]:
 		return False
 	if actuals is not None:
 		for actual in actuals:
-			if actual["doctype"] != source["doctype"] or str(actual["name"]) != str(item["fulfilled_by"]):
+			if (
+				actual["doctype"] != source["doctype"]
+				or str(actual["name"]) != str(item["fulfilled_by"])
+				or actual["kind"] != item["activity_type"]
+			):
 				continue
 			if not source["when_is_activity_time"]:
 				return True
