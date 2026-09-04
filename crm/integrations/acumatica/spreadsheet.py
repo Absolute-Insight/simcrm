@@ -635,6 +635,6 @@ def import_workbooks(
 	# bench execute prints the return value; make the numbers readable
 	for section in ("customers", "sales_orders", "invoices"):
 		for key, value in list(summary.get(section, {}).items()):
-			if isinstance(value, (Decimal, date)):
+			if isinstance(value, Decimal | date):
 				summary[section][key] = str(value)
 	return summary
