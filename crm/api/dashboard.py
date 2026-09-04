@@ -1855,9 +1855,12 @@ def client_reliability(from_date: str | None = None, to_date: str | None = None,
 	cancel the team's visits. A task reaches its organization through the deal
 	it references, and so does a calendar event -- but a logged visit names the
 	organization directly as an event participant and often has no deal at all,
-	which is the third source. Activity on a *lead* is not counted: a lead's
-	organization is free text, not a link. Sorted by rescheduled plus cancelled
-	so the clients that cost the most time are at the top."""
+	which is the third source. An event carrying a deal is counted through the
+	deal and excluded from the participant path, so it lands on exactly one
+	organization; the participant path catches the rest. Activity on a *lead* is
+	not counted: a lead's organization is free text, not a link. Sorted by
+	rescheduled plus cancelled so the clients that cost the most time are at the
+	top."""
 	Task = DocType("CRM Task")
 	Event = DocType("Event")
 	Participant = DocType("Event Participants")
@@ -1899,12 +1902,20 @@ def client_reliability(from_date: str | None = None, to_date: str | None = None,
 		.groupby(Deal.organization)
 	)
 	# The visits a rep logs from the planner name the organization as a
-	# participant and need no deal, so the deal join never sees them.
+	# participant and need no deal, so the deal join never sees them. An event
+	# that does carry a deal is already counted above; excluding it here is what
+	# keeps a visit logged against both from being counted twice. An unset
+	# reference is not a deal reference, hence the isnull arm.
 	visits = (
 		frappe.qb.from_(Event)
 		.join(Participant)
-		.on((Participant.parent == Event.name) & (Participant.reference_doctype == "CRM Organization"))
+		.on(
+			(Participant.parent == Event.name)
+			& (Participant.parenttype == "Event")
+			& (Participant.reference_doctype == "CRM Organization")
+		)
 		.where((Event.starts_on >= from_date) & (Event.starts_on < end))
+		.where(Event.reference_doctype.isnull() | (Event.reference_doctype != "CRM Deal"))
 		.select(
 			Participant.reference_docname.as_("organization"),
 			Count(Event.name).as_("total"),

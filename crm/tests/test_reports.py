@@ -353,6 +353,25 @@ class ClientReliabilityTest(IntegrationTestCase):
 		row = next(r for r in rows if r["organization"] == self.solid.name)
 		self.assertEqual((row["done"], row["total"]), (1, 1))
 
+	def test_a_visit_with_a_deal_and_a_participant_is_counted_once(self):
+		"""log_unplanned_visit always adds the organization participant, so a visit
+		the rep also attached a deal to reaches the same organization down both
+		paths. It is one visit and must be counted as one."""
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(self.USER)
+		log_unplanned_visit(
+			self.flaky.name,
+			"Breakdown on site, quoted the replacement",
+			reference_doctype="CRM Deal",
+			reference_docname=self.flaky_deal.name,
+		)
+		frappe.set_user("Administrator")
+
+		today = frappe.utils.nowdate()
+		rows = client_reliability(today, today, user=self.USER)
+		row = next(r for r in rows if r["organization"] == self.flaky.name)
+		self.assertEqual((row["done"], row["total"]), (1, 1))
+
 	def test_a_cancelled_deal_event_counts(self):
 		self.addCleanup(frappe.set_user, "Administrator")
 		frappe.set_user(self.USER)
