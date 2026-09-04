@@ -15,6 +15,12 @@ from __future__ import annotations
 import re
 from datetime import date, timedelta
 from decimal import Decimal
+from pathlib import Path
+
+import frappe
+from openpyxl import load_workbook
+
+from crm.integrations.acumatica.importer import COMMIT_EVERY, upsert_organization
 
 # Payment terms leaking into the customer name. Only this suffix is stripped:
 # "- Shaft 10", "- Driefontein Division" and the like are real delivery sites.
@@ -95,3 +101,49 @@ def map_deal_status(status: str, outcome) -> str | None:
 
 def within_window(quote_date: date, as_of: date, days: int) -> bool:
 	return quote_date >= as_of - timedelta(days=days)
+
+
+def read_sheet(path, sheet: str = "Data") -> list[dict]:
+	"""The workbook, not an export of it: a CSV round-trip re-introduces DD/MM ambiguity
+	the source does not have, and a MM/DD misread only errors on days above 12."""
+	path = Path(path)
+	if path.suffix.lower() != ".xlsx":
+		raise ValueError(f"{path.name}: the importer reads .xlsx workbooks only, never CSV")
+	wb = load_workbook(path, read_only=True, data_only=True)
+	try:
+		ws = wb[sheet]
+		rows_iter = ws.iter_rows(values_only=True)
+		header = [str(h).strip() if h is not None else "" for h in next(rows_iter)]
+		return [dict(zip(header, row)) for row in rows_iter if any(cell is not None for cell in row)]
+	finally:
+		wb.close()
+
+
+class Rejects:
+	"""Rows the import would not write, and why. Reported at the end, never skipped silently:
+	a row that fails to resolve its organization, salesperson or status is a finding
+	about the mapping."""
+
+	def __init__(self):
+		self.rows: list[dict] = []
+
+	def add(self, file: str, key, reason: str) -> None:
+		self.rows.append({"file": file, "key": str(key), "reason": reason})
+
+	def __len__(self) -> int:
+		return len(self.rows)
+
+
+def _commit_every(done: int) -> None:
+	# Same reasoning as run_backfill: a 10k-row import must not hold one transaction.
+	# Under test the whole run is one rolled-back transaction, so never commit there.
+	if done % COMMIT_EVERY == 0 and not frappe.flags.in_test:
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
+
+
+def _country_table() -> dict[str, str]:
+	return {
+		(row.code or "").lower(): row.name
+		for row in frappe.get_all("Country", fields=["name", "code"])
+		if row.code
+	}

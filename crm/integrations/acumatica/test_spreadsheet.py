@@ -8,10 +8,13 @@ client's data and are never committed.
 
 from __future__ import annotations
 
-from datetime import date
+import tempfile
+from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 
 from frappe.tests import UnitTestCase
+from openpyxl import Workbook
 
 from crm.integrations.acumatica import spreadsheet as ss
 
@@ -79,3 +82,51 @@ class TransformTest(UnitTestCase):
 		self.assertTrue(ss.within_window(date(2026, 6, 4), as_of, 90))  # exactly 90 days
 		self.assertFalse(ss.within_window(date(2026, 6, 3), as_of, 90))  # 91 days
 		self.assertTrue(ss.within_window(as_of, as_of, 0))
+
+
+def write_workbook(path: Path, header: list[str], rows: list[list]) -> Path:
+	"""The exports have a `Data` sheet with a header row and a `Parameters` sheet."""
+	wb = Workbook()
+	ws = wb.active
+	ws.title = "Data"
+	ws.append(header)
+	for row in rows:
+		ws.append(row)
+	wb.create_sheet("Parameters").append(["Title:", "test"])
+	wb.save(path)
+	return path
+
+
+class ReaderTest(UnitTestCase):
+	def setUp(self):
+		self.dir = Path(tempfile.mkdtemp())
+
+	def test_rows_are_keyed_by_header_and_dates_stay_datetimes(self):
+		path = write_workbook(
+			self.dir / "t.xlsx",
+			["Customer ID", "Created On", "Credit Limit"],
+			[
+				["C-1", datetime(2025, 10, 20, 9, 53), 0],
+				[None, None, None],
+				["C-2", datetime(2026, 1, 2), 1.5],
+			],
+		)
+		rows = ss.read_sheet(path)
+		self.assertEqual([r["Customer ID"] for r in rows], ["C-1", "C-2"])  # blank row dropped
+		self.assertEqual(rows[0]["Created On"], datetime(2025, 10, 20, 9, 53))
+		self.assertIsInstance(rows[1]["Credit Limit"], float)
+
+	def test_csv_is_refused(self):
+		with self.assertRaises(ValueError):
+			ss.read_sheet(self.dir / "t.csv")
+
+
+class RejectsTest(UnitTestCase):
+	def test_rejects_are_kept_in_order_with_their_reason(self):
+		rejects = ss.Rejects()
+		rejects.add("sales_orders", "QT1", "unmapped salesperson 022")
+		rejects.add("customers", "C-9", "no organization name")
+		self.assertEqual(len(rejects), 2)
+		self.assertEqual(
+			rejects.rows[0], {"file": "sales_orders", "key": "QT1", "reason": "unmapped salesperson 022"}
+		)
