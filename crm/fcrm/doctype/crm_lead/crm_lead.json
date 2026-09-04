@@ -29,6 +29,8 @@
   "territory",
   "industry",
   "job_title",
+  "birthday",
+  "contact_type",
   "source",
   "lead_owner",
   "organization_tab",
@@ -203,6 +205,17 @@
    "fieldname": "job_title",
    "fieldtype": "Data",
    "label": "Job Title"
+  },
+  {
+   "fieldname": "birthday",
+   "fieldtype": "Date",
+   "label": "Birthday"
+  },
+  {
+   "fieldname": "contact_type",
+   "fieldtype": "Select",
+   "label": "Contact Type",
+   "options": "\nBuyer\nEngineer\nMaintenance\nProcurement\nManagement\nOther"
   },
   {
    "fieldname": "organization_tab",

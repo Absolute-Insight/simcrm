@@ -38,6 +38,7 @@ def after_install(force=False):
 	ensure_agent_role()
 	apply_endpoint_defaults()
 	ensure_zar_currency()
+	ensure_sa_provinces()
 	ensure_visit_event_category()
 	ensure_app_logo()
 	# install/migrate runs outside a request, so nothing else will commit the
@@ -89,6 +90,30 @@ def ensure_zar_currency():
 			"number_format": "#,###.##",
 		}
 	).insert(ignore_permissions=True)
+
+
+SA_PROVINCES = (
+	"Eastern Cape",
+	"Free State",
+	"Gauteng",
+	"KwaZulu-Natal",
+	"Limpopo",
+	"Mpumalanga",
+	"North West",
+	"Northern Cape",
+	"Western Cape",
+)
+
+
+def ensure_sa_provinces():
+	"""The old rep app's lead form has a Province picker; here that is Territory.
+	Idempotent, called from after_install and the patch for the same reason as
+	ensure_zar_currency: patches are marked executed, never run, on a fresh install."""
+	for province in SA_PROVINCES:
+		if not frappe.db.exists("CRM Territory", province):
+			frappe.get_doc({"doctype": "CRM Territory", "territory_name": province}).insert(
+				ignore_permissions=True
+			)
 
 
 VISIT_EVENT_CATEGORY = "Visit"
@@ -255,7 +280,7 @@ def add_default_fields_layout(force=False):
 	quick_entry_layouts = {
 		"CRM Lead-Quick Entry": {
 			"doctype": "CRM Lead",
-			"layout": '[{"name": "person_section", "columns": [{"name": "column_5jrk", "fields": ["salutation", "email"]}, {"name": "column_5CPV", "fields": ["first_name", "mobile_no"]}, {"name": "column_gXOy", "fields": ["last_name", "gender"]}]}, {"name": "organization_section", "columns": [{"name": "column_GHfX", "fields": ["organization", "territory"]}, {"name": "column_hXjS", "fields": ["website", "annual_revenue", "company_description"]}, {"name": "column_RDNA", "fields": ["no_of_employees", "industry", "linkedin", "twitter", "facebook"]}]}, {"name": "lead_section", "columns": [{"name": "column_EO1H", "fields": ["status"]}, {"name": "column_RWBe", "fields": ["lead_owner"]}]}]',
+			"layout": '[{"name": "person_section", "columns": [{"name": "column_5jrk", "fields": ["salutation", "email"]}, {"name": "column_5CPV", "fields": ["first_name", "mobile_no", "contact_type"]}, {"name": "column_gXOy", "fields": ["last_name", "gender", "birthday"]}]}, {"name": "organization_section", "columns": [{"name": "column_GHfX", "fields": ["organization", "territory"]}, {"name": "column_hXjS", "fields": ["website", "annual_revenue", "company_description"]}, {"name": "column_RDNA", "fields": ["no_of_employees", "industry", "linkedin", "twitter", "facebook"]}]}, {"name": "lead_section", "columns": [{"name": "column_EO1H", "fields": ["status"]}, {"name": "column_RWBe", "fields": ["lead_owner"]}]}]',
 		},
 		"CRM Deal-Quick Entry": {
 			"doctype": "CRM Deal",
