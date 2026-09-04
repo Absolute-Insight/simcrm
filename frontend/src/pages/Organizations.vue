@@ -107,6 +107,7 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { call, toast } from 'frappe-ui'
 import EmptyState from '../components/ListViews/EmptyState.vue'
+import { renderFieldLayoutDialog } from '@/utils/renderFieldLayoutDialog'
 
 const { getFormattedPercent, getFormattedFloat, getFormattedCurrency } =
   getMeta('CRM Organization')
@@ -200,32 +201,52 @@ async function findByCode() {
   if (!codeQuery.value.trim() || findingCode.value) return
   findingCode.value = true
   try {
-    const rows = await call('crm.api.organization.find_by_code', {
+    const matches = await call('crm.api.organization.find_by_code', {
       code: codeQuery.value,
     })
-    if (!rows.length) {
+    if (!matches.length) {
       toast.warning(
         __('No organization has a code starting with {0}', [codeQuery.value]),
       )
       return
     }
-    // One exact hit opens it; several narrow the list to the prefix instead.
-    const exact = rows.find(
+    // One exact hit opens it; several ask which one. The search never touches
+    // the list resource: a filter left pinned on the view outlives the search
+    // that set it, and the rep has no way to tell it is there.
+    const exact = matches.find(
       (r) =>
         r.acumatica_id.toLowerCase() === codeQuery.value.trim().toLowerCase(),
     )
-    if (exact || rows.length === 1) {
+    if (exact || matches.length === 1) {
       router.push({
         name: 'Organization',
-        params: { organizationId: (exact || rows[0]).name },
+        params: { organizationId: (exact || matches[0]).name },
       })
       return
     }
-    organizations.value.params.filters = {
-      ...(organizations.value.params.filters || {}),
-      acumatica_id: ['like', `${codeQuery.value.trim()}%`],
-    }
-    organizations.value.reload()
+    const picked = await renderFieldLayoutDialog({
+      title: __('Which organization?'),
+      size: 'md',
+      fields: [
+        {
+          fieldname: 'organization',
+          fieldtype: 'Select',
+          label: __('Organization'),
+          options: matches.map((r) => ({
+            label: `${r.acumatica_id} — ${r.name}`,
+            value: r.name,
+          })),
+        },
+      ],
+      required: ['organization'],
+      submitLabel: __('Open'),
+      cancelLabel: __('Cancel'),
+    })
+    if (!picked?.organization) return
+    router.push({
+      name: 'Organization',
+      params: { organizationId: picked.organization },
+    })
   } catch (error) {
     // The missing-field case arrives here as a server message; it must be read, not hidden.
     toast.error(error?.messages?.[0] || __('Could not search by code'))
