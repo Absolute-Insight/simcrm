@@ -2,9 +2,15 @@
 # For license information, please see license.txt
 
 import frappe
+from frappe import _
 from frappe.desk.form.assign_to import add as assign
 from frappe.desk.form.assign_to import remove as unassign
 from frappe.model.document import Document
+
+# A closed task must say why. The old rep app refused to close a call without a
+# comment and that discipline is what made its history worth reading; losing it
+# would be the first regression reps notice.
+CLOSED_STATUSES = ("Done", "Canceled", "Rescheduled")
 
 
 class CRMTask(Document):
@@ -17,6 +23,7 @@ class CRMTask(Document):
 		from frappe.types import DF
 
 		assigned_to: DF.Link | None
+		closing_note: DF.SmallText | None
 		description: DF.TextEditor | None
 		due_date: DF.Datetime | None
 		name: DF.Int | None
@@ -32,12 +39,27 @@ class CRMTask(Document):
 		self.assign_to()
 
 	def validate(self):
+		self.require_closing_note()
 		if self.is_new() or not self.assigned_to:
 			return
 
 		if self.get_doc_before_save().assigned_to != self.assigned_to:
 			self.unassign_from_previous_user(self.get_doc_before_save().assigned_to)
 			self.assign_to()
+
+	def require_closing_note(self):
+		"""On the transition into a closed status only. A task created already closed
+		(seeding, fixtures) or edited while closed is not the moment the rule is for."""
+		if self.status not in CLOSED_STATUSES or self.is_new():
+			return
+		before = self.get_doc_before_save()
+		if before and before.status == self.status:
+			return
+		if not (self.closing_note or "").strip():
+			frappe.throw(
+				_("Add a closing note before marking this task {0}.").format(_(self.status)),
+				frappe.MandatoryError,
+			)
 
 	def unassign_from_previous_user(self, user: str | None):
 		if user:

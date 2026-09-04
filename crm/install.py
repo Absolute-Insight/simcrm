@@ -231,6 +231,26 @@ def add_default_communication_statuses():
 		doc.insert()
 
 
+def append_to_layout_column(layout: list, anchor: str, fieldname: str) -> bool:
+	"""Add ``fieldname`` after ``anchor`` in whichever column holds it.
+
+	Layouts come in two shapes -- tabs holding sections, or sections at the top
+	level -- and a patch must not care which. Returns False when the anchor is
+	absent or the field is already there, so a patch can run twice safely."""
+	nodes = list(layout)
+	while nodes:
+		node = nodes.pop(0)
+		for column in node.get("columns", []):
+			fields = column.get("fields", [])
+			if fieldname in fields:
+				return False
+			if anchor in fields:
+				fields.insert(fields.index(anchor) + 1, fieldname)
+				return True
+		nodes.extend(node.get("sections", []))
+	return False
+
+
 def add_default_fields_layout(force=False):
 	quick_entry_layouts = {
 		"CRM Lead-Quick Entry": {
@@ -263,7 +283,7 @@ def add_default_fields_layout(force=False):
 		},
 		"CRM Task-Quick Entry": {
 			"doctype": "CRM Task",
-			"layout": '[{"name":"first_tab","sections":[{"name":"details_section","columns":[{"name":"column_X9sG","fields":["title","description"]}]},{"name":"assignment_section","columns":[{"name":"column_9XjK","fields":["priority","due_date"]},{"name":"column_7s8n","fields":["assigned_to","status"]}],"hideBorder":true}]}]',
+			"layout": '[{"name":"first_tab","sections":[{"name":"details_section","columns":[{"name":"column_X9sG","fields":["title","description"]}]},{"name":"assignment_section","columns":[{"name":"column_9XjK","fields":["priority","due_date"]},{"name":"column_7s8n","fields":["assigned_to","status","closing_note"]}],"hideBorder":true}]}]',
 		},
 	}
 

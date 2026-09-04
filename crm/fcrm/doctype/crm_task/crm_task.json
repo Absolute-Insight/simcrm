@@ -19,7 +19,8 @@
   "status",
   "due_date",
   "section_break_bzhd",
-  "description"
+  "description",
+  "closing_note"
  ],
  "fields": [
   {
@@ -75,6 +76,12 @@
    "fieldname": "description",
    "fieldtype": "Text Editor",
    "label": "Description"
+  },
+  {
+   "fieldname": "closing_note",
+   "fieldtype": "Small Text",
+   "label": "Closing Note",
+   "description": "Required when a task is marked Done, Canceled or Rescheduled"
   },
   {
    "fieldname": "reference_doctype",
