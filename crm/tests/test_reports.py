@@ -15,6 +15,7 @@ from frappe.tests import IntegrationTestCase
 
 from crm.api.dashboard import activity_cancellations, client_reliability, plan_adherence
 from crm.api.reports import REPORTS, get_report, list_reports
+from crm.install import ensure_sa_provinces
 
 USER = "reports-rep@crmtest.test"
 
@@ -287,6 +288,7 @@ class ClientReliabilityTest(IntegrationTestCase):
 			)
 			user.insert(ignore_permissions=True)
 			user.add_roles("Sales User")
+		ensure_sa_provinces()  # so "Gauteng" exists as a CRM Territory for the territory-blind test
 		self.flaky = frappe.get_doc(
 			{"doctype": "CRM Organization", "organization_name": "Flaky Mine"}
 		).insert()
@@ -341,3 +343,12 @@ class ClientReliabilityTest(IntegrationTestCase):
 		today = frappe.utils.nowdate()
 		report = get_report("client_reliability", today, today, self.USER)
 		self.assertEqual(report["rows"], client_reliability(today, today, user=self.USER))
+
+	def test_the_report_says_it_ignores_the_territory_picker(self):
+		"""client_reliability groups by organization, not territory, and does not
+		accept the parameter -- picking a territory must not make the UI claim
+		these rows are scoped to it (see TERRITORY_BLIND in crm.api.reports)."""
+		self._task(self.flaky_deal, "Canceled")
+		today = frappe.utils.nowdate()
+		report = get_report("client_reliability", today, today, self.USER, territory="Gauteng")
+		self.assertFalse(report["territory_filtered"])

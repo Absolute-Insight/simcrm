@@ -289,8 +289,10 @@ REPORTS = {
 # The report-side twin of ``dashboard.TERRITORY_BLIND``, and for the same
 # reasons: a rep plan has no territory, and quota is per rep per month so
 # filtering only the closed-won side would divide one region's revenue by the
-# global target. Reported rather than silently ignored.
-TERRITORY_BLIND = frozenset({"plan_adherence_by_rep", "quota_attainment_by_rep"})
+# global target. ``client_reliability`` joins ``CRM Deal`` already (for the
+# organization) but the query never accepts or applies ``territory`` -- worth
+# doing, not done yet. Reported rather than silently ignored.
+TERRITORY_BLIND = frozenset({"plan_adherence_by_rep", "quota_attainment_by_rep", "client_reliability"})
 
 
 def _translated_columns(report: dict) -> list[dict]:
