@@ -522,6 +522,13 @@ much of the rest is AP distribution lists.
    Call `ensure_custom_fields()` directly. It has no guard of its own and is
    idempotent — `create_custom_fields` skips fields that already exist — so it
    is safe to re-run, and it leaves the integration off as *Non-goals* requires.
+
+   Tracked as [issue #166](https://github.com/Absolute-Insight/simcrm/issues/166),
+   which proposes separating schema install from activation and giving the
+   settings an on-disable path. Until one of those lands, the direct call is the
+   workaround and the rationale above is why — it stays in this document rather
+   than only in the issue, because the person about to flip that toggle is
+   reading this at import time.
 2. **Salesperson code → CRM user mapping**, from MBP. Blocking.
 3. **Those users exist in Vectora** before the import — `deal_owner` is a Link
    to `User` and a missing target fails the row.
