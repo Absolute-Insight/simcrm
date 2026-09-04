@@ -218,10 +218,7 @@ def upsert_address(organization: str, fields: dict) -> str:
 		"parent",
 	)
 	doc = frappe.get_doc("Address", existing) if existing else frappe.new_doc("Address")
-	doc.update({k: v for k, v in fields.items() if v is not None})
-	for key, value in fields.items():
-		if value is None:
-			doc.set(key, None)
+	doc.update(fields)
 	doc.address_title = organization
 	doc.address_type = "Billing"
 	if not existing:
@@ -577,10 +574,23 @@ def import_workbooks(
 		)
 	dry = dry_run
 	owners_map = _load_owners(owners)
+	for owner in set(owners_map.values()) | ({default_owner} if default_owner else set()):
+		if not frappe.db.exists("User", owner):
+			raise ValueError(f"owner {owner} is not a User on this site; create the users first")
 	rejects = Rejects()
 	manifest_path = _manifest_path(sales_orders)
 	manifest = _read_manifest(manifest_path)
 	warnings: list[str] = []
+
+	# pre-flight: a fact about the site, not about what this run writes, so it is
+	# checked before the importers run rather than derived from what they wrote.
+	automation_rules = frappe.db.count(
+		"CRM Automation Rule", {"enabled": 1, "document_type": "CRM Deal", "trigger": "Created"}
+	)
+	if automation_rules:
+		warnings.append(
+			f"{automation_rules} enabled automation rule(s) fire on every deal created; each imported deal triggered them"
+		)
 
 	summary = {"dry_run": dry, "warnings": warnings}
 	frappe.flags.spreadsheet_import_dry_run = dry
@@ -604,8 +614,9 @@ def import_workbooks(
 				f"{with_sla} imported deals picked up a Service Level Agreement; response timers are now running on them"
 			)
 	except Exception:
-		# whatever was written since the last commit goes; the entry point never
-		# commits partial work, and a re-run is idempotent
+		# the current batch rolls back; batches already committed by
+		# `_commit_every` stay, and a re-run is idempotent so the operator
+		# resumes rather than restores
 		frappe.db.rollback()
 		raise
 	else:
