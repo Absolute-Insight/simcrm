@@ -32,6 +32,7 @@ from itertools import pairwise
 import frappe
 
 from crm.agent.config import SIGNAL_DEFAULTS, get_signal_config
+from crm.fcrm.doctype.crm_task.crm_task import TERMINAL_STATUSES
 
 # These are the keyword defaults for the pure finders below, and they must be the
 # same numbers an admin sees in Settings -- so they are read from SIGNAL_DEFAULTS
@@ -648,7 +649,7 @@ def _deals_with_open_tasks(deal_names: list[str]) -> set[str]:
 				filters={
 					"reference_doctype": "CRM Deal",
 					"reference_docname": ("in", batch),
-					"status": ("not in", ("Done", "Canceled")),
+					"status": ("not in", TERMINAL_STATUSES),
 				},
 				pluck="reference_docname",
 			)

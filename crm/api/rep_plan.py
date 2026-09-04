@@ -22,7 +22,7 @@ import frappe
 from frappe import _
 
 from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
-from crm.rep_planning import ACTUAL_SOURCES, KIND_BY_DOCTYPE, MATCH_HORIZON_WEEKS, _query_source
+from crm.rep_planning import ACTUAL_SOURCES, KIND_BY_DOCTYPE, MATCH_HORIZON_WEEKS, _query_source, week_of
 from crm.utils import sales_user_only
 
 ITEM_FIELDS = (
@@ -301,7 +301,14 @@ def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled
 		# the real record from its own rep's matching and dock their adherence.
 		# The matcher's own definition of "this rep's completed work" decides --
 		# existence, the kind's status filters, and ownership in one query.
-		kind = KIND_BY_DOCTYPE[fulfilled_by_doctype]
+		# Event backs two kinds (Meeting, Visit) with different filters, so the
+		# item's own kind decides which set of filters the record must satisfy;
+		# the doctype-keyed fallback keeps cross-kind fulfilment as it was.
+		item_kind = frappe.db.get_value("CRM Rep Plan Item", item, "activity_type")
+		if ACTUAL_SOURCES.get(item_kind, {}).get("doctype") == fulfilled_by_doctype:
+			kind = item_kind
+		else:
+			kind = KIND_BY_DOCTYPE[fulfilled_by_doctype]
 		if not _query_source(kind, frappe.session.user, None, names=[fulfilled_by]):
 			frappe.throw(
 				_("{0} {1} is not a completed activity of yours.").format(fulfilled_by_doctype, fulfilled_by)
@@ -401,6 +408,83 @@ def propose_week(week_start: str):
 			}
 		)
 	return drafts
+
+
+@frappe.whitelist()
+@sales_user_only
+def log_unplanned_visit(
+	organization: str,
+	note: str,
+	when: str | None = None,
+	reference_doctype: str | None = None,
+	reference_docname: str | None = None,
+):
+	"""Record a visit that was never planned -- a rep called to site for a breakdown --
+	as already done, in one step.
+
+	Creates the calendar Event the matcher would have looked for and a plan item that
+	is fulfilled by it and flagged ``manual_override``, so the daily job never
+	reconsiders it. The rep's word is the record here, exactly as in ``mark_fulfilled``.
+	"""
+	if not (note or "").strip():
+		frappe.throw(_("Say what happened on the visit."), frappe.ValidationError)
+	if not frappe.db.exists("CRM Organization", organization):
+		frappe.throw(_("Organization {0} not found.").format(organization), frappe.DoesNotExistError)
+	if reference_doctype and reference_doctype not in REFERENCE_DOCTYPES:
+		frappe.throw(_("{0} cannot be the subject of a visit.").format(reference_doctype))
+
+	when_dt = frappe.utils.get_datetime(when) if when else frappe.utils.now_datetime()
+	monday, _sunday = week_of(when_dt.date())
+	horizon = frappe.utils.getdate() - timedelta(weeks=MATCH_HORIZON_WEEKS)
+	if monday < horizon:
+		frappe.throw(_("Visits older than {0} weeks can no longer be logged.").format(MATCH_HORIZON_WEEKS))
+
+	event = frappe.get_doc(
+		{
+			"doctype": "Event",
+			"subject": _("Visit: {0}").format(organization),
+			"starts_on": when_dt,
+			"ends_on": when_dt + timedelta(hours=1),
+			"event_type": "Private",
+			# the category is what makes this a Visit to the matcher, not a Meeting
+			"event_category": "Visit",
+			"status": "Completed",
+			"description": note,
+			"reference_doctype": reference_doctype,
+			"reference_docname": reference_docname,
+			"event_participants": [
+				{"reference_doctype": "CRM Organization", "reference_docname": organization}
+			],
+		}
+	).insert(ignore_permissions=True)
+
+	user = frappe.session.user
+	for attempt in range(2):
+		plan = _plan_for(user, str(monday))
+		plan.append(
+			"items",
+			{
+				"activity_type": "Visit",
+				"planned_date": when_dt.date(),
+				"note": note,
+				"reference_doctype": reference_doctype,
+				"reference_docname": reference_docname,
+				"status": "Done",
+				"manual_override": 1,
+				"fulfilled_by_doctype": "Event",
+				"fulfilled_by": event.name,
+			},
+		)
+		frappe.db.savepoint("log_visit")
+		try:
+			plan.save(ignore_permissions=True)
+			break
+		except (frappe.UniqueValidationError, frappe.DuplicateEntryError):
+			# same race as save_plan: two first saves of one week, the index decides
+			frappe.db.rollback(save_point="log_visit")
+			if attempt:
+				raise
+	return get_plan(str(monday), user)
 
 
 def _parse_payload(action_payload) -> dict:

@@ -228,6 +228,14 @@ router.beforeEach(async (to, from, next) => {
   if (isLoggedIn && to.name !== 'Not Permitted' && !isCrmUser()) {
     next({ name: 'Not Permitted' })
   } else if (to.name === 'Home' && isLoggedIn) {
+    // Eight of MBP's reps have muscle memory in an app whose home screen is
+    // their week. A rep looking for "what am I doing Tuesday" must not have
+    // to learn a route on day one; managers keep the views-driven default.
+    const { isManager } = usersStore()
+    if (!isManager()) {
+      next({ name: 'Planner' })
+      return
+    }
     const { views, getDefaultView } = viewsStore()
     await views.promise
 

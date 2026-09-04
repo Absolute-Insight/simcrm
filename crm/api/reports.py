@@ -182,6 +182,12 @@ def _quota_attainment_by_rep(from_date, to_date, user, territory=None):
 	return _rep_display(rows)
 
 
+def _client_reliability(from_date, to_date, user, territory=None):
+	from crm.api.dashboard import client_reliability
+
+	return client_reliability(from_date, to_date, user)
+
+
 REPORTS = {
 	"pipeline_by_stage": {
 		"title": "Pipeline by stage",
@@ -226,6 +232,7 @@ REPORTS = {
 			{"key": "planned", "label": "Planned (due)", "type": "number"},
 			{"key": "done", "label": "Done", "type": "number"},
 			{"key": "missed", "label": "Missed", "type": "number"},
+			{"key": "cancelled", "label": "Cancelled", "type": "number"},
 			{"key": "adherence", "label": "Adherence %", "type": "percent"},
 		],
 		"get_rows": _plan_adherence_by_rep,
@@ -264,14 +271,28 @@ REPORTS = {
 		],
 		"get_rows": _quota_attainment_by_rep,
 	},
+	"client_reliability": {
+		"title": "Client reliability",
+		"description": "Activity outcomes by client, most rescheduled and cancelled first",
+		"columns": [
+			{"key": "organization", "label": "Client", "type": "text"},
+			{"key": "total", "label": "Activities", "type": "number"},
+			{"key": "done", "label": "Done", "type": "number"},
+			{"key": "rescheduled", "label": "Rescheduled", "type": "number"},
+			{"key": "cancelled", "label": "Cancelled", "type": "number"},
+		],
+		"get_rows": _client_reliability,
+	},
 }
 
 
 # The report-side twin of ``dashboard.TERRITORY_BLIND``, and for the same
 # reasons: a rep plan has no territory, and quota is per rep per month so
 # filtering only the closed-won side would divide one region's revenue by the
-# global target. Reported rather than silently ignored.
-TERRITORY_BLIND = frozenset({"plan_adherence_by_rep", "quota_attainment_by_rep"})
+# global target. ``client_reliability`` joins ``CRM Deal`` already (for the
+# organization) but the query never accepts or applies ``territory`` -- worth
+# doing, not done yet. Reported rather than silently ignored.
+TERRITORY_BLIND = frozenset({"plan_adherence_by_rep", "quota_attainment_by_rep", "client_reliability"})
 
 
 def _translated_columns(report: dict) -> list[dict]:

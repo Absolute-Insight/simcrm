@@ -24,7 +24,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Activity Type",
-   "options": "Call\nMeeting\nTask\nEmail",
+   "options": "Call\nMeeting\nTask\nEmail\nVisit",
    "reqd": 1
   },
   {

@@ -18,7 +18,11 @@ from frappe.tests import IntegrationTestCase, UnitTestCase
 
 from crm.api.reports import REPORTS, get_report
 from crm.fcrm.doctype.crm_report_digest import crm_report_digest
-from crm.fcrm.doctype.crm_report_digest.crm_report_digest import _render_digest, send_due_digests
+from crm.fcrm.doctype.crm_report_digest.crm_report_digest import (
+	TD_STYLE,
+	_render_digest,
+	send_due_digests,
+)
 
 RECIPIENT = "digest-manager@crmtest.test"
 
@@ -283,3 +287,14 @@ class RenderDigestTest(UnitTestCase):
 		html = _render_digest(self.report(title="<i>Pipeline</i>"), "<x>", "2026-01-02")
 		self.assertIn("&lt;i&gt;Pipeline&lt;/i&gt;", html)
 		self.assertIn("&lt;x&gt;", html)
+
+	def test_a_missing_value_renders_blank(self):
+		"""A null cell used to reach the email as the literal word "None"."""
+		html = _render_digest(self.report(rows=[{"stage": None}]), "2026-01-01", "2026-01-02")
+		self.assertIn(f'<td style="{TD_STYLE}"></td>', html)
+		self.assertNotIn("None", html)
+
+	def test_a_zero_still_renders(self):
+		"""Blanking None must not blank the falsy values that are real answers."""
+		html = _render_digest(self.report(rows=[{"stage": 0}]), "2026-01-01", "2026-01-02")
+		self.assertIn(f'<td style="{TD_STYLE}">0</td>', html)

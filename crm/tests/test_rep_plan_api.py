@@ -427,3 +427,101 @@ class RepPlanApiTest(IntegrationTestCase):
 		duplicate.flags.ignore_validate = True
 		with self.assertRaises((frappe.UniqueValidationError, frappe.DuplicateEntryError)):
 			duplicate.insert(ignore_permissions=True)
+
+
+from datetime import datetime, timedelta
+
+from crm.install import ensure_visit_event_category
+
+
+def _this_monday() -> str:
+	today = frappe.utils.getdate()
+	return str(today - timedelta(days=today.weekday()))
+
+
+class MarkFulfilledByKindTest(IntegrationTestCase):
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		ensure_visit_event_category()
+
+	def setUp(self):
+		super().setUp()
+		make_sales_user(REP, "Plan Rep")
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(REP)
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _plan_with(self, activity_type: str) -> str:
+		plan = save_plan(_this_monday(), [{"activity_type": activity_type, "planned_date": _this_monday()}])
+		return plan["items"][0]["name"]
+
+	def _event(self, category=None):
+		fields = {
+			"doctype": "Event",
+			"subject": "x",
+			"starts_on": datetime.now(),
+			"event_type": "Private",
+		}
+		if category:
+			fields["event_category"] = category
+		return frappe.get_doc(fields).insert()
+
+	def test_a_visit_item_accepts_a_visit_event_and_refuses_a_plain_one(self):
+		item = self._plan_with("Visit")
+		plain = self._event()
+		with self.assertRaises(frappe.ValidationError):
+			mark_fulfilled(item, "Event", plain.name)
+		visit = self._event("Visit")
+		plan = mark_fulfilled(item, "Event", visit.name)
+		self.assertEqual(plan["items"][0]["status"], "Done")
+
+	def test_a_meeting_item_still_accepts_a_plain_event(self):
+		item = self._plan_with("Meeting")
+		plan = mark_fulfilled(item, "Event", self._event().name)
+		self.assertEqual(plan["items"][0]["status"], "Done")
+
+
+from crm.api.rep_plan import log_unplanned_visit
+
+
+class UnplannedVisitTest(IntegrationTestCase):
+	def setUp(self):
+		super().setUp()
+		make_sales_user(REP, "Plan Rep")
+		self.org = frappe.get_doc(
+			{"doctype": "CRM Organization", "organization_name": "4D Union Section"}
+		).insert()
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(REP)
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def test_logs_a_done_visit_the_matcher_will_leave_alone(self):
+		plan = log_unplanned_visit(self.org.name, "Called to site for a breakdown on the 200mm valve")
+		item = plan["items"][0]
+		self.assertEqual(item["activity_type"], "Visit")
+		self.assertEqual(item["status"], "Done")
+		self.assertEqual(item["manual_override"], 1)
+		self.assertEqual(item["fulfilled_by_doctype"], "Event")
+		event = frappe.get_doc("Event", item["fulfilled_by"])
+		self.assertEqual(event.event_category, "Visit")
+		self.assertEqual(event.status, "Completed")
+		self.assertEqual(event.owner, REP)
+		self.assertIn(self.org.name, [p.reference_docname for p in event.event_participants])
+
+	def test_a_note_is_required(self):
+		with self.assertRaises(frappe.ValidationError):
+			log_unplanned_visit(self.org.name, "   ")
+
+	def test_an_unknown_organization_is_refused(self):
+		with self.assertRaises(frappe.DoesNotExistError):
+			log_unplanned_visit("Nobody Ltd", "x")
+
+	def test_lands_in_the_week_of_the_visit_not_today(self):
+		when = frappe.utils.get_datetime(_this_monday()) - timedelta(days=7)
+		plan = log_unplanned_visit(self.org.name, "last week", when=str(when))
+		self.assertEqual(plan["week_start"], str(when.date()))

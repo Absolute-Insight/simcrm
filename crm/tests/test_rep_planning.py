@@ -19,6 +19,7 @@ import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
 from crm import rep_planning
+from crm.install import ensure_visit_event_category
 from crm.rep_planning import MATCH_HORIZON_WEEKS, match_actuals, match_items
 
 WEEK = date(2026, 8, 10)  # a Monday
@@ -112,6 +113,12 @@ class MatchItemsTest(UnitTestCase):
 		second = match_items(list(reversed(items)), [actual()])
 		self.assertEqual(list(first), ["a-item"])
 		self.assertEqual(list(first), list(second))
+
+	def test_a_visit_item_is_fulfilled_by_a_visit_only(self):
+		visit = actual(doctype="Event", name="EV-1", kind="Visit")
+		self.assertEqual(match_items([item(activity_type="Visit")], [visit])["item-1"]["name"], "EV-1")
+		meeting = actual(doctype="Event", name="EV-1", kind="Meeting")
+		self.assertEqual(match_items([item(activity_type="Visit")], [meeting]), {})
 
 
 class MatchActualsJobTest(IntegrationTestCase):
@@ -374,6 +381,27 @@ class MatchActualsJobTest(IntegrationTestCase):
 		plan.reload()
 		self.assertEqual(plan.items[0].status, "Planned")
 
+	def test_a_meeting_recategorised_as_a_visit_releases_the_item(self):
+		plan = self.make_plan({"activity_type": "Meeting"})
+		event = frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "Slipping",
+				"starts_on": frappe.utils.now_datetime(),
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.set_value("Event", event.name, "owner", self.USER)
+		match_actuals()
+		plan.reload()
+		self.assertEqual(plan.items[0].status, "Done")
+		self.assertEqual(plan.items[0].fulfilled_by, event.name)
+
+		frappe.db.set_value("Event", event.name, "event_category", "Visit")
+		match_actuals()
+		plan.reload()
+		self.assertEqual(plan.items[0].status, "Planned")
+		self.assertFalse(plan.items[0].fulfilled_by)
+
 	def test_a_missed_item_is_reconsidered_once_the_record_shows_up(self):
 		last_monday = frappe.utils.add_days(self.monday, -7)
 		plan = frappe.get_doc(
@@ -547,3 +575,41 @@ class MatchActualsJobTest(IntegrationTestCase):
 		match_actuals()
 		plan.reload()
 		self.assertEqual([row.status for row in plan.items], ["Missed", "Done"])
+
+
+class EventKindsTest(IntegrationTestCase):
+	"""One Event is emitted under exactly one kind, or a single visit could fulfil
+	a Visit item and a Meeting item in the same run."""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		ensure_visit_event_category()
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _event(self, subject, category=None):
+		fields = {
+			"doctype": "Event",
+			"subject": subject,
+			"starts_on": datetime(2026, 8, 12, 10, 0),
+			"event_type": "Private",
+		}
+		if category:
+			fields["event_category"] = category
+		return frappe.get_doc(fields).insert()
+
+	def test_visit_and_meeting_partition_events_by_category(self):
+		visit = self._event("Site visit", "Visit")
+		meeting = self._event("Catch-up")
+		window = (date(2026, 8, 10), date(2026, 8, 16))
+		visits = {row["name"] for row in rep_planning._query_source("Visit", "Administrator", window)}
+		meetings = {row["name"] for row in rep_planning._query_source("Meeting", "Administrator", window)}
+		self.assertIn(visit.name, visits)
+		self.assertNotIn(meeting.name, visits)
+		self.assertIn(meeting.name, meetings)
+		self.assertNotIn(visit.name, meetings)
+
+	def test_the_reverse_map_still_names_meeting_for_an_event(self):
+		self.assertEqual(rep_planning.KIND_BY_DOCTYPE["Event"], "Meeting")

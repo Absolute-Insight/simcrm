@@ -154,6 +154,8 @@ class TestCRMTask(IntegrationTestCase):
 		# Test status transitions up to Done
 		for status in statuses[1:4]:  # Backlog -> Todo -> In Progress -> Done
 			task.status = status
+			if status == "Done":
+				task.closing_note = "Finished the workflow test"
 			task.save()
 			task.reload()
 			self.assertEqual(task.status, status)
@@ -219,6 +221,71 @@ class TestCRMTask(IntegrationTestCase):
 		assignees_after = task.get_assigned_users()
 		self.assertEqual(len(assignees_after), initial_count)
 		self.assertIn("Administrator", assignees_after)
+
+	def test_a_task_can_be_rescheduled(self):
+		task = create_test_task(title="Site visit", status="Todo")
+		task.status = "Rescheduled"
+		task.closing_note = "Client moved it to next week"  # Task 4 requires this; harmless before
+		task.save()
+		self.assertEqual(frappe.db.get_value("CRM Task", task.name, "status"), "Rescheduled")
+
+	def test_closing_without_a_note_is_refused(self):
+		task = create_test_task(title="Call back", status="Todo")
+		task.status = "Done"
+		with self.assertRaises(frappe.MandatoryError):
+			task.save()
+
+	def test_closing_with_a_note_saves(self):
+		task = create_test_task(title="Call back", status="Todo")
+		task.status = "Canceled"
+		task.closing_note = "Client no longer needs the part"
+		task.save()
+		self.assertEqual(frappe.db.get_value("CRM Task", task.name, "status"), "Canceled")
+
+	def test_the_rule_is_about_the_transition_not_the_state(self):
+		# created straight into Done (seeding, the matcher's fixtures): allowed
+		task = create_test_task(title="Already done", status="Done")
+		self.assertEqual(task.status, "Done")
+		# editing something else on a closed task: allowed
+		task.title = "Already done, renamed"
+		task.save()
+		# reopening needs nothing either
+		task.status = "Todo"
+		task.save()
+
+	def test_history_lists_each_change_with_the_note_that_came_with_it(self):
+		from crm.api.task import get_history
+
+		task = create_test_task(title="Visit 4D Union", status="Todo")
+		task.status = "Rescheduled"
+		task.closing_note = "Client asked for the 21st"
+		# the test runner suppresses Version rows by default; production saves never do
+		task.save(ignore_version=False)
+		history = get_history(str(task.name))  # CRM Task autoincrements; name is int in-process
+		self.assertGreaterEqual(len(history), 1)
+		latest = history[0]
+		fields = {change["field"]: change for change in latest["changes"]}
+		self.assertEqual(fields["status"]["old"], "Todo")
+		self.assertEqual(fields["status"]["new"], "Rescheduled")
+		self.assertEqual(fields["closing_note"]["new"], "Client asked for the 21st")
+		self.assertEqual(fields["status"]["label"], "Status")
+
+
+class LayoutHelperTest(IntegrationTestCase):
+	def test_append_to_layout_column_finds_the_anchor_in_tabs_or_sections(self):
+		from crm.install import append_to_layout_column
+
+		tabbed = [
+			{"name": "t", "sections": [{"name": "s", "columns": [{"name": "c", "fields": ["status"]}]}]}
+		]
+		self.assertTrue(append_to_layout_column(tabbed, "status", "closing_note"))
+		self.assertEqual(tabbed[0]["sections"][0]["columns"][0]["fields"], ["status", "closing_note"])
+		self.assertFalse(append_to_layout_column(tabbed, "status", "closing_note"))  # idempotent
+
+		flat = [{"name": "s", "columns": [{"name": "c", "fields": ["gender"]}]}]
+		self.assertTrue(append_to_layout_column(flat, "gender", "birthday"))
+		self.assertEqual(flat[0]["columns"][0]["fields"], ["gender", "birthday"])
+		self.assertFalse(append_to_layout_column(flat, "missing", "x"))
 
 
 def create_test_task(**kwargs):

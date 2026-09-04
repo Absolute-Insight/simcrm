@@ -2,9 +2,22 @@
 # For license information, please see license.txt
 
 import frappe
+from frappe import _
 from frappe.desk.form.assign_to import add as assign
 from frappe.desk.form.assign_to import remove as unassign
 from frappe.model.document import Document
+
+# A task may not be *left* in any of these without saying why. The old rep app
+# refused to close a call without a comment and that discipline is what made its
+# history worth reading; losing it would be the first regression reps notice.
+# Rescheduled is on this list but is not an ending: the visit still has to
+# happen, so the task stays open and only picks up a new due date.
+NOTE_REQUIRED_STATUSES = ("Done", "Canceled", "Rescheduled")
+
+# The statuses that end a task. Every "still open" query in the app filters on
+# these, so they live here rather than as a literal repeated in four modules
+# where a fifth status would only be added to three of them.
+TERMINAL_STATUSES = ("Done", "Canceled")
 
 
 class CRMTask(Document):
@@ -17,6 +30,7 @@ class CRMTask(Document):
 		from frappe.types import DF
 
 		assigned_to: DF.Link | None
+		closing_note: DF.SmallText | None
 		description: DF.TextEditor | None
 		due_date: DF.Datetime | None
 		name: DF.Int | None
@@ -24,7 +38,7 @@ class CRMTask(Document):
 		reference_docname: DF.DynamicLink | None
 		reference_doctype: DF.Link | None
 		start_date: DF.Date | None
-		status: DF.Literal["Backlog", "Todo", "In Progress", "Done", "Canceled"]
+		status: DF.Literal["Backlog", "Todo", "In Progress", "Rescheduled", "Done", "Canceled"]
 		title: DF.Data
 	# end: auto-generated types
 
@@ -32,12 +46,27 @@ class CRMTask(Document):
 		self.assign_to()
 
 	def validate(self):
+		self.require_closing_note()
 		if self.is_new() or not self.assigned_to:
 			return
 
 		if self.get_doc_before_save().assigned_to != self.assigned_to:
 			self.unassign_from_previous_user(self.get_doc_before_save().assigned_to)
 			self.assign_to()
+
+	def require_closing_note(self):
+		"""On the transition into a note-requiring status only. A task created already
+		there (seeding, fixtures) or edited while there is not the moment the rule is for."""
+		if self.status not in NOTE_REQUIRED_STATUSES or self.is_new():
+			return
+		before = self.get_doc_before_save()
+		if before and before.status == self.status:
+			return
+		if not (self.closing_note or "").strip():
+			frappe.throw(
+				_("Add a closing note before marking this task {0}.").format(_(self.status)),
+				frappe.MandatoryError,
+			)
 
 	def unassign_from_previous_user(self, user: str | None):
 		if user:

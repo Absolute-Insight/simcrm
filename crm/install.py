@@ -38,6 +38,8 @@ def after_install(force=False):
 	ensure_agent_role()
 	apply_endpoint_defaults()
 	ensure_zar_currency()
+	ensure_sa_provinces()
+	ensure_visit_event_category()
 	ensure_app_logo()
 	# install/migrate runs outside a request, so nothing else will commit the
 	# fixtures created above.
@@ -88,6 +90,52 @@ def ensure_zar_currency():
 			"number_format": "#,###.##",
 		}
 	).insert(ignore_permissions=True)
+
+
+SA_PROVINCES = (
+	"Eastern Cape",
+	"Free State",
+	"Gauteng",
+	"KwaZulu-Natal",
+	"Limpopo",
+	"Mpumalanga",
+	"North West",
+	"Northern Cape",
+	"Western Cape",
+)
+
+
+def ensure_sa_provinces():
+	"""The old rep app's lead form has a Province picker; here that is Territory.
+	Idempotent, called from after_install and the patch for the same reason as
+	ensure_zar_currency: patches are marked executed, never run, on a fresh install."""
+	for province in SA_PROVINCES:
+		if not frappe.db.exists("CRM Territory", province):
+			frappe.get_doc({"doctype": "CRM Territory", "territory_name": province}).insert(
+				ignore_permissions=True
+			)
+
+
+VISIT_EVENT_CATEGORY = "Visit"
+
+
+def ensure_visit_event_category():
+	"""Add "Visit" to Event.event_category so the planner can tell a site visit from a
+	meeting. Frappe stores the FIRST option ("Event") for any event saved without a
+	category, so the discriminator has to be a value nothing else ever sets. Property
+	Setter rather than a JSON edit because Event is a core doctype. Idempotent; called
+	from after_install and the add_visit_event_category patch.
+
+	The Property Setter freezes the option list as it stood when this first ran, so a
+	core Frappe release that adds an ``event_category`` option will not show it on this
+	site until the setter is refreshed -- delete it and re-run, or widen the patch."""
+	from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+	options = frappe.get_meta("Event").get_field("event_category").options or ""
+	if VISIT_EVENT_CATEGORY in options.split("\n"):
+		return
+	make_property_setter("Event", "event_category", "options", f"{options}\n{VISIT_EVENT_CATEGORY}", "Text")
+	frappe.clear_cache(doctype="Event")
 
 
 def add_default_lead_statuses():
@@ -212,11 +260,31 @@ def add_default_communication_statuses():
 		doc.insert()
 
 
+def append_to_layout_column(layout: list, anchor: str, fieldname: str) -> bool:
+	"""Add ``fieldname`` after ``anchor`` in whichever column holds it.
+
+	Layouts come in two shapes -- tabs holding sections, or sections at the top
+	level -- and a patch must not care which. Returns False when the anchor is
+	absent or the field is already there, so a patch can run twice safely."""
+	nodes = list(layout)
+	while nodes:
+		node = nodes.pop(0)
+		for column in node.get("columns", []):
+			fields = column.get("fields", [])
+			if fieldname in fields:
+				return False
+			if anchor in fields:
+				fields.insert(fields.index(anchor) + 1, fieldname)
+				return True
+		nodes.extend(node.get("sections", []))
+	return False
+
+
 def add_default_fields_layout(force=False):
 	quick_entry_layouts = {
 		"CRM Lead-Quick Entry": {
 			"doctype": "CRM Lead",
-			"layout": '[{"name": "person_section", "columns": [{"name": "column_5jrk", "fields": ["salutation", "email"]}, {"name": "column_5CPV", "fields": ["first_name", "mobile_no"]}, {"name": "column_gXOy", "fields": ["last_name", "gender"]}]}, {"name": "organization_section", "columns": [{"name": "column_GHfX", "fields": ["organization", "territory"]}, {"name": "column_hXjS", "fields": ["website", "annual_revenue", "company_description"]}, {"name": "column_RDNA", "fields": ["no_of_employees", "industry", "linkedin", "twitter", "facebook"]}]}, {"name": "lead_section", "columns": [{"name": "column_EO1H", "fields": ["status"]}, {"name": "column_RWBe", "fields": ["lead_owner"]}]}]',
+			"layout": '[{"name": "person_section", "columns": [{"name": "column_5jrk", "fields": ["salutation", "email"]}, {"name": "column_5CPV", "fields": ["first_name", "mobile_no", "contact_type"]}, {"name": "column_gXOy", "fields": ["last_name", "gender", "birthday"]}]}, {"name": "organization_section", "columns": [{"name": "column_GHfX", "fields": ["organization", "territory"]}, {"name": "column_hXjS", "fields": ["website", "annual_revenue", "company_description"]}, {"name": "column_RDNA", "fields": ["no_of_employees", "industry", "linkedin", "twitter", "facebook"]}]}, {"name": "lead_section", "columns": [{"name": "column_EO1H", "fields": ["status"]}, {"name": "column_RWBe", "fields": ["lead_owner"]}]}]',
 		},
 		"CRM Deal-Quick Entry": {
 			"doctype": "CRM Deal",
@@ -244,7 +312,7 @@ def add_default_fields_layout(force=False):
 		},
 		"CRM Task-Quick Entry": {
 			"doctype": "CRM Task",
-			"layout": '[{"name":"first_tab","sections":[{"name":"details_section","columns":[{"name":"column_X9sG","fields":["title","description"]}]},{"name":"assignment_section","columns":[{"name":"column_9XjK","fields":["priority","due_date"]},{"name":"column_7s8n","fields":["assigned_to","status"]}],"hideBorder":true}]}]',
+			"layout": '[{"name":"first_tab","sections":[{"name":"details_section","columns":[{"name":"column_X9sG","fields":["title","description"]}]},{"name":"assignment_section","columns":[{"name":"column_9XjK","fields":["priority","due_date"]},{"name":"column_7s8n","fields":["assigned_to","status","closing_note"]}],"hideBorder":true}]}]',
 		},
 	}
 

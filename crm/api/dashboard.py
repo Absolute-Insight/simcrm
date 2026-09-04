@@ -1800,6 +1800,154 @@ def lost_deal_count(
 	return rows[0].count if rows else 0
 
 
+def activity_cancellations(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	group_by_user: bool = False,
+):
+	"""Tasks cancelled and calendar events cancelled in the period, per rep.
+
+	The old rep app's admin view charted cancellations per user next to
+	completions; the matcher never counts them because a cancellation fulfils
+	nothing. Tasks are dated by ``modified`` for the same reason the matcher is
+	(no completion timestamp exists); events by when they were to happen."""
+	Task = DocType("CRM Task")
+	Event = DocType("Event")
+	end = add_days(to_date, 1)
+
+	tasks = (
+		frappe.qb.from_(Task)
+		.where(Task.status == "Canceled")
+		.where((Task.modified >= from_date) & (Task.modified < end))
+		.select(Task.assigned_to.as_("user"), Count(Task.name).as_("cancelled"))
+		.groupby(Task.assigned_to)
+	)
+	events = (
+		frappe.qb.from_(Event)
+		.where(Event.status == "Cancelled")
+		.where((Event.starts_on >= from_date) & (Event.starts_on < end))
+		.select(Event.owner.as_("user"), Count(Event.name).as_("cancelled"))
+		.groupby(Event.owner)
+	)
+	if user:
+		tasks = tasks.where(Task.assigned_to == user)
+		events = events.where(Event.owner == user)
+	else:
+		reps = visible_reps()
+		if reps is not None:
+			tasks = tasks.where(Task.assigned_to.isin(reps))
+			events = events.where(Event.owner.isin(reps))
+
+	totals: dict[str, int] = {}
+	for row in tasks.run(as_dict=True) + events.run(as_dict=True):
+		totals[row.user] = totals.get(row.user, 0) + (row.cancelled or 0)
+
+	if group_by_user:
+		return [frappe._dict({"user": u, "cancelled": n}) for u, n in sorted(totals.items())]
+	return [frappe._dict({"cancelled": sum(totals.values())})]
+
+
+def client_reliability(from_date: str | None = None, to_date: str | None = None, user: str | None = None):
+	"""Activity outcomes grouped by the client they were for, worst first.
+
+	The one genuinely new idea in the old rep app: which customers move and
+	cancel the team's visits. A task reaches its organization through the deal
+	it references, and so does a calendar event -- but a logged visit names the
+	organization directly as an event participant and often has no deal at all,
+	which is the third source. An event carrying a deal is counted through the
+	deal and excluded from the participant path, so it lands on exactly one
+	organization; the participant path catches the rest. Activity on a *lead* is
+	not counted: a lead's organization is free text, not a link. Sorted by
+	rescheduled plus cancelled so the clients that cost the most time are at the
+	top."""
+	Task = DocType("CRM Task")
+	Event = DocType("Event")
+	Participant = DocType("Event Participants")
+	Deal = DocType("CRM Deal")
+	end = add_days(to_date, 1)
+
+	def flag(column, value):
+		return Sum(Case().when(column == value, 1).else_(0))
+
+	tasks = (
+		frappe.qb.from_(Task)
+		.join(Deal)
+		.on((Task.reference_doctype == "CRM Deal") & (Task.reference_docname == Deal.name))
+		.where((Task.modified >= from_date) & (Task.modified < end))
+		.where(Deal.organization.isnotnull())
+		.select(
+			Deal.organization.as_("organization"),
+			Count(Task.name).as_("total"),
+			flag(Task.status, "Done").as_("done"),
+			flag(Task.status, "Rescheduled").as_("rescheduled"),
+			flag(Task.status, "Canceled").as_("cancelled"),
+		)
+		.groupby(Deal.organization)
+	)
+	# An event is either done or cancelled: there is no rescheduled state to
+	# select, so both event queries omit the column and the merge defaults it.
+	events = (
+		frappe.qb.from_(Event)
+		.join(Deal)
+		.on((Event.reference_doctype == "CRM Deal") & (Event.reference_docname == Deal.name))
+		.where((Event.starts_on >= from_date) & (Event.starts_on < end))
+		.where(Deal.organization.isnotnull())
+		.select(
+			Deal.organization.as_("organization"),
+			Count(Event.name).as_("total"),
+			(flag(Event.status, "Completed") + flag(Event.status, "Closed")).as_("done"),
+			flag(Event.status, "Cancelled").as_("cancelled"),
+		)
+		.groupby(Deal.organization)
+	)
+	# The visits a rep logs from the planner name the organization as a
+	# participant and need no deal, so the deal join never sees them. An event
+	# that does carry a deal is already counted above; excluding it here is what
+	# keeps a visit logged against both from being counted twice. An unset
+	# reference is not a deal reference, hence the isnull arm.
+	visits = (
+		frappe.qb.from_(Event)
+		.join(Participant)
+		.on(
+			(Participant.parent == Event.name)
+			& (Participant.parenttype == "Event")
+			& (Participant.reference_doctype == "CRM Organization")
+		)
+		.where((Event.starts_on >= from_date) & (Event.starts_on < end))
+		.where(Event.reference_doctype.isnull() | (Event.reference_doctype != "CRM Deal"))
+		.select(
+			Participant.reference_docname.as_("organization"),
+			Count(Event.name).as_("total"),
+			(flag(Event.status, "Completed") + flag(Event.status, "Closed")).as_("done"),
+			flag(Event.status, "Cancelled").as_("cancelled"),
+		)
+		.groupby(Participant.reference_docname)
+	)
+	if user:
+		tasks = tasks.where(Task.assigned_to == user)
+		events = events.where(Event.owner == user)
+		visits = visits.where(Event.owner == user)
+	else:
+		reps = visible_reps()
+		if reps is not None:
+			tasks = tasks.where(Task.assigned_to.isin(reps))
+			events = events.where(Event.owner.isin(reps))
+			visits = visits.where(Event.owner.isin(reps))
+
+	merged: dict[str, dict] = {}
+	for row in tasks.run(as_dict=True) + events.run(as_dict=True) + visits.run(as_dict=True):
+		bucket = merged.setdefault(
+			row.organization,
+			{"organization": row.organization, "total": 0, "done": 0, "rescheduled": 0, "cancelled": 0},
+		)
+		for key in ("total", "done", "rescheduled", "cancelled"):
+			bucket[key] += int(row.get(key) or 0)
+	rows = [frappe._dict(b) for b in merged.values()]
+	rows.sort(key=lambda r: (-(r["rescheduled"] + r["cancelled"]), r["organization"]))
+	return rows
+
+
 def plan_adherence(
 	from_date: str | None = None,
 	to_date: str | None = None,
@@ -1850,6 +1998,24 @@ def plan_adherence(
 		row["done"] = row["done"] or 0
 		row["missed"] = row["missed"] or 0
 		row["adherence"] = round(row["done"] / row["planned"] * 100) if row["planned"] else 0
+
+	cancellations = activity_cancellations(from_date, to_date, user, group_by_user)
+	if group_by_user:
+		by_user = {row["user"]: row["cancelled"] for row in cancellations}
+		seen = {row["user"] for row in rows}
+		for row in rows:
+			row["cancelled"] = by_user.get(row["user"], 0)
+		# a rep with cancellations and no plan items still has a row to show them on
+		for u, n in by_user.items():
+			if u not in seen:
+				rows.append(
+					frappe._dict(
+						{"user": u, "planned": 0, "done": 0, "missed": 0, "adherence": None, "cancelled": n}
+					)
+				)
+	else:
+		rows[0]["cancelled"] = cancellations[0]["cancelled"]
+
 	return rows
 
 

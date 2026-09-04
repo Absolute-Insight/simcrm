@@ -25,6 +25,7 @@ from crm.agent.signals import (
 	suggestion_blocked,
 	user_at_open_cap,
 )
+from crm.fcrm.doctype.crm_task.crm_task import TERMINAL_STATUSES
 
 OWNER_FIELD = {"CRM Lead": "lead_owner", "CRM Deal": "deal_owner"}
 
@@ -185,7 +186,7 @@ def _apply(rule, doc) -> None:
 		# distinct rules that happen to render the same title are two
 		# instructions and used to suppress each other. The title arm survives
 		# only for rows created before the field existed.
-		open_statuses = ("not in", ("Done", "Canceled"))
+		open_statuses = ("not in", TERMINAL_STATUSES)
 		duplicate = frappe.db.exists(
 			"CRM Task",
 			{

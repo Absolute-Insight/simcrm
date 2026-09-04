@@ -61,12 +61,26 @@ ACTUAL_SOURCES = {
 			"communication_medium": "Email",
 		},
 	},
+	"Visit": {
+		# MBP's reps think in visits to plants and mines, not meetings. A visit is
+		# a calendar event in the "Visit" category -- its own category, added by a
+		# Property Setter (see crm.install.ensure_visit_event_category), because
+		# Frappe stores the first option ("Event") for any event saved without
+		# one, so that value was never free to repurpose as the discriminator.
+		"doctype": "Event",
+		"user_fields": ("owner",),
+		"when_field": "starts_on",
+		"when_is_activity_time": True,
+		"filters": {"event_category": "Visit"},
+		"exclude": {"status": ("Cancelled",)},
+	},
 	"Meeting": {
 		"doctype": "Event",
 		"user_fields": ("owner",),
 		"when_field": "starts_on",
 		"when_is_activity_time": True,
-		"exclude": {"status": ("Cancelled",)},
+		# a visit is not a meeting; without this one event could fulfil both kinds
+		"exclude": {"status": ("Cancelled",), "event_category": ("Visit",)},
 	},
 }
 
@@ -237,14 +251,20 @@ def _fulfilment_holds(
 	fetched; it answers the question without a query. A Task holds regardless
 	of when it was last touched (``when_is_activity_time`` is False), which is
 	fine to read from the window too: ``modified`` only ever moves forward, and
-	a task matched into a week inside the horizon was touched inside it.
+	a task matched into a week inside the horizon was touched inside it. Two
+	kinds can share a doctype (Event backs both Meeting and Visit), so kind is
+	part of a record's identity here, not just its doctype and name.
 	"""
 	source = ACTUAL_SOURCES.get(item["activity_type"])
 	if not source or not item["fulfilled_by"] or item["fulfilled_by_doctype"] != source["doctype"]:
 		return False
 	if actuals is not None:
 		for actual in actuals:
-			if actual["doctype"] != source["doctype"] or str(actual["name"]) != str(item["fulfilled_by"]):
+			if (
+				actual["doctype"] != source["doctype"]
+				or str(actual["name"]) != str(item["fulfilled_by"])
+				or actual["kind"] != item["activity_type"]
+			):
 				continue
 			if not source["when_is_activity_time"]:
 				return True

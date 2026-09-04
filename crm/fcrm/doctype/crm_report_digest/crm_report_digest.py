@@ -166,6 +166,14 @@ TH_STYLE = (
 TD_STYLE = "padding:6px 12px;border-bottom:1px solid #f2f2f8;font-variant-numeric:tabular-nums"
 
 
+def _cell(value) -> str:
+	"""A missing cell is blank, not the word "None". A report row leaves a key out
+	or carries a null whenever the underlying value is unset -- no close date, no
+	owner -- and ``str(None)`` puts the Python repr in front of the reader. 0 and
+	False are real answers and are rendered as themselves."""
+	return "" if value is None else str(value)
+
+
 def _render_digest(report, from_date, to_date) -> str:
 	"""Every interpolation is escaped: report cells carry user-authored text —
 	stage names, lost reasons, user names — straight into an email body."""
@@ -174,7 +182,7 @@ def _render_digest(report, from_date, to_date) -> str:
 	body = ""
 	for row in report["rows"]:
 		cells = "".join(
-			f'<td style="{TD_STYLE}">{escape_html(str(row.get(col["key"], "")))}</td>' for col in columns
+			f'<td style="{TD_STYLE}">{escape_html(_cell(row.get(col["key"])))}</td>' for col in columns
 		)
 		body += f"<tr>{cells}</tr>"
 	if not report["rows"]:

@@ -7,6 +7,7 @@
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
+ "track_changes": 1,
  "field_order": [
   "title",
   "priority",
@@ -19,7 +20,8 @@
   "status",
   "due_date",
   "section_break_bzhd",
-  "description"
+  "description",
+  "closing_note"
  ],
  "fields": [
   {
@@ -59,7 +61,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Backlog\nTodo\nIn Progress\nDone\nCanceled"
+   "options": "Backlog\nTodo\nIn Progress\nRescheduled\nDone\nCanceled"
   },
   {
    "fieldname": "due_date",
@@ -75,6 +77,12 @@
    "fieldname": "description",
    "fieldtype": "Text Editor",
    "label": "Description"
+  },
+  {
+   "fieldname": "closing_note",
+   "fieldtype": "Small Text",
+   "label": "Closing Note",
+   "description": "Required when a task is marked Done, Canceled or Rescheduled"
   },
   {
    "fieldname": "reference_doctype",

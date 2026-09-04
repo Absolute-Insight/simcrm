@@ -567,7 +567,7 @@ import Link from '@/components/Controls/Link.vue'
 import { usersStore } from '@/stores/users'
 import { getSettings } from '@/stores/settings'
 import { isNarrowGrid } from '@/composables/settings'
-import { formatCell } from '@/utils/reportExport'
+import { EMPTY_CELL, formatCell } from '@/utils/reportExport'
 import { copy } from '@/utils'
 import { describeError } from '@/utils/describeError'
 import { quiet } from '@/utils/quiet'
@@ -909,8 +909,9 @@ const PANEL_CATALOGUE = computed(() => {
       emptyTitle: __('No plans in this period'),
       emptyDescription: __('Adherence appears once reps plan their weeks.'),
       rows: computed(() => teamAdherence.data?.rows || []),
-      cell: (row) => `${row.adherence}%`,
-      tone: (row) => (row.adherence < 60 ? 'text-ink-orange-9' : ''),
+      cell: (row) => (row.adherence == null ? EMPTY_CELL : `${row.adherence}%`),
+      tone: (row) =>
+        row.adherence != null && row.adherence < 60 ? 'text-ink-orange-9' : '',
     },
     {
       id: 'pipeline',

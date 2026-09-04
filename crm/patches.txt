@@ -43,3 +43,7 @@ crm.patches.v1_0.add_analytics_dashboard_widgets
 crm.patches.v1_0.remove_duplicated_grid_tiles #2
 crm.patches.v1_0.create_custom_fields_for_acumatica_in_crm
 crm.patches.v1_0.enable_zar_currency
+crm.patches.v1_0.add_visit_event_category
+crm.patches.v1_0.add_closing_note_to_task_quick_entry
+crm.patches.v1_0.add_person_fields_to_lead_quick_entry
+crm.patches.v1_0.ensure_sa_provinces

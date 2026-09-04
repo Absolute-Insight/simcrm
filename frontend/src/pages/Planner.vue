@@ -6,6 +6,17 @@
     <template #right-header>
       <Button
         v-if="isOwnPlan"
+        :label="__('Log a visit')"
+        :disabled="logging"
+        :loading="logging"
+        @click="logVisit"
+      >
+        <template #prefix>
+          <LucideMapPin class="size-4" />
+        </template>
+      </Button>
+      <Button
+        v-if="isOwnPlan"
         :label="__('Propose my week')"
         :disabled="!canEdit || proposing"
         :loading="proposing"
@@ -382,6 +393,7 @@
 // activity. There is no same-family Phosphor substitute that keeps that
 // meaning intact.
 import LucideCalendarClock from '~icons/lucide/calendar-clock'
+import LucideMapPin from '~icons/lucide/map-pin'
 import { PhCheckCircle as LucideCircleCheck } from '@phosphor-icons/vue'
 import { PhEnvelope as LucideMail } from '@phosphor-icons/vue'
 import { PhPhone as LucidePhone } from '@phosphor-icons/vue'
@@ -451,6 +463,7 @@ const weekStart = ref(mondayOf(today.value))
 const planUser = ref(session.user)
 const saving = ref(false)
 const proposing = ref(false)
+const logging = ref(false)
 const stale = ref(false)
 const announcement = ref('')
 const dragging = ref(null)
@@ -683,6 +696,7 @@ function typeIcon(type) {
       Meeting: LucideCalendarClock,
       Task: LucideCircleCheck,
       Email: LucideMail,
+      Visit: LucideMapPin,
     }[type] || LucideCircleCheck
   )
 }
@@ -758,7 +772,7 @@ function itemDialogFields() {
       fieldname: 'activity_type',
       fieldtype: 'Select',
       label: __('Activity'),
-      options: 'Call\nMeeting\nTask\nEmail',
+      options: 'Call\nMeeting\nTask\nEmail\nVisit',
     },
     { fieldname: 'planned_date', fieldtype: 'Date', label: __('Day') },
     { fieldname: 'note', fieldtype: 'Data', label: __('Note') },
@@ -970,6 +984,83 @@ async function overrideItem(method, item) {
     toast.success(OVERRIDE_DONE[method]())
   } catch (error) {
     toast.error(errorText(error))
+  }
+}
+
+/* An unplanned visit -- "called to site for a breakdown" in MBP's words --
+   is recorded as already done. The server creates the calendar event and the
+   fulfilled item; we only collect the facts. */
+async function logVisit() {
+  const data = await renderFieldLayoutDialog({
+    title: __('Log an unplanned visit'),
+    size: 'md',
+    fields: [
+      {
+        fieldname: 'organization',
+        fieldtype: 'Link',
+        label: __('Organization'),
+        options: 'CRM Organization',
+      },
+      { fieldname: 'when', fieldtype: 'Datetime', label: __('When') },
+      {
+        fieldname: 'note',
+        fieldtype: 'Small Text',
+        label: __('What happened'),
+      },
+      {
+        fieldname: 'reference_doctype',
+        fieldtype: 'Select',
+        label: __('Related to'),
+        options: [
+          { label: '', value: '' },
+          { label: __('Deal'), value: 'CRM Deal' },
+          { label: __('Lead'), value: 'CRM Lead' },
+        ],
+      },
+      {
+        fieldname: 'reference_docname',
+        fieldtype: 'Dynamic Link',
+        label: __('Record'),
+        options: 'reference_doctype',
+      },
+    ],
+    required: ['organization', 'note'],
+    submitLabel: __('Log visit'),
+    cancelLabel: __('Cancel'),
+  })
+  if (!data) return
+  logging.value = true
+  try {
+    const plan = await call('crm.api.rep_plan.log_unplanned_visit', {
+      organization: data.organization,
+      note: data.note,
+      when: data.when || undefined,
+      reference_doctype: data.reference_doctype || undefined,
+      reference_docname: data.reference_doctype
+        ? data.reference_docname || undefined
+        : undefined,
+    })
+    // The visit may belong to a different week than the one on screen; only
+    // adopt the payload when it is this week, otherwise just say where it went.
+    if (plan.week_start === weekStart.value) {
+      // Logging a visit is not a reason to lose the week the rep is drafting,
+      // so the response is merged rather than adopted; the visit itself is a
+      // row the buffer has never seen, which is what the append is for.
+      mergeServerPlan(plan)
+      const known = new Set(
+        localItems.list.filter((i) => i.name).map((i) => String(i.name)),
+      )
+      const added = server.items.filter((i) => !known.has(String(i.name)))
+      if (added.length) {
+        localItems.list = [...localItems.list, ...added.map(withUid)]
+      }
+      loadReferenceTitles(plan.items)
+    }
+    toast.success(__('Visit logged for the week of {0}', [plan.week_start]))
+  } catch (error) {
+    toast.error(errorText(error))
+  } finally {
+    logging.value = false
   }
 }
 

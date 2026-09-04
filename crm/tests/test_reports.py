@@ -13,7 +13,10 @@ from __future__ import annotations
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from crm.api.dashboard import activity_cancellations, client_reliability, plan_adherence
+from crm.api.rep_plan import log_unplanned_visit
 from crm.api.reports import REPORTS, get_report, list_reports
+from crm.install import ensure_sa_provinces
 
 USER = "reports-rep@crmtest.test"
 
@@ -209,3 +212,198 @@ class TestForecastNotice(IntegrationTestCase):
 			get_report("forecast_vs_actual", self.today(), self.today())["notice"],
 			forecast_empty_state(),
 		)
+
+
+class CancellationsTest(IntegrationTestCase):
+	USER = "cancel-rep@crmtest.test"
+
+	def setUp(self):
+		super().setUp()
+		if not frappe.db.exists("User", self.USER):
+			user = frappe.get_doc(
+				{"doctype": "User", "email": self.USER, "first_name": "Cancel Rep", "send_welcome_email": 0}
+			)
+			user.insert(ignore_permissions=True)
+			user.add_roles("Sales User")
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _task(self, status):
+		task = frappe.get_doc(
+			{"doctype": "CRM Task", "title": "t", "status": "Todo", "assigned_to": self.USER}
+		).insert()
+		# assign_to() (after_insert) sets `assigned_to` via frappe.db.set_value, which bumps
+		# `modified` in the database without updating this in-memory copy — reload or save()
+		# below trips check_if_latest's TimestampMismatchError.
+		task.reload()
+		task.status = status
+		task.closing_note = "n"
+		task.save()
+		return task
+
+	def test_cancelled_tasks_and_events_are_counted_per_rep_and_reported(self):
+		self._task("Canceled")
+		self._task("Canceled")
+		self._task("Done")
+
+		frappe.set_user(self.USER)
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "e",
+				"starts_on": frappe.utils.now_datetime(),
+				"event_type": "Private",
+				"status": "Cancelled",
+				"owner": self.USER,
+			}
+		).insert(ignore_permissions=True)
+		frappe.set_user("Administrator")
+
+		today = frappe.utils.nowdate()
+		rows = activity_cancellations(today, today, user=self.USER)
+		self.assertEqual(rows[0]["cancelled"], 3)
+
+		adherence = plan_adherence(today, today, user=self.USER)
+		self.assertEqual(adherence[0]["cancelled"], 3)
+		self.assertEqual(adherence[0]["planned"], 0)  # unchanged: no plan items exist
+
+		report = get_report("plan_adherence_by_rep", today, today, self.USER)
+		self.assertIn({"key": "cancelled", "label": "Cancelled", "type": "number"}, report["columns"])
+
+		row = next(r for r in report["rows"] if r["user"] == self.USER)
+		self.assertEqual(row["cancelled"], 3)
+		self.assertIsNone(row["adherence"])
+		self.assertEqual(row["planned"], 0)
+
+
+class ClientReliabilityTest(IntegrationTestCase):
+	USER = "reliab-rep@crmtest.test"
+
+	def setUp(self):
+		super().setUp()
+		if not frappe.db.exists("User", self.USER):
+			user = frappe.get_doc(
+				{"doctype": "User", "email": self.USER, "first_name": "Reliab Rep", "send_welcome_email": 0}
+			)
+			user.insert(ignore_permissions=True)
+			user.add_roles("Sales User")
+		ensure_sa_provinces()  # so "Gauteng" exists as a CRM Territory for the territory-blind test
+		self.flaky = frappe.get_doc(
+			{"doctype": "CRM Organization", "organization_name": "Flaky Mine"}
+		).insert()
+		self.solid = frappe.get_doc(
+			{"doctype": "CRM Organization", "organization_name": "Solid Works"}
+		).insert()
+		self.flaky_deal = frappe.get_doc(
+			{"doctype": "CRM Deal", "organization": self.flaky.name, "deal_owner": self.USER}
+		).insert()
+		self.solid_deal = frappe.get_doc(
+			{"doctype": "CRM Deal", "organization": self.solid.name, "deal_owner": self.USER}
+		).insert()
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _task(self, deal, status):
+		task = frappe.get_doc(
+			{
+				"doctype": "CRM Task",
+				"title": "t",
+				"status": "Todo",
+				"assigned_to": self.USER,
+				"reference_doctype": "CRM Deal",
+				"reference_docname": deal.name,
+			}
+		).insert()
+		# assign_to() (after_insert) sets `assigned_to` via frappe.db.set_value, which bumps
+		# `modified` in the database without updating this in-memory copy — reload or save()
+		# below trips check_if_latest's TimestampMismatchError.
+		task.reload()
+		task.status = status
+		task.closing_note = "n"
+		task.save()
+
+	def test_clients_are_ranked_by_how_often_they_move_or_drop_activities(self):
+		self._task(self.flaky_deal, "Rescheduled")
+		self._task(self.flaky_deal, "Canceled")
+		self._task(self.flaky_deal, "Done")
+		self._task(self.solid_deal, "Done")
+		today = frappe.utils.nowdate()
+		rows = client_reliability(today, today, user=self.USER)
+		self.assertEqual(rows[0]["organization"], "Flaky Mine")
+		self.assertEqual(
+			(rows[0]["rescheduled"], rows[0]["cancelled"], rows[0]["done"], rows[0]["total"]), (1, 1, 1, 3)
+		)
+		self.assertEqual(rows[1]["organization"], "Solid Works")
+		self.assertEqual(rows[1]["done"], 1)
+
+	def test_an_unplanned_visit_counts_for_its_organization(self):
+		"""A logged visit names its organization as an event participant and has no
+		deal, so the deal join alone never saw it -- the client whose site the rep
+		actually drove to was missing from the report about that client."""
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(self.USER)
+		log_unplanned_visit(self.solid.name, "Called to site for a breakdown")
+		frappe.set_user("Administrator")
+
+		today = frappe.utils.nowdate()
+		rows = client_reliability(today, today, user=self.USER)
+		row = next(r for r in rows if r["organization"] == self.solid.name)
+		self.assertEqual((row["done"], row["total"]), (1, 1))
+
+	def test_a_visit_with_a_deal_and_a_participant_is_counted_once(self):
+		"""log_unplanned_visit always adds the organization participant, so a visit
+		the rep also attached a deal to reaches the same organization down both
+		paths. It is one visit and must be counted as one."""
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(self.USER)
+		log_unplanned_visit(
+			self.flaky.name,
+			"Breakdown on site, quoted the replacement",
+			reference_doctype="CRM Deal",
+			reference_docname=self.flaky_deal.name,
+		)
+		frappe.set_user("Administrator")
+
+		today = frappe.utils.nowdate()
+		rows = client_reliability(today, today, user=self.USER)
+		row = next(r for r in rows if r["organization"] == self.flaky.name)
+		self.assertEqual((row["done"], row["total"]), (1, 1))
+
+	def test_a_cancelled_deal_event_counts(self):
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(self.USER)
+		frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "Site meeting",
+				"starts_on": frappe.utils.now_datetime(),
+				"event_type": "Private",
+				"status": "Cancelled",
+				"reference_doctype": "CRM Deal",
+				"reference_docname": self.flaky_deal.name,
+			}
+		).insert(ignore_permissions=True)
+		frappe.set_user("Administrator")
+
+		today = frappe.utils.nowdate()
+		rows = client_reliability(today, today, user=self.USER)
+		row = next(r for r in rows if r["organization"] == self.flaky.name)
+		self.assertEqual((row["cancelled"], row["rescheduled"], row["total"]), (1, 0, 1))
+
+	def test_the_report_is_the_aggregate(self):
+		self._task(self.flaky_deal, "Canceled")
+		today = frappe.utils.nowdate()
+		report = get_report("client_reliability", today, today, self.USER)
+		self.assertEqual(report["rows"], client_reliability(today, today, user=self.USER))
+
+	def test_the_report_says_it_ignores_the_territory_picker(self):
+		"""client_reliability groups by organization, not territory, and does not
+		accept the parameter -- picking a territory must not make the UI claim
+		these rows are scoped to it (see TERRITORY_BLIND in crm.api.reports)."""
+		self._task(self.flaky_deal, "Canceled")
+		today = frappe.utils.nowdate()
+		report = get_report("client_reliability", today, today, self.USER, territory="Gauteng")
+		self.assertFalse(report["territory_filtered"])

@@ -17,7 +17,7 @@ Copied from the spec and the repo's conventions. Every task's requirements inclu
 - **Sequencing is forced:** Tasks 1–4 (G1, G3, G4) change the data model and land before anything that writes activity. G6 depends on the import plan's custom fields existing. G5 depends on G3.
 - **Reports contain no aggregation.** A new number is a function in `crm/api/dashboard.py`; `crm/api/reports.py` only consumes it. Tile and report must agree, and a test says so.
 - **Scoping follows the sales hierarchy.** Any per-rep aggregate filters by `visible_reps()` exactly as `plan_adherence` does.
-- **One record fulfils one plan item, ever.** An `Event` must be emitted by the matcher under exactly one kind. `Visit` is an Event with `event_category = "Event"`; `Meeting` excludes that category. The calendar sets no category, so nothing existing changes kind.
+- **One record fulfils one plan item, ever.** An `Event` must be emitted by the matcher under exactly one kind. `Visit` is an Event with `event_category = "Visit"`, its own category added to `Event.event_category`'s options by a Property Setter; `Meeting` excludes that category. Frappe stores the first option, `"Event"`, for any event saved without a category, so existing events stay Meetings.
 - **A note is required on the *transition* into a closed status** (Done, Canceled, Rescheduled), not on insert. Demo seeding and the matcher's tests create tasks directly as Done and must keep working.
 - **Doctype JSON edits update both `fields` and `field_order`.** Frappe ignores a field missing from `field_order`.
 - **Quick-entry layouts are stored documents** (`CRM Fields Layout`), so a new field reaches existing sites through a patch, and fresh installs through `crm/install.py`.
