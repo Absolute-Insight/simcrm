@@ -359,6 +359,7 @@ import Draggable from 'vuedraggable'
 import isEqual from 'lodash/isEqual'
 import { PhTrayArrowDown as ImportIcon } from '@phosphor-icons/vue'
 import { reportActionError } from '@/utils/reportActionError'
+import { renderFieldLayoutDialog } from '@/utils/renderFieldLayoutDialog'
 
 const props = defineProps({
   doctype: { type: String, required: true },
@@ -1026,14 +1027,90 @@ function persistCustomView() {
     .catch((error) => reportActionError(error, __('Could not save the view.')))
 }
 
+// A CRM Task may not be left in one of these without a closing note, so the
+// board has to collect the note before it writes the status. Rescheduled is on
+// the list but is not terminal: it also needs a new due date.
+const NOTE_REQUIRED_TASK_STATUSES = ['Done', 'Canceled', 'Rescheduled']
+
+function needsClosingNote(data) {
+  return (
+    props.doctype === 'CRM Task' &&
+    view.value.column_field === 'status' &&
+    NOTE_REQUIRED_TASK_STATUSES.includes(data.to)
+  )
+}
+
+function closingNoteFields(status) {
+  const fields = [
+    {
+      fieldname: 'closing_note',
+      fieldtype: 'Small Text',
+      label: __('What happened'),
+    },
+  ]
+  if (status === 'Rescheduled') {
+    fields.push({
+      fieldname: 'due_date',
+      fieldtype: 'Datetime',
+      label: __('New due date'),
+    })
+  }
+  return fields
+}
+
+function closingSubmitLabel(status) {
+  const labels = {
+    Done: __('Mark done'),
+    Canceled: __('Mark canceled'),
+    Rescheduled: __('Mark rescheduled'),
+  }
+  return labels[status] || __('Save')
+}
+
+// vuedraggable has already moved the card by the time this runs, so the board
+// is showing a move the server has not accepted yet. Every failure — and a
+// cancelled dialog — has to reload, or the card sits in the wrong column until
+// the page is refreshed.
+async function moveKanbanItem(data) {
+  const values = { [view.value.column_field]: data.to }
+
+  if (needsClosingNote(data)) {
+    const fields = closingNoteFields(data.to)
+    const result = await renderFieldLayoutDialog({
+      title: __('Closing note'),
+      size: 'md',
+      fields,
+      required: fields.map((field) => field.fieldname),
+      submitLabel: closingSubmitLabel(data.to),
+      cancelLabel: __('Cancel'),
+    })
+    if (!result) {
+      list.value.reload?.()
+      return
+    }
+    values.closing_note = result.closing_note
+    if (result.due_date) values.due_date = result.due_date
+  }
+
+  return call('frappe.client.set_value', {
+    doctype: props.doctype,
+    name: data.item,
+    fieldname: values,
+  })
+    .then(() => {
+      // The drag already put the card in the right column, but the dialog wrote
+      // fields the card renders from, so pull the row back for those.
+      if (values.closing_note !== undefined) list.value.reload?.()
+    })
+    .catch((e) => {
+      reportActionError(e, __('Could not move the item.'))
+      list.value.reload?.()
+    })
+}
+
 function updateKanbanSettings(data) {
   if (data.item && data.to) {
-    call('frappe.client.set_value', {
-      doctype: props.doctype,
-      name: data.item,
-      fieldname: view.value.column_field,
-      value: data.to,
-    })
+    moveKanbanItem(data)
     return
   }
 
