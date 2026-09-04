@@ -5,6 +5,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from crm.integrations.acumatica import importer
+from crm.integrations.acumatica.install import ensure_custom_fields
 
 
 def C(**kw):
@@ -12,7 +13,25 @@ def C(**kw):
 	return {k: {"value": v} for k, v in kw.items()}
 
 
-class TestUpserts(FrappeTestCase):
+class ImporterTestCase(FrappeTestCase):
+	"""Create the identity custom fields this module queries.
+
+	They are not part of the schema of a site that never turned Acumatica on:
+	``create_custom_fields_for_acumatica_in_crm`` is guarded on the setting, so on a
+	fresh install -- which is every CI run -- it does nothing. Nothing in this module
+	enables the integration, so every ``acumatica_noteid`` lookup here used to depend on
+	some *other* module issuing the DDL first (``test_outbound._enable()`` saving the
+	Single, or ``test_crm_acumatica_settings`` calling this function). Test discovery
+	order is filesystem order, so that made the whole module fail or pass by luck of the
+	inode -- 1054 "Unknown column 'acumatica_noteid'" on the runs where it lost."""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		ensure_custom_fields()
+
+
+class TestUpserts(ImporterTestCase):
 	def tearDown(self):
 		frappe.db.rollback()
 
@@ -70,7 +89,7 @@ class TestUpserts(FrappeTestCase):
 		self.assertEqual(frappe.db.get_value("CRM Product", name, "product_name"), "New")
 
 
-class TestAdoptOnMatch(FrappeTestCase):
+class TestAdoptOnMatch(ImporterTestCase):
 	"""A backfill onto a CRM that already holds the same customers must claim those
 	records, not collide with them -- an unlinked org gets a SECOND Customer pushed
 	back into Acumatica by the outbound hook."""
@@ -150,7 +169,7 @@ class TestAdoptOnMatch(FrappeTestCase):
 		self.assertEqual(frappe.db.get_value("Contact", name, "acumatica_noteid"), "g-adopt-5")
 
 
-class TestBackfill(FrappeTestCase):
+class TestBackfill(ImporterTestCase):
 	def tearDown(self):
 		frappe.db.rollback()
 
