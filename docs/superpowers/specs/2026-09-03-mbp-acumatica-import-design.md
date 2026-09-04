@@ -452,12 +452,49 @@ a placeholder and much of the rest is AP distribution lists.
 
 ## Prerequisites
 
-1. **The Acumatica custom fields do not exist on production.** Verified
-   2026-09-03: `Custom Field` returns `[]` for both `CRM Organization` and
-   `CRM Deal`. They are created by `ensure_custom_fields()`
-   (`crm/integrations/acumatica/install.py`), reached by saving CRM Acumatica
-   Settings with the integration enabled, or by calling it directly. Without
-   them there is no `acumatica_id` and no idempotency key.
+1. **The Acumatica custom fields do not exist on production, and there is
+   exactly one safe way to create them.** Verified 2026-09-03: `Custom Field`
+   returns `[]` for both `CRM Organization` and `CRM Deal`. Without them there
+   is no `acumatica_id` and no idempotency key.
+
+   Both ordinary routes to `ensure_custom_fields()` are gated on the
+   integration being switched on — the patch
+   (`crm/patches/v1_0/create_custom_fields_for_acumatica_in_crm.py`) is a no-op
+   unless `CRM Acumatica Settings.enabled`, which is why a fresh site never has
+   the fields, and `CRMAcumaticaSettings.on_update` runs it only under the same
+   condition.
+
+   **Do not reach them by enabling the settings.** `validate()` refuses to
+   enable without an `instance_url`
+   (`crm/fcrm/doctype/crm_acumatica_settings/crm_acumatica_settings.py:13`), so
+   it would mean pointing the trial site at MBP's live Acumatica. Two things
+   follow from that, in order of certainty:
+
+   - **A permanent dead button, guaranteed.** `on_update` also calls
+     `create_crm_form_script()`, installing "Create Sales Quote from CRM Deal"
+     on every deal form. Nothing ever removes it: `on_update` acts only
+     `if self.enabled`, and there is no disable path, so enable-then-disable
+     leaves the script installed with `enabled: 1` forever. It is inert —
+     `create_sales_quote_from_deal` re-checks the setting and throws
+     (`outbound.py:55-57`) — so this is a cleanup problem, not a data one.
+   - **An automatic customer write, conditionally.**
+     `crm.integrations.acumatica.outbound.create_customer_in_acumatica` is
+     registered as a `CRM Deal` `on_update` doc_event in `crm/hooks.py:220`, so
+     it runs on *every* deal save and decides at runtime whether to act. While
+     it acts it `PUT`s a real Customer into the client's ERP with no click and
+     no confirmation. It is gated on four conditions, not one: `enabled`, **and**
+     `create_customer_on_status_change`, **and** the deal matching the configured
+     `deal_status`, **and** the deal having an organization. Both checkboxes
+     default to `0` and `deal_status` has no default, so enabling the
+     integration alone does not fire it — but a trial site with 2,000+ deals is
+     exactly where a later well-meaning toggle would write thousands of
+     customers into MBP's production ERP.
+
+   Neither is worth risking for a schema side effect.
+
+   Call `ensure_custom_fields()` directly. It has no guard of its own and is
+   idempotent — `create_custom_fields` skips fields that already exist — so it
+   is safe to re-run, and it leaves the integration off as *Non-goals* requires.
 2. **Salesperson code → CRM user mapping**, from MBP. Blocking.
 3. **Those users exist in Vectora** before the import — `deal_owner` is a Link
    to `User` and a missing target fails the row.
@@ -549,7 +586,8 @@ fixtures typed from the rows quoted in this document.
 
 ## Rollout sequence
 
-1. `ensure_custom_fields()`, and confirm the fields exist.
+1. Call `ensure_custom_fields()` **directly** — not by enabling the
+   integration, see Prerequisite 1 — and confirm the fields exist.
 2. Obtain the salesperson mapping; create the CRM users.
 3. Manual backup.
 4. `clear_demo_data()`.
