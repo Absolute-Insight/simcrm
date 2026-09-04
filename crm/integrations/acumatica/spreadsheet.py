@@ -114,7 +114,7 @@ def read_sheet(path, sheet: str = "Data") -> list[dict]:
 		ws = wb[sheet]
 		rows_iter = ws.iter_rows(values_only=True)
 		header = [str(h).strip() if h is not None else "" for h in next(rows_iter)]
-		return [dict(zip(header, row)) for row in rows_iter if any(cell is not None for cell in row)]
+		return [dict(zip(header, row, strict=True)) for row in rows_iter if any(cell is not None for cell in row)]
 	finally:
 		wb.close()
 
