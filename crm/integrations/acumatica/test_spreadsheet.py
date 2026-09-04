@@ -512,3 +512,85 @@ class ImportSalesOrdersTest(SpreadsheetImportTestCase):
 		with patch("crm.integrations.acumatica.spreadsheet._commit_every") as commit:
 			ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
 		self.assertEqual(commit.call_count, 3)
+
+
+INVOICE_HEADER = [
+	"Type",
+	"Reference Nbr.",
+	"Status",
+	"Date",
+	"Post Period",
+	"Customer",
+	"Customer Name",
+	"Description",
+	"Customer Order Nbr.",
+	"Amount",
+	"Currency",
+	"Created On",
+]
+
+
+def invoice(**over):
+	row = {
+		"Type": "Invoice",
+		"Reference Nbr.": "IN-JHB1001418",
+		"Status": "Open",
+		"Date": datetime(2026, 9, 2),
+		"Post Period": "04-2026",
+		"Customer": "C-SURE01",
+		"Customer Name": "Sure Seal SA (Pty) Ltd",
+		"Description": "Ball vlv",
+		"Customer Order Nbr.": "11520",
+		"Amount": 430.39,
+		"Currency": "ZAR",
+		"Created On": datetime(2026, 9, 2, 10, 10),
+	}
+	row.update(over)
+	return row
+
+
+class RevenueTest(UnitTestCase):
+	def test_credit_memos_subtract_cancelled_rows_are_ignored_and_usd_converts(self):
+		rows = [
+			invoice(),
+			invoice(**{"Type": "Credit Memo", "Amount": 30.39}),
+			invoice(**{"Status": "Canceled", "Amount": 1_000_000}),
+			invoice(**{"Currency": "USD", "Amount": 10}),
+		]
+		totals, rejects = ss.revenue_by_customer(rows, RATES, "ZAR")
+		self.assertEqual(totals["C-SURE01"], Decimal("400") + Decimal("182"))
+		self.assertEqual(rejects, [])
+
+	def test_an_unknown_currency_rejects_that_row_only(self):
+		totals, rejects = ss.revenue_by_customer([invoice(), invoice(**{"Currency": "EUR"})], RATES, "ZAR")
+		self.assertEqual(totals["C-SURE01"], Decimal("430.39"))
+		self.assertEqual(rejects, [("IN-JHB1001418", "no exchange rate supplied for EUR")])
+
+
+class ImportInvoicesTest(SpreadsheetImportTestCase):
+	def setUp(self):
+		super().setUp()
+		frappe.db.set_single_value("FCRM Settings", "currency", "ZAR")
+
+	def test_writes_annual_revenue_on_the_organization(self):
+		frappe.get_doc(
+			{
+				"doctype": "CRM Organization",
+				"organization_name": "Sure Seal SA (Pty) Ltd",
+				"acumatica_id": "C-SURE01",
+			}
+		).insert()
+		path = write_workbook(self.dir / "inv.xlsx", INVOICE_HEADER, [[invoice()[h] for h in INVOICE_HEADER]])
+		rejects = ss.Rejects()
+		counts = ss.import_invoices(path, rejects, rates=RATES)
+		self.assertEqual(len(rejects), 0)
+		self.assertEqual(counts["organizations"], 1)
+		self.assertAlmostEqual(
+			frappe.db.get_value("CRM Organization", "Sure Seal SA (Pty) Ltd", "annual_revenue"), 430.39
+		)
+
+	def test_a_customer_with_no_organization_rejects(self):
+		path = write_workbook(self.dir / "inv.xlsx", INVOICE_HEADER, [[invoice()[h] for h in INVOICE_HEADER]])
+		rejects = ss.Rejects()
+		ss.import_invoices(path, rejects, rates=RATES)
+		self.assertEqual(rejects.rows[0]["key"], "C-SURE01")

@@ -13,6 +13,7 @@ ones with direct tests.
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -457,4 +458,47 @@ def import_customers(path, rejects: Rejects) -> dict:
 					counts["addresses"] += 1
 			else:
 				counts["addresses_skipped"] += 1
+	return counts
+
+
+def revenue_by_customer(rows: list[dict], rates: dict[str, Decimal], base_currency: str):
+	"""Invoice amounts summed per customer in the base currency. Credit memos are
+	positive in the export and must be subtracted; cancelled rows are not revenue."""
+	totals: dict[str, Decimal] = defaultdict(Decimal)
+	rejects: list[tuple] = []
+	for row in rows:
+		if row.get("Status") == "Canceled":
+			continue
+		currency = row.get("Currency") or base_currency
+		rate = _rate_for(currency, rates, base_currency)
+		if rate is None:
+			rejects.append((row.get("Reference Nbr."), f"no exchange rate supplied for {currency}"))
+			continue
+		amount = to_decimal(row.get("Amount")) * rate
+		if row.get("Type") == "Credit Memo":
+			amount = -amount
+		totals[row.get("Customer")] += amount
+	return dict(totals), rejects
+
+
+def import_invoices(path, rejects: Rejects, *, rates: dict | None = None) -> dict:
+	base_currency = frappe.db.get_single_value("FCRM Settings", "currency") or "USD"
+	rates = {k: Decimal(str(v)) for k, v in (rates or {}).items()}
+	totals, row_rejects = revenue_by_customer(read_sheet(path), rates, base_currency)
+	for key, reason in row_rejects:
+		rejects.add("invoices", key, reason)
+	counts = {"organizations": 0, "total": Decimal("0")}
+	for done, (customer_id, total) in enumerate(totals.items(), 1):
+		_commit_every(done)
+		organization = frappe.db.get_value("CRM Organization", {"acumatica_id": customer_id}, "name")
+		if not organization:
+			rejects.add("invoices", customer_id, f"customer {customer_id} has no organization on the site")
+			continue
+		# The window is nine months, not twelve. The field is named annual_revenue;
+		# the rollout walk-through with MBP says what period it covers.
+		frappe.db.set_value(
+			"CRM Organization", organization, "annual_revenue", float(total), update_modified=False
+		)
+		counts["organizations"] += 1
+		counts["total"] += total
 	return counts
