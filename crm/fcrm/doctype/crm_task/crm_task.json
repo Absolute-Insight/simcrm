@@ -7,6 +7,7 @@
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
+ "track_changes": 1,
  "field_order": [
   "title",
   "priority",

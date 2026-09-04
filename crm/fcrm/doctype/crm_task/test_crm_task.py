@@ -253,6 +253,23 @@ class TestCRMTask(IntegrationTestCase):
 		task.status = "Todo"
 		task.save()
 
+	def test_history_lists_each_change_with_the_note_that_came_with_it(self):
+		from crm.api.task import get_history
+
+		task = create_test_task(title="Visit 4D Union", status="Todo")
+		task.status = "Rescheduled"
+		task.closing_note = "Client asked for the 21st"
+		# the test runner suppresses Version rows by default; production saves never do
+		task.save(ignore_version=False)
+		history = get_history(str(task.name))  # CRM Task autoincrements; name is int in-process
+		self.assertGreaterEqual(len(history), 1)
+		latest = history[0]
+		fields = {change["field"]: change for change in latest["changes"]}
+		self.assertEqual(fields["status"]["old"], "Todo")
+		self.assertEqual(fields["status"]["new"], "Rescheduled")
+		self.assertEqual(fields["closing_note"]["new"], "Client asked for the 21st")
+		self.assertEqual(fields["status"]["label"], "Status")
+
 
 class LayoutHelperTest(IntegrationTestCase):
 	def test_append_to_layout_column_finds_the_anchor_in_tabs_or_sections(self):

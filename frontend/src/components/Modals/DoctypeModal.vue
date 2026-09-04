@@ -54,6 +54,38 @@
             :doctype="doctype"
             :docname="docname"
           />
+          <div v-if="doctype === 'CRM Task' && docname" class="mt-6">
+            <div class="mb-2 text-sm font-medium text-ink-gray-7">
+              {{ __('History') }}
+            </div>
+            <div
+              v-if="history.data?.length"
+              class="max-h-48 space-y-2 overflow-y-auto text-sm"
+            >
+              <div v-for="(entry, i) in history.data" :key="i">
+                <div class="text-ink-gray-5">
+                  {{ entry.owner }} · {{ formatDate(entry.creation) }}
+                </div>
+                <div
+                  v-for="change in entry.changes"
+                  :key="change.field"
+                  class="text-ink-gray-8"
+                >
+                  <span class="font-medium">{{ change.label }}</span
+                  >:
+                  <span
+                    v-if="change.old"
+                    class="text-ink-gray-5 line-through"
+                    >{{ change.old }}</span
+                  >
+                  {{ change.new }}
+                </div>
+              </div>
+            </div>
+            <div v-else class="text-sm text-ink-gray-5">
+              {{ __('No history for this task yet.') }}
+            </div>
+          </div>
           <ErrorMessage v-if="error" class="mt-4" :message="__(error)" />
         </div>
       </div>
@@ -92,6 +124,16 @@ const props = defineProps({
   docname: { type: String, default: '' },
   defaults: { type: Object, default: () => ({}) },
 })
+
+const history = createResource({
+  url: 'crm.api.task.get_history',
+  params: { name: props.docname },
+  auto: props.doctype === 'CRM Task' && !!props.docname,
+})
+
+function formatDate(value) {
+  return new Date(value).toLocaleString()
+}
 
 const show = defineModel({ type: Boolean })
 
