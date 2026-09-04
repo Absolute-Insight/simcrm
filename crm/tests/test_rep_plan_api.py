@@ -427,3 +427,58 @@ class RepPlanApiTest(IntegrationTestCase):
 		duplicate.flags.ignore_validate = True
 		with self.assertRaises((frappe.UniqueValidationError, frappe.DuplicateEntryError)):
 			duplicate.insert(ignore_permissions=True)
+
+
+from datetime import datetime, timedelta
+
+from crm.install import ensure_visit_event_category
+
+
+def _this_monday() -> str:
+	today = frappe.utils.getdate()
+	return str(today - timedelta(days=today.weekday()))
+
+
+class MarkFulfilledByKindTest(IntegrationTestCase):
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		ensure_visit_event_category()
+
+	def setUp(self):
+		super().setUp()
+		make_sales_user(REP, "Plan Rep")
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(REP)
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _plan_with(self, activity_type: str) -> str:
+		plan = save_plan(_this_monday(), [{"activity_type": activity_type, "planned_date": _this_monday()}])
+		return plan["items"][0]["name"]
+
+	def _event(self, category=None):
+		fields = {
+			"doctype": "Event",
+			"subject": "x",
+			"starts_on": datetime.now(),
+			"event_type": "Private",
+		}
+		if category:
+			fields["event_category"] = category
+		return frappe.get_doc(fields).insert()
+
+	def test_a_visit_item_accepts_a_visit_event_and_refuses_a_plain_one(self):
+		item = self._plan_with("Visit")
+		plain = self._event()
+		with self.assertRaises(frappe.ValidationError):
+			mark_fulfilled(item, "Event", plain.name)
+		visit = self._event("Visit")
+		plan = mark_fulfilled(item, "Event", visit.name)
+		self.assertEqual(plan["items"][0]["status"], "Done")
+
+	def test_a_meeting_item_still_accepts_a_plain_event(self):
+		item = self._plan_with("Meeting")
+		plan = mark_fulfilled(item, "Event", self._event().name)
+		self.assertEqual(plan["items"][0]["status"], "Done")

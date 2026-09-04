@@ -61,12 +61,26 @@ ACTUAL_SOURCES = {
 			"communication_medium": "Email",
 		},
 	},
+	"Visit": {
+		# MBP's reps think in visits to plants and mines, not meetings. A visit is
+		# a calendar event in the "Visit" category -- its own category, added by a
+		# Property Setter (see crm.install.ensure_visit_event_category), because
+		# Frappe stores the first option ("Event") for any event saved without
+		# one, so that value was never free to repurpose as the discriminator.
+		"doctype": "Event",
+		"user_fields": ("owner",),
+		"when_field": "starts_on",
+		"when_is_activity_time": True,
+		"filters": {"event_category": "Visit"},
+		"exclude": {"status": ("Cancelled",)},
+	},
 	"Meeting": {
 		"doctype": "Event",
 		"user_fields": ("owner",),
 		"when_field": "starts_on",
 		"when_is_activity_time": True,
-		"exclude": {"status": ("Cancelled",)},
+		# a visit is not a meeting; without this one event could fulfil both kinds
+		"exclude": {"status": ("Cancelled",), "event_category": ("Visit",)},
 	},
 }
 

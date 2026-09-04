@@ -301,7 +301,14 @@ def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled
 		# the real record from its own rep's matching and dock their adherence.
 		# The matcher's own definition of "this rep's completed work" decides --
 		# existence, the kind's status filters, and ownership in one query.
-		kind = KIND_BY_DOCTYPE[fulfilled_by_doctype]
+		# Event backs two kinds (Meeting, Visit) with different filters, so the
+		# item's own kind decides which set of filters the record must satisfy;
+		# the doctype-keyed fallback keeps cross-kind fulfilment as it was.
+		item_kind = frappe.db.get_value("CRM Rep Plan Item", item, "activity_type")
+		if ACTUAL_SOURCES.get(item_kind, {}).get("doctype") == fulfilled_by_doctype:
+			kind = item_kind
+		else:
+			kind = KIND_BY_DOCTYPE[fulfilled_by_doctype]
 		if not _query_source(kind, frappe.session.user, None, names=[fulfilled_by]):
 			frappe.throw(
 				_("{0} {1} is not a completed activity of yours.").format(fulfilled_by_doctype, fulfilled_by)

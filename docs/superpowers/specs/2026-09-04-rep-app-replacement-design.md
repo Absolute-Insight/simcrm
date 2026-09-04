@@ -124,8 +124,12 @@ surface work.
 do not think in those; their unit of work is a **customer visit to a plant or a
 mine**, and the old app's types are Visit / Unplanned Meeting / E-Mail. Add
 `Visit` to the Select and to `ACTUAL_SOURCES` in `crm/rep_planning.py`, sourced
-from `Event` the way Meeting already is. Getting this vocabulary right matters
-more to adoption than any chart on this list.
+from `Event` the way Meeting already is: `event_category = "Visit"`, its own
+value added to `Event.event_category`'s options via a Property Setter (Event is
+a core doctype). Frappe stores the first option, `"Event"`, for any event saved
+without a category, so every existing event keeps that value and stays a
+Meeting. Getting this vocabulary right matters more to adoption than any chart
+on this list.
 
 **G2 — Log an unplanned visit.** Their words: *"in the event a rep is called to
 site for a break down as it was not a planned visit."* A retrospective flow that

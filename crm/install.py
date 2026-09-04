@@ -38,6 +38,7 @@ def after_install(force=False):
 	ensure_agent_role()
 	apply_endpoint_defaults()
 	ensure_zar_currency()
+	ensure_visit_event_category()
 	ensure_app_logo()
 	# install/migrate runs outside a request, so nothing else will commit the
 	# fixtures created above.
@@ -88,6 +89,24 @@ def ensure_zar_currency():
 			"number_format": "#,###.##",
 		}
 	).insert(ignore_permissions=True)
+
+
+VISIT_EVENT_CATEGORY = "Visit"
+
+
+def ensure_visit_event_category():
+	"""Add "Visit" to Event.event_category so the planner can tell a site visit from a
+	meeting. Frappe stores the FIRST option ("Event") for any event saved without a
+	category, so the discriminator has to be a value nothing else ever sets. Property
+	Setter rather than a JSON edit because Event is a core doctype. Idempotent; called
+	from after_install and the add_visit_event_category patch."""
+	from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+	options = frappe.get_meta("Event").get_field("event_category").options or ""
+	if VISIT_EVENT_CATEGORY in options.split("\n"):
+		return
+	make_property_setter("Event", "event_category", "options", f"{options}\n{VISIT_EVENT_CATEGORY}", "Text")
+	frappe.clear_cache(doctype="Event")
 
 
 def add_default_lead_statuses():
