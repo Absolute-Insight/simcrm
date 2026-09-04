@@ -88,6 +88,14 @@ class HappyPathTest(IntegrationTestCase):
 
 
 class RateLimitTest(IntegrationTestCase):
+	def setUp(self):
+		super().setUp()
+		# This class is the one place that exercises the real per-user bucket
+		# (user_rate_limited is unmocked here) rather than stubbing it out, so it
+		# opts back in to enforcement that a test run otherwise skips.
+		frappe.flags.enforce_user_rate_limits = True
+		self.addCleanup(setattr, frappe.flags, "enforce_user_rate_limits", False)
+
 	def test_the_endpoint_is_rate_limited(self):
 		"""One call can hold a worker for ``timeout`` x ``MAX_ATTEMPTS`` -- 60s at the
 		shipped defaults -- so the cap is what stands between one authenticated user and

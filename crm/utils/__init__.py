@@ -167,6 +167,11 @@ def user_rate_limited(scope: str, limit: int, window_seconds: int = 60) -> bool:
 	"""
 	if limit <= 0:
 		return False
+	if frappe.flags.in_test and not frappe.flags.enforce_user_rate_limits:
+		# A whole test run is one user making hundreds of calls in a minute; a
+		# per-human budget is not a property of the suite. Tests that exercise the
+		# bucket itself opt back in with frappe.flags.enforce_user_rate_limits.
+		return False
 	key = user_rate_key(scope, window_seconds)
 	try:
 		cache = frappe.cache()
