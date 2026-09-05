@@ -94,10 +94,14 @@ class TestAcumaticaSettings(FrappeTestCase):
 			any(row.remote_id == "ABC001" for row in frappe.get_doc("CRM Acumatica Settings").sync_issues)
 		)
 
-	def test_sales_user_can_read_the_enabled_flag(self):
-		"""The deal form script asks for it on every load; a PermissionError here
-		means every rep sees a console error and never gets the action."""
+	def test_a_sales_user_learns_only_whether_it_is_enabled(self):
+		"""The deal form script needs one bit. The settings document also holds the
+		webhook secret and the API identity, and frappe.client.get_single_value checks
+		doctype-level read only -- so the bit comes through its own method and the
+		document itself is closed to reps."""
 		from frappe.client import get_single_value
+
+		from crm.integrations.acumatica.api import is_enabled
 
 		email = "acumatica-rep@crmtest.test"
 		if not frappe.db.exists("User", email):
@@ -107,9 +111,26 @@ class TestAcumaticaSettings(FrappeTestCase):
 			user.add_roles("Sales User")
 		frappe.set_user(email)
 		try:
-			self.assertIsNotNone(get_single_value("CRM Acumatica Settings", "enabled"))
+			self.assertFalse(is_enabled())
+			with self.assertRaises(frappe.PermissionError):
+				get_single_value("CRM Acumatica Settings", "webhook_verify_token")
 		finally:
 			frappe.set_user("Administrator")
+
+	def test_the_webhook_token_is_stored_encrypted(self):
+		s = frappe.get_doc("CRM Acumatica Settings")
+		s.webhook_verify_token = "plain-token-for-test"
+		s.flags.ignore_validate = True
+		s.save(ignore_permissions=True)
+		try:
+			self.assertNotEqual(
+				frappe.db.get_single_value("CRM Acumatica Settings", "webhook_verify_token"),
+				"plain-token-for-test",
+			)
+			self.assertEqual(s.get_password("webhook_verify_token"), "plain-token-for-test")
+		finally:
+			s.webhook_verify_token = ""
+			s.save(ignore_permissions=True)
 
 	def test_saving_settings_refreshes_a_stale_form_script(self):
 		from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import FORM_SCRIPT_NAME

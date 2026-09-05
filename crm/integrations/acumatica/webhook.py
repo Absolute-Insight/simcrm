@@ -15,7 +15,8 @@ from frappe import _
 @frappe.whitelist(allow_guest=True, methods=["POST"])  # nosemgrep: guest-whitelisted-method
 def handle_notification():
 	key = frappe.request.args.get("key") if frappe.request else None
-	stored = frappe.db.get_single_value("CRM Acumatica Settings", "webhook_verify_token")
+	settings = frappe.get_cached_doc("CRM Acumatica Settings")
+	stored = settings.get_password("webhook_verify_token", raise_exception=False)
 	if not (key and stored and hmac.compare_digest(key, stored)):
 		frappe.throw(_("Invalid webhook key"), frappe.PermissionError)
 

@@ -6,16 +6,22 @@ from frappe.tests.utils import FrappeTestCase
 from crm.integrations.acumatica import webhook
 
 
+def _set_token(value):
+	s = frappe.get_doc("CRM Acumatica Settings")
+	s.webhook_verify_token = value
+	s.flags.ignore_validate = True
+	s.save(ignore_permissions=True)
+
+
 class TestWebhook(FrappeTestCase):
 	def setUp(self):
-		self.original_token = frappe.db.get_single_value("CRM Acumatica Settings", "webhook_verify_token")
-		frappe.db.set_single_value("CRM Acumatica Settings", "webhook_verify_token", "tok123")
+		_set_token("tok123")
 		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 1)
 		frappe.clear_cache(doctype="CRM Acumatica Settings")
 
 	def tearDown(self):
 		# one test blanks the token; leaving it blank would disarm the next one
-		frappe.db.set_single_value("CRM Acumatica Settings", "webhook_verify_token", self.original_token)
+		_set_token("")
 		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
 		frappe.clear_cache(doctype="CRM Acumatica Settings")
 
@@ -39,7 +45,7 @@ class TestWebhook(FrappeTestCase):
 
 	@patch("crm.integrations.acumatica.webhook.frappe.enqueue")
 	def test_missing_stored_token_401s_even_with_matching_empty(self, enqueue):
-		frappe.db.set_single_value("CRM Acumatica Settings", "webhook_verify_token", "")
+		_set_token("")
 		frappe.clear_cache(doctype="CRM Acumatica Settings")
 		with self.assertRaises(frappe.PermissionError):
 			self._call("")

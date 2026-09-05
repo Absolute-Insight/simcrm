@@ -109,7 +109,8 @@ class TestFormScript(FrappeTestCase):
 		script = get_crm_form_script()
 		self.assertIn("Create Sales Quote", script)
 		self.assertIn("crm.integrations.acumatica.outbound.create_sales_quote_from_deal", script)
-		self.assertIn("CRM Acumatica Settings", script)
+		self.assertIn("crm.integrations.acumatica.api.is_enabled", script)
+		self.assertNotIn("frappe.client.get_single_value", script)
 
 	def test_form_script_swallows_the_settings_read_failure(self):
 		"""A rep without read access on the settings would otherwise get an

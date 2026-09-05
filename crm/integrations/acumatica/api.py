@@ -67,6 +67,15 @@ def dismiss_sync_issue(issue_name: str) -> bool:
 
 
 @frappe.whitelist()
+def is_enabled() -> bool:
+	"""The one bit the Deal form script needs. The settings document itself holds the
+	webhook secret and the API identity, so reps get this and nothing else."""
+	if frappe.session.user == "Guest":
+		frappe.throw(_("Not permitted"), frappe.PermissionError)
+	return bool(frappe.db.get_single_value("CRM Acumatica Settings", "enabled"))
+
+
+@frappe.whitelist()
 def get_crm_form_script():
 	"""Form Script for CRM Deal -- same delivery mechanism as the ERPNext
 	integration's get_crm_form_script. Additive only: it registers an action,
@@ -74,10 +83,7 @@ def get_crm_form_script():
 	return """class CRMDeal {
 	onLoad() {
 		if (this.doc.__newDocument) return
-		call("frappe.client.get_single_value", {
-			doctype: "CRM Acumatica Settings",
-			field: "enabled",
-		}).then((enabled) => {
+		call("crm.integrations.acumatica.api.is_enabled").then((enabled) => {
 			if (enabled) this.doc.trigger("setAcumaticaActions")
 		}).catch(() => {})
 	}

@@ -47,3 +47,4 @@ crm.patches.v1_0.add_visit_event_category
 crm.patches.v1_0.add_closing_note_to_task_quick_entry
 crm.patches.v1_0.add_person_fields_to_lead_quick_entry
 crm.patches.v1_0.ensure_sa_provinces
+crm.patches.v1_0.encrypt_acumatica_webhook_token

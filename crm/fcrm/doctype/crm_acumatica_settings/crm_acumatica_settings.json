@@ -172,7 +172,7 @@
   {
    "description": "Random secret the operator pastes into the Push Notification header/URL",
    "fieldname": "webhook_verify_token",
-   "fieldtype": "Data",
+   "fieldtype": "Password",
    "label": "Webhook Verify Token"
   },
   {
@@ -231,13 +231,6 @@
    "role": "Sales Manager",
    "share": 1,
    "write": 1
-  },
-  {
-   "email": 1,
-   "print": 1,
-   "read": 1,
-   "role": "Sales User",
-   "share": 1
   }
  ],
  "row_format": "Dynamic",
