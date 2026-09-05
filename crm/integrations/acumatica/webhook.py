@@ -3,7 +3,7 @@ import hmac
 import frappe
 from frappe import _
 
-from crm.integrations.acumatica.importer import SYNC_JOB_ID
+from crm.integrations.acumatica.importer import BACKFILL_TIMEOUT, SYNC_JOB_ID
 
 # Paste into Acumatica's Push Notifications (SM302000) webhook destination:
 # https://<site>/api/method/crm.integrations.acumatica.webhook.handle_notification
@@ -38,5 +38,9 @@ def handle_notification():
 			# behind a backfill an admin started by hand
 			job_id=SYNC_JOB_ID,
 			deduplicate=True,
+			# The first notification after the integration is switched on sweeps from
+			# no high-water mark at all, which is a full backfill; the long queue's
+			# 1500s default would kill it partway through every time.
+			timeout=BACKFILL_TIMEOUT,
 		)
 	return {"ok": True}

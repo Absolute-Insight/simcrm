@@ -15,11 +15,12 @@ from crm.integrations.acumatica.names import normalise_account_name
 COMMIT_EVERY = 50  # keep transactions short; a 50k-customer backfill must not hold one tx
 
 # One name for the whole sync. Three things start it -- the manual backfill button,
-# every webhook notification and the nightly scheduler -- so the queue dedupes them
-# under this job id, and run_backfill takes a site filelock of the same name for the
-# ones that get past the queue anyway (a job already running is no longer queued, so
-# deduplication alone would let the next notification start a second importer over
-# the same pages).
+# every webhook notification and the nightly scheduler -- and enqueueing all of them
+# under this one job id lets `deduplicate` collapse them, queued or already running.
+# That is best effort, not a guarantee: the dedup key is a redis entry with a TTL of
+# its own, and `bench execute` reaches run_backfill without any queue at all. So
+# run_backfill takes a site filelock of the same name, which is the thing that
+# actually keeps two importers off the same pages.
 SYNC_JOB_ID = "acumatica_sync"
 
 # The long queue's default job timeout is 1500s. A first backfill of a real tenant
@@ -306,7 +307,12 @@ def _import_all(modified_since: str | None) -> dict:
 				if noteid:
 					# Queue it for the next sweep. A record with no NoteID cannot be
 					# fetched again, so there is nothing to retry with.
-					pending.setdefault(entity, {})[noteid] = 1
+					#
+					# setdefault, not assignment: a backfill passes no high-water mark,
+					# so it re-scans the records the retry pass above has already tried
+					# this run. Overwriting would hand the record a fresh attempt every
+					# run and it would never reach the cap.
+					pending.setdefault(entity, {}).setdefault(noteid, 1)
 			done_in_entity += 1
 			if done_in_entity % COMMIT_EVERY == 0:
 				# A 50k-record backfill must not hold one transaction; committing per

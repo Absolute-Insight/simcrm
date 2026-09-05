@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from crm.integrations.acumatica import webhook
+from crm.integrations.acumatica import importer, webhook
 
 
 def _set_token(value):
@@ -40,6 +40,10 @@ class TestWebhook(FrappeTestCase):
 		# the same id the scheduler and the manual backfill use, so a burst of
 		# notifications cannot stack sweeps on top of a running import
 		self.assertEqual(enqueue.call_args.kwargs["job_id"], "acumatica_sync")
+		# the first notification after switch-on sweeps from nothing, which is a full
+		# backfill: it must not die at the long queue's 1500s default
+		self.assertEqual(enqueue.call_args.kwargs["timeout"], importer.BACKFILL_TIMEOUT)
+		self.assertGreater(importer.BACKFILL_TIMEOUT, 1500)
 
 	@patch("crm.integrations.acumatica.webhook.frappe.enqueue")
 	def test_wrong_key_401s(self, enqueue):

@@ -208,10 +208,23 @@ class TestAdoptOnMatch(ImporterTestCase):
 
 
 class TestBackfill(ImporterTestCase):
+	def setUp(self):
+		super().setUp()
+		self._retry_suffixes = []
+
 	def tearDown(self):
 		frappe.db.rollback()
-		# run_backfill commits, so what it left on the Single outlives that rollback --
-		# a queued retry or a recorded crash would otherwise leak into the next test.
+		# run_backfill commits, so what it left behind outlives that rollback -- both a
+		# queued retry or a recorded crash on the Single, and the organizations these
+		# tests fed through the importer, which would otherwise litter the site with a
+		# fresh set on every suite run.
+		for suffix in self._retry_suffixes:
+			for name in frappe.get_all(
+				"CRM Organization", filters={"organization_name": ("like", f"%{suffix}")}, pluck="name"
+			):
+				frappe.delete_doc(
+					"CRM Organization", name, force=True, ignore_permissions=True, delete_permanently=True
+				)
 		frappe.db.set_single_value("CRM Acumatica Settings", "pending_retries", "{}")
 		frappe.db.set_single_value("CRM Acumatica Settings", "last_sync_error", "")
 		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
@@ -230,6 +243,9 @@ class TestBackfill(ImporterTestCase):
 			ignore_permissions=True
 		)
 		frappe.db.set_value("CRM Organization", name, "acumatica_id", f"OTHER{suffix}")
+		# tearDown clears out everything carrying this suffix -- this row and whatever
+		# the importer went on to write under it
+		self._retry_suffixes.append(suffix)
 		return name
 
 	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
@@ -345,6 +361,34 @@ class TestBackfill(ImporterTestCase):
 				"CRM Organization", {"acumatica_noteid": f"retry-{suffix}"}, "organization_name"
 			),
 			f"Freed {suffix}",
+		)
+
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_a_record_that_fails_in_both_passes_still_runs_out_of_attempts(self, ClientCls):
+		"""A backfill -- start_backfill, or the first sweep of all -- passes no
+		high-water mark, so it re-scans the very records the retry pass has just tried.
+		Treating that second failure as a fresh queue entry would put the record back to
+		one attempt every single run, and it would never reach the cap."""
+		client = MagicMock()
+		ClientCls.return_value = client
+		suffix = frappe.generate_hash(length=6)
+		bad = _customer(suffix, self._contested_org(suffix))
+		# offered by BOTH passes on every run, which is what an unfiltered backfill does
+		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
+		client.get_page.return_value = [bad]
+
+		for _ in range(importer.MAX_RETRY_ATTEMPTS):
+			importer.run_backfill()
+
+		kinds = [
+			row.kind
+			for row in frappe.get_doc("CRM Acumatica Settings").sync_issues
+			if row.remote_id == f"RETRY{suffix}"
+		]
+		# one failure per run, then the give-up inside the last one -- and, after it, that
+		# run's own main-loop failure, which a backfill re-offering the record earns fairly
+		self.assertEqual(
+			kinds, ["Import Failed"] * (importer.MAX_RETRY_ATTEMPTS - 1) + ["Gave Up", "Import Failed"]
 		)
 
 	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
