@@ -54,7 +54,7 @@ class TestCreateCustomer(FrappeTestCase):
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_noop_when_disabled(self, ClientCls):
 		org, deal = _make_deal()
-		outbound.create_customer_in_acumatica(deal, "on_update")
+		outbound.push_customer_for_deal(deal.name)
 		ClientCls.assert_not_called()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
@@ -64,7 +64,7 @@ class TestCreateCustomer(FrappeTestCase):
 		ClientCls.return_value = client
 		client.put.return_value = _wrapped(CustomerID="NEW01", NoteID="g-new")
 		org, deal = _make_deal(status="Won")
-		outbound.create_customer_in_acumatica(deal, "on_update")
+		outbound.push_customer_for_deal(deal.name)
 		entity, payload = client.put.call_args[0]
 		self.assertEqual(entity, "Customer")
 		self.assertEqual(payload["CustomerName"], org.organization_name)
@@ -78,7 +78,7 @@ class TestCreateCustomer(FrappeTestCase):
 		client = MagicMock()
 		ClientCls.return_value = client
 		client.put.return_value = _wrapped(NoteID="n", CustomerID="X")
-		outbound.create_customer_in_acumatica(deal, "on_update")
+		outbound.push_customer_for_deal(deal.name)
 		self.assertLessEqual(len(client.put.call_args.args[1]["CustomerID"]), 10)
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
@@ -88,7 +88,7 @@ class TestCreateCustomer(FrappeTestCase):
 		frappe.db.set_value("CRM Organization", org.name, "acumatica_noteid", "g-existing")
 		client = MagicMock()
 		ClientCls.return_value = client
-		outbound.create_customer_in_acumatica(deal, "on_update")
+		outbound.push_customer_for_deal(deal.name)
 		client.put.assert_not_called()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
@@ -100,18 +100,36 @@ class TestCreateCustomer(FrappeTestCase):
 		ClientCls.return_value = client
 		client.put.side_effect = AcumaticaError("boom", status_code=422)
 		org, deal = _make_deal(status="Won")
-		outbound.create_customer_in_acumatica(deal, "on_update")  # must not raise
+		outbound.push_customer_for_deal(deal.name)  # must not raise
 		issues = frappe.get_doc("CRM Acumatica Settings").sync_issues
 		self.assertTrue(any(i.kind == "Push Failed" for i in issues))
 
 
 class TestHook(FrappeTestCase):
-	def test_handler_registered_on_deal_update(self):
-		from crm import hooks
+	def tearDown(self):
+		frappe.db.rollback()
+		_disable()
 
+	@patch("crm.integrations.acumatica.outbound.frappe.enqueue")
+	def test_the_deal_save_enqueues_the_push_instead_of_calling_the_erp(self, enqueue):
+		_enable(create_customer_on_status_change=1, deal_status="Won")
+		org, deal = _make_deal(status="Won")
+		# _make_deal's insert() already ran the real on_update hook once (the
+		# integration is enabled and the deal lands on the trigger status) --
+		# isolate the explicit call below from that incidental firing.
+		enqueue.reset_mock()
+		outbound.queue_customer_push(deal, "on_update")
+		enqueue.assert_called_once()
+		self.assertEqual(
+			enqueue.call_args.args[0], "crm.integrations.acumatica.outbound.push_customer_for_deal"
+		)
+		self.assertTrue(enqueue.call_args.kwargs["enqueue_after_commit"])
+		self.assertEqual(enqueue.call_args.kwargs["job_id"], f"acumatica_customer_{org.name}")
+
+	def test_handler_registered_on_deal_update(self):
 		self.assertIn(
-			"crm.integrations.acumatica.outbound.create_customer_in_acumatica",
-			hooks.doc_events["CRM Deal"]["on_update"],
+			"crm.integrations.acumatica.outbound.queue_customer_push",
+			frappe.get_hooks("doc_events")["CRM Deal"]["on_update"],
 		)
 
 
@@ -159,7 +177,7 @@ class TestTransportFailures(FrappeTestCase):
 		client.put.side_effect = requests.ConnectionError("dns is down")
 		org, deal = _make_deal(status="Won")
 
-		outbound.create_customer_in_acumatica(deal, "on_update")  # must not raise
+		outbound.push_customer_for_deal(deal.name)  # must not raise
 
 		issues = frappe.get_doc("CRM Acumatica Settings").sync_issues
 		self.assertTrue(any(i.kind == "Push Failed" and i.remote_id == org.name for i in issues))
@@ -173,7 +191,7 @@ class TestTransportFailures(FrappeTestCase):
 		client.put.side_effect = ValueError("Expecting value: line 1 column 1")
 		org, deal = _make_deal(status="Won")
 
-		outbound.create_customer_in_acumatica(deal, "on_update")  # must not raise
+		outbound.push_customer_for_deal(deal.name)  # must not raise
 
 		issues = frappe.get_doc("CRM Acumatica Settings").sync_issues
 		self.assertTrue(any(i.kind == "Push Failed" and i.remote_id == org.name for i in issues))

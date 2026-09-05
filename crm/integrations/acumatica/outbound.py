@@ -11,9 +11,42 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError, v
 
 
-def create_customer_in_acumatica(doc, method):
+def queue_customer_push(doc, method):
 	"""CRM Deal on_update handler. Mirrors the ERPNext integration's trigger shape:
-	fires once when the deal reaches the configured status."""
+	fires once when the deal reaches the configured status. Cheap checks only --
+	the HTTP PUT itself runs off-thread in push_customer_for_deal so a slow or
+	down Acumatica never holds up the user's save."""
+	settings = get_settings()
+	if (
+		not settings.enabled
+		or not settings.create_customer_on_status_change
+		or doc.status != settings.deal_status
+		or not doc.organization
+	):
+		return
+
+	frappe.enqueue(
+		"crm.integrations.acumatica.outbound.push_customer_for_deal",
+		deal=doc.name,
+		queue="short",
+		job_id=f"acumatica_customer_{doc.organization}",
+		deduplicate=True,
+		enqueue_after_commit=True,
+	)
+
+
+def create_customer_in_acumatica(doc, method):
+	"""Deprecated: renamed to queue_customer_push. Kept as a thin alias for one
+	release so a site with a stale hooks cache (pointing at the old dotted path)
+	does not error before it picks up the new hooks.py."""
+	return queue_customer_push(doc, method)
+
+
+def push_customer_for_deal(deal: str) -> None:
+	"""Worker: does the actual Acumatica customer push. Re-loads the deal and
+	re-checks the conditions, since time has passed since the hook enqueued this
+	and the deal's status may have moved on."""
+	doc = frappe.get_doc("CRM Deal", deal)
 	settings = get_settings()
 	if (
 		not settings.enabled
@@ -40,9 +73,11 @@ def create_customer_in_acumatica(doc, method):
 	try:
 		created = AcumaticaClient(settings).put("Customer", payload)
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
-		# This runs inside the user's deal save. A DNS blip, a read timeout or an HTML
-		# error page from a proxy (json() raises ValueError/JSONDecodeError) must land in
-		# the sync-issues table like any other push failure -- never fail the save.
+		# This runs in a background job, off the user's deal save -- but a raised
+		# exception here still fails silently from their point of view, so a DNS
+		# blip, a read timeout or an HTML error page from a proxy (json() raises
+		# ValueError/JSONDecodeError) must land in the sync-issues table like any
+		# other push failure rather than just dying in the worker log.
 		record_sync_issue("Customer", org.name, "Push Failed", f"{e} :: {getattr(e, 'body', '')}")
 		return
 
