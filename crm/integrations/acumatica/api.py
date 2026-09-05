@@ -1,11 +1,10 @@
 import frappe
 from frappe import _
 
-# The long queue's default job timeout is 1500s. A first backfill of a real tenant
-# (tens of thousands of customers, paced by request_pause) does not finish inside
-# that, and run_backfill only writes last_synced_at once every entity is done -- so a
-# killed run leaves no forward progress at all. Give it a working day's ceiling.
-BACKFILL_TIMEOUT = 4 * 3600
+# Both describe the sync rather than this button -- the timeout is how long one takes,
+# and the job id is shared with the sweep and the webhook so only one can be queued --
+# so they live with the importer.
+from crm.integrations.acumatica.importer import BACKFILL_TIMEOUT, SYNC_JOB_ID
 
 
 @frappe.whitelist()
@@ -17,7 +16,7 @@ def start_backfill() -> dict:
 	frappe.enqueue(
 		"crm.integrations.acumatica.importer.run_backfill",
 		queue="long",
-		job_id="acumatica_backfill",
+		job_id=SYNC_JOB_ID,
 		deduplicate=True,
 		timeout=BACKFILL_TIMEOUT,
 	)

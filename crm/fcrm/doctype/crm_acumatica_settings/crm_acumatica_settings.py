@@ -1,3 +1,5 @@
+import json
+
 import frappe
 from frappe import _
 from frappe.model.document import Document
@@ -66,6 +68,24 @@ class CRMAcumaticaSettings(Document):
 
 def get_settings():
 	return frappe.get_cached_doc("CRM Acumatica Settings")
+
+
+def get_pending_retries() -> dict:
+	"""The importer's retry queue: ``{"<entity>": {"<NoteID>": attempts}}``.
+
+	A JSON field rather than a child table because it is a work list, not a log: the
+	sweep rewrites it whole every run and nobody reads it in the UI. What an admin
+	reads is the sync-issues table, which is where a record ends up once its attempts
+	run out."""
+	raw = frappe.db.get_single_value("CRM Acumatica Settings", "pending_retries")
+	return json.loads(raw) if raw else {}
+
+
+def set_pending_retries(pending: dict) -> None:
+	# set_single_value, not doc.save(): this runs at the end of a sweep that has been
+	# appending sync issues through their own saves, and a whole-document write would
+	# carry a stale copy of everything else back with it.
+	frappe.db.set_single_value("CRM Acumatica Settings", "pending_retries", json.dumps(pending))
 
 
 def record_sync_issue(entity: str, remote_id: str, kind: str, detail: str) -> None:

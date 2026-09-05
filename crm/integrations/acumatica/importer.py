@@ -1,15 +1,37 @@
 from datetime import datetime, timezone
 
 import frappe
+from frappe.utils.synchronization import LockTimeoutError, filelock
 
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
+	get_pending_retries,
 	get_settings,
 	record_sync_issue,
+	set_pending_retries,
 )
 from crm.integrations.acumatica.client import AcumaticaClient, v
 from crm.integrations.acumatica.names import normalise_account_name
 
 COMMIT_EVERY = 50  # keep transactions short; a 50k-customer backfill must not hold one tx
+
+# One name for the whole sync. Three things start it -- the manual backfill button,
+# every webhook notification and the nightly scheduler -- so the queue dedupes them
+# under this job id, and run_backfill takes a site filelock of the same name for the
+# ones that get past the queue anyway (a job already running is no longer queued, so
+# deduplication alone would let the next notification start a second importer over
+# the same pages).
+SYNC_JOB_ID = "acumatica_sync"
+
+# The long queue's default job timeout is 1500s. A first backfill of a real tenant
+# (tens of thousands of customers, paced by request_pause) does not finish inside
+# that, and run_backfill only writes last_synced_at once every entity is done -- so a
+# killed run leaves no forward progress at all. Give it a working day's ceiling.
+BACKFILL_TIMEOUT = 4 * 3600
+
+# Retries are free (one filtered read each) but not infinite: a record that is still
+# failing after five sweeps is failing on something no amount of waiting fixes, and
+# an admin is better told about it than left with a queue that never drains.
+MAX_RETRY_ATTEMPTS = 5
 
 
 def _find_by_noteid(doctype, noteid):
@@ -161,9 +183,90 @@ _ENTITIES = (
 )
 
 
+def _remote_id(rec) -> str:
+	"""The id an admin can paste into Acumatica's search. Each entity spells it
+	differently, and the NoteID an issue row would otherwise carry is a guid nobody
+	can look up in the UI."""
+	return v(rec, "CustomerID") or v(rec, "InventoryID") or v(rec, "ContactID") or "?"
+
+
+def _log_issue(entity: str, remote_id: str, kind: str, detail: str) -> None:
+	try:
+		record_sync_issue(entity, remote_id, kind, detail)
+	except Exception:
+		# record_sync_issue does its own doc.save() and can fail in turn; losing the
+		# ability to log one bad record must not abort the rest of the run.
+		frappe.log_error(frappe.get_traceback(), "Acumatica sync issue recording failed")
+
+
+def _retry_pending(client, pending: dict, counts: dict) -> None:
+	"""Re-import the records earlier sweeps could not.
+
+	A record usually fails on something outside itself -- a parent customer that had
+	not arrived yet, a name an admin still has to free up -- and Acumatica will not
+	send it again, because nothing about it was modified. The high-water-mark filter
+	therefore skips it forever, so the failures are re-fetched by NoteID here instead."""
+	for entity, upsert, counter in _ENTITIES:
+		queued = pending.get(entity) or {}
+		for noteid, attempts in list(queued.items()):
+			# Same one-savepoint-per-record reasoning as the main loop below.
+			frappe.db.savepoint("acumatica_retry")
+			rec = None
+			try:
+				page = client.get_page(entity, top=1, filter=f"NoteID eq guid'{noteid}'")
+				if not page:
+					# Deleted in Acumatica since it failed: there is nothing left to
+					# import and nothing to warn anybody about.
+					del queued[noteid]
+					continue
+				rec = page[0]
+				if upsert(rec) is not None:
+					counts[counter] += 1
+				del queued[noteid]
+			except Exception as e:
+				frappe.db.rollback(save_point="acumatica_retry")
+				attempts += 1
+				if attempts < MAX_RETRY_ATTEMPTS:
+					queued[noteid] = attempts
+					continue
+				del queued[noteid]
+				counts["issues"] += 1
+				# The first failure already wrote an "Import Failed" row; this is the
+				# one that says nobody is coming back for it. If the fetch is what
+				# failed there is no record to name it by, only the guid.
+				_log_issue(entity, _remote_id(rec) if rec else noteid, "Gave Up", str(e))
+		if not queued:
+			# leave the field holding {} rather than a litter of empty entities
+			pending.pop(entity, None)
+
+
 def run_backfill(modified_since: str | None = None) -> dict:
 	"""Import everything (or everything modified since the high-water mark).
 	Records that fail land in the sync-issues table instead of aborting the run."""
+	try:
+		# The lock comes before everything, the settings read included: a second sync
+		# has nothing useful to do, and two importers over the same pages write the
+		# same documents from two transactions.
+		with filelock(SYNC_JOB_ID, timeout=0):
+			try:
+				return _import_all(modified_since)
+			except Exception as e:
+				# The run died where the per-record savepoint could not catch it --
+				# expired credentials, a dropped connection. Without this an admin sees
+				# only a high-water mark that quietly stopped moving.
+				frappe.db.set_single_value("CRM Acumatica Settings", "last_sync_error", str(e)[:500])
+				# the failing job's transaction is about to be rolled back around us
+				frappe.db.commit()  # nosemgrep: frappe-manual-commit
+				raise
+	except LockTimeoutError:
+		# Not an error worth recording: the sweep runs nightly AND on every webhook, so
+		# arriving while one is in flight is the ordinary busy case.
+		frappe.logger("acumatica").info("a sync is already running; skipping this one")
+		return {"skipped": "another sync is running"}
+
+
+def _import_all(modified_since: str | None) -> dict:
+	"""The body of a sync, with the lock already held."""
 	settings = get_settings()
 	client = AcumaticaClient(settings)
 	counts = {"customers": 0, "contacts": 0, "products": 0, "issues": 0}
@@ -178,6 +281,10 @@ def run_backfill(modified_since: str | None = None) -> dict:
 	# on UTC (e.g. skip everything modified in the site's UTC offset each sweep).
 	# Capture naive UTC instead so the stored mark and the "Z" filter agree.
 	started_at = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+
+	pending = get_pending_retries()
+	_retry_pending(client, pending, counts)
+
 	for entity, upsert, counter in _ENTITIES:
 		done_in_entity = 0
 		for rec in client.iter_all(entity, filter=filter_):
@@ -194,18 +301,12 @@ def run_backfill(modified_since: str | None = None) -> dict:
 			except Exception as e:
 				frappe.db.rollback(save_point="acumatica_rec")
 				counts["issues"] += 1
-				try:
-					record_sync_issue(
-						entity,
-						v(rec, "CustomerID") or v(rec, "InventoryID") or v(rec, "ContactID") or "?",
-						"Import Failed",
-						str(e),
-					)
-				except Exception:
-					# record_sync_issue does its own doc.save() and can fail in turn;
-					# losing the ability to log one bad record must not abort the rest
-					# of the run.
-					frappe.log_error(frappe.get_traceback(), "Acumatica sync issue recording failed")
+				_log_issue(entity, _remote_id(rec), "Import Failed", str(e))
+				noteid = v(rec, "NoteID")
+				if noteid:
+					# Queue it for the next sweep. A record with no NoteID cannot be
+					# fetched again, so there is nothing to retry with.
+					pending.setdefault(entity, {})[noteid] = 1
 			done_in_entity += 1
 			if done_in_entity % COMMIT_EVERY == 0:
 				# A 50k-record backfill must not hold one transaction; committing per
@@ -214,13 +315,33 @@ def run_backfill(modified_since: str | None = None) -> dict:
 		# Entity boundary: same reasoning as the per-page commit above.
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
+	# Written last, and only here: everything above appends sync issues through
+	# whole-document saves, which would carry a stale queue back over this one.
+	set_pending_retries(pending)
 	# High-water mark is when this run STARTED: anything modified mid-run is
 	# picked up again next sweep rather than lost in the gap.
 	frappe.db.set_single_value("CRM Acumatica Settings", "last_synced_at", started_at)
+	# The run finished, so whatever killed the last one is history.
+	frappe.db.set_single_value("CRM Acumatica Settings", "last_sync_error", "")
 	# The high-water mark must be durable the moment it is set -- the next sweep
 	# reads it from a different worker process.
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	return counts
+
+
+def schedule_sweep() -> None:
+	"""Scheduler entry. It only enqueues: run inline it would hold a scheduler worker
+	for the hours a first sync takes, and it would not be sharing the sync job id with
+	the webhook and the manual backfill -- which is what keeps them to one at a time."""
+	if not get_settings().enabled:
+		return
+	frappe.enqueue(
+		"crm.integrations.acumatica.importer.nightly_sweep",
+		queue="long",
+		job_id=SYNC_JOB_ID,
+		deduplicate=True,
+		timeout=BACKFILL_TIMEOUT,
+	)
 
 
 def nightly_sweep() -> None:

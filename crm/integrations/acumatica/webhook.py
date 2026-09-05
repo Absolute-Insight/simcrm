@@ -3,6 +3,8 @@ import hmac
 import frappe
 from frappe import _
 
+from crm.integrations.acumatica.importer import SYNC_JOB_ID
+
 # Paste into Acumatica's Push Notifications (SM302000) webhook destination:
 # https://<site>/api/method/crm.integrations.acumatica.webhook.handle_notification
 # with header X-Vectora-Key: <webhook_verify_token>. If the destination cannot set a
@@ -31,7 +33,10 @@ def handle_notification():
 		frappe.enqueue(
 			"crm.integrations.acumatica.importer.nightly_sweep",
 			queue="long",
-			job_id="acumatica_webhook_sweep",
-			deduplicate=True,  # a burst of notifications collapses to one sweep
+			# the sweep, the scheduler and the manual backfill share one job id, so a
+			# burst of notifications collapses to one sweep -- and cannot queue one
+			# behind a backfill an admin started by hand
+			job_id=SYNC_JOB_ID,
+			deduplicate=True,
 		)
 	return {"ok": True}

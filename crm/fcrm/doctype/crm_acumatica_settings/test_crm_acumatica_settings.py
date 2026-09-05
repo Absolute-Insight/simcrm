@@ -22,6 +22,8 @@ class TestAcumaticaSettings(FrappeTestCase):
 			"webhook_verify_token",
 			"request_pause",
 			"last_synced_at",
+			"last_sync_error",
+			"pending_retries",
 			"sync_issues",
 		):
 			self.assertIsNotNone(meta.get_field(fieldname), fieldname)

@@ -9,11 +9,12 @@ class TestHookWiring(FrappeTestCase):
 		from crm import hooks
 
 		self.assertIn(
-			"crm.integrations.acumatica.importer.nightly_sweep",
+			"crm.integrations.acumatica.importer.schedule_sweep",
 			hooks.scheduler_events["daily_long"],
 		)
 
 	def test_registered_methods_are_importable(self):
+		frappe.get_attr("crm.integrations.acumatica.importer.schedule_sweep")
 		frappe.get_attr("crm.integrations.acumatica.importer.nightly_sweep")
 		frappe.get_attr("crm.integrations.acumatica.api.start_backfill")
 		frappe.get_attr("crm.integrations.acumatica.api.get_sync_status")
@@ -39,6 +40,8 @@ class TestStartBackfill(FrappeTestCase):
 		out = start_backfill()
 		self.assertTrue(out["queued"])
 		self.assertEqual(enqueue.call_args.kwargs["queue"], "long")
+		# the same id the sweep and the webhook use, so the queue holds one sync
+		self.assertEqual(enqueue.call_args.kwargs["job_id"], "acumatica_sync")
 
 	@patch("crm.integrations.acumatica.api.frappe.enqueue")
 	def test_start_backfill_raises_the_job_timeout_above_the_queue_default(self, enqueue):

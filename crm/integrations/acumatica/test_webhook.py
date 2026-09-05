@@ -37,6 +37,9 @@ class TestWebhook(FrappeTestCase):
 		out = self._call("tok123")
 		self.assertTrue(out["ok"])
 		self.assertEqual(enqueue.call_args[0][0], "crm.integrations.acumatica.importer.nightly_sweep")
+		# the same id the scheduler and the manual backfill use, so a burst of
+		# notifications cannot stack sweeps on top of a running import
+		self.assertEqual(enqueue.call_args.kwargs["job_id"], "acumatica_sync")
 
 	@patch("crm.integrations.acumatica.webhook.frappe.enqueue")
 	def test_wrong_key_401s(self, enqueue):
