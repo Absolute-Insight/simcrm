@@ -74,14 +74,17 @@ bench --site <site> execute crm.integrations.acumatica.install.ensure_custom_fie
 Put the workbooks and an `owners.json` (`{"018": "rep@example.com", ...}`)
 under the site's private files, then dry-run. `--kwargs` is evaluated as a
 Python literal, not parsed as JSON — write `True`/`False`/`None`, not
-`true`/`false`/`null`:
+`true`/`false`/`null`. Paths are absolute: `bench execute` runs with the
+`sites/` directory as its working directory, so `sites/<site>/...` does not
+resolve (it failed that way on the first production run):
 
 ```
+P=/home/frappe/frappe-bench/sites/<site>/private/files/mbp
 bench --site <site> execute crm.integrations.acumatica.spreadsheet.import_workbooks --kwargs '{
-  "customers": "sites/<site>/private/files/mbp/Customers 20260902.xlsx",
-  "sales_orders": "sites/<site>/private/files/mbp/Sales Orders 20260902.xlsx",
-  "invoices": "sites/<site>/private/files/mbp/Invoices 20260902.xlsx",
-  "owners": "sites/<site>/private/files/mbp/owners.json",
+  "customers": "'$P'/Customers 20260902.xlsx",
+  "sales_orders": "'$P'/Sales Orders 20260902.xlsx",
+  "invoices": "'$P'/Invoices 20260902.xlsx",
+  "owners": "'$P'/owners.json",
   "rates": {"USD": 18.2},
   "window_days": 90,
   "quote_validity_days": 30,
@@ -110,10 +113,25 @@ column.
 Reps will see one in-app assignment notification per imported deal on
 first login even with emails muted.
 
-Preconditions, in order: custom fields exist; the owner users exist;
-`FCRM Settings.currency` is ZAR; no enabled CRM Automation Rule on
-CRM Deal / Created, or you have decided to let each fire ~4,000 times;
-`mute_emails` is `1` in site config; a manual `bench backup --with-files`;
-`clear_demo_data()` has run. After the run: check `Email Queue` and
-`Notification Log` counts, drain or purge the default RQ queue, then
+Preconditions, in order: custom fields exist (installed by migrate since
+#166); the owner users exist — every salesperson code on an in-window quote
+must be in `owners.json` or its quotes are rejected, so map the codes you
+cannot resolve (Acumatica's `017` "Admin", the `999` catch-all) to
+`Administrator` rather than leaving them out; `FCRM Settings.currency` is
+ZAR; no enabled CRM Automation Rule on CRM Deal / Created, or you have
+decided to let each fire ~4,000 times; `mute_emails` is `1` in site config;
+`bench --site <site> set-config max_queued_jobs 50000` — every deal insert
+enqueues its assignment notification, and Frappe refuses to enqueue past
+`max_queued_jobs` (default 500), which on the first production run rejected
+3,112 of 4,163 deals with "Too many queued background jobs"; a manual
+`bench backup --with-files`; `clear_demo_data()` has run.
+
+After the run, in this order: wait for the RQ queues to drain (`bench doctor`,
+or `llen` on `rq:queue:*`); **purge the assignment emails the run queued** —
+muting stops the send, not the queuing, so the run leaves one `Not Sent`
+`Email Queue` row per deal that would all go out the moment emails are
+unmuted (`delete from \`tabEmail Queue\` where status='Not Sent' and
+creation >= '<run start>'`, plus their `tabEmail Queue Recipient` rows, or set
+them to `Expired`); check `Notification Log` (one in-app assignment per deal
+is expected); `set-config max_queued_jobs 500`; then and only then
 `set-config mute_emails 0`.
