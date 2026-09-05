@@ -135,6 +135,46 @@ class TestAcumaticaSettings(FrappeTestCase):
 			if frappe.db.exists("CRM Form Script", FORM_SCRIPT_NAME):
 				frappe.delete_doc("CRM Form Script", FORM_SCRIPT_NAME, force=True, ignore_permissions=True)
 
+	def test_identity_fields_are_schema_not_a_feature_flag(self):
+		"""#166: the only route to the custom fields used to be enabling the
+		integration, which also arms a live ERP write. Install and migrate own
+		them now, and the patch no longer looks at the toggle."""
+		from crm.patches.v1_0.create_custom_fields_for_acumatica_in_crm import execute
+
+		self.assertIn(
+			"crm.integrations.acumatica.install.ensure_custom_fields",
+			frappe.get_hooks("after_migrate"),
+		)
+		self.assertEqual(frappe.db.get_single_value("CRM Acumatica Settings", "enabled"), 0)
+		execute()
+		self.assertIsNotNone(frappe.get_meta("CRM Organization").get_field("acumatica_id"))
+		self.assertIsNotNone(frappe.get_meta("Contact").get_field("acumatica_noteid"))
+
+	def test_disabling_disables_the_form_script_and_enabling_brings_it_back(self):
+		from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import FORM_SCRIPT_NAME
+
+		try:
+			s = frappe.get_doc("CRM Acumatica Settings")
+			s.enabled = 1
+			s.instance_url = "https://x.acumatica.com"
+			s.save()
+			self.assertEqual(frappe.db.get_value("CRM Form Script", FORM_SCRIPT_NAME, "enabled"), 1)
+
+			s.reload()
+			s.enabled = 0
+			s.save()
+			# the record survives (a site may have customised it) but the button is gone
+			self.assertEqual(frappe.db.get_value("CRM Form Script", FORM_SCRIPT_NAME, "enabled"), 0)
+
+			s.reload()
+			s.enabled = 1
+			s.save()
+			self.assertEqual(frappe.db.get_value("CRM Form Script", FORM_SCRIPT_NAME, "enabled"), 1)
+		finally:
+			frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
+			if frappe.db.exists("CRM Form Script", FORM_SCRIPT_NAME):
+				frappe.delete_doc("CRM Form Script", FORM_SCRIPT_NAME, force=True, ignore_permissions=True)
+
 	def test_ensure_custom_fields_creates_identity_fields(self):
 		from crm.integrations.acumatica.install import ensure_custom_fields
 

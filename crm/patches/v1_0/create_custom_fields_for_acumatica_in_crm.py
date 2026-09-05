@@ -1,8 +1,7 @@
-import frappe
+from crm.integrations.acumatica.install import ensure_custom_fields
 
 
 def execute():
-	if frappe.db.get_single_value("CRM Acumatica Settings", "enabled"):
-		from crm.integrations.acumatica.install import ensure_custom_fields
-
-		ensure_custom_fields()
+	# Unconditional since #166: the fields are schema, not a feature flag. Sites
+	# where this already ran as a no-op get them from the after_migrate hook.
+	ensure_custom_fields()

@@ -20,11 +20,18 @@ class CRMAcumaticaSettings(Document):
 			)
 
 	def on_update(self):
+		# The identity custom fields are schema, installed by after_install and
+		# after_migrate whether or not the integration is on (#166) -- enabling
+		# only arms the write paths. Disabling has to undo the one visible thing
+		# enabling did, or the Deal form keeps a dead button forever.
 		if self.enabled:
-			from crm.integrations.acumatica.install import ensure_custom_fields
-
-			ensure_custom_fields()
 			self.create_crm_form_script()
+		else:
+			self.disable_crm_form_script()
+
+	def disable_crm_form_script(self):
+		if frappe.db.get_value("CRM Form Script", FORM_SCRIPT_NAME, "enabled"):
+			frappe.db.set_value("CRM Form Script", FORM_SCRIPT_NAME, "enabled", 0)
 
 	def create_crm_form_script(self):
 		from crm.integrations.acumatica.api import get_crm_form_script
@@ -47,8 +54,14 @@ class CRMAcumaticaSettings(Document):
 		# The script ships with the app, not with the record: an install that predates a
 		# fix would otherwise run the frozen first-install string forever. Same idiom as
 		# ERPNext CRM Settings' reset_erpnext_form_script.
-		if frappe.db.get_value("CRM Form Script", FORM_SCRIPT_NAME, "script") != script:
+		current = frappe.db.get_value(
+			"CRM Form Script", FORM_SCRIPT_NAME, ["script", "enabled"], as_dict=True
+		)
+		if current.script != script:
 			frappe.db.set_value("CRM Form Script", FORM_SCRIPT_NAME, "script", script)
+		if not current.enabled:
+			# re-enabling after a disable brings the button back
+			frappe.db.set_value("CRM Form Script", FORM_SCRIPT_NAME, "enabled", 1)
 
 
 def get_settings():

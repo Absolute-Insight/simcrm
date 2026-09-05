@@ -60,8 +60,12 @@ create-vs-update, which is why writes key on NoteID.
 without enabling the integration. Design and every mapping decision:
 `docs/superpowers/specs/2026-09-03-mbp-acumatica-import-design.md`.
 
-**Do not enable CRM Acumatica Settings to get the custom fields** — see the
-spec's Prerequisite 1 and issue #166. Call the function directly:
+The identity custom fields (`acumatica_noteid`, `acumatica_id`, the two Deal
+fields) are schema, not a feature: `after_install` and `after_migrate` create
+them on every site, so a site on a build that includes #166 has them without
+the integration ever being enabled. **Do not enable CRM Acumatica Settings to
+get them** on an older build — enabling arms the ERP write paths (see the
+spec's Prerequisite 1). Repair or pre-#166 sites:
 
 ```
 bench --site <site> execute crm.integrations.acumatica.install.ensure_custom_fields
