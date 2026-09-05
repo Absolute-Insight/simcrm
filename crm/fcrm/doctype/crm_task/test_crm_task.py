@@ -261,7 +261,11 @@ class TestCRMTask(IntegrationTestCase):
 		task.closing_note = "Client asked for the 21st"
 		# the test runner suppresses Version rows by default; production saves never do
 		task.save(ignore_version=False)
-		history = get_history(str(task.name))  # CRM Task autoincrements; name is int in-process
+		# CRM Task autoincrements, so the browser posts the name as a JSON number and
+		# Frappe checks whitelisted arguments against their annotations (in tests too):
+		# the int has to go in as an int, or the test passes while the History block
+		# answers 417 to every real call.
+		history = get_history(task.name)
 		self.assertGreaterEqual(len(history), 1)
 		latest = history[0]
 		fields = {change["field"]: change for change in latest["changes"]}
