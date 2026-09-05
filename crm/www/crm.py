@@ -14,6 +14,11 @@ no_cache = 1
 def get_context():
 	from crm.api import check_app_permission
 
+	if frappe.session.user == "Guest":
+		# A logged-out visitor typing /crm got Frappe's "Not Permitted" page and
+		# had to know about /login themselves; send them there and back again.
+		frappe.local.flags.redirect_location = "/login?redirect-to=/crm"
+		raise frappe.Redirect
 	if not check_app_permission():
 		frappe.throw(_("You do not have permission to access Vectora"), frappe.PermissionError)
 
