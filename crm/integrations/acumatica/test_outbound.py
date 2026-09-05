@@ -16,6 +16,8 @@ def _enable(**overrides):
 	s.instance_url = "https://t.acumatica.com"
 	s.create_customer_on_status_change = overrides.get("create_customer_on_status_change", 1)
 	s.deal_status = overrides.get("deal_status", "Won")
+	s.customer_numbering = overrides.get("customer_numbering", "AutoNumber")
+	s.customer_id_max_length = overrides.get("customer_id_max_length", 10)
 	s.quote_order_type = "QT"
 	s.save(ignore_permissions=True)
 	frappe.clear_cache(doctype="CRM Acumatica Settings")
@@ -33,8 +35,10 @@ def _disable():
 
 
 def _make_deal(status="Won"):
+	# length=10, not the usual 6: the CustomerID-from-name test needs a name that
+	# still exceeds customer_id_max_length after the dash is stripped.
 	org = frappe.get_doc(
-		{"doctype": "CRM Organization", "organization_name": f"Out-{frappe.generate_hash(length=6)}"}
+		{"doctype": "CRM Organization", "organization_name": f"Out-{frappe.generate_hash(length=10)}"}
 	).insert(ignore_permissions=True)
 	deal = frappe.get_doc({"doctype": "CRM Deal", "organization": org.name, "status": status}).insert(
 		ignore_permissions=True
@@ -66,6 +70,16 @@ class TestCreateCustomer(FrappeTestCase):
 		self.assertEqual(payload["CustomerName"], org.organization_name)
 		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "acumatica_customer"), "NEW01")
 		self.assertEqual(frappe.db.get_value("CRM Organization", org.name, "acumatica_noteid"), "g-new")
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_customer_id_from_name_respects_the_segment_length(self, ClientCls):
+		_enable(customer_numbering="From Organization Name", customer_id_max_length=10)
+		org, deal = _make_deal(status="Won")  # organization_name is longer than 10 chars
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.return_value = _wrapped(NoteID="n", CustomerID="X")
+		outbound.create_customer_in_acumatica(deal, "on_update")
+		self.assertLessEqual(len(client.put.call_args.args[1]["CustomerID"]), 10)
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_skips_when_org_already_linked(self, ClientCls):

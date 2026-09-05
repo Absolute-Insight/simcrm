@@ -22,6 +22,7 @@
   "password",
   "section_break_ause",
   "customer_numbering",
+  "customer_id_max_length",
   "column_break_ausf",
   "create_customer_on_status_change",
   "deal_status",
@@ -133,6 +134,13 @@
    "fieldtype": "Select",
    "label": "Customer Numbering",
    "options": "AutoNumber\nFrom Organization Name"
+  },
+  {
+   "default": "10",
+   "description": "Acumatica's CUSTOMER ID segment length; only used with From Organization Name",
+   "fieldname": "customer_id_max_length",
+   "fieldtype": "Int",
+   "label": "Customer ID Max Length"
   },
   {
    "fieldname": "column_break_ausf",

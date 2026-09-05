@@ -25,9 +25,10 @@ class TestWebhook(FrappeTestCase):
 		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
 		frappe.clear_cache(doctype="CRM Acumatica Settings")
 
-	def _call(self, key):
+	def _call(self, key=None, headers=None):
 		req = MagicMock()
 		req.args = {"key": key} if key is not None else {}
+		req.headers = headers or {}
 		with patch.object(frappe.local, "request", req, create=True):
 			return webhook.handle_notification()
 
@@ -50,3 +51,13 @@ class TestWebhook(FrappeTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			self._call("")
 		enqueue.assert_not_called()
+
+	@patch("crm.integrations.acumatica.webhook.frappe.enqueue")
+	def test_key_in_header_is_accepted(self, enqueue):
+		# Note: the brief's test constructs a FakeRequest(args=..., headers=...) and
+		# sets frappe.local.request directly. This file already fakes the request via
+		# the _call() helper (a MagicMock patched onto frappe.local.request), so the
+		# header is threaded through that helper instead of introducing a new fake.
+		out = self._call(headers={"X-Vectora-Key": "tok123"})
+		self.assertEqual(out, {"ok": True})
+		enqueue.assert_called_once()

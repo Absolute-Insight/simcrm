@@ -4,7 +4,9 @@ import frappe
 from frappe import _
 
 # Paste into Acumatica's Push Notifications (SM302000) webhook destination:
-# https://<site>/api/method/crm.integrations.acumatica.webhook.handle_notification?key=<webhook_verify_token>
+# https://<site>/api/method/crm.integrations.acumatica.webhook.handle_notification
+# with header X-Vectora-Key: <webhook_verify_token>. If the destination cannot set a
+# header, ?key=<webhook_verify_token> on the URL still works.
 # The payload is deliberately ignored: this endpoint only triggers a pull
 # through the authenticated client, so its worst-case abuse is a redundant sweep.
 
@@ -14,7 +16,12 @@ from frappe import _
 # and browser history.
 @frappe.whitelist(allow_guest=True, methods=["POST"])  # nosemgrep: guest-whitelisted-method
 def handle_notification():
-	key = frappe.request.args.get("key") if frappe.request else None
+	# The header is the primary channel: a query-string key lands in every access
+	# log between Acumatica and this process. ?key= stays for destinations that
+	# cannot set a header.
+	key = None
+	if frappe.request:
+		key = frappe.request.headers.get("X-Vectora-Key") or frappe.request.args.get("key")
 	settings = frappe.get_cached_doc("CRM Acumatica Settings")
 	stored = settings.get_password("webhook_verify_token", raise_exception=False)
 	if not (key and stored and hmac.compare_digest(key, stored)):

@@ -1,3 +1,5 @@
+import re
+
 import frappe
 import requests
 from frappe import _
@@ -30,7 +32,10 @@ def create_customer_in_acumatica(doc, method):
 
 	payload = {"CustomerName": org.organization_name}
 	if settings.customer_numbering == "From Organization Name":
-		payload["CustomerID"] = org.organization_name[:30].upper().replace(" ", "")
+		# Acumatica's default CUSTOMER ID segment is 10; the setting exists for
+		# tenants that widened it.
+		limit = int(settings.get("customer_id_max_length") or 10)
+		payload["CustomerID"] = re.sub(r"[^A-Z0-9]", "", org.organization_name.upper())[:limit]
 
 	try:
 		created = AcumaticaClient(settings).put("Customer", payload)
