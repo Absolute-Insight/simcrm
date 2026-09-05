@@ -218,7 +218,7 @@ doc_events = {
 		"after_insert": ["crm.automation.run_automations"],
 		"on_update": [
 			"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.create_customer_in_erpnext",
-			"crm.integrations.acumatica.outbound.create_customer_in_acumatica",
+			"crm.integrations.acumatica.outbound.queue_customer_push",
 			"crm.automation.run_automations",
 		],
 		"on_trash": ["crm.automation.clear_suggestions"],
@@ -289,8 +289,10 @@ scheduler_events = {
 		# record it queues is a crawl of somebody else's website
 		"crm.domain_enrichment.tasks.reenrich_stale_records",
 		# correctness sweep for the Acumatica integration -- webhooks only lower
-		# latency, they do not guarantee delivery (2-day retention on their side)
-		"crm.integrations.acumatica.importer.nightly_sweep",
+		# latency, they do not guarantee delivery (2-day retention on their side).
+		# Enqueues onto the long queue rather than sweeping here: a first sync runs
+		# for hours, and the scheduler's worker has the rest of the day's jobs.
+		"crm.integrations.acumatica.importer.schedule_sweep",
 	],
 	"hourly_long": [
 		"crm.lead_syncing.background_sync.sync_leads_from_sources_hourly",

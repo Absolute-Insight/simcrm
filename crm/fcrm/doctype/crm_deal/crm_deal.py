@@ -172,6 +172,27 @@ class CRMDeal(Document):
 					# the agent is already set as an assignee
 					return
 
+		if frappe.flags.bulk_assign_quietly:
+			# A file import assigns thousands of deals in one run. assign_to._add
+			# notifies on every one -- a Notification Log row, an email and an RQ job
+			# each -- which on the first production import tripped max_queued_jobs and
+			# left 4,000 muted mails to purge. The ToDo is the assignment; the rest is
+			# noise for a rep who was not at their desk when the data arrived.
+			frappe.get_doc(
+				{
+					"doctype": "ToDo",
+					"allocated_to": agent,
+					"reference_type": "CRM Deal",
+					"reference_name": self.name,
+					"assigned_by": frappe.session.user,
+					"status": "Open",
+					"description": self.get_title() or self.name,
+				}
+			).insert(ignore_permissions=True)
+			if not frappe.has_permission("CRM Deal", "read", self, user=agent):
+				frappe.share.add("CRM Deal", self.name, agent, notify=0)
+			return
+
 		assign({"assign_to": [agent], "doctype": "CRM Deal", "name": self.name}, ignore_permissions=True)
 
 	def share_with_agent(self, agent):

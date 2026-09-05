@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +12,12 @@ from crm.integrations.acumatica.install import ensure_custom_fields
 def C(**kw):
 	"""Build a wrapped Acumatica record from plain values."""
 	return {k: {"value": v} for k, v in kw.items()}
+
+
+def _customer(suffix, name):
+	"""The customer the retry tests push through the sweep, unique per run: run_backfill
+	commits, so anything these tests import is still there on the next suite run."""
+	return C(NoteID=f"retry-{suffix}", CustomerID=f"RETRY{suffix}", CustomerName=name)
 
 
 class ImporterTestCase(FrappeTestCase):
@@ -201,13 +208,54 @@ class TestAdoptOnMatch(ImporterTestCase):
 
 
 class TestBackfill(ImporterTestCase):
+	def setUp(self):
+		super().setUp()
+		self._retry_suffixes = []
+
 	def tearDown(self):
 		frappe.db.rollback()
+		# run_backfill commits, so what it left behind outlives that rollback -- both a
+		# queued retry or a recorded crash on the Single, and the organizations these
+		# tests fed through the importer, which would otherwise litter the site with a
+		# fresh set on every suite run.
+		for suffix in self._retry_suffixes:
+			for name in frappe.get_all(
+				"CRM Organization", filters={"organization_name": ("like", f"%{suffix}")}, pluck="name"
+			):
+				frappe.delete_doc(
+					"CRM Organization", name, force=True, ignore_permissions=True, delete_permanently=True
+				)
+		frappe.db.set_single_value("CRM Acumatica Settings", "pending_retries", "{}")
+		frappe.db.set_single_value("CRM Acumatica Settings", "last_sync_error", "")
+		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+
+	def _pending(self):
+		return json.loads(frappe.db.get_single_value("CRM Acumatica Settings", "pending_retries") or "{}")
+
+	def _contested_org(self, suffix):
+		"""An organization already linked to a DIFFERENT Acumatica customer. A customer
+		arriving under that name is refused rather than merged into it, which is the
+		shape of failure an admin fixes in Acumatica and expects the CRM to pick up."""
+		name = f"Contested {suffix}"
+		frappe.get_doc({"doctype": "CRM Organization", "organization_name": name}).insert(
+			ignore_permissions=True
+		)
+		frappe.db.set_value("CRM Organization", name, "acumatica_id", f"OTHER{suffix}")
+		# tearDown clears out everything carrying this suffix -- this row and whatever
+		# the importer went on to write under it
+		self._retry_suffixes.append(suffix)
+		return name
 
 	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
 	def test_run_backfill_counts_and_records_issue_on_bad_record(self, ClientCls):
 		client = MagicMock()
 		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
 
 		def fake_iter(entity, **kw):
 			if entity == "Customer":
@@ -236,6 +284,10 @@ class TestBackfill(ImporterTestCase):
 	def test_run_backfill_stores_high_water_mark_as_naive_utc(self, ClientCls):
 		client = MagicMock()
 		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
 		client.iter_all.side_effect = lambda entity, **kw: iter([])
 
 		importer.run_backfill()
@@ -251,6 +303,10 @@ class TestBackfill(ImporterTestCase):
 	def test_run_backfill_survives_a_failing_record_sync_issue_call(self, ClientCls, record_sync_issue_mock):
 		client = MagicMock()
 		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
 		record_sync_issue_mock.side_effect = Exception("boom")
 
 		def fake_iter(entity, **kw):
@@ -264,3 +320,192 @@ class TestBackfill(ImporterTestCase):
 
 		self.assertEqual(out["issues"], 1)
 		self.assertIsNotNone(frappe.db.get_single_value("CRM Acumatica Settings", "last_synced_at"))
+
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_a_failed_record_is_retried_next_sweep_and_given_up_after_the_cap(self, ClientCls):
+		client = MagicMock()
+		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
+		suffix = frappe.generate_hash(length=6)
+		bad = _customer(suffix, self._contested_org(suffix))
+		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
+		client.get_page.return_value = [bad]
+
+		importer.run_backfill()
+
+		self.assertEqual(self._pending()["Customer"][f"retry-{suffix}"], 1)
+
+		# Acumatica never sends the record again -- it was not modified, only mishandled.
+		# Only the queue keeps it in front of the importer.
+		client.iter_all.side_effect = lambda entity, **kw: iter([])
+		for _ in range(importer.MAX_RETRY_ATTEMPTS - 1):
+			importer.run_backfill()
+
+		self.assertNotIn(f"retry-{suffix}", self._pending().get("Customer", {}))
+		issues = [
+			row
+			for row in frappe.get_doc("CRM Acumatica Settings").sync_issues
+			if row.remote_id == f"RETRY{suffix}"
+		]
+		# one row when it first failed, one when the retries ran out -- not one per sweep
+		self.assertEqual([row.kind for row in issues], ["Import Failed", "Gave Up"])
+
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_a_retried_record_that_now_succeeds_leaves_the_queue(self, ClientCls):
+		client = MagicMock()
+		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
+		suffix = frappe.generate_hash(length=6)
+		bad = _customer(suffix, self._contested_org(suffix))
+		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
+		client.get_page.return_value = [bad]
+
+		importer.run_backfill()
+		self.assertEqual(self._pending()["Customer"][f"retry-{suffix}"], 1)
+
+		# the admin renames the customer in Acumatica; the retry re-fetches it and it lands
+		client.iter_all.side_effect = lambda entity, **kw: iter([])
+		client.get_page.return_value = [_customer(suffix, f"Freed {suffix}")]
+
+		importer.run_backfill()
+
+		self.assertEqual(self._pending(), {})
+		self.assertEqual(
+			frappe.db.get_value(
+				"CRM Organization", {"acumatica_noteid": f"retry-{suffix}"}, "organization_name"
+			),
+			f"Freed {suffix}",
+		)
+
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_a_record_that_fails_in_both_passes_still_runs_out_of_attempts(self, ClientCls):
+		"""A backfill -- start_backfill, or the first sweep of all -- passes no
+		high-water mark, so it re-scans the very records the retry pass has just tried.
+		Treating that second failure as a fresh queue entry would put the record back to
+		one attempt every single run, and it would never reach the cap."""
+		client = MagicMock()
+		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
+		suffix = frappe.generate_hash(length=6)
+		bad = _customer(suffix, self._contested_org(suffix))
+		# offered by BOTH passes on every run, which is what an unfiltered backfill does
+		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
+		client.get_page.return_value = [bad]
+
+		for _ in range(importer.MAX_RETRY_ATTEMPTS):
+			importer.run_backfill()
+
+		kinds = [
+			row.kind
+			for row in frappe.get_doc("CRM Acumatica Settings").sync_issues
+			if row.remote_id == f"RETRY{suffix}"
+		]
+		# one failure per run, then the give-up inside the last one -- and, after it, that
+		# run's own main-loop failure, which a backfill re-offering the record earns fairly
+		self.assertEqual(
+			kinds, ["Import Failed"] * (importer.MAX_RETRY_ATTEMPTS - 1) + ["Gave Up", "Import Failed"]
+		)
+
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_a_retry_whose_re_fetch_fails_gives_up_on_the_noteid_it_has(self, ClientCls):
+		"""The re-fetch is a call of its own and can be the thing that fails. There is
+		no record to name that issue after then, only the guid the queue is keyed by."""
+		client = MagicMock()
+		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
+		suffix = frappe.generate_hash(length=6)
+		bad = _customer(suffix, self._contested_org(suffix))
+		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
+
+		importer.run_backfill()
+
+		client.iter_all.side_effect = lambda entity, **kw: iter([])
+		client.get_page.side_effect = RuntimeError("Acumatica GET Customer -> 503")
+		for _ in range(importer.MAX_RETRY_ATTEMPTS - 1):
+			importer.run_backfill()  # must not let a dead endpoint abort the sweep
+
+		self.assertEqual(self._pending(), {})
+		issues = [
+			row
+			for row in frappe.get_doc("CRM Acumatica Settings").sync_issues
+			if row.remote_id == f"retry-{suffix}"
+		]
+		self.assertEqual([row.kind for row in issues], ["Gave Up"])
+
+	def test_two_syncs_do_not_run_at_once(self):
+		"""The manual backfill, the webhook and the scheduler all reach run_backfill;
+		two of them importing the same page at once race over the same documents."""
+		from frappe.utils.synchronization import filelock
+
+		with filelock("acumatica_sync", timeout=0):
+			self.assertEqual(importer.run_backfill(), {"skipped": "another sync is running"})
+
+	def test_a_crashing_run_leaves_its_error_on_the_settings(self):
+		"""A run that dies outside any one record -- expired credentials, a dropped
+		connection -- otherwise leaves an admin nothing but a mark that stopped moving."""
+		with patch("crm.integrations.acumatica.importer.AcumaticaClient", side_effect=RuntimeError("boom")):
+			with self.assertRaises(RuntimeError):
+				importer.run_backfill()
+
+		self.assertIn("boom", frappe.db.get_single_value("CRM Acumatica Settings", "last_sync_error"))
+
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_a_clean_run_clears_the_last_error(self, ClientCls):
+		client = MagicMock()
+		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
+		client.iter_all.side_effect = lambda entity, **kw: iter([])
+		frappe.db.set_single_value("CRM Acumatica Settings", "last_sync_error", "an older failure")
+
+		importer.run_backfill()
+
+		self.assertFalse(frappe.db.get_single_value("CRM Acumatica Settings", "last_sync_error"))
+
+
+class TestScheduleSweep(FrappeTestCase):
+	"""The scheduler hands the sweep to the long queue rather than running it inline:
+	a first backfill takes hours, and the scheduler's own worker has other jobs."""
+
+	def setUp(self):
+		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 1)
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+
+	def tearDown(self):
+		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
+		# an `enabled` that leaked out of this module would send every later test's
+		# deal save at a real Acumatica instance
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+
+	@patch("crm.integrations.acumatica.importer.frappe.enqueue")
+	def test_it_queues_the_sweep_under_the_one_sync_job_id(self, enqueue):
+		importer.schedule_sweep()
+
+		self.assertEqual(enqueue.call_args[0][0], "crm.integrations.acumatica.importer.nightly_sweep")
+		self.assertEqual(enqueue.call_args.kwargs["queue"], "long")
+		self.assertEqual(enqueue.call_args.kwargs["job_id"], importer.SYNC_JOB_ID)
+		self.assertEqual(enqueue.call_args.kwargs["timeout"], importer.BACKFILL_TIMEOUT)
+
+	@patch("crm.integrations.acumatica.importer.frappe.enqueue")
+	def test_it_does_nothing_while_the_integration_is_off(self, enqueue):
+		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+
+		importer.schedule_sweep()
+
+		enqueue.assert_not_called()

@@ -16,6 +16,8 @@ def _enable(**overrides):
 	s.instance_url = "https://t.acumatica.com"
 	s.create_customer_on_status_change = overrides.get("create_customer_on_status_change", 1)
 	s.deal_status = overrides.get("deal_status", "Won")
+	s.customer_numbering = overrides.get("customer_numbering", "AutoNumber")
+	s.customer_id_max_length = overrides.get("customer_id_max_length", 10)
 	s.quote_order_type = "QT"
 	s.save(ignore_permissions=True)
 	frappe.clear_cache(doctype="CRM Acumatica Settings")
@@ -33,8 +35,10 @@ def _disable():
 
 
 def _make_deal(status="Won"):
+	# length=10, not the usual 6: the CustomerID-from-name test needs a name that
+	# still exceeds customer_id_max_length after the dash is stripped.
 	org = frappe.get_doc(
-		{"doctype": "CRM Organization", "organization_name": f"Out-{frappe.generate_hash(length=6)}"}
+		{"doctype": "CRM Organization", "organization_name": f"Out-{frappe.generate_hash(length=10)}"}
 	).insert(ignore_permissions=True)
 	deal = frappe.get_doc({"doctype": "CRM Deal", "organization": org.name, "status": status}).insert(
 		ignore_permissions=True
@@ -50,7 +54,7 @@ class TestCreateCustomer(FrappeTestCase):
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_noop_when_disabled(self, ClientCls):
 		org, deal = _make_deal()
-		outbound.create_customer_in_acumatica(deal, "on_update")
+		outbound.push_customer_for_deal(deal.name)
 		ClientCls.assert_not_called()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
@@ -60,12 +64,22 @@ class TestCreateCustomer(FrappeTestCase):
 		ClientCls.return_value = client
 		client.put.return_value = _wrapped(CustomerID="NEW01", NoteID="g-new")
 		org, deal = _make_deal(status="Won")
-		outbound.create_customer_in_acumatica(deal, "on_update")
+		outbound.push_customer_for_deal(deal.name)
 		entity, payload = client.put.call_args[0]
 		self.assertEqual(entity, "Customer")
 		self.assertEqual(payload["CustomerName"], org.organization_name)
 		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "acumatica_customer"), "NEW01")
 		self.assertEqual(frappe.db.get_value("CRM Organization", org.name, "acumatica_noteid"), "g-new")
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_customer_id_from_name_respects_the_segment_length(self, ClientCls):
+		_enable(customer_numbering="From Organization Name", customer_id_max_length=10)
+		org, deal = _make_deal(status="Won")  # organization_name is longer than 10 chars
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.return_value = _wrapped(NoteID="n", CustomerID="X")
+		outbound.push_customer_for_deal(deal.name)
+		self.assertLessEqual(len(client.put.call_args.args[1]["CustomerID"]), 10)
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_skips_when_org_already_linked(self, ClientCls):
@@ -74,8 +88,63 @@ class TestCreateCustomer(FrappeTestCase):
 		frappe.db.set_value("CRM Organization", org.name, "acumatica_noteid", "g-existing")
 		client = MagicMock()
 		ClientCls.return_value = client
-		outbound.create_customer_in_acumatica(deal, "on_update")
+		outbound.push_customer_for_deal(deal.name)
 		client.put.assert_not_called()
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_rechecks_the_link_with_a_row_lock_before_the_put(self, ClientCls):
+		"""enqueue_after_commit only defers the enqueue_call into frappe.db.after_commit,
+		a plain deque with no de-duplication of its own -- two deals on the same
+		organization saved in one request both pass the redis dedup check at hook time
+		and both land a job at commit, so two workers can be here at once. The unlocked
+		read earlier in the function can't see a concurrent winner's in-flight write, so
+		the re-check right before the PUT must take a row lock (for_update=True) -- that
+		is what makes the loser block until the winner commits instead of racing it."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.return_value = _wrapped(CustomerID="NEW01", NoteID="g-new")
+		org, deal = _make_deal(status="Won")
+
+		real_get_value = frappe.db.get_value
+		calls = []
+
+		def spy(doctype, filters=None, fieldname="name", *args, **kwargs):
+			if doctype == "CRM Organization" and fieldname == "acumatica_noteid":
+				calls.append(kwargs.get("for_update"))
+			return real_get_value(doctype, filters, fieldname, *args, **kwargs)
+
+		with patch("crm.integrations.acumatica.outbound.frappe.db.get_value", side_effect=spy):
+			outbound.push_customer_for_deal(deal.name)
+
+		self.assertIn(True, calls, "the pre-PUT re-check of acumatica_noteid must pass for_update=True")
+		client.put.assert_called_once()
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_link_written_between_the_first_read_and_the_lock_stops_the_second_push(self, ClientCls):
+		"""Simulates the race without threads: the doc-level read (the existing
+		"already linked" fast path) sees no link yet, but the locked re-check --
+		standing in for a concurrent worker's commit that landed in between -- does.
+		The second job must find that and no-op rather than PUT a second customer."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		org, deal = _make_deal(status="Won")
+
+		real_get_value = frappe.db.get_value
+
+		def racing_winner(doctype, filters=None, fieldname="name", *args, **kwargs):
+			if doctype == "CRM Organization" and fieldname == "acumatica_noteid" and kwargs.get("for_update"):
+				return "g-won-the-race"
+			if doctype == "CRM Organization" and fieldname == "acumatica_id":
+				return "CUST-RACE"
+			return real_get_value(doctype, filters, fieldname, *args, **kwargs)
+
+		with patch("crm.integrations.acumatica.outbound.frappe.db.get_value", side_effect=racing_winner):
+			outbound.push_customer_for_deal(deal.name)
+
+		client.put.assert_not_called()
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "acumatica_customer"), "CUST-RACE")
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_failure_lands_in_sync_issues_not_exception(self, ClientCls):
@@ -86,18 +155,36 @@ class TestCreateCustomer(FrappeTestCase):
 		ClientCls.return_value = client
 		client.put.side_effect = AcumaticaError("boom", status_code=422)
 		org, deal = _make_deal(status="Won")
-		outbound.create_customer_in_acumatica(deal, "on_update")  # must not raise
+		outbound.push_customer_for_deal(deal.name)  # must not raise
 		issues = frappe.get_doc("CRM Acumatica Settings").sync_issues
 		self.assertTrue(any(i.kind == "Push Failed" for i in issues))
 
 
 class TestHook(FrappeTestCase):
-	def test_handler_registered_on_deal_update(self):
-		from crm import hooks
+	def tearDown(self):
+		frappe.db.rollback()
+		_disable()
 
+	@patch("crm.integrations.acumatica.outbound.frappe.enqueue")
+	def test_the_deal_save_enqueues_the_push_instead_of_calling_the_erp(self, enqueue):
+		_enable(create_customer_on_status_change=1, deal_status="Won")
+		org, deal = _make_deal(status="Won")
+		# _make_deal's insert() already ran the real on_update hook once (the
+		# integration is enabled and the deal lands on the trigger status) --
+		# isolate the explicit call below from that incidental firing.
+		enqueue.reset_mock()
+		outbound.queue_customer_push(deal, "on_update")
+		enqueue.assert_called_once()
+		self.assertEqual(
+			enqueue.call_args.args[0], "crm.integrations.acumatica.outbound.push_customer_for_deal"
+		)
+		self.assertTrue(enqueue.call_args.kwargs["enqueue_after_commit"])
+		self.assertEqual(enqueue.call_args.kwargs["job_id"], f"acumatica_customer_{org.name}")
+
+	def test_handler_registered_on_deal_update(self):
 		self.assertIn(
-			"crm.integrations.acumatica.outbound.create_customer_in_acumatica",
-			hooks.doc_events["CRM Deal"]["on_update"],
+			"crm.integrations.acumatica.outbound.queue_customer_push",
+			frappe.get_hooks("doc_events")["CRM Deal"]["on_update"],
 		)
 
 
@@ -145,7 +232,7 @@ class TestTransportFailures(FrappeTestCase):
 		client.put.side_effect = requests.ConnectionError("dns is down")
 		org, deal = _make_deal(status="Won")
 
-		outbound.create_customer_in_acumatica(deal, "on_update")  # must not raise
+		outbound.push_customer_for_deal(deal.name)  # must not raise
 
 		issues = frappe.get_doc("CRM Acumatica Settings").sync_issues
 		self.assertTrue(any(i.kind == "Push Failed" and i.remote_id == org.name for i in issues))
@@ -159,7 +246,7 @@ class TestTransportFailures(FrappeTestCase):
 		client.put.side_effect = ValueError("Expecting value: line 1 column 1")
 		org, deal = _make_deal(status="Won")
 
-		outbound.create_customer_in_acumatica(deal, "on_update")  # must not raise
+		outbound.push_customer_for_deal(deal.name)  # must not raise
 
 		issues = frappe.get_doc("CRM Acumatica Settings").sync_issues
 		self.assertTrue(any(i.kind == "Push Failed" and i.remote_id == org.name for i in issues))
@@ -241,4 +328,25 @@ class TestCreateSalesQuote(FrappeTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			outbound.create_sales_quote_from_deal(deal.name)
 
+		client.put.assert_not_called()
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_refuses_when_any_product_is_unlinked_and_names_it(self, ClientCls):
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		org, deal = _mapped_deal()  # one linked product
+		unlinked = frappe.get_doc(
+			{"doctype": "CRM Product", "product_code": "NO-ACU-1", "product_name": "Unlinked"}
+		).insert(ignore_permissions=True)
+		deal.append(
+			"products",
+			{"product_code": unlinked.name, "product_name": unlinked.product_name, "qty": 1, "rate": 5},
+		)
+		deal.save(ignore_permissions=True)
+
+		with self.assertRaises(frappe.ValidationError) as cm:
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertIn("NO-ACU-1", str(cm.exception))
 		client.put.assert_not_called()

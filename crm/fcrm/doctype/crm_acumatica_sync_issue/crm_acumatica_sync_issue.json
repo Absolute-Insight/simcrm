@@ -33,7 +33,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Kind",
-   "options": "Import Failed\nPush Failed\nMapping Conflict",
+   "options": "Import Failed\nPush Failed\nMapping Conflict\nGave Up",
    "read_only": 1
   },
   {

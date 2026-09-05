@@ -15,7 +15,7 @@ def _resp(status=200, json_body=None):
 	return m
 
 
-def _settings():
+def _settings(branch=None):
 	s = MagicMock()
 	s.instance_url = "https://t.acumatica.com"
 	s.endpoint_name = "Default"
@@ -23,6 +23,7 @@ def _settings():
 	s.client_id = "cid"
 	s.username = "api"
 	s.request_pause = 0
+	s.branch = branch
 	s.get_password.return_value = "secret"
 	return s
 
@@ -78,6 +79,24 @@ class TestClient(FrappeTestCase):
 
 	@patch("crm.integrations.acumatica.client.requests.post")
 	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_branch_is_sent_on_the_token_request_when_set(self, rget, rpost):
+		rpost.return_value = _resp(200, {"access_token": "t", "expires_in": 3600})
+		rget.return_value = _resp(200, [])
+		s = _settings(branch="MAIN")
+		AcumaticaClient(s).get_page("Customer")
+		self.assertEqual(rpost.call_args.kwargs["data"]["branch"], "MAIN")
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_branch_is_not_sent_when_unset(self, rget, rpost):
+		rpost.return_value = _resp(200, {"access_token": "t", "expires_in": 3600})
+		rget.return_value = _resp(200, [])
+		s = _settings()
+		AcumaticaClient(s).get_page("Customer")
+		self.assertNotIn("branch", rpost.call_args.kwargs["data"])
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
 	def test_401_reauthenticates_once_then_raises(self, rget, rpost):
 		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": 3600})
 		rget.return_value = _resp(401, {})
@@ -102,6 +121,25 @@ class TestClient(FrappeTestCase):
 		self.assertEqual(rget.call_args_list[1].kwargs["params"]["$skip"], 2)
 		# the short page moved the cursor by what arrived, not by $top
 		self.assertEqual(rget.call_args_list[2].kwargs["params"]["$skip"], 3)
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_ping_fetches_one_customer(self, rget, rpost):
+		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": 3600})
+		rget.return_value = _resp(200, [{"CustomerID": {"value": "A"}}])
+		c = AcumaticaClient(_settings())
+		out = c.ping()
+		self.assertEqual(out, {"ok": True, "sample": "A"})
+		self.assertEqual(rget.call_args.kwargs["params"]["$top"], 1)
+		self.assertEqual(rget.call_args.kwargs["params"]["$select"], "CustomerID")
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_ping_reports_no_sample_on_empty_page(self, rget, rpost):
+		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": 3600})
+		rget.return_value = _resp(200, [])
+		c = AcumaticaClient(_settings())
+		self.assertEqual(c.ping(), {"ok": True, "sample": None})
 
 	@patch("crm.integrations.acumatica.client.requests.post")
 	@patch("crm.integrations.acumatica.client.requests.put")

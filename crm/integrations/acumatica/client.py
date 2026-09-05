@@ -54,16 +54,20 @@ class AcumaticaClient:
 			if cached:
 				return cached
 		s = self.settings
+		data = {
+			"grant_type": "password",
+			"client_id": s.client_id,
+			"client_secret": s.get_password("client_secret", raise_exception=False),
+			"username": s.username,
+			"password": s.get_password("password", raise_exception=False),
+			"scope": "api",
+		}
+		if getattr(s, "branch", None):
+			# Tenants with more than one branch reject a login that doesn't name one.
+			data["branch"] = s.branch
 		resp = requests.post(
 			f"{self.base}/identity/connect/token",
-			data={
-				"grant_type": "password",
-				"client_id": s.client_id,
-				"client_secret": s.get_password("client_secret", raise_exception=False),
-				"username": s.username,
-				"password": s.get_password("password", raise_exception=False),
-				"scope": "api",
-			},
+			data=data,
 			timeout=TIMEOUT,
 		)
 		if resp.status_code != 200:
@@ -129,3 +133,11 @@ class AcumaticaClient:
 	# --- writes ---------------------------------------------------------
 	def put(self, entity, payload):
 		return self._request("put", self.entity_url(entity), json=wrap(payload)).json()
+
+	# --- diagnostics ------------------------------------------------------
+	def ping(self):
+		"""One cheap, read-only call an admin's "Test connection" button can afford to
+		make synchronously. Errors are left to propagate -- the caller is the one that
+		knows whether to swallow them for a status panel or let them surface."""
+		page = self.get_page("Customer", top=1, select="CustomerID")
+		return {"ok": True, "sample": v(page[0], "CustomerID") if page else None}

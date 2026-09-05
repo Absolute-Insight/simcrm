@@ -22,6 +22,7 @@
   "password",
   "section_break_ause",
   "customer_numbering",
+  "customer_id_max_length",
   "column_break_ausf",
   "create_customer_on_status_change",
   "deal_status",
@@ -32,6 +33,8 @@
   "request_pause",
   "section_break_ausk",
   "last_synced_at",
+  "last_sync_error",
+  "pending_retries",
   "sync_issues"
  ],
  "fields": [
@@ -135,6 +138,13 @@
    "options": "AutoNumber\nFrom Organization Name"
   },
   {
+   "default": "10",
+   "description": "Acumatica's CUSTOMER ID segment length; only used with From Organization Name",
+   "fieldname": "customer_id_max_length",
+   "fieldtype": "Int",
+   "label": "Customer ID Max Length"
+  },
+  {
    "fieldname": "column_break_ausf",
    "fieldtype": "Column Break"
   },
@@ -172,7 +182,7 @@
   {
    "description": "Random secret the operator pastes into the Push Notification header/URL",
    "fieldname": "webhook_verify_token",
-   "fieldtype": "Data",
+   "fieldtype": "Password",
    "label": "Webhook Verify Token"
   },
   {
@@ -193,6 +203,21 @@
    "fieldname": "last_synced_at",
    "fieldtype": "Datetime",
    "label": "Last Synced At",
+   "read_only": 1
+  },
+  {
+   "description": "Why the last run stopped, if it died outside any single record",
+   "fieldname": "last_sync_error",
+   "fieldtype": "Small Text",
+   "label": "Last Sync Error",
+   "read_only": 1
+  },
+  {
+   "description": "Records the sweep will try again; kept for the importer, not for reading",
+   "fieldname": "pending_retries",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Pending Retries",
    "read_only": 1
   },
   {
@@ -231,13 +256,6 @@
    "role": "Sales Manager",
    "share": 1,
    "write": 1
-  },
-  {
-   "email": 1,
-   "print": 1,
-   "read": 1,
-   "role": "Sales User",
-   "share": 1
   }
  ],
  "row_format": "Dynamic",

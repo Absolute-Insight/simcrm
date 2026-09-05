@@ -3,25 +3,32 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from crm.integrations.acumatica import webhook
+from crm.integrations.acumatica import importer, webhook
+
+
+def _set_token(value):
+	s = frappe.get_doc("CRM Acumatica Settings")
+	s.webhook_verify_token = value
+	s.flags.ignore_validate = True
+	s.save(ignore_permissions=True)
 
 
 class TestWebhook(FrappeTestCase):
 	def setUp(self):
-		self.original_token = frappe.db.get_single_value("CRM Acumatica Settings", "webhook_verify_token")
-		frappe.db.set_single_value("CRM Acumatica Settings", "webhook_verify_token", "tok123")
+		_set_token("tok123")
 		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 1)
 		frappe.clear_cache(doctype="CRM Acumatica Settings")
 
 	def tearDown(self):
 		# one test blanks the token; leaving it blank would disarm the next one
-		frappe.db.set_single_value("CRM Acumatica Settings", "webhook_verify_token", self.original_token)
+		_set_token("")
 		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
 		frappe.clear_cache(doctype="CRM Acumatica Settings")
 
-	def _call(self, key):
+	def _call(self, key=None, headers=None):
 		req = MagicMock()
 		req.args = {"key": key} if key is not None else {}
+		req.headers = headers or {}
 		with patch.object(frappe.local, "request", req, create=True):
 			return webhook.handle_notification()
 
@@ -30,6 +37,13 @@ class TestWebhook(FrappeTestCase):
 		out = self._call("tok123")
 		self.assertTrue(out["ok"])
 		self.assertEqual(enqueue.call_args[0][0], "crm.integrations.acumatica.importer.nightly_sweep")
+		# the same id the scheduler and the manual backfill use, so a burst of
+		# notifications cannot stack sweeps on top of a running import
+		self.assertEqual(enqueue.call_args.kwargs["job_id"], "acumatica_sync")
+		# the first notification after switch-on sweeps from nothing, which is a full
+		# backfill: it must not die at the long queue's 1500s default
+		self.assertEqual(enqueue.call_args.kwargs["timeout"], importer.BACKFILL_TIMEOUT)
+		self.assertGreater(importer.BACKFILL_TIMEOUT, 1500)
 
 	@patch("crm.integrations.acumatica.webhook.frappe.enqueue")
 	def test_wrong_key_401s(self, enqueue):
@@ -39,8 +53,18 @@ class TestWebhook(FrappeTestCase):
 
 	@patch("crm.integrations.acumatica.webhook.frappe.enqueue")
 	def test_missing_stored_token_401s_even_with_matching_empty(self, enqueue):
-		frappe.db.set_single_value("CRM Acumatica Settings", "webhook_verify_token", "")
+		_set_token("")
 		frappe.clear_cache(doctype="CRM Acumatica Settings")
 		with self.assertRaises(frappe.PermissionError):
 			self._call("")
 		enqueue.assert_not_called()
+
+	@patch("crm.integrations.acumatica.webhook.frappe.enqueue")
+	def test_key_in_header_is_accepted(self, enqueue):
+		# Note: the brief's test constructs a FakeRequest(args=..., headers=...) and
+		# sets frappe.local.request directly. This file already fakes the request via
+		# the _call() helper (a MagicMock patched onto frappe.local.request), so the
+		# header is threaded through that helper instead of introducing a new fake.
+		out = self._call(headers={"X-Vectora-Key": "tok123"})
+		self.assertEqual(out, {"ok": True})
+		enqueue.assert_called_once()

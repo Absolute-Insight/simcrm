@@ -774,3 +774,21 @@ class ImportWorkbooksTest(SpreadsheetImportTestCase):
 		self.assertFalse(frappe.db.exists("CRM Organization", "Proserve (Pty) Ltd"))
 		self.assertFalse((self.dir / "import-manifest.json").exists())
 		self.assertFalse(frappe.flags.spreadsheet_import_dry_run)
+
+	def test_a_real_run_assigns_deals_quietly(self):
+		"""A real run assigns thousands of deals in one go; assign_to._add's
+		per-assignment Notification Log row and email would overwhelm the queue
+		(see the runbook incident), so import_workbooks must run with
+		bulk_assign_quietly set -- every deal still gets an Open ToDo, but no
+		Notification Log growth."""
+		before = frappe.db.count("Notification Log")
+		ss.import_workbooks(self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2})
+		self.assertFalse(frappe.flags.bulk_assign_quietly)
+		self.assertEqual(frappe.db.count("Notification Log"), before)
+		deal_name = frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": "QT103012"}, "name")
+		self.assertTrue(deal_name)
+		self.assertTrue(
+			frappe.db.exists(
+				"ToDo", {"reference_type": "CRM Deal", "reference_name": deal_name, "status": "Open"}
+			)
+		)
