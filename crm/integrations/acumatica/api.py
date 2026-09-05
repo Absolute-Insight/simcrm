@@ -1,5 +1,9 @@
 import frappe
 from frappe import _
+from frappe.utils.background_jobs import is_job_enqueued
+
+from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import get_pending_retries
+from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError
 
 # Both describe the sync rather than this button -- the timeout is how long one takes,
 # and the job id is shared with the sweep and the webhook so only one can be queued --
@@ -28,7 +32,40 @@ def get_sync_status() -> dict:
 	frappe.only_for(["System Manager", "Sales Manager"], True)
 	settings = frappe.get_cached_doc("CRM Acumatica Settings")
 	open_issues = sum(1 for row in settings.sync_issues if not row.dismissed)
-	return {"last_synced_at": settings.last_synced_at, "open_issues": open_issues}
+	# a count, not the queue itself -- the retry list is a work list for the sweep,
+	# not something the panel walks entity by entity
+	pending_retries = sum(len(attempts) for attempts in get_pending_retries().values())
+	return {
+		"last_synced_at": settings.last_synced_at,
+		"open_issues": open_issues,
+		"running": is_job_enqueued(SYNC_JOB_ID),
+		"last_sync_error": settings.last_sync_error,
+		"pending_retries": pending_retries,
+	}
+
+
+@frappe.whitelist()
+def test_connection() -> dict:
+	"""Never raises: a transport failure is exactly what an admin clicking this button
+	is trying to see, not a stack trace on the panel."""
+	frappe.only_for(["System Manager", "Sales Manager"], True)
+	settings = frappe.get_doc("CRM Acumatica Settings")  # the saved doc -- the operator just saved it
+	if not settings.instance_url:
+		return {"ok": False, "error": _("Instance URL is required")}
+	client = AcumaticaClient(settings)
+	# the operator may have just changed the credentials; a cached token from the old
+	# ones would test those, not the ones on screen
+	frappe.cache().delete_value(client._cache_key())
+	try:
+		return client.ping()
+	except AcumaticaError as e:
+		if e.status_code:
+			error = f"{e.status_code}: {(e.body or '')[:300]}"
+		else:
+			error = str(e)
+		return {"ok": False, "error": error}
+	except Exception as e:
+		return {"ok": False, "error": str(e)}
 
 
 @frappe.whitelist()

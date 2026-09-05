@@ -123,6 +123,25 @@ class TestClient(FrappeTestCase):
 		self.assertEqual(rget.call_args_list[2].kwargs["params"]["$skip"], 3)
 
 	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_ping_fetches_one_customer(self, rget, rpost):
+		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": 3600})
+		rget.return_value = _resp(200, [{"CustomerID": {"value": "A"}}])
+		c = AcumaticaClient(_settings())
+		out = c.ping()
+		self.assertEqual(out, {"ok": True, "sample": "A"})
+		self.assertEqual(rget.call_args.kwargs["params"]["$top"], 1)
+		self.assertEqual(rget.call_args.kwargs["params"]["$select"], "CustomerID")
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_ping_reports_no_sample_on_empty_page(self, rget, rpost):
+		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": 3600})
+		rget.return_value = _resp(200, [])
+		c = AcumaticaClient(_settings())
+		self.assertEqual(c.ping(), {"ok": True, "sample": None})
+
+	@patch("crm.integrations.acumatica.client.requests.post")
 	@patch("crm.integrations.acumatica.client.requests.put")
 	def test_put_wraps_payload(self, rput, rpost):
 		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": 3600})

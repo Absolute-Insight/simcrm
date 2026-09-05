@@ -18,6 +18,7 @@ class TestHookWiring(FrappeTestCase):
 		frappe.get_attr("crm.integrations.acumatica.importer.nightly_sweep")
 		frappe.get_attr("crm.integrations.acumatica.api.start_backfill")
 		frappe.get_attr("crm.integrations.acumatica.api.get_sync_status")
+		frappe.get_attr("crm.integrations.acumatica.api.test_connection")
 
 
 class TestStartBackfill(FrappeTestCase):
@@ -63,6 +64,104 @@ class TestStartBackfill(FrappeTestCase):
 				start_backfill()
 		finally:
 			frappe.set_user("Administrator")
+
+
+class TestSyncStatus(FrappeTestCase):
+	def tearDown(self):
+		frappe.db.set_single_value("CRM Acumatica Settings", "last_sync_error", "")
+		frappe.db.set_single_value("CRM Acumatica Settings", "pending_retries", "{}")
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+
+	def test_status_carries_the_new_keys(self):
+		from crm.integrations.acumatica.api import get_sync_status
+
+		frappe.db.set_single_value("CRM Acumatica Settings", "last_sync_error", "boom")
+		# two NoteIDs under Customer, one under Contact -- the count is across entities
+		frappe.db.set_single_value(
+			"CRM Acumatica Settings",
+			"pending_retries",
+			'{"Customer": {"n1": 1, "n2": 2}, "Contact": {"n3": 1}}',
+		)
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+
+		out = get_sync_status()
+		self.assertEqual(out["last_sync_error"], "boom")
+		self.assertEqual(out["pending_retries"], 3)
+		self.assertIn("last_synced_at", out)
+		self.assertIn("open_issues", out)
+		self.assertFalse(out["running"])
+
+	@patch("crm.integrations.acumatica.api.is_job_enqueued")
+	def test_running_reflects_the_shared_job_id(self, mock_enqueued):
+		from crm.integrations.acumatica.api import SYNC_JOB_ID, get_sync_status
+
+		mock_enqueued.return_value = True
+		out = get_sync_status()
+		self.assertTrue(out["running"])
+		mock_enqueued.assert_called_once_with(SYNC_JOB_ID)
+
+
+class TestConnection(FrappeTestCase):
+	def tearDown(self):
+		frappe.db.set_single_value("CRM Acumatica Settings", "instance_url", "")
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+		frappe.set_user("Administrator")
+
+	def test_rejects_non_managers(self):
+		from crm.integrations.acumatica.api import test_connection
+
+		frappe.set_user("Guest")
+		with self.assertRaises(frappe.PermissionError):
+			test_connection()
+
+	def test_missing_instance_url_is_reported_not_thrown(self):
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value("CRM Acumatica Settings", "instance_url", "")
+		from crm.integrations.acumatica.api import test_connection
+
+		out = test_connection()
+		self.assertFalse(out["ok"])
+		self.assertIn("Instance URL", out["error"])
+
+	@patch("crm.integrations.acumatica.api.AcumaticaClient")
+	def test_transport_failure_is_reported_not_raised(self, MockClient):
+		from crm.integrations.acumatica.api import test_connection
+		from crm.integrations.acumatica.client import AcumaticaError
+
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value("CRM Acumatica Settings", "instance_url", "https://t.acumatica.com")
+		MockClient.return_value._cache_key.return_value = "k"
+		MockClient.return_value.ping.side_effect = AcumaticaError("boom", status_code=401, body="bad creds")
+
+		out = test_connection()
+		self.assertFalse(out["ok"])
+		self.assertIn("401", out["error"])
+
+	@patch("crm.integrations.acumatica.api.AcumaticaClient")
+	def test_success_returns_the_sample(self, MockClient):
+		from crm.integrations.acumatica.api import test_connection
+
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value("CRM Acumatica Settings", "instance_url", "https://t.acumatica.com")
+		MockClient.return_value._cache_key.return_value = "k"
+		MockClient.return_value.ping.return_value = {"ok": True, "sample": "C001"}
+
+		self.assertEqual(test_connection(), {"ok": True, "sample": "C001"})
+
+	@patch("crm.integrations.acumatica.api.AcumaticaClient")
+	def test_forces_a_fresh_token_before_pinging(self, MockClient):
+		"""The operator just saved new credentials -- a cached token from the old
+		ones would make the test pass or fail on stale creds instead of the new ones."""
+		from crm.integrations.acumatica.api import test_connection
+
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value("CRM Acumatica Settings", "instance_url", "https://t.acumatica.com")
+		MockClient.return_value._cache_key.return_value = "acumatica_token::https://t.acumatica.com"
+		MockClient.return_value.ping.return_value = {"ok": True, "sample": None}
+		frappe.cache().set_value("acumatica_token::https://t.acumatica.com", "stale")
+
+		test_connection()
+		self.assertIsNone(frappe.cache().get_value("acumatica_token::https://t.acumatica.com"))
 
 
 class TestSyncIssueEndpoints(FrappeTestCase):

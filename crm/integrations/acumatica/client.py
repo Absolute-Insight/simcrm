@@ -133,3 +133,11 @@ class AcumaticaClient:
 	# --- writes ---------------------------------------------------------
 	def put(self, entity, payload):
 		return self._request("put", self.entity_url(entity), json=wrap(payload)).json()
+
+	# --- diagnostics ------------------------------------------------------
+	def ping(self):
+		"""One cheap, read-only call an admin's "Test connection" button can afford to
+		make synchronously. Errors are left to propagate -- the caller is the one that
+		knows whether to swallow them for a status panel or let them surface."""
+		page = self.get_page("Customer", top=1, select="CustomerID")
+		return {"ok": True, "sample": v(page[0], "CustomerID") if page else None}
