@@ -389,6 +389,11 @@ after_migrate = [
 	# unrelated tests. Idempotent, and it only claims the field while it still
 	# holds a Frappe default.
 	"crm.install.ensure_app_logo",
+	# The Acumatica identity fields are schema the import and the code search
+	# key on, so they exist on every site; only the settings toggle arms the
+	# ERP write paths (#166). A hook rather than a patch for the same reason as
+	# ensure_app_logo above. Idempotent.
+	"crm.integrations.acumatica.install.ensure_custom_fields",
 	"crm.api.whatsapp.add_roles",
 	"crm.domain_enrichment.install.seed_default_rules_and_mappings",
 	"crm.agent.install.ensure_agent_role",

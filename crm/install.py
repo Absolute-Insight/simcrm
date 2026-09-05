@@ -10,6 +10,7 @@ from crm.agent.install import apply_endpoint_defaults, ensure_agent_role
 from crm.domain_enrichment.install import seed_default_rules_and_mappings
 from crm.fcrm.doctype.crm_dashboard.crm_dashboard import create_default_manager_dashboard
 from crm.fcrm.doctype.crm_products.crm_products import create_product_details_script
+from crm.integrations.acumatica.install import ensure_custom_fields as ensure_acumatica_fields
 
 
 def before_install():
@@ -41,6 +42,7 @@ def after_install(force=False):
 	ensure_sa_provinces()
 	ensure_visit_event_category()
 	ensure_app_logo()
+	ensure_acumatica_fields()
 	# install/migrate runs outside a request, so nothing else will commit the
 	# fixtures created above.
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
