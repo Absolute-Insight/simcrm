@@ -47,8 +47,12 @@ call reaches it with no queue at all) and the lock is what actually keeps two
 importers off the same pages. The scheduler (`daily_long` → `schedule_sweep`)
 only enqueues `nightly_sweep`; it does not run the sweep inline, since a first
 sync can take hours and would otherwise hold a scheduler worker. A sync that
-finds another one already running (lock or queue) skips quietly rather than
-erroring — that's the ordinary case, not a fault.
+finds another one already running (lock or queue) does not error — that's the
+ordinary case, not a fault — but it is not silent either: `filelock` writes an
+Error Log row ("Filelock: Failed to aquire …") before raising `LockTimeoutError`,
+which `run_backfill` catches and logs at info level rather than treating as a
+failure. So a skipped sync leaves an Error Log row behind, even though nothing
+about it needs attention.
 
 A record an entity's upsert can't handle (a name collision, a bad value) is
 logged as an "Import Failed" sync issue and queued in the settings' hidden
@@ -243,10 +247,17 @@ ZAR; no enabled CRM Automation Rule on CRM Deal / Created, or you have
 decided to let each fire ~4,000 times; `mute_emails` is `1` in site config as
 belt-and-braces — the quiet assignment path queues no email regardless, but
 mute is free insurance against anything else a deal save triggers; a manual
-`bench backup --with-files`; `clear_demo_data()` has run.
+`bench backup --with-files`; `clear_demo_data()` has run; and, before a first
+production run, `bench --site <site> set-config max_queued_jobs 50000` — one
+more line of insurance. The quiet assignment path should make it unnecessary
+(no `assign_to._add` job per assignment any more), but the run is not
+otherwise instrumented for enqueue counts, so there's no cheap way to confirm
+that from the run itself.
 
 After the run: wait for the RQ queues to drain (`bench doctor`, or `llen` on
-`rq:queue:*`), then `set-config mute_emails 0`. The old
-`max_queued_jobs`/purge-before-unmute steps are gone from this runbook — the
-quiet assignment path is what removed the need for them, not a workaround
-that still has to be undone by hand.
+`rq:queue:*`), then `set-config mute_emails 0` and
+`bench --site <site> set-config max_queued_jobs 500` to put the ceiling back.
+The old purge-before-unmute step is gone from this runbook — the quiet
+assignment path is what removed the need for it, not a workaround that still
+has to be undone by hand. The `max_queued_jobs` bump stays, as insurance that
+costs one line to set and one to undo.
