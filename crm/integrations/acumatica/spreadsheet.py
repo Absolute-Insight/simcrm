@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
@@ -332,7 +333,18 @@ def upsert_deal(deal: dict, organization: str) -> str | None:
 	doc.acumatica_customer = deal["customer_id"]
 	if deal["status"] == "Lost":
 		doc.lost_reason = LOST_REASON
-	doc.save(ignore_permissions=True)
+	# Belt and braces: with notifications off (bulk_assign_quietly) there should be
+	# no jobs from this importer, but a site automation may still enqueue and trip
+	# max_queued_jobs mid-run -- a short retry outlasts a transient queue backlog
+	# instead of rejecting the row.
+	for attempt in range(3):
+		try:
+			doc.save(ignore_permissions=True)
+			break
+		except frappe.QueueOverloaded:
+			if attempt == 2:
+				raise
+			time.sleep(2)
 
 	after = {}
 	if deal["closed_date"]:
@@ -594,6 +606,11 @@ def import_workbooks(
 
 	summary = {"dry_run": dry, "warnings": warnings}
 	frappe.flags.spreadsheet_import_dry_run = dry
+	# thousands of deals get assigned in one run; assign_to._add's per-deal
+	# Notification Log row, email and RQ job overwhelmed the queue on the first
+	# production import (see the runbook incident) -- the ToDo is the assignment,
+	# the rest is noise for a rep who was not at their desk when the data arrived.
+	frappe.flags.bulk_assign_quietly = True
 	try:
 		summary["customers"] = import_customers(customers, rejects)
 		summary["sales_orders"] = import_sales_orders(
@@ -626,6 +643,7 @@ def import_workbooks(
 			frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	finally:
 		frappe.flags.spreadsheet_import_dry_run = False
+		frappe.flags.bulk_assign_quietly = False
 
 	summary["rejects"] = len(rejects)
 	if not dry:

@@ -125,6 +125,23 @@ class TestCRMDeal(IntegrationTestCase):
 		assignees = deal.get_assigned_users()
 		self.assertIn("Administrator", assignees)
 
+	def test_a_quiet_bulk_assignment_writes_the_todo_and_nothing_else(self):
+		"""Under frappe.flags.bulk_assign_quietly, assign_agent writes the ToDo
+		directly instead of going through assign_to._add, which notifies."""
+		before = frappe.db.count("Notification Log")
+		frappe.flags.bulk_assign_quietly = True
+		try:
+			deal = create_test_deal(organization="Quiet Assignment Org", deal_owner="crm.user1@example.com")
+		finally:
+			frappe.flags.bulk_assign_quietly = False
+		self.assertTrue(
+			frappe.db.exists(
+				"ToDo",
+				{"reference_type": "CRM Deal", "reference_name": deal.name, "status": "Open"},
+			)
+		)
+		self.assertEqual(frappe.db.count("Notification Log"), before)
+
 	def test_update_deal_owner(self):
 		"""Test updating deal owner assigns and shares with new owner"""
 		# Create deal without owner
