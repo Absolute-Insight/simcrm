@@ -74,6 +74,16 @@
           "
         />
         <FormControl
+          v-model.number="settings.doc.customer_id_max_length"
+          type="number"
+          :label="__('Customer ID max length')"
+          :description="
+            __(
+              'Acumatica CUSTOMER ID segment length; only used with From Organization Name',
+            )
+          "
+        />
+        <FormControl
           v-model.number="settings.doc.request_pause"
           type="number"
           step="0.1"
@@ -176,7 +186,7 @@ const settings = createDocumentResource({
 })
 
 // Matches the Select options on the doctype field; sending anything else silently
-// falls back to AutoNumber in outbound.create_customer_in_acumatica.
+// falls back to AutoNumber in outbound.push_customer_for_deal.
 const customerNumberingOptions = ['AutoNumber', 'From Organization Name']
 
 const tokenHint = __(

@@ -186,7 +186,7 @@ class CRMDeal(Document):
 					"reference_name": self.name,
 					"assigned_by": frappe.session.user,
 					"status": "Open",
-					"description": self.get_title() if hasattr(self, "get_title") else self.name,
+					"description": self.get_title() or self.name,
 				}
 			).insert(ignore_permissions=True)
 			if not frappe.has_permission("CRM Deal", "read", self, user=agent):

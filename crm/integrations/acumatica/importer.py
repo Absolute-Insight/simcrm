@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timezone
 
 import frappe
@@ -207,6 +208,9 @@ def _retry_pending(client, pending: dict, counts: dict) -> None:
 	not arrived yet, a name an admin still has to free up -- and Acumatica will not
 	send it again, because nothing about it was modified. The high-water-mark filter
 	therefore skips it forever, so the failures are re-fetched by NoteID here instead."""
+	# One request per queued NoteID, same as the paging loop's per-page requests --
+	# the same licence rate cap applies, so it gets the same throttle.
+	pause = float(client.settings.request_pause or 0)
 	for entity, upsert, counter in _ENTITIES:
 		queued = pending.get(entity) or {}
 		for noteid, attempts in list(queued.items()):
@@ -236,6 +240,9 @@ def _retry_pending(client, pending: dict, counts: dict) -> None:
 				# one that says nobody is coming back for it. If the fetch is what
 				# failed there is no record to name it by, only the guid.
 				_log_issue(entity, _remote_id(rec) if rec else noteid, "Gave Up", str(e))
+			finally:
+				if pause:
+					time.sleep(pause)
 		if not queued:
 			# leave the field holding {} rather than a litter of empty entities
 			pending.pop(entity, None)

@@ -92,6 +92,61 @@ class TestCreateCustomer(FrappeTestCase):
 		client.put.assert_not_called()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_rechecks_the_link_with_a_row_lock_before_the_put(self, ClientCls):
+		"""enqueue_after_commit only defers the enqueue_call into frappe.db.after_commit,
+		a plain deque with no de-duplication of its own -- two deals on the same
+		organization saved in one request both pass the redis dedup check at hook time
+		and both land a job at commit, so two workers can be here at once. The unlocked
+		read earlier in the function can't see a concurrent winner's in-flight write, so
+		the re-check right before the PUT must take a row lock (for_update=True) -- that
+		is what makes the loser block until the winner commits instead of racing it."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.return_value = _wrapped(CustomerID="NEW01", NoteID="g-new")
+		org, deal = _make_deal(status="Won")
+
+		real_get_value = frappe.db.get_value
+		calls = []
+
+		def spy(doctype, filters=None, fieldname="name", *args, **kwargs):
+			if doctype == "CRM Organization" and fieldname == "acumatica_noteid":
+				calls.append(kwargs.get("for_update"))
+			return real_get_value(doctype, filters, fieldname, *args, **kwargs)
+
+		with patch("crm.integrations.acumatica.outbound.frappe.db.get_value", side_effect=spy):
+			outbound.push_customer_for_deal(deal.name)
+
+		self.assertIn(True, calls, "the pre-PUT re-check of acumatica_noteid must pass for_update=True")
+		client.put.assert_called_once()
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_link_written_between_the_first_read_and_the_lock_stops_the_second_push(self, ClientCls):
+		"""Simulates the race without threads: the doc-level read (the existing
+		"already linked" fast path) sees no link yet, but the locked re-check --
+		standing in for a concurrent worker's commit that landed in between -- does.
+		The second job must find that and no-op rather than PUT a second customer."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		org, deal = _make_deal(status="Won")
+
+		real_get_value = frappe.db.get_value
+
+		def racing_winner(doctype, filters=None, fieldname="name", *args, **kwargs):
+			if doctype == "CRM Organization" and fieldname == "acumatica_noteid" and kwargs.get("for_update"):
+				return "g-won-the-race"
+			if doctype == "CRM Organization" and fieldname == "acumatica_id":
+				return "CUST-RACE"
+			return real_get_value(doctype, filters, fieldname, *args, **kwargs)
+
+		with patch("crm.integrations.acumatica.outbound.frappe.db.get_value", side_effect=racing_winner):
+			outbound.push_customer_for_deal(deal.name)
+
+		client.put.assert_not_called()
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "acumatica_customer"), "CUST-RACE")
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_failure_lands_in_sync_issues_not_exception(self, ClientCls):
 		from crm.integrations.acumatica.client import AcumaticaError
 

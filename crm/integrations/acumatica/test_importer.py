@@ -252,6 +252,10 @@ class TestBackfill(ImporterTestCase):
 	def test_run_backfill_counts_and_records_issue_on_bad_record(self, ClientCls):
 		client = MagicMock()
 		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
 
 		def fake_iter(entity, **kw):
 			if entity == "Customer":
@@ -280,6 +284,10 @@ class TestBackfill(ImporterTestCase):
 	def test_run_backfill_stores_high_water_mark_as_naive_utc(self, ClientCls):
 		client = MagicMock()
 		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
 		client.iter_all.side_effect = lambda entity, **kw: iter([])
 
 		importer.run_backfill()
@@ -295,6 +303,10 @@ class TestBackfill(ImporterTestCase):
 	def test_run_backfill_survives_a_failing_record_sync_issue_call(self, ClientCls, record_sync_issue_mock):
 		client = MagicMock()
 		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
 		record_sync_issue_mock.side_effect = Exception("boom")
 
 		def fake_iter(entity, **kw):
@@ -313,6 +325,10 @@ class TestBackfill(ImporterTestCase):
 	def test_a_failed_record_is_retried_next_sweep_and_given_up_after_the_cap(self, ClientCls):
 		client = MagicMock()
 		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
 		suffix = frappe.generate_hash(length=6)
 		bad = _customer(suffix, self._contested_org(suffix))
 		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
@@ -341,6 +357,10 @@ class TestBackfill(ImporterTestCase):
 	def test_a_retried_record_that_now_succeeds_leaves_the_queue(self, ClientCls):
 		client = MagicMock()
 		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
 		suffix = frappe.generate_hash(length=6)
 		bad = _customer(suffix, self._contested_org(suffix))
 		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
@@ -371,6 +391,10 @@ class TestBackfill(ImporterTestCase):
 		one attempt every single run, and it would never reach the cap."""
 		client = MagicMock()
 		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
 		suffix = frappe.generate_hash(length=6)
 		bad = _customer(suffix, self._contested_org(suffix))
 		# offered by BOTH passes on every run, which is what an unfiltered backfill does
@@ -397,6 +421,10 @@ class TestBackfill(ImporterTestCase):
 		no record to name that issue after then, only the guid the queue is keyed by."""
 		client = MagicMock()
 		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
 		suffix = frappe.generate_hash(length=6)
 		bad = _customer(suffix, self._contested_org(suffix))
 		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
@@ -437,6 +465,10 @@ class TestBackfill(ImporterTestCase):
 	def test_a_clean_run_clears_the_last_error(self, ClientCls):
 		client = MagicMock()
 		ClientCls.return_value = client
+		# MagicMock's default __float__ is 1.0, not 0 -- unset this and _retry_pending's
+		# new inter-request pause (mirroring the paging loop's) turns every retry test
+		# into a real sleep.
+		client.settings.request_pause = 0
 		client.iter_all.side_effect = lambda entity, **kw: iter([])
 		frappe.db.set_single_value("CRM Acumatica Settings", "last_sync_error", "an older failure")
 

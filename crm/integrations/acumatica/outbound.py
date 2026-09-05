@@ -70,6 +70,21 @@ def push_customer_for_deal(deal: str) -> None:
 		limit = int(settings.get("customer_id_max_length") or 10)
 		payload["CustomerID"] = re.sub(r"[^A-Z0-9]", "", org.organization_name.upper())[:limit]
 
+	# enqueue_after_commit only defers the ENQUEUE into frappe.db.after_commit -- a plain
+	# deque with no de-duplication of its own. Two deals on the same organization saved
+	# inside one request both pass queue_customer_push's redis dedup check at hook time
+	# (nothing has committed yet, so neither looks like a duplicate to the other) and
+	# both land a job at commit; two workers then reach this point concurrently, and the
+	# unlocked read above can't see a link a concurrent winner is mid-write on. Re-read
+	# with a row lock immediately before the PUT: the loser blocks here until the
+	# winner's write below commits, then sees the link already populated and no-ops
+	# instead of PUTting a second Customer into the client's ERP.
+	if frappe.db.get_value("CRM Organization", org.name, "acumatica_noteid", for_update=True):
+		if not doc.get("acumatica_customer"):
+			acumatica_id = frappe.db.get_value("CRM Organization", org.name, "acumatica_id")
+			frappe.db.set_value("CRM Deal", doc.name, "acumatica_customer", acumatica_id)
+		return
+
 	try:
 		created = AcumaticaClient(settings).put("Customer", payload)
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
