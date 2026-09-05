@@ -111,11 +111,16 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 
 	products = deal.get("products") or []
 	details = []
+	unlinked = []
 	# CRM Deal's child table is `products` (CRM Products rows); the row's link to
 	# the CRM Product is `product_code`, the quantity field is `qty`.
 	for row in products:
 		inventory_id = frappe.db.get_value("CRM Product", row.product_code, "acumatica_id")
 		if not inventory_id:
+			# A quote missing one of its lines still saves and still shows a success
+			# toast -- the rep has no reason to notice it shipped short. Refuse the
+			# whole thing instead of sending a partial order.
+			unlinked.append(row.product_code)
 			continue
 		line = {
 			"InventoryID": inventory_id,
@@ -127,9 +132,12 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 		# negotiated, and only the keys the row actually carries.
 		details.append({key: value for key, value in line.items() if value is not None})
 
-	if products and not details:
+	if unlinked:
 		frappe.throw(
-			_("None of this deal's products are linked to Acumatica inventory items — run a backfill first")
+			_(
+				"These products are not linked to Acumatica inventory items: {0}. "
+				"Run a backfill or link them, then try again."
+			).format(", ".join(unlinked))
 		)
 
 	payload = {

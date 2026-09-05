@@ -274,3 +274,24 @@ class TestCreateSalesQuote(FrappeTestCase):
 			outbound.create_sales_quote_from_deal(deal.name)
 
 		client.put.assert_not_called()
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_refuses_when_any_product_is_unlinked_and_names_it(self, ClientCls):
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		org, deal = _mapped_deal()  # one linked product
+		unlinked = frappe.get_doc(
+			{"doctype": "CRM Product", "product_code": "NO-ACU-1", "product_name": "Unlinked"}
+		).insert(ignore_permissions=True)
+		deal.append(
+			"products",
+			{"product_code": unlinked.name, "product_name": unlinked.product_name, "qty": 1, "rate": 5},
+		)
+		deal.save(ignore_permissions=True)
+
+		with self.assertRaises(frappe.ValidationError) as cm:
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertIn("NO-ACU-1", str(cm.exception))
+		client.put.assert_not_called()
