@@ -5,12 +5,17 @@ from frappe import _
 
 
 @frappe.whitelist()
-def get_history(name: str) -> list[dict]:
+def get_history(name: str | int) -> list[dict]:
 	"""What changed on a task, and who did it, newest first.
 
 	The old rep app showed the edit trail inside the activity dialog beside the
 	note that came with each change; ``track_changes`` already records exactly
-	that as Version rows, so this only reshapes them."""
+	that as Version rows, so this only reshapes them.
+
+	CRM Task autoincrements, so the browser sends ``{"name": 7}`` -- a bare
+	``str`` annotation made Frappe's type validation answer 417 to every real
+	call and the History block never had anything to show."""
+	name = str(name)
 	frappe.has_permission("CRM Task", "read", doc=name, throw=True)
 	labels = {f.fieldname: f.label for f in frappe.get_meta("CRM Task").fields}
 	rows = frappe.get_all(
