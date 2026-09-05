@@ -242,7 +242,11 @@ async function updateUser(u) {
 }
 
 function buildEventFilters(range) {
-  const filters = [['status', '=', 'Open']]
+  // Open and Completed, not Open alone: a visit a rep logs after the fact is
+  // written Completed (that is what the plan matcher counts), and the old rep
+  // app's calendar was where they looked their visit history up. Closed and
+  // Cancelled stay hidden.
+  const filters = [['status', 'in', ['Open', 'Completed']]]
   if (range?.startDate && range?.endDate) {
     const start = dayjs(range.startDate)
       .startOf('day')
