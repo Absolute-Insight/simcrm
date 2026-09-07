@@ -114,7 +114,13 @@ against what the snapshot believed at the time.
 
 ## Scheduled digests
 
-`CRM Report Digest` + `send_due_digests` (daily). Recipients must be enabled
+`CRM Report Digest` + `send_due_digests` (daily). The window is the previous
+N *settled* days ending yesterday — one for a daily digest, seven for a weekly
+one — because the job fires at midnight and `quota_in_period` pro-rates by
+covered days: a window that reached into today charged an extra day of target
+against nothing. Measures are formatted by the column type the registry
+declares (money in the base currency, `%`, grouped integers), the same types
+`formatCell` renders on the Reports page. Recipients must be enabled
 Users holding a CRM role, at most `MAX_RECIPIENTS` (50) per digest, and each message is rendered inside
 `frappe.set_user(recipient)` so the scope is the recipient's own: a rep gets
 their rows, a manager the team's. All interpolated values are HTML-escaped.

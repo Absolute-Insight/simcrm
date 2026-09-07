@@ -111,8 +111,16 @@ def send_due_digests():
 			if not report_def:
 				continue
 
+			# The window is the previous N *settled* days, ending yesterday. The
+			# scheduler fires at midnight, so today has no closes in it yet -- but
+			# quota_in_period pro-rates by covered days, so a window that reached
+			# into today charged a full extra day of target against N days of
+			# revenue: a weekly digest read an on-target rep at 87.5%, a daily one
+			# at 50%. The settings page promises "covering the previous day" /
+			# "the previous seven days"; this is that.
 			today = frappe.utils.nowdate()
 			days = 7 if digest.frequency == "Weekly" else 1
+			to_date = frappe.utils.add_days(today, -1)
 			from_date = frappe.utils.add_days(today, -days)
 
 			recipients = [e.strip() for e in (digest.recipients or "").split(",") if e.strip()]
@@ -137,7 +145,7 @@ def send_due_digests():
 					# finally below restores the scheduler user unconditionally.
 					# nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser
 					frappe.set_user(recipient)
-					report = get_report(digest.report, str(from_date), str(today))
+					report = get_report(digest.report, str(from_date), str(to_date))
 				finally:
 					# nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser
 					frappe.set_user(original_user)
@@ -145,7 +153,7 @@ def send_due_digests():
 				frappe.sendmail(
 					recipients=[recipient],
 					subject=_("Vectora digest: {0}").format(report["title"]),
-					message=_render_digest(report, from_date, today),
+					message=_render_digest(report, from_date, to_date),
 					reference_doctype="CRM Report Digest",
 					reference_name=digest.name,
 				)
@@ -164,7 +172,6 @@ TH_STYLE = (
 	"font-size:12px;color:#7a7990;text-transform:uppercase;letter-spacing:0.04em"
 )
 TD_STYLE = "padding:6px 12px;border-bottom:1px solid #f2f2f8;font-variant-numeric:tabular-nums"
-
 
 def _cell(value) -> str:
 	"""A missing cell is blank, not the word "None". A report row leaves a key out

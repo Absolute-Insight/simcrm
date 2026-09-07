@@ -27,19 +27,18 @@ from crm.fcrm.doctype.crm_report_digest.crm_report_digest import (
 RECIPIENT = "digest-manager@crmtest.test"
 
 
+def ensure_user(email: str, first_name: str, role: str) -> None:
+	if not frappe.db.exists("User", email):
+		user = frappe.get_doc(
+			{"doctype": "User", "email": email, "first_name": first_name, "send_welcome_email": 0}
+		).insert(ignore_permissions=True)
+		user.add_roles(role)
+
+
 class ReportDigestTest(IntegrationTestCase):
 	def setUp(self):
 		super().setUp()
-		if not frappe.db.exists("User", RECIPIENT):
-			user = frappe.get_doc(
-				{
-					"doctype": "User",
-					"email": RECIPIENT,
-					"first_name": "Digest Manager",
-					"send_welcome_email": 0,
-				}
-			).insert(ignore_permissions=True)
-			user.add_roles("Sales Manager")
+		ensure_user(RECIPIENT, "Digest Manager", "Sales Manager")
 		self.digests: list[str] = []
 		self.clear_mail()
 
@@ -51,6 +50,21 @@ class ReportDigestTest(IntegrationTestCase):
 
 	def clear_mail(self):
 		frappe.db.delete("Email Queue", {"reference_doctype": "CRM Report Digest"})
+
+	def rendered_windows(self) -> list[tuple[str, str]]:
+		"""Run the scheduler and return the ``(from_date, to_date)`` each report was rendered for."""
+		from crm.api import reports
+
+		real = reports.get_report
+		windows: list[tuple[str, str]] = []
+
+		def recording(name, from_date=None, to_date=None, *args, **kwargs):
+			windows.append((str(from_date), str(to_date)))
+			return real(name, from_date, to_date, *args, **kwargs)
+
+		with patch.object(reports, "get_report", side_effect=recording):
+			send_due_digests()
+		return windows
 
 	def make_digest(self, **overrides):
 		digest = {
@@ -111,6 +125,34 @@ class ReportDigestTest(IntegrationTestCase):
 		self.make_digest(enabled=0)
 		self.assertEqual(send_due_digests(), 0)
 		self.assertEqual(self.queued_messages(), [])
+
+	# --- the window -----------------------------------------------------
+
+	def test_a_daily_digest_covers_exactly_the_previous_day(self):
+		"""The scheduler fires at midnight, so "today" has nothing in it yet --
+		but quota_in_period pro-rates by covered days, so a window that reached
+		into today charged a full extra day of target against one day of closes.
+		The settings page promises "covering the previous day"; hold it to that."""
+		self.make_digest()
+		yesterday = str(frappe.utils.add_days(frappe.utils.nowdate(), -1))
+		self.assertEqual(self.rendered_windows(), [(yesterday, yesterday)])
+
+	def test_a_weekly_digest_covers_exactly_the_previous_seven_days(self):
+		self.make_digest(frequency="Weekly")
+		with self.on_day("2026-08-10"):
+			windows = self.rendered_windows()
+		today = frappe.utils.nowdate()
+		self.assertEqual(
+			windows,
+			[(str(frappe.utils.add_days(today, -7)), str(frappe.utils.add_days(today, -1)))],
+		)
+		self.assertEqual(frappe.utils.date_diff(windows[0][1], windows[0][0]) + 1, 7)
+
+	def test_the_email_states_the_window_it_covers(self):
+		self.make_digest()
+		send_due_digests()
+		yesterday = str(frappe.utils.add_days(frappe.utils.nowdate(), -1))
+		self.assertIn(yesterday, self.queued_messages()[0])
 
 	def on_day(self, day: str):
 		"""Pin "today" for the scheduler without pinning it for everything else —
