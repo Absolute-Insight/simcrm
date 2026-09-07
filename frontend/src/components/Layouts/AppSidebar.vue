@@ -152,8 +152,12 @@
           </CollapsibleSection>
         </div>
 
-        <div v-if="!mobile" class="mt-auto flex flex-col gap-1 pt-2">
-          <div class="mb-1 flex flex-col gap-2">
+        <!-- The footer renders on mobile too: the drawer is the only place a
+             phone can reach the signed-in user, help, settings and log out.
+             The banners and the demo reset stay desktop-only -- they are
+             admin chores, and each one costs a phone-height row. -->
+        <div class="mt-auto flex flex-col gap-1 pt-2">
+          <div v-if="!mobile" class="mb-1 flex flex-col gap-2">
             <SignupBanner
               v-if="isDemoSite"
               :isSidebarCollapsed="isCollapsed"
@@ -175,7 +179,7 @@
             </div>
           </div>
           <SidebarItem
-            v-if="isManager() && isDemoDataCreated"
+            v-if="!mobile && isManager() && isDemoDataCreated"
             :label="__('Clear Demo Data')"
             class="!text-ink-red-6 hover:!bg-surface-red-2"
             @click="() => clearDemoData()"
