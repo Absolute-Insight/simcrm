@@ -26,11 +26,20 @@
 
 name: vectora
 
+# Bounded container logs. Without a limit the json-file driver grows without
+# end and a chatty worker fills the host disk before anything alerts.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 x-app: &app
   # No default tag on purpose: a stack that silently tracks `:stable` cannot
   # say what it is running. Pin a release in .env.
   image: ${VECTORA_IMAGE:-ghcr.io/absolute-insight/simcrm}:${VECTORA_TAG:?set VECTORA_TAG in .env (a release tag, e.g. v3.0.0)}
   restart: unless-stopped
+  logging: *logging
   volumes:
     - sites:/home/frappe/frappe-bench/sites
     - logs:/home/frappe/frappe-bench/logs
@@ -43,6 +52,7 @@ x-app: &app
 services:
   db:
     image: mariadb:10.6
+    logging: *logging
     restart: unless-stopped
     healthcheck:
       test: mysqladmin ping -h localhost --password=${DB_ROOT_PASSWORD}
@@ -65,6 +75,7 @@ services:
 
   redis-cache:
     image: redis:6.2-alpine
+    logging: *logging
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -80,6 +91,7 @@ services:
 
   redis-queue:
     image: redis:6.2-alpine
+    logging: *logging
     restart: unless-stopped
     volumes:
       - redis-queue-data:/data
@@ -314,6 +326,7 @@ services:
   # the proxy ceiling with it. See README.md.
   ollama:
     image: ollama/ollama:0.32.15
+    logging: *logging
     profiles: ["local-model"]
     restart: unless-stopped
     environment:
@@ -333,6 +346,7 @@ services:
   # present is a no-op, so `up -d` stays safe to re-run.
   ollama-pull:
     image: ollama/ollama:0.32.15
+    logging: *logging
     profiles: ["local-model"]
     restart: on-failure
     depends_on:
