@@ -392,7 +392,11 @@ text reaches their prompts. The Analyst's `deals_at_risk` and
 `accounts_going_quiet` tables carry deal and organization *names*, which a
 rep types; if that ever proves to steer the narrative, those two tables are
 the place to look, and the blast radius is a sentence an administrator
-reads next to the real table.
+reads next to the real table. Both scan **every** open deal: health comes
+from the dashboard's one-pass scorer (`_at_risk_deals`, the caller's own
+permission scope), and `accounts_going_quiet` no longer takes the first 200
+rows of `_working_deal_rows()` — that list is in `modified desc` order, so
+the cap kept the deals touched most recently and dropped the quiet ones.
 
 ## What is not here yet
 

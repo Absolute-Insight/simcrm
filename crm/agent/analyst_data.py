@@ -26,7 +26,7 @@ import requests
 
 from crm.agent import analyst
 from crm.agent.config import get_signal_config
-from crm.agent.predict import AT_RISK_BELOW, COOLING_RATIO, get_deal_health
+from crm.agent.predict import AT_RISK_BELOW, COOLING_RATIO
 from crm.agent.signals import (
 	CADENCE_WINDOW_DAYS,
 	_activity_history,
@@ -38,7 +38,6 @@ from crm.agent.signals import (
 ERP_ROW_CAP = 5000
 ERP_TIMEOUT = 30
 OVERDUE_AFTER_DAYS = 30
-QUIET_DEAL_CAP = 200
 
 
 # --- which ERP -----------------------------------------------------------------
@@ -224,13 +223,28 @@ def _deals_at_risk(from_date, to_date):
 
 
 def _accounts_going_quiet(from_date, to_date):
-	"""Organizations whose open deals are cooling or slipping -- the maintenance list."""
+	"""Organizations whose open deals are cooling or slipping -- the maintenance list.
+
+	Every working deal is scanned. This used to take the first 200 rows of
+	``_working_deal_rows()``, which come back in CRM Deal's default order
+	(``modified desc``): the 200 deals touched most recently -- precisely the
+	ones not going quiet -- and the answer then presented that sample as the
+	whole site. The activity helpers are batched and the health scores come from
+	the dashboard's one-pass scorer, so the full scan costs what ``deals_at_risk``
+	already costs.
+	"""
+	from crm.api.dashboard import _at_risk_deals
+
 	now = frappe.utils.now_datetime()
 	horizon = get_signal_config().close_horizon_days
-	deals = _working_deal_rows()[:QUIET_DEAL_CAP]
+	deals = _working_deal_rows()
 	names = [row["name"] for row in deals]
 	latest = _latest_activity(names)
 	history = _activity_history(names, now - timedelta(days=CADENCE_WINDOW_DAYS))
+	# Scored under the caller's own permission scope (get_list), like the
+	# dashboard tile: a deal the admin may not read has no score and is skipped,
+	# which is what the per-deal get_deal_health PermissionError used to do.
+	health_by_deal = {row["name"]: row["score"] for row in _at_risk_deals()}
 
 	by_org: dict[str, dict] = {}
 	for deal in deals:
@@ -243,11 +257,10 @@ def _accounts_going_quiet(from_date, to_date):
 			reasons.append("close date near, stage still early")
 		if not reasons:
 			continue
-		last = latest.get(deal["name"]) or deal["creation"]
-		try:
-			health = get_deal_health(deal["name"])["score"]
-		except frappe.PermissionError:
+		health = health_by_deal.get(deal["name"])
+		if health is None:
 			continue
+		last = latest.get(deal["name"]) or deal["creation"]
 		org = deal.get("organization") or "(no organization)"
 		entry = by_org.setdefault(
 			org,
@@ -268,7 +281,10 @@ def _accounts_going_quiet(from_date, to_date):
 		{**entry, "reason": ", ".join(sorted(entry.pop("reasons")))}
 		for entry in sorted(by_org.values(), key=lambda e: (e["lowest_health"], -e["days_since_contact"]))
 	]
-	return rows, "From the cadence and slip-risk signals on open deals; not equipment maintenance."
+	return rows, (
+		f"From the cadence and slip-risk signals on all {len(deals)} open deals, scored now; "
+		"not equipment maintenance."
+	)
 
 
 def _sales_trend(from_date, to_date):
