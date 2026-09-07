@@ -1,3 +1,4 @@
+import re
 from urllib.parse import urlparse
 
 import frappe
@@ -33,19 +34,47 @@ class DuplicateLeadError(ValidationError):
 GRAPH_TIMEOUT = (5, 30)
 
 
+_TOKEN_IN_QUERY = re.compile(r"(access_token=)[^&\s'\"]+")
+
+
+def redact_token(text: str, token: str | None = None) -> str:
+	"""``text`` with any Graph access token blanked, whether it sits in a query
+	string or was handed over as a header value."""
+	text = _TOKEN_IN_QUERY.sub(r"\1***", text or "")
+	if token:
+		text = text.replace(token, "***")
+	return text
+
+
 def graph_get(url: str, params: dict | None = None) -> dict:
 	"""One GET against Graph, decoded as JSON, with a bounded wait.
 
 	The same contract as frappe's ``make_get_request`` for a JSON endpoint -- a
 	non-2xx status raises, and the failure is logged before it propagates -- with
 	a timeout on top.
+
+	The access token travels as a bearer header, never in the URL: requests'
+	HTTPError text is "<status> Client Error: <reason> for url: <full URL>", so a
+	token in the query string landed in plaintext in the Error Log on every
+	failed call. Graph's paging cursor still carries it (that URL is Graph's, not
+	ours), which is what the redaction below is for.
 	"""
+	params = dict(params or {})
+	token = params.pop("access_token", None)
+	headers = {"Authorization": f"Bearer {token}"} if token else None
 	try:
-		response = get_request_session().get(url, params=params, timeout=GRAPH_TIMEOUT)
+		response = get_request_session().get(
+			url, params=params or None, headers=headers, timeout=GRAPH_TIMEOUT
+		)
 		response.raise_for_status()
 		return response.json()
-	except Exception:
-		frappe.log_error()
+	except Exception as exc:
+		frappe.log_error(
+			title="Facebook Graph request failed",
+			message=redact_token(
+				f"GET {url}\n{type(exc).__name__}: {exc}\n\n{frappe.get_traceback()}", token
+			),
+		)
 		raise
 
 
