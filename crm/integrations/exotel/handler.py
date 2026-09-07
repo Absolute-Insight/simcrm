@@ -40,6 +40,7 @@ def handle_request(**kwargs):
 	if not is_integration_enabled():
 		return
 
+	kwargs = _webhook_payload(kwargs)
 	request_log = create_request_log(
 		kwargs,
 		request_description="Exotel Call",
@@ -205,6 +206,19 @@ def get_all_exophones():
 	endpoint = get_exotel_endpoint("IncomingPhoneNumbers", "v2_beta")
 	response = requests.get(endpoint, auth=get_exotel_auth(), timeout=(5, 30))
 	return [phone.get("friendly_name") for phone in response.json().get("incoming_phone_numbers", [])]
+
+
+# Query parameters that are ours, not Exotel's: the shared secret that guards
+# this endpoint and the agent the callback URL was minted for. Frappe folds the
+# query string into the method's kwargs, so without this the verify token was
+# persisted in every Integration Request row and pushed to the agent's browser
+# in the realtime payload.
+WEBHOOK_TRANSPORT_KEYS = frozenset({"key", "agent", "cmd"})
+
+
+def _webhook_payload(kwargs: dict) -> dict:
+	"""The call payload Exotel sent, without our own transport parameters."""
+	return {k: v for k, v in kwargs.items() if k not in WEBHOOK_TRANSPORT_KEYS}
 
 
 def get_status_updater_url():
