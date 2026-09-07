@@ -99,7 +99,7 @@
         <div v-else>
           <div class="mb-1.5 text-base text-ink-gray-5">
             {{ __('Content') }}
-            <span class="text-ink-red-6">*</span>
+            <span class="text-ink-red-9">*</span>
           </div>
           <TextEditor
             ref="content"
