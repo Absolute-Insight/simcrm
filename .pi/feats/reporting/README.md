@@ -25,6 +25,13 @@ pattern.
   taken from one. A patch clears the contaminated snapshot history.
 - **"Actual" revenue is bucketed by `closed_date`**, the month a deal actually
   closed — not by the month it was *expected* to close.
+- **A deal's probability follows its stage until someone sets it by hand.** Every
+  weighted number reads `CRM Deal.probability`; it used to be written once at
+  creation from the first stage's default, so the forecast never moved as deals
+  advanced. On a status change a value still equal to the previous stage's
+  default moves to the new stage's default; any other value was a decision and
+  is kept. `closed_date` is stamped once on the way into Won and never
+  overwritten.
 - **Slip risk reads `expected_closure_date`, not `closed_date`.** `closed_date`
   is only set on a win, so anything scoring open deals against it can never
   fire.

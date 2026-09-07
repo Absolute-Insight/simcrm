@@ -36,7 +36,7 @@ feed them.
 | `idle_deal` | No activity logged for `IDLE_DEAL_DAYS` | backward |
 | `no_next_step` | Open deal with no open task | backward |
 | `lead_sla` | New lead untouched past the response target | backward |
-| `close_at_risk` | Expected close date approaching while the stage probability is still below `EARLY_STAGE_PROBABILITY` | **forward** |
+| `close_at_risk` | Expected close date approaching (today or ahead, within the horizon) while the stage probability is still below `EARLY_STAGE_PROBABILITY`; a date already past is history and never fires — the health score carries it as `close_overdue` | **forward** |
 | `deal_cooling` | Contact cadence decelerating against this deal's own median gap, before the flat idle threshold trips | **forward** |
 | `stale_plan` | A plan item is past due with no linked activity | backward |
 
@@ -70,6 +70,13 @@ suggestion respects its cooldown instead of returning on the next status flap.
 
 Dismissal reasons are readable through `get_dismissal_stats`, so a threshold that
 reps keep rejecting is visible rather than guessed at.
+
+Deleting a deal or lead clears its suggestions (`clear_suggestions`) and unlinks
+the plan items that pointed at it (`clear_plan_item_references`) — the item
+stays on the rep's week, the reference goes. Both doctypes sit in
+`ignore_links_on_delete`, so a planned activity can never make a record
+undeletable, and the "delete linked" flow refuses a document whose link lives in
+a child row rather than deleting the whole parent.
 
 ## The per-rep ceiling
 

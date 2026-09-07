@@ -40,7 +40,11 @@ Import direction is one-way: `errors` ← `config`/`schemas`/`context` ← `clie
   control that actually holds is that this layer has no write tools for hostile content to
   aim at. Treat every summary as text a third party can influence.
 - The endpoint degrades: with the flag off or the endpoint down, callers get a status,
-  never an exception. Config normalisation degrades too — an uninterpretable value falls
+  never an exception. A record with no email thread answers `{"status": "empty"}`
+  before the throttle, the budget or the model are consulted — the model used to be
+  asked to summarise silence and confidently reported that there was nothing to say.
+  The prompt header names the record by kind (`Lead:` / `Deal:`), read from the
+  `doctype` `tools.read_record` now carries. Config normalisation degrades too — an uninterpretable value falls
   back to its default rather than raising out of `get_config()`.
 - Every endpoint that can trigger an outbound model call is gated on a sales role
   (`@sales_user_only`) and rate-limited **twice**: frappe's `@rate_limit`, which keys on
@@ -367,6 +371,12 @@ and what they are grounded on. Spec:
 
 The Mentor was the original `ask_assistant` (2026-08-21); it was renamed when
 the Assistant took over the sidebar with a different source.
+
+Both cite what they were grounded on. The model's own `related_articles` are
+kept when they name real articles; when they name none (the shipped default
+never did in a live run), the endpoint cites the selected grounding set instead
+(`MAX_CITATIONS`, matching the schema's cap). An answer with no grounding still
+carries no citation.
 
 The Analyst is two model calls around one deterministic step: the model picks
 catalogue keys and a period (`AnalystPlan`; `normalise_plan` drops anything
