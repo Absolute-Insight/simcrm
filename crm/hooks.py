@@ -162,6 +162,7 @@ permission_query_conditions = {
 	"CRM Quota": "crm.fcrm.doctype.crm_quota.crm_quota.get_permission_query_conditions",
 	"CRM Suggestion": "crm.fcrm.doctype.crm_suggestion.crm_suggestion.get_permission_query_conditions",
 	"CRM Rep Plan": "crm.fcrm.doctype.crm_rep_plan.crm_rep_plan.get_permission_query_conditions",
+	"CRM Invitation": "crm.fcrm.doctype.crm_invitation.crm_invitation.get_permission_query_conditions",
 }
 
 has_permission = {
@@ -171,6 +172,7 @@ has_permission = {
 	"CRM Quota": "crm.fcrm.doctype.crm_quota.crm_quota.has_permission",
 	"CRM Suggestion": "crm.fcrm.doctype.crm_suggestion.crm_suggestion.has_permission",
 	"CRM Rep Plan": "crm.fcrm.doctype.crm_rep_plan.crm_rep_plan.has_permission",
+	"CRM Invitation": "crm.fcrm.doctype.crm_invitation.crm_invitation.has_permission",
 }
 
 # DocType Class

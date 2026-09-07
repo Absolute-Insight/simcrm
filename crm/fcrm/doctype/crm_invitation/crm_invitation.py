@@ -1,9 +1,27 @@
 # Copyright (c) 2024, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
+import hashlib
+
 import frappe
 from frappe import _
 from frappe.model.document import Document
+
+INVITABLE_ROLES = ("Sales User", "Sales Manager", "System Manager")
+# Only a System Manager may hand out either of these; a Sales Manager invites reps.
+ELEVATED_ROLES = ("Sales Manager", "System Manager")
+KEY_LENGTH = 32
+
+
+def hash_key(raw_key: str) -> str:
+	"""What the table stores for an invitation key.
+
+	The raw key travels only in the emailed link. Storing its SHA-256 means a read
+	of the row -- a report, an export, a permission gap like the one that let every
+	Sales User list pending invitations until 2026-09 -- yields nothing that can be
+	pasted into ``accept_invitation``.
+	"""
+	return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
 
 class CRMInvitation(Document):
@@ -26,16 +44,41 @@ class CRMInvitation(Document):
 
 	def before_insert(self):
 		frappe.utils.validate_email_address(self.email, True)
+		self.validate_inviter_may_grant_role()
 
-		self.key = frappe.generate_hash(length=12)
+		# The raw key is kept on the instance only long enough to be mailed.
+		self._raw_key = frappe.generate_hash(length=KEY_LENGTH)
+		self.key = hash_key(self._raw_key)
 		self.invited_by = frappe.session.user
 		self.status = "Pending"
+
+	def validate_inviter_may_grant_role(self):
+		"""The role an invitation grants is bounded by the inviter's own.
+
+		``crm.api.invite_by_email`` checks this too, but the endpoint is not the
+		only door: ``frappe.client.insert`` reaches the controller directly, and a
+		Sales Manager could insert a System Manager invitation, read its key back
+		and accept it as themselves. The check belongs where every insert passes.
+		"""
+		if self.role not in INVITABLE_ROLES:
+			frappe.throw(_("Cannot invite for this role"), frappe.PermissionError)
+		if self.role in ELEVATED_ROLES and "System Manager" not in frappe.get_roles(frappe.session.user):
+			frappe.throw(
+				_("Only a System Manager can invite a {0}").format(_(self.role)),
+				frappe.PermissionError,
+			)
 
 	def after_insert(self):
 		self.invite_via_email()
 
 	def invite_via_email(self):
-		invite_link = frappe.utils.get_url(f"/api/method/crm.api.accept_invitation?key={self.key}")
+		raw_key = getattr(self, "_raw_key", None)
+		if not raw_key:
+			# A resend: the stored value is a hash and cannot be turned back into a
+			# link, so the invitation gets a fresh key and the old link dies.
+			raw_key = frappe.generate_hash(length=KEY_LENGTH)
+			self.db_set("key", hash_key(raw_key))
+		invite_link = frappe.utils.get_url(f"/api/method/crm.api.accept_invitation?key={raw_key}")
 		if frappe.local.dev_server:
 			print(f"Invite link for {self.email}: {invite_link}")  # nosemgrep
 
@@ -57,7 +100,10 @@ class CRMInvitation(Document):
 
 	@frappe.whitelist()
 	def accept_invitation(self):
-		frappe.only_for(["System Manager", "Sales Manager"], True)
+		# Accepting on the invitee's behalf creates their account and mails them a
+		# set-password link. That is an administrator's act: a Sales Manager who
+		# could do it would be creating accounts, including for roles above their own.
+		frappe.only_for("System Manager", True)
 		if self.accept():
 			# the invitee was not around to set a password, mail them a link to do it
 			frappe.get_doc("User", self.email).send_welcome_mail_to_user()
@@ -131,3 +177,27 @@ def expire_invitations():
 				title="CRM Invitation: expiry failed",
 				message=f"{invitation.name}: {frappe.get_traceback()}",
 			)
+
+
+def get_permission_query_conditions(user=None):
+	"""Managers see the invitations they sent; System Managers see them all.
+
+	Reps have no read grant at all any more. This is the list door
+	(``frappe.client.get_list``, report view, export); ``has_permission`` below is
+	the record door, and the two must agree.
+	"""
+	user = user or frappe.session.user
+	if "System Manager" in frappe.get_roles(user):
+		return ""
+	return f"`tabCRM Invitation`.`invited_by` = {frappe.db.escape(user)}"
+
+
+def has_permission(doc, ptype="read", user=None):
+	user = user or frappe.session.user
+	if "System Manager" in frappe.get_roles(user):
+		return True
+	if ptype in ("create", "write"):
+		# invitations are created through crm.api.invite_by_email, which checks the
+		# inviter's role and inserts on their behalf
+		return False
+	return doc.invited_by == user
