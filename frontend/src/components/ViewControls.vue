@@ -359,7 +359,7 @@ import Draggable from 'vuedraggable'
 import isEqual from 'lodash/isEqual'
 import { PhTrayArrowDown as ImportIcon } from '@phosphor-icons/vue'
 import { reportActionError } from '@/utils/reportActionError'
-import { renderFieldLayoutDialog } from '@/utils/renderFieldLayoutDialog'
+import { collectClosingValues, needsClosingNote } from '@/utils/taskClosing'
 
 const props = defineProps({
   doctype: { type: String, required: true },
@@ -1027,44 +1027,15 @@ function persistCustomView() {
     .catch((error) => reportActionError(error, __('Could not save the view.')))
 }
 
-// A CRM Task may not be left in one of these without a closing note, so the
-// board has to collect the note before it writes the status. Rescheduled is on
-// the list but is not terminal: it also needs a new due date.
-const NOTE_REQUIRED_TASK_STATUSES = ['Done', 'Canceled', 'Rescheduled']
-
-function needsClosingNote(data) {
+// A CRM Task may not be left in Done/Canceled/Rescheduled without a closing
+// note, so the board collects it before writing the status -- through the same
+// helper the record page's task list uses (utils/taskClosing.js).
+function needsTaskClosingNote(data) {
   return (
     props.doctype === 'CRM Task' &&
     view.value.column_field === 'status' &&
-    NOTE_REQUIRED_TASK_STATUSES.includes(data.to)
+    needsClosingNote(data.to)
   )
-}
-
-function closingNoteFields(status) {
-  const fields = [
-    {
-      fieldname: 'closing_note',
-      fieldtype: 'Small Text',
-      label: __('What happened'),
-    },
-  ]
-  if (status === 'Rescheduled') {
-    fields.push({
-      fieldname: 'due_date',
-      fieldtype: 'Datetime',
-      label: __('New due date'),
-    })
-  }
-  return fields
-}
-
-function closingSubmitLabel(status) {
-  const labels = {
-    Done: __('Mark done'),
-    Canceled: __('Mark canceled'),
-    Rescheduled: __('Mark rescheduled'),
-  }
-  return labels[status] || __('Save')
 }
 
 // vuedraggable has already moved the card by the time this runs, so the board
@@ -1074,22 +1045,13 @@ function closingSubmitLabel(status) {
 async function moveKanbanItem(data) {
   const values = { [view.value.column_field]: data.to }
 
-  if (needsClosingNote(data)) {
-    const fields = closingNoteFields(data.to)
-    const result = await renderFieldLayoutDialog({
-      title: __('Closing note'),
-      size: 'md',
-      fields,
-      required: fields.map((field) => field.fieldname),
-      submitLabel: closingSubmitLabel(data.to),
-      cancelLabel: __('Cancel'),
-    })
-    if (!result) {
+  if (needsTaskClosingNote(data)) {
+    const closing = await collectClosingValues(data.to)
+    if (!closing) {
       list.value.reload?.()
       return
     }
-    values.closing_note = result.closing_note
-    if (result.due_date) values.due_date = result.due_date
+    Object.assign(values, closing)
   }
 
   return call('frappe.client.set_value', {
