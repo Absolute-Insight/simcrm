@@ -4,7 +4,7 @@
       <h2 class="text-xl font-semibold text-ink-gray-8">
         {{ __('Acumatica Settings') }}
       </h2>
-      <Switch
+      <CheckSwitch
         v-if="settings.doc"
         v-model="settings.doc.enabled"
         :label="settings.doc.enabled ? __('Enabled') : __('Disabled')"
@@ -168,13 +168,13 @@
 </template>
 
 <script setup>
+import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import { ref, onMounted, onUnmounted } from 'vue'
 import {
   createDocumentResource,
   call,
   FormControl,
   Button,
-  Switch,
   toast,
 } from 'frappe-ui'
 import Link from '@/components/Controls/Link.vue'

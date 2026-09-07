@@ -153,7 +153,7 @@ import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import EmailTemplateIcon from '@/components/Icons/EmailTemplateIcon.vue'
 import EmptyState from '../../ListViews/EmptyState.vue'
 import { useBroadcast } from '@/composables/useBroadcast'
-import { TextInput, Select, Switch, Dropdown, toast } from 'frappe-ui'
+import { TextInput, Select, Dropdown, toast } from 'frappe-ui'
 import { ref, computed, inject } from 'vue'
 import { ConfirmDelete } from '../../../utils'
 

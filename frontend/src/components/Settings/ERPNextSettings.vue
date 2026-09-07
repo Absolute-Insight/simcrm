@@ -476,7 +476,6 @@ import {
   createResource,
   FormControl,
   LoadingIndicator,
-  Switch,
   toast,
   Tooltip,
 } from 'frappe-ui'

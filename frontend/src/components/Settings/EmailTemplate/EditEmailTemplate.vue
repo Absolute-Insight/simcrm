@@ -123,7 +123,7 @@
 </template>
 <script setup>
 import CheckSwitch from '@/components/ui/CheckSwitch.vue'
-import { FormControl, Switch, toast, createResource } from 'frappe-ui'
+import { FormControl, toast, createResource } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
 import { TextEditor } from 'frappe-ui/experimental'
 import { computed, inject, onMounted, ref } from 'vue'

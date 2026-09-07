@@ -171,7 +171,6 @@ import { supportedSourceTypes } from './leadSyncSourceConfig'
 import {
   Button,
   FormControl,
-  Switch,
   toast,
   ErrorMessage,
   Tabs,

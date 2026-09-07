@@ -123,7 +123,7 @@
 <script setup>
 import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import ToneBadge from '@/components/ui/ToneBadge.vue'
-import { Switch, Dropdown, toast } from 'frappe-ui'
+import { Dropdown, toast } from 'frappe-ui'
 import { ref, computed, inject } from 'vue'
 import EmptyState from '../../ListViews/EmptyState.vue'
 import { ConfirmDelete } from '../../../utils'
