@@ -209,7 +209,7 @@
     <!-- v-if matters: useOnboarding() hands back the step list as it stands
          when called, and the steps are registered in onMounted. -->
     <OnboardingPanel
-      v-if="showHelpModal"
+      v-if="showHelpModal && isManager()"
       :logo="CRMLogo"
       :title="__('Vectora')"
       :afterSkip="(step) => capture('onboarding_step_skipped_' + step)"
@@ -816,6 +816,12 @@ onMounted(async () => {
   if (props.mobile) return
 
   await users.promise
+
+  // Only whoever sets the site up gets the checklist. Its steps ("create your
+  // first lead", "invite your team") assume an empty site, and registering them
+  // is what opens the floating panel: a rep landing on an imported pipeline of
+  // thousands of deals would meet "Getting started 0/7" over it on day one.
+  if (!isManager()) return
 
   const filteredSteps = steps.filter((step) => {
     if (step.condition) {
