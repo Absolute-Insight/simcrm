@@ -195,7 +195,8 @@ class RateLimitTest(IntegrationTestCase):
 				api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001")
 				for _ in range(api_mod.SUMMARISE_RATE_LIMIT + 1)
 			]
-		self.assertEqual(results[-1], {"status": "unavailable"})
+		# the refusal names the burst window, so the client can say "a minute", not "tomorrow"
+		self.assertEqual(results[-1], {"status": "unavailable", "reason": api_mod.RATE_LIMITED})
 		self.assertEqual(complete.call_count, api_mod.SUMMARISE_RATE_LIMIT)
 
 	def test_a_dead_cache_fails_open(self):
@@ -296,7 +297,7 @@ class DailyBudgetTest(IntegrationTestCase):
 			frappe.cache().delete(key)
 			self.addCleanup(frappe.cache().delete, key)
 		verdicts = [api_mod._budget_spent(shared) for _ in range(21)]
-		self.assertEqual(verdicts[:20], [False] * 20)
+		self.assertEqual([bool(v) for v in verdicts[:20]], [False] * 20)
 		self.assertTrue(verdicts[20])
 		self.assertLess(int(frappe.cache().get(api_mod.budget_key()) or 0), shared.daily_call_budget)
 
@@ -545,3 +546,62 @@ class SlotRefusalRefundTest(IntegrationTestCase):
 		complete.assert_not_called()
 		self.assertEqual(int(frappe.cache().get(site_key) or 0), 0)
 		self.assertEqual(int(frappe.cache().get(user_key) or 0), 0)
+
+
+class ThrottleReasonTest(IntegrationTestCase):
+	"""A spent budget is not weather. The burst limiter clears in a minute and a
+	dead endpoint may be back in a moment, but a spent day budget does not
+	recover until tomorrow -- so the status has to say which it was, or every
+	surface invites retries that are refunded and never succeed."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.cache().delete(api_mod.budget_key())
+		frappe.cache().delete(api_mod.user_budget_key())
+		self.addCleanup(frappe.cache().delete_value, api_mod.budget_key())
+		self.addCleanup(frappe.cache().delete_value, api_mod.user_budget_key())
+
+	def test_the_burst_window_and_the_two_budgets_are_told_apart(self):
+		with mock.patch.object(api_mod, "user_rate_limited", return_value=True):
+			self.assertEqual(api_mod._throttled(ENABLED), api_mod.RATE_LIMITED)
+		tiny = AgentConfig(
+			enabled=True, base_url="http://x/v1", model="m", timeout=5, max_tokens=64, daily_call_budget=1
+		)
+		frappe.cache().setex(api_mod.budget_key(), 3600, 1)
+		self.assertEqual(api_mod._budget_spent(tiny), api_mod.SITE_BUDGET)
+		frappe.cache().delete(api_mod.budget_key())
+		frappe.cache().setex(api_mod.user_budget_key(), 3600, api_mod.user_daily_call_budget(tiny))
+		self.assertEqual(api_mod._budget_spent(tiny), api_mod.USER_BUDGET)
+		frappe.cache().delete(api_mod.user_budget_key())
+		self.assertIsNone(api_mod._budget_spent(tiny))
+
+	def test_every_endpoint_reports_the_reason_for_a_spent_budget(self):
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod, "_throttled", return_value=api_mod.SITE_BUDGET),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
+			mock.patch.object(api_mod, "_knowledge_available", return_value=True, create=True),
+			mock.patch.object(api_mod, "_knowledge_articles", return_value=[{"name": "a", "title": "A"}]),
+			mock.patch.object(api_mod.client, "complete") as complete,
+		):
+			results = [
+				api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001"),
+				api_mod.draft_reply("CRM Deal", "CRM-DEAL-0001"),
+				api_mod.ask_mentor("how do targets work?"),
+				api_mod.ask_assistant("what do we sell?"),
+			]
+		for result in results:
+			self.assertEqual(result, {"status": "unavailable", "reason": "budget"}, result)
+		complete.assert_not_called()
+
+	def test_an_unreachable_model_still_reports_a_bare_unavailable(self):
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			no_budget_check(),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
+			mock.patch.object(api_mod.client, "complete", side_effect=AgentUnavailable("down")),
+		):
+			result = api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001")
+		self.assertEqual(result, {"status": "unavailable"})

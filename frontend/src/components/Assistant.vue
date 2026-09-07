@@ -31,6 +31,7 @@
           :messages="assistantMessages"
           :asking="assistantAsking"
           :failure="assistantFailure"
+          :failure-reason="assistantFailureReason"
           :examples="exampleQuestions"
           :intro="intro"
           :placeholder="__('Ask about our products…')"
@@ -82,7 +83,10 @@
               @click="openSettingsPage('Knowledge')"
             />
             <Button
-              v-else-if="failure === 'unavailable'"
+              v-else-if="
+                failure === 'unavailable' &&
+                canRetryUnavailable(assistantFailureReason)
+              "
               size="sm"
               variant="subtle"
               :label="__('Try again')"
@@ -101,6 +105,7 @@ import {
   askAssistant,
   assistantAsking,
   assistantFailure,
+  assistantFailureReason,
   assistantMessages,
   assistantVisible,
   clearAssistant,
@@ -108,6 +113,11 @@ import {
   toggleAssistant,
 } from '@/stores/assistant'
 import { openHelpCenter } from '@/stores/help'
+import {
+  budgetStatusMessage,
+  canRetryUnavailable,
+  isBudgetReason,
+} from '@/utils/agentStatus'
 import { usersStore } from '@/stores/users'
 import { activeSettingsPage, showSettings } from '@/composables/settings'
 import { onClickOutside } from '@vueuse/core'
@@ -129,6 +139,10 @@ const exampleQuestions = [
 ]
 
 function failureCopy(failure) {
+  if (failure === 'unavailable' && isBudgetReason(assistantFailureReason.value)) {
+    // a spent day budget is not weather: no retry will help until tomorrow
+    return budgetStatusMessage(assistantFailureReason.value)
+  }
   if (failure === 'disabled') {
     return isAdmin()
       ? __(

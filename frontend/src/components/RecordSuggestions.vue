@@ -228,7 +228,7 @@ async function summariseThread() {
     } else {
       summary.value = null
       summaryNotice.value =
-        summaryStatusMessage(result?.status) ||
+        summaryStatusMessage(result?.status, result?.reason) ||
         __('There was nothing on this record to summarise yet.')
     }
   } catch {

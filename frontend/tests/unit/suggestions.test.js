@@ -494,3 +494,25 @@ describe('thread summary', () => {
     expect(sentimentLabel(null)).toBe('')
   })
 })
+
+describe('spent budget on the record surfaces', () => {
+  it('summary and draft say the allowance is used up rather than "try again"', () => {
+    for (const reason of ['budget', 'user_budget']) {
+      expect(summaryStatusMessage('unavailable', reason)).toMatch(/allowance/i)
+      expect(summaryStatusMessage('unavailable', reason)).not.toMatch(
+        /try again/i,
+      )
+      expect(draftStatusMessage('unavailable', reason)).toMatch(/allowance/i)
+      expect(draftStatusMessage('unavailable', reason)).not.toMatch(
+        /try again/i,
+      )
+    }
+  })
+
+  it('keeps the weather wording for every other reason', () => {
+    expect(summaryStatusMessage('unavailable', 'rate_limited')).toMatch(
+      /could not be reached/,
+    )
+    expect(draftStatusMessage('unavailable')).toMatch(/could not be reached/)
+  })
+})

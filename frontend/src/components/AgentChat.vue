@@ -55,13 +55,15 @@
       >
         <slot name="failure" :failure="failure">
           <p class="text-sm text-ink-gray-6">
-            {{ failureCopy[failure] }}
+            {{ failureText(failure) }}
           </p>
         </slot>
         <div class="flex flex-wrap gap-2">
           <slot name="failure-actions" :failure="failure">
             <Button
-              v-if="failure === 'unavailable'"
+              v-if="
+                failure === 'unavailable' && canRetryUnavailable(failureReason)
+              "
               size="sm"
               variant="subtle"
               :label="__('Try again')"
@@ -103,6 +105,11 @@
  * only renders it and emits intent.
  */
 import { PhCircleNotch as LucideLoaderCircle } from '@phosphor-icons/vue'
+import {
+  budgetStatusMessage,
+  canRetryUnavailable,
+  isBudgetReason,
+} from '@/utils/agentStatus'
 import { nextTick, ref, watch } from 'vue'
 
 const props = defineProps({
@@ -110,6 +117,8 @@ const props = defineProps({
   asking: { type: Boolean, default: false },
   /** '' | 'disabled' | 'empty' | 'unavailable' */
   failure: { type: String, default: '' },
+  /** The server's reason for an unavailable status, when it gave one. */
+  failureReason: { type: String, default: '' },
   examples: { type: Array, default: () => [] },
   intro: { type: String, default: '' },
   placeholder: { type: String, default: '' },
@@ -133,6 +142,13 @@ const failureCopy = {
   unavailable: __(
     'The model could not be reached right now. Your question was not lost — try again in a moment.',
   ),
+}
+
+function failureText(failure) {
+  if (failure === 'unavailable' && isBudgetReason(props.failureReason)) {
+    return budgetStatusMessage(props.failureReason)
+  }
+  return failureCopy[failure]
 }
 
 function send(text) {

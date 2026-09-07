@@ -26,6 +26,7 @@ export const mentorOpen = ref(false)
 export const mentorMessages = store.messages
 export const mentorAsking = store.asking
 export const mentorFailure = store.failure
+export const mentorFailureReason = store.failureReason
 export const clearMentor = store.clear
 export const retryMentor = store.retry
 

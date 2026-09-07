@@ -11,6 +11,7 @@
  * different shapes here: urgency resolves to a word, health to a meter with an
  * explicit denominator. Nothing in the UI should print a bare suggestion score.
  */
+import { budgetStatusMessage, isBudgetReason } from '@/utils/agentStatus'
 
 /* Explicit, not a ternary on "is it a Deal": the inbox used to send every
    non-Deal suggestion to the Lead route, so a suggestion on any third doctype
@@ -282,7 +283,7 @@ export function composeDismissReason(choice, note) {
 }
 
 /** What to tell the rep when the agent tier could not write them a draft. */
-export function draftStatusMessage(status) {
+export function draftStatusMessage(status, reason = '') {
   if (status === 'empty') {
     return __(
       'There are no emails on this record to reply to yet, so there is no draft to start from. Write the message yourself.',
@@ -294,6 +295,9 @@ export function draftStatusMessage(status) {
     )
   }
   if (status === 'unavailable') {
+    if (isBudgetReason(reason)) {
+      return `${budgetStatusMessage(reason)} ${__('There is no draft to start from, so write the reply yourself.')}`
+    }
     return __(
       'The assistant could not be reached, so there is no draft to start from. Write the reply yourself, or try again later.',
     )
@@ -306,7 +310,7 @@ export function draftStatusMessage(status) {
     Same shape as draftStatusMessage: name the state, then say what to do
     instead. A feature that is switched off should read as absent, not broken,
     and either way the thread is still there to read. */
-export function summaryStatusMessage(status) {
+export function summaryStatusMessage(status, reason = '') {
   if (status === 'empty') {
     return __(
       'No emails on this record yet, so there is nothing to summarise.',
@@ -318,6 +322,9 @@ export function summaryStatusMessage(status) {
     )
   }
   if (status === 'unavailable') {
+    if (isBudgetReason(reason)) {
+      return `${budgetStatusMessage(reason)} ${__('There is no summary; the emails below are the thread.')}`
+    }
     return __(
       'The assistant could not be reached, so there is no summary. The emails below are the thread, or try again later.',
     )

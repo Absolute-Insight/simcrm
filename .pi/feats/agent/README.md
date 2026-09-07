@@ -55,6 +55,11 @@ Import direction is one-way: `errors` ← `config`/`schemas`/`context` ← `clie
   `SUMMARISE_RATE_LIMIT` (10/min); `test_connection` has its own 6/min pair. A throttled
   call returns `{"status": "unavailable"}`, which the frontend already treats as
   weather. One call can hold a worker for `timeout × MAX_ATTEMPTS`.
+- A call the throttle refuses answers `{"status": "unavailable", "reason": ...}` with
+  `rate_limited` (the minute window), `user_budget` or `budget` (the day is spent);
+  a model that could not be reached stays a bare `unavailable`. The surfaces read
+  the reason (`frontend/src/utils/agentStatus.js`): a spent budget says so and hides
+  "Try again", because a retry would be refunded and never succeed.
 - Two daily budgets, both redis counters that expire themselves: the site-wide
   `daily_call_budget` from settings, and a per-user share derived from it —
   `max(10, daily_call_budget // 5)` — so one account cannot spend the whole site's day.
