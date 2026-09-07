@@ -1104,8 +1104,10 @@ async function savePlan() {
       week_start: weekStart.value,
       items: toSavePayload(localItems.list),
       // round-tripped so the server can tell us the week moved under us rather
-      // than silently overwriting whoever got there first
-      modified: server.modified || undefined,
+      // than silently overwriting whoever got there first; '' says "we loaded
+      // the week and there was no plan", so a plan that appeared since (another
+      // tab, another device) is a conflict too
+      modified: server.loaded ? server.modified || '' : undefined,
     })
     adoptServerPlan(data)
     loadReferenceTitles(data.items)

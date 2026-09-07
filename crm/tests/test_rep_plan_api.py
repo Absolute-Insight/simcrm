@@ -291,6 +291,18 @@ class RepPlanApiTest(IntegrationTestCase):
 		out = get_plan(self.monday)
 		self.assertEqual(out["items"][0]["activity_type"], "Task")
 
+	def test_a_tab_that_saw_an_empty_week_is_told_when_a_plan_appeared(self):
+		"""Two tabs on an empty week: the first save creates the plan, the second
+		must not silently replace it. "" is the client's word for "I loaded the
+		week and there was nothing"."""
+		frappe.set_user(REP)
+		save_plan(self.monday, [{"activity_type": "Call", "planned_date": self.monday}], modified="")
+
+		with self.assertRaises(frappe.TimestampMismatchError):
+			save_plan(self.monday, [{"activity_type": "Task", "planned_date": self.monday}], modified="")
+		out = get_plan(self.monday)
+		self.assertEqual(out["items"][0]["activity_type"], "Call")
+
 	def test_a_rep_can_mark_an_item_done_by_hand_and_hand_it_back(self):
 		frappe.set_user(REP)
 		out = save_plan(self.monday, [{"activity_type": "Call", "planned_date": self.monday}])

@@ -215,9 +215,18 @@ def save_plan(week_start: str, items: list | str, modified: str | None = None):
 		frappe.throw(_("Plans older than {0} weeks can no longer be edited.").format(MATCH_HORIZON_WEEKS))
 
 	user = frappe.session.user
-	if modified:
+	if modified is not None:
+		# What the caller saw when they loaded the week: a timestamp, or "" for
+		# "there was no plan". Either is checked against what is there now, so a
+		# tab opened on an empty week cannot replace a plan another tab or device
+		# created meanwhile. None means the caller makes no claim (a server-side
+		# caller, or an old client) and the save goes through unchecked.
 		current = frappe.db.get_value("CRM Rep Plan", {"user": user, "week_start": week_start}, "modified")
-		if not current or frappe.utils.get_datetime(current) != frappe.utils.get_datetime(modified):
+		if modified == "":
+			changed = bool(current)
+		else:
+			changed = not current or frappe.utils.get_datetime(current) != frappe.utils.get_datetime(modified)
+		if changed:
 			frappe.throw(
 				_("This plan changed since you opened it. Reload before saving."),
 				frappe.TimestampMismatchError,
