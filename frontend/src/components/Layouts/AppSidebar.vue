@@ -170,7 +170,15 @@
                  wrap it here, in code we own, rather than reaching into its
                  internal structure from index.css. See the .v-getting-started
                  rule there for why (F3, low-contrast CTA button). -->
-            <div v-if="!isOnboardingStepsCompleted" class="v-getting-started">
+            <!-- The checklist is for whoever sets the site up. Its steps
+                 ("create your first lead", "invite your team") assume an
+                 empty site; a rep arriving at an imported pipeline of
+                 thousands of deals would read "0/7 steps" as the product
+                 not knowing who they are. -->
+            <div
+              v-if="isManager() && !isOnboardingStepsCompleted"
+              class="v-getting-started"
+            >
               <GettingStartedBanner :isSidebarCollapsed="isCollapsed" />
             </div>
           </div>
