@@ -157,3 +157,20 @@ class RowPermissionTest(IntegrationTestCase):
 		self.addCleanup(frappe.set_user, "Administrator")
 		frappe.set_user(BOB)
 		self.assertIsInstance(get_assigned_users("CRM Deal", self.deal.name), list)
+
+
+class PlanOwnershipTest(RowPermissionTest):
+	def test_a_rep_cannot_take_over_another_reps_plan_by_rewriting_its_user(self):
+		"""frappe checks write permission on the mutated document, so `user = me`
+		used to pass has_permission; validate refuses the change and the stored
+		owner is what has_permission compares against."""
+		frappe.set_user(ALICE)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Rep Plan", self.bobs_plan.name, "user", ALICE)
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("CRM Rep Plan", self.bobs_plan.name, "user"), BOB)
+
+		frappe.set_user(ALICE)
+		plan = frappe.get_doc("CRM Rep Plan", self.bobs_plan.name)
+		plan.user = ALICE
+		self.assertFalse(plan.has_permission("write"))

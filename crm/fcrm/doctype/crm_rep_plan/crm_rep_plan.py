@@ -51,12 +51,20 @@ def has_permission(doc, ptype="read", user=None):
 	``crm.api.rep_plan`` enforces the same rule, but the generic document API is a
 	second door into this doctype and a rep editing a colleague's week through it
 	would be indistinguishable from the colleague doing it.
+
+	Ownership is read from the stored row, not the in-memory document: frappe
+	checks write permission on the document *after* ``set_value``/``save`` have
+	applied the caller's changes, so a rep who rewrote ``user`` to themselves
+	looked like the owner. ``validate`` refuses that change as well.
 	"""
 	user = user or frappe.session.user
-	if doc.user == user:
+	owner = doc.user
+	if doc.name and not doc.get("__islocal"):
+		owner = frappe.db.get_value("CRM Rep Plan", doc.name, "user") or doc.user
+	if owner == user:
 		return True
 	users = visible_users(user)
-	return ptype in READABLE and (users is None or doc.user in users)
+	return ptype in READABLE and (users is None or owner in users)
 
 
 def on_doctype_update():
@@ -108,6 +116,14 @@ class CRMRepPlan(Document):
 	# end: auto-generated types
 
 	def validate(self):
+		# A plan is never handed to another user. Nothing legitimate moves a week
+		# from one rep to another, and allowing it let a rep take over a colleague's
+		# plan -- items, fulfilment state and all -- by rewriting `user` through
+		# frappe.client.set_value: frappe checks write permission on the already
+		# mutated document, so the thief looked like the owner.
+		if not self.is_new() and self.has_value_changed("user"):
+			frappe.throw(_("A plan cannot be moved to another user."), frappe.PermissionError)
+
 		week_start = getdate(self.week_start)
 		if week_start.weekday() != 0:
 			frappe.throw(_("Week start must be a Monday."))
