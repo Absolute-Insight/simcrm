@@ -48,3 +48,42 @@ def on_doctype_update():
 				"index was not created.\n\n" + frappe.get_traceback()
 			),
 		)
+
+
+def get_permission_query_conditions(user=None):
+	"""A manager reads the snapshots of the reps they can see, and their own team's.
+
+	Every row stores a monthly revenue forecast and the actual closed at the time,
+	per rep, per team node and site-wide. The dashboard picks one series server-side
+	(``forecast_accuracy_scope``), but the doctype was open to the generic API with
+	nothing but the Sales Manager role grant, so an in-tree manager could pull the
+	company total and every other team's numbers with one ``get_list``. This is the
+	same hierarchy rule CRM Quota and CRM Rep Plan already follow.
+	"""
+	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
+
+	user = user or frappe.session.user
+	users = visible_users(user)
+	if users is None:
+		return ""
+	reps = ", ".join(frappe.db.escape(name) for name in users)
+	me = frappe.db.escape(user)
+	return (
+		f"((`tabCRM Forecast Snapshot`.`scope` = 'Rep' and `tabCRM Forecast Snapshot`.`user` in ({reps}))"
+		f" or (`tabCRM Forecast Snapshot`.`scope` = 'Team' and `tabCRM Forecast Snapshot`.`user` = {me}))"
+	)
+
+
+def has_permission(doc, ptype="read", user=None):
+	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
+
+	user = user or frappe.session.user
+	users = visible_users(user)
+	if users is None:
+		return True
+	if doc.scope == "Rep":
+		return doc.user in users
+	if doc.scope == "Team":
+		return doc.user == user
+	# Site rows are the company total; only the unrestricted see them.
+	return False
