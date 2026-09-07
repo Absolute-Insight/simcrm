@@ -3586,10 +3586,10 @@ foreground-child@^3.3.1:
     cross-spawn "^7.0.6"
     signal-exit "^4.0.1"
 
-frappe-ui@1.0.0-beta.55:
-  version "1.0.0-beta.55"
-  resolved "https://registry.yarnpkg.com/frappe-ui/-/frappe-ui-1.0.0-beta.55.tgz#405b8e569d456d8b6679f4dd3109068c3982dfcc"
-  integrity sha512-+G+5GDVIr31+QJ2ekDpM8FOXUWzTO4oBhh9rMjfDzJnFGzISbAy4U7V/XOF3hYOkQz4R/QqnrHTD55o+JRcOoA==
+frappe-ui@1.0.0-beta.56:
+  version "1.0.0-beta.56"
+  resolved "https://registry.yarnpkg.com/frappe-ui/-/frappe-ui-1.0.0-beta.56.tgz#4a90662a58114aede964c55cada102efc78c5e93"
+  integrity sha512-Ez3AZKC+7jFAbUW7Dceosz5uzmzV4MakQkUTNa464nGiX0OFrF/+eNRZAXbooR9Gz61Ur0KQVvUhp07LOUB4FQ==
   dependencies:
     "@codemirror/lang-css" "^6.3.0"
     "@codemirror/lang-html" "^6.4.9"
