@@ -152,11 +152,6 @@ const routes = [
     props: true,
   },
   {
-    path: '/welcome',
-    name: 'Welcome',
-    component: () => import('@/pages/Welcome.vue'),
-  },
-  {
     path: '/onboarding',
     name: 'Onboarding',
     component: () => import('@/pages/PersonaForm.vue'),
@@ -368,7 +363,10 @@ router.beforeEach(async (to, from, next) => {
    Reload once onto the page they asked for; the cooldown keeps a build that is
    broken for real from reloading in a loop. */
 router.onError((error, to) => {
-  reloadOnceForStaleChunk(error, to?.fullPath ? `/crm${to.fullPath}` : undefined)
+  reloadOnceForStaleChunk(
+    error,
+    to?.fullPath ? `/crm${to.fullPath}` : undefined,
+  )
 })
 
 export default router
