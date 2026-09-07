@@ -159,6 +159,16 @@ def _stage_items(plan, items: list[dict]) -> set[str]:
 			frappe.throw(_("Cannot plan against {0}.").format(reference_doctype))
 
 		clean = {f: row.get(f) for f in EDITABLE_ITEM_FIELDS}
+		# The client resends the reference it loaded the week with, and a deal or
+		# lead can now be deleted out from under a plan item (clear_plan_item_references
+		# nulls the stored row without touching the plan's `modified`, so the
+		# optimistic-lock check cannot see it). Re-adopting a name that is gone
+		# would fail the whole save on a link-validation error the rep can do
+		# nothing about, losing the rest of their week's edits.
+		if clean.get("reference_doctype") and clean.get("reference_docname"):
+			if not frappe.db.exists(clean["reference_doctype"], clean["reference_docname"]):
+				clean["reference_doctype"] = None
+				clean["reference_docname"] = None
 		existing = preserved.get(str(row.get("name") or ""))
 		if existing:
 			# rescheduling a row is not the same as replacing it: it keeps its name,
