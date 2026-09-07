@@ -808,15 +808,21 @@ def remove_doc_link(doctype, docname):
 	if not doctype or not docname:
 		return
 	if doctype != "CRM Notification" and not _has_reference_fields(doctype):
-		# The link lives in a child row (a plan item, a call log's links table), not
-		# on this document. Saving it with two fields it does not have was a silent
-		# no-op that left the link in place, and the delete path then removed the
-		# whole parent -- a rep's entire weekly plan -- to free one deal. Refuse,
-		# and let the caller report it as skipped.
-		frappe.throw(
-			_("{0} is linked through one of its rows and cannot be unlinked here").format(_(doctype)),
-			frappe.ValidationError,
-		)
+		# Nothing to unlink here: this document has no reference_doctype /
+		# reference_docname pair, so its link to the target is one of its own
+		# fields (CRM Deal.lead, CRM Deal.organization) or a child row. Saving it
+		# with two fields it does not have would be a silent no-op, so skip it and
+		# leave the caller's own decision -- "delete linked document(s)" really
+		# does mean delete this one -- alone.
+		#
+		# This used to throw. That was written for a plan item, whose parent is a
+		# rep's whole week and must not be deleted to free one deal; but CRM Rep
+		# Plan and CRM Rep Plan Item are both in `ignore_links_on_delete`, which
+		# frappe's get_linked_docs / get_dynamic_linked_docs honour, so a plan
+		# never reaches here. The throw's only live effect was to block deleting a
+		# converted lead's deal, and the bulk path discards `skipped`, so the UI
+		# reported success while the lead and its deal both stayed.
+		return
 
 	try:
 		linked_doc_data = frappe.get_doc(doctype, docname)
