@@ -222,7 +222,17 @@ services:
       BACKEND: backend:8000
       SOCKETIO: websocket:9000
       FRAPPE_SITE_NAME_HEADER: ${SITE_NAME:?set SITE_NAME in .env}
-      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      # Which peers nginx trusts to carry the client address in X-Forwarded-For.
+      # The TLS proxy never arrives from 127.0.0.1: through Docker's published
+      # port it appears as the compose network's gateway, and as a sibling
+      # container it appears with its own address -- both in Docker's private
+      # 172.16/12 space. With the old loopback default the header was never
+      # honoured, every request reached frappe with the same address, and every
+      # per-IP rate limit (the guest invitation acceptance most painfully) was
+      # one bucket for the whole company. Only the proxy can reach this port, so
+      # trusting the private range is trusting the proxy. Override in .env if
+      # your proxy lives elsewhere.
+      UPSTREAM_REAL_IP_ADDRESS: ${UPSTREAM_REAL_IP_ADDRESS:-172.16.0.0/12}
       UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
       UPSTREAM_REAL_IP_RECURSIVE: "off"
       PROXY_READ_TIMEOUT: 120
