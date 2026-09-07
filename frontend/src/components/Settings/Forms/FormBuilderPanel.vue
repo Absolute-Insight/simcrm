@@ -612,7 +612,7 @@
                         />
                         <span class="text-sm text-ink-gray-5"
                           >{{ f.label
-                          }}<span v-if="fieldRequired(f)" class="text-ink-red-5"
+                          }}<span v-if="fieldRequired(f)" class="text-ink-red-9"
                             >*</span
                           ></span
                         >
