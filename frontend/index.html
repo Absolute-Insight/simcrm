@@ -48,7 +48,12 @@
     <meta name="theme-color" content="#0e1830" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Vectora" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="white" />
+    <!-- "white" is not one of the three values this tag accepts (default,
+         black, black-translucent), so iOS ignored it and used `default`: an
+         opaque white bar with dark text above a dark-first app. `black` keeps
+         the bar dark in both themes; `black-translucent` would slide content
+         under it and needs safe-area padding this layout does not carry. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
 
     <!-- PWA -->
     <link
