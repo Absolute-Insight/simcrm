@@ -164,6 +164,7 @@ permission_query_conditions = {
 	"CRM Rep Plan": "crm.fcrm.doctype.crm_rep_plan.crm_rep_plan.get_permission_query_conditions",
 	"CRM Invitation": "crm.fcrm.doctype.crm_invitation.crm_invitation.get_permission_query_conditions",
 	"CRM Forecast Snapshot": "crm.fcrm.doctype.crm_forecast_snapshot.crm_forecast_snapshot.get_permission_query_conditions",
+	"CRM View Settings": "crm.fcrm.doctype.crm_view_settings.crm_view_settings.get_permission_query_conditions",
 }
 
 has_permission = {
@@ -175,6 +176,7 @@ has_permission = {
 	"CRM Rep Plan": "crm.fcrm.doctype.crm_rep_plan.crm_rep_plan.has_permission",
 	"CRM Invitation": "crm.fcrm.doctype.crm_invitation.crm_invitation.has_permission",
 	"CRM Forecast Snapshot": "crm.fcrm.doctype.crm_forecast_snapshot.crm_forecast_snapshot.has_permission",
+	"CRM View Settings": "crm.fcrm.doctype.crm_view_settings.crm_view_settings.has_permission",
 }
 
 # DocType Class
