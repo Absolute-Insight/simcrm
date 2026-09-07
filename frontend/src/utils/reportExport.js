@@ -152,3 +152,22 @@ export function toCsv(columns, rows, currency = '') {
 
   return UTF8_BOM + lines.join('\r\n')
 }
+
+/**
+ * The download name for a report's CSV.
+ *
+ * Built-in reports carry a registry `name`; a report from the builder
+ * (`report_builder.run`) carries measure/dimension and no name, so the file
+ * used to download as "undefined-<from>-to-<to>.csv". A snapshot report
+ * (`period: false`) never applied the range it was named after.
+ */
+export function csvFileName(report, from, to) {
+  const stem =
+    report?.name ||
+    (report?.measure && report?.dimension
+      ? `${report.measure}_by_${report.dimension}`
+      : '') ||
+    'report'
+  if (report?.period === false || !from || !to) return `${stem}.csv`
+  return `${stem}-${from}-to-${to}.csv`
+}
