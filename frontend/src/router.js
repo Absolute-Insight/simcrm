@@ -259,7 +259,10 @@ router.beforeEach(async (to, from, next) => {
       next({ name: route_name, params: { viewType: type } })
     }
   } else if (!isLoggedIn) {
-    window.location.href = '/login?redirect-to=/crm'
+    // Carry the requested route so the person comes back to it, not to the
+    // front door; crm/www/crm.py does the same for a cold /crm/<path> load.
+    window.location.href =
+      '/login?redirect-to=' + encodeURIComponent('/crm' + to.fullPath)
     // Leaving the SPA entirely, but this guard still has to answer: vue-router
     // declares `next` in its signature, so returning without calling it logs
     // "Invalid navigation guard" and rejects the navigation with an error

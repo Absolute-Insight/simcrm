@@ -1,6 +1,8 @@
 # Copyright (c) 2022, Frappe Technologies Pvt. Ltd. and Contributors
 # GNU GPLv3 License. See license.txt
 
+from urllib.parse import quote
+
 import frappe
 from frappe import _, get_installed_apps
 from frappe.integrations.frappe_providers.frappecloud_billing import is_fc_site
@@ -16,8 +18,13 @@ def get_context():
 
 	if frappe.session.user == "Guest":
 		# A logged-out visitor typing /crm got Frappe's "Not Permitted" page and
-		# had to know about /login themselves; send them there and back again.
-		frappe.local.flags.redirect_location = "/login?redirect-to=/crm"
+		# had to know about /login themselves; send them there and back again --
+		# to the page they asked for, not the front door: a rep tapping "Task
+		# assigned to you" in an email while logged out lands on that deal.
+		request = getattr(frappe.local, "request", None)
+		frappe.local.flags.redirect_location = login_redirect_for(
+			request.full_path if request is not None else None
+		)
 		raise frappe.Redirect
 	if not check_app_permission():
 		frappe.throw(_("You do not have permission to access Vectora"), frappe.PermissionError)
@@ -95,3 +102,20 @@ def get_state_options() -> dict[str, list[str]]:
 
 def get_default_route():
 	return "/crm"
+
+
+def login_redirect_for(requested_path: str | None) -> str:
+	"""The /login URL that brings a guest back to the page they asked for.
+
+	``website_route_rules`` routes every ``/crm/<path>`` to this page, so the
+	request path is the deep link. Anything that is not a path inside the app
+	(no request, a scheme-relative ``//host``, another route) falls back to the
+	front door -- frappe's login page already refuses off-site redirects, but
+	the value is built here from request data, so it is pinned here too. The
+	fragment (``#tasks``) never reaches the server and cannot be carried.
+	"""
+	# werkzeug's full_path is "path?" when there is no query string
+	path = (requested_path or "").rstrip("?")
+	if not (path == "/crm" or path.startswith("/crm/")) or path.startswith("//"):
+		path = "/crm"
+	return f"/login?redirect-to={quote(path, safe='/')}"
