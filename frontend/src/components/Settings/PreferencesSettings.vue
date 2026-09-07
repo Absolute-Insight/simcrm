@@ -94,16 +94,15 @@ import {
   Combobox,
   toast,
   createResource,
-  createDocumentResource,
 } from 'frappe-ui'
-import { ref, computed, inject } from 'vue'
+import { useOwnProfile } from '@/composables/useOwnProfile'
+import { ref, computed } from 'vue'
 
 const refreshRequired = ref(false)
 
-const { user: sessionUser } = inject('session')
 
 const { brand } = getSettings()
-const user = createDocumentResource({ doctype: 'User', name: sessionUser })
+const user = useOwnProfile()
 
 function save() {
   refreshRequired.value =

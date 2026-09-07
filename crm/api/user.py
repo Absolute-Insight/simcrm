@@ -4,6 +4,61 @@ from frappe.auth import LoginAttemptTracker
 from frappe.rate_limiter import rate_limit
 from frappe.utils.password import check_password, update_password
 
+# What Settings -> Profile and Settings -> Preferences show and let a person change
+# about themselves. frappe's User doctype grants read and write to System Manager
+# only (plus `select` to Desk User), so the frappe.client document resource the
+# panes used answered 403 for every Sales User: a rep could not see their own
+# name, change their photo, or pick a language. These two endpoints are the
+# rep's own row, nothing else, through an allow-list of fields.
+PROFILE_FIELDS = (
+	"name",
+	"email",
+	"first_name",
+	"last_name",
+	"full_name",
+	"user_image",
+	"language",
+	"time_zone",
+	"modified",
+)
+PROFILE_EDITABLE_FIELDS = frozenset({"first_name", "last_name", "user_image", "language", "time_zone"})
+
+
+def _own_user() -> str:
+	user = frappe.session.user
+	if user == "Guest":
+		frappe.throw(_("You must be logged in"), frappe.AuthenticationError)
+	return user
+
+
+@frappe.whitelist()
+def get_profile() -> dict:
+	"""The session user's own profile, readable regardless of User doctype grants."""
+	return frappe.db.get_value("User", _own_user(), list(PROFILE_FIELDS), as_dict=True)
+
+
+@frappe.whitelist(methods=["POST"])
+def update_profile(changes: dict | str) -> dict:
+	"""Change the session user's own profile fields; anything else is refused.
+
+	Saved with ``ignore_permissions`` because the row is the caller's own and the
+	field list is fixed here -- roles, email, enabled and everything that grants
+	access are not in it and cannot be reached through this door.
+	"""
+	user = _own_user()
+	changes = frappe.parse_json(changes) if isinstance(changes, str) else (changes or {})
+	unknown = set(changes) - PROFILE_EDITABLE_FIELDS
+	if unknown:
+		frappe.throw(
+			_("These fields cannot be changed here: {0}").format(", ".join(sorted(unknown))),
+			frappe.ValidationError,
+		)
+	doc = frappe.get_doc("User", user)
+	for field, value in changes.items():
+		doc.set(field, value)
+	doc.save(ignore_permissions=True)
+	return get_profile()
+
 
 @frappe.whitelist()
 @rate_limit(limit=5, seconds=300)  # 5 attempts per 5 minutes per user/IP

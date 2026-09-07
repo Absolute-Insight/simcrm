@@ -144,14 +144,13 @@ import {
   LoadingIndicator,
   toast,
   Tooltip,
-  createDocumentResource,
 } from 'frappe-ui'
-import { ref, computed, inject, useTemplateRef, nextTick } from 'vue'
+import { useOwnProfile } from '@/composables/useOwnProfile'
+import { ref, computed, useTemplateRef, nextTick } from 'vue'
 
 const emit = defineEmits(['updateStep'])
 
-const { user: sessionUser } = inject('session')
-const user = createDocumentResource({ doctype: 'User', name: sessionUser })
+const user = useOwnProfile()
 
 const showChangePasswordModal = ref(false)
 const isHoveringRemove = ref(false)
