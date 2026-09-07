@@ -319,6 +319,7 @@ describe('dismissal reasons', () => {
 describe('agent degrade statuses', () => {
   it('explains a switched-off assistant', () => {
     expect(draftStatusMessage('disabled')).toMatch(/switched off/)
+    expect(draftStatusMessage('empty')).toMatch(/no emails on this record/)
   })
 
   it('explains an unreachable assistant', () => {
@@ -443,6 +444,9 @@ describe('thread summary', () => {
   it('names the state and says what to do instead', () => {
     expect(summaryStatusMessage('disabled')).toMatch(/switched off/)
     expect(summaryStatusMessage('unavailable')).toMatch(/could not be reached/)
+    // the server answers `empty` for a record with no email thread, before any
+    // model call; the rep should read that as a fact about the record
+    expect(summaryStatusMessage('empty')).toMatch(/No emails on this record/)
     // a status with nothing useful to say says nothing, rather than inventing
     expect(summaryStatusMessage('ok')).toBe('')
     expect(summaryStatusMessage(undefined)).toBe('')

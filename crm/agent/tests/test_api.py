@@ -18,6 +18,11 @@ from crm.agent.schemas import ThreadSummary
 DISABLED = AgentConfig(enabled=False, base_url="http://x/v1", model="m", timeout=5, max_tokens=64)
 ENABLED = AgentConfig(enabled=True, base_url="http://x/v1", model="m", timeout=5, max_tokens=64)
 SUMMARY = ThreadSummary(summary="Stalled on pricing.", next_steps=["Send quote"], sentiment="neutral")
+# A record with no thread is answered before the throttle and the model are
+# consulted (status "empty"), so tests about those layers need something to read.
+ONE_MESSAGE = [
+	{"name": "COMM-0001", "creation": "2026-08-01 09:00:00", "sender": "buyer@acme.test", "content": "hello"}
+]
 
 
 # Every endpoint runs through the per-user minute window and the daily budgets; the
@@ -56,7 +61,7 @@ class DegradeTest(IntegrationTestCase):
 		with (
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
-			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
 			mock.patch.object(api_mod.client, "complete", side_effect=AgentUnavailable("down")),
 			no_budget_check(),
 		):
@@ -65,12 +70,58 @@ class DegradeTest(IntegrationTestCase):
 		self.assertEqual(result["status"], "unavailable")
 
 
+class EmptyThreadTest(IntegrationTestCase):
+	"""No emails means nothing to summarise or reply to: say so, spend nothing.
+
+	The model used to be asked anyway and confidently reported that there were no
+	communications -- eight seconds and a budget unit for a sentence the client can
+	write itself, and a rate-limit tick against the rep.
+	"""
+
+	def test_summarise_reports_empty_before_the_throttle_or_the_model(self):
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod, "_throttled") as throttled,
+			mock.patch.object(api_mod.client, "complete") as complete,
+		):
+			result = api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001")
+
+		self.assertEqual(result, {"status": "empty"})
+		throttled.assert_not_called()
+		complete.assert_not_called()
+
+	def test_draft_reply_reports_empty_the_same_way(self):
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod, "_throttled") as throttled,
+			mock.patch.object(api_mod.actions, "propose_reply") as propose,
+		):
+			result = api_mod.draft_reply("CRM Deal", "CRM-DEAL-0001")
+
+		self.assertEqual(result, {"status": "empty"})
+		throttled.assert_not_called()
+		propose.assert_not_called()
+
+	def test_a_missing_or_unreadable_record_still_raises_before_anything_is_charged(self):
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod, "_throttled") as throttled,
+		):
+			with self.assertRaises(frappe.DoesNotExistError):
+				api_mod.summarise_thread("CRM Deal", "CRM-DEAL-DOES-NOT-EXIST")
+		throttled.assert_not_called()
+
+
 class HappyPathTest(IntegrationTestCase):
 	def test_returns_the_validated_summary_as_a_plain_dict(self):
 		with (
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
-			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
 			mock.patch.object(api_mod.client, "complete", return_value=SUMMARY) as complete,
 			no_budget_check(),
 		):
@@ -137,7 +188,7 @@ class RateLimitTest(IntegrationTestCase):
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod, "_budget_spent", return_value=False),
 			mock.patch.object(api_mod.tools, "read_record", return_value={}),
-			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
 			mock.patch.object(api_mod.client, "complete", return_value=SUMMARY) as complete,
 		):
 			results = [
@@ -187,6 +238,8 @@ class DailyBudgetTest(IntegrationTestCase):
 		with (
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod, "_budget_spent", return_value=True),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
 			mock.patch.object(api_mod.client, "complete") as complete,
 			mock.patch.object(api_mod.actions, "propose_reply") as propose,
 		):
@@ -454,7 +507,7 @@ class InflightSlotTest(IntegrationTestCase):
 			no_budget_check(),
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "X"}),
-			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
 			mock.patch.object(api_mod.client, "complete") as complete,
 		):
 			result = api_mod.summarise_thread("CRM Deal", "X")
@@ -483,7 +536,7 @@ class SlotRefusalRefundTest(IntegrationTestCase):
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod, "user_rate_limited", return_value=False),
 			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "X"}),
-			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
 			mock.patch.object(api_mod.client, "complete") as complete,
 		):
 			result = api_mod.summarise_thread("CRM Deal", "X")

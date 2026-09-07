@@ -41,19 +41,29 @@ def build_thread_messages(
 	# ultimately typed by someone, and the rule "anything out of the database is
 	# neutralised unless it is a constant" is cheaper to hold than a per-field argument
 	# about which columns a stranger can reach.
-	header = "\n".join(
-		[
-			f"Deal: {_neutralise(deal.get('name', ''))}",
-			f"Organization: {_neutralise(deal.get('organization', '')) or 'unknown'}",
-			f"Status: {_neutralise(deal.get('status', '')) or 'unknown'}",
-		]
-	)
+	header = _record_header(deal)
 	body = _fenced_thread(communications, max_chars)
 	user = f"{header}\n\n{body}\n\nSummarise the conversation and list concrete next steps."
 	return [
 		{"role": "system", "content": SYSTEM_PROMPT},
 		{"role": "user", "content": user},
 	]
+
+
+# What a record is called in the prompt, by doctype. The header used to say
+# "Deal:" for every record; a lead's summary then called it a deal.
+RECORD_LABELS = {"CRM Deal": "Deal", "CRM Lead": "Lead"}
+
+
+def _record_header(record: dict) -> str:
+	kind = RECORD_LABELS.get(str(record.get("doctype") or ""), "Deal")
+	return "\n".join(
+		[
+			f"{kind}: {_neutralise(record.get('name', ''))}",
+			f"Organization: {_neutralise(record.get('organization', '')) or 'unknown'}",
+			f"Status: {_neutralise(record.get('status', '')) or 'unknown'}",
+		]
+	)
 
 
 def _fenced_thread(communications: list[dict], max_chars: int) -> str:
@@ -122,13 +132,7 @@ def build_reply_messages(
 	third-party text), which is why it may only ever land in a compose window a
 	human reviews and sends -- never in an outbox.
 	"""
-	header = "\n".join(
-		[
-			f"Deal: {_neutralise(deal.get('name', ''))}",
-			f"Organization: {_neutralise(deal.get('organization', '')) or 'unknown'}",
-			f"Status: {_neutralise(deal.get('status', '')) or 'unknown'}",
-		]
-	)
+	header = _record_header(deal)
 	body = _fenced_thread(communications, max_chars)
 	user = (
 		f"{header}\n\n{body}\n\n"

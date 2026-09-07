@@ -26,6 +26,10 @@ from crm.agent.schemas import ReplyDraft
 DISABLED = AgentConfig(enabled=False, base_url="http://x/v1", model="m", timeout=5, max_tokens=64)
 ENABLED = AgentConfig(enabled=True, base_url="http://x/v1", model="m", timeout=5, max_tokens=64)
 DRAFT = ReplyDraft(subject="Re: pricing", body="Thanks — sending the quote today.")
+# the endpoint answers "empty" for a record with no thread before it reaches the model
+ONE_MESSAGE = [
+	{"name": "COMM-0001", "creation": "2026-08-01 09:00:00", "sender": "buyer@acme.test", "content": "hello"}
+]
 
 
 class ActionsNeverTouchFrappeTest(UnitTestCase):
@@ -64,7 +68,7 @@ class DraftReplyEndpointTest(IntegrationTestCase):
 		with (
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
-			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
 			mock.patch.object(api_mod.client, "complete", side_effect=AgentUnavailable("down")),
 			mock.patch.object(api_mod, "_budget_spent", return_value=False),
 		):
@@ -75,7 +79,7 @@ class DraftReplyEndpointTest(IntegrationTestCase):
 		with (
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
-			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
 			mock.patch.object(api_mod.client, "complete", return_value=DRAFT) as complete,
 			mock.patch.object(api_mod, "_budget_spent", return_value=False),
 		):

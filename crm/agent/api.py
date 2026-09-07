@@ -200,17 +200,25 @@ def _throttled(cfg) -> bool:
 def summarise_thread(reference_doctype: str, reference_name: str) -> dict:
 	"""Summarise a record's communication thread.
 
-	Returns ``{"status": "ok", "summary": {...}}`` on success, or a bare status of
-	``disabled`` or ``unavailable``.
+	Returns ``{"status": "ok", "summary": {...}}`` on success, ``{"status": "empty"}``
+	when the record has no email thread, or a bare status of ``disabled`` or
+	``unavailable``.
 	"""
 	cfg = get_config()
 	if not cfg.enabled:
 		return {"status": "disabled"}
-	if _throttled(cfg):
-		return {"status": "unavailable"}
 
+	# Read before throttling: a record with no email thread is answered here
+	# without a model call, a budget charge or a rate-limit tick. The model used
+	# to be asked to summarise silence and confidently reported that there was
+	# nothing to say -- eight seconds and a budget unit for a sentence the
+	# client can write itself.
 	record = tools.read_record(reference_doctype, reference_name)
 	thread = tools.read_thread(reference_doctype, reference_name)
+	if not thread:
+		return {"status": "empty"}
+	if _throttled(cfg):
+		return {"status": "unavailable"}
 	messages = build_thread_messages(record, thread)
 
 	with _model_call_slot() as free:
@@ -240,11 +248,14 @@ def draft_reply(reference_doctype: str, reference_name: str) -> dict:
 	cfg = get_config()
 	if not cfg.enabled:
 		return {"status": "disabled"}
-	if _throttled(cfg):
-		return {"status": "unavailable"}
 
 	record = tools.read_record(reference_doctype, reference_name)
 	thread = tools.read_thread(reference_doctype, reference_name)
+	if not thread:
+		# nothing to reply to; same short-circuit as summarise_thread
+		return {"status": "empty"}
+	if _throttled(cfg):
+		return {"status": "unavailable"}
 
 	with _model_call_slot() as free:
 		if not free:
@@ -292,8 +303,18 @@ def ask_mentor(question: str, history: str | list | None = None) -> dict:
 	# so an invented citation cannot become a dead link in the help center.
 	known = {article["name"] for article in articles}
 	related = [name for name in reply.related_articles if name in known]
+	if not related:
+		# Small models seldom fill related_articles at all (the shipped default
+		# never did in a live run). The grounding set is what the answer was built
+		# from, so it is the honest citation when the model offers none -- and it
+		# stays empty when nothing scored, because then nothing was quoted.
+		related = [article["name"] for article in selected[:MAX_CITATIONS]]
 	return {"status": "ok", "answer": reply.answer, "related_articles": related}
 
+
+# How many grounding articles are cited when the model names none itself; matches
+# the cap the schema puts on the model's own related_articles.
+MAX_CITATIONS = 3
 
 # How many knowledge rows the Assistant considers. Selection is a scan over
 # titles, tags and bodies, so a catalogue past this is a search index's job,
@@ -343,7 +364,12 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 		return {"status": "unavailable"}
 
 	titles = {article["name"]: article["title"] for article in articles}
-	sources = [{"name": name, "title": titles[name]} for name in reply.related_articles if name in titles]
+	cited = [name for name in reply.related_articles if name in titles]
+	if not cited:
+		# same rule as the Mentor: an answer grounded on articles the model did
+		# not name is still an answer from those articles
+		cited = [article["name"] for article in selected[:MAX_CITATIONS]]
+	sources = [{"name": name, "title": titles[name]} for name in cited]
 	return {"status": "ok", "answer": reply.answer, "sources": sources}
 
 

@@ -283,6 +283,11 @@ export function composeDismissReason(choice, note) {
 
 /** What to tell the rep when the agent tier could not write them a draft. */
 export function draftStatusMessage(status) {
+  if (status === 'empty') {
+    return __(
+      'There are no emails on this record to reply to yet, so there is no draft to start from. Write the message yourself.',
+    )
+  }
   if (status === 'disabled') {
     return __(
       'The assistant is switched off, so there is no draft to start from. Write the reply yourself and send it as usual.',
@@ -302,6 +307,11 @@ export function draftStatusMessage(status) {
     instead. A feature that is switched off should read as absent, not broken,
     and either way the thread is still there to read. */
 export function summaryStatusMessage(status) {
+  if (status === 'empty') {
+    return __(
+      'No emails on this record yet, so there is nothing to summarise.',
+    )
+  }
   if (status === 'disabled') {
     return __(
       'The assistant is switched off, so there is no summary. The emails below are the thread.',
