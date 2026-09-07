@@ -67,6 +67,8 @@ class DealTimelineWithUnreadableLeadTest(IntegrationTestCase):
 		creation = [a for a in activities if a.get("activity_type") == "creation"]
 		self.assertEqual(len(creation), 1, activities)
 		self.assertIn("converted", creation[0]["data"])
+		# and it is the deal's own row: nothing from the lead came through
+		self.assertFalse(any(a.get("is_lead") for a in activities), activities)
 
 	def test_a_reader_who_may_see_the_lead_gets_both_histories(self):
 		frappe.set_user(OTHER)
@@ -76,5 +78,14 @@ class DealTimelineWithUnreadableLeadTest(IntegrationTestCase):
 
 		frappe.set_user("Administrator")
 		activities, *_rest = get_activities(self.deal.name)
-		kinds = {a.get("activity_type") for a in activities}
-		self.assertIn("creation", kinds)
+
+		# The assertion that matters is the *merge*, not the deal's own creation
+		# row -- that one is appended unconditionally, so asserting on it alone
+		# passed just as well with the lead history dropped entirely.
+		# get_lead_activities seeds a row of its own marked is_lead, so a reader
+		# entitled to the lead sees two creation rows and an unentitled one sees
+		# a single row (asserted above).
+		creation = [a for a in activities if a.get("activity_type") == "creation"]
+		self.assertEqual(len(creation), 2, activities)
+		self.assertTrue(any(a.get("is_lead") for a in creation), activities)
+		self.assertTrue(any(not a.get("is_lead") for a in creation), activities)
