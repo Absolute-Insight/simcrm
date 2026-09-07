@@ -1043,7 +1043,7 @@ function goBack() {
         {
           label: __('Go Back'),
           variant: 'solid',
-          onClick: (close) => {
+          onClick: ({ close }) => {
             emit('back')
             close()
           },
@@ -1402,7 +1402,7 @@ async function requestDoctypeChange(newDt) {
         label: __('Change & remove fields'),
         variant: 'solid',
         theme: 'red',
-        onClick: (close) => {
+        onClick: ({ close }) => {
           commitDoctype(newDt, valid)
           close()
         },

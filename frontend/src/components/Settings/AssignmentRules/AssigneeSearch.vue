@@ -156,7 +156,7 @@ const inviteAgent = () => {
       {
         label: __('Go to Invite Page'),
         variant: 'solid',
-        onClick: (close) => {
+        onClick: ({ close }) => {
           activeSettingsPage.value = 'Invite User'
           close()
         },

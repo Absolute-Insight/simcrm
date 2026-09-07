@@ -473,7 +473,7 @@ function deleteEvent() {
         label: __('Delete'),
         variant: 'solid',
         theme: 'red',
-        onClick: (close) => {
+        onClick: ({ close }) => {
           eventsResource.delete.submit(_event.value.id, {
             onSuccess: async () => {
               await eventsResource.reload()

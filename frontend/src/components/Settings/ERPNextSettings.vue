@@ -681,7 +681,7 @@ const toggleEnable = (value) => {
           label: __('Disable'),
           variant: 'solid',
           theme: 'red',
-          onClick: (close) => {
+          onClick: ({ close }) => {
             updateFields('enabled', false)
             close()
           },

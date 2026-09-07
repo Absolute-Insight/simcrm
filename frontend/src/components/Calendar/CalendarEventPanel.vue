@@ -928,14 +928,14 @@ function showDiscardChangesModal(action) {
     actions: [
       {
         label: __('Cancel'),
-        onClick: (close) => {
+        onClick: ({ close }) => {
           close()
         },
       },
       {
         label: __('Discard'),
         variant: 'solid',
-        onClick: (close) => {
+        onClick: ({ close }) => {
           action()
           close()
         },

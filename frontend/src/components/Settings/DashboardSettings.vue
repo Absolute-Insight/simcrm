@@ -249,7 +249,7 @@ function setCurrency(value) {
       {
         label: __('Save'),
         variant: 'solid',
-        onClick: (close) => {
+        onClick: ({ close }) => {
           settings.doc.currency = value
           settings.save.submit(null, {
             onSuccess: () => {

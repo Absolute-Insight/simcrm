@@ -1270,7 +1270,7 @@ const viewActions = (view, close) => {
                   label: __('Delete'),
                   variant: 'solid',
                   theme: 'red',
-                  onClick: (close) => deleteView(_view, close),
+                  onClick: ({ close }) => deleteView(_view, close),
                 },
               ],
             }),
