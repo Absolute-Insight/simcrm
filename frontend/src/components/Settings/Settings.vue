@@ -216,7 +216,11 @@ const tabs = computed(() => {
           label: __('Accounts'),
           icon: Email2Icon,
           component: markRaw(EmailConfig),
-          condition: () => isManager(),
+          // The site's outgoing and incoming mail accounts, which Frappe keeps
+          // to System Manager. A Sales Manager was offered the pane and met a
+          // 403 behind an empty list; their own address lives under
+          // Profile > Email instead.
+          condition: () => isAdmin(),
         },
         {
           label: __('Templates'),
@@ -232,6 +236,11 @@ const tabs = computed(() => {
           label: __('Assignment Rules'),
           icon: markRaw(h(SettingsIcon2, { class: 'rotate-90' })),
           component: markRaw(AssignmentRulePage),
+          // Assignment Rule is a framework doctype readable by System Manager
+          // only, so a Sales Manager opening this got the error state rather
+          // than their team's routing rules. Same gate as Assistant and
+          // Knowledge above.
+          condition: () => isAdmin(),
         },
         {
           label: __('SLA Policies'),
