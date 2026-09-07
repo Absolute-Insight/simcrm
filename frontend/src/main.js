@@ -4,6 +4,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { createDialog } from './utils/dialogs'
 import { cleanUpSupersededWorkers } from './utils/staleServiceWorkers'
+import { isSessionGone, loginUrlFor } from './utils/sessionExpiry'
 import { initSocket } from './socket'
 import router from './router'
 import translationPlugin from './translation'
@@ -61,7 +62,21 @@ let app = createApp(App)
 app.provide('weight', 'regular')
 app.provide('color', 'currentColor')
 
-setConfig('resourceFetcher', frappeRequest)
+/* Every resource in the app fetches through here. When the session has lapsed
+   frappe answers 403 to everything, which the pages used to render as a
+   permission problem ("ask an administrator"). Send the person back to log in,
+   returning to the page they were on; a genuine 403 on a live session still
+   surfaces as a permission error. */
+let redirectingToLogin = false
+setConfig('resourceFetcher', (options) =>
+  frappeRequest(options).catch((error) => {
+    if (!redirectingToLogin && isSessionGone(error, document.cookie)) {
+      redirectingToLogin = true
+      window.location.assign(loginUrlFor(window.location))
+    }
+    throw error
+  }),
+)
 app.use(FrappeUI)
 app.use(spritePlugin)
 app.use(pinia)

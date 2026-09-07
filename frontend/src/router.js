@@ -3,6 +3,7 @@ import { call } from 'frappe-ui'
 import { usersStore } from '@/stores/users'
 import { sessionStore } from '@/stores/session'
 import { viewsStore } from '@/stores/views'
+import { reloadOnceForStaleChunk } from '@/utils/staleChunk'
 
 let personaChecked = false
 export const PERSONA_DONE_KEY = 'crm_persona_captured'
@@ -356,6 +357,15 @@ router.beforeEach(async (to, from, next) => {
   } else {
     next()
   }
+})
+
+/* A release replaces every hashed chunk. A tab opened before it lazily imports
+   a page that no longer exists, the navigation rejects, and nothing tells the
+   person -- the sidebar simply stops working until they think of reloading.
+   Reload once onto the page they asked for; the cooldown keeps a build that is
+   broken for real from reloading in a loop. */
+router.onError((error, to) => {
+  reloadOnceForStaleChunk(error, to?.fullPath ? `/crm${to.fullPath}` : undefined)
 })
 
 export default router
