@@ -6,6 +6,11 @@ from frappe.tests.utils import FrappeTestCase
 from crm.integrations.acumatica import outbound
 
 
+def _names(fieldname):
+	"""The field names a get_value call asked for, whether it passed one or a list."""
+	return fieldname if isinstance(fieldname, list | tuple) else [fieldname]
+
+
 def _wrapped(**kw):
 	return {k: {"value": v} for k, v in kw.items()}
 
@@ -72,6 +77,28 @@ class TestCreateCustomer(FrappeTestCase):
 		self.assertEqual(frappe.db.get_value("CRM Organization", org.name, "acumatica_noteid"), "g-new")
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_an_organization_with_a_customer_id_but_no_noteid_is_already_linked(self, ClientCls):
+		"""The spreadsheet import gives every organization its real CustomerID and no
+		NoteID (the exports carry none). Testing NoteID alone would have PUT a
+		duplicate customer into the client's live ERP the first time a rep won one
+		of the 4,163 imported deals, then overwritten the real id with the duplicate's."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		# Insert open, then move to Won without hooks: inserting at Won runs the
+		# push through the on_update hook before the import's identity is set.
+		org, deal = _make_deal(status="Qualification")
+		frappe.db.set_value("CRM Organization", org.name, "acumatica_id", "C-PRO004")
+		frappe.db.set_value("CRM Deal", deal.name, "status", "Won")
+
+		outbound.push_customer_for_deal(deal.name)
+
+		client.put.assert_not_called()
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "acumatica_customer"), "C-PRO004")
+		self.assertEqual(frappe.db.get_value("CRM Organization", org.name, "acumatica_id"), "C-PRO004")
+		self.assertFalse(frappe.db.get_value("CRM Organization", org.name, "acumatica_noteid"))
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_customer_id_from_name_respects_the_segment_length(self, ClientCls):
 		_enable(customer_numbering="From Organization Name", customer_id_max_length=10)
 		org, deal = _make_deal(status="Won")  # organization_name is longer than 10 chars
@@ -110,7 +137,7 @@ class TestCreateCustomer(FrappeTestCase):
 		calls = []
 
 		def spy(doctype, filters=None, fieldname="name", *args, **kwargs):
-			if doctype == "CRM Organization" and fieldname == "acumatica_noteid":
+			if doctype == "CRM Organization" and "acumatica_noteid" in _names(fieldname):
 				calls.append(kwargs.get("for_update"))
 			return real_get_value(doctype, filters, fieldname, *args, **kwargs)
 
@@ -134,10 +161,9 @@ class TestCreateCustomer(FrappeTestCase):
 		real_get_value = frappe.db.get_value
 
 		def racing_winner(doctype, filters=None, fieldname="name", *args, **kwargs):
-			if doctype == "CRM Organization" and fieldname == "acumatica_noteid" and kwargs.get("for_update"):
-				return "g-won-the-race"
-			if doctype == "CRM Organization" and fieldname == "acumatica_id":
-				return "CUST-RACE"
+			if doctype == "CRM Organization" and "acumatica_noteid" in _names(fieldname) and kwargs.get("for_update"):
+				# the locked re-check reads both identity fields at once
+				return frappe._dict(acumatica_noteid="g-won-the-race", acumatica_id="CUST-RACE")
 			return real_get_value(doctype, filters, fieldname, *args, **kwargs)
 
 		with patch("crm.integrations.acumatica.outbound.frappe.db.get_value", side_effect=racing_winner):
