@@ -18,10 +18,13 @@
       ;(function () {
         try {
           var stored = localStorage.getItem('theme')
+          // Dark-first, like main.js (which writes 'dark' for a visitor with
+          // no stored choice): the pre-paint must agree or the first visit
+          // flashes light and then flips.
           var theme =
             stored === 'light' || stored === 'dark' || stored === 'system'
               ? stored
-              : 'system'
+              : 'dark'
           var resolved =
             theme === 'system'
               ? window.matchMedia('(prefers-color-scheme: dark)').matches
