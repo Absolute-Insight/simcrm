@@ -39,7 +39,7 @@
           </div>
         </div>
         <div>
-          <Switch v-model="settings.doc.enable_forecasting" size="sm" />
+          <CheckSwitch v-model="settings.doc.enable_forecasting" size="sm" />
         </div>
       </div>
       <div class="h-px border-t mx-2 border-outline-elevation-2" />
@@ -57,7 +57,7 @@
           </div>
         </div>
         <div>
-          <Switch
+          <CheckSwitch
             v-model="settings.doc.auto_update_expected_deal_value"
             size="sm"
           />
@@ -174,10 +174,11 @@
   </div>
 </template>
 <script setup>
+import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import { getSettings } from '@/stores/settings'
 import { globalStore } from '@/stores/global'
 import { useBroadcast } from '@/composables/useBroadcast'
-import { ErrorMessage, FormControl, Switch, toast } from 'frappe-ui'
+import { ErrorMessage, FormControl, toast } from 'frappe-ui'
 import { useRoute } from 'vue-router'
 import { ref, computed } from 'vue'
 

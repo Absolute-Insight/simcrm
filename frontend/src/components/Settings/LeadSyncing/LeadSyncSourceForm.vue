@@ -14,7 +14,7 @@
       </div>
       <div class="flex item-center space-x-4 w-3/12 justify-end">
         <div class="flex items-center space-x-2">
-          <Switch v-model="syncSource.enabled" size="sm" />
+          <CheckSwitch v-model="syncSource.enabled" size="sm" />
           <span class="text-sm text-ink-gray-7">{{ __('Enabled') }}</span>
         </div>
 
@@ -164,6 +164,7 @@
 </template>
 
 <script setup>
+import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import { useDocument } from '@/data/document'
 import { onMounted, inject, ref, computed, watch } from 'vue'
 import { supportedSourceTypes } from './leadSyncSourceConfig'

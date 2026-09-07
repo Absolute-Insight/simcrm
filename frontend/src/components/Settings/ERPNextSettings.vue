@@ -224,7 +224,7 @@
                   </div>
                 </div>
                 <div>
-                  <Switch
+                  <CheckSwitch
                     v-model="erpnextCRMSettingsResource.doc.sync_products"
                     size="sm"
                   />
@@ -278,7 +278,7 @@
                   </div>
                 </div>
                 <div>
-                  <Switch
+                  <CheckSwitch
                     v-model="
                       erpnextCRMSettingsResource.doc
                         .create_customer_on_status_change
@@ -468,6 +468,7 @@
 </template>
 
 <script setup>
+import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import {
   Button,
   Combobox,

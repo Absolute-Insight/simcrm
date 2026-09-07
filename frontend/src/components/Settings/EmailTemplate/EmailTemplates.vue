@@ -102,7 +102,7 @@
               {{ template.reference_doctype.replace('CRM ', '') }}
             </div>
             <div class="flex items-center justify-between w-1/6">
-              <Switch
+              <CheckSwitch
                 v-model="template.enabled"
                 size="sm"
                 @update:model-value="
@@ -149,6 +149,7 @@
   </div>
 </template>
 <script setup>
+import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import EmailTemplateIcon from '@/components/Icons/EmailTemplateIcon.vue'
 import EmptyState from '../../ListViews/EmptyState.vue'
 import { useBroadcast } from '@/composables/useBroadcast'

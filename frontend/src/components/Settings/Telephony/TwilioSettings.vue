@@ -99,7 +99,7 @@
               </div>
             </div>
             <div>
-              <Switch v-model="twilio.doc.record_calls" size="sm" />
+              <CheckSwitch v-model="twilio.doc.record_calls" size="sm" />
             </div>
           </div>
         </div>
@@ -136,10 +136,11 @@
   </SettingsLayoutBase>
 </template>
 <script setup>
+import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import ToneBadge from '@/components/ui/ToneBadge.vue'
 import { setEnabled } from '@/composables/telephony'
 import { useDocument } from '@/data/document'
-import { Combobox, Switch } from 'frappe-ui'
+import { Combobox } from 'frappe-ui'
 import { computed } from 'vue'
 
 const emit = defineEmits(['updateStep'])

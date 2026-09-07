@@ -14,7 +14,7 @@
       </div>
       <div class="flex item-center space-x-4 w-3/12 justify-end">
         <div class="flex items-center space-x-2">
-          <Switch v-model="template.enabled" size="sm" />
+          <CheckSwitch v-model="template.enabled" size="sm" />
           <span class="text-sm text-ink-gray-7">{{ __('Enabled') }}</span>
         </div>
         <Button
@@ -122,6 +122,7 @@
   </div>
 </template>
 <script setup>
+import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import { FormControl, Switch, toast, createResource } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
 import { TextEditor } from 'frappe-ui/experimental'

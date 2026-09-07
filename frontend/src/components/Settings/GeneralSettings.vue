@@ -24,10 +24,10 @@
           </div>
         </div>
         <div>
-          <Switch
+          <CheckSwitch
             v-model="settings.doc.update_timestamp_on_new_communication"
             size="sm"
-            @click.stop="toggle('update_timestamp_on_new_communication')"
+            @update:model-value="toggle('update_timestamp_on_new_communication')"
           />
         </div>
       </div>
@@ -46,10 +46,10 @@
           </div>
         </div>
         <div>
-          <Switch
+          <CheckSwitch
             v-model="settings.doc.auto_mark_replied_on_response"
             size="sm"
-            @click.stop="toggle('auto_mark_replied_on_response')"
+            @update:model-value="toggle('auto_mark_replied_on_response')"
           />
         </div>
       </div>
@@ -68,10 +68,10 @@
           </div>
         </div>
         <div>
-          <Switch
+          <CheckSwitch
             v-model="settings.doc.auto_reopen_on_new_communication"
             size="sm"
-            @click.stop="toggle('auto_reopen_on_new_communication')"
+            @update:model-value="toggle('auto_reopen_on_new_communication')"
           />
         </div>
       </div>
@@ -130,8 +130,9 @@
 </template>
 
 <script setup>
+import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import { getSettings } from '@/stores/settings'
-import { FormControl, Switch, toast } from 'frappe-ui'
+import { FormControl, toast } from 'frappe-ui'
 
 const { _settings: settings } = getSettings()
 
