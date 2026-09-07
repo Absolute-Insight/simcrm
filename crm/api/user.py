@@ -167,6 +167,13 @@ def update_user_role(user: str, new_role: str):
 	if target_is_system_manager and not is_system_manager:
 		frappe.throw(_("Only System Managers can modify other System Managers"), frappe.PermissionError)
 
+	# The same rule as granting the role: a Sales Manager manages reps, and a
+	# peer manager's role is a System Manager's to change. Without this any team
+	# lead could demote another to Sales User and lock them out of their team's
+	# records.
+	if "Sales Manager" in target_roles and not is_system_manager:
+		frappe.throw(_("Only System Managers can modify other Sales Managers"), frappe.PermissionError)
+
 	if new_role == "Sales Manager" and not is_system_manager:
 		frappe.throw(_("Only System Managers can assign the Sales Manager role"), frappe.PermissionError)
 
@@ -211,6 +218,9 @@ def remove_crm_roles_from_user(user: str):
 
 	if "System Manager" in roles and not current_user_is_system_manager:
 		frappe.throw(_("Only System Managers can modify other System Managers"), frappe.PermissionError)
+
+	if "Sales Manager" in roles and not current_user_is_system_manager:
+		frappe.throw(_("Only System Managers can modify other Sales Managers"), frappe.PermissionError)
 
 	if user_doc.get("role_profiles") or user_doc.get("role_profile_name"):
 		return frappe.throw(
