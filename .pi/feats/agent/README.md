@@ -190,6 +190,12 @@ PYTHONPATH=/workspace bench --site dev.localhost execute crm.agent.api.summarise
 > `timeout` at ~55. Raise `PROXY_READ_TIMEOUT` first if a model genuinely needs longer,
 > and remember a slow model holds a worker either way — size the pool for it. The 120
 > above is safe *here* only because a bench dev server has no nginx in front of it.
+>
+> The same arithmetic holds for the Analyst although it makes two completions: `ask_analyst`
+> computes one absolute deadline of `timeout × MAX_ATTEMPTS` and passes it to both
+> `client.complete` calls, which bound every attempt by the time left and skip an attempt
+> that would start after it. A plan phase that spent the budget leaves the answer refused
+> (`unavailable`) rather than a request nginx has already abandoned.
 
 A dev site seeded only by the test suite has **no Deal with a thread on it** — every
 `_T-` record is a leaked fixture and none carry Communications. Create a Deal, a

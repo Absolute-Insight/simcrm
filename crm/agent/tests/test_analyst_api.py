@@ -120,3 +120,21 @@ class FlowTest(IntegrationTestCase):
 		self.assertNotIn("erp_cashflow_by_month", complete.call_args_list[0][0][2][0]["content"])
 		# the fallback ran because the only requested metric was unavailable
 		self.assertEqual(run_plan.call_args[0][0]["metrics"], ["won_revenue_by_month", "pipeline_by_stage"])
+
+
+class DeadlineTest(IntegrationTestCase):
+	"""Two completions, one request: each on its own could take timeout x 2,
+	so the pair could hold a worker for four timeouts while nginx gave up at
+	two. Both calls get the same absolute deadline, timeout x MAX_ATTEMPTS
+	from the start, so plan + answer fit in what one call is allowed."""
+
+	def test_plan_and_answer_share_one_deadline_inside_timeout_x_attempts(self):
+		plan = AnalystPlan(metrics=["won_revenue_by_month"], from_date="", to_date="", reasoning="")
+		patches = stubs(GRANTED, [plan, ANSWER])
+		with patches[0], patches[1], patches[2], patches[3], patches[4] as complete:
+			with mock.patch.object(api_mod.time, "monotonic", return_value=1000.0):
+				api_mod.ask_analyst("how did revenue go?")
+		deadlines = [call.kwargs.get("deadline") for call in complete.call_args_list]
+		self.assertEqual(len(deadlines), 2)
+		self.assertEqual(deadlines[0], deadlines[1])
+		self.assertEqual(deadlines[0], 1000.0 + GRANTED.timeout * api_mod.client.MAX_ATTEMPTS)

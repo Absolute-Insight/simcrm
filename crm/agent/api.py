@@ -456,6 +456,14 @@ def ask_analyst(question: str, history: str | list | None = None) -> dict:
 	today = frappe.utils.getdate()
 	turns = _parse_history(history)
 
+	# One deadline for the whole request. Each completion on its own may take
+	# timeout x MAX_ATTEMPTS, so two in sequence could hold the worker for four
+	# timeouts while the proxy gives up at two (validate_timeout budgets
+	# timeout x 2 against PROXY_READ_TIMEOUT). Sharing the deadline keeps plan +
+	# data + answer inside what a single call is allowed; a plan that ate the
+	# budget leaves the answer refused rather than the request hung.
+	deadline = time.monotonic() + cfg.timeout * client.MAX_ATTEMPTS
+
 	with _model_call_slot() as free:
 		if not free:
 			_refund_budget(cfg)
@@ -468,6 +476,7 @@ def ask_analyst(question: str, history: str | list | None = None) -> dict:
 				cfg,
 				AnalystPlan,
 				analyst.build_plan_messages(question, analyst.catalogue_entries(available), today, turns),
+				deadline=deadline,
 			)
 		except (AgentUnavailable, SchemaMismatch) as exc:
 			frappe.log_error(title="CRM analyst plan failed", message=str(exc))
@@ -479,7 +488,10 @@ def ask_analyst(question: str, history: str | list | None = None) -> dict:
 
 		try:
 			reply = client.complete(
-				cfg, AnalystAnswer, analyst.build_answer_messages(question, tables, period, turns)
+				cfg,
+				AnalystAnswer,
+				analyst.build_answer_messages(question, tables, period, turns),
+				deadline=deadline,
 			)
 		except (AgentUnavailable, SchemaMismatch) as exc:
 			frappe.log_error(title="CRM analyst answer failed", message=str(exc))
