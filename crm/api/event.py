@@ -54,7 +54,12 @@ def _process_event_notifications_by_interval(interval):
 		return
 
 	current_time = now_datetime()
-	current_user = frappe.session.user
+	# A site-wide sweep. This used to filter on `e.owner = frappe.session.user OR
+	# ep.email = frappe.session.user`, which under the scheduler is Administrator:
+	# every event a rep or manager created -- including the meetings and visits
+	# the planner writes -- was excluded, and no reminder ever fired for anyone
+	# but Administrator. Who each reminder reaches is decided per event by
+	# _notification_audience (owner plus participants), not by who runs the job.
 	all_events_data = frappe.db.sql(
 		"""
 		SELECT
@@ -69,23 +74,20 @@ def _process_event_notifications_by_interval(interval):
 			en.before as before_value,
 			en.time as time_of_day,
 			en.interval as notification_interval,
-			ep.email as participant_email,
 			ep_all.participant_emails_csv,
 			CASE WHEN en.parent IS NULL THEN 0 ELSE 1 END as has_custom_notifications
 		FROM `tabEvent` e
 		LEFT JOIN `tabEvent Notifications` en ON e.name = en.parent AND en.interval = %s
-		LEFT JOIN `tabEvent Participants` ep ON e.name = ep.parent AND ep.email = %s
 		LEFT JOIN (
 			SELECT parent, GROUP_CONCAT(email) AS participant_emails_csv
 			FROM `tabEvent Participants`
 			GROUP BY parent
 		) AS ep_all ON ep_all.parent = e.name
 		WHERE (e.starts_on >= %s OR (%s >= e.starts_on AND %s < e.ends_on))
-		AND (e.owner = %s OR ep.email = %s)
 		AND e.status != 'Cancelled'
 		ORDER BY e.starts_on, e.name
 	""",
-		(interval, current_user, current_time, current_time, current_time, current_user, current_user),
+		(interval, current_time, current_time, current_time),
 		as_dict=True,
 	)
 
