@@ -162,6 +162,9 @@ const tabs = computed(() => {
           label: __('Defaults'),
           component: markRaw(DefaultsSettings),
           icon: MonitorCogIcon,
+          // System Settings is a System Manager doctype; a Sales Manager
+          // opening this pane got a blank page and two 403s
+          condition: () => isAdmin(),
         },
         {
           label: __('Brand'),
