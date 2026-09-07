@@ -799,9 +799,24 @@ def get_linked_docs_of_document(doctype: str, docname: str):
 	return docs_data
 
 
+def _has_reference_fields(doctype: str) -> bool:
+	meta = frappe.get_meta(doctype)
+	return bool(meta.has_field("reference_doctype") and meta.has_field("reference_docname"))
+
+
 def remove_doc_link(doctype, docname):
 	if not doctype or not docname:
 		return
+	if doctype != "CRM Notification" and not _has_reference_fields(doctype):
+		# The link lives in a child row (a plan item, a call log's links table), not
+		# on this document. Saving it with two fields it does not have was a silent
+		# no-op that left the link in place, and the delete path then removed the
+		# whole parent -- a rep's entire weekly plan -- to free one deal. Refuse,
+		# and let the caller report it as skipped.
+		frappe.throw(
+			_("{0} is linked through one of its rows and cannot be unlinked here").format(_(doctype)),
+			frappe.ValidationError,
+		)
 
 	try:
 		linked_doc_data = frappe.get_doc(doctype, docname)
@@ -876,6 +891,8 @@ def remove_linked_doc_reference(items: str | list, remove_contact: bool = False,
 				remove_doc_link(item["doctype"], item["docname"])
 
 			if delete:
+				# only reached when the unlink above succeeded, so a parent that is
+				# linked through a child row (refused there) is never deleted
 				frappe.delete_doc(item["doctype"], item["docname"])
 		except (frappe.DoesNotExistError, frappe.ValidationError) as exc:
 			skipped.append({"docname": item["docname"], "reason": str(exc)[:200]})
