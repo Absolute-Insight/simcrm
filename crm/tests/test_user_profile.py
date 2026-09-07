@@ -73,3 +73,43 @@ class OwnProfileTest(IntegrationTestCase):
 			get_profile()
 		with self.assertRaises(frappe.AuthenticationError):
 			update_profile({"first_name": "x"})
+
+
+class OwnProfileEmailTest(IntegrationTestCase):
+	"""The composer and the signature pane read the same row through the same door."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		ensure_rep(REP, "Profile Rep")
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		doc = frappe.get_doc("User", REP)
+		doc.email_signature = None
+		doc.set("user_emails", [])
+		doc.save(ignore_permissions=True)
+		super().tearDown()
+
+	def test_signature_and_linked_accounts_round_trip(self):
+		frappe.set_user(REP)
+		profile = update_profile({"email_signature": "<p>Kind regards</p>"})
+		self.assertEqual(profile["email_signature"], "<p>Kind regards</p>")
+		self.assertEqual(profile["user_emails"], [])
+
+	def test_an_account_that_does_not_exist_is_refused_by_the_link(self):
+		frappe.set_user(REP)
+		with self.assertRaises(frappe.ValidationError):
+			update_profile({"user_emails": [{"email_account": "No Such Account", "email_id": "x@example.com"}]})
+
+	def test_extra_row_fields_are_dropped_not_written(self):
+		account = frappe.get_all("Email Account", filters={"enable_outgoing": 1}, fields=["name", "email_id"], limit=1)
+		if not account:
+			self.skipTest("no outgoing Email Account on this site")
+		frappe.set_user(REP)
+		profile = update_profile(
+			{"user_emails": [{"email_account": account[0].name, "email_id": account[0].email_id, "parenttype": "Role"}]}
+		)
+		self.assertEqual(
+			profile["user_emails"], [{"email_account": account[0].name, "email_id": account[0].email_id}]
+		)

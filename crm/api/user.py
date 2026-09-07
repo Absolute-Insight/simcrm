@@ -19,9 +19,15 @@ PROFILE_FIELDS = (
 	"user_image",
 	"language",
 	"time_zone",
+	"email_signature",
 	"modified",
 )
-PROFILE_EDITABLE_FIELDS = frozenset({"first_name", "last_name", "user_image", "language", "time_zone"})
+PROFILE_EDITABLE_FIELDS = frozenset(
+	{"first_name", "last_name", "user_image", "language", "time_zone", "email_signature", "user_emails"}
+)
+# The child rows the email composer and the signature pane read: which outgoing
+# accounts this person may send from.
+USER_EMAIL_FIELDS = ("email_account", "email_id")
 
 
 def _own_user() -> str:
@@ -34,7 +40,15 @@ def _own_user() -> str:
 @frappe.whitelist()
 def get_profile() -> dict:
 	"""The session user's own profile, readable regardless of User doctype grants."""
-	return frappe.db.get_value("User", _own_user(), list(PROFILE_FIELDS), as_dict=True)
+	user = _own_user()
+	profile = frappe.db.get_value("User", user, list(PROFILE_FIELDS), as_dict=True)
+	profile["user_emails"] = frappe.get_all(
+		"User Email",
+		filters={"parent": user, "parenttype": "User"},
+		fields=list(USER_EMAIL_FIELDS),
+		order_by="idx asc",
+	)
+	return profile
 
 
 @frappe.whitelist(methods=["POST"])
@@ -55,7 +69,14 @@ def update_profile(changes: dict | str) -> dict:
 		)
 	doc = frappe.get_doc("User", user)
 	for field, value in changes.items():
-		doc.set(field, value)
+		if field == "user_emails":
+			# rows are rebuilt from the two fields the UI knows; anything else a
+			# client might send on a row is dropped, and the Link validation on
+			# User Email still refuses an account that does not exist
+			rows = value if isinstance(value, list) else frappe.parse_json(value or "[]")
+			doc.set("user_emails", [{key: (row or {}).get(key) for key in USER_EMAIL_FIELDS} for row in rows])
+		else:
+			doc.set(field, value)
 	doc.save(ignore_permissions=True)
 	return get_profile()
 

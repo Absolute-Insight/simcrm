@@ -4,7 +4,15 @@ import { computed, reactive, ref } from 'vue'
 /* The fields crm.api.user.update_profile accepts. Kept in step with
    PROFILE_EDITABLE_FIELDS on the server; anything else on the doc is read-only
    context (email, full_name, modified) and is never sent back. */
-const EDITABLE = ['first_name', 'last_name', 'user_image', 'language', 'time_zone']
+const EDITABLE = [
+  'first_name',
+  'last_name',
+  'user_image',
+  'language',
+  'time_zone',
+  'email_signature',
+  'user_emails',
+]
 
 /**
  * The session user's own profile, shaped like the document resource it
@@ -23,8 +31,9 @@ export function useOwnProfile() {
   const originalDoc = ref(null)
 
   function accept(data) {
-    doc.value = { ...data }
-    originalDoc.value = { ...data }
+    // deep copies: user_emails is a list of rows and must not be shared
+    doc.value = JSON.parse(JSON.stringify(data))
+    originalDoc.value = JSON.parse(JSON.stringify(data))
   }
 
   const profile = createResource({
@@ -43,9 +52,9 @@ export function useOwnProfile() {
     submit(_params, { onSuccess, onError } = {}) {
       const changes = {}
       for (const field of EDITABLE) {
-        if (doc.value?.[field] !== originalDoc.value?.[field]) {
-          changes[field] = doc.value?.[field] ?? null
-        }
+        const now = JSON.stringify(doc.value?.[field] ?? null)
+        const then = JSON.stringify(originalDoc.value?.[field] ?? null)
+        if (now !== then) changes[field] = doc.value?.[field] ?? null
       }
       return update.submit(
         { changes },
