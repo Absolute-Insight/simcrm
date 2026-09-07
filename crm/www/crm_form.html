@@ -1,4 +1,10 @@
 <!doctype html>
+{#- frappe's Jinja environment has autoescape off. Everything below comes from
+    a form author (a Sales Manager typing a label) or from records a Sales User
+    can name (a Link option's label), and lands on the company's public page in
+    front of a prospect, so the whole document renders escaped. The |tojson
+    values are Markup already and are not touched by this. -#}
+{% autoescape true %}
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -621,3 +627,4 @@
     </script>
   </body>
 </html>
+{% endautoescape %}
