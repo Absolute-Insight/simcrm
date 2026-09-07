@@ -265,7 +265,12 @@ def find_close_date_at_risk(
 		if not due:
 			continue
 		days_to_close = (due - today).days
-		if days_to_close > horizon_days:
+		# Past-due dates are history: the health score already carries them as
+		# close_overdue, and letting them through here did the opposite of what
+		# the docstring promises -- the score formula grows as the date recedes,
+		# so an imported pipeline of stale quotes capped every rep's inbox with
+		# identical "Urgent" rows before a live deal could get a word in.
+		if days_to_close < 0 or days_to_close > horizon_days:
 			continue
 		probability = row.get("stage_probability")
 		if probability is None or probability >= EARLY_STAGE_PROBABILITY:
