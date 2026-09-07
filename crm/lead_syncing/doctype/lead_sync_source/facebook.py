@@ -198,10 +198,14 @@ class FacebookSyncSource:
 			response = self.fetch_page(url, params=params)
 			yield from response.get("data") or []
 
-			# The cursor already carries the token, the fields and the filter, so
-			# the follow-up request must not re-add them.
+			# The cursor carries the fields and the filter, so those must not be
+			# re-added -- but the credential is ours to send. Graph only echoes
+			# `access_token` into `paging.next` when the first request passed it as
+			# a query parameter, and it does not: graph_get sends it as a bearer
+			# header. So the token is handed over again explicitly, or every sync
+			# past the first page would go out unauthenticated.
 			url = (response.get("paging") or {}).get("next")
-			params = None
+			params = {"access_token": self.access_token}
 			if not url:
 				return
 
