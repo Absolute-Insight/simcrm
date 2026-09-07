@@ -5,6 +5,7 @@ import frappe
 from frappe import _
 from frappe.desk.form.assign_to import _add as assign
 from frappe.model.document import Document
+from frappe.utils import flt
 
 from crm.api.exchange_rate import get_exchange_rate
 from crm.fcrm.doctype.crm_service_level_agreement.utils import get_sla
@@ -95,7 +96,10 @@ class CRMDeal(Document):
 			self.assign_agent(self.deal_owner)
 		if self.has_value_changed("status"):
 			add_status_change_log(self)
-			if frappe.db.get_value("CRM Deal Status", self.status, "type") == "Won":
+			self.follow_stage_probability()
+			if frappe.db.get_value("CRM Deal Status", self.status, "type") == "Won" and not self.closed_date:
+				# stamped once, on the way into Won; a supplied or existing date
+				# (an import, a correction) is not overwritten
 				self.closed_date = frappe.utils.nowdate()
 		self.validate_forecasting_fields()
 		self.validate_lost_reason()
@@ -275,6 +279,25 @@ class CRMDeal(Document):
 		Update the default probability based on the status.
 		"""
 		if not self.probability or self.probability == 0:
+			self.probability = frappe.db.get_value("CRM Deal Status", self.status, "probability") or 0
+
+	def follow_stage_probability(self):
+		"""Move the probability with the stage unless someone set it by hand.
+
+		Every probability-weighted number -- the forecast chart, forecast vs
+		actual, the pipeline report's weighted value, the weekly snapshot -- reads
+		``probability`` off the deal, and it used to be written once, at creation,
+		from the first stage's default. A deal dragged from Qualification to
+		Negotiation kept forecasting at the Qualification rate for life, so the
+		forecast never moved as the pipeline advanced. A value that still equals
+		the previous stage's default was never a decision; it follows the stage.
+		A hand-set value (anything else) is kept, because that *was* a decision.
+		"""
+		before = self.get_doc_before_save()
+		if not before or not before.status or before.status == self.status:
+			return
+		previous_default = frappe.db.get_value("CRM Deal Status", before.status, "probability")
+		if not self.probability or previous_default is None or flt(self.probability) == flt(previous_default):
 			self.probability = frappe.db.get_value("CRM Deal Status", self.status, "probability") or 0
 
 	def update_expected_deal_value(self):
