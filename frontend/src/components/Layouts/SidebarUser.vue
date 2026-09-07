@@ -3,8 +3,10 @@
        are plain icon buttons rather than menu entries; collapsed, they stack
        into their own centred rows so neither becomes unreachable.
 
-       `settings` is hidden on mobile because the settings dialog is desktop-only
-       -- the same condition the dropdown applied before. -->
+       On mobile the three buttons close the drawer before opening their
+       modal: the drawer is a Dialog of its own, and a modal opened from inside
+       it would otherwise sit on top of the still-open drawer, which then
+       swallows the tap meant to dismiss the modal. -->
   <div class="flex flex-col gap-1">
     <div
       class="flex h-10 items-center rounded-[var(--v-radius-control)] duration-300 ease-in-out"
@@ -37,12 +39,11 @@
           class="grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
           :aria-label="__('Help')"
           :title="__('Help')"
-          @click="() => openHelpCenter()"
+          @click="openHelp"
         >
           <HelpIcon class="size-4" />
         </button>
         <button
-          v-if="!isMobileView"
           class="ml-1 grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
           :aria-label="__('Settings')"
           :title="__('Settings')"
@@ -66,12 +67,11 @@
         class="mx-auto grid size-6 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
         :aria-label="__('Help')"
         :title="__('Help')"
-        @click="() => openHelpCenter()"
+        @click="openHelp"
       >
         <HelpIcon class="size-4" />
       </button>
       <button
-        v-if="!isMobileView"
         class="mx-auto grid size-6 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
         :aria-label="__('Settings')"
         :title="__('Settings')"
@@ -97,7 +97,7 @@ import HelpIcon from '@/components/Icons/HelpIcon.vue'
 import SettingsIcon from '@/components/Icons/SettingsIcon.vue'
 import { sessionStore } from '@/stores/session'
 import { usersStore } from '@/stores/users'
-import { showSettings, isMobileView } from '@/composables/settings'
+import { showSettings, mobileSidebarOpened } from '@/composables/settings'
 import { openHelpCenter } from '@/stores/help'
 import { Avatar } from 'frappe-ui'
 import { computed } from 'vue'
@@ -111,7 +111,13 @@ const { getUser } = usersStore()
 
 const user = computed(() => getUser() || {})
 
+function openHelp() {
+  mobileSidebarOpened.value = false
+  openHelpCenter()
+}
+
 function openSettings() {
+  mobileSidebarOpened.value = false
   showSettings.value = true
 }
 </script>

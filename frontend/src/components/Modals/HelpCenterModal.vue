@@ -1,9 +1,14 @@
 <template>
   <Dialog v-model:open="helpCenterVisible" bare :size="'5xl'">
     <template #default>
+      <!-- Below md the list and the article do not fit side by side, so the
+           dialog shows one pane at a time: the list first, the article (or the
+           Mentor) behind a back button. From md up both are always visible and
+           `mobilePane` is inert. Same shape as Settings.vue. -->
       <div class="flex h-[calc(100vh_-_8rem)] bg-surface-gray-1">
         <div
-          class="m-1 flex w-64 shrink-0 flex-col rounded-l-[var(--v-radius-card)] bg-surface-gray-1"
+          class="m-1 w-full shrink-0 flex-col rounded-l-[var(--v-radius-card)] bg-surface-gray-1 md:w-64"
+          :class="mobilePane === 'page' ? 'hidden md:flex' : 'flex'"
         >
           <!-- The Mentor is the sparkle opposite the title: one click opens
                the conversation in the right pane, with its own examples. -->
@@ -17,7 +22,7 @@
               :class="mentorOpen ? 'bg-surface-gray-3' : ''"
               :aria-label="__('Ask the Mentor')"
               :title="__('Ask the Mentor')"
-              @click="mentorOpen = true"
+              @click="openMentor"
             >
               <SparkleIcon class="size-4 text-ink-violet-6" />
             </button>
@@ -90,8 +95,22 @@
         </div>
 
         <div
-          class="flex flex-1 flex-col overflow-y-auto bg-surface-elevation-2"
+          class="flex-1 flex-col overflow-y-auto bg-surface-elevation-2"
+          :class="mobilePane === 'nav' ? 'hidden md:flex' : 'flex'"
         >
+          <div
+            class="flex items-center gap-1 border-b border-[var(--v-shell-hairline)] px-2 py-2 md:hidden"
+          >
+            <Button
+              variant="ghost"
+              :label="__('Help Center')"
+              @click="mobilePane = 'nav'"
+            >
+              <template #prefix>
+                <PhCaretLeft class="size-4" />
+              </template>
+            </Button>
+          </div>
           <div v-if="mentorOpen" class="flex h-full min-h-0 flex-col">
             <div class="flex items-center justify-between px-4 pt-3">
               <div class="flex items-center gap-2">
@@ -194,7 +213,7 @@
 </template>
 
 <script setup>
-import { PhBookOpen as LucideBookOpen } from '@phosphor-icons/vue'
+import { PhBookOpen as LucideBookOpen, PhCaretLeft } from '@phosphor-icons/vue'
 import AgentChat from '@/components/AgentChat.vue'
 import SparkleIcon from '@/components/Icons/SparkleIcon.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -219,7 +238,7 @@ import {
   renderArticleMarkdown,
   searchArticles,
 } from '@/utils/helpCenter'
-import { Dialog, SidebarItem, TextInput } from 'frappe-ui'
+import { Button, Dialog, SidebarItem, TextInput } from 'frappe-ui'
 import { computed, ref, watch } from 'vue'
 
 const search = ref('')
@@ -243,7 +262,26 @@ function articleTitle(name) {
 function showArticle(name) {
   activeHelpArticle.value = name
   mentorOpen.value = false
+  mobilePane.value = 'page'
 }
+
+function openMentor() {
+  mentorOpen.value = true
+  mobilePane.value = 'page'
+}
+
+// Which pane a phone shows. A plain open lands on the list; an open that
+// arrives with an article (the assistant or a help link handing one over)
+// lands on that article, as does an article change while already open.
+const mobilePane = ref('nav')
+watch(
+  [helpCenterVisible, activeHelpArticle],
+  ([open, article], [wasOpen, previous]) => {
+    if (!open) return
+    if (!wasOpen) mobilePane.value = article !== previous ? 'page' : 'nav'
+    else if (article !== previous) mobilePane.value = 'page'
+  },
+)
 
 const articles = computed(() => helpContent.data?.articles || [])
 const groups = computed(() =>
