@@ -1,18 +1,25 @@
 import { defineConfig, devices } from '@playwright/test'
-
-// Auth state file path (gitignored)
-const authFile = 'e2e/.auth/user.json'
+import { authFile, type Role } from './e2e/roles'
 
 /**
  * Playwright configuration for Frappe CRM E2E tests.
  *
- * Uses the "setup project" pattern for authentication:
- * 1. The setup project logs in once and saves the storage state to a file.
- * 2. The chromium project depends on setup and reuses the stored state.
+ * Uses the "setup project" pattern for authentication, once per role:
+ * 1. A setup project logs in as one role and saves its storage state to a file
+ *    (auth.setup.ts reads the `role` option to know whom to log in as).
+ * 2. The projects that stand for that role depend on the setup and reuse the
+ *    stored state.
+ *
+ * Administrator bypasses every permission hook, so the default `chromium`
+ * project cannot see the app the way a rep or the manager will. `rep`,
+ * `manager` and `mobile` run the specs under e2e/tests/<role>/ as those users;
+ * `chromium` runs everything else as Administrator, as before.
  *
  * @see https://playwright.dev/docs/auth
  */
-export default defineConfig({
+const desktop = devices['Desktop Chrome']
+
+export default defineConfig<{ role: Role }>({
 	testDir: './e2e/tests',
 	fullyParallel: false, // sequential for Frappe state consistency
 	forbidOnly: !!process.env.CI,
@@ -38,14 +45,64 @@ export default defineConfig({
 		{
 			name: 'setup',
 			testMatch: /auth\.setup\.ts/,
+			use: { role: 'admin' },
+		},
+		{
+			// The rep and manager accounts are created by Administrator when the
+			// site lacks them, so their setups run after the admin one.
+			name: 'setup-rep',
+			testMatch: /auth\.setup\.ts/,
+			use: { role: 'rep' },
+			dependencies: ['setup'],
+		},
+		{
+			name: 'setup-manager',
+			testMatch: /auth\.setup\.ts/,
+			use: { role: 'manager' },
+			dependencies: ['setup'],
 		},
 		{
 			name: 'chromium',
+			testIgnore: /\/tests\/(rep|manager|mobile)\//,
 			use: {
-				...devices['Desktop Chrome'],
-				storageState: authFile,
+				...desktop,
+				storageState: authFile('admin'),
+				role: 'admin',
 			},
 			dependencies: ['setup'],
+		},
+		{
+			name: 'rep',
+			testMatch: /\/tests\/rep\//,
+			use: {
+				...desktop,
+				storageState: authFile('rep'),
+				role: 'rep',
+			},
+			dependencies: ['setup-rep'],
+		},
+		{
+			name: 'manager',
+			testMatch: /\/tests\/manager\//,
+			use: {
+				...desktop,
+				storageState: authFile('manager'),
+				role: 'manager',
+			},
+			dependencies: ['setup-manager'],
+		},
+		{
+			// One phone viewport, as the rep: the layout below 768px is a
+			// different component tree (Mobile* pages, bottom navigation), and
+			// nothing else in the suite renders it.
+			name: 'mobile',
+			testMatch: /\/tests\/mobile\//,
+			use: {
+				...devices['Pixel 5'],
+				storageState: authFile('rep'),
+				role: 'rep',
+			},
+			dependencies: ['setup-rep'],
 		},
 	],
 })
