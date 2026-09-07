@@ -56,6 +56,15 @@ SUPPORTED_FIELDTYPES = (
 	"Color",
 )
 
+# Link targets a public form must never point at. Frappe serves every CRM form at
+# /<route> as well as at our branded /crm-form/<route>, and its own
+# ``web_form.get_link_options`` (guest-whitelisted) lists *every* record of any
+# doctype a Link on a published, login-free form names -- ``frappe.get_all``,
+# no permission check, the CRM's ``guest_can_select`` gate nowhere on that path.
+# ``name`` of User is a rep's email; ``name`` of CRM Organization is a customer.
+# Reference data (territory, industry, source) stays linkable.
+DENIED_LINK_TARGETS = ("User", "CRM Lead", "CRM Deal", "Contact", "CRM Organization")
+
 # Never expose these as mappable fields even if their type is supported.
 DENIED_FIELDNAMES = (
 	"naming_series",
@@ -119,7 +128,7 @@ def _link_target_doctypes() -> set:
 	targets = set()
 	for document_type in ALLOWED_DOCTYPES:
 		for df in frappe.get_meta(document_type).fields:
-			if df.fieldtype == "Link" and df.options:
+			if df.fieldtype == "Link" and df.options and df.options not in DENIED_LINK_TARGETS:
 				targets.add(df.options)
 	return targets
 
@@ -135,6 +144,8 @@ def _mappable_fields(document_type: str) -> list[dict]:
 		if not df.fieldname or df.fieldname in DENIED_FIELDNAMES:
 			continue
 		if df.hidden or df.read_only:
+			continue
+		if df.fieldtype == "Link" and df.options in DENIED_LINK_TARGETS:
 			continue
 		# a Link is offered even when guests can't select the target yet; the builder
 		# warns and offers a one-click grant (see grant_guest_link_access).

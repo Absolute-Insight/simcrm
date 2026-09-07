@@ -50,3 +50,4 @@ crm.patches.v1_0.ensure_sa_provinces
 crm.patches.v1_0.encrypt_acumatica_webhook_token
 crm.patches.v1_0.expire_pending_invitations
 crm.patches.v1_0.expire_overdue_close_at_risk_suggestions
+crm.patches.v1_0.strip_public_form_links_to_people
