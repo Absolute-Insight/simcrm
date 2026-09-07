@@ -4,7 +4,7 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import escape_html, validate_email_address
+from frappe.utils import escape_html, fmt_money, validate_email_address
 
 CRM_ROLES = ("Sales User", "Sales Manager", "System Manager")
 
@@ -91,6 +91,7 @@ def _still_entitled(email: str) -> bool:
 
 def send_due_digests():
 	"""Daily scheduler entry. Weekly digests fire on Mondays."""
+	from crm.api.dashboard import get_base_currency
 	from crm.api.reports import REPORTS, get_report
 
 	is_monday = frappe.utils.getdate().weekday() == 0
@@ -153,7 +154,7 @@ def send_due_digests():
 				frappe.sendmail(
 					recipients=[recipient],
 					subject=_("Vectora digest: {0}").format(report["title"]),
-					message=_render_digest(report, from_date, to_date),
+					message=_render_digest(report, from_date, to_date, currency=get_base_currency()),
 					reference_doctype="CRM Report Digest",
 					reference_name=digest.name,
 				)
@@ -173,24 +174,59 @@ TH_STYLE = (
 )
 TD_STYLE = "padding:6px 12px;border-bottom:1px solid #f2f2f8;font-variant-numeric:tabular-nums"
 
-def _cell(value) -> str:
+# The column types the report registry declares (crm.api.reports) that hold a
+# measure rather than a label. Formatted and right-aligned, the way the Reports
+# page renders the same columns through formatCell.
+NUMERIC_TYPES = ("currency", "percent", "number")
+
+
+def _cell(value, col_type: str | None = None, currency: str | None = None) -> str:
 	"""A missing cell is blank, not the word "None". A report row leaves a key out
 	or carries a null whenever the underlying value is unset -- no close date, no
 	owner -- and ``str(None)`` puts the Python repr in front of the reader. 0 and
-	False are real answers and are rendered as themselves."""
-	return "" if value is None else str(value)
+	False are real answers and are rendered as themselves.
+
+	Measures are formatted by the column type the registry declares. The
+	renderer used to ``str()`` every value, so the recommended first digest --
+	quota attainment by rep -- landed as ``300000.0 | 212500.55 | 71`` while
+	the same report on screen read ``R 300,000 | R 212,501 | 71%``. A value
+	that is not a number (a backend change, not a reason to blow up an email)
+	falls through to its text form.
+	"""
+	if value is None:
+		return ""
+	if col_type in NUMERIC_TYPES:
+		try:
+			number = float(value)
+		except (TypeError, ValueError):
+			return str(value)
+		if col_type == "currency":
+			from crm.api.dashboard import get_base_currency
+
+			return fmt_money(number, currency=currency or get_base_currency())
+		if col_type == "percent":
+			return f"{value}%"
+		return fmt_money(number, precision=0)
+	return str(value)
 
 
-def _render_digest(report, from_date, to_date) -> str:
+def _td(col, value, currency) -> str:
+	style = TD_STYLE + (";text-align:right" if col.get("type") in NUMERIC_TYPES else "")
+	return f'<td style="{style}">{escape_html(_cell(value, col.get("type"), currency))}</td>'
+
+
+def _render_digest(report, from_date, to_date, currency: str | None = None) -> str:
 	"""Every interpolation is escaped: report cells carry user-authored text —
-	stage names, lost reasons, user names — straight into an email body."""
+	stage names, lost reasons, user names — straight into an email body.
+
+	``currency`` is the base currency every currency column is already
+	normalised to; left out, it is read from FCRM Settings per currency cell.
+	"""
 	columns = report["columns"]
 	head = "".join(f'<th style="{TH_STYLE}">{escape_html(str(col["label"]))}</th>' for col in columns)
 	body = ""
 	for row in report["rows"]:
-		cells = "".join(
-			f'<td style="{TD_STYLE}">{escape_html(_cell(row.get(col["key"])))}</td>' for col in columns
-		)
+		cells = "".join(_td(col, row.get(col["key"]), currency) for col in columns)
 		body += f"<tr>{cells}</tr>"
 	if not report["rows"]:
 		body = (
