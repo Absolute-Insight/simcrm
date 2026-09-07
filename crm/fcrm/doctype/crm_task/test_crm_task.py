@@ -182,13 +182,14 @@ class TestCRMTask(IntegrationTestCase):
 		canceled_task_names = [str(t.name) for t in canceled_tasks]
 		self.assertIn(str(task3.name), canceled_task_names)
 
-	def test_task_without_assigned_user(self):
-		"""Test creating task without assigned user"""
+	def test_a_task_created_without_an_assignee_is_the_creators(self):
+		"""The rep-facing dialogs leave Assigned To blank. A task nobody is named on
+		would sit in no one's list and the planner could credit it to no one, so the
+		person who wrote it is its assignee unless they said otherwise."""
 		task = create_test_task(title="Unassigned Task")
 
-		self.assertFalse(task.assigned_to)
-		assignees = task.get_assigned_users()
-		self.assertEqual(len(assignees), 0)
+		self.assertEqual(task.assigned_to, frappe.session.user)
+		self.assertEqual(task.get_assigned_users(), {frappe.session.user})
 
 	def test_task_description(self):
 		"""Test task with rich text description"""

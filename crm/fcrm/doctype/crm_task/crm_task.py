@@ -42,8 +42,20 @@ class CRMTask(Document):
 		title: DF.Data
 	# end: auto-generated types
 
+	def before_insert(self):
+		# The rep-facing dialogs leave Assigned To blank, and a task nobody is named
+		# on sits in no one's list and is credited to no one's plan. The person who
+		# wrote it is its assignee unless they said otherwise. A rule's task is the
+		# admin's configuration (assign_to_owner) and is left as the rule set it.
+		if not self.assigned_to and not self.automation_rule and frappe.session.user != "Guest":
+			self.assigned_to = frappe.session.user
+
 	def after_insert(self):
 		self.assign_to()
+		# frappe's assign_to writes ``assigned_to`` back with a fresh ``modified``, so
+		# the document the caller holds no longer matches the row and its next save
+		# is a TimestampMismatchError. Every task now has an assignee; tell the truth.
+		self.modified = frappe.db.get_value(self.doctype, self.name, "modified")
 
 	def validate(self):
 		self.require_closing_note()

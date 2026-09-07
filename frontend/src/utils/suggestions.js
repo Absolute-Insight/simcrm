@@ -378,6 +378,9 @@ export function buildTaskDoc(suggestion, data) {
     doctype: 'CRM Task',
     ...reference(suggestion),
     status: 'Todo',
+    // The suggestion was addressed to a rep; the task it turns into is theirs.
+    // Left blank (an unowned suggestion) the server assigns whoever inserts it.
+    assigned_to: suggestion.user || '',
     ...data,
   }
 }

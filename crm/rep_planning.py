@@ -30,10 +30,16 @@ from frappe.query_builder.functions import Coalesce
 # to ``modified``, an edit marker that drifts every time the task is touched
 # again; a fulfilment already recorded against a task is therefore never revoked
 # on drift alone (see ``_fulfilment_holds``).
+#
+# ``fallback_user_field`` is consulted only when every ``user_fields`` value is
+# empty. The rep-facing dialogs left assigned_to / caller blank for a long time
+# (they now default at insert), and a task with nobody named on it was still
+# somebody's work: the record's owner is the one attribution it always carries.
 ACTUAL_SOURCES = {
 	"Task": {
 		"doctype": "CRM Task",
 		"user_fields": ("assigned_to",),
+		"fallback_user_field": "owner",
 		"when_field": "modified",
 		"when_is_activity_time": False,
 		"filters": {"status": "Done"},
@@ -43,6 +49,7 @@ ACTUAL_SOURCES = {
 		# a call logged by telephony is owned by the integration user, not by the
 		# rep who made it — the rep is on caller/receiver
 		"user_fields": ("caller", "receiver"),
+		"fallback_user_field": "owner",
 		"when_field": "start_time",
 		"when_fallback_field": "creation",
 		"when_is_activity_time": True,
@@ -174,18 +181,28 @@ def _query_source(
 		when = Coalesce(when, table[source["when_fallback_field"]])
 	reference_field = REFERENCE_NAME_FIELD.get(doctype, "reference_docname")
 
+	fallback = source.get("fallback_user_field")
+	user_columns = (*source["user_fields"], *((fallback,) if fallback else ()))
 	query = frappe.qb.from_(table).select(
 		table.name,
 		when.as_("happened_at"),
 		table.reference_doctype,
 		table[reference_field].as_("reference_docname"),
-		*(table[field].as_(f"_user_{field}") for field in source["user_fields"]),
+		*(table[field].as_(f"_user_{field}") for field in user_columns),
 	)
 
 	user_match = None
 	for field in source["user_fields"]:
 		match = table[field].isin(users)
 		user_match = match if user_match is None else user_match | match
+	if fallback:
+		# the owner stands in only when nobody is named: a task the rep wrote for
+		# a colleague is the colleague's work
+		unnamed = None
+		for field in source["user_fields"]:
+			empty = table[field].isnull() | (table[field] == "")
+			unnamed = empty if unnamed is None else unnamed & empty
+		user_match = user_match | (unnamed & table[fallback].isin(users))
 	query = query.where(user_match)
 
 	for field, value in source.get("filters", {}).items():
@@ -201,6 +218,13 @@ def _query_source(
 		query = query.where(when >= start).where(when < end + timedelta(days=1))
 
 	wanted = set(users)
+
+	def users_of(row) -> list[str]:
+		named = [row[f"_user_{field}"] for field in source["user_fields"] if row[f"_user_{field}"]]
+		if not named and fallback:
+			named = [row[f"_user_{fallback}"]]
+		return sorted({user for user in named if user in wanted})
+
 	return [
 		{
 			"doctype": doctype,
@@ -209,9 +233,7 @@ def _query_source(
 			"when": row.happened_at,
 			"reference_doctype": row.reference_doctype,
 			"reference_docname": row.reference_docname,
-			"users": sorted(
-				{row[f"_user_{field}"] for field in source["user_fields"] if row[f"_user_{field}"] in wanted}
-			),
+			"users": users_of(row),
 		}
 		for row in query.run(as_dict=True)
 	]

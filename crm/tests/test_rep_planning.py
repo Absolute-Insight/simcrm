@@ -156,10 +156,10 @@ class MatchActualsJobTest(IntegrationTestCase):
 		users = (self.USER, self.OTHER)
 		targets = (
 			("CRM Rep Plan", {"user": ("in", users)}, None),
-			("CRM Call Log", None, [["caller", "in", users], ["receiver", "in", users]]),
+			("CRM Call Log", None, [["caller", "in", users], ["receiver", "in", users], ["owner", "in", users]]),
 			("Event", {"owner": ("in", users)}, None),
 			("Communication", {"owner": ("in", users)}, None),
-			("CRM Task", {"assigned_to": ("in", users)}, None),
+			("CRM Task", None, [["assigned_to", "in", users], ["owner", "in", users]]),
 		)
 		for doctype, filters, or_filters in targets:
 			for name in frappe.get_all(doctype, filters=filters, or_filters=or_filters, pluck="name"):
@@ -213,6 +213,55 @@ class MatchActualsJobTest(IntegrationTestCase):
 		self.assertEqual(plan.items[0].status, "Done")
 		# autoincrement task names are ints; the Dynamic Link stores the string
 		self.assertEqual(plan.items[0].fulfilled_by, str(task.name))
+
+	def test_a_done_task_the_rep_created_but_never_assigned_is_credited_to_them(self):
+		"""The rep-facing dialogs leave ``assigned_to`` blank. The record's owner is
+		the rep who wrote it, and is the only attribution such a task carries."""
+		plan = self.make_plan(self.on_deal(activity_type="Task"))
+		task = frappe.get_doc(
+			{
+				"doctype": "CRM Task",
+				"title": "Unassigned touch",
+				"status": "Done",
+				"reference_doctype": "CRM Deal",
+				"reference_docname": self.deal,
+			}
+		).insert(ignore_permissions=True)
+		# a row written before assignment defaulted at insert: no assignee, owned by the rep
+		frappe.db.set_value("CRM Task", task.name, {"assigned_to": None, "owner": self.USER})
+
+		match_actuals()
+		plan.reload()
+		self.assertEqual(plan.items[0].status, "Done")
+		self.assertEqual(plan.items[0].fulfilled_by, str(task.name))
+
+	def test_a_task_the_rep_created_for_someone_else_is_not_credited_to_the_rep(self):
+		plan = self.make_plan(self.on_deal(activity_type="Task"))
+		task = frappe.get_doc(
+			{
+				"doctype": "CRM Task",
+				"title": "Delegated touch",
+				"status": "Done",
+				"assigned_to": self.OTHER,
+				"reference_doctype": "CRM Deal",
+				"reference_docname": self.deal,
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.set_value("CRM Task", task.name, "owner", self.USER)
+
+		match_actuals()
+		plan.reload()
+		self.assertEqual(plan.items[0].status, "Planned")
+
+	def test_a_hand_logged_call_with_no_caller_named_is_credited_to_whoever_logged_it(self):
+		plan = self.make_plan({"activity_type": "Call"})
+		call = self.make_call(telephony_medium="Manual", start_time=None, status="Completed")
+		frappe.db.set_value("CRM Call Log", call.name, {"caller": None, "receiver": None, "owner": self.USER})
+
+		match_actuals()
+		plan.reload()
+		self.assertEqual(plan.items[0].status, "Done")
+		self.assertEqual(plan.items[0].fulfilled_by, call.name)
 
 	def test_a_stale_unfulfilled_item_goes_missed(self):
 		old_monday = frappe.utils.add_days(self.monday, -14)
