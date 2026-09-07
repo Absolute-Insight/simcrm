@@ -70,7 +70,7 @@
           </div>
           <div>
             <ImageUploader
-              image_type="image/ico"
+              image_type="image/png,image/svg+xml,image/jpeg,image/webp"
               :image_url="settings.doc?.brand_logo"
               @upload="(url) => (settings.doc.brand_logo = url)"
               @remove="() => (settings.doc.brand_logo = '')"
@@ -105,7 +105,7 @@
           </div>
           <div>
             <ImageUploader
-              image_type="image/ico"
+              image_type="image/png,image/x-icon,image/vnd.microsoft.icon,image/svg+xml"
               :image_url="settings.doc?.favicon"
               @upload="(url) => (settings.doc.favicon = url)"
               @remove="() => (settings.doc.favicon = '')"
