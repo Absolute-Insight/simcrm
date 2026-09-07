@@ -13,9 +13,14 @@
           {{ __('Manage your profile and this workspace') }}
         </DialogDescription>
       </VisuallyHidden>
+      <!-- Below md the two panes do not fit side by side (the nav column alone
+           is 224px of a 360px phone), so the dialog shows one at a time: the
+           nav list first, then the chosen page behind a back button. From md
+           up both are always visible and `mobilePane` is inert. -->
       <div class="flex h-[calc(100vh_-_8rem)] bg-surface-gray-1">
         <div
-          class="flex flex-col m-1 rounded-l-[var(--v-radius-card)] w-56 shrink-0 bg-surface-gray-1 overflow-y-auto"
+          class="flex-col m-1 rounded-l-[var(--v-radius-card)] w-full md:w-56 shrink-0 bg-surface-gray-1 overflow-y-auto"
+          :class="mobilePane === 'page' ? 'hidden md:flex' : 'flex'"
         >
           <template v-for="(tab, i) in tabs" :key="tab.label">
             <div v-if="!tab.hideLabel && i != 0" class="mx-1 mb-0.5 mt-[5px]" />
@@ -35,7 +40,7 @@
                 :class="
                   activeTab?.label != item.label && 'hover:!bg-surface-gray-3'
                 "
-                @click="activeSettingsPage = item.label"
+                @click="openPage(item.label)"
               >
                 <template #prefix>
                   <Icon :icon="item.icon" class="size-4 text-ink-gray-7" />
@@ -45,8 +50,22 @@
           </template>
         </div>
         <div
-          class="flex flex-col flex-1 overflow-y-auto bg-surface-elevation-2"
+          class="flex-col flex-1 overflow-y-auto bg-surface-elevation-2"
+          :class="mobilePane === 'nav' ? 'hidden md:flex' : 'flex'"
         >
+          <div
+            class="flex items-center gap-1 border-b border-[var(--v-shell-hairline)] px-2 py-2 md:hidden"
+          >
+            <Button
+              variant="ghost"
+              :label="__('Settings')"
+              @click="mobilePane = 'nav'"
+            >
+              <template #prefix>
+                <PhCaretLeft class="size-4" />
+              </template>
+            </Button>
+          </div>
           <component :is="activeTab.component" v-if="activeTab" />
         </div>
       </div>
@@ -54,7 +73,10 @@
   </Dialog>
 </template>
 <script setup>
-import { PhSquaresFour as LucideLayoutDashboard } from '@phosphor-icons/vue'
+import {
+  PhCaretLeft,
+  PhSquaresFour as LucideLayoutDashboard,
+} from '@phosphor-icons/vue'
 import { PhNetwork as LucideNetwork } from '@phosphor-icons/vue'
 import { PhTarget as LucideTarget } from '@phosphor-icons/vue'
 import { PhFlowArrow as LucideWorkflow } from '@phosphor-icons/vue'
@@ -113,7 +135,7 @@ import {
 } from '@/composables/settings'
 import { isWhatsappInstalled } from '@/composables/whatsapp'
 import { leadSyncingEnabled } from '@/composables/leadSyncing'
-import { Dialog, Avatar, SidebarItem } from 'frappe-ui'
+import { Dialog, Avatar, SidebarItem, Button } from 'frappe-ui'
 import { ref, markRaw, computed, watch, h } from 'vue'
 import AssignmentRulePage from './AssignmentRules/AssignmentRulePage.vue'
 import { PhShieldCheck as ShieldCheck } from '@phosphor-icons/vue'
@@ -354,4 +376,18 @@ function setActiveTab(tabName) {
 }
 
 watch(activeSettingsPage, (activePage) => setActiveTab(activePage))
+
+// Which pane a phone shows. A deep link (`activeSettingsPage` set before the
+// dialog opens, e.g. the Invite User row) lands on the page; a plain open
+// lands on the list.
+const mobilePane = ref('nav')
+
+function openPage(label) {
+  activeSettingsPage.value = label
+  mobilePane.value = 'page'
+}
+
+watch(showSettings, (open) => {
+  if (open) mobilePane.value = activeSettingsPage.value ? 'page' : 'nav'
+})
 </script>
