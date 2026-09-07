@@ -12,8 +12,8 @@
     </div>
 
     <ErrorState
-      v-if="settings.error"
-      :error="settings.error"
+      v-if="settings.get.error"
+      :error="settings.get.error"
       :title="__('Could not load Acumatica settings')"
       :retry="() => settings.reload()"
     />

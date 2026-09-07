@@ -18,7 +18,7 @@
           v-if="isDirty"
           :label="__('Update')"
           variant="solid"
-          :loading="settings.loading"
+          :loading="settings.save.loading"
           @click="updateSettings"
         />
       </div>
@@ -147,8 +147,8 @@
       </div>
     </div>
     <ErrorState
-      v-else-if="settings.error"
-      :error="settings.error"
+      v-else-if="settings.get.error"
+      :error="settings.get.error"
       :title="__('Could not load system defaults')"
       :retry="() => settings.reload()"
     />
