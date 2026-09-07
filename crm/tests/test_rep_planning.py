@@ -156,7 +156,11 @@ class MatchActualsJobTest(IntegrationTestCase):
 		users = (self.USER, self.OTHER)
 		targets = (
 			("CRM Rep Plan", {"user": ("in", users)}, None),
-			("CRM Call Log", None, [["caller", "in", users], ["receiver", "in", users], ["owner", "in", users]]),
+			(
+				"CRM Call Log",
+				None,
+				[["caller", "in", users], ["receiver", "in", users], ["owner", "in", users]],
+			),
 			("Event", {"owner": ("in", users)}, None),
 			("Communication", {"owner": ("in", users)}, None),
 			("CRM Task", None, [["assigned_to", "in", users], ["owner", "in", users]]),
@@ -333,6 +337,32 @@ class MatchActualsJobTest(IntegrationTestCase):
 		plan.reload()
 		self.assertEqual(plan.items[0].status, "Done")
 		self.assertEqual(plan.items[0].fulfilled_by, event.name)
+
+	def test_a_meeting_still_ahead_does_not_fulfil_the_item_yet(self):
+		"""Booked is not done. The event only counts once its start has passed."""
+		plan = self.make_plan({"activity_type": "Meeting"})
+		event = frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "Later today",
+				"starts_on": frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=2),
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.set_value("Event", event.name, "owner", self.USER)
+
+		match_actuals()
+		plan.reload()
+		self.assertEqual(plan.items[0].status, "Planned")
+
+		frappe.db.set_value(
+			"Event",
+			event.name,
+			"starts_on",
+			frappe.utils.add_to_date(frappe.utils.now_datetime(), minutes=-1),
+		)
+		match_actuals()
+		plan.reload()
+		self.assertEqual(plan.items[0].status, "Done")
 
 	def test_a_cancelled_meeting_does_not_fulfil_the_item(self):
 		plan = self.make_plan({"activity_type": "Meeting"})

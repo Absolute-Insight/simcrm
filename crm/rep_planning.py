@@ -216,6 +216,11 @@ def _query_source(
 	if window:
 		start, end = window
 		query = query.where(when >= start).where(when < end + timedelta(days=1))
+	if source["when_is_activity_time"]:
+		# An activity is actual once its moment has passed. A meeting booked for
+		# Friday is a plan, not a fulfilment, on Monday; without this the item
+		# read Done all week and adherence counted a visit nobody had made yet.
+		query = query.where(when <= frappe.utils.now_datetime())
 
 	wanted = set(users)
 
