@@ -9,9 +9,13 @@ export function initSocket() {
   let protocol = port ? 'http' : 'https'
   let url = `${protocol}://${host}${port}/${siteName}`
 
+  // socket.io's default is to keep retrying with backoff. The previous cap of
+  // five attempts (~20 s) meant a laptop that slept through a coffee break came
+  // back with realtime silently dead for the rest of the tab's life: no new
+  // suggestion badge, no notification popups, no list refreshes.
   let socket = io(url, {
     withCredentials: true,
-    reconnectionAttempts: 5,
+    reconnectionAttempts: Infinity,
   })
   socket.on('refetch_resource', (data) => {
     if (data.cache_key) {
