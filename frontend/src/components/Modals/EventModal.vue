@@ -81,7 +81,7 @@
             <DatePicker
               :class="[_event.isFullDay ? 'w-full' : 'w-[158px]']"
               variant="outline"
-              :value="_event.fromDate"
+              :modelValue="_event.fromDate"
               :format="'MMM D, YYYY'"
               :placeholder="__('May 1, 2025')"
               :clearable="false"

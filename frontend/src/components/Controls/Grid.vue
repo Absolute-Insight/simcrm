@@ -202,7 +202,7 @@
                       </div>
                       <TimePicker
                         v-else-if="field.fieldtype === 'Time'"
-                        :value="row[field.fieldname]"
+                        :modelValue="row[field.fieldname]"
                         variant="outline"
                         :format="getFormat('', '', false, true, false)"
                         input-class="border-none text-sm text-ink-gray-8"
@@ -210,7 +210,7 @@
                       />
                       <DatePicker
                         v-else-if="field.fieldtype === 'Date'"
-                        :value="row[field.fieldname]"
+                        :modelValue="row[field.fieldname]"
                         variant="outline"
                         :format="getFormat('', '', true, false, false)"
                         input-class="border-none text-sm text-ink-gray-8"
@@ -218,7 +218,7 @@
                       />
                       <DateTimePicker
                         v-else-if="field.fieldtype === 'Datetime'"
-                        :value="row[field.fieldname]"
+                        :modelValue="row[field.fieldname]"
                         variant="outline"
                         :format="getFormat('', '', true, true, false)"
                         input-class="border-none text-sm text-ink-gray-8"
