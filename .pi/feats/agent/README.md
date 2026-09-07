@@ -372,7 +372,7 @@ and what they are grounded on. Spec:
 | Endpoint | Gate | Grounding | Untrusted content in the prompt? |
 |---|---|---|---|
 | `ask_mentor` | sales user | the shipped help articles (`knowledge.py`, pure) | none — the manual is a constant |
-| `ask_assistant` | sales user | `CRM Knowledge Article` rows with `available_to_assistant=1` (admin-authored), plus enabled `CRM Product` rows when `assistant_reads_products` is on; both via permission-checked `get_list` | none beyond what an admin typed; a product description is admin data too |
+| `ask_assistant` | sales user | `CRM Knowledge Article` rows with `available_to_assistant=1` (admin-authored), plus enabled `CRM Product` rows when `assistant_reads_products` is on; both via permission-checked `get_list` | none beyond what an admin typed; a product description is admin data too — since 2026-09-07 Sales User holds read only on `CRM Product` (write, create and delete are Sales Manager and System Manager), so a rep cannot plant text there |
 | `ask_analyst` | **System Manager**, then `analyst_enabled` | a catalogue of metrics-layer calculations (`analyst.py` pure, `analyst_data.py` site-bound) and, when an ERP integration is enabled, its invoices and payments | only computed numbers; deal names and organization names appear in two tables |
 
 The Mentor was the original `ask_assistant` (2026-08-21); it was renamed when
