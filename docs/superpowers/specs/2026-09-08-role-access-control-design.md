@@ -75,9 +75,11 @@ Two switches, both of which change what the database returns:
   and know what their managers can see.
 - **Managers outside the hierarchy** — a new setting,
   `manager_outside_hierarchy`, with two values: `All records` and `Own records
-  only`. The doctype **field default is `All records`**: a Single doctype that
-  has never been written returns its field defaults, so this is what every
-  existing site reads, and today's behaviour survives with no patch.
+  only`. The field default is `All records`, and the one reader treats a missing
+  value as `All records` too — `frappe.db.get_single_value` reads `tabSingles`
+  and returns `None` for a Single that has never been saved, so the fallback has
+  to be in the code and not only in the field. Between them, every existing site
+  keeps today's behaviour with no patch.
   `after_install` then writes `Own records only` for new installs — which is
   what makes "default the hierarchy on" mean anything on a site whose tree is
   still empty, since otherwise every manager on a fresh site is out of tree and
@@ -118,11 +120,13 @@ and to nobody else, holding:
 | Field | Type | Meaning |
 |---|---|---|
 | `manager_outside_hierarchy` | Select | `All records` \| `Own records only` |
-| `role_surfaces` | Table (`CRM Role Surface`) | the §2 matrix |
+| `hidden_surfaces` | Table (`CRM Role Surface`) | the §2 matrix |
 
-`CRM Role Surface` is a child doctype with `role` (Select: `Sales Manager` /
-`Sales User`), `surface` (Data) and `visible` (Check). Rows are stored sparsely —
-only what has been hidden.
+`CRM Role Surface` is a child doctype with exactly two fields: `role` (Select:
+`Sales Manager` / `Sales User`) and `surface` (Data). **A row's existence means
+hidden** — there is no `visible` flag, because a sparse table of what has been
+hidden needs no second way to say the same thing. The parent field is named
+`hidden_surfaces` so a row reads correctly in the desk UI without a legend.
 
 A child table rather than a JSON blob, deliberately: `FCRM Settings` already
 holds `dropdown_items` and `event_notifications` this way, so it is the house
@@ -151,6 +155,12 @@ managers entirely; their writes go through one narrow endpoint instead.
    `Sales User`.** A manager tunes what their reps see; the Sales Manager column
    is an admin's to set. This is the rule that keeps the pane from being a way
    for a manager to widen their own access.
+
+   Note the matrix has **two columns, not three**: `Sales Manager` and
+   `Sales User`. There is deliberately no System Manager column — nothing can be
+   hidden from an admin, which means an admin can never configure themselves out
+   of the pane that would let them undo it. The feature stays recoverable by
+   construction rather than by a reset button.
 3. Validate each key by shape — `^(nav|settings)\.[a-z0-9_]+$`, with a cap on
    count and key length — rather than against a Python allowlist. One registry
    instead of two, and the narrowing invariant already makes an unrecognised key
