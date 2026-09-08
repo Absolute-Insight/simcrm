@@ -351,10 +351,14 @@ class InstallDefaultsTest(IntegrationTestCase):
 		)
 
 	def test_ensure_access_defaults_scopes_a_fresh_site(self):
+		"""A fresh site has no row in Singles for either field at all -- not a
+		falsy stored value. A Check field with no row also casts to 0
+		(``frappe.utils.cast``), so setting the field to 0 and deleting its row
+		are different states that must not be conflated."""
 		from crm.install import ensure_access_defaults
 
-		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 0)
-		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		frappe.db.delete("Singles", {"doctype": "FCRM Settings", "field": "enable_sales_hierarchy"})
+		frappe.db.delete("Singles", {"doctype": "CRM Access Settings", "field": "manager_outside_hierarchy"})
 
 		ensure_access_defaults()
 
@@ -362,4 +366,22 @@ class InstallDefaultsTest(IntegrationTestCase):
 		self.assertEqual(
 			frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy"),
 			"Own records only",
+		)
+
+	def test_ensure_access_defaults_leaves_a_configured_site_alone(self):
+		"""First-run only: once a row exists -- even one that happens to match
+		what used to be the only behaviour -- an administrator's choice stands.
+		This is exactly the shape FCRMSettings.restore_defaults produces on an
+		existing site, since it calls after_install."""
+		from crm.install import ensure_access_defaults
+
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 0)
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+
+		ensure_access_defaults()
+
+		self.assertEqual(frappe.db.get_single_value("FCRM Settings", "enable_sales_hierarchy"), 0)
+		self.assertEqual(
+			frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy"),
+			"All records",
 		)

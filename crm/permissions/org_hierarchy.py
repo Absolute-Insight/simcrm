@@ -21,12 +21,12 @@ def _permission_query_conditions(user: str | None, doctype: str):
 		return ""
 
 	roles = frappe.get_roles(user)
-	from crm.api.access import manager_outside_hierarchy_sees_all
-
 	if "System Manager" in roles:
 		return ""
 
 	in_tree = hierarchy_enabled() and _in_hierarchy(user)
+
+	from crm.api.access import manager_outside_hierarchy_sees_all
 
 	# A Sales Manager outside the tree sees everything -- unless an administrator
 	# has said otherwise. The historical answer is the fallback (see
@@ -83,8 +83,6 @@ def _has_permission(doc, ptype, user, doctype: str) -> bool | None:
 		return True
 
 	roles = frappe.get_roles(user)
-	from crm.api.access import manager_outside_hierarchy_sees_all
-
 	if "System Manager" in roles:
 		return True
 
@@ -92,6 +90,9 @@ def _has_permission(doc, ptype, user, doctype: str) -> bool | None:
 		return True
 
 	in_tree = hierarchy_enabled() and _in_hierarchy(user)
+
+	from crm.api.access import manager_outside_hierarchy_sees_all
+
 	if "Sales Manager" in roles and not in_tree and manager_outside_hierarchy_sees_all():
 		return True
 

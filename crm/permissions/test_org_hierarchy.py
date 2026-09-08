@@ -282,6 +282,21 @@ class ManagerOutsideHierarchyTest(IntegrationTestCase):
 		self.assertNotEqual(condition, "")
 		self.assertIn(self.manager, condition)
 
+	def test_the_setting_also_governs_direct_deal_access(self):
+		"""get_deal_permission_query_conditions governs list and report views; a
+		deal opened directly by name goes through has_deal_permission instead.
+		Both anchors read the same setting, so they must scope the same way -- a
+		manager who cannot list a deal but can still open it by name/URL is a
+		worse failure than an inconsistent list."""
+		make_user("someone-else@crmtest.test")
+		deal = make_deal("someone-else@crmtest.test")
+
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		self.assertTrue(has_deal_permission(deal, "read", self.manager))
+
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		self.assertFalse(has_deal_permission(deal, "read", self.manager))
+
 	def test_an_unsaved_setting_reads_as_all_records(self):
 		"""get_single_value returns None for a Single that was never saved, so an
 		existing site upgrading into this feature must not change behaviour."""
