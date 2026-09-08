@@ -80,10 +80,13 @@ Two switches, both of which change what the database returns:
 - **Managers outside the hierarchy** — a new setting,
   `manager_outside_hierarchy`, with two values: `All records` and `Own records
   only`. The field default is `All records`, and the one reader treats a missing
-  value as `All records` too — `frappe.db.get_single_value` reads `tabSingles`
-  and returns `None` for a Single that has never been saved, so the fallback has
-  to be in the code and not only in the field. Between them, every existing site
-  keeps today's behaviour with no patch.
+  value as `All records` too. The mechanism is not what this document first
+  claimed: `frappe.db.get_single_value` does **not** return `None` for a Single
+  that has never been saved — it casts the missing value to the fieldtype's zero
+  value, so a Select yields `""` and a Check yields `0`. `""` is falsy, so the
+  `or "All records"` fallback still gives the historical answer; the code was
+  right and the reasoning was wrong. Between the default and the fallback, every
+  existing site keeps today's behaviour with no patch.
   `after_install` then writes `Own records only` for new installs — which is
   what makes "default the hierarchy on" mean anything on a site whose tree is
   still empty, since otherwise every manager on a fresh site is out of tree and
@@ -239,10 +242,19 @@ than field defaults, and there is no migration patch, so every existing site —
 MBP's live v3.10.1 included — keeps exactly what it has; flipping it under a running trial would silently narrow what their
 managers see with nothing on screen to explain it.
 
-One consequence to document rather than hide: `FCRMSettings.restore_defaults`
-calls `after_install`, so an admin pressing *Restore Defaults* on an existing
-site would also switch the hierarchy on. That is defensible for a button named
-"restore defaults", but it should be in the release note.
+`FCRMSettings.restore_defaults` also calls `after_install`, which would have
+made *Restore Defaults* silently switch the hierarchy on **and** scope every
+out-of-tree manager — no error, just missing rows. So the helper returns early
+unless `frappe.flags.in_install` is set: it acts on a genuine first install and
+does nothing on any existing site. Row existence was tried first and is wrong,
+because `add_standard_dropdown_items` saves `FCRM Settings` earlier in
+`after_install` and `update_single` rewrites a row for every field of a Single —
+so by the time the helper runs the row always exists and says nothing about
+intent.
+
+The one path that does re-apply them is `bench install-app crm --force`, which
+re-runs `after_install` with the flag set. That is the correct semantics for a
+forced install, and worth a line in the release note.
 
 ## UI
 
