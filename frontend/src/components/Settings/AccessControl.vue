@@ -124,14 +124,34 @@
         </p>
       </div>
 
-      <div class="min-h-0 flex-1 overflow-auto">
+      <SkeletonTable
+        v-if="access.visibility.loading"
+        :columns="CONFIGURABLE_ROLES.length + 1"
+        :rows="12"
+        density="compact"
+        class="flex-1 px-1"
+        :label="__('Loading the surface matrix')"
+      />
+
+      <ErrorState
+        v-else-if="access.visibility.error"
+        class="flex-1"
+        :error="access.visibility.error"
+        :title="__('Could not load the surface matrix')"
+        :retry="access.reload"
+      />
+
+      <div v-else class="min-h-0 flex-1 overflow-auto">
         <table class="min-w-full text-base">
           <thead class="sticky top-0 z-10 bg-surface-elevation-2">
             <tr class="text-left text-ink-gray-6">
-              <th class="py-2 pr-4 font-medium">{{ __('Surface') }}</th>
+              <th scope="col" class="py-2 pr-4 font-medium">
+                {{ __('Surface') }}
+              </th>
               <th
                 v-for="role in CONFIGURABLE_ROLES"
                 :key="role"
+                scope="col"
                 class="w-40 py-2 pr-4 font-medium"
               >
                 {{ roleLabel(role) }}
@@ -171,7 +191,7 @@
                       ])
                     "
                   >
-                    <span class="text-ink-gray-4">—</span>
+                    <span class="text-ink-gray-4" tabindex="0">—</span>
                   </Tooltip>
                   <CheckSwitch
                     v-else
@@ -193,7 +213,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { createResource, FormControl, Tooltip, toast } from 'frappe-ui'
 import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -211,6 +231,20 @@ import {
 const { isAdmin } = usersStore()
 const { $dialog } = globalStore()
 const access = accessStore()
+
+// §1 refreshes itself via createResource's own auto:true; §2's data is the
+// store's shared `visibility` resource, fetched once at boot by the router
+// guard. Without this, opening the pane long after boot -- or in a second
+// tab -- renders however stale a matrix that boot fetch got, and
+// set_visibility is a whole-row replace, so a save from that stale row
+// silently discards whatever anyone else changed to that row since.
+// Swallowed on failure: access.visibility.error is already reactive and the
+// template's ErrorState renders from it -- an uncaught rejection here would
+// only be a second, unhandled report of the same failure (createResource
+// re-throws even after its own onError runs; see stores/access.js).
+onMounted(() => {
+  access.reload().catch(() => {})
+})
 
 const saving = ref(false)
 
@@ -264,7 +298,11 @@ function saveDataAccess(payload, message) {
       dataAccess.reload()
       toast.success(message)
     })
-    .catch((error) => toast.error(error?.messages?.[0] || __('Could not save')))
+    .catch((error) =>
+      toast.error(
+        error?.messages?.[0] || error?.message || __('Could not save'),
+      ),
+    )
 }
 
 function onHierarchyToggle(value) {
@@ -319,6 +357,12 @@ const setVisibility = createResource({
 })
 
 async function onToggle(role, key, nextVisible) {
+  // Vue's :disabled binding on the switch is reactive but not synchronous --
+  // two clicks in the same tick both arrive here before the DOM disables
+  // anything, and would otherwise both read the same base row and the
+  // second whole-row write would clobber the first.
+  if (saving.value) return
+
   const hidden = new Set(hiddenFor(role))
   if (nextVisible) hidden.delete(key)
   else hidden.add(key)
@@ -326,11 +370,26 @@ async function onToggle(role, key, nextVisible) {
   saving.value = true
   try {
     await setVisibility.submit({ role, hidden: Array.from(hidden) })
-    // Re-read rather than patching local state: the caller's own row may be
-    // among the ones that changed, and the shell reads it from this store.
-    await access.reload()
   } catch (error) {
-    toast.error(error?.messages?.[0] || __('Could not save'))
+    toast.error(error?.messages?.[0] || error?.message || __('Could not save'))
+    saving.value = false
+    return
+  }
+
+  toast.success(__('Saved'))
+
+  // Re-read rather than patching local state: the caller's own row may be
+  // among the ones that changed, and the shell reads it from this store.
+  // Its own try/catch on purpose, separate from the save above: the save
+  // already succeeded and is already reported, so a blip on this refresh
+  // must not turn into "Could not save" for a row that did save --
+  // createResource re-throws even after its own onError runs, and
+  // stores/access.js's onError already resets hidden to [] as its own
+  // fail-open, so there is nothing further to tell the user here.
+  try {
+    await access.reload()
+  } catch {
+    // handled above
   } finally {
     saving.value = false
   }
