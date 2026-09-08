@@ -17,6 +17,11 @@ Needs a reachable endpoint::
 
     bench --site <site> execute crm.agent.evals.runner.run_and_print
     bench --site <site> execute crm.agent.evals.runner.run_and_print --kwargs "{'repeats': 5}"
+
+Or, to measure a candidate without pointing the site at it::
+
+    bench --site <site> execute crm.agent.evals.runner.run_and_print --kwargs \
+      "{'base_url': 'http://candidate:8080/v1', 'model': 'candidate', 'max_tokens': 4096}"
 """
 
 from __future__ import annotations
@@ -160,9 +165,24 @@ def format_report(results, cfg: AgentConfig) -> str:
 	return "\n".join(lines)
 
 
-def run_and_print(repeats: int = DEFAULT_REPEATS, only: str | None = None) -> str:
-	"""``bench execute`` entry point. Prints the report and returns it."""
-	cfg = get_config()
+def run_and_print(
+	repeats: int = DEFAULT_REPEATS,
+	only: str | None = None,
+	base_url: str | None = None,
+	model: str | None = None,
+	timeout: int | str | None = None,
+	max_tokens: int | str | None = None,
+) -> str:
+	"""``bench execute`` entry point. Prints the report and returns it.
+
+	Everything after ``only`` overrides the site's own agent settings for this run
+	and nothing else, which is how a *candidate* gets measured: pointing CRM Agent
+	Settings at one changes what reps are served while the sweep runs, and leaves
+	the site aimed at the candidate if it dies halfway. ``max_tokens`` is the one
+	most often worth moving -- a budget too small for a model's reasoning channel
+	reads as an unanswering endpoint rather than as a budget.
+	"""
+	cfg = get_config().with_overrides(base_url=base_url, model=model, timeout=timeout, max_tokens=max_tokens)
 	report = format_report(run_evals(cfg, repeats=repeats, only=only), cfg)
 	print(report)
 	return report

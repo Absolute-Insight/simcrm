@@ -10,7 +10,7 @@ normalised into a plain dataclass, so nothing downstream touches the database.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import frappe
 
@@ -115,6 +115,47 @@ class AgentConfig:
 			analyst_enabled=bool(to_int("analyst_enabled", 0)),
 			api_key=str(merged.get("api_key") or ""),
 		)
+
+	def with_overrides(
+		self,
+		*,
+		base_url: str | None = None,
+		model: str | None = None,
+		timeout: int | str | None = None,
+		max_tokens: int | str | None = None,
+	) -> AgentConfig:
+		"""This config with the named fields replaced, normalised as settings are.
+
+		Exists for ``evals.runner``: measuring a candidate model otherwise means
+		editing CRM Agent Settings, which changes what reps are served for the
+		duration of the sweep and leaves the site pointed somewhere else if the run
+		dies halfway.
+
+		Routed back through ``from_settings`` rather than ``dataclasses.replace`` so
+		an override gets the same treatment a settings value does -- a hand-typed
+		``base_url`` keeps its trailing slash under ``replace``, and every request
+		then carries ``//chat/completions``. Numbers may arrive as strings, because
+		``bench execute --kwargs`` is the caller and what it hands over depends on
+		how the operator quoted it.
+
+		The parameters are spelled out rather than taken as ``**overrides`` on
+		purpose: a misspelled one has to be a ``TypeError`` here, not a sweep that
+		quietly measures the site's own endpoint and gets written down as the
+		candidate's.
+		"""
+		supplied = {
+			key: value
+			for key, value in (
+				("base_url", base_url),
+				("model", model),
+				("timeout", timeout),
+				("max_tokens", max_tokens),
+			)
+			if value is not None
+		}
+		if not supplied:
+			return self
+		return self.from_settings({**asdict(self), **supplied})
 
 
 @dataclass(frozen=True)
