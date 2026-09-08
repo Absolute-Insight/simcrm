@@ -248,6 +248,12 @@ const tabs = computed(() => {
           label: __('Templates'),
           icon: EmailTemplateIcon,
           component: markRaw(EmailTemplatePage),
+          // The Email group carries no group condition (Telephony's group
+          // cannot have one — a rep configures their own agent number there),
+          // so an ungated item here falls through to reps. Templates is an
+          // authoring surface; a rep *uses* templates from the composer, not
+          // from Settings.
+          condition: () => isManager(),
         },
       ],
     },
