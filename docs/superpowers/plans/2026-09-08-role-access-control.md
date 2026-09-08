@@ -1284,6 +1284,32 @@ describe('SURFACES', () => {
     }
   })
 
+  it('gives every settings surface a section, and no nav surface one', () => {
+    // The matrix renders `section · label` for settings rows, because
+    // "Accounts" and "Templates" mean nothing on their own.
+    for (const surface of surfacesByGroup('settings')) {
+      expect(surface.section, surface.key).toBeTruthy()
+    }
+    for (const surface of surfacesByGroup('nav')) {
+      expect(surface.section, surface.key).toBeUndefined()
+    }
+  })
+
+  it('uses only section names that exist in Settings.vue', () => {
+    const real = [
+      'User Configuration',
+      'System Configuration',
+      'User Management',
+      'Email',
+      'Automation & Rules',
+      'Customization',
+      'Integrations',
+    ]
+    for (const surface of surfacesByGroup('settings')) {
+      expect(real, surface.key).toContain(surface.section)
+    }
+  })
+
   it('covers the nav links and the settings panes', () => {
     expect(surfacesByGroup('nav').length).toBe(13)
     expect(surfacesByGroup('settings').length).toBe(27)
@@ -1415,33 +1441,38 @@ export const SURFACES = [
   { key: 'nav.call_logs', group: 'nav', label: 'Call Logs' },
 
   // --- settings: Settings.vue's `tabs` ---
-  { key: 'settings.profile', group: 'settings', label: 'Profile' },
-  { key: 'settings.preferences', group: 'settings', label: 'Preferences' },
-  { key: 'settings.general', group: 'settings', label: 'General', floor: MANAGER_ROLE },
-  { key: 'settings.dashboard', group: 'settings', label: 'Dashboard', floor: MANAGER_ROLE },
-  { key: 'settings.defaults', group: 'settings', label: 'Defaults', floor: ADMIN_ROLE },
-  { key: 'settings.brand', group: 'settings', label: 'Brand', floor: MANAGER_ROLE },
-  { key: 'settings.calendar', group: 'settings', label: 'Calendar', floor: MANAGER_ROLE },
-  { key: 'settings.users', group: 'settings', label: 'Users', floor: MANAGER_ROLE },
-  { key: 'settings.invite_user', group: 'settings', label: 'Invite User', floor: MANAGER_ROLE },
-  { key: 'settings.sales_hierarchy', group: 'settings', label: 'Sales Hierarchy', floor: MANAGER_ROLE },
-  { key: 'settings.sales_targets', group: 'settings', label: 'Sales Targets', floor: MANAGER_ROLE },
-  { key: 'settings.access_control', group: 'settings', label: 'Access Control', floor: MANAGER_ROLE },
-  { key: 'settings.email_accounts', group: 'settings', label: 'Accounts', floor: ADMIN_ROLE },
-  { key: 'settings.email_templates', group: 'settings', label: 'Templates', floor: MANAGER_ROLE },
-  { key: 'settings.assignment_rules', group: 'settings', label: 'Assignment Rules', floor: ADMIN_ROLE },
-  { key: 'settings.sla_policies', group: 'settings', label: 'SLA Policies', floor: MANAGER_ROLE },
-  { key: 'settings.automation_rules', group: 'settings', label: 'Automation Rules', floor: MANAGER_ROLE },
-  { key: 'settings.assistant', group: 'settings', label: 'Assistant', floor: ADMIN_ROLE },
-  { key: 'settings.knowledge', group: 'settings', label: 'Knowledge', floor: ADMIN_ROLE },
-  { key: 'settings.report_digests', group: 'settings', label: 'Report Digests', floor: MANAGER_ROLE },
-  { key: 'settings.forms', group: 'settings', label: 'Forms', floor: MANAGER_ROLE },
-  { key: 'settings.home_actions', group: 'settings', label: 'Home Actions', floor: MANAGER_ROLE },
-  { key: 'settings.telephony', group: 'settings', label: 'Telephony' },
-  { key: 'settings.whatsapp', group: 'settings', label: 'WhatsApp', floor: MANAGER_ROLE },
-  { key: 'settings.simerp', group: 'settings', label: 'SIMERP', floor: MANAGER_ROLE },
-  { key: 'settings.acumatica', group: 'settings', label: 'Acumatica', floor: MANAGER_ROLE },
-  { key: 'settings.lead_syncing', group: 'settings', label: 'Lead Syncing', floor: MANAGER_ROLE },
+  // `section` is the settings group the pane lives under. It exists because
+  // several labels are meaningless alone in a flat matrix -- "Accounts" (of
+  // what?), "Templates" -- and because "Dashboard", "Calendar" and "Assistant"
+  // each name BOTH a nav link and a settings pane. The pane renders
+  // `section · label`.
+  { key: 'settings.profile', group: 'settings', section: 'User Configuration', label: 'Profile' },
+  { key: 'settings.preferences', group: 'settings', section: 'User Configuration', label: 'Preferences' },
+  { key: 'settings.general', group: 'settings', section: 'System Configuration', label: 'General', floor: MANAGER_ROLE },
+  { key: 'settings.dashboard', group: 'settings', section: 'System Configuration', label: 'Dashboard', floor: MANAGER_ROLE },
+  { key: 'settings.defaults', group: 'settings', section: 'System Configuration', label: 'Defaults', floor: ADMIN_ROLE },
+  { key: 'settings.brand', group: 'settings', section: 'System Configuration', label: 'Brand', floor: MANAGER_ROLE },
+  { key: 'settings.calendar', group: 'settings', section: 'System Configuration', label: 'Calendar', floor: MANAGER_ROLE },
+  { key: 'settings.users', group: 'settings', section: 'User Management', label: 'Users', floor: MANAGER_ROLE },
+  { key: 'settings.invite_user', group: 'settings', section: 'User Management', label: 'Invite User', floor: MANAGER_ROLE },
+  { key: 'settings.sales_hierarchy', group: 'settings', section: 'User Management', label: 'Sales Hierarchy', floor: MANAGER_ROLE },
+  { key: 'settings.sales_targets', group: 'settings', section: 'User Management', label: 'Sales Targets', floor: MANAGER_ROLE },
+  { key: 'settings.access_control', group: 'settings', section: 'User Management', label: 'Access Control', floor: MANAGER_ROLE },
+  { key: 'settings.email_accounts', group: 'settings', section: 'Email', label: 'Accounts', floor: ADMIN_ROLE },
+  { key: 'settings.email_templates', group: 'settings', section: 'Email', label: 'Templates', floor: MANAGER_ROLE },
+  { key: 'settings.assignment_rules', group: 'settings', section: 'Automation & Rules', label: 'Assignment Rules', floor: ADMIN_ROLE },
+  { key: 'settings.sla_policies', group: 'settings', section: 'Automation & Rules', label: 'SLA Policies', floor: MANAGER_ROLE },
+  { key: 'settings.automation_rules', group: 'settings', section: 'Automation & Rules', label: 'Automation Rules', floor: MANAGER_ROLE },
+  { key: 'settings.assistant', group: 'settings', section: 'Automation & Rules', label: 'Assistant', floor: ADMIN_ROLE },
+  { key: 'settings.knowledge', group: 'settings', section: 'Automation & Rules', label: 'Knowledge', floor: ADMIN_ROLE },
+  { key: 'settings.report_digests', group: 'settings', section: 'Automation & Rules', label: 'Report Digests', floor: MANAGER_ROLE },
+  { key: 'settings.forms', group: 'settings', section: 'Automation & Rules', label: 'Forms', floor: MANAGER_ROLE },
+  { key: 'settings.home_actions', group: 'settings', section: 'Customization', label: 'Home Actions', floor: MANAGER_ROLE },
+  { key: 'settings.telephony', group: 'settings', section: 'Integrations', label: 'Telephony' },
+  { key: 'settings.whatsapp', group: 'settings', section: 'Integrations', label: 'WhatsApp', floor: MANAGER_ROLE },
+  { key: 'settings.simerp', group: 'settings', section: 'Integrations', label: 'SIMERP', floor: MANAGER_ROLE },
+  { key: 'settings.acumatica', group: 'settings', section: 'Integrations', label: 'Acumatica', floor: MANAGER_ROLE },
+  { key: 'settings.lead_syncing', group: 'settings', section: 'Integrations', label: 'Lead Syncing', floor: MANAGER_ROLE },
 ]
 
 /** How much each role can reach, for comparing against a surface's floor. */
@@ -1680,6 +1711,7 @@ The biggest task, and the one that needs eyes on a screen. `Quotas.vue` is the m
 
 **Interfaces:**
 - Consumes: `accessStore()` from Task 6; `SURFACES`, `CONFIGURABLE_ROLES`, `editableBy`, `isAtFloor`, `surfacesByGroup` from Task 5; `crm.api.access.get_data_access` / `set_data_access` / `set_visibility` from Task 3.
+- **`set_visibility` and `set_data_access` are `@frappe.whitelist(methods=["POST"])`.** frappe-ui's `createResource` defaults to GET, so every write resource here MUST pass `method: 'POST'` or the save will 403. The two read endpoints stay GET.
 - Produces: the pane, reachable as `Settings → Access Control`.
 
 - [ ] **Step 1: Add stable keys to the settings items**
@@ -1954,7 +1986,9 @@ Create `frontend/src/components/Settings/AccessControl.vue`:
                 class="border-t border-[var(--v-shell-hairline)]"
               >
                 <td class="py-2 pr-4 text-ink-gray-8">
-                  {{ __(surface.label) }}
+                  <span v-if="surface.section" class="text-ink-gray-5"
+                    >{{ __(surface.section) }} &middot; </span
+                  >{{ __(surface.label) }}
                 </td>
                 <td
                   v-for="role in CONFIGURABLE_ROLES"
