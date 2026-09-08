@@ -65,6 +65,14 @@ they run as evaluated strings in the browser.
 | `frontend/src/stores/meta.js` | `getMeta(doctype)` — fetches DocType meta, exposes `getFields()`, formatters |
 | `frontend/src/stores/global.js` | `$dialog`, `$socket`, `makeCall` |
 | `frontend/src/stores/suggestions.js` | Suggestion inbox store, badge count, accept/dismiss flows |
+| `frontend/src/utils/surfaces.js` | Nav/settings surface registry (`SURFACES`, `canSee`, `editableBy`, `isAtFloor`) — the source of truth `Settings → Access Control` renders |
+| `frontend/src/stores/access.js` | `canSee(key)` over the session's hidden set, loaded once in the router guard |
+
+### Permissions
+| File | Role |
+|---|---|
+| `crm/permissions/org_hierarchy.py` | Sales-hierarchy row scoping for `CRM Lead` / `CRM Deal` (`permission_query_conditions`, `has_permission`); reads `manager_outside_hierarchy` for the out-of-tree case |
+| `crm/api/access.py` | `get_visibility` / `set_visibility` — the nav/settings visibility matrix; `get_data_access` / `set_data_access` — the two server-enforced switches |
 
 ### Product surfaces (Vectora)
 | File | Role |
@@ -81,6 +89,7 @@ they run as evaluated strings in the browser.
 | `frontend/src/pages/Analyst.vue` | Admin-only analyst page: model narrative beside computed tables (`crm.agent.api.ask_analyst`) |
 | `frontend/src/components/AgentChat.vue` | The transcript/input shared by the three chat surfaces; stores come from `stores/agentChat.js` |
 | `frontend/src/components/Settings/KnowledgeSettings.vue` | Settings → Knowledge: what the Assistant may quote (`crm/api/knowledge.py`, `crm/knowledge/samples/`) |
+| `frontend/src/components/Settings/AccessControl.vue` | Settings → Access Control: admin-only data-access switches plus the role × surface visibility matrix (`crm/api/access.py`) |
 
 ### Design system
 | File | Role |

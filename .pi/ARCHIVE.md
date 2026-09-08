@@ -330,3 +330,146 @@ Feature doc: [feats/reporting/README.md](./feats/reporting/README.md).
 - Registry strings are untranslated literals with `_()` applied per request: a module is
   imported once per worker, so translating at import time freezes every label to the
   language of whoever made the first request.
+
+---
+
+## Role-Based Access Control
+
+**Completed 2026-09-08/09.** Design:
+`docs/superpowers/specs/2026-09-08-role-access-control-design.md`. Task plan:
+`docs/superpowers/plans/2026-09-08-role-access-control.md`.
+Stable contract: [SPEC.md — Role visibility](./SPEC.md#role-visibility).
+
+### What the audit found
+
+An audit of every role gate in the app (doctype permissions, the nine
+`permission_query_conditions` / `has_permission` hooks, ~40 endpoint gates, and every
+frontend `isManager()` / `isAdmin()` condition) found the server side in good shape overall,
+and three things that needed fixing:
+
+- **`enable_sales_hierarchy` defaulted to `0`.** On a fresh site nobody is in the sales
+  hierarchy tree, so `org_hierarchy.py`'s explicit fallback — *"a Sales Manager outside the
+  tree retains the default, i.e. sees everything"* — meant every Sales Manager read every
+  lead and deal on the site, and, because `visible_users()` returned `None` for them, every
+  rep's quota, plan and suggestions too. SECURITY.md names exactly this as the invariant
+  worth probing, and the flag that enforces it was surfaced only inside the admin-only tree
+  editor (`Hierarchy.vue`), reading as a feature of that editor rather than the master switch
+  it actually is.
+- **The out-of-tree case was hardcoded**, not configurable. "Sees everything" is a
+  reasonable escape hatch for a manager who genuinely runs the whole book — but it is also
+  what *every* manager gets on a site whose tree nobody has built yet, so turning the
+  hierarchy on by itself would only relocate the problem to the first manager added.
+- **Two `Settings.vue` groups carried no group condition.** Five of seven groups were gated
+  with `isManager()`; `Email` and `Integrations` were not. `Integrations`' ungated
+  fall-through is deliberate — a rep configures their own Telephony agent number there, and
+  the manager-only controls inside it are already gated one by one — so a group condition on
+  `Integrations` would have been a regression, taking that away from reps. `Email →
+  Templates` had no such reason and was gated at the item.
+
+Separately: `isSalesUser()` (`stores/users.js`) was exported with no callers and was an exact
+role match where its sibling `isManager()` is inclusive — two different meanings for one
+idea, waiting for someone to reach for the wrong one. Both fixes (the Templates gate, the
+dead helper) landed as their own commit ahead of the feature, since they are correct whether
+or not the settings pane ships at all.
+
+### What shipped
+
+- **`CRM Access Settings`** — a Single, `rwcd` to System Manager and nobody else — holding
+  `manager_outside_hierarchy` and a sparse `hidden_surfaces` child table (`CRM Role Surface`:
+  `role` + `surface`). A row's existence means hidden; there is no `visible` field for it to
+  fall out of sync with.
+- **`crm/api/access.py`** — `get_visibility` / `set_visibility` for the chrome matrix,
+  `get_data_access` / `set_data_access` for the two switches that actually change what the
+  database returns, and `manager_outside_hierarchy_sees_all()`, the single place that decision
+  is made.
+- **`frontend/src/utils/surfaces.js`** — the registry (13 nav links, 27 settings panes) plus
+  the pure `canSee` / `editableBy` / `isAtFloor` gates. **`frontend/src/stores/access.js`** —
+  the Pinia wrapper the shell actually calls, loaded once in the router's global guard
+  alongside `users`, so the sidebar renders once with the final set instead of painting a link
+  and retracting it.
+- **`Settings → Access Control`** (`AccessControl.vue`) — §1 the two data-access switches,
+  admin-only; §2 the two-column role × surface matrix, styled after `Quotas.vue`'s
+  skeleton/error/grid states.
+
+Full contract, including exact payload shapes and the two-step recipe for adding a surface:
+[SPEC.md — Role visibility](./SPEC.md#role-visibility).
+
+### Load-bearing decisions
+
+- **The matrix is a new doctype, not more fields on `FCRM Settings`.** `FCRM Settings` grants
+  `rwcd` to Sales Manager (confirmed against `fcrm_settings.json`), so putting the matrix
+  there would let a manager rewrite their own row through the generic document API — the
+  exact escalation this pane exists to prevent, and the same class of problem
+  `test_admin_only_actions.py` already guards elsewhere. `CRM Access Settings`'s door is
+  closed to managers entirely; their writes go through the one narrow endpoint instead.
+  `enable_sales_hierarchy` stays on `FCRM Settings` rather than migrating across, since the
+  new pane can simply read and write it where it already lives.
+- **There is no System Manager column, enforced twice.** Nothing is hideable from an
+  administrator, so an administrator can never configure themselves out of the pane that
+  would undo it — recoverable by construction, not by a reset button. `set_visibility`'s own
+  role check and `CRMAccessSettings.validate()` (`reject_unconfigurable_roles`) both reject a
+  non-configurable role, independently, because the desk form is a second door onto the same
+  doctype.
+- **New installs get safe defaults; existing sites — MBP's live v3.10.1 included — do not
+  change.** `after_install` writes `enable_sales_hierarchy = 1` and
+  `manager_outside_hierarchy = "Own records only"`; there is no migration patch, so an
+  upgraded site keeps exactly the behaviour it already has. Getting the discriminator right
+  took two tries:
+  - `frappe.db.get_single_value` does **not** return `None` for a Single that has never been
+    saved — it casts to the fieldtype's zero value (`""` for a Select, `0` for a Check). A
+    guard written against `is None` never fires; that mistake shipped once here and had to be
+    reverted. `""` being falsy is what makes `(value or "All records")` land on the historical
+    answer regardless — the *code* was right, the *reasoning* about `None` was wrong, and both
+    this file and the design doc originally repeated the wrong reasoning before being
+    corrected.
+  - **A `Singles` row's existence is not a proxy for "an administrator configured this."**
+    `update_single` deletes and reinserts a row for *every* field of a Single on every save,
+    and `add_standard_dropdown_items` saves `FCRM Settings` 13 lines before
+    `ensure_access_defaults` runs inside `after_install` — so by the time a row-existence
+    guard would check, the row already exists and says nothing about intent. The first attempt
+    used row existence anyway and shipped a worse bug than the one it fixed: on a fresh
+    install `enable_sales_hierarchy` became unreachable, landing on hierarchy **off** plus
+    managers **scoped** — the inverse of intent, and worse than doing nothing, because with
+    the hierarchy off every Sales Manager is narrowed to their own records everywhere at once.
+    The real discriminator is `frappe.flags.in_install`, which the installer sets for the
+    whole `after_install` hook loop and nothing else touches afterward — so
+    `FCRMSettings.restore_defaults` (which also calls `after_install`) now does nothing on a
+    site that already exists, instead of silently re-narrowing every out-of-tree manager on a
+    site an admin already configured.
+- **Scoping had to reach plans and quotas, not just leads and deals.** The out-of-tree rule
+  was first wired into `org_hierarchy.py` alone, which left `crm_rep_plan.py`'s own copy of
+  the same "Sales Manager sees everything" branch — backing `CRM Rep Plan`'s permission query,
+  `visible_reps()`, and quota's `_only_own_team` — unrestricted. That is every rep's
+  compensation figure, precisely the invariant SECURITY.md names, and the inconsistency was
+  one this change introduced rather than inherited (before it, all four were uniformly
+  unrestricted). Fixed by routing `crm_rep_plan.visible_users()` through the same
+  `manager_outside_hierarchy_sees_all()`, so `CRM Suggestion` and `CRM Forecast Snapshot` —
+  which already called `visible_users` for their own scoping — inherited the fix rather than
+  needing a fourth copy of the branch. Net effect under `Own records only`: an out-of-tree
+  manager sees their own rep plan, their own quota row, and their own suggestions plus
+  unowned team-wide signals — and forecast snapshots go empty rather than merely narrower,
+  since a `scope: "Site"` row is refused outright and an out-of-tree manager owns no
+  `Team`-scoped row either.
+- **The write endpoints are POST-only, not a bare `@frappe.whitelist()`.** A bare whitelist
+  admits GET, and frappe skips CSRF validation for safe methods — the only CSRF-unchecked
+  route into a privileged write this pane has. Not exploitable the day it shipped (frappe
+  rolls back a safe-method transaction), but latent: one stray `frappe.db.commit()` later in
+  the request path would have made it live, and in the meantime a GET reported success while
+  persisting nothing — which would have had the pane telling an operator "saved" falsely.
+- **`get_visibility` and `get_data_access` use a module-local `_require_crm_user()`
+  (`crm.api.session.CRM_ALLOWED_ROLES`), not the app's usual `sales_user_only`.**
+  `crm.utils.is_admin()` means the literal `Administrator` account, so `sales_user_only`
+  refuses a user holding only `System Manager` — reachable via `bench add-system-manager` or
+  the desk, and admitted to the CRM by `get_session_role_flags`. These two endpoints gate the
+  shell's own chrome and the pane an administrator would use to fix their own access, so they
+  must not be the thing that locks such an administrator out. Write endpoints keep
+  `frappe.only_for` unchanged: only the two reads needed the wider gate, and widening
+  `sales_user_only` itself would touch roughly twenty endpoints for a change that deserves its
+  own review, not a drive-by here. (The wider version of this gap — a System-Manager-only
+  account 403ing on the app's other `sales_user_only` endpoints, e.g. the dashboard and
+  `ask_mentor` — predates this feature and is unfixed; the audit surfaced it, this feature
+  does not close it.)
+- **`bench install-app crm --force` re-runs `after_install` with the install flag set**, so it
+  rewrites both access settings over an administrator's own configuration. Correct semantics
+  for a forced install — it is meant to reset the app — but worth knowing before running one
+  against a site an admin has already tuned.

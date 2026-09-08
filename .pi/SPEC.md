@@ -19,6 +19,7 @@
 7. [formDialog API](#formdialog-api)
 8. [Available Helpers](#available-helpers)
 9. [Testing](#testing)
+10. [Role visibility](#role-visibility)
 
 ---
 
@@ -322,3 +323,163 @@ describe('processField', () => {
 ```
 
 > See `tests/setup.js` for available globals (`__`, `window.sysdefaults`)
+
+---
+
+## Role visibility
+
+> `Settings → Access Control`. Backend: `crm/api/access.py`. Frontend registry: `frontend/src/utils/surfaces.js`. Frontend store: `frontend/src/stores/access.js` (`canSee`). This is a separate, later contract from the scripting API above — it lives in this file because SPEC.md is where stable, user-facing contracts go. Rationale and history: [ARCHIVE.md — Role-Based Access Control](./ARCHIVE.md#role-based-access-control).
+
+### `get_visibility()`
+
+```
+GET crm.api.access.get_visibility
+→ {
+    role: "System Manager" | "Sales Manager" | "Sales User",
+    hidden: string[],                                     // the caller's own row
+    matrix: { "Sales Manager": string[], "Sales User": string[] } | null,
+  }
+```
+
+Example, for a rep with two surfaces hidden:
+
+```json
+{ "role": "Sales User", "hidden": ["nav.notes", "settings.email_templates"], "matrix": null }
+```
+
+`matrix` is populated for a System Manager or a Sales Manager, `null` for a Sales User — a
+rep never receives another role's configuration. Any CRM role may call this
+(`_require_crm_user()` — deliberately wider than `sales_user_only`, see ARCHIVE.md); a caller
+holding no CRM role gets `frappe.PermissionError`.
+
+### `set_visibility(role, hidden)`
+
+```
+POST crm.api.access.set_visibility
+  role: "Sales Manager" | "Sales User"
+  hidden: string[]              // a JSON-encoded string is also accepted
+→ { role: string, hidden: string[] }
+```
+
+Whole-row replace, not add/remove: the caller posts the complete row it is showing, so two
+managers editing at once cannot silently lose each other's change.
+
+| Caller | `role: "Sales User"` | `role: "Sales Manager"` | `role: "System Manager"` |
+|---|---|---|---|
+| System Manager | allowed | allowed | refused — `ValidationError` (not configurable, ever) |
+| Sales Manager | allowed | refused — `PermissionError` | refused — `ValidationError` |
+| Sales User | refused — `PermissionError` | refused — `PermissionError` | refused — `PermissionError` |
+
+Every entry in `hidden` must match the surface key shape below; the request is capped at
+`MAX_SURFACES` (200) entries. A malformed key, an over-long key, or too many keys raises
+`frappe.ValidationError` and saves nothing.
+
+**Must be called with `method: 'POST'`.** Both write endpoints are
+`@frappe.whitelist(methods=["POST"])`; a `createResource` (or any other caller) that leaves
+the default GET gets a 403.
+
+### The narrowing invariant
+
+> Configuration can only ever hide a surface. It can never reveal one.
+
+Every consumer composes `canSee(key)` with the role gate the surface already had:
+
+```js
+canSee('nav.analyst') && isAdmin()   // correct — the only shape
+canSee('nav.analyst') || isAdmin()   // never
+canSee('nav.analyst')                // never, on its own
+```
+
+Unhiding `nav.analyst` for reps changes nothing: `isAdmin()` still fails in the nav, the
+route guard still redirects, and `crm.agent.api.ask_analyst` is still
+`frappe.only_for("System Manager", True)`. `crm/tests/test_access_settings.py::test_unhiding_a_surface_does_not_make_its_endpoint_callable`
+asserts this against a live endpoint, not just the gate function — treat it as the one test
+here that must never be weakened.
+
+Consequence: an unrecognised or misspelled surface key is inert. It can only fail to hide
+something, never grant it.
+
+### The two-column rule
+
+The matrix has exactly two columns — `Sales Manager` and `Sales User` (`CONFIGURABLE_ROLES`).
+There is no System Manager column: nothing is hideable from an administrator, so an
+administrator can never configure themselves out of the pane that would undo it. Enforced
+twice, independently: `set_visibility`'s own role check, and `CRMAccessSettings.validate()` →
+`reject_unconfigurable_roles()` on the doctype itself, because the desk form is a second door
+onto the same data.
+
+Python source of truth: `CONFIGURABLE_ROLES` in
+`crm/fcrm/doctype/crm_access_settings/crm_access_settings.py` — the doctype owns its own
+Select `options` string. JS copy: `CONFIGURABLE_ROLES` in `frontend/src/utils/surfaces.js`,
+commented as mirroring the Python constant. No cross-language import exists; keep both in
+step by hand.
+
+### Surface key shape
+
+```
+^(nav|settings)\.[a-z0-9_]{1,48}\Z
+```
+
+Enforced server-side (`crm/api/access.py::SURFACE_KEY`). Shape-validated rather than checked
+against a Python allow-list, so the registry that produces valid keys lives once, client-side
+— there is no server-side copy of the surface list to keep in sync.
+
+Each registry entry in `frontend/src/utils/surfaces.js`'s `SURFACES` array:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `key` | `string` | `nav.*` or `settings.*`, matching the shape above |
+| `group` | `'nav' \| 'settings'` | which list this came from — `AppSidebar.vue` (13 entries) or `Settings.vue` (27 entries) |
+| `label` | `string` | display label |
+| `section` | `string?` | settings only — the settings group the surface lives under. The pane renders `section · label`, because several labels are meaningless alone ("Accounts", "Templates") and "Dashboard" / "Calendar" / "Assistant" each name both a nav link and a settings pane |
+| `floor` | `string?` | the role gate the surface's own code already enforces (e.g. `nav.analyst` → `ADMIN_ROLE`). The matrix renders that cell as a fixed dash, not a toggle — see `isAtFloor(surface, role)` |
+
+### Adding a surface
+
+Two steps, in order:
+
+1. **Register it** — add an entry to `SURFACES` in `frontend/src/utils/surfaces.js`: a key
+   matching the shape above, `group`, `label`, and `section` / `floor` if applicable.
+2. **Wire `canSee` at the surface's existing gate.** The mechanism differs by group:
+   - **`nav.*`** (`AppSidebar.vue`): compose it directly into the link's own `condition`:
+     `condition: () => canSee('nav.foo') && <existing gate>`.
+   - **`settings.*`** (`Settings.vue`): give the item a `key: 'settings.foo'` matching the
+     registry and leave its own `condition` untouched. The shared `tabs` computed already
+     applies `canSee(item.key)` before `item.condition()` for every keyed item — adding the
+     key is the whole change.
+
+A surface left off the registry simply stays visible to everyone the existing gate already
+allowed. That is the safe direction, not a hole.
+
+### Data access switches
+
+The other half of `crm/api/access.py` — the two switches that change what the database
+returns, not what the shell shows. Administrator-only to write; `get_data_access` is also
+readable by a Sales Manager, so the pane can show a manager their own scope as read-only
+context.
+
+```
+GET  crm.api.access.get_data_access
+POST crm.api.access.set_data_access
+  enable_sales_hierarchy?: 0 | 1
+  manager_outside_hierarchy?: "All records" | "Own records only"
+→ {
+    enable_sales_hierarchy: 0 | 1,
+    manager_outside_hierarchy: "All records" | "Own records only",
+    hierarchy_size: number,        // frappe.db.count("CRM Sales Hierarchy")
+  }
+```
+
+`manager_outside_hierarchy` accepts only the two `MANAGER_SCOPES` values (`crm_access_settings.py`
+— also the doctype's own Select `options`, so this tuple is the only enforcement on this path,
+which bypasses both `validate()` and frappe's own Select validation); anything else raises
+`frappe.ValidationError`. `set_data_access` is `frappe.only_for("System Manager", True)` — a
+Sales Manager gets `frappe.PermissionError`.
+
+`crm.api.access.manager_outside_hierarchy_sees_all() -> bool` is the single place the
+out-of-tree decision is made. Consumed by `crm/permissions/org_hierarchy.py` (leads, deals)
+and by `crm_rep_plan.visible_users()` (plans; and, through it, quota's `visible_reps()`,
+`CRM Suggestion`, and `CRM Forecast Snapshot`) — one function rather than a copy per doctype.
+
+See [ARCHIVE.md — Role-Based Access Control](./ARCHIVE.md#role-based-access-control) for why
+these two switches exist and why a new install's defaults differ from an existing site's.
