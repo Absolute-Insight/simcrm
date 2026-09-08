@@ -50,19 +50,17 @@ class CRMTask(Document):
 		if not self.assigned_to and not self.automation_rule and frappe.session.user != "Guest":
 			self.assigned_to = frappe.session.user
 
+	# The rule below reads `self.modified = ...` as a field set on a document that
+	# is then never saved. It is the opposite: the row already holds this value and
+	# it is being read back into the in-memory document, so there is nothing to
+	# commit. Annotated on the def because that is where semgrep anchors the match.
+	# nosemgrep: frappe-modifying-but-not-comitting
 	def after_insert(self):
 		self.assign_to()
 		# frappe's assign_to writes ``assigned_to`` back with a fresh ``modified``, so
 		# the document the caller holds no longer matches the row and its next save
 		# is a TimestampMismatchError. Every task now has an assignee; tell the truth.
-		#
-		# This reads the row's own timestamp back into the in-memory document. It
-		# writes nothing, so there is nothing to commit -- the opposite of what
-		# frappe-modifying-but-not-comitting is looking for, which is a field set on
-		# a document that is then never saved.
-		self.modified = frappe.db.get_value(  # nosemgrep: frappe-modifying-but-not-comitting
-			self.doctype, self.name, "modified"
-		)
+		self.modified = frappe.db.get_value(self.doctype, self.name, "modified")
 
 	def validate(self):
 		self.require_closing_note()
