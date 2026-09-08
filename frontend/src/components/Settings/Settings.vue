@@ -357,16 +357,22 @@ const tabs = computed(() => {
     },
   ]
 
-  return _tabs.filter((tab) => {
-    if (tab.condition && !tab.condition()) return false
-    if (tab.items) {
-      tab.items = tab.items.filter((item) => {
-        if (item.condition && !item.condition()) return false
+  return (
+    _tabs
+      .filter((tab) => {
+        if (tab.condition && !tab.condition()) return false
+        if (tab.items) {
+          tab.items = tab.items.filter((item) => {
+            if (item.condition && !item.condition()) return false
+            return true
+          })
+        }
         return true
       })
-    }
-    return true
-  })
+      // Drop groups left with no items — a heading for an empty category
+      // confuses the navigation and contradicts the intent of per-item gates.
+      .filter((tab) => !tab.items || tab.items.length > 0)
+  )
 })
 
 const activeTab = ref(tabs.value[0].items[0])
