@@ -23,7 +23,44 @@
 
 ## Prerequisites — read this before running any test command
 
-**Both suites need the devcontainer**; the host has no `bench` and no `frontend/node_modules`. Bring it up with `/dev-up` first. As of writing it is **not** running (only the `vectora-*` deploy stack is).
+**Both suites need the devcontainer**; the host has no `bench` and no `yarn`.
+
+**It is already up and verified** (2026-09-08): container `simcrm_devcontainer-frappe-1`,
+compose project `simcrm_devcontainer`, volumes `simcrm_devcontainer_{bench-data,mariadb-data}`.
+Sites `dev.localhost` and `test_site` both exist; `test_site` has `allow_tests`
+and all four mail keys set. Run commands through it:
+
+```bash
+docker exec simcrm_devcontainer-frappe-1 bash -lc '<command>'
+```
+
+Do **not** `docker compose up` from `.devcontainer/` without `-p simcrm_devcontainer`:
+the project name defaults to `devcontainer`, which builds a second stack on
+empty volumes and then fails to bind :8000 against the real one.
+
+**The scheduler is disabled, deliberately.** `bench doctor` reports it, and the
+`/dev-up` skill says to enable it — do not. This devcontainer runs 0 workers, so
+enabling it only fills a queue nothing consumes, which is the `QueueOverloaded`
+failure that reads like a test regression. Nothing in this feature uses a
+scheduled job. Before any full `run-tests --app crm`, still purge:
+`bench --site test_site purge-jobs`.
+
+**The worktree needs a `node_modules`.** `yarn install` ran in the main checkout
+only, so `frontend/node_modules` is absent under `.worktrees/`. This branch adds
+no dependencies and the two `yarn.lock` files are byte-identical, so a symlink is
+correct and instant — already created, but re-create it if it goes missing:
+
+```bash
+ln -sfn /workspace/frontend/node_modules \
+        /workspace/.worktrees/feat-role-access/frontend/node_modules
+```
+
+It is gitignored, so it does not dirty `git status`.
+
+**Baseline before any change:** 41 files, 548 tests passing, ~0.9s, run as
+`cd /workspace/.worktrees/feat-role-access/frontend && yarn test:run`. AGENTS.md
+says "29 files · 480 tests"; that line has drifted, which is why it tells you to
+re-read the counts rather than trust it.
 
 **The bench does not see this branch by default.** `.devcontainer/docker-compose.yml` mounts the repo root at `/workspace`, and `scripts/init.sh:164` links `apps/crm → /workspace` — the **main checkout**, which is on `develop`. Work done in a worktree under `.worktrees/` is visible in the container as a directory but is not what `import crm` resolves to.
 
@@ -31,10 +68,14 @@ Pick one, inside the container:
 
 ```bash
 # Option A (recommended) — point the bench at this branch, then restore it.
-cd /home/frappe/frappe-bench
-ln -sfn /workspace/.worktrees/feat-role-access apps/crm     # before testing
-ln -sfn /workspace apps/crm                                 # after, always
+docker exec simcrm_devcontainer-frappe-1 bash -lc '
+  cd /home/frappe/frappe-bench &&
+  ln -sfn /workspace/.worktrees/feat-role-access apps/crm'   # before testing
+docker exec simcrm_devcontainer-frappe-1 bash -lc '
+  cd /home/frappe/frappe-bench && ln -sfn /workspace apps/crm'  # after, ALWAYS
 ```
+
+Verified target today: `apps/crm -> /workspace`. Restore it to exactly that.
 
 `pip install -e` was run against the path `apps/crm`, i.e. the symlink, so re-pointing needs no re-install. `sites/assets/crm` also resolves through it.
 
