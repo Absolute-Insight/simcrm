@@ -279,7 +279,7 @@ export const suggestionsStore = defineStore('crm-suggestions', () => {
         reference_name: suggestion.reference_docname,
       })
       if (isDraftUsable(result)) draft = result.draft
-      else degraded = draftStatusMessage(result?.status)
+      else degraded = draftStatusMessage(result?.status, result?.reason)
     } catch {
       // rate limit, permission, anything: the reply is still writable by hand
       degraded = draftStatusMessage('unavailable')

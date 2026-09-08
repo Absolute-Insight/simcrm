@@ -572,7 +572,7 @@
                         class="mb-1.5 text-sm text-ink-gray-5"
                       >
                         {{ f.label
-                        }}<span v-if="fieldRequired(f)" class="text-ink-red-5"
+                        }}<span v-if="fieldRequired(f)" class="text-ink-red-9"
                           >*</span
                         >
                       </div>
@@ -610,7 +610,7 @@
                         />
                         <span class="text-sm text-ink-gray-5"
                           >{{ f.label
-                          }}<span v-if="fieldRequired(f)" class="text-ink-red-5"
+                          }}<span v-if="fieldRequired(f)" class="text-ink-red-9"
                             >*</span
                           ></span
                         >
@@ -1043,7 +1043,7 @@ function goBack() {
         {
           label: __('Go Back'),
           variant: 'solid',
-          onClick: (close) => {
+          onClick: ({ close }) => {
             emit('back')
             close()
           },
@@ -1402,7 +1402,7 @@ async function requestDoctypeChange(newDt) {
         label: __('Change & remove fields'),
         variant: 'solid',
         theme: 'red',
-        onClick: (close) => {
+        onClick: ({ close }) => {
           commitDoctype(newDt, valid)
           close()
         },

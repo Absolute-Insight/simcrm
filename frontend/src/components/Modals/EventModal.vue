@@ -81,7 +81,7 @@
             <DatePicker
               :class="[_event.isFullDay ? 'w-full' : 'w-[158px]']"
               variant="outline"
-              :value="_event.fromDate"
+              :modelValue="_event.fromDate"
               :format="'MMM D, YYYY'"
               :placeholder="__('May 1, 2025')"
               :clearable="false"
@@ -473,7 +473,7 @@ function deleteEvent() {
         label: __('Delete'),
         variant: 'solid',
         theme: 'red',
-        onClick: (close) => {
+        onClick: ({ close }) => {
           eventsResource.delete.submit(_event.value.id, {
             onSuccess: async () => {
               await eventsResource.reload()

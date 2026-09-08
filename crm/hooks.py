@@ -162,6 +162,9 @@ permission_query_conditions = {
 	"CRM Quota": "crm.fcrm.doctype.crm_quota.crm_quota.get_permission_query_conditions",
 	"CRM Suggestion": "crm.fcrm.doctype.crm_suggestion.crm_suggestion.get_permission_query_conditions",
 	"CRM Rep Plan": "crm.fcrm.doctype.crm_rep_plan.crm_rep_plan.get_permission_query_conditions",
+	"CRM Invitation": "crm.fcrm.doctype.crm_invitation.crm_invitation.get_permission_query_conditions",
+	"CRM Forecast Snapshot": "crm.fcrm.doctype.crm_forecast_snapshot.crm_forecast_snapshot.get_permission_query_conditions",
+	"CRM View Settings": "crm.fcrm.doctype.crm_view_settings.crm_view_settings.get_permission_query_conditions",
 }
 
 has_permission = {
@@ -171,6 +174,9 @@ has_permission = {
 	"CRM Quota": "crm.fcrm.doctype.crm_quota.crm_quota.has_permission",
 	"CRM Suggestion": "crm.fcrm.doctype.crm_suggestion.crm_suggestion.has_permission",
 	"CRM Rep Plan": "crm.fcrm.doctype.crm_rep_plan.crm_rep_plan.has_permission",
+	"CRM Invitation": "crm.fcrm.doctype.crm_invitation.crm_invitation.has_permission",
+	"CRM Forecast Snapshot": "crm.fcrm.doctype.crm_forecast_snapshot.crm_forecast_snapshot.has_permission",
+	"CRM View Settings": "crm.fcrm.doctype.crm_view_settings.crm_view_settings.has_permission",
 }
 
 # DocType Class
@@ -221,12 +227,12 @@ doc_events = {
 			"crm.integrations.acumatica.outbound.queue_customer_push",
 			"crm.automation.run_automations",
 		],
-		"on_trash": ["crm.automation.clear_suggestions"],
+		"on_trash": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
 	},
 	"CRM Lead": {
 		"after_insert": ["crm.automation.run_automations"],
 		"on_update": ["crm.automation.run_automations"],
-		"on_trash": ["crm.automation.clear_suggestions"],
+		"on_trash": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
 	},
 	"ERPNext CRM Settings": {
 		"validate": ["crm.integrations.acumatica.install.block_dual_erp"],
@@ -338,7 +344,10 @@ before_tests = "crm.tests.before_tests"
 # CRM Suggestion holds a Dynamic Link to the deal or lead it is about. Without this
 # an open suggestion makes its own record undeletable; the on_trash handler above
 # clears the rows so nothing orphaned survives the delete.
-ignore_links_on_delete = ["Failed Lead Sync Log", "CRM Suggestion"]
+# CRM Rep Plan Item's reference is a Dynamic Link too, and a rep's planned week
+# must never make a deal undeletable nor be deleted to free one; the on_trash
+# handler above unlinks the items and keeps them.
+ignore_links_on_delete = ["Failed Lead Sync Log", "CRM Suggestion", "CRM Rep Plan Item", "CRM Rep Plan"]
 
 # Request Events
 # ----------------

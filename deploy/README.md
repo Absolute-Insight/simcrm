@@ -178,6 +178,17 @@ HTTP_BIND_ADDRESS=0.0.0.0      # or the host's private-network address
 and restrict who can reach it at the network layer yourself, because once the
 bind is not loopback, nothing in this stack does.
 
+**Tell nginx which proxy to believe.** The `frontend` container reads the
+client address from `X-Forwarded-For`, but only when the request arrives from
+an address in `UPSTREAM_REAL_IP_ADDRESS`. The default covers Docker's private
+range, which is where a proxy on this host appears from (as the compose
+network's gateway, or as a sibling container). A proxy on another machine needs
+its address there instead. Get this wrong and every request reaches frappe
+with the same address, so the per-IP rate limits (login attempts, invitation
+acceptance) become one shared bucket for the whole company. Changing it needs
+`docker compose up -d`, not just a restart, so the container picks up the new
+environment.
+
 ## Installing it as an app (PWA)
 
 Vectora ships a web app manifest and a service worker, so a browser can install

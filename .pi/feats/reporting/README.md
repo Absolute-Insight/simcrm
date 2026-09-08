@@ -25,6 +25,13 @@ pattern.
   taken from one. A patch clears the contaminated snapshot history.
 - **"Actual" revenue is bucketed by `closed_date`**, the month a deal actually
   closed — not by the month it was *expected* to close.
+- **A deal's probability follows its stage until someone sets it by hand.** Every
+  weighted number reads `CRM Deal.probability`; it used to be written once at
+  creation from the first stage's default, so the forecast never moved as deals
+  advanced. On a status change a value still equal to the previous stage's
+  default moves to the new stage's default; any other value was a decision and
+  is kept. `closed_date` is stamped once on the way into Won and never
+  overwritten.
 - **Slip risk reads `expected_closure_date`, not `closed_date`.** `closed_date`
   is only set on a win, so anything scoring open deals against it can never
   fire.
@@ -107,7 +114,13 @@ against what the snapshot believed at the time.
 
 ## Scheduled digests
 
-`CRM Report Digest` + `send_due_digests` (daily). Recipients must be enabled
+`CRM Report Digest` + `send_due_digests` (daily). The window is the previous
+N *settled* days ending yesterday — one for a daily digest, seven for a weekly
+one — because the job fires at midnight and `quota_in_period` pro-rates by
+covered days: a window that reached into today charged an extra day of target
+against nothing. Measures are formatted by the column type the registry
+declares (money in the base currency, `%`, grouped integers), the same types
+`formatCell` renders on the Reports page. Recipients must be enabled
 Users holding a CRM role, at most `MAX_RECIPIENTS` (50) per digest, and each message is rendered inside
 `frappe.set_user(recipient)` so the scope is the recipient's own: a rep gets
 their rows, a manager the team's. All interpolated values are HTML-escaped.

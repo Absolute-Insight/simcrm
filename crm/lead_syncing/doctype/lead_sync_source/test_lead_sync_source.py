@@ -1,7 +1,7 @@
 # Copyright (c) 2025, Frappe Technologies Pvt. Ltd. and Contributors
 # See license.txt
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -281,3 +281,45 @@ class TestFacebookPagination(IntegrationTestCase):
 		self.assertIsNone(src.sync_single_lead(lead))
 		self.assertEqual(frappe.db.count("Failed Lead Sync Log", {"source": self.source_name}), before)
 		self.assertEqual(frappe.db.count("CRM Lead", {"facebook_lead_id": "dup-1"}), 1)
+
+
+class GraphTokenHandlingTest(IntegrationTestCase):
+	"""The page access token must reach Graph and nowhere else."""
+
+	def test_the_token_travels_as_a_header_not_in_the_url(self):
+		from crm.lead_syncing.doctype.lead_sync_source import facebook
+
+		session = MagicMock()
+		session.get.return_value.json.return_value = {"data": []}
+		with patch.object(facebook, "get_request_session", return_value=session):
+			facebook.graph_get(
+				"https://graph.facebook.com/v23.0/me", params={"access_token": "tok-1", "fields": "id"}
+			)
+
+		_, kwargs = session.get.call_args
+		self.assertEqual(kwargs["headers"], {"Authorization": "Bearer tok-1"})
+		self.assertNotIn("access_token", kwargs["params"])
+		self.assertEqual(kwargs["params"], {"fields": "id"})
+
+	def test_a_failed_call_never_logs_the_token(self):
+		from requests import HTTPError
+
+		from crm.lead_syncing.doctype.lead_sync_source import facebook
+
+		session = MagicMock()
+		session.get.return_value.raise_for_status.side_effect = HTTPError(
+			"400 Client Error: Bad Request for url: https://graph.facebook.com/v23.0/x/leads?access_token=tok-2&limit=1"
+		)
+		with (
+			patch.object(facebook, "get_request_session", return_value=session),
+			patch.object(frappe, "log_error") as log_error,
+		):
+			with self.assertRaises(HTTPError):
+				facebook.graph_get(
+					"https://graph.facebook.com/v23.0/x/leads?access_token=tok-2&limit=1",
+					params={"access_token": "tok-2"},
+				)
+
+		logged = " ".join(str(v) for v in log_error.call_args.kwargs.values())
+		self.assertNotIn("tok-2", logged)
+		self.assertIn("access_token=***", logged)

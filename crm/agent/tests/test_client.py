@@ -146,3 +146,48 @@ class ClientTransportFailureTest(UnitTestCase):
 					client_mod.complete(CFG, ThreadSummary, MESSAGES)
 			self.assertIn("rejected the API key", str(caught.exception))
 			self.assertIsInstance(caught.exception, AgentUnavailable)
+
+
+class ClientDeadlineTest(UnitTestCase):
+	"""A caller that makes more than one completion in a request (the Analyst)
+	hands every call one absolute deadline, so the whole request -- retries
+	included -- fits inside ``timeout x MAX_ATTEMPTS`` rather than each call
+	being allowed that on its own."""
+
+	def test_each_attempt_is_bounded_by_the_time_left_to_the_deadline(self):
+		clock = iter([100.0, 100.0, 100.0, 100.0])
+		with (
+			mock.patch.object(client_mod.requests, "post", return_value=_reply(GOOD)) as post,
+			mock.patch.object(client_mod.time, "monotonic", side_effect=lambda: next(clock)),
+		):
+			client_mod.complete(CFG, ThreadSummary, MESSAGES, deadline=102.0)
+		# two seconds were left; the connect timeout must not be the full five
+		self.assertEqual(post.call_args[1]["timeout"], 2.0)
+
+	def test_a_call_started_after_the_deadline_is_refused_without_a_request(self):
+		with (
+			mock.patch.object(client_mod.requests, "post") as post,
+			mock.patch.object(client_mod.time, "monotonic", return_value=200.0),
+		):
+			with self.assertRaises(AgentUnavailable) as caught:
+				client_mod.complete(CFG, ThreadSummary, MESSAGES, deadline=199.0)
+		post.assert_not_called()
+		self.assertIn("deadline", str(caught.exception))
+
+	def test_a_retry_past_the_deadline_is_not_attempted(self):
+		# the first reply is unusable; by the time the retry would go out the
+		# deadline has passed, so the retry is skipped and the schema error
+		# is what the caller hears
+		clock = iter([100.0, 100.0, 100.0, 100.0, 110.0, 110.0])
+		with (
+			mock.patch.object(client_mod.requests, "post", return_value=_reply("not json")) as post,
+			mock.patch.object(client_mod.time, "monotonic", side_effect=lambda: next(clock)),
+		):
+			with self.assertRaises((SchemaMismatch, AgentUnavailable)):
+				client_mod.complete(CFG, ThreadSummary, MESSAGES, deadline=105.0)
+		self.assertEqual(post.call_count, 1)
+
+	def test_without_a_deadline_the_configured_timeout_applies(self):
+		with mock.patch.object(client_mod.requests, "post", return_value=_reply(GOOD)) as post:
+			client_mod.complete(CFG, ThreadSummary, MESSAGES)
+		self.assertEqual(post.call_args[1]["timeout"], CFG.timeout)

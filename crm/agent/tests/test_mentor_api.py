@@ -124,3 +124,36 @@ class HappyPathTest(IntegrationTestCase):
 
 		question = complete.call_args[0][2][-1]["content"]
 		self.assertEqual(len(question), api_mod.ASSISTANT_QUESTION_MAX_CHARS)
+
+
+class CitationFallbackTest(IntegrationTestCase):
+	def test_the_grounding_articles_are_cited_when_the_model_names_none(self):
+		"""LFM2.5, the shipped default, returned related_articles=[] on every live
+		question while its answers came straight from the selected articles."""
+		answer = AssistantAnswer(answer="Set targets in Settings → Sales Targets.", related_articles=[])
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod.client, "complete", return_value=answer) as complete,
+			no_budget_check(),
+		):
+			result = api_mod.ask_mentor("where do I set monthly sales targets?")
+
+		self.assertEqual(result["status"], "ok")
+		self.assertTrue(result["related_articles"])
+		self.assertLessEqual(len(result["related_articles"]), api_mod.MAX_CITATIONS)
+		self.assertIn("forecasting-and-targets", result["related_articles"])
+		# every citation was actually quoted in the prompt
+		system = complete.call_args[0][2][0]["content"]
+		for name in result["related_articles"]:
+			self.assertIn(name, system)
+
+	def test_no_grounding_means_no_citation(self):
+		answer = AssistantAnswer(answer="I do not know that from the manual.", related_articles=[])
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod.client, "complete", return_value=answer),
+			no_budget_check(),
+		):
+			result = api_mod.ask_mentor("zxqv plorth wibble")
+
+		self.assertEqual(result["related_articles"], [])

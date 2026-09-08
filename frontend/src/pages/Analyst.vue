@@ -26,6 +26,7 @@
         :messages="analystMessages"
         :asking="analystAsking"
         :failure="analystFailure"
+        :failure-reason="analystFailureReason"
         :examples="exampleQuestions"
         :intro="intro"
         :placeholder="__('Ask about the business…')"
@@ -146,7 +147,10 @@
             @click="openAssistantSettings"
           />
           <Button
-            v-else-if="failure === 'unavailable'"
+            v-else-if="
+              failure === 'unavailable' &&
+              canRetryUnavailable(analystFailureReason)
+            "
             size="sm"
             variant="subtle"
             :label="__('Try again')"
@@ -160,6 +164,11 @@
 
 <script setup>
 import { PhDownloadSimple as LucideDownload } from '@phosphor-icons/vue'
+import {
+  budgetStatusMessage,
+  canRetryUnavailable,
+  isBudgetReason,
+} from '@/utils/agentStatus'
 import { PhEraser as LucideEraser } from '@phosphor-icons/vue'
 import AgentChat from '@/components/AgentChat.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
@@ -202,6 +211,9 @@ function periodLabel(period) {
 }
 
 function failureCopy(failure) {
+  if (failure === 'unavailable' && isBudgetReason(analystFailureReason.value)) {
+    return budgetStatusMessage(analystFailureReason.value)
+  }
   if (failure === 'disabled') {
     return analystFailureReason.value === 'analyst_off'
       ? __(

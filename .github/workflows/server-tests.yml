@@ -11,9 +11,15 @@ on:
             - main
             - develop
     pull_request:
+        # No "**.js" here. crm/agent/tests/test_thresholds.py parses
+        # frontend/src/utils/suggestions.js and asserts its HEALTH_AT_RISK
+        # matches predict.py's AT_RISK_BELOW -- its whole point is to fail the
+        # PR that moves one side. Ignoring JavaScript meant a PR touching only
+        # suggestions.js skipped this suite and the mismatch surfaced on the
+        # develop push after the merge, with the badge and the dashboard tile
+        # already speaking two vocabularies.
         paths-ignore:
             - "**.css"
-            - "**.js"
             - "**.md"
             - "**.html"
             - "**.csv"

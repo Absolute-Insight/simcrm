@@ -76,7 +76,7 @@
             </div>
 
             <div class="flex items-center justify-between w-1/6">
-              <Switch
+              <CheckSwitch
                 v-model="source.enabled"
                 size="sm"
                 @update:model-value="toggleLeadSyncSourceEnabled(source)"
@@ -121,8 +121,9 @@
   </div>
 </template>
 <script setup>
+import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import ToneBadge from '@/components/ui/ToneBadge.vue'
-import { Switch, Dropdown, toast } from 'frappe-ui'
+import { Dropdown, toast } from 'frappe-ui'
 import { ref, computed, inject } from 'vue'
 import EmptyState from '../../ListViews/EmptyState.vue'
 import { ConfirmDelete } from '../../../utils'

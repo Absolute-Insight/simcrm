@@ -44,7 +44,9 @@ def read_record(doctype: str, name: str) -> dict:
 	)
 	if not rows:
 		raise frappe.DoesNotExistError(f"{doctype} {name} not found or not permitted")
-	return dict(rows[0])
+	# The prompt builder names the record by kind; without this a lead was
+	# introduced to the model as "Deal: CRM-LEAD-…" and summarised as one.
+	return {**rows[0], "doctype": doctype}
 
 
 def read_thread(doctype: str, name: str, limit: int = DEFAULT_THREAD_LIMIT) -> list[dict]:

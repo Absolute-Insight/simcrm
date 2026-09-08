@@ -57,9 +57,16 @@ def push_customer_for_deal(deal: str) -> None:
 		return
 
 	org = frappe.get_doc("CRM Organization", doc.organization)
-	if org.get("acumatica_noteid"):
-		# already linked -- record the link on the deal and stop
-		if not doc.get("acumatica_customer"):
+	if org.get("acumatica_noteid") or org.get("acumatica_id"):
+		# Already linked -- record the link on the deal and stop. Either identity
+		# counts: the spreadsheet import gives every organization its real
+		# CustomerID (acumatica_id) but no NoteID, because the exports carry none.
+		# Testing NoteID alone treated all 1,091 imported organizations as unknown
+		# and would have PUT a duplicate customer into the client's live ERP the
+		# first time a rep won one of their deals -- and then overwritten the real
+		# CustomerID with the duplicate's. create_sales_quote_from_deal already
+		# accepts acumatica_id as sufficient linkage; the push follows the same rule.
+		if not doc.get("acumatica_customer") and org.get("acumatica_id"):
 			frappe.db.set_value("CRM Deal", doc.name, "acumatica_customer", org.get("acumatica_id"))
 		return
 
@@ -79,10 +86,12 @@ def push_customer_for_deal(deal: str) -> None:
 	# with a row lock immediately before the PUT: the loser blocks here until the
 	# winner's write below commits, then sees the link already populated and no-ops
 	# instead of PUTting a second Customer into the client's ERP.
-	if frappe.db.get_value("CRM Organization", org.name, "acumatica_noteid", for_update=True):
-		if not doc.get("acumatica_customer"):
-			acumatica_id = frappe.db.get_value("CRM Organization", org.name, "acumatica_id")
-			frappe.db.set_value("CRM Deal", doc.name, "acumatica_customer", acumatica_id)
+	locked = frappe.db.get_value(
+		"CRM Organization", org.name, ["acumatica_noteid", "acumatica_id"], as_dict=True, for_update=True
+	)
+	if locked and (locked.acumatica_noteid or locked.acumatica_id):
+		if not doc.get("acumatica_customer") and locked.acumatica_id:
+			frappe.db.set_value("CRM Deal", doc.name, "acumatica_customer", locked.acumatica_id)
 		return
 
 	try:

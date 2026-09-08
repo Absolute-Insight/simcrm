@@ -92,7 +92,7 @@ function convertToDeal(selections, unselectAll) {
         // a failed conversion was an unhandled rejection the rep never saw. A
         // bulk convert of 30 qualified leads could silently drop some and still
         // look like it worked. Settle them all, then report once, honestly.
-        onClick: async (close) => {
+        onClick: async ({ close }) => {
           capture('bulk_convert_to_deal')
           const names = Array.from(selections)
           const results = await Promise.allSettled(
@@ -166,7 +166,7 @@ function clearAssignments(selections, unselectAll) {
         label: __('Clear Assignment'),
         variant: 'solid',
         theme: 'red',
-        onClick: (close) => {
+        onClick: ({ close }) => {
           capture('bulk_clear_assignment')
           // no ignore_permissions here: remove_multiple does not accept it
           // today, so it was silently dropped, but sending it means the day

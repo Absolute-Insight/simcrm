@@ -19,7 +19,7 @@
         }"
       >
         {{ column.label }}
-        <span v-if="column.isRequired" class="text-red-500">*</span>
+        <span v-if="column.isRequired" class="text-ink-red-9">*</span>
       </div>
     </div>
     <hr v-if="slaData.priorities?.length !== 0" class="border-outline-gray-2" />

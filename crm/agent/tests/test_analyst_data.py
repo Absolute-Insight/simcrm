@@ -128,3 +128,70 @@ class RunPlanTest(IntegrationTestCase):
 	def test_enabled_erp_is_none_when_both_integrations_are_off(self):
 		with mock.patch.object(frappe.db, "get_single_value", return_value=0):
 			self.assertIsNone(analyst_data.enabled_erp())
+
+
+class QuietAccountsTest(IntegrationTestCase):
+	"""``accounts_going_quiet`` used to look at ``_working_deal_rows()[:200]``.
+	That list comes back in CRM Deal's default order, ``modified desc``, so the
+	slice kept the 200 deals touched most recently -- the ones least likely to
+	be going quiet -- and silently dropped every other open deal on the site.
+
+	The padding rows here stand in for 200 recently edited deals ahead of the
+	one that matters; they are never flagged (no close date, no cadence), so
+	the only question is whether the deal behind them is still scanned."""
+
+	PADDING = 200
+
+	def setUp(self):
+		super().setUp()
+		frappe.db.savepoint("quiet_accounts")
+		self.addCleanup(frappe.db.rollback, save_point="quiet_accounts")
+		self.org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Quiet Accounts Org"})
+			.insert()
+			.name
+		)
+		early = frappe.get_all(
+			"CRM Deal Status",
+			filters={"type": ("in", ("Open", "Ongoing")), "probability": ("<", 50)},
+			pluck="name",
+			limit=1,
+		)
+		self.deal = frappe.get_doc(
+			{
+				"doctype": "CRM Deal",
+				"organization": self.org,
+				"status": early[0],
+				# closing inside the horizon while the stage is still early: the
+				# slip-risk reason, which needs no activity history to fire
+				"expected_closure_date": frappe.utils.add_days(frappe.utils.today(), 2),
+			}
+		).insert()
+
+	def test_a_quiet_deal_behind_two_hundred_fresher_ones_is_still_reported(self):
+		real_rows = analyst_data._working_deal_rows()
+		quiet = [row for row in real_rows if row["name"] == self.deal.name]
+		self.assertEqual(len(quiet), 1)
+		padding = [
+			{
+				**quiet[0],
+				"name": f"QUIET-PAD-{index:04d}",
+				"organization": "Padding Org",
+				"expected_closure_date": None,
+			}
+			for index in range(self.PADDING)
+		]
+		with mock.patch.object(analyst_data, "_working_deal_rows", return_value=[*padding, *quiet]):
+			tables = analyst_data.run_plan(
+				{
+					"metrics": ["accounts_going_quiet"],
+					"from_date": "2026-01-01",
+					"to_date": frappe.utils.today(),
+				},
+				None,
+			)
+		rows = tables[0]["rows"]
+		self.assertIn(self.org, [row["organization"] for row in rows])
+		entry = next(row for row in rows if row["organization"] == self.org)
+		self.assertEqual(entry["deals"], 1)
+		self.assertIn("close date near", entry["reason"])

@@ -174,7 +174,15 @@
                  wrap it here, in code we own, rather than reaching into its
                  internal structure from index.css. See the .v-getting-started
                  rule there for why (F3, low-contrast CTA button). -->
-            <div v-if="!isOnboardingStepsCompleted" class="v-getting-started">
+            <!-- The checklist is for whoever sets the site up. Its steps
+                 ("create your first lead", "invite your team") assume an
+                 empty site; a rep arriving at an imported pipeline of
+                 thousands of deals would read "0/7 steps" as the product
+                 not knowing who they are. -->
+            <div
+              v-if="isManager() && !isOnboardingStepsCompleted"
+              class="v-getting-started"
+            >
               <GettingStartedBanner :isSidebarCollapsed="isCollapsed" />
             </div>
           </div>
@@ -205,7 +213,7 @@
     <!-- v-if matters: useOnboarding() hands back the step list as it stands
          when called, and the steps are registered in onMounted. -->
     <OnboardingPanel
-      v-if="showHelpModal"
+      v-if="showHelpModal && isManager()"
       :logo="CRMLogo"
       :title="__('Vectora')"
       :afterSkip="(step) => capture('onboarding_step_skipped_' + step)"
@@ -812,6 +820,12 @@ onMounted(async () => {
   if (props.mobile) return
 
   await users.promise
+
+  // Only whoever sets the site up gets the checklist. Its steps ("create your
+  // first lead", "invite your team") assume an empty site, and registering them
+  // is what opens the floating panel: a rep landing on an imported pipeline of
+  // thousands of deals would meet "Getting started 0/7" over it on day one.
+  if (!isManager()) return
 
   const filteredSteps = steps.filter((step) => {
     if (step.condition) {

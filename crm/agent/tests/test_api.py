@@ -18,6 +18,11 @@ from crm.agent.schemas import ThreadSummary
 DISABLED = AgentConfig(enabled=False, base_url="http://x/v1", model="m", timeout=5, max_tokens=64)
 ENABLED = AgentConfig(enabled=True, base_url="http://x/v1", model="m", timeout=5, max_tokens=64)
 SUMMARY = ThreadSummary(summary="Stalled on pricing.", next_steps=["Send quote"], sentiment="neutral")
+# A record with no thread is answered before the throttle and the model are
+# consulted (status "empty"), so tests about those layers need something to read.
+ONE_MESSAGE = [
+	{"name": "COMM-0001", "creation": "2026-08-01 09:00:00", "sender": "buyer@acme.test", "content": "hello"}
+]
 
 
 # Every endpoint runs through the per-user minute window and the daily budgets; the
@@ -56,7 +61,7 @@ class DegradeTest(IntegrationTestCase):
 		with (
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
-			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
 			mock.patch.object(api_mod.client, "complete", side_effect=AgentUnavailable("down")),
 			no_budget_check(),
 		):
@@ -65,12 +70,58 @@ class DegradeTest(IntegrationTestCase):
 		self.assertEqual(result["status"], "unavailable")
 
 
+class EmptyThreadTest(IntegrationTestCase):
+	"""No emails means nothing to summarise or reply to: say so, spend nothing.
+
+	The model used to be asked anyway and confidently reported that there were no
+	communications -- eight seconds and a budget unit for a sentence the client can
+	write itself, and a rate-limit tick against the rep.
+	"""
+
+	def test_summarise_reports_empty_before_the_throttle_or_the_model(self):
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod, "_throttled") as throttled,
+			mock.patch.object(api_mod.client, "complete") as complete,
+		):
+			result = api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001")
+
+		self.assertEqual(result, {"status": "empty"})
+		throttled.assert_not_called()
+		complete.assert_not_called()
+
+	def test_draft_reply_reports_empty_the_same_way(self):
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod, "_throttled") as throttled,
+			mock.patch.object(api_mod.actions, "propose_reply") as propose,
+		):
+			result = api_mod.draft_reply("CRM Deal", "CRM-DEAL-0001")
+
+		self.assertEqual(result, {"status": "empty"})
+		throttled.assert_not_called()
+		propose.assert_not_called()
+
+	def test_a_missing_or_unreadable_record_still_raises_before_anything_is_charged(self):
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod, "_throttled") as throttled,
+		):
+			with self.assertRaises(frappe.DoesNotExistError):
+				api_mod.summarise_thread("CRM Deal", "CRM-DEAL-DOES-NOT-EXIST")
+		throttled.assert_not_called()
+
+
 class HappyPathTest(IntegrationTestCase):
 	def test_returns_the_validated_summary_as_a_plain_dict(self):
 		with (
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
-			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
 			mock.patch.object(api_mod.client, "complete", return_value=SUMMARY) as complete,
 			no_budget_check(),
 		):
@@ -137,14 +188,15 @@ class RateLimitTest(IntegrationTestCase):
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod, "_budget_spent", return_value=False),
 			mock.patch.object(api_mod.tools, "read_record", return_value={}),
-			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
 			mock.patch.object(api_mod.client, "complete", return_value=SUMMARY) as complete,
 		):
 			results = [
 				api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001")
 				for _ in range(api_mod.SUMMARISE_RATE_LIMIT + 1)
 			]
-		self.assertEqual(results[-1], {"status": "unavailable"})
+		# the refusal names the burst window, so the client can say "a minute", not "tomorrow"
+		self.assertEqual(results[-1], {"status": "unavailable", "reason": api_mod.RATE_LIMITED})
 		self.assertEqual(complete.call_count, api_mod.SUMMARISE_RATE_LIMIT)
 
 	def test_a_dead_cache_fails_open(self):
@@ -187,6 +239,8 @@ class DailyBudgetTest(IntegrationTestCase):
 		with (
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod, "_budget_spent", return_value=True),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
 			mock.patch.object(api_mod.client, "complete") as complete,
 			mock.patch.object(api_mod.actions, "propose_reply") as propose,
 		):
@@ -243,7 +297,7 @@ class DailyBudgetTest(IntegrationTestCase):
 			frappe.cache().delete(key)
 			self.addCleanup(frappe.cache().delete, key)
 		verdicts = [api_mod._budget_spent(shared) for _ in range(21)]
-		self.assertEqual(verdicts[:20], [False] * 20)
+		self.assertEqual([bool(v) for v in verdicts[:20]], [False] * 20)
 		self.assertTrue(verdicts[20])
 		self.assertLess(int(frappe.cache().get(api_mod.budget_key()) or 0), shared.daily_call_budget)
 
@@ -454,7 +508,7 @@ class InflightSlotTest(IntegrationTestCase):
 			no_budget_check(),
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "X"}),
-			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
 			mock.patch.object(api_mod.client, "complete") as complete,
 		):
 			result = api_mod.summarise_thread("CRM Deal", "X")
@@ -483,7 +537,7 @@ class SlotRefusalRefundTest(IntegrationTestCase):
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
 			mock.patch.object(api_mod, "user_rate_limited", return_value=False),
 			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "X"}),
-			mock.patch.object(api_mod.tools, "read_thread", return_value=[]),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
 			mock.patch.object(api_mod.client, "complete") as complete,
 		):
 			result = api_mod.summarise_thread("CRM Deal", "X")
@@ -492,3 +546,62 @@ class SlotRefusalRefundTest(IntegrationTestCase):
 		complete.assert_not_called()
 		self.assertEqual(int(frappe.cache().get(site_key) or 0), 0)
 		self.assertEqual(int(frappe.cache().get(user_key) or 0), 0)
+
+
+class ThrottleReasonTest(IntegrationTestCase):
+	"""A spent budget is not weather. The burst limiter clears in a minute and a
+	dead endpoint may be back in a moment, but a spent day budget does not
+	recover until tomorrow -- so the status has to say which it was, or every
+	surface invites retries that are refunded and never succeed."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.cache().delete(api_mod.budget_key())
+		frappe.cache().delete(api_mod.user_budget_key())
+		self.addCleanup(frappe.cache().delete_value, api_mod.budget_key())
+		self.addCleanup(frappe.cache().delete_value, api_mod.user_budget_key())
+
+	def test_the_burst_window_and_the_two_budgets_are_told_apart(self):
+		with mock.patch.object(api_mod, "user_rate_limited", return_value=True):
+			self.assertEqual(api_mod._throttled(ENABLED), api_mod.RATE_LIMITED)
+		tiny = AgentConfig(
+			enabled=True, base_url="http://x/v1", model="m", timeout=5, max_tokens=64, daily_call_budget=1
+		)
+		frappe.cache().setex(api_mod.budget_key(), 3600, 1)
+		self.assertEqual(api_mod._budget_spent(tiny), api_mod.SITE_BUDGET)
+		frappe.cache().delete(api_mod.budget_key())
+		frappe.cache().setex(api_mod.user_budget_key(), 3600, api_mod.user_daily_call_budget(tiny))
+		self.assertEqual(api_mod._budget_spent(tiny), api_mod.USER_BUDGET)
+		frappe.cache().delete(api_mod.user_budget_key())
+		self.assertIsNone(api_mod._budget_spent(tiny))
+
+	def test_every_endpoint_reports_the_reason_for_a_spent_budget(self):
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod, "_throttled", return_value=api_mod.SITE_BUDGET),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
+			mock.patch.object(api_mod, "_knowledge_available", return_value=True, create=True),
+			mock.patch.object(api_mod, "_knowledge_articles", return_value=[{"name": "a", "title": "A"}]),
+			mock.patch.object(api_mod.client, "complete") as complete,
+		):
+			results = [
+				api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001"),
+				api_mod.draft_reply("CRM Deal", "CRM-DEAL-0001"),
+				api_mod.ask_mentor("how do targets work?"),
+				api_mod.ask_assistant("what do we sell?"),
+			]
+		for result in results:
+			self.assertEqual(result, {"status": "unavailable", "reason": "budget"}, result)
+		complete.assert_not_called()
+
+	def test_an_unreachable_model_still_reports_a_bare_unavailable(self):
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			no_budget_check(),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
+			mock.patch.object(api_mod.client, "complete", side_effect=AgentUnavailable("down")),
+		):
+			result = api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001")
+		self.assertEqual(result, {"status": "unavailable"})

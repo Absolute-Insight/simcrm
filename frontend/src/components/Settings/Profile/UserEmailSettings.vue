@@ -119,22 +119,15 @@
 <script setup>
 import ToneBadge from '@/components/ui/ToneBadge.vue'
 import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
-import {
-  Button,
-  Combobox,
-  createDocumentResource,
-  createListResource,
-  toast,
-} from 'frappe-ui'
+import { Button, Combobox, createListResource, toast } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
 import { TextEditor } from 'frappe-ui/experimental'
-import { computed, inject } from 'vue'
+import { useOwnProfile } from '@/composables/useOwnProfile'
+import { computed } from 'vue'
 
 const emit = defineEmits(['updateStep'])
 
-const { user: sessionUser } = inject('session')
-
-const user = createDocumentResource({ doctype: 'User', name: sessionUser })
+const user = useOwnProfile()
 
 const emails = createListResource({
   doctype: 'Email Account',

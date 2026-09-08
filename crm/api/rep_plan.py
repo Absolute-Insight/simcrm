@@ -159,6 +159,16 @@ def _stage_items(plan, items: list[dict]) -> set[str]:
 			frappe.throw(_("Cannot plan against {0}.").format(reference_doctype))
 
 		clean = {f: row.get(f) for f in EDITABLE_ITEM_FIELDS}
+		# The client resends the reference it loaded the week with, and a deal or
+		# lead can now be deleted out from under a plan item (clear_plan_item_references
+		# nulls the stored row without touching the plan's `modified`, so the
+		# optimistic-lock check cannot see it). Re-adopting a name that is gone
+		# would fail the whole save on a link-validation error the rep can do
+		# nothing about, losing the rest of their week's edits.
+		if clean.get("reference_doctype") and clean.get("reference_docname"):
+			if not frappe.db.exists(clean["reference_doctype"], clean["reference_docname"]):
+				clean["reference_doctype"] = None
+				clean["reference_docname"] = None
 		existing = preserved.get(str(row.get("name") or ""))
 		if existing:
 			# rescheduling a row is not the same as replacing it: it keeps its name,
@@ -215,9 +225,18 @@ def save_plan(week_start: str, items: list | str, modified: str | None = None):
 		frappe.throw(_("Plans older than {0} weeks can no longer be edited.").format(MATCH_HORIZON_WEEKS))
 
 	user = frappe.session.user
-	if modified:
+	if modified is not None:
+		# What the caller saw when they loaded the week: a timestamp, or "" for
+		# "there was no plan". Either is checked against what is there now, so a
+		# tab opened on an empty week cannot replace a plan another tab or device
+		# created meanwhile. None means the caller makes no claim (a server-side
+		# caller, or an old client) and the save goes through unchecked.
 		current = frappe.db.get_value("CRM Rep Plan", {"user": user, "week_start": week_start}, "modified")
-		if not current or frappe.utils.get_datetime(current) != frappe.utils.get_datetime(modified):
+		if modified == "":
+			changed = bool(current)
+		else:
+			changed = not current or frappe.utils.get_datetime(current) != frappe.utils.get_datetime(modified)
+		if changed:
 			frappe.throw(
 				_("This plan changed since you opened it. Reload before saving."),
 				frappe.TimestampMismatchError,

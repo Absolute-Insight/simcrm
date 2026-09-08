@@ -224,6 +224,15 @@ class CloseDateAtRiskTest(UnitTestCase):
 		row = self.row(expected_closure_date=NOW.date() + timedelta(days=CLOSE_HORIZON_DAYS + 1))
 		self.assertEqual(find_close_date_at_risk([row], set(), NOW), [])
 
+	def test_an_overdue_close_date_is_history_not_a_risk(self):
+		"""The score formula grows as the date recedes, so without this an imported
+		pipeline of stale quotes outranked every live signal at the cap."""
+		for days_ago in (1, 41, 400):
+			row = self.row(expected_closure_date=NOW.date() - timedelta(days=days_ago))
+			self.assertEqual(find_close_date_at_risk([row], set(), NOW), [], days_ago)
+		today = self.row(expected_closure_date=NOW.date())
+		self.assertEqual(len(find_close_date_at_risk([today], set(), NOW)), 1)
+
 	def test_a_late_stage_deal_closing_soon_is_not_at_risk(self):
 		row = self.row(stage_probability=EARLY_STAGE_PROBABILITY + 10)
 		self.assertEqual(find_close_date_at_risk([row], set(), NOW), [])

@@ -18,7 +18,7 @@
           v-if="isDirty"
           :label="__('Update')"
           variant="solid"
-          :loading="settings.loading"
+          :loading="settings.save.loading"
           @click="updateSettings"
         />
       </div>
@@ -146,10 +146,17 @@
         </div>
       </div>
     </div>
+    <ErrorState
+      v-else-if="settings.get.error"
+      :error="settings.get.error"
+      :title="__('Could not load system defaults')"
+      :retry="() => settings.reload()"
+    />
   </div>
 </template>
 
 <script setup>
+import ErrorState from '@/components/ui/ErrorState.vue'
 import Link from '@/components/Controls/Link.vue'
 import { getMeta } from '@/stores/meta'
 import { Select, Button, toast, createDocumentResource } from 'frappe-ui'

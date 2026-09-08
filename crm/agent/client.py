@@ -38,18 +38,28 @@ RETRY_INSTRUCTION = (
 )
 
 
-def complete(cfg: AgentConfig, model: type[BaseModel], messages: list[dict]) -> BaseModel:
+def complete(
+	cfg: AgentConfig, model: type[BaseModel], messages: list[dict], deadline: float | None = None
+) -> BaseModel:
 	"""Return a validated ``model`` instance, or raise.
 
 	Raises ``AgentUnavailable`` on any transport problem and ``SchemaMismatch`` when
 	the reply will not validate after one retry.
+
+	``deadline`` is an absolute ``time.monotonic()`` value. A caller that makes
+	more than one completion inside one web request (the Analyst: plan, then
+	answer) passes the same deadline to each, so the request as a whole -- retries
+	included -- fits inside ``timeout x MAX_ATTEMPTS`` instead of every call being
+	allowed that on its own. Each attempt is then bounded by the time left, and an
+	attempt that would start after the deadline is not made.
 	"""
 	schema = json_schema(model)
 	attempt_messages = list(messages)
 	last_error = "no attempt was made"
 
 	for _attempt in range(MAX_ATTEMPTS):
-		raw = _post(cfg, _request_body(cfg, schema, attempt_messages))
+		timeout = _time_allowed(cfg, deadline)
+		raw = _post(cfg, _request_body(cfg, schema, attempt_messages), timeout)
 		try:
 			return parse_into(model, raw)
 		except SchemaMismatch as exc:
@@ -58,8 +68,22 @@ def complete(cfg: AgentConfig, model: type[BaseModel], messages: list[dict]) -> 
 				*messages,
 				{"role": "user", "content": RETRY_INSTRUCTION.format(error=last_error)},
 			]
+			if deadline is not None and time.monotonic() >= deadline:
+				# the retry would be refused at _time_allowed anyway; say why
+				# the reply was bad rather than that the clock ran out
+				break
 
 	raise SchemaMismatch(last_error)
+
+
+def _time_allowed(cfg: AgentConfig, deadline: float | None) -> float:
+	"""Seconds this attempt may take: ``cfg.timeout``, or less if the deadline is nearer."""
+	if deadline is None:
+		return cfg.timeout
+	remaining = deadline - time.monotonic()
+	if remaining <= 0:
+		raise AgentUnavailable(f"{cfg.base_url}: request deadline passed before the call was made")
+	return min(cfg.timeout, remaining)
 
 
 def _request_body(cfg: AgentConfig, schema: dict, messages: list[dict]) -> dict:
@@ -88,20 +112,22 @@ def _headers(cfg: AgentConfig) -> dict:
 	return {"Authorization": f"Bearer {cfg.api_key}"} if cfg.api_key else {}
 
 
-def _post(cfg: AgentConfig, body: dict) -> str:
+def _post(cfg: AgentConfig, body: dict, timeout: float | None = None) -> str:
 	"""One HTTP round trip, bounded by wall clock and by size.
 
 	``requests``' ``timeout`` is a connect/inactivity timeout: a server that trickles
 	a byte every few seconds never trips it. So the body is streamed under a deadline
-	of ``cfg.timeout`` from the start of the call, and under ``MAX_RESPONSE_BYTES``,
-	and either breach is an ``AgentUnavailable`` like any other transport failure.
+	of ``timeout`` (``cfg.timeout`` unless the caller has less left) from the start
+	of the call, and under ``MAX_RESPONSE_BYTES``, and either breach is an
+	``AgentUnavailable`` like any other transport failure.
 	"""
-	deadline = time.monotonic() + cfg.timeout
+	timeout = cfg.timeout if timeout is None else timeout
+	deadline = time.monotonic() + timeout
 	try:
 		response = requests.post(
 			f"{cfg.base_url}/chat/completions",
 			json=body,
-			timeout=cfg.timeout,
+			timeout=timeout,
 			headers=_headers(cfg),
 			stream=True,
 			# a redirect would replay the configured Bearer token at whatever host
@@ -117,7 +143,7 @@ def _post(cfg: AgentConfig, body: dict) -> str:
 					f"{cfg.base_url}: endpoint rejected the API key (HTTP {response.status_code})"
 				)
 			response.raise_for_status()
-			raw = _read_bounded(cfg, response, deadline)
+			raw = _read_bounded(cfg, response, deadline, timeout)
 		finally:
 			response.close()
 		return _content(raw)
@@ -125,7 +151,7 @@ def _post(cfg: AgentConfig, body: dict) -> str:
 		raise AgentUnavailable(f"{cfg.base_url}: {exc}") from exc
 
 
-def _read_bounded(cfg: AgentConfig, response, deadline: float) -> bytes:
+def _read_bounded(cfg: AgentConfig, response, deadline: float, timeout: float) -> bytes:
 	chunks: list[bytes] = []
 	received = 0
 	for chunk in response.iter_content(chunk_size=READ_CHUNK_BYTES):
@@ -135,7 +161,7 @@ def _read_bounded(cfg: AgentConfig, response, deadline: float) -> bytes:
 		if received > MAX_RESPONSE_BYTES:
 			raise AgentUnavailable(f"{cfg.base_url}: response exceeded {MAX_RESPONSE_BYTES} bytes")
 		if time.monotonic() > deadline:
-			raise AgentUnavailable(f"{cfg.base_url}: response not complete within {cfg.timeout}s")
+			raise AgentUnavailable(f"{cfg.base_url}: response not complete within {timeout:g}s")
 		chunks.append(chunk)
 	return b"".join(chunks)
 

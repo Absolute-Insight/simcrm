@@ -134,6 +134,23 @@ def clear_suggestions(doc, method=None) -> None:
 	clear_suggestions_for(doc.doctype, doc.name)
 
 
+def clear_plan_item_references(doc, method=None) -> None:
+	"""on_trash entry point: plan items that pointed at the record keep the item, lose the link.
+
+	``CRM Rep Plan Item.reference_docname`` is a Dynamic Link. Left alone, frappe's
+	link check refused to delete a deal any rep had planned work against, and the
+	app's "delete linked" flow, which knows only records with their own reference
+	fields, deleted the *plan* -- the rep's whole week -- to free the deal. The
+	planned activity is the rep's; the record it was about is what is going away.
+	"""
+	frappe.db.set_value(
+		"CRM Rep Plan Item",
+		{"reference_doctype": doc.doctype, "reference_docname": doc.name},
+		{"reference_doctype": None, "reference_docname": None},
+		update_modified=False,
+	)
+
+
 def _matches(rule, doc) -> bool:
 	if rule.to_status and _status_label(doc) != rule.to_status:
 		return False

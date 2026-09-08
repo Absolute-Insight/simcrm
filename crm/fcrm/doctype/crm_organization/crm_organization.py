@@ -38,13 +38,37 @@ class CRMOrganization(Document):
 		auto_enrich_on_create(self)
 
 	def update_exchange_rate(self):
-		if self.has_value_changed("currency") or not self.exchange_rate:
-			system_currency = frappe.db.get_single_value("FCRM Settings", "currency") or "USD"
-			exchange_rate = 1
-			if self.currency and self.currency != system_currency:
-				exchange_rate = get_exchange_rate(self.currency, system_currency)
+		"""Refresh the rate, but never let a third party decide whether the record saves.
 
-			self.db_set("exchange_rate", exchange_rate)
+		The same rule as ``CRMDeal.update_exchange_rate``: this runs inside
+		``validate`` and ``get_exchange_rate`` throws when no provider answers, so
+		a host without outbound internet failed every save of a foreign-currency
+		organization. A stale rate is a wrong number in a report; an unsaveable
+		organization is a rep who cannot file the visit they just made.
+		"""
+		if not (self.has_value_changed("currency") or not self.exchange_rate):
+			return
+
+		system_currency = frappe.db.get_single_value("FCRM Settings", "currency") or "USD"
+		if not self.currency or self.currency == system_currency:
+			self.db_set("exchange_rate", 1)
+			return
+
+		try:
+			self.db_set("exchange_rate", get_exchange_rate(self.currency, system_currency))
+		except Exception:
+			# get_exchange_rate has already logged which provider failed
+			if not self.exchange_rate:
+				# a brand-new record has nothing to keep; 1 is the honest placeholder
+				# that the warning below tells the person about
+				self.db_set("exchange_rate", 1)
+			frappe.msgprint(
+				frappe._(
+					"Could not fetch the {0} to {1} exchange rate. Saved with the previous rate."
+				).format(self.currency, system_currency),
+				indicator="orange",
+				alert=True,
+			)
 
 	@staticmethod
 	def default_list_data():

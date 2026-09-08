@@ -40,7 +40,11 @@ Import direction is one-way: `errors` ← `config`/`schemas`/`context` ← `clie
   control that actually holds is that this layer has no write tools for hostile content to
   aim at. Treat every summary as text a third party can influence.
 - The endpoint degrades: with the flag off or the endpoint down, callers get a status,
-  never an exception. Config normalisation degrades too — an uninterpretable value falls
+  never an exception. A record with no email thread answers `{"status": "empty"}`
+  before the throttle, the budget or the model are consulted — the model used to be
+  asked to summarise silence and confidently reported that there was nothing to say.
+  The prompt header names the record by kind (`Lead:` / `Deal:`), read from the
+  `doctype` `tools.read_record` now carries. Config normalisation degrades too — an uninterpretable value falls
   back to its default rather than raising out of `get_config()`.
 - Every endpoint that can trigger an outbound model call is gated on a sales role
   (`@sales_user_only`) and rate-limited **twice**: frappe's `@rate_limit`, which keys on
@@ -51,6 +55,11 @@ Import direction is one-way: `errors` ← `config`/`schemas`/`context` ← `clie
   `SUMMARISE_RATE_LIMIT` (10/min); `test_connection` has its own 6/min pair. A throttled
   call returns `{"status": "unavailable"}`, which the frontend already treats as
   weather. One call can hold a worker for `timeout × MAX_ATTEMPTS`.
+- A call the throttle refuses answers `{"status": "unavailable", "reason": ...}` with
+  `rate_limited` (the minute window), `user_budget` or `budget` (the day is spent);
+  a model that could not be reached stays a bare `unavailable`. The surfaces read
+  the reason (`frontend/src/utils/agentStatus.js`): a spent budget says so and hides
+  "Try again", because a retry would be refunded and never succeed.
 - Two daily budgets, both redis counters that expire themselves: the site-wide
   `daily_call_budget` from settings, and a per-user share derived from it —
   `max(10, daily_call_budget // 5)` — so one account cannot spend the whole site's day.
@@ -186,6 +195,12 @@ PYTHONPATH=/workspace bench --site dev.localhost execute crm.agent.api.summarise
 > `timeout` at ~55. Raise `PROXY_READ_TIMEOUT` first if a model genuinely needs longer,
 > and remember a slow model holds a worker either way — size the pool for it. The 120
 > above is safe *here* only because a bench dev server has no nginx in front of it.
+>
+> The same arithmetic holds for the Analyst although it makes two completions: `ask_analyst`
+> computes one absolute deadline of `timeout × MAX_ATTEMPTS` and passes it to both
+> `client.complete` calls, which bound every attempt by the time left and skip an attempt
+> that would start after it. A plan phase that spent the budget leaves the answer refused
+> (`unavailable`) rather than a request nginx has already abandoned.
 
 A dev site seeded only by the test suite has **no Deal with a thread on it** — every
 `_T-` record is a leaked fixture and none carry Communications. Create a Deal, a
@@ -362,11 +377,17 @@ and what they are grounded on. Spec:
 | Endpoint | Gate | Grounding | Untrusted content in the prompt? |
 |---|---|---|---|
 | `ask_mentor` | sales user | the shipped help articles (`knowledge.py`, pure) | none — the manual is a constant |
-| `ask_assistant` | sales user | `CRM Knowledge Article` rows with `available_to_assistant=1` (admin-authored), plus enabled `CRM Product` rows when `assistant_reads_products` is on; both via permission-checked `get_list` | none beyond what an admin typed; a product description is admin data too |
+| `ask_assistant` | sales user | `CRM Knowledge Article` rows with `available_to_assistant=1` (admin-authored), plus enabled `CRM Product` rows when `assistant_reads_products` is on; both via permission-checked `get_list` | none beyond what an admin typed; a product description is admin data too — since 2026-09-07 Sales User holds read only on `CRM Product` (write, create and delete are Sales Manager and System Manager), so a rep cannot plant text there |
 | `ask_analyst` | **System Manager**, then `analyst_enabled` | a catalogue of metrics-layer calculations (`analyst.py` pure, `analyst_data.py` site-bound) and, when an ERP integration is enabled, its invoices and payments | only computed numbers; deal names and organization names appear in two tables |
 
 The Mentor was the original `ask_assistant` (2026-08-21); it was renamed when
 the Assistant took over the sidebar with a different source.
+
+Both cite what they were grounded on. The model's own `related_articles` are
+kept when they name real articles; when they name none (the shipped default
+never did in a live run), the endpoint cites the selected grounding set instead
+(`MAX_CITATIONS`, matching the schema's cap). An answer with no grounding still
+carries no citation.
 
 The Analyst is two model calls around one deterministic step: the model picks
 catalogue keys and a period (`AnalystPlan`; `normalise_plan` drops anything
@@ -382,7 +403,11 @@ text reaches their prompts. The Analyst's `deals_at_risk` and
 `accounts_going_quiet` tables carry deal and organization *names*, which a
 rep types; if that ever proves to steer the narrative, those two tables are
 the place to look, and the blast radius is a sentence an administrator
-reads next to the real table.
+reads next to the real table. Both scan **every** open deal: health comes
+from the dashboard's one-pass scorer (`_at_risk_deals`, the caller's own
+permission scope), and `accounts_going_quiet` no longer takes the first 200
+rows of `_working_deal_rows()` — that list is in `modified desc` order, so
+the cap kept the deals touched most recently and dropped the quiet ones.
 
 ## What is not here yet
 

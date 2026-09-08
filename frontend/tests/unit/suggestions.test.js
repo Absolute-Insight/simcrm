@@ -319,6 +319,7 @@ describe('dismissal reasons', () => {
 describe('agent degrade statuses', () => {
   it('explains a switched-off assistant', () => {
     expect(draftStatusMessage('disabled')).toMatch(/switched off/)
+    expect(draftStatusMessage('empty')).toMatch(/no emails on this record/)
   })
 
   it('explains an unreachable assistant', () => {
@@ -365,14 +366,33 @@ describe('action document builders', () => {
     reference_docname: 'D-1',
   }
 
-  it('builds a task against the referenced record', () => {
-    expect(buildTaskDoc(suggestion, { title: 'Re-engage Acme' })).toEqual({
+  it('builds a task against the referenced record, assigned to the rep it was for', () => {
+    expect(
+      buildTaskDoc(
+        { ...suggestion, user: 'rep@example.com' },
+        { title: 'Re-engage Acme' },
+      ),
+    ).toEqual({
       doctype: 'CRM Task',
       reference_doctype: 'CRM Deal',
       reference_docname: 'D-1',
       status: 'Todo',
+      assigned_to: 'rep@example.com',
       title: 'Re-engage Acme',
     })
+  })
+
+  it('leaves the assignee to the server for an unowned suggestion', () => {
+    // the server defaults a blank assignee to whoever inserts the task
+    expect(buildTaskDoc(suggestion, { title: 'x' }).assigned_to).toBe('')
+  })
+
+  it('lets the dialog override the assignee', () => {
+    const doc = buildTaskDoc(
+      { ...suggestion, user: 'rep@example.com' },
+      { title: 'x', assigned_to: 'lead@example.com' },
+    )
+    expect(doc.assigned_to).toBe('lead@example.com')
   })
 
   it('builds a scheduled call as a calendar Event, not a call log', () => {
@@ -443,6 +463,9 @@ describe('thread summary', () => {
   it('names the state and says what to do instead', () => {
     expect(summaryStatusMessage('disabled')).toMatch(/switched off/)
     expect(summaryStatusMessage('unavailable')).toMatch(/could not be reached/)
+    // the server answers `empty` for a record with no email thread, before any
+    // model call; the rep should read that as a fact about the record
+    expect(summaryStatusMessage('empty')).toMatch(/No emails on this record/)
     // a status with nothing useful to say says nothing, rather than inventing
     expect(summaryStatusMessage('ok')).toBe('')
     expect(summaryStatusMessage(undefined)).toBe('')
@@ -469,5 +492,27 @@ describe('thread summary', () => {
     // not put a raw token in front of a rep
     expect(sentimentLabel('furious')).toBe('')
     expect(sentimentLabel(null)).toBe('')
+  })
+})
+
+describe('spent budget on the record surfaces', () => {
+  it('summary and draft say the allowance is used up rather than "try again"', () => {
+    for (const reason of ['budget', 'user_budget']) {
+      expect(summaryStatusMessage('unavailable', reason)).toMatch(/allowance/i)
+      expect(summaryStatusMessage('unavailable', reason)).not.toMatch(
+        /try again/i,
+      )
+      expect(draftStatusMessage('unavailable', reason)).toMatch(/allowance/i)
+      expect(draftStatusMessage('unavailable', reason)).not.toMatch(
+        /try again/i,
+      )
+    }
+  })
+
+  it('keeps the weather wording for every other reason', () => {
+    expect(summaryStatusMessage('unavailable', 'rate_limited')).toMatch(
+      /could not be reached/,
+    )
+    expect(draftStatusMessage('unavailable')).toMatch(/could not be reached/)
   })
 })

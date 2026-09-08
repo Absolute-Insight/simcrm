@@ -32,8 +32,10 @@ calls" and the 30 planned call items can never disagree.
 
 A **Rescheduled** task is still open: it needs a new due date and stays in every
 "open task" query until it is Done or Canceled. Moving a task to Rescheduled —
-on the board or on the form — asks for the closing note and the new date, the
-same as the two statuses that do end it. `crm_task.NOTE_REQUIRED_STATUSES` is
+on the board, on the form, or from the status menu in a record's task list — asks
+for the closing note and the new date, the same as the two statuses that do end
+it. The three surfaces share one helper (`frontend/src/utils/taskClosing.js`)
+so they cannot drift. `crm_task.NOTE_REQUIRED_STATUSES` is
 the list that must say why; `TERMINAL_STATUSES` is the shorter list that ends
 the task, and it is the one the open-task queries filter on.
 
@@ -97,7 +99,11 @@ enabled and the user is in it, everything for System Manager and an out-of-tree
 Sales Manager. It backs the permission query, `has_permission`, `get_plan`'s
 check and the rep picker — so the picker never offers a row that would 403.
 
-A plan is only ever *written* by its own rep, at both doors.
+A plan is only ever *written* by its own rep, at both doors, and it is never
+handed to another user: `validate` refuses a change of `user` on an existing
+plan, and `has_permission` compares against the stored owner rather than the
+in-memory document (frappe checks write permission after `set_value` has applied
+the caller's changes, so a rewritten `user` used to look like the owner).
 
 ## Key files
 

@@ -44,6 +44,25 @@ class TestCRMCallLog(IntegrationTestCase):
 		self.assertEqual(call.status, "Completed")
 		self.assertEqual(call.caller, "Administrator")
 
+	def test_a_hand_logged_outgoing_call_names_the_session_user_as_caller(self):
+		"""The manual quick entry leaves caller/receiver blank; the person logging the
+		call is the one who made it, and the planner credits calls by these fields."""
+		call = create_test_call_log(type="Outgoing", telephony_medium="Manual", caller=None, receiver=None)
+		self.assertEqual(call.caller, frappe.session.user)
+		self.assertFalse(call.receiver)
+
+	def test_a_hand_logged_incoming_call_names_the_session_user_as_receiver(self):
+		call = create_test_call_log(type="Incoming", telephony_medium="Manual", caller=None, receiver=None)
+		self.assertEqual(call.receiver, frappe.session.user)
+		self.assertFalse(call.caller)
+
+	def test_a_telephony_log_is_not_attributed_to_whoever_inserted_it(self):
+		"""Twilio and Exotel write the log as the integration user; the rep is set
+		on caller/receiver by the handler, or not at all."""
+		call = create_test_call_log(type="Outgoing", telephony_medium="Twilio", caller=None, receiver=None)
+		self.assertFalse(call.caller)
+		self.assertFalse(call.receiver)
+
 	def test_call_log_with_duration(self):
 		"""Test call log with duration field"""
 		call = create_test_call_log(

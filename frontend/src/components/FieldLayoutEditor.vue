@@ -434,7 +434,7 @@ function getTabOptions(tab) {
               label: __('Remove'),
               variant: 'solid',
               theme: 'red',
-              onClick: (close) => {
+              onClick: ({ close }) => {
                 tabs.value.splice(tabIndex.value, 1)
                 tabIndex.value = tabIndex.value ? tabIndex.value - 1 : 0
                 close()
@@ -494,7 +494,7 @@ function getSectionOptions(i, section, tab) {
                     label: __('Remove'),
                     variant: 'solid',
                     theme: 'red',
-                    onClick: (close) => {
+                    onClick: ({ close }) => {
                       doRemove()
                       close()
                     },
@@ -589,7 +589,7 @@ function getSectionOptions(i, section, tab) {
                     label: __('Remove'),
                     variant: 'solid',
                     theme: 'red',
-                    onClick: (close) => {
+                    onClick: ({ close }) => {
                       doRemove()
                       close()
                     },

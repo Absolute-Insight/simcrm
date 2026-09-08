@@ -84,6 +84,19 @@ class AssistantApiTest(IntegrationTestCase):
 		self.assertIn("Knowledge base", system)
 		self.assertIs(complete.call_args[0][1], AssistantAnswer)
 
+	def test_sources_fall_back_to_the_grounding_articles_when_the_model_cites_none(self):
+		name = make_article("Gate valves", "Gate valves isolate a line. Sizes DN50 to DN600.")
+		make_article("Flow meters", "Magnetic flow meters measure conductive liquids.")
+		answer = AssistantAnswer(answer="DN50 to DN600.", related_articles=[])
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod.client, "complete", return_value=answer),
+			no_budget_check(),
+		):
+			result = api_mod.ask_assistant("what sizes do gate valves come in?")
+
+		self.assertEqual(result["sources"], [{"name": name, "title": "Gate valves"}])
+
 	def test_sources_are_filtered_to_loaded_articles_and_carry_titles(self):
 		name = make_article("Ball valves", "Quarter-turn isolation.", tags="ball, quarter-turn")
 		answer = AssistantAnswer(answer="Quarter-turn.", related_articles=[name, "KB-99999"])

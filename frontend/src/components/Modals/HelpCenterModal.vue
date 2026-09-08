@@ -142,6 +142,7 @@
               :messages="mentorMessages"
               :asking="mentorAsking"
               :failure="mentorFailure"
+              :failure-reason="mentorFailureReason"
               :intro="mentorIntro"
               :examples="mentorExamples"
               :placeholder="__('Ask how Vectora works…')"
@@ -167,15 +168,7 @@
               </template>
               <template #failure="{ failure }">
                 <p class="text-sm text-ink-gray-6">
-                  {{
-                    failure === 'disabled'
-                      ? __(
-                          'The mentor is switched off for this site. The manual on the left works either way.',
-                        )
-                      : __(
-                          'The mentor could not be reached right now. Your question was not lost — try again in a moment.',
-                        )
-                  }}
+                  {{ mentorFailureCopy(failure) }}
                 </p>
               </template>
             </AgentChat>
@@ -214,6 +207,7 @@
 
 <script setup>
 import { PhBookOpen as LucideBookOpen, PhCaretLeft } from '@phosphor-icons/vue'
+import { budgetStatusMessage, isBudgetReason } from '@/utils/agentStatus'
 import AgentChat from '@/components/AgentChat.vue'
 import SparkleIcon from '@/components/Icons/SparkleIcon.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -228,6 +222,7 @@ import {
   clearMentor,
   mentorAsking,
   mentorFailure,
+  mentorFailureReason,
   mentorMessages,
   mentorOpen,
   retryMentor,
@@ -242,6 +237,20 @@ import { Button, Dialog, SidebarItem, TextInput } from 'frappe-ui'
 import { computed, ref, watch } from 'vue'
 
 const search = ref('')
+
+function mentorFailureCopy(failure) {
+  if (failure === 'disabled') {
+    return __(
+      'The mentor is switched off for this site. The manual on the left works either way.',
+    )
+  }
+  if (isBudgetReason(mentorFailureReason.value)) {
+    return budgetStatusMessage(mentorFailureReason.value)
+  }
+  return __(
+    'The mentor could not be reached right now. Your question was not lost — try again in a moment.',
+  )
+}
 
 const mentorIntro = __(
   'Ask how Vectora works — screens, settings, and how the numbers are computed. The Mentor answers from this manual and cannot read or change your records.',

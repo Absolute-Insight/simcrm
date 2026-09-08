@@ -9,6 +9,7 @@
 </template>
 <script setup>
 import EventModal from '@/components/Modals/EventModal.vue'
+import { collectClosingValues } from '@/utils/taskClosing'
 import { showEventModal, activeEvent } from '@/composables/event'
 import { useDoctypeModal } from '@/composables/doctypeModal'
 import { useOnboarding } from '@framework/ui/components/Onboarding'
@@ -59,12 +60,17 @@ async function deleteTask(name) {
   activities.value.reload()
 }
 
-function updateTaskStatus(status, task) {
+async function updateTaskStatus(status, task) {
+  // Done, Canceled and Rescheduled need a closing note (and a new due date for
+  // Rescheduled); the server refuses the bare status write. Ask the same way
+  // the Kanban board does, so the record page is not the surface where the
+  // rule shows up as an error toast with nothing to fill in.
+  const closing = await collectClosingValues(status)
+  if (!closing) return
   call('frappe.client.set_value', {
     doctype: 'CRM Task',
     name: task.name,
-    fieldname: 'status',
-    value: status,
+    fieldname: { status, ...closing },
   })
     .then(() => {
       activities.value.reload()

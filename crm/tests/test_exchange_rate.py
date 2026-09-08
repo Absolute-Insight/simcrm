@@ -247,6 +247,44 @@ class TestDealSurvivesAnUnreachableProvider(FrappeTestCase):
 		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "exchange_rate"), 1)
 
 
+class TestOrganizationSurvivesAnUnreachableProvider(FrappeTestCase):
+	"""The organization controller had the same unguarded fetch the deal
+	controller was cured of, and MBP runs a ZAR base with USD organizations."""
+
+	def setUp(self):
+		super().setUp()
+		self.base = frappe.db.get_single_value("FCRM Settings", "currency") or "USD"
+		self.foreign = "EUR" if self.base != "EUR" else "GBP"
+
+	@patch("crm.api.exchange_rate._fetch_exchange_rate")
+	def test_a_foreign_currency_organization_saves_when_no_provider_answers(self, mock_fetch):
+		mock_fetch.return_value = (None, "frankfurter")
+
+		org = frappe.get_doc(
+			{"doctype": "CRM Organization", "organization_name": "FX Down Org", "currency": self.foreign}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Organization", org.name, force=True)
+
+		self.assertTrue(frappe.db.exists("CRM Organization", org.name))
+		self.assertEqual(frappe.db.get_value("CRM Organization", org.name, "exchange_rate"), 1)
+
+	@patch("crm.api.exchange_rate._fetch_exchange_rate")
+	def test_a_known_rate_is_kept_when_the_provider_goes_quiet(self, mock_fetch):
+		mock_fetch.return_value = (4.5, "frankfurter")
+		org = frappe.get_doc(
+			{"doctype": "CRM Organization", "organization_name": "FX Kept Org", "currency": self.foreign}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Organization", org.name, force=True)
+		self.assertEqual(frappe.db.get_value("CRM Organization", org.name, "exchange_rate"), 4.5)
+
+		frappe.cache().delete_keys("exchange_rate_")
+		mock_fetch.return_value = (None, "frankfurter")
+		org.reload()
+		org.exchange_rate = None  # force a refresh on the next save
+		org.save(ignore_permissions=True)
+		self.assertEqual(frappe.db.get_value("CRM Organization", org.name, "exchange_rate"), 1)
+
+
 class TestFetchFromSarb(FrappeTestCase):
 	"""The SARB provider answers exactly what the central bank publishes: the
 	current official ZAR fix against USD, GBP, EUR and JPY. Everything else is

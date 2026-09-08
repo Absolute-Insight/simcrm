@@ -4,14 +4,20 @@
       <h2 class="text-xl font-semibold text-ink-gray-8">
         {{ __('Acumatica Settings') }}
       </h2>
-      <Switch
+      <CheckSwitch
         v-if="settings.doc"
         v-model="settings.doc.enabled"
         :label="settings.doc.enabled ? __('Enabled') : __('Disabled')"
       />
     </div>
 
-    <template v-if="settings.doc">
+    <ErrorState
+      v-if="settings.get.error"
+      :error="settings.get.error"
+      :title="__('Could not load Acumatica settings')"
+      :retry="() => settings.reload()"
+    />
+    <template v-else-if="settings.doc">
       <div class="grid grid-cols-2 gap-4">
         <FormControl
           v-model="settings.doc.instance_url"
@@ -128,6 +134,9 @@
         />
       </div>
 
+      <div v-if="statusError" class="text-p-sm text-ink-orange-9">
+        {{ __('Could not load the sync status.') }} {{ statusError }}
+      </div>
       <div v-if="status" class="flex flex-col gap-2 text-p-sm text-ink-gray-6">
         <div>
           {{ __('Last synced') }} ({{ __('UTC') }}):
@@ -168,13 +177,14 @@
 </template>
 
 <script setup>
+import CheckSwitch from '@/components/ui/CheckSwitch.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
 import { ref, onMounted, onUnmounted } from 'vue'
 import {
   createDocumentResource,
   call,
   FormControl,
   Button,
-  Switch,
   toast,
 } from 'frappe-ui'
 import Link from '@/components/Controls/Link.vue'
@@ -194,6 +204,7 @@ const tokenHint = __(
 )
 
 const status = ref(null)
+const statusError = ref('')
 const issues = ref([])
 const backfilling = ref(false)
 const testing = ref(false)
@@ -245,10 +256,13 @@ async function loadStatus() {
     issues.value = await call(
       'crm.integrations.acumatica.api.get_open_sync_issues',
     )
-  } catch {
-    // the panel is informational; a failed read must not blow up the page
+    statusError.value = ''
+  } catch (e) {
+    // the panel is informational; a failed read must not blow up the page,
+    // but silently showing nothing read as "no sync has ever run"
     status.value = null
     issues.value = []
+    statusError.value = e?.messages?.[0] || e?.message || ''
   }
 }
 

@@ -185,7 +185,7 @@
             name: ['in', (crmUsers || []).map((u) => u.name)],
             ignore_user_type: 1,
           }"
-          :placeholder="__('Sales User')"
+          :placeholder="__('All reps')"
           :hideMe="true"
           @change="(v) => (scopeUser = v || '')"
         >
@@ -396,7 +396,7 @@ import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import { getSettings } from '@/stores/settings'
 import { usersStore } from '@/stores/users'
 import { formatRange, getLastXDays, parseDateRange } from '@/utils/dashboard'
-import { formatCell, toCsv } from '@/utils/reportExport'
+import { csvFileName, formatCell, toCsv } from '@/utils/reportExport'
 import { quiet } from '@/utils/quiet'
 import {
   createResource,
@@ -747,7 +747,7 @@ function exportCsv() {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `${data.name}-${fromDate.value}-to-${toDate.value}.csv`
+  link.download = csvFileName(data, fromDate.value, toDate.value)
   // Firefox ignores a click on an anchor that is not in the document, and
   // revoking the URL in the same tick can abort the download.
   document.body.appendChild(link)

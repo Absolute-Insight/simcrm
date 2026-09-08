@@ -129,8 +129,10 @@ def get_whatsapp_messages(reference_doctype: str, reference_name: str):
 
 	if reference_doctype == "CRM Deal":
 		lead = reference_doc.get("lead")
-		if lead:
-			validate_access("CRM Lead", lead)
+		# Same rule as crm.api.activities.get_deal_activities: the lead's thread is
+		# included when the reader may see the lead, and skipped -- not fatal --
+		# when they may not. The deal itself was permission-checked above.
+		if lead and frappe.has_permission("CRM Lead", "read", lead):
 			messages = frappe.get_all(
 				"WhatsApp Message",
 				filters={

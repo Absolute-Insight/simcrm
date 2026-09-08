@@ -3,6 +3,7 @@ import { call } from 'frappe-ui'
 import { usersStore } from '@/stores/users'
 import { sessionStore } from '@/stores/session'
 import { viewsStore } from '@/stores/views'
+import { reloadOnceForStaleChunk } from '@/utils/staleChunk'
 
 let personaChecked = false
 export const PERSONA_DONE_KEY = 'crm_persona_captured'
@@ -151,11 +152,6 @@ const routes = [
     props: true,
   },
   {
-    path: '/welcome',
-    name: 'Welcome',
-    component: () => import('@/pages/Welcome.vue'),
-  },
-  {
     path: '/onboarding',
     name: 'Onboarding',
     component: () => import('@/pages/PersonaForm.vue'),
@@ -258,7 +254,10 @@ router.beforeEach(async (to, from, next) => {
       next({ name: route_name, params: { viewType: type } })
     }
   } else if (!isLoggedIn) {
-    window.location.href = '/login?redirect-to=/crm'
+    // Carry the requested route so the person comes back to it, not to the
+    // front door; crm/www/crm.py does the same for a cold /crm/<path> load.
+    window.location.href =
+      '/login?redirect-to=' + encodeURIComponent('/crm' + to.fullPath)
     // Leaving the SPA entirely, but this guard still has to answer: vue-router
     // declares `next` in its signature, so returning without calling it logs
     // "Invalid navigation guard" and rejects the navigation with an error
@@ -356,6 +355,18 @@ router.beforeEach(async (to, from, next) => {
   } else {
     next()
   }
+})
+
+/* A release replaces every hashed chunk. A tab opened before it lazily imports
+   a page that no longer exists, the navigation rejects, and nothing tells the
+   person -- the sidebar simply stops working until they think of reloading.
+   Reload once onto the page they asked for; the cooldown keeps a build that is
+   broken for real from reloading in a loop. */
+router.onError((error, to) => {
+  reloadOnceForStaleChunk(
+    error,
+    to?.fullPath ? `/crm${to.fullPath}` : undefined,
+  )
 })
 
 export default router

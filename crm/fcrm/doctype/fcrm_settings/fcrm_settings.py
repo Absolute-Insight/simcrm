@@ -50,7 +50,10 @@ class FCRMSettings(Document):
 
 	@frappe.whitelist()
 	def restore_demo_data(self):
-		frappe.only_for(["Sales Manager", "System Manager"], True)
+		# Seeding sample organizations, deals and users into a site is an
+		# administrator's act; a Sales Manager on a live customer site must not
+		# be able to do it by mistake.
+		frappe.only_for("System Manager", True)
 		create_demo_data()
 
 	def validate(self):

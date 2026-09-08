@@ -157,3 +157,194 @@ class RowPermissionTest(IntegrationTestCase):
 		self.addCleanup(frappe.set_user, "Administrator")
 		frappe.set_user(BOB)
 		self.assertIsInstance(get_assigned_users("CRM Deal", self.deal.name), list)
+
+
+class PlanOwnershipTest(RowPermissionTest):
+	def test_a_rep_cannot_take_over_another_reps_plan_by_rewriting_its_user(self):
+		"""frappe checks write permission on the mutated document, so `user = me`
+		used to pass has_permission; validate refuses the change and the stored
+		owner is what has_permission compares against."""
+		frappe.set_user(ALICE)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Rep Plan", self.bobs_plan.name, "user", ALICE)
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("CRM Rep Plan", self.bobs_plan.name, "user"), BOB)
+
+		frappe.set_user(ALICE)
+		plan = frappe.get_doc("CRM Rep Plan", self.bobs_plan.name)
+		plan.user = ALICE
+		self.assertFalse(plan.has_permission("write"))
+
+
+class ViewSettingsRowPermissionTest(IntegrationTestCase):
+	"""``check_permission`` in the view endpoints is the same rule the doctype has
+	to enforce, or ``frappe.client.delete`` on a public kanban's name deletes it
+	for the whole team."""
+
+	MANAGER = "rowperm-viewmanager@crmtest.test"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		ensure_rep(ALICE, "Alice")
+		ensure_rep(BOB, "Bob")
+		if not frappe.db.exists("User", self.MANAGER):
+			user = frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": self.MANAGER,
+					"first_name": "View Manager",
+					"send_welcome_email": 0,
+				}
+			).insert(ignore_permissions=True)
+			user.add_roles("Sales Manager")
+		self.addCleanup(frappe.set_user, "Administrator")
+
+		def make_view(label, user, public=0):
+			doc = frappe.get_doc(
+				{
+					"doctype": "CRM View Settings",
+					"label": label,
+					"dt": "CRM Deal",
+					"type": "list",
+					"user": user,
+					"public": public,
+					"filters": "{}",
+					"columns": "[]",
+					"rows": "[]",
+				}
+			).insert(ignore_permissions=True)
+			self.addCleanup(
+				lambda name=doc.name: (
+					frappe.db.exists("CRM View Settings", name)
+					and frappe.delete_doc("CRM View Settings", name, force=True, ignore_permissions=True)
+				)
+			)
+			return doc
+
+		self.bobs_view = make_view("Bob's private view", BOB)
+		self.alices_view = make_view("Alice's private view", ALICE)
+		self.team_view = make_view("Team pipeline", "", public=1)
+
+	def test_a_rep_cannot_delete_the_teams_public_view(self):
+		frappe.set_user(ALICE)
+		self.assertFalse(frappe.has_permission("CRM View Settings", doc=self.team_view.name, ptype="delete"))
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.delete("CRM View Settings", self.team_view.name)
+		frappe.set_user("Administrator")
+		self.assertTrue(frappe.db.exists("CRM View Settings", self.team_view.name))
+
+	def test_a_rep_cannot_rewrite_the_teams_public_view(self):
+		frappe.set_user(ALICE)
+		self.assertFalse(frappe.has_permission("CRM View Settings", doc=self.team_view.name, ptype="write"))
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM View Settings", self.team_view.name, "filters", '{"status": "Lost"}')
+
+	def test_a_rep_cannot_see_or_edit_another_reps_private_view(self):
+		frappe.set_user(ALICE)
+		names = [str(n) for n in frappe.get_list("CRM View Settings", pluck="name")]
+		self.assertNotIn(str(self.bobs_view.name), names)
+		self.assertFalse(frappe.has_permission("CRM View Settings", doc=self.bobs_view.name, ptype="read"))
+		self.assertFalse(frappe.has_permission("CRM View Settings", doc=self.bobs_view.name, ptype="write"))
+		self.assertFalse(frappe.has_permission("CRM View Settings", doc=self.bobs_view.name, ptype="delete"))
+
+	def test_a_rep_cannot_take_over_a_view_by_rewriting_its_user(self):
+		"""frappe checks write on the mutated document; ownership is read from the row."""
+		frappe.set_user(ALICE)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM View Settings", self.bobs_view.name, "user", ALICE)
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("CRM View Settings", self.bobs_view.name, "user"), BOB)
+
+	def test_a_rep_cannot_create_a_view_for_someone_else_or_a_public_one(self):
+		frappe.set_user(ALICE)
+		for extra in ({"user": BOB}, {"user": "", "public": 1}):
+			doc = frappe.get_doc(
+				{
+					"doctype": "CRM View Settings",
+					"label": "Planted",
+					"dt": "CRM Deal",
+					"type": "list",
+					**extra,
+				}
+			)
+			with self.assertRaises(frappe.PermissionError):
+				doc.insert()
+
+	def test_a_rep_still_owns_their_own_view_and_sees_public_ones(self):
+		frappe.set_user(ALICE)
+		names = [str(n) for n in frappe.get_list("CRM View Settings", pluck="name")]
+		self.assertIn(str(self.alices_view.name), names)
+		self.assertIn(str(self.team_view.name), names)
+		self.assertTrue(frappe.has_permission("CRM View Settings", doc=self.alices_view.name, ptype="write"))
+		self.assertTrue(frappe.has_permission("CRM View Settings", doc=self.alices_view.name, ptype="delete"))
+		self.assertTrue(frappe.has_permission("CRM View Settings", doc=self.team_view.name, ptype="read"))
+		frappe.client.set_value("CRM View Settings", self.alices_view.name, "filters", '{"status": "Won"}')
+		frappe.set_user("Administrator")
+		self.assertEqual(
+			frappe.db.get_value("CRM View Settings", self.alices_view.name, "filters"), '{"status": "Won"}'
+		)
+
+	def test_a_sales_manager_edits_public_views_but_not_a_reps_private_one(self):
+		frappe.set_user(self.MANAGER)
+		self.assertTrue(frappe.has_permission("CRM View Settings", doc=self.team_view.name, ptype="write"))
+		self.assertTrue(frappe.has_permission("CRM View Settings", doc=self.team_view.name, ptype="delete"))
+		self.assertFalse(frappe.has_permission("CRM View Settings", doc=self.bobs_view.name, ptype="write"))
+		self.assertFalse(frappe.has_permission("CRM View Settings", doc=self.bobs_view.name, ptype="read"))
+		names = [str(n) for n in frappe.get_list("CRM View Settings", pluck="name")]
+		self.assertNotIn(str(self.bobs_view.name), names)
+		self.assertIn(str(self.team_view.name), names)
+
+
+class ProductMasterDataPermissionTest(IntegrationTestCase):
+	"""Products are master data: every deal line defaults to ``standard_rate`` and,
+	with the catalogue switch on, every rep's Assistant prompt quotes the
+	description. Reps read them; managers and administrators maintain them."""
+
+	MANAGER = "rowperm-productmanager@crmtest.test"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		ensure_rep(ALICE, "Alice")
+		if not frappe.db.exists("User", self.MANAGER):
+			user = frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": self.MANAGER,
+					"first_name": "Product Manager",
+					"send_welcome_email": 0,
+				}
+			).insert(ignore_permissions=True)
+			user.add_roles("Sales Manager")
+		self.addCleanup(frappe.set_user, "Administrator")
+		self.product = frappe.get_doc(
+			{"doctype": "CRM Product", "product_code": "ROWPERM-VALVE", "standard_rate": 12500}
+		).insert(ignore_permissions=True, ignore_if_duplicate=True)
+		self.addCleanup(
+			lambda: frappe.db.exists("CRM Product", self.product.name)
+			and frappe.delete_doc("CRM Product", self.product.name, force=True, ignore_permissions=True)
+		)
+
+	def test_the_doctype_gives_a_sales_user_read_only(self):
+		perms = [p for p in frappe.get_meta("CRM Product").permissions if p.role == "Sales User"]
+		self.assertTrue(perms)
+		self.assertTrue(perms[0].read)
+		for ptype in ("write", "create", "delete"):
+			self.assertFalse(perms[0].get(ptype), ptype)
+
+	def test_a_rep_cannot_change_a_price_or_description(self):
+		frappe.set_user(ALICE)
+		self.assertTrue(frappe.has_permission("CRM Product", doc=self.product.name, ptype="read"))
+		self.assertFalse(frappe.has_permission("CRM Product", doc=self.product.name, ptype="write"))
+		self.assertFalse(frappe.has_permission("CRM Product", doc=self.product.name, ptype="delete"))
+		self.assertFalse(frappe.has_permission("CRM Product", ptype="create"))
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Product", self.product.name, "standard_rate", 1250)
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("CRM Product", self.product.name, "standard_rate"), 12500)
+
+	def test_a_sales_manager_still_maintains_the_catalogue(self):
+		frappe.set_user(self.MANAGER)
+		self.assertTrue(frappe.has_permission("CRM Product", doc=self.product.name, ptype="write"))
+		self.assertTrue(frappe.has_permission("CRM Product", ptype="create"))

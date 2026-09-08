@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover maximum-scale=1.0, user-scalable=no"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <title>Vectora</title>
     <!--
@@ -18,10 +18,13 @@
       ;(function () {
         try {
           var stored = localStorage.getItem('theme')
+          // Dark-first, like main.js (which writes 'dark' for a visitor with
+          // no stored choice): the pre-paint must agree or the first visit
+          // flashes light and then flips.
           var theme =
             stored === 'light' || stored === 'dark' || stored === 'system'
               ? stored
-              : 'system'
+              : 'dark'
           var resolved =
             theme === 'system'
               ? window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -45,7 +48,12 @@
     <meta name="theme-color" content="#0e1830" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Vectora" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="white" />
+    <!-- "white" is not one of the three values this tag accepts (default,
+         black, black-translucent), so iOS ignored it and used `default`: an
+         opaque white bar with dark text above a dark-first app. `black` keeps
+         the bar dark in both themes; `black-translucent` would slide content
+         under it and needs safe-area padding this layout does not carry. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
 
     <!-- PWA -->
     <link

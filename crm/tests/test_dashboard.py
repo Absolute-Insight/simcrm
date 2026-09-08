@@ -584,18 +584,31 @@ class TestDashboard(IntegrationTestCase):
 	# ============================================================
 
 	def test_deal_counts_consistency(self):
-		"""Test that ongoing + won + lost deals = total deals"""
-		ongoing = get_ongoing_deals(self.from_date, self.to_date)["value"]
-		won = get_won_deals(self.from_date, self.to_date)["value"]
+		"""The ongoing tile's status set partitions the period's deals with Won and Lost.
 
-		# Get lost deals count
-		lost_deals = frappe.db.count(
-			"CRM Deal",
-			{
-				"creation": ["between", [self.from_date, self.to_date]],
-				"status": ["in", frappe.db.get_list("CRM Deal Status", {"type": "Lost"}, pluck="name")],
-			},
-		)
+		Won is counted here by ``creation`` like the other two, not through
+		``get_won_deals``: that tile is dated by ``closed_date`` on purpose, and a
+		deal created in the period but closed outside it (or the reverse) is not
+		a defect in either number. It only ever looked like a partition because
+		``closed_date`` used to be overwritten with the save date on every
+		transition into Won.
+		"""
+		ongoing = get_ongoing_deals(self.from_date, self.to_date)["value"]
+
+		def count(status_type):
+			return frappe.db.count(
+				"CRM Deal",
+				{
+					"creation": ["between", [self.from_date, self.to_date]],
+					"status": [
+						"in",
+						frappe.db.get_list("CRM Deal Status", {"type": status_type}, pluck="name"),
+					],
+				},
+			)
+
+		won = count("Won")
+		lost_deals = count("Lost")
 
 		total_deals_by_type = ongoing + won + lost_deals
 		total_deals = frappe.db.count("CRM Deal", {"creation": ["between", [self.from_date, self.to_date]]})

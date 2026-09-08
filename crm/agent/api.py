@@ -62,6 +62,16 @@ ASSISTANT_QUESTION_MAX_CHARS = 2000
 
 BUDGET_CACHE_KEY = "crm_agent_daily_calls"
 
+# Why a call was refused before it reached the model, carried as ``reason`` on
+# an ``unavailable`` status. The distinction matters to the reader: the burst
+# window clears within a minute and a dead endpoint may be back in a moment,
+# but a spent day budget does not recover until tomorrow. Without the reason
+# every surface said "try again in a moment" and invited retries that were
+# refunded and never succeeded -- an idle endpoint reported as an outage.
+RATE_LIMITED = "rate_limited"
+USER_BUDGET = "user_budget"
+SITE_BUDGET = "budget"
+
 
 def budget_key() -> str:
 	"""Today's counter key, site-scoped.
@@ -85,8 +95,11 @@ def user_daily_call_budget(cfg) -> int:
 	return max(USER_DAILY_BUDGET_FLOOR, cfg.daily_call_budget // USER_DAILY_BUDGET_SHARE)
 
 
-def _budget_spent(cfg) -> bool:
-	"""Count this call against the daily budgets; True when either is gone.
+def _budget_spent(cfg) -> str | None:
+	"""Count this call against the daily budgets; the reason when either is gone.
+
+	Returns ``None`` when the call may proceed, :data:`USER_BUDGET` when this
+	account's share of the day is spent, :data:`SITE_BUDGET` when the site's is.
 
 	The per-user rate limit bounds a burst, not a day: fifty users at ten calls a
 	minute is still an unbounded bill against whoever hosts the endpoint. The
@@ -101,7 +114,7 @@ def _budget_spent(cfg) -> bool:
 	everyone else out. A refused call must cost nobody anything.
 	"""
 	if cfg.daily_call_budget <= 0:
-		return False
+		return None
 	try:
 		cache = frappe.cache()
 		user_key = user_budget_key()
@@ -109,18 +122,18 @@ def _budget_spent(cfg) -> bool:
 		cache.expire(user_key, 60 * 60 * 36)
 		if user_spent > user_daily_call_budget(cfg):
 			cache.decr(user_key)
-			return True
+			return USER_BUDGET
 		key = budget_key()
 		spent = cache.incr(key)
 		cache.expire(key, 60 * 60 * 36)
 		if spent > cfg.daily_call_budget:
 			cache.decr(key)
 			cache.decr(user_key)
-			return True
+			return SITE_BUDGET
 	except Exception:
 		# a cache that is unavailable must not take the feature down with it
-		return False
-	return False
+		return None
+	return None
 
 
 def _refund_budget(cfg) -> None:
@@ -188,10 +201,21 @@ def _model_call_slot():
 			pass
 
 
-def _throttled(cfg) -> bool:
+def _throttled(cfg) -> str | None:
 	"""The per-user minute window, then the daily budgets -- in that order, so a
-	call the burst limiter refuses is not also charged to the day."""
-	return user_rate_limited(USER_RATE_SCOPE, SUMMARISE_RATE_LIMIT) or _budget_spent(cfg)
+	call the burst limiter refuses is not also charged to the day. Returns the
+	reason the call is refused, or ``None`` when it may proceed."""
+	if user_rate_limited(USER_RATE_SCOPE, SUMMARISE_RATE_LIMIT):
+		return RATE_LIMITED
+	return _budget_spent(cfg)
+
+
+def _unavailable(reason=None) -> dict:
+	"""The degrade status, naming the throttle reason when there is one. A model
+	that could not be reached has no reason: that really is weather."""
+	if isinstance(reason, str) and reason:
+		return {"status": "unavailable", "reason": reason}
+	return {"status": "unavailable"}
 
 
 @frappe.whitelist()
@@ -200,17 +224,27 @@ def _throttled(cfg) -> bool:
 def summarise_thread(reference_doctype: str, reference_name: str) -> dict:
 	"""Summarise a record's communication thread.
 
-	Returns ``{"status": "ok", "summary": {...}}`` on success, or a bare status of
-	``disabled`` or ``unavailable``.
+	Returns ``{"status": "ok", "summary": {...}}`` on success, ``{"status": "empty"}``
+	when the record has no email thread, or a bare status of ``disabled`` or
+	``unavailable``. A call the throttle refused carries ``reason`` --
+	``rate_limited``, ``user_budget`` or ``budget`` -- so the client can say
+	whether waiting a moment or waiting for tomorrow is the answer.
 	"""
 	cfg = get_config()
 	if not cfg.enabled:
 		return {"status": "disabled"}
-	if _throttled(cfg):
-		return {"status": "unavailable"}
 
+	# Read before throttling: a record with no email thread is answered here
+	# without a model call, a budget charge or a rate-limit tick. The model used
+	# to be asked to summarise silence and confidently reported that there was
+	# nothing to say -- eight seconds and a budget unit for a sentence the
+	# client can write itself.
 	record = tools.read_record(reference_doctype, reference_name)
 	thread = tools.read_thread(reference_doctype, reference_name)
+	if not thread:
+		return {"status": "empty"}
+	if reason := _throttled(cfg):
+		return _unavailable(reason)
 	messages = build_thread_messages(record, thread)
 
 	with _model_call_slot() as free:
@@ -240,11 +274,14 @@ def draft_reply(reference_doctype: str, reference_name: str) -> dict:
 	cfg = get_config()
 	if not cfg.enabled:
 		return {"status": "disabled"}
-	if _throttled(cfg):
-		return {"status": "unavailable"}
 
 	record = tools.read_record(reference_doctype, reference_name)
 	thread = tools.read_thread(reference_doctype, reference_name)
+	if not thread:
+		# nothing to reply to; same short-circuit as summarise_thread
+		return {"status": "empty"}
+	if reason := _throttled(cfg):
+		return _unavailable(reason)
 
 	with _model_call_slot() as free:
 		if not free:
@@ -277,8 +314,8 @@ def ask_mentor(question: str, history: str | list | None = None) -> dict:
 	cfg = get_config()
 	if not cfg.enabled:
 		return {"status": "disabled"}
-	if _throttled(cfg):
-		return {"status": "unavailable"}
+	if reason := _throttled(cfg):
+		return _unavailable(reason)
 
 	articles = load_articles()
 	selected = knowledge.select_articles(question, articles)
@@ -292,8 +329,18 @@ def ask_mentor(question: str, history: str | list | None = None) -> dict:
 	# so an invented citation cannot become a dead link in the help center.
 	known = {article["name"] for article in articles}
 	related = [name for name in reply.related_articles if name in known]
+	if not related:
+		# Small models seldom fill related_articles at all (the shipped default
+		# never did in a live run). The grounding set is what the answer was built
+		# from, so it is the honest citation when the model offers none -- and it
+		# stays empty when nothing scored, because then nothing was quoted.
+		related = [article["name"] for article in selected[:MAX_CITATIONS]]
 	return {"status": "ok", "answer": reply.answer, "related_articles": related}
 
+
+# How many grounding articles are cited when the model names none itself; matches
+# the cap the schema puts on the model's own related_articles.
+MAX_CITATIONS = 3
 
 # How many knowledge rows the Assistant considers. Selection is a scan over
 # titles, tags and bodies, so a catalogue past this is a search index's job,
@@ -324,8 +371,8 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 	if not articles:
 		return {"status": "empty"}
 
-	if _throttled(cfg):
-		return {"status": "unavailable"}
+	if reason := _throttled(cfg):
+		return _unavailable(reason)
 
 	selected = knowledge.select_articles(question, articles)
 	company = frappe.db.get_single_value("FCRM Settings", "brand_name") or "the company"
@@ -343,7 +390,12 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 		return {"status": "unavailable"}
 
 	titles = {article["name"]: article["title"] for article in articles}
-	sources = [{"name": name, "title": titles[name]} for name in reply.related_articles if name in titles]
+	cited = [name for name in reply.related_articles if name in titles]
+	if not cited:
+		# same rule as the Mentor: an answer grounded on articles the model did
+		# not name is still an answer from those articles
+		cited = [article["name"] for article in selected[:MAX_CITATIONS]]
+	sources = [{"name": name, "title": titles[name]} for name in cited]
 	return {"status": "ok", "answer": reply.answer, "sources": sources}
 
 
@@ -422,13 +474,21 @@ def ask_analyst(question: str, history: str | list | None = None) -> dict:
 		return {"status": "disabled"}
 	if not cfg.analyst_enabled:
 		return {"status": "disabled", "reason": "analyst_off"}
-	if _throttled(cfg):
-		return {"status": "unavailable"}
+	if reason := _throttled(cfg):
+		return _unavailable(reason)
 
 	erp = analyst_data.enabled_erp()
 	available = analyst.available_keys(erp_enabled=bool(erp))
 	today = frappe.utils.getdate()
 	turns = _parse_history(history)
+
+	# One deadline for the whole request. Each completion on its own may take
+	# timeout x MAX_ATTEMPTS, so two in sequence could hold the worker for four
+	# timeouts while the proxy gives up at two (validate_timeout budgets
+	# timeout x 2 against PROXY_READ_TIMEOUT). Sharing the deadline keeps plan +
+	# data + answer inside what a single call is allowed; a plan that ate the
+	# budget leaves the answer refused rather than the request hung.
+	deadline = time.monotonic() + cfg.timeout * client.MAX_ATTEMPTS
 
 	with _model_call_slot() as free:
 		if not free:
@@ -442,6 +502,7 @@ def ask_analyst(question: str, history: str | list | None = None) -> dict:
 				cfg,
 				AnalystPlan,
 				analyst.build_plan_messages(question, analyst.catalogue_entries(available), today, turns),
+				deadline=deadline,
 			)
 		except (AgentUnavailable, SchemaMismatch) as exc:
 			frappe.log_error(title="CRM analyst plan failed", message=str(exc))
@@ -453,7 +514,10 @@ def ask_analyst(question: str, history: str | list | None = None) -> dict:
 
 		try:
 			reply = client.complete(
-				cfg, AnalystAnswer, analyst.build_answer_messages(question, tables, period, turns)
+				cfg,
+				AnalystAnswer,
+				analyst.build_answer_messages(question, tables, period, turns),
+				deadline=deadline,
 			)
 		except (AgentUnavailable, SchemaMismatch) as exc:
 			frappe.log_error(title="CRM analyst answer failed", message=str(exc))

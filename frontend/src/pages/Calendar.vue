@@ -443,7 +443,7 @@ function deleteEvent(eventID) {
         label: __('Delete'),
         variant: 'solid',
         theme: 'red',
-        onClick: (close) => {
+        onClick: ({ close }) => {
           events.delete.submit(eventID, {
             onSuccess: () => {
               toast.success(__('Event deleted successfully'))

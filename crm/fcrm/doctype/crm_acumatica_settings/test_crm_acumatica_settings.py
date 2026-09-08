@@ -6,6 +6,22 @@ class TestAcumaticaSettings(FrappeTestCase):
 	def tearDown(self):
 		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
 		frappe.db.set_single_value("ERPNext CRM Settings", "enabled", 0)
+		self.clear_sync_issues()
+
+	@staticmethod
+	def clear_sync_issues():
+		"""``record_sync_issue`` saves the Single from inside whatever transaction
+		hit the failure, so its rows outlive the test that wrote them. Left alone,
+		the cap test's 200 rows carry into the next run and the append test then
+		measures a table already at MAX_SYNC_ISSUES -- appending trims one off and
+		the count does not move. Each test starts from a table it set itself.
+		"""
+		doc = frappe.get_doc("CRM Acumatica Settings")
+		if not doc.sync_issues:
+			return
+		doc.sync_issues = []
+		doc.flags.ignore_validate = True
+		doc.save(ignore_permissions=True)
 
 	def test_doctype_exists_with_expected_fields(self):
 		meta = frappe.get_meta("CRM Acumatica Settings")
@@ -49,6 +65,7 @@ class TestAcumaticaSettings(FrappeTestCase):
 			record_sync_issue,
 		)
 
+		self.clear_sync_issues()
 		before = len(frappe.get_doc("CRM Acumatica Settings").sync_issues)
 		record_sync_issue("Customer", "ABC001", "Import Failed", "boom")
 		after = frappe.get_doc("CRM Acumatica Settings").sync_issues

@@ -33,6 +33,15 @@ def _comm(idx: int, content: str = "hello", sender: str = "buyer@acme.test"):
 
 
 class ThreadMessagesTest(UnitTestCase):
+	def test_the_header_names_the_record_by_its_kind(self):
+		"""A lead used to be introduced as "Deal: CRM-LEAD-…" and summarised as one."""
+		lead = {"doctype": "CRM Lead", "name": "CRM-LEAD-0001", "organization": "Acme", "status": "New"}
+		user = build_thread_messages(lead, [_comm(1)])[1]["content"]
+		self.assertIn("Lead: CRM-LEAD-0001", user)
+		self.assertNotIn("Deal:", user)
+		# records without a doctype key (older callers, fixtures) still read as deals
+		self.assertIn("Deal: CRM-DEAL-0001", build_thread_messages(DEAL, [_comm(1)])[1]["content"])
+
 	def test_returns_a_system_and_a_user_message(self):
 		messages = build_thread_messages(DEAL, [_comm(1)])
 		self.assertEqual([m["role"] for m in messages], ["system", "user"])

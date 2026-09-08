@@ -5,6 +5,7 @@ from frappe.rate_limiter import rate_limit
 from frappe.translate import get_all_translations
 from frappe.utils import sanitize_html, split_emails, validate_email_address
 
+from crm.fcrm.doctype.crm_invitation.crm_invitation import hash_key
 from crm.utils import is_frappe_version
 
 
@@ -73,17 +74,23 @@ def check_app_permission():
 
 
 # Guest access is required -- accepting an invitation is how a user first gets an
-# account, so by definition there is no session yet. The key is the credential;
-# the rate limit below is what stops it being guessed.
+# account, so by definition there is no session yet. The key is the credential:
+# 32 characters of frappe.generate_hash, stored hashed, so guessing it is not a
+# realistic attack and the limits below are about abuse, not entropy. Two of them
+# because the deploy stack sits behind a reverse proxy: with one shared bucket
+# per client address, the eleventh rep in an office to click their invitation
+# link inside an hour was refused. Per address the limit is now generous; per key
+# it is tight, so a burst against one invitation still stops.
 @frappe.whitelist(allow_guest=True)  # nosemgrep: guest-whitelisted-method
-@rate_limit(limit=10, seconds=60 * 60)
+@rate_limit(limit=200, seconds=60 * 60)
+@rate_limit(key="key", limit=10, seconds=60 * 60)
 def accept_invitation(key: str | None = None):
 	# A guest follows this link from an email. Anything that throws here is
 	# rendered by frappe as "Server Error 417: Uncaught Exception", which tells
 	# the person nothing they can act on -- a cancelled invitation, an expired
 	# one, or a link pasted with a character missing all look like an outage.
 	# So the failure is a plain page with the one useful sentence instead.
-	result = frappe.db.get_all("CRM Invitation", filters={"key": key}, pluck="name") if key else []
+	result = frappe.db.get_all("CRM Invitation", filters={"key": hash_key(key)}, pluck="name") if key else []
 	if not result:
 		return _invitation_unavailable()
 	invitation = frappe.get_doc("CRM Invitation", result[0])

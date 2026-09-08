@@ -92,7 +92,7 @@
           }"
         >
           {{ column.label }}
-          <span v-if="column.isRequired" class="text-red-500">*</span>
+          <span v-if="column.isRequired" class="text-ink-red-9">*</span>
         </div>
       </div>
       <hr

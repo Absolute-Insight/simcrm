@@ -119,3 +119,21 @@ class ExotelWebhookAuthTest(IntegrationTestCase):
 				self.validate_with("", token=token)
 			with self.subTest(token=token), self.assertRaises(frappe.PermissionError):
 				self.validate_with("anything", token=token)
+
+
+class WebhookPayloadTest(IntegrationTestCase):
+	"""The verify token rides in on the query string and must go no further."""
+
+	def test_transport_parameters_are_stripped_before_the_payload_is_used(self):
+		from crm.integrations.exotel.handler import _webhook_payload
+
+		payload = _webhook_payload(
+			{
+				"key": "s3cret",
+				"agent": "rep@example.com",
+				"cmd": "handle_request",
+				"CallSid": "abc",
+				"Status": "free",
+			}
+		)
+		self.assertEqual(payload, {"CallSid": "abc", "Status": "free"})

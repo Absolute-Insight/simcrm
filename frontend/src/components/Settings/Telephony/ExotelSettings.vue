@@ -92,7 +92,7 @@
               </div>
             </div>
             <div>
-              <Switch v-model="exotel.doc.record_call" size="sm" />
+              <CheckSwitch v-model="exotel.doc.record_call" size="sm" />
             </div>
           </div>
         </div>
@@ -125,14 +125,21 @@
       >
         <LoadingIndicator class="size-6" />
       </div>
+      <ErrorState
+        v-else-if="exotel.get.error"
+        :error="exotel.get.error"
+        :title="__('Could not load the settings')"
+        :retry="() => exotel.reload()"
+      />
     </template>
   </SettingsLayoutBase>
 </template>
 <script setup>
+import CheckSwitch from '@/components/ui/CheckSwitch.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
 import ToneBadge from '@/components/ui/ToneBadge.vue'
 import { setEnabled } from '@/composables/telephony'
 import { useDocument } from '@/data/document'
-import { Switch } from 'frappe-ui'
 import { computed } from 'vue'
 
 const emit = defineEmits(['updateStep'])

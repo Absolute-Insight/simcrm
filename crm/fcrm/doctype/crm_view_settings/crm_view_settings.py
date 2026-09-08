@@ -164,6 +164,63 @@ def check_permission(doc):
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 
 
+READABLE = ("read", "select", "report", "export", "print", "email")
+
+
+def _is_admin(user: str) -> bool:
+	return user == "Administrator" or "System Manager" in frappe.get_roles(user)
+
+
+def _stored_ownership(doc) -> tuple[str | None, bool]:
+	"""``(user, public)`` of the row as saved, not as the caller has mutated it.
+
+	frappe checks write permission on the document *after* ``set_value`` /
+	``save`` have applied the caller's changes, so a rep who rewrote ``user`` to
+	themselves on a colleague's view would look like its owner.
+	"""
+	if doc.name and not doc.get("__islocal"):
+		row = frappe.db.get_value("CRM View Settings", doc.name, ["user", "public"], as_dict=True)
+		if row:
+			return row.user, bool(row.public)
+	return doc.user, bool(doc.public)
+
+
+def get_permission_query_conditions(user=None):
+	"""The list door shows what ``crm.api.views.get_views`` shows: public views and
+	the caller's own. Another rep's private view is not a thing to enumerate."""
+	user = user or frappe.session.user
+	if _is_admin(user):
+		return ""
+	return (
+		"(`tabCRM View Settings`.`public` = 1"
+		f" or ifnull(`tabCRM View Settings`.`user`, '') in ('', {frappe.db.escape(user)}))"
+	)
+
+
+def has_permission(doc, ptype="read", user=None):
+	"""The rule ``check_permission`` applies in the endpoints, on the doctype itself.
+
+	The endpoints are not the only door: ``frappe.client.delete`` / ``save`` /
+	``set_value`` reach this doctype directly with the session user's role grants,
+	and Sales User holds write and delete on it. A public view is anyone's to
+	read and a Sales Manager's to change; a private view is its owner's alone.
+	"""
+	user = user or frappe.session.user
+	if _is_admin(user):
+		return True
+	is_manager = "Sales Manager" in frappe.get_roles(user)
+	if ptype == "create":
+		# a new row is the caller's own, or a manager's public one -- never
+		# planted under another user's name
+		return doc.user == user or (bool(doc.public) and is_manager)
+	owner, public = _stored_ownership(doc)
+	if owner == user:
+		return True
+	if public or not owner:
+		return ptype in READABLE or is_manager
+	return False
+
+
 def remove_duplicates(l):
 	return list(dict.fromkeys(l))
 

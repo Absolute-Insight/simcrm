@@ -52,5 +52,27 @@ export default [
       'no-console': ['error', { allow: ['warn', 'error', 'info'] }],
     },
   },
+  {
+    // frappe-ui's Dialog runs each action as `onClick({ close })`. A handler
+    // written `(close) => { ...; close() }` receives the whole object, so the
+    // action runs and then throws "close is not a function" with the dialog
+    // still open. Two rounds of fixes covered 4 then 17 call sites by hand;
+    // this keeps the two signatures from drifting apart again. Form-script
+    // actions (src/doctypes/**, rendered by CustomActions.vue) legitimately
+    // take a bare close function and are excluded.
+    files: ['src/**/*.vue', 'src/**/*.js', 'src/**/*.ts'],
+    ignores: ['src/doctypes/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'Property[key.name="onClick"] > :function[params.length=1] > Identifier.params[name="close"]',
+          message:
+            'Dialog actions are called as onClick({ close }); destructure the object.',
+        },
+      ],
+    },
+  },
   configPrettier,
 ]

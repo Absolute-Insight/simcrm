@@ -47,7 +47,7 @@
                 field.reqd ||
                 (field.mandatory_depends_on && field.mandatory_via_depends_on)
               "
-              class="text-ink-red-5"
+              class="text-ink-red-9"
               >*</span
             >
           </div>
@@ -202,7 +202,7 @@
                       </div>
                       <TimePicker
                         v-else-if="field.fieldtype === 'Time'"
-                        :value="row[field.fieldname]"
+                        :modelValue="row[field.fieldname]"
                         variant="outline"
                         :format="getFormat('', '', false, true, false)"
                         input-class="border-none text-sm text-ink-gray-8"
@@ -210,7 +210,7 @@
                       />
                       <DatePicker
                         v-else-if="field.fieldtype === 'Date'"
-                        :value="row[field.fieldname]"
+                        :modelValue="row[field.fieldname]"
                         variant="outline"
                         :format="getFormat('', '', true, false, false)"
                         input-class="border-none text-sm text-ink-gray-8"
@@ -218,7 +218,7 @@
                       />
                       <DateTimePicker
                         v-else-if="field.fieldtype === 'Datetime'"
-                        :value="row[field.fieldname]"
+                        :modelValue="row[field.fieldname]"
                         variant="outline"
                         :format="getFormat('', '', true, true, false)"
                         input-class="border-none text-sm text-ink-gray-8"

@@ -52,6 +52,21 @@ class CRMCallLog(Document):
 			self.id = generate_hash(length=12)
 		if not self.telephony_medium:
 			self.telephony_medium = "Manual"
+		self.default_manual_participant()
+
+	def default_manual_participant(self):
+		"""A call logged by hand is the logger's own: the quick entry leaves caller
+		and receiver blank, and the planner credits calls by exactly those fields.
+		Telephony logs are written by the integration user and name the rep
+		themselves, so they are left alone."""
+		if self.telephony_medium != "Manual" or self.caller or self.receiver:
+			return
+		if frappe.session.user == "Guest":
+			return
+		if self.type == "Incoming":
+			self.receiver = frappe.session.user
+		else:
+			self.caller = frappe.session.user
 
 	@staticmethod
 	def default_list_data():

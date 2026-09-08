@@ -4,6 +4,82 @@ from frappe.auth import LoginAttemptTracker
 from frappe.rate_limiter import rate_limit
 from frappe.utils.password import check_password, update_password
 
+# What Settings -> Profile and Settings -> Preferences show and let a person change
+# about themselves. frappe's User doctype grants read and write to System Manager
+# only (plus `select` to Desk User), so the frappe.client document resource the
+# panes used answered 403 for every Sales User: a rep could not see their own
+# name, change their photo, or pick a language. These two endpoints are the
+# rep's own row, nothing else, through an allow-list of fields.
+PROFILE_FIELDS = (
+	"name",
+	"email",
+	"first_name",
+	"last_name",
+	"full_name",
+	"user_image",
+	"language",
+	"time_zone",
+	"email_signature",
+	"modified",
+)
+PROFILE_EDITABLE_FIELDS = frozenset(
+	{"first_name", "last_name", "user_image", "language", "time_zone", "email_signature", "user_emails"}
+)
+# The child rows the email composer and the signature pane read: which outgoing
+# accounts this person may send from.
+USER_EMAIL_FIELDS = ("email_account", "email_id")
+
+
+def _own_user() -> str:
+	user = frappe.session.user
+	if user == "Guest":
+		frappe.throw(_("You must be logged in"), frappe.AuthenticationError)
+	return user
+
+
+@frappe.whitelist()
+def get_profile() -> dict:
+	"""The session user's own profile, readable regardless of User doctype grants."""
+	user = _own_user()
+	profile = frappe.db.get_value("User", user, list(PROFILE_FIELDS), as_dict=True)
+	profile["user_emails"] = frappe.get_all(
+		"User Email",
+		filters={"parent": user, "parenttype": "User"},
+		fields=list(USER_EMAIL_FIELDS),
+		order_by="idx asc",
+	)
+	return profile
+
+
+@frappe.whitelist(methods=["POST"])
+def update_profile(changes: dict | str) -> dict:
+	"""Change the session user's own profile fields; anything else is refused.
+
+	Saved with ``ignore_permissions`` because the row is the caller's own and the
+	field list is fixed here -- roles, email, enabled and everything that grants
+	access are not in it and cannot be reached through this door.
+	"""
+	user = _own_user()
+	changes = frappe.parse_json(changes) if isinstance(changes, str) else (changes or {})
+	unknown = set(changes) - PROFILE_EDITABLE_FIELDS
+	if unknown:
+		frappe.throw(
+			_("These fields cannot be changed here: {0}").format(", ".join(sorted(unknown))),
+			frappe.ValidationError,
+		)
+	doc = frappe.get_doc("User", user)
+	for field, value in changes.items():
+		if field == "user_emails":
+			# rows are rebuilt from the two fields the UI knows; anything else a
+			# client might send on a row is dropped, and the Link validation on
+			# User Email still refuses an account that does not exist
+			rows = value if isinstance(value, list) else frappe.parse_json(value or "[]")
+			doc.set("user_emails", [{key: (row or {}).get(key) for key in USER_EMAIL_FIELDS} for row in rows])
+		else:
+			doc.set(field, value)
+	doc.save(ignore_permissions=True)
+	return get_profile()
+
 
 @frappe.whitelist()
 @rate_limit(limit=5, seconds=300)  # 5 attempts per 5 minutes per user/IP
@@ -91,6 +167,13 @@ def update_user_role(user: str, new_role: str):
 	if target_is_system_manager and not is_system_manager:
 		frappe.throw(_("Only System Managers can modify other System Managers"), frappe.PermissionError)
 
+	# The same rule as granting the role: a Sales Manager manages reps, and a
+	# peer manager's role is a System Manager's to change. Without this any team
+	# lead could demote another to Sales User and lock them out of their team's
+	# records.
+	if "Sales Manager" in target_roles and not is_system_manager:
+		frappe.throw(_("Only System Managers can modify other Sales Managers"), frappe.PermissionError)
+
 	if new_role == "Sales Manager" and not is_system_manager:
 		frappe.throw(_("Only System Managers can assign the Sales Manager role"), frappe.PermissionError)
 
@@ -135,6 +218,9 @@ def remove_crm_roles_from_user(user: str):
 
 	if "System Manager" in roles and not current_user_is_system_manager:
 		frappe.throw(_("Only System Managers can modify other System Managers"), frappe.PermissionError)
+
+	if "Sales Manager" in roles and not current_user_is_system_manager:
+		frappe.throw(_("Only System Managers can modify other Sales Managers"), frappe.PermissionError)
 
 	if user_doc.get("role_profiles") or user_doc.get("role_profile_name"):
 		return frappe.throw(

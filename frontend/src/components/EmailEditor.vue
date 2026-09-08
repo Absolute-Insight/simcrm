@@ -201,7 +201,7 @@ import {
   EditorTableMenu,
 } from 'frappe-ui/editor'
 import { useTelemetry } from '@framework/ui/telemetry'
-import { useDocument } from '@/data/document'
+import { useOwnProfile } from '@/composables/useOwnProfile'
 import { validateEmail, submitShortcutLabel } from '@/utils'
 import Paragraph from '@tiptap/extension-paragraph'
 import { ref, computed, nextTick, inject, watch } from 'vue'
@@ -243,7 +243,11 @@ const content = defineModel('content', { type: String, default: '' })
 
 const { capture } = useTelemetry()
 const { user: sessionUser } = inject('session')
-const { document: user } = useDocument('User', sessionUser)
+// The composer needs the outgoing accounts linked to the sender. A User
+// document resource answered 403 for every Sales User (the doctype is
+// System Manager only), which also put an error banner on the mobile record
+// page the moment it mounted; the own-profile endpoint carries the rows.
+const user = useOwnProfile()
 
 const textEditor = ref(null)
 const cc = ref(false)

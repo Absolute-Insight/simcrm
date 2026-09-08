@@ -25,32 +25,56 @@ from crm.fcrm.doctype.crm_report_digest.crm_report_digest import (
 )
 
 RECIPIENT = "digest-manager@crmtest.test"
+REP = "digest-rep@crmtest.test"
+OTHER = "digest-other@crmtest.test"
+
+
+def ensure_user(email: str, first_name: str, role: str) -> None:
+	if not frappe.db.exists("User", email):
+		user = frappe.get_doc(
+			{"doctype": "User", "email": email, "first_name": first_name, "send_welcome_email": 0}
+		).insert(ignore_permissions=True)
+		user.add_roles(role)
 
 
 class ReportDigestTest(IntegrationTestCase):
 	def setUp(self):
 		super().setUp()
-		if not frappe.db.exists("User", RECIPIENT):
-			user = frappe.get_doc(
-				{
-					"doctype": "User",
-					"email": RECIPIENT,
-					"first_name": "Digest Manager",
-					"send_welcome_email": 0,
-				}
-			).insert(ignore_permissions=True)
-			user.add_roles("Sales Manager")
+		ensure_user(RECIPIENT, "Digest Manager", "Sales Manager")
+		ensure_user(REP, "Digest Rep", "Sales User")
+		ensure_user(OTHER, "Digest Other", "Sales User")
 		self.digests: list[str] = []
 		self.clear_mail()
+		self.clear_plans()
 
 	def tearDown(self):
 		for name in self.digests:
 			frappe.delete_doc("CRM Report Digest", name, force=True, ignore_permissions=True)
 		self.clear_mail()
+		self.clear_plans()
 		super().tearDown()
 
 	def clear_mail(self):
 		frappe.db.delete("Email Queue", {"reference_doctype": "CRM Report Digest"})
+
+	def clear_plans(self):
+		for name in frappe.get_all("CRM Rep Plan", filters={"user": ("in", [REP, OTHER])}, pluck="name"):
+			frappe.delete_doc("CRM Rep Plan", name, force=True, ignore_permissions=True)
+
+	def rendered_windows(self) -> list[tuple[str, str]]:
+		"""Run the scheduler and return the ``(from_date, to_date)`` each report was rendered for."""
+		from crm.api import reports
+
+		real = reports.get_report
+		windows: list[tuple[str, str]] = []
+
+		def recording(name, from_date=None, to_date=None, *args, **kwargs):
+			windows.append((str(from_date), str(to_date)))
+			return real(name, from_date, to_date, *args, **kwargs)
+
+		with patch.object(reports, "get_report", side_effect=recording):
+			send_due_digests()
+		return windows
 
 	def make_digest(self, **overrides):
 		digest = {
@@ -109,6 +133,79 @@ class ReportDigestTest(IntegrationTestCase):
 
 	def test_a_disabled_digest_sends_nothing(self):
 		self.make_digest(enabled=0)
+		self.assertEqual(send_due_digests(), 0)
+		self.assertEqual(self.queued_messages(), [])
+
+	# --- the window -----------------------------------------------------
+
+	def test_a_daily_digest_covers_exactly_the_previous_day(self):
+		"""The scheduler fires at midnight, so "today" has nothing in it yet --
+		but quota_in_period pro-rates by covered days, so a window that reached
+		into today charged a full extra day of target against one day of closes.
+		The settings page promises "covering the previous day"; hold it to that."""
+		self.make_digest()
+		yesterday = str(frappe.utils.add_days(frappe.utils.nowdate(), -1))
+		self.assertEqual(self.rendered_windows(), [(yesterday, yesterday)])
+
+	def test_a_weekly_digest_covers_exactly_the_previous_seven_days(self):
+		self.make_digest(frequency="Weekly")
+		with self.on_day("2026-08-10"):
+			windows = self.rendered_windows()
+		today = frappe.utils.nowdate()
+		self.assertEqual(
+			windows,
+			[(str(frappe.utils.add_days(today, -7)), str(frappe.utils.add_days(today, -1)))],
+		)
+		self.assertEqual(frappe.utils.date_diff(windows[0][1], windows[0][0]) + 1, 7)
+
+	def test_the_email_states_the_window_it_covers(self):
+		self.make_digest()
+		send_due_digests()
+		yesterday = str(frappe.utils.add_days(frappe.utils.nowdate(), -1))
+		self.assertIn(yesterday, self.queued_messages()[0])
+
+	# --- who gets what --------------------------------------------------
+
+	def plan_for(self, user: str, planned_date):
+		monday = frappe.utils.add_days(planned_date, -planned_date.weekday())
+		frappe.get_doc(
+			{
+				"doctype": "CRM Rep Plan",
+				"user": user,
+				"week_start": monday,
+				"items": [{"activity_type": "Task", "planned_date": planned_date, "status": "Done"}],
+			}
+		).insert(ignore_permissions=True)
+
+	def test_a_rep_recipient_is_mailed_only_their_own_rows(self):
+		"""The report is rendered as the recipient, so a rep's digest carries the
+		rep's rows and nobody else's -- pipeline data must not leave the
+		hierarchy by email. Yesterday is the one day a daily window covers and
+		the newest day adherence counts as settled."""
+		yesterday = frappe.utils.add_days(frappe.utils.getdate(), -1)
+		self.plan_for(REP, yesterday)
+		self.plan_for(OTHER, yesterday)
+		self.make_digest(report="plan_adherence_by_rep", recipients=REP)
+
+		self.assertEqual(send_due_digests(), 1)
+		self.assertEqual(frappe.session.user, "Administrator")
+
+		html = self.queued_messages()[0]
+		self.assertIn("Digest Rep", html)
+		self.assertNotIn("Digest Other", html)
+
+	def test_a_recipient_disabled_after_save_is_dropped_at_send(self):
+		self.make_digest()
+		frappe.db.set_value("User", RECIPIENT, "enabled", 0)
+		self.addCleanup(frappe.db.set_value, "User", RECIPIENT, "enabled", 1)
+		self.assertEqual(send_due_digests(), 0)
+		self.assertEqual(self.queued_messages(), [])
+
+	def test_a_recipient_stripped_of_crm_roles_is_dropped_at_send(self):
+		self.make_digest()
+		user = frappe.get_doc("User", RECIPIENT)
+		user.remove_roles("Sales Manager")
+		self.addCleanup(lambda: frappe.get_doc("User", RECIPIENT).add_roles("Sales Manager"))
 		self.assertEqual(send_due_digests(), 0)
 		self.assertEqual(self.queued_messages(), [])
 
@@ -298,3 +395,37 @@ class RenderDigestTest(UnitTestCase):
 		"""Blanking None must not blank the falsy values that are real answers."""
 		html = _render_digest(self.report(rows=[{"stage": 0}]), "2026-01-01", "2026-01-02")
 		self.assertIn(f'<td style="{TD_STYLE}">0</td>', html)
+
+	def typed(self, col_type: str, value):
+		return self.report(columns=[{"key": "v", "label": "V", "type": col_type}], rows=[{"v": value}])
+
+	def test_a_currency_cell_is_formatted_as_money_in_the_base_currency(self):
+		"""The first digest anyone schedules is quota attainment, and it arrived
+		reading ``300000.0 | 212500.55`` while the same report on screen read
+		``R 300,000``. Same column types the Reports page formats by."""
+		html = _render_digest(self.typed("currency", 1234567.891), "2026-01-01", "2026-01-02", currency="ZAR")
+		self.assertIn("1,234,567.89", html)
+		self.assertIn("R", html.split("<tbody>")[1])
+		self.assertNotIn("1234567", html)
+
+	def test_a_percent_cell_carries_its_sign(self):
+		html = _render_digest(self.typed("percent", 71), "2026-01-01", "2026-01-02")
+		self.assertIn(">71%</td>", html)
+
+	def test_a_number_cell_is_grouped(self):
+		html = _render_digest(self.typed("number", 12345), "2026-01-01", "2026-01-02")
+		self.assertIn(">12,345</td>", html)
+
+	def test_numeric_cells_are_right_aligned_and_text_cells_are_not(self):
+		html = _render_digest(self.typed("number", 5), "2026-01-01", "2026-01-02")
+		self.assertIn(f'<td style="{TD_STYLE};text-align:right">5</td>', html)
+		text = _render_digest(self.report(rows=[{"stage": "Demo"}]), "2026-01-01", "2026-01-02")
+		self.assertIn(f'<td style="{TD_STYLE}">Demo</td>', text)
+
+	def test_a_blank_measure_stays_blank_whatever_its_type(self):
+		"""``actual`` is None for a month that has not happened; formatting it as
+		money would print R 0.00 for a month with no data."""
+		for col_type in ("currency", "percent", "number"):
+			with self.subTest(type=col_type):
+				html = _render_digest(self.typed(col_type, None), "2026-01-01", "2026-01-02")
+				self.assertIn(f'<td style="{TD_STYLE};text-align:right"></td>', html)

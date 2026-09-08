@@ -50,8 +50,16 @@ def get_deal_activities(name: str):
 	creation_text = _("created this deal")
 
 	if lead:
-		activities, calls, notes, tasks, attachments = get_lead_activities(lead)
 		creation_text = _("converted the lead to this deal")
+		# The lead's history joins the deal timeline only when the reader may see
+		# the lead. Lead ownership never follows the deal: a deal reassigned after
+		# conversion, or converted from a web-form or imported lead nobody owns,
+		# points at a lead its owner cannot read, and get_lead_activities throws
+		# PermissionError for it -- which used to take the deal's own emails,
+		# comments, tasks and notes down with it. The deal was permission-checked
+		# above; the lead is a bonus, not a gate.
+		if frappe.has_permission("CRM Lead", "read", lead):
+			activities, calls, notes, tasks, attachments = get_lead_activities(lead)
 
 	activities.append(
 		{

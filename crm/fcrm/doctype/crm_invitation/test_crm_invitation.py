@@ -107,7 +107,7 @@ class TestCRMInvitation(FrappeTestCase):
 
 		invitation = self.make_invitation(email="new-invitee@example.com")
 
-		accept_invitation(key=invitation.key)
+		accept_invitation(key=invitation._raw_key)
 
 		self.assertEqual(frappe.local.response["type"], "redirect")
 		self.assertIn("/update-password?key=", frappe.local.response["location"])
@@ -126,7 +126,7 @@ class TestCRMInvitation(FrappeTestCase):
 		invitation = self.make_invitation(email="existing-invitee@example.com")
 
 		with patch.object(frappe.local, "login_manager", create=True) as login_manager:
-			accept_invitation(key=invitation.key)
+			accept_invitation(key=invitation._raw_key)
 
 		login_manager.login_as.assert_called_once_with("existing-invitee@example.com")
 		self.assertEqual(frappe.local.response["location"], "/crm")
@@ -194,10 +194,114 @@ class TestCRMInvitation(FrappeTestCase):
 		from crm.api import accept_invitation
 
 		invitation = self.make_invitation(email="twice@example.com")
-		key = invitation.key
+		key = invitation._raw_key
 		invitation.accept()
 
 		accept_invitation(key=key)
 
 		self.assertEqual(frappe.local.response["type"], "page")
 		self.assertEqual(frappe.local.response["http_status_code"], 410)
+
+
+MANAGER = "invitation-manager@crmtest.test"
+OTHER_MANAGER = "invitation-other-manager@crmtest.test"
+REP = "invitation-rep@crmtest.test"
+
+
+def ensure_user(email: str, *roles: str) -> None:
+	if not frappe.db.exists("User", email):
+		frappe.get_doc(
+			{"doctype": "User", "email": email, "first_name": email.split("@")[0], "send_welcome_email": 0}
+		).insert(ignore_permissions=True)
+	frappe.get_doc("User", email).add_roles(*roles)
+
+
+class InvitationPermissionTest(FrappeTestCase):
+	"""The key is a credential; who can read, mint and redeem it is the whole point."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		ensure_user(MANAGER, "Sales Manager", "Sales User")
+		ensure_user(OTHER_MANAGER, "Sales Manager", "Sales User")
+		ensure_user(REP, "Sales User")
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		super().tearDown()
+
+	def invite(self, email, role="Sales User", **kwargs):
+		with patch.object(frappe, "sendmail") as sendmail:
+			doc = frappe.get_doc(doctype="CRM Invitation", email=email, role=role).insert(**kwargs)
+		return doc, sendmail
+
+	def test_the_stored_key_is_a_hash_and_only_the_link_carries_the_raw_key(self):
+		from crm.fcrm.doctype.crm_invitation.crm_invitation import KEY_LENGTH, hash_key
+
+		invitation, sendmail = self.invite("hashed-invitee@example.com", ignore_permissions=True)
+		link = sendmail.call_args.kwargs["args"]["invite_link"]
+		raw_key = link.rsplit("key=", 1)[1]
+
+		self.assertEqual(len(raw_key), KEY_LENGTH)
+		self.assertNotEqual(raw_key, invitation.key)
+		self.assertEqual(hash_key(raw_key), invitation.key)
+		self.assertEqual(frappe.db.get_value("CRM Invitation", invitation.name, "key"), hash_key(raw_key))
+
+	def test_the_guest_endpoint_redeems_the_raw_key_against_the_hash(self):
+		from crm.api import accept_invitation
+
+		invitation, sendmail = self.invite("redeem-invitee@example.com", ignore_permissions=True)
+		raw_key = sendmail.call_args.kwargs["args"]["invite_link"].rsplit("key=", 1)[1]
+
+		frappe.set_user("Guest")
+		with patch.object(frappe, "sendmail"):
+			accept_invitation(raw_key)
+		frappe.set_user("Administrator")
+
+		self.assertEqual(frappe.db.get_value("CRM Invitation", invitation.name, "status"), "Accepted")
+		self.assertTrue(frappe.db.exists("User", "redeem-invitee@example.com"))
+
+	def test_a_rep_cannot_list_or_read_invitations(self):
+		invitation, _ = self.invite("rep-cannot-see@example.com", ignore_permissions=True)
+
+		frappe.set_user(REP)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.get_list("CRM Invitation", fields=["name", "email"])
+		self.assertFalse(frappe.has_permission("CRM Invitation", "read", invitation.name))
+
+	def test_a_manager_sees_only_the_invitations_they_sent(self):
+		frappe.set_user(MANAGER)
+		mine, _ = self.invite("managers-invitee@example.com", ignore_permissions=True)
+		frappe.set_user(OTHER_MANAGER)
+		theirs, _ = self.invite("other-managers-invitee@example.com", ignore_permissions=True)
+
+		frappe.set_user(MANAGER)
+		visible = frappe.get_list("CRM Invitation", pluck="name")
+		self.assertIn(mine.name, visible)
+		self.assertNotIn(theirs.name, visible)
+		self.assertFalse(frappe.has_permission("CRM Invitation", "read", theirs.name))
+		# and the key stays out of reach even on their own row: permlevel 1 is admin-only,
+		# so the document the client API hands back carries no key
+		from frappe.client import get as client_get
+
+		self.assertFalse(client_get("CRM Invitation", mine.name).get("key"))
+
+	def test_a_manager_cannot_insert_an_elevated_invitation_through_either_door(self):
+		frappe.set_user(MANAGER)
+		# the doctype door: no create grant for Sales Manager
+		with self.assertRaises(frappe.PermissionError):
+			self.invite("door-one@example.com", role="Sales User")
+		# the controller door: ignore_permissions reaches before_insert, which checks the role
+		for role in ("Sales Manager", "System Manager"):
+			with self.assertRaises(frappe.PermissionError):
+				self.invite(
+					f"door-two-{role.lower().replace(' ', '-')}@example.com",
+					role=role,
+					ignore_permissions=True,
+				)
+
+	def test_accepting_on_behalf_of_the_invitee_is_for_system_managers_only(self):
+		invitation, _ = self.invite("on-behalf@example.com", ignore_permissions=True)
+		frappe.set_user(MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			invitation.accept_invitation()

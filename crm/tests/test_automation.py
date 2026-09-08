@@ -114,6 +114,16 @@ class AutomationRuleTest(IntegrationTestCase):
 			frappe.utils.getdate(frappe.utils.add_days(frappe.utils.nowdate(), 2)),
 		)
 
+	def test_a_rule_that_does_not_assign_leaves_its_task_unassigned(self):
+		"""A task a person writes without naming anyone is theirs (CRMTask.before_insert).
+		A rule's task is the admin's configuration: with assign_to_owner off it must not
+		fall to whoever happened to save the deal."""
+		make_rule(assign_to_owner=0)
+		deal = self.make_deal(deal_owner=ensure_user(LEAD_OWNER, "Automation Owner"))
+		tasks = self.tasks_for(deal)
+		self.assertEqual(len(tasks), 1)
+		self.assertFalse(tasks[0].assigned_to)
+
 	def test_a_disabled_rule_does_nothing(self):
 		make_rule(enabled=0)
 		deal = self.make_deal()
