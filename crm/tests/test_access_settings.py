@@ -353,8 +353,18 @@ class InstallDefaultsTest(IntegrationTestCase):
 	def test_ensure_access_defaults_writes_both_values_during_install(self):
 		"""frappe.flags.in_install is set to the installing app's name for the
 		whole after_install hook loop (frappe/installer.py) and cleared at the
-		end -- this reproduces being called from inside that window."""
+		end -- this reproduces being called from inside that window.
+
+		Seeded to the wrong values first, same as the "outside install" test
+		below, so this REDs on ambient module state coincidentally already
+		matching the target values rather than on the helper actually doing
+		nothing -- otherwise a reordering that left them already at 1 /
+		"Own records only" would pass this test without exercising the write at
+		all, and this is the regression guard for exactly that write."""
 		from crm.install import ensure_access_defaults
+
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 0)
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
 
 		original_flag = frappe.flags.in_install
 		self.addCleanup(setattr, frappe.flags, "in_install", original_flag)

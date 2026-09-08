@@ -160,6 +160,7 @@ def ensure_access_defaults():
 		return
 
 	frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+	# MANAGER_SCOPES[1] is "Own records only", the narrower of the two.
 	frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", MANAGER_SCOPES[1])
 
 
