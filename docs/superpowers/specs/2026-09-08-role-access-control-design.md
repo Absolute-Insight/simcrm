@@ -55,6 +55,10 @@ individually-ungated items fall through to reps: `Email → Templates` and
 agent number there and the manager-only controls inside are gated one by one
 (`TelephonySettings.vue:157-191`). Templates appears to be an oversight.
 
+So the fix is **not** symmetrical, and a group condition on `Integrations` would
+be a regression: it would take a rep's own telephony configuration away. Only
+`Email → Templates` needs gating, as a condition on the item.
+
 Separately: `isSalesUser()` (`stores/users.js:148`) is exported, has no callers,
 and is an exact role match where its sibling `isManager()` is inclusive — two
 different meanings for one idea, waiting for someone to reach for the wrong one.
@@ -298,7 +302,7 @@ exactly what `tests/unit/` is for.
 | `frontend/src/utils/surfaces.js` | new — the shared registry |
 | `frontend/src/stores/access.js` | new — `canSee` |
 | `frontend/src/components/Settings/AccessControl.vue` | new pane |
-| `frontend/src/components/Settings/Settings.vue` | stable keys, register the pane, `canSee` in conditions, **group conditions on Email and Integrations** |
+| `frontend/src/components/Settings/Settings.vue` | stable keys, register the pane, `canSee` in conditions, **a condition on Email → Templates** |
 | `frontend/src/components/Layouts/AppSidebar.vue` | `canSee` in conditions |
 | `frontend/src/router.js` | await the access resource |
 | `frontend/src/stores/users.js` | drop the dead `isSalesUser` |
