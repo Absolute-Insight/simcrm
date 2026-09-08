@@ -35,8 +35,9 @@ class ConnectionProbe(BaseModel):
 
 	Deliberately schema-constrained rather than a bare ping: reaching the host
 	says nothing about whether guided decoding works there, and that is the
-	failure this test exists to find. MiniCPM5-1B, for one, connects fine and
-	returns empty content.
+	failure this test exists to find: a model can connect, accept the schema and
+	still return empty content, which is what MiniCPM5-1B did at the 1024-token
+	budget this tier used to ship (see the agent README -- at 2048 it answers).
 	"""
 
 	model_config = ConfigDict(extra="forbid")
