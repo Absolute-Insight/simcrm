@@ -62,26 +62,33 @@ It is gitignored, so it does not dirty `git status`.
 says "29 files · 480 tests"; that line has drifted, which is why it tells you to
 re-read the counts rather than trust it.
 
-**The bench does not see this branch by default.** `.devcontainer/docker-compose.yml` mounts the repo root at `/workspace`, and `scripts/init.sh:164` links `apps/crm → /workspace` — the **main checkout**, which is on `develop`. Work done in a worktree under `.worktrees/` is visible in the container as a directory but is not what `import crm` resolves to.
+**The bench does not see this branch by default, and the symlink is NOT the reason.**
 
-Pick one, inside the container:
+The venv carries `env/lib/python3.14/site-packages/crm.pth` whose entire content
+is the line `/workspace`, so `import crm` resolves to the **main checkout** no
+matter where `apps/crm` points. Re-pointing that symlink changes nothing for
+Python — it only appears to work, and an earlier version of this plan told you
+to do exactly that.
+
+The fix is `PYTHONPATH`, which precedes site-packages `.pth` entries on
+`sys.path`, is inherited by bench's child processes, and mutates **no shared
+state** — nothing to restore, and the peer sessions sharing this bench are
+unaffected. Use the wrapper, which sets it and then refuses to run unless
+`import crm` actually resolved to the worktree:
 
 ```bash
-# Option A (recommended) — point the bench at this branch, then restore it.
-docker exec simcrm_devcontainer-frappe-1 bash -lc '
-  cd /home/frappe/frappe-bench &&
-  ln -sfn /workspace/.worktrees/feat-role-access apps/crm'   # before testing
-docker exec simcrm_devcontainer-frappe-1 bash -lc '
-  cd /home/frappe/frappe-bench && ln -sfn /workspace apps/crm'  # after, ALWAYS
+.superpowers/sdd/2026-09-08-role-access-control/bench-on-branch.sh 'bench --site test_site migrate'
+.superpowers/sdd/2026-09-08-role-access-control/bench-on-branch.sh 'bench --site test_site run-tests --module crm.tests.test_access_settings'
 ```
 
-Verified target today: `apps/crm -> /workspace`. Restore it to exactly that.
+Do not flip `apps/crm`, and do not edit `crm.pth` — both are shared state, and
+neither is necessary.
 
-`pip install -e` was run against the path `apps/crm`, i.e. the symlink, so re-pointing needs no re-install. `sites/assets/crm` also resolves through it.
-
-**This bench is shared.** Another session running `bench run-tests` while the symlink is re-pointed silently tests this branch instead of theirs. Coordinate over `SendMessage` before Option A, and restore the link the moment you are done.
-
-Option B is to check `feat/role-access` out in the main checkout instead — but it currently holds another session's uncommitted brand/logo image changes, so do not.
+**Proven with a discriminator**, which is the only evidence that counts here:
+`crm/fcrm/doctype/crm_access_settings/` exists only on this branch. With
+`PYTHONPATH` set it imports; without it, `ModuleNotFoundError`. A check that
+resolves `crm` after manually inserting a path onto `sys.path` proves nothing —
+it tests the insertion, not the bench.
 
 **Python tests run against a dedicated site**, never a browsing site (AGENTS.md): `bench --site test_site run-tests --app crm`. Purge the job queue first — the devcontainer has no workers and a full queue raises `QueueOverloaded` errors that read like regressions:
 
@@ -279,6 +286,11 @@ bench --site test_site run-tests --module crm.tests.test_access_settings
 ```
 
 Expected: FAIL — `DoesNotExistError: DocType CRM Access Settings not found`.
+
+**Not** `No module named 'crm.tests.test_access_settings'`. That error means the
+bench cannot see this branch at all (see Prerequisites) and is indistinguishable
+from the test file not existing — if you get it, your harness is broken, not
+your code, and the RED you are looking at is meaningless.
 
 - [ ] **Step 3: Create the child doctype**
 
