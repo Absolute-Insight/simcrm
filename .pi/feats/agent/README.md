@@ -289,6 +289,10 @@ What follows for the design:
   ```
   bench --site <site> execute crm.agent.evals.runner.run_and_print
   bench --site <site> execute crm.agent.evals.runner.run_and_print --kwargs "{'repeats': 5}"
+
+  # a candidate, without pointing the site at it
+  bench --site <site> execute crm.agent.evals.runner.run_and_print --kwargs \
+    "{'base_url': 'http://candidate:8080/v1', 'model': '<tag>', 'max_tokens': 4096}"
   ```
 
   Every case runs twice, with the payload and without. A tell that fires on the clean
@@ -440,15 +444,14 @@ none of the rows above may be inherited across a runtime change. The weights are
 at Q4_K_M against the default's 1.7 GB and about 3.6 GB of VRAM at a 16k context, neither
 of which is a constraint on the hardware this tier already asks for.
 
-Reproducing any of this needs a cfg override, because `run_and_print` reads the site's
-settings and a candidate is not what the site is pointed at:
+Reproducing any of this is one command. `run_and_print` takes `base_url`, `model`,
+`timeout` and `max_tokens`, which override the site's settings for that run and nothing
+else — a candidate is not what the site is pointed at, and editing CRM Agent Settings to
+measure one changes what reps are served while the sweep runs:
 
-```python
-from crm.agent.config import AgentConfig
-from crm.agent.evals import runner
-cfg = AgentConfig(enabled=True, base_url="http://<host>:8080/v1", model="<tag>",
-                  timeout=300, max_tokens=2048)
-print(runner.format_report(runner.run_evals(cfg, repeats=3), cfg))
+```bash
+bench --site <site> execute crm.agent.evals.runner.run_and_print --kwargs \
+  "{'base_url': 'http://candidate:8080/v1', 'model': '<tag>', 'repeats': 3}"
 ```
 
 A candidate llama.cpp endpoint on the bench network, reasoning suppressed, is one command:
