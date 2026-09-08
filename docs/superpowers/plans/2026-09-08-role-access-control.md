@@ -1925,7 +1925,12 @@ Create `frontend/src/components/Settings/AccessControl.vue`:
               }}
             </p>
           </div>
-          <Select
+          <!-- FormControl type="select", not a bare <Select>: that is the
+               house pattern for a select in Settings (see
+               GeneralSettings.vue's timeline controls) and keeps this pane
+               visually identical to its neighbours. -->
+          <FormControl
+            type="select"
             class="w-48 shrink-0"
             :model-value="dataAccess.data?.manager_outside_hierarchy"
             :options="managerScopeOptions"
@@ -2026,7 +2031,7 @@ Create `frontend/src/components/Settings/AccessControl.vue`:
 
 <script setup>
 import { computed, ref } from 'vue'
-import { createResource, Select, Tooltip, toast } from 'frappe-ui'
+import { createResource, FormControl, Tooltip, toast } from 'frappe-ui'
 import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import SkeletonTable from '@/components/ui/SkeletonTable.vue'
