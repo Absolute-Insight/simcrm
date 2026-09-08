@@ -31,7 +31,7 @@ from frappe import _
 from frappe.utils import cint
 
 from crm.api.session import CRM_ALLOWED_ROLES
-from crm.fcrm.doctype.crm_access_settings.crm_access_settings import CONFIGURABLE_ROLES
+from crm.fcrm.doctype.crm_access_settings.crm_access_settings import CONFIGURABLE_ROLES, MANAGER_SCOPES
 
 SETTINGS_DOCTYPE = "CRM Access Settings"
 
@@ -39,13 +39,11 @@ SETTINGS_DOCTYPE = "CRM Access Settings"
 #: registry lives in one place (frontend/src/utils/surfaces.js) instead of two.
 #: An unrecognised key is inert: because config only narrows, the worst it can
 #: do is fail to hide something.
-SURFACE_KEY = re.compile(r"^(nav|settings)\.[a-z0-9_]{1,48}$")
+SURFACE_KEY = re.compile(r"^(nav|settings)\.[a-z0-9_]{1,48}\Z")
 
 #: A bound on how much one write may store. The registry is ~40 surfaces across
 #: two roles; this leaves room to grow without leaving the table unbounded.
 MAX_SURFACES = 200
-
-MANAGER_SCOPES = ("All records", "Own records only")
 
 
 def _effective_role(user: str | None = None) -> str:
@@ -83,7 +81,13 @@ def _require_crm_user() -> None:
 
 
 def _hidden_for(role: str) -> list[str]:
-	"""Surfaces hidden for ``role``. Always empty for an administrator."""
+	"""Surfaces hidden for ``role``.
+
+	Empty for any role that is not one of the two configurable ones -- an
+	administrator, but equally anything else this module doesn't recognise.
+	That fail-open is safe here specifically because config only ever narrows:
+	the worst an unrecognised role can do is fail to hide something.
+	"""
 	if role not in CONFIGURABLE_ROLES:
 		return []
 	return frappe.get_all(
@@ -105,9 +109,12 @@ def manager_outside_hierarchy_sees_all() -> bool:
 	here and not only the field default -- otherwise installing this feature
 	would silently narrow every existing site on the next request.
 
-	Deliberately uncached, for the reason ``org_hierarchy._in_hierarchy`` gives:
-	``frappe.local.request_cache`` lives for a whole scheduler process, so a
-	setting changed mid-run would read stale until a restart.
+	Not actually uncached: ``get_single_value`` keeps its own per-connection
+	``value_cache``, and ``set_single_value`` invalidates it -- so a write is
+	visible immediately to reads on the *same* connection. What that does not
+	cover is a different, already-running connection: a long scheduler job
+	holds one connection for its whole run, so a setting changed by another
+	process mid-job reads stale in *that* job until it reconnects.
 	"""
 	value = frappe.db.get_single_value(SETTINGS_DOCTYPE, "manager_outside_hierarchy")
 	return (value or "All records") == "All records"
@@ -135,7 +142,10 @@ def get_visibility() -> dict:
 
 def _validated_keys(hidden) -> list[str]:
 	if isinstance(hidden, str):
-		hidden = frappe.parse_json(hidden)
+		try:
+			hidden = frappe.parse_json(hidden)
+		except Exception:
+			frappe.throw(_("Hidden surfaces must be a list."))
 	if hidden is None:
 		hidden = []
 	if not isinstance(hidden, list):
@@ -152,7 +162,7 @@ def _validated_keys(hidden) -> list[str]:
 	return keys
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def set_visibility(role: str, hidden: list | str) -> dict:
 	"""Replace ``role``'s hidden set.
 
@@ -196,11 +206,14 @@ def set_visibility(role: str, hidden: list | str) -> dict:
 def get_data_access() -> dict:
 	"""The two switches that actually change what the database returns.
 
-	Readable by anyone in the CRM so the pane can render for a manager as
-	read-only context -- knowing the site scopes by hierarchy leaks nothing, and
-	a manager seeing "your team only" explains their own numbers to them.
+	Readable by a Sales Manager, not just an administrator, so the pane can
+	render for a manager as read-only context -- knowing the site scopes by
+	hierarchy leaks nothing, and a manager seeing "your team only" explains
+	their own numbers to them. Narrower than ``get_visibility``'s
+	``_require_crm_user``, deliberately: only the pane calls this, the pane is
+	manager-and-above, and a rep has no reason to hold these two values.
 	"""
-	_require_crm_user()
+	frappe.only_for(["System Manager", "Sales Manager"], True)
 	return {
 		"enable_sales_hierarchy": frappe.db.get_single_value("FCRM Settings", "enable_sales_hierarchy") or 0,
 		"manager_outside_hierarchy": frappe.db.get_single_value(SETTINGS_DOCTYPE, "manager_outside_hierarchy")
@@ -209,7 +222,7 @@ def get_data_access() -> dict:
 	}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def set_data_access(
 	enable_sales_hierarchy: int | str | None = None,
 	manager_outside_hierarchy: str | None = None,

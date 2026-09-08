@@ -20,12 +20,18 @@ REP = "access-rep@crmtest.test"
 
 
 def ensure_user(email: str, name: str, *roles: str) -> None:
-	if not frappe.db.exists("User", email):
+	if frappe.db.exists("User", email):
+		user = frappe.get_doc("User", email)
+	else:
 		user = frappe.get_doc(
 			{"doctype": "User", "email": email, "first_name": name, "send_welcome_email": 0}
 		).insert(ignore_permissions=True)
-		if roles:
-			user.add_roles(*roles)
+	# Outside the branch above so a pre-existing user still gets any role this
+	# call asks for -- a fixture whose roles only apply on first creation is
+	# order-dependent on which test class happens to run (and so create the
+	# user) first, and silently stops meaning what its call site says.
+	if roles:
+		user.add_roles(*roles)
 
 
 class AccessSettingsDocTypeTest(IntegrationTestCase):
@@ -278,7 +284,10 @@ class AccessApiTest(IntegrationTestCase):
 
 		frappe.set_user(REP)
 		self.assertNotIn("nav.analyst", get_visibility()["hidden"])
-		with self.assertRaises(frappe.PermissionError):
+		# assertRaisesRegex, not assertRaises: attributes the failure to
+		# frappe.only_for's own message specifically, rather than to any
+		# PermissionError raised anywhere earlier in the call path.
+		with self.assertRaisesRegex(frappe.PermissionError, "only allowed for"):
 			ask_analyst("what is my pipeline worth")
 
 	# --- data access ----------------------------------------------------
