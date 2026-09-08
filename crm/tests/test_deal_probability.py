@@ -22,7 +22,9 @@ def stage(type_: str, exclude=()) -> tuple[str, float]:
 	rows = frappe.get_all(
 		"CRM Deal Status", filters=filters, fields=["name", "probability"], order_by="position asc"
 	)
-	assert rows, f"no CRM Deal Status of type {type_}: {frappe.get_all('CRM Deal Status', fields=['name', 'type'])}"
+	assert (
+		rows
+	), f"no CRM Deal Status of type {type_}: {frappe.get_all('CRM Deal Status', fields=['name', 'type'])}"
 	return rows[0].name, float(rows[0].probability or 0)
 
 

@@ -600,7 +600,10 @@ class TestDashboard(IntegrationTestCase):
 				"CRM Deal",
 				{
 					"creation": ["between", [self.from_date, self.to_date]],
-					"status": ["in", frappe.db.get_list("CRM Deal Status", {"type": status_type}, pluck="name")],
+					"status": [
+						"in",
+						frappe.db.get_list("CRM Deal Status", {"type": status_type}, pluck="name"),
+					],
 				},
 			)
 

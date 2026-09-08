@@ -26,4 +26,6 @@ def execute():
 		pluck=True,
 	)
 	if stale:
-		frappe.db.set_value("CRM Suggestion", {"name": ("in", stale)}, "status", "Expired", update_modified=False)
+		frappe.db.set_value(
+			"CRM Suggestion", {"name": ("in", stale)}, "status", "Expired", update_modified=False
+		)

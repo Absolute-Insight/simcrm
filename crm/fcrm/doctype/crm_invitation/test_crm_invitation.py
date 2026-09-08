@@ -294,7 +294,11 @@ class InvitationPermissionTest(FrappeTestCase):
 		# the controller door: ignore_permissions reaches before_insert, which checks the role
 		for role in ("Sales Manager", "System Manager"):
 			with self.assertRaises(frappe.PermissionError):
-				self.invite(f"door-two-{role.lower().replace(' ', '-')}@example.com", role=role, ignore_permissions=True)
+				self.invite(
+					f"door-two-{role.lower().replace(' ', '-')}@example.com",
+					role=role,
+					ignore_permissions=True,
+				)
 
 	def test_accepting_on_behalf_of_the_invitee_is_for_system_managers_only(self):
 		invitation, _ = self.invite("on-behalf@example.com", ignore_permissions=True)

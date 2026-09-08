@@ -161,7 +161,11 @@ class TestCreateCustomer(FrappeTestCase):
 		real_get_value = frappe.db.get_value
 
 		def racing_winner(doctype, filters=None, fieldname="name", *args, **kwargs):
-			if doctype == "CRM Organization" and "acumatica_noteid" in _names(fieldname) and kwargs.get("for_update"):
+			if (
+				doctype == "CRM Organization"
+				and "acumatica_noteid" in _names(fieldname)
+				and kwargs.get("for_update")
+			):
 				# the locked re-check reads both identity fields at once
 				return frappe._dict(acumatica_noteid="g-won-the-race", acumatica_id="CUST-RACE")
 			return real_get_value(doctype, filters, fieldname, *args, **kwargs)

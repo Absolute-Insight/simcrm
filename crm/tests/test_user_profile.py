@@ -37,7 +37,9 @@ class OwnProfileTest(IntegrationTestCase):
 
 	def tearDown(self):
 		frappe.set_user("Administrator")
-		frappe.db.set_value("User", REP, {"first_name": "Profile Rep", "last_name": None}, update_modified=False)
+		frappe.db.set_value(
+			"User", REP, {"first_name": "Profile Rep", "last_name": None}, update_modified=False
+		)
 		super().tearDown()
 
 	def test_a_rep_reads_their_own_profile(self):
@@ -100,15 +102,23 @@ class OwnProfileEmailTest(IntegrationTestCase):
 	def test_an_account_that_does_not_exist_is_refused_by_the_link(self):
 		frappe.set_user(REP)
 		with self.assertRaises(frappe.ValidationError):
-			update_profile({"user_emails": [{"email_account": "No Such Account", "email_id": "x@example.com"}]})
+			update_profile(
+				{"user_emails": [{"email_account": "No Such Account", "email_id": "x@example.com"}]}
+			)
 
 	def test_extra_row_fields_are_dropped_not_written(self):
-		account = frappe.get_all("Email Account", filters={"enable_outgoing": 1}, fields=["name", "email_id"], limit=1)
+		account = frappe.get_all(
+			"Email Account", filters={"enable_outgoing": 1}, fields=["name", "email_id"], limit=1
+		)
 		if not account:
 			self.skipTest("no outgoing Email Account on this site")
 		frappe.set_user(REP)
 		profile = update_profile(
-			{"user_emails": [{"email_account": account[0].name, "email_id": account[0].email_id, "parenttype": "Role"}]}
+			{
+				"user_emails": [
+					{"email_account": account[0].name, "email_id": account[0].email_id, "parenttype": "Role"}
+				]
+			}
 		)
 		self.assertEqual(
 			profile["user_emails"], [{"email_account": account[0].name, "email_id": account[0].email_id}]

@@ -38,7 +38,9 @@ class ForecastSnapshotPermissionTest(IntegrationTestCase):
 		self.saved_hierarchy_flag = frappe.db.get_single_value("FCRM Settings", "enable_sales_hierarchy")
 		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
 		frappe.db.delete("CRM Sales Hierarchy", {"user": ("in", [MANAGER, MY_REP, OTHER_REP])})
-		node = frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": MANAGER}).insert(ignore_permissions=True)
+		node = frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": MANAGER}).insert(
+			ignore_permissions=True
+		)
 		frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": MY_REP, "reports_to": node.name}).insert(
 			ignore_permissions=True
 		)
@@ -83,9 +85,15 @@ class ForecastSnapshotPermissionTest(IntegrationTestCase):
 
 	def test_the_record_door_agrees_with_the_list_door(self):
 		frappe.set_user(MANAGER)
-		self.assertTrue(frappe.has_permission("CRM Forecast Snapshot", "read", self.rows[("Rep", MY_REP)].name))
-		self.assertTrue(frappe.has_permission("CRM Forecast Snapshot", "read", self.rows[("Team", MANAGER)].name))
-		self.assertFalse(frappe.has_permission("CRM Forecast Snapshot", "read", self.rows[("Rep", OTHER_REP)].name))
+		self.assertTrue(
+			frappe.has_permission("CRM Forecast Snapshot", "read", self.rows[("Rep", MY_REP)].name)
+		)
+		self.assertTrue(
+			frappe.has_permission("CRM Forecast Snapshot", "read", self.rows[("Team", MANAGER)].name)
+		)
+		self.assertFalse(
+			frappe.has_permission("CRM Forecast Snapshot", "read", self.rows[("Rep", OTHER_REP)].name)
+		)
 		self.assertFalse(frappe.has_permission("CRM Forecast Snapshot", "read", self.rows[("Site", "")].name))
 
 	def test_a_rep_has_no_grant_at_all(self):
