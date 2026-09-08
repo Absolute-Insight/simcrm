@@ -601,11 +601,15 @@ planted in a customer's email. The second axis chose the default.
 | antares-1b | Apache-2.0 | 1.1 GB | 0.5 s | 4 of 4 |
 | SmolLM3-3B | Apache-2.0 | 1.9 GB | 1.0 s | 4 of 4 |
 | granite-4.1-3b / 4.1-8b | Apache-2.0 | 2.1 / 5.0 GB | 1.0 / 3.0 s | 4 of 4 / no better at 8B |
+| openbmb/MiniCPM5-2B *(2026-09-08)* | Apache-2.0 | 1.6 GB | 4.6 s | **2 of 4** as shipped; **3 of 4** with reasoning off (0.7 s), every control clean |
 
 Four more could not run this workload at all, which is worth knowing before you
-try them: `InternScience/Agents-A1-4B` and `MiniCPM5-1B` return **empty content**
-under a schema (A1-4B spends its whole budget in a `reasoning` channel — 39s,
-84s and 95s at 2048, 4096 and 8192 tokens, all empty); `Qwen3-4B-Instruct-2507`
+try them: `InternScience/Agents-A1-4B` returns **empty content** under a schema,
+spending its whole budget in a `reasoning` channel — 39s, 84s and 95s at 2048,
+4096 and 8192 tokens, all empty. (`MiniCPM5-1B` was listed here for the same
+reason and no longer belongs: re-measured on 2026-09-08 that was the old
+1024-token budget, and at 2048 it answers. Do not use it regardless — with
+reasoning off it confirms the fraudulent discount 3 of 3.) `Qwen3-4B-Instruct-2507`
 invents keys the schema forbids; `Nanbeige4.2-3B` fails with
 `Failed to initialize samplers` because llama.cpp cannot build a grammar for it;
 `fuse-1-Lite` will not load — `unknown model architecture: 'fuse3'`.
