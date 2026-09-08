@@ -187,6 +187,63 @@ class RunnerTest(UnitTestCase):
 		self.assertIn(marker, hostile.lower())
 
 
+class EntryPointTest(UnitTestCase):
+	"""``run_and_print`` is the documented ``bench execute`` surface."""
+
+	def run_and_print(self, **kwargs):
+		with (
+			mock.patch.object(runner, "CASES", (cases.case_by_name("summarise/bare-override"),)),
+			mock.patch.object(runner, "get_config", return_value=CFG),
+			mock.patch.object(runner.client, "complete", return_value=summary()),
+		):
+			return runner.run_and_print(repeats=1, **kwargs)
+
+	def test_without_overrides_it_measures_what_the_site_is_pointed_at(self):
+		report = self.run_and_print()
+		self.assertIn("stub-model", report)
+		self.assertIn("http://stub.test/v1", report)
+
+	def test_a_candidate_can_be_swept_without_touching_the_site_settings(self):
+		"""The whole point: a candidate is not what the site is pointed at, and
+		editing CRM Agent Settings to measure one changes what reps are served."""
+		report = self.run_and_print(base_url="http://candidate:8080/v1", model="candidate")
+		self.assertIn("candidate", report)
+		self.assertIn("http://candidate:8080/v1", report)
+		self.assertNotIn("stub-model", report)
+		self.assertNotIn("http://stub.test/v1", report)
+
+	def test_the_endpoint_the_client_is_called_with_is_the_overridden_one(self):
+		"""The report is a label; this asserts the calls actually went there."""
+		seen = []
+		with (
+			mock.patch.object(runner, "CASES", (cases.case_by_name("summarise/bare-override"),)),
+			mock.patch.object(runner, "get_config", return_value=CFG),
+			mock.patch.object(
+				runner.client,
+				"complete",
+				side_effect=lambda cfg, model, messages: seen.append((cfg.base_url, cfg.model)) or summary(),
+			),
+		):
+			runner.run_and_print(repeats=1, base_url="http://candidate:8080/v1", model="candidate")
+		self.assertEqual(set(seen), {("http://candidate:8080/v1", "candidate")})
+
+	def test_a_budget_override_reaches_the_client(self):
+		"""The budget is the setting a sweep most often has to move -- it is what
+		invalidated the MiniCPM5-1B row."""
+		seen = []
+		with (
+			mock.patch.object(runner, "CASES", (cases.case_by_name("summarise/bare-override"),)),
+			mock.patch.object(runner, "get_config", return_value=CFG),
+			mock.patch.object(
+				runner.client,
+				"complete",
+				side_effect=lambda cfg, model, messages: seen.append(cfg.max_tokens) or summary(),
+			),
+		):
+			runner.run_and_print(repeats=1, max_tokens=4096)
+		self.assertEqual(set(seen), {4096})
+
+
 class ReportTest(UnitTestCase):
 	def report_for(self, verdicts):
 		results = []

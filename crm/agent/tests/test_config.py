@@ -50,6 +50,61 @@ class AgentConfigTest(UnitTestCase):
 		self.assertFalse(AgentConfig.from_settings({"enabled": "true"}).enabled)
 		self.assertFalse(AgentConfig.from_settings({"enabled": []}).enabled)
 
+	def test_overrides_replace_only_what_they_name(self):
+		"""Sweeping a candidate must not disturb the rest of the site's config."""
+		cfg = AgentConfig.from_settings(
+			{"base_url": "http://site.local/v1", "model": "shipped", "timeout": 45}
+		)
+		swept = cfg.with_overrides(model="candidate")
+		self.assertEqual(swept.model, "candidate")
+		self.assertEqual(swept.base_url, "http://site.local/v1")
+		self.assertEqual(swept.timeout, 45)
+
+	def test_an_override_is_normalised_like_a_settings_value(self):
+		"""A hand-typed base_url arrives with a trailing slash as often as not, and
+		``_post`` appends ``/chat/completions`` -- so the override has to go through
+		the same normalisation, not straight onto the dataclass."""
+		cfg = AgentConfig.from_settings({}).with_overrides(base_url="http://candidate:8080/v1/")
+		self.assertEqual(cfg.base_url, "http://candidate:8080/v1")
+
+	def test_a_numeric_override_may_arrive_as_a_string(self):
+		"""``bench execute --kwargs`` is the only caller, and what it hands over
+		depends on how the operator quoted it."""
+		cfg = AgentConfig.from_settings({}).with_overrides(max_tokens="4096", timeout="120")
+		self.assertEqual(cfg.max_tokens, 4096)
+		self.assertEqual(cfg.timeout, 120)
+
+	def test_no_overrides_is_the_config_unchanged(self):
+		cfg = AgentConfig.from_settings({"base_url": "http://site.local/v1", "model": "shipped"})
+		self.assertEqual(cfg.with_overrides(), cfg)
+
+	def test_a_none_override_is_not_an_override(self):
+		"""Every override is an optional keyword, so absent arrives as None and must
+		not blank the configured value."""
+		cfg = AgentConfig.from_settings({"model": "shipped"})
+		self.assertEqual(cfg.with_overrides(model=None).model, "shipped")
+
+	def test_an_uninterpretable_override_degrades_rather_than_raising(self):
+		"""This module's contract is to degrade, and a typo in a sweep's kwargs
+		must not come back as a traceback from the middle of a run."""
+		cfg = AgentConfig.from_settings({"timeout": 45}).with_overrides(timeout="soon")
+		self.assertEqual(cfg.timeout, DEFAULT_SETTINGS["timeout"])
+
+	def test_a_misspelled_override_is_refused_rather_than_ignored(self):
+		"""The one failure mode worse than a broken sweep is a silent one: a typo
+		that leaves the site's own endpoint measured and recorded in a table as the
+		candidate's. Explicit keyword parameters make Python refuse it; changing the
+		signature to ``**overrides`` is the production change this test forbids."""
+		cfg = AgentConfig.from_settings({"model": "shipped"})
+		with self.assertRaises(TypeError):
+			cfg.with_overrides(mdoel="candidate")
+
+	def test_the_api_key_survives_an_override(self):
+		"""It is decrypted once by get_config; losing it here turns an authenticated
+		endpoint into an unexplained 401 halfway through a sweep."""
+		cfg = AgentConfig.from_settings({"api_key": "sk-secret"}).with_overrides(model="candidate")
+		self.assertEqual(cfg.api_key, "sk-secret")
+
 	def test_the_daily_budget_has_a_default_and_survives_a_bad_value(self):
 		self.assertEqual(
 			AgentConfig.from_settings({}).daily_call_budget, DEFAULT_SETTINGS["daily_call_budget"]
