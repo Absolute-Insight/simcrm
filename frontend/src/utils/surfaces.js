@@ -251,9 +251,16 @@ export function surfacesByGroup(group) {
  * Whether `key` should be shown, given the hidden set from the server.
  *
  * Compose this with the surface's existing role gate — never use it alone.
+ *
+ * `hidden` must be an array to consult; anything else (missing, `null`, or a
+ * truthy non-array — `{} || []` short-circuits to `{}`, which has no
+ * `.includes`) fails open. Not reachable from the server today, but a
+ * loading/error transient upstream is exactly the shape that could produce
+ * one, and a throw here would blank the whole shell's nav.
  */
 export function canSee(key, hidden) {
-  return !(hidden || []).includes(key)
+  if (!Array.isArray(hidden)) return true
+  return !hidden.includes(key)
 }
 
 /** Whether `callerRole` may change `targetRole`'s row. Mirrors `set_visibility`. */
@@ -270,8 +277,14 @@ export function editableBy(callerRole, targetRole) {
  * The matrix renders these cells as fixed. Offering a toggle whose effect the
  * narrowing rule guarantees is nil teaches the operator the wrong model of what
  * this pane does.
+ *
+ * A role absent from `RANK` reads as at-floor too. `RANK[role]` is `undefined`
+ * there, and `undefined < N` is always `false` -- so the naive comparison
+ * called an unrankable role "not at floor", i.e. a live toggle. Fixed is the
+ * safer misreading of a role nobody vetted.
  */
 export function isAtFloor(surface, role) {
   if (!surface.floor) return false
+  if (!(role in RANK)) return true
   return RANK[role] < RANK[surface.floor]
 }

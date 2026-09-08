@@ -82,6 +82,16 @@ describe('canSee', () => {
   it('ignores an unrecognised key in the hidden set', () => {
     expect(canSee('nav.notes', ['nav.nonsense'])).toBe(true)
   })
+
+  it('fails open instead of throwing when hidden is a truthy non-array', () => {
+    // `{} || []` short-circuits to `{}`, so a naive `(hidden || []).includes`
+    // throws TypeError on anything object-shaped. Not reachable from the
+    // server today, but a loading/error transient in the store is exactly
+    // the kind of thing that could produce this -- and a throw here must not
+    // blank the whole shell's nav.
+    expect(() => canSee('nav.notes', {})).not.toThrow()
+    expect(canSee('nav.notes', {})).toBe(true)
+  })
 })
 
 describe('editableBy', () => {
@@ -133,5 +143,15 @@ describe('isAtFloor', () => {
 
   it('is never at floor for a surface with no floor', () => {
     expect(isAtFloor(notes, 'Sales Manager')).toBe(false)
+  })
+
+  it('reads an unrecognised role as at-floor, not editable', () => {
+    // `RANK[role]` is undefined for a role the matrix doesn't know, and
+    // `undefined < N` is always false -- so the naive comparison reported
+    // "not at floor", i.e. a live toggle, for a role that cannot be ranked
+    // at all. Fixed is the safe direction: reading strays into "editable"
+    // for a role nobody vetted, not the reverse.
+    expect(isAtFloor(analyst, 'Some Unknown Role')).toBe(true)
+    expect(isAtFloor(targets, 'Some Unknown Role')).toBe(true)
   })
 })
