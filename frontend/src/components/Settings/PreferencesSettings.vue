@@ -90,16 +90,11 @@ import SettingsLayoutBase from '@/components/Layouts/SettingsLayoutBase.vue'
 import Link from '@/components/Controls/Link.vue'
 import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
 import { getSettings } from '@/stores/settings'
-import {
-  Combobox,
-  toast,
-  createResource,
-} from 'frappe-ui'
+import { Combobox, toast, createResource } from 'frappe-ui'
 import { useOwnProfile } from '@/composables/useOwnProfile'
 import { ref, computed } from 'vue'
 
 const refreshRequired = ref(false)
-
 
 const { brand } = getSettings()
 const user = useOwnProfile()

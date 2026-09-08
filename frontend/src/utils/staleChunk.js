@@ -6,7 +6,8 @@
  * cannot loop.
  */
 
-const CHUNK_ERROR = /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|ChunkLoadError|Unable to preload CSS/i
+const CHUNK_ERROR =
+  /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|ChunkLoadError|Unable to preload CSS/i
 
 export function isStaleChunkError(error) {
   const text = `${error?.name ?? ''} ${error?.message ?? ''}`
@@ -27,7 +28,11 @@ function readMark(store) {
 /**
  * @returns {boolean} true when a reload was issued
  */
-export function reloadOnceForStaleChunk(error, target, { storage, now, reload } = {}) {
+export function reloadOnceForStaleChunk(
+  error,
+  target,
+  { storage, now, reload } = {},
+) {
   if (!isStaleChunkError(error)) return false
   const store = storage ?? window.sessionStorage
   const time = now ?? Date.now()

@@ -119,12 +119,7 @@
 <script setup>
 import ToneBadge from '@/components/ui/ToneBadge.vue'
 import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
-import {
-  Button,
-  Combobox,
-  createListResource,
-  toast,
-} from 'frappe-ui'
+import { Button, Combobox, createListResource, toast } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
 import { TextEditor } from 'frappe-ui/experimental'
 import { useOwnProfile } from '@/composables/useOwnProfile'

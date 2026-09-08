@@ -139,7 +139,10 @@ const exampleQuestions = [
 ]
 
 function failureCopy(failure) {
-  if (failure === 'unavailable' && isBudgetReason(assistantFailureReason.value)) {
+  if (
+    failure === 'unavailable' &&
+    isBudgetReason(assistantFailureReason.value)
+  ) {
     // a spent day budget is not weather: no retry will help until tomorrow
     return budgetStatusMessage(assistantFailureReason.value)
   }

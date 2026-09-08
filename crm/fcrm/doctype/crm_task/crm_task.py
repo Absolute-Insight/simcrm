@@ -55,7 +55,14 @@ class CRMTask(Document):
 		# frappe's assign_to writes ``assigned_to`` back with a fresh ``modified``, so
 		# the document the caller holds no longer matches the row and its next save
 		# is a TimestampMismatchError. Every task now has an assignee; tell the truth.
-		self.modified = frappe.db.get_value(self.doctype, self.name, "modified")
+		#
+		# This reads the row's own timestamp back into the in-memory document. It
+		# writes nothing, so there is nothing to commit -- the opposite of what
+		# frappe-modifying-but-not-comitting is looking for, which is a field set on
+		# a document that is then never saved.
+		self.modified = frappe.db.get_value(  # nosemgrep: frappe-modifying-but-not-comitting
+			self.doctype, self.name, "modified"
+		)
 
 	def validate(self):
 		self.require_closing_note()

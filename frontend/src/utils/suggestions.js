@@ -312,9 +312,7 @@ export function draftStatusMessage(status, reason = '') {
     and either way the thread is still there to read. */
 export function summaryStatusMessage(status, reason = '') {
   if (status === 'empty') {
-    return __(
-      'No emails on this record yet, so there is nothing to summarise.',
-    )
+    return __('No emails on this record yet, so there is nothing to summarise.')
   }
   if (status === 'disabled') {
     return __(

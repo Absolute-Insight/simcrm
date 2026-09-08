@@ -30,7 +30,8 @@ function pickerTags(source) {
   const tags = []
   const re = new RegExp(`<(${PICKERS.join('|')})\\b([^>]*)>`, 'g')
   let match
-  while ((match = re.exec(source))) tags.push({ component: match[1], attrs: match[2] })
+  while ((match = re.exec(source)))
+    tags.push({ component: match[1], attrs: match[2] })
   return tags
 }
 
@@ -38,7 +39,10 @@ describe('date and time pickers are bound with modelValue', () => {
   const files = vueFiles(SRC)
 
   it('finds the pickers it is guarding', () => {
-    const total = files.reduce((n, f) => n + pickerTags(readFileSync(f, 'utf8')).length, 0)
+    const total = files.reduce(
+      (n, f) => n + pickerTags(readFileSync(f, 'utf8')).length,
+      0,
+    )
     expect(total).toBeGreaterThan(5)
   })
 
@@ -47,7 +51,9 @@ describe('date and time pickers are bound with modelValue', () => {
     for (const file of files) {
       for (const tag of pickerTags(readFileSync(file, 'utf8'))) {
         if (/(^|\s):value=/.test(tag.attrs)) {
-          offenders.push(`${relative(SRC, file)} <${tag.component} ... :value=>`)
+          offenders.push(
+            `${relative(SRC, file)} <${tag.component} ... :value=>`,
+          )
         }
       }
     }

@@ -27,7 +27,9 @@
           <CheckSwitch
             v-model="settings.doc.update_timestamp_on_new_communication"
             size="sm"
-            @update:model-value="toggle('update_timestamp_on_new_communication')"
+            @update:model-value="
+              toggle('update_timestamp_on_new_communication')
+            "
           />
         </div>
       </div>

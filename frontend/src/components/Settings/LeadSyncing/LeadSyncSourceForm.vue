@@ -168,13 +168,7 @@ import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import { useDocument } from '@/data/document'
 import { onMounted, inject, ref, computed, watch } from 'vue'
 import { supportedSourceTypes } from './leadSyncSourceConfig'
-import {
-  Button,
-  FormControl,
-  toast,
-  ErrorMessage,
-  Tabs,
-} from 'frappe-ui'
+import { Button, FormControl, toast, ErrorMessage, Tabs } from 'frappe-ui'
 
 import { getMeta } from '@/stores/meta'
 import Link from '@/components/Controls/Link.vue'
