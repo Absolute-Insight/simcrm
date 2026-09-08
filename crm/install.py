@@ -43,6 +43,7 @@ def after_install(force=False):
 	ensure_visit_event_category()
 	ensure_app_logo()
 	ensure_acumatica_fields()
+	ensure_access_defaults()
 	# install/migrate runs outside a request, so nothing else will commit the
 	# fixtures created above.
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
@@ -138,6 +139,22 @@ def ensure_visit_event_category():
 		return
 	make_property_setter("Event", "event_category", "options", f"{options}\n{VISIT_EVENT_CATEGORY}", "Text")
 	frappe.clear_cache(doctype="Event")
+
+
+def ensure_access_defaults():
+	"""A fresh site scopes managers to their own team until a tree exists.
+
+	Two stored writes rather than field defaults, so no existing site is
+	touched: there is no migration patch, and ``org_hierarchy`` treats a missing
+	value as the historical "sees everything".
+
+	One consequence to know about: ``FCRMSettings.restore_defaults`` calls
+	``after_install``, so an administrator pressing *Restore Defaults* on an
+	existing site also switches the hierarchy on. That is defensible for a
+	button with that name, and it is in the release note.
+	"""
+	frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+	frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
 
 
 def add_default_lead_statuses():

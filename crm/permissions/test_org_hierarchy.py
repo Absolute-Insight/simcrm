@@ -230,3 +230,62 @@ def assign_todo(doctype, docname, allocated_to, status="Open"):
 			"description": f"Test assignment to {allocated_to}",
 		}
 	).insert(ignore_permissions=True)
+
+
+class ManagerOutsideHierarchyTest(IntegrationTestCase):
+	"""The out-of-tree manager used to be hardcoded to "sees everything".
+
+	That is a fair escape hatch for a manager who runs the whole book, and it is
+	also what every manager got on a site whose tree nobody had built -- so
+	defaulting the hierarchy on, alone, just moved the problem. It is now a
+	setting, and this is the test that it is actually read.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		email = "outside-manager@crmtest.test"
+		if not frappe.db.exists("User", email):
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": email,
+					"first_name": "Outside Manager",
+					"send_welcome_email": 0,
+				}
+			).insert(ignore_permissions=True).add_roles("Sales Manager")
+		self.manager = email
+
+		self.saved_hierarchy = frappe.db.get_single_value("FCRM Settings", "enable_sales_hierarchy")
+		self.saved_scope = frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy")
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+		self.addCleanup(self._restore)
+
+	def _restore(self):
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", self.saved_hierarchy or 0)
+		frappe.db.set_single_value(
+			"CRM Access Settings", "manager_outside_hierarchy", self.saved_scope or "All records"
+		)
+
+	def test_all_records_leaves_an_out_of_tree_manager_unrestricted(self):
+		from crm.permissions.org_hierarchy import get_deal_permission_query_conditions
+
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		self.assertEqual(get_deal_permission_query_conditions(self.manager), "")
+
+	def test_own_records_only_scopes_an_out_of_tree_manager(self):
+		from crm.permissions.org_hierarchy import get_deal_permission_query_conditions
+
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		condition = get_deal_permission_query_conditions(self.manager)
+		self.assertNotEqual(condition, "")
+		self.assertIn(self.manager, condition)
+
+	def test_an_unsaved_setting_reads_as_all_records(self):
+		"""get_single_value returns None for a Single that was never saved, so an
+		existing site upgrading into this feature must not change behaviour."""
+		from crm.api.access import manager_outside_hierarchy_sees_all
+
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", None)
+		self.assertTrue(manager_outside_hierarchy_sees_all())

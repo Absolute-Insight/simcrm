@@ -299,6 +299,19 @@ class AccessApiTest(IntegrationTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			set_data_access(enable_sales_hierarchy=1)
 
+	def test_a_rep_cannot_read_data_access(self):
+		"""get_data_access was narrowed to System Manager and Sales Manager, but
+		nothing asserted that a plain Sales User is refused. Its sibling
+		get_visibility has exactly this kind of edge covered (see
+		test_a_bare_system_manager_can_still_read_visibility, the other
+		direction); without this test, a future re-widening of get_data_access's
+		frappe.only_for list would go uncaught."""
+		from crm.api.access import get_data_access
+
+		frappe.set_user(REP)
+		with self.assertRaises(frappe.PermissionError):
+			get_data_access()
+
 	def test_an_admin_can_change_data_access(self):
 		from crm.api.access import get_data_access, set_data_access
 
@@ -319,3 +332,34 @@ class AccessApiTest(IntegrationTestCase):
 		frappe.set_user(ADMIN)
 		with self.assertRaises(frappe.ValidationError):
 			set_data_access(manager_outside_hierarchy="Everything")
+
+
+class InstallDefaultsTest(IntegrationTestCase):
+	"""A new install starts scoped; an existing one is never touched."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		self.saved_hierarchy = frappe.db.get_single_value("FCRM Settings", "enable_sales_hierarchy")
+		self.saved_scope = frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy")
+		self.addCleanup(self._restore)
+
+	def _restore(self):
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", self.saved_hierarchy or 0)
+		frappe.db.set_single_value(
+			"CRM Access Settings", "manager_outside_hierarchy", self.saved_scope or "All records"
+		)
+
+	def test_ensure_access_defaults_scopes_a_fresh_site(self):
+		from crm.install import ensure_access_defaults
+
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 0)
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+
+		ensure_access_defaults()
+
+		self.assertEqual(frappe.db.get_single_value("FCRM Settings", "enable_sales_hierarchy"), 1)
+		self.assertEqual(
+			frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy"),
+			"Own records only",
+		)
