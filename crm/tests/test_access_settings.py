@@ -121,3 +121,192 @@ class AccessSettingsDocTypeTest(IntegrationTestCase):
 			row for row in settings.hidden_surfaces if (row.role, row.surface) not in pairs
 		]
 		settings.save(ignore_permissions=True)
+
+
+class AccessApiTest(IntegrationTestCase):
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		# crm.api.user.update_user_role grants System Manager promotions all
+		# three roles, and Sales Manager promotions both sales roles -- a
+		# single-role System Manager is not a shape the product creates, so a
+		# fixture that made one was exercising a user this app never produces.
+		ensure_user(ADMIN, "Access Admin", "System Manager", "Sales Manager", "Sales User")
+		ensure_user(MANAGER, "Access Manager", "Sales Manager", "Sales User")
+		ensure_user(REP, "Access Rep", "Sales User")
+		settings = frappe.get_single("CRM Access Settings")
+		settings.hidden_surfaces = []
+		settings.save(ignore_permissions=True)
+		self.addCleanup(self._reset)
+
+	def _reset(self):
+		frappe.set_user("Administrator")
+		settings = frappe.get_single("CRM Access Settings")
+		settings.hidden_surfaces = []
+		settings.save(ignore_permissions=True)
+
+	# --- the write rule -------------------------------------------------
+
+	def test_a_manager_may_hide_a_surface_from_reps(self):
+		from crm.api.access import set_visibility
+
+		frappe.set_user(MANAGER)
+		result = set_visibility("Sales User", ["nav.notes"])
+		self.assertEqual(result["hidden"], ["nav.notes"])
+
+	def test_a_manager_may_not_edit_the_manager_row(self):
+		"""The rule that stops this pane being a way for a manager to widen
+		their own surface set."""
+		from crm.api.access import set_visibility
+
+		frappe.set_user(MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			set_visibility("Sales Manager", ["nav.reports"])
+
+	def test_an_admin_may_edit_the_manager_row(self):
+		from crm.api.access import set_visibility
+
+		frappe.set_user(ADMIN)
+		result = set_visibility("Sales Manager", ["nav.reports"])
+		self.assertEqual(result["hidden"], ["nav.reports"])
+
+	def test_a_rep_may_not_write_at_all(self):
+		from crm.api.access import set_visibility
+
+		frappe.set_user(REP)
+		with self.assertRaises(frappe.PermissionError):
+			set_visibility("Sales User", ["nav.notes"])
+
+	def test_the_admin_role_is_not_configurable(self):
+		from crm.api.access import set_visibility
+
+		frappe.set_user(ADMIN)
+		with self.assertRaises(frappe.ValidationError):
+			set_visibility("System Manager", ["nav.notes"])
+
+	# --- key validation -------------------------------------------------
+
+	def test_malformed_keys_are_refused(self):
+		from crm.api.access import set_visibility
+
+		frappe.set_user(ADMIN)
+		for bad in ("Nav.Analyst", "analyst", "nav.", "nav.a b", "reports.x", "nav." + "x" * 200):
+			with self.subTest(key=bad), self.assertRaises(frappe.ValidationError):
+				set_visibility("Sales User", [bad])
+
+	def test_too_many_keys_are_refused(self):
+		from crm.api.access import MAX_SURFACES, set_visibility
+
+		frappe.set_user(ADMIN)
+		with self.assertRaises(frappe.ValidationError):
+			set_visibility("Sales User", [f"nav.k{i}" for i in range(MAX_SURFACES + 1)])
+
+	def test_a_json_string_body_is_accepted(self):
+		"""The HTTP layer hands lists over as JSON strings."""
+		from crm.api.access import set_visibility
+
+		frappe.set_user(ADMIN)
+		result = set_visibility("Sales User", '["nav.notes"]')
+		self.assertEqual(result["hidden"], ["nav.notes"])
+
+	# --- the read path --------------------------------------------------
+
+	def test_a_rep_reads_only_their_own_row_and_no_matrix(self):
+		from crm.api.access import get_visibility, set_visibility
+
+		frappe.set_user(ADMIN)
+		set_visibility("Sales User", ["nav.notes"])
+		set_visibility("Sales Manager", ["nav.reports"])
+
+		frappe.set_user(REP)
+		payload = get_visibility()
+		self.assertEqual(payload["role"], "Sales User")
+		self.assertEqual(payload["hidden"], ["nav.notes"])
+		self.assertIsNone(payload["matrix"])
+
+	def test_a_manager_reads_the_whole_matrix(self):
+		from crm.api.access import get_visibility, set_visibility
+
+		frappe.set_user(ADMIN)
+		set_visibility("Sales User", ["nav.notes"])
+
+		frappe.set_user(MANAGER)
+		payload = get_visibility()
+		self.assertEqual(payload["role"], "Sales Manager")
+		self.assertEqual(payload["matrix"]["Sales User"], ["nav.notes"])
+		self.assertEqual(payload["matrix"]["Sales Manager"], [])
+
+	def test_an_admin_is_never_hidden_anything(self):
+		from crm.api.access import get_visibility, set_visibility
+
+		frappe.set_user(ADMIN)
+		set_visibility("Sales Manager", ["nav.reports"])
+		self.assertEqual(get_visibility()["hidden"], [])
+
+	def test_a_bare_system_manager_can_still_read_visibility(self):
+		"""A user holding only System Manager -- reachable via
+		``bench add-system-manager`` or the desk, not through this product's own
+		``update_user_role`` -- is still admitted to the CRM by
+		``crm.api.session.get_session_role_flags``. ``get_visibility`` gates the
+		shell's own chrome and the pane an administrator would use to fix their
+		access, so it must not be the thing that locks such an administrator out.
+		Distinct email from ``ADMIN``, which now carries all three roles."""
+		from crm.api.access import get_visibility
+
+		email = "access-bare-system-manager@crmtest.test"
+		ensure_user(email, "Bare System Manager", "System Manager")
+		frappe.set_user(email)
+		payload = get_visibility()
+		self.assertEqual(payload["role"], "System Manager")
+		self.assertEqual(payload["hidden"], [])
+
+	# --- the invariant --------------------------------------------------
+
+	def test_unhiding_a_surface_does_not_make_its_endpoint_callable(self):
+		"""THE test in this file.
+
+		Configuration narrows and never widens. A rep with nav.analyst visible
+		-- which is its default state, since the matrix stores only what is
+		hidden -- still cannot reach the Analyst, because every gate is
+		``canSee(key) and <existing role gate>`` and the endpoint is
+		``frappe.only_for("System Manager")``. If this test ever fails, the
+		visibility matrix has become a permission system and the pane is
+		unsafe to expose to managers.
+		"""
+		from crm.agent.api import ask_analyst
+		from crm.api.access import get_visibility
+
+		frappe.set_user(REP)
+		self.assertNotIn("nav.analyst", get_visibility()["hidden"])
+		with self.assertRaises(frappe.PermissionError):
+			ask_analyst("what is my pipeline worth")
+
+	# --- data access ----------------------------------------------------
+
+	def test_a_manager_cannot_change_data_access(self):
+		from crm.api.access import set_data_access
+
+		frappe.set_user(MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			set_data_access(enable_sales_hierarchy=1)
+
+	def test_an_admin_can_change_data_access(self):
+		from crm.api.access import get_data_access, set_data_access
+
+		frappe.set_user(ADMIN)
+		before = get_data_access()
+		self.addCleanup(
+			set_data_access,
+			before["enable_sales_hierarchy"],
+			before["manager_outside_hierarchy"],
+		)
+		result = set_data_access(enable_sales_hierarchy=1, manager_outside_hierarchy="Own records only")
+		self.assertEqual(result["enable_sales_hierarchy"], 1)
+		self.assertEqual(result["manager_outside_hierarchy"], "Own records only")
+
+	def test_an_unknown_data_access_value_is_refused(self):
+		from crm.api.access import set_data_access
+
+		frappe.set_user(ADMIN)
+		with self.assertRaises(frappe.ValidationError):
+			set_data_access(manager_outside_hierarchy="Everything")
