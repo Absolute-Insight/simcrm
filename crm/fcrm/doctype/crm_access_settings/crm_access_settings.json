@@ -1,0 +1,63 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-09-08 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "data_access_section",
+  "manager_outside_hierarchy",
+  "surface_section",
+  "hidden_surfaces"
+ ],
+ "fields": [
+  {
+   "fieldname": "data_access_section",
+   "fieldtype": "Section Break",
+   "label": "Data Access"
+  },
+  {
+   "default": "All records",
+   "description": "What a Sales Manager who is not in the sales hierarchy may read. \"All records\" is the historical behaviour and stays the default so existing sites are unchanged; a new install is set to \"Own records only\".",
+   "fieldname": "manager_outside_hierarchy",
+   "fieldtype": "Select",
+   "label": "Managers outside the hierarchy",
+   "options": "All records\nOwn records only"
+  },
+  {
+   "description": "Which nav links and settings panes each role is shown. Hiding a surface tidies the app; it does not protect data. Nothing can be hidden from an administrator.",
+   "fieldname": "surface_section",
+   "fieldtype": "Section Break",
+   "label": "Hidden Surfaces"
+  },
+  {
+   "fieldname": "hidden_surfaces",
+   "fieldtype": "Table",
+   "label": "Hidden Surfaces",
+   "options": "CRM Role Surface"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-09-08 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FCRM",
+ "name": "CRM Access Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
