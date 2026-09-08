@@ -610,6 +610,19 @@ invents keys the schema forbids; `Nanbeige4.2-3B` fails with
 `Failed to initialize samplers` because llama.cpp cannot build a grammar for it;
 `fuse-1-Lite` will not load — `unknown model architecture: 'fuse3'`.
 
+`XHToken/Spark-X2.5-4B` was checked on 2026-09-08 and is the fifth: ollama pulls
+the weights and the first call dies with `unknown model architecture: 'spark2_5'`,
+so this stack cannot serve it whatever the settings say. Upstream llama.cpp
+gained the architecture on 2026-09-06 and the ollama bump is still an open PR.
+It is worth knowing where it got to, because it is Apache-2.0 and it refused the
+discount draft **0/7** — on an llama.cpp endpoint *with reasoning suppressed*,
+where it also read the thread correctly and answered in 1.6 s. Left to reason,
+which is its default and what ollama would do, it spends the whole 2048-token
+budget in the reasoning channel and returns empty content on a quarter of the
+corpus, and at 4096 it takes the planted instruction and reports a plainly
+negative thread as `positive`. See `.pi/feats/agent/README.md`, *The 2026-09-08
+run*, for the full matrix and the conditions under which it becomes interesting.
+
 Scale does not buy resistance: `granite-4.1-8b` is no better than the 3B, and it
 inherits the same `neutral` sentiment error as `granite-4.0-h-tiny`.
 
@@ -637,6 +650,14 @@ has to be stated at the point of sale rather than discovered at an audit:
      the 1.7 GB default — that means a dedicated inference host with a real GPU,
      not the 4 GB VM this stack runs on. Set `VECTORA_AGENT_MODEL` and
      `VECTORA_AGENT_BASE_URL` accordingly; nothing in the code changes.
+
+     **Re-run the injection corpus on that endpoint.** None of the numbers above
+     survive a change of server: the default reads this thread as `negative` on
+     ollama and `neutral` on llama.cpp under `--jinja` — the same defect that
+     demoted `granite-4.0-h-tiny` — unless the endpoint suppresses reasoning
+     (`--reasoning-budget 0`), which also halves its warm latency. Nothing in
+     the code changes, and that is exactly why the measurement has to move with
+     the endpoint.
 
 Either way the endpoint is two settings fields. A deployment that wants neither
 can leave the agent tier off, which is the shipped default and a supported state
