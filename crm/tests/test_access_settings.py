@@ -350,15 +350,15 @@ class InstallDefaultsTest(IntegrationTestCase):
 			"CRM Access Settings", "manager_outside_hierarchy", self.saved_scope or "All records"
 		)
 
-	def test_ensure_access_defaults_scopes_a_fresh_site(self):
-		"""A fresh site has no row in Singles for either field at all -- not a
-		falsy stored value. A Check field with no row also casts to 0
-		(``frappe.utils.cast``), so setting the field to 0 and deleting its row
-		are different states that must not be conflated."""
+	def test_ensure_access_defaults_writes_both_values_during_install(self):
+		"""frappe.flags.in_install is set to the installing app's name for the
+		whole after_install hook loop (frappe/installer.py) and cleared at the
+		end -- this reproduces being called from inside that window."""
 		from crm.install import ensure_access_defaults
 
-		frappe.db.delete("Singles", {"doctype": "FCRM Settings", "field": "enable_sales_hierarchy"})
-		frappe.db.delete("Singles", {"doctype": "CRM Access Settings", "field": "manager_outside_hierarchy"})
+		original_flag = frappe.flags.in_install
+		self.addCleanup(setattr, frappe.flags, "in_install", original_flag)
+		frappe.flags.in_install = "crm"
 
 		ensure_access_defaults()
 
@@ -368,12 +368,15 @@ class InstallDefaultsTest(IntegrationTestCase):
 			"Own records only",
 		)
 
-	def test_ensure_access_defaults_leaves_a_configured_site_alone(self):
-		"""First-run only: once a row exists -- even one that happens to match
-		what used to be the only behaviour -- an administrator's choice stands.
-		This is exactly the shape FCRMSettings.restore_defaults produces on an
-		existing site, since it calls after_install."""
+	def test_ensure_access_defaults_changes_nothing_outside_install(self):
+		"""This is the Restore Defaults case: an administrator on a site someone
+		is already running must not have their configuration silently narrowed,
+		with no error and no explanation."""
 		from crm.install import ensure_access_defaults
+
+		original_flag = frappe.flags.in_install
+		self.addCleanup(setattr, frappe.flags, "in_install", original_flag)
+		frappe.flags.in_install = False
 
 		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 0)
 		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")

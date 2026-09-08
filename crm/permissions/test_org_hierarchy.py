@@ -298,7 +298,8 @@ class ManagerOutsideHierarchyTest(IntegrationTestCase):
 		self.assertFalse(has_deal_permission(deal, "read", self.manager))
 
 	def test_an_unsaved_setting_reads_as_all_records(self):
-		"""get_single_value returns None for a Single that was never saved, so an
+		"""get_single_value casts a Single that was never saved to the fieldtype's
+		zero value -- "" for this Select field, not None -- which is falsy, so an
 		existing site upgrading into this feature must not change behaviour."""
 		from crm.api.access import manager_outside_hierarchy_sees_all
 

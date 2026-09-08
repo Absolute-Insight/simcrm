@@ -145,29 +145,22 @@ def ensure_visit_event_category():
 def ensure_access_defaults():
 	"""A fresh site scopes managers to their own team until a tree exists.
 
-	Each write is first-run only, so a site an administrator has already
-	configured -- including one where ``FCRMSettings.restore_defaults`` re-runs
-	this via ``after_install`` -- is left exactly as they set it.
+	First install only. ``FCRMSettings.restore_defaults`` also calls
+	``after_install``, and "restore defaults" must not silently change who can
+	see which records on a site someone is already running -- managers would
+	just stop seeing most of the pipeline, with no error and no explanation.
 
-	The guard is row existence on ``Singles``, not the value ``get_single_value``
-	returns: a Check field with no stored row casts to ``0`` and a Select field
-	with no stored row casts to ``""`` (``frappe.utils.cast``), so a genuinely
-	untouched field and one an administrator explicitly set to that same value
-	are indistinguishable once cast -- only the raw row tells them apart.
-	``frappe.db.count`` reads that row directly rather than through the cast;
-	``frappe.db.exists`` cannot, because it fetches a ``name`` column that
-	``Singles`` (doctype/field/value only) does not have.
+	``frappe.flags.in_install`` is the discriminator rather than the presence of
+	a ``Singles`` row: ``add_standard_dropdown_items`` saves ``FCRM Settings``
+	earlier in ``after_install``, and ``update_single`` rewrites a row for every
+	field of a Single, so by the time this runs the row always exists and says
+	nothing about intent.
 	"""
-	if not frappe.db.count(
-		"Singles", filters={"doctype": "FCRM Settings", "field": "enable_sales_hierarchy"}
-	):
-		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+	if not frappe.flags.in_install:
+		return
 
-	# MANAGER_SCOPES[1] is "Own records only", the narrower of the two.
-	if not frappe.db.count(
-		"Singles", filters={"doctype": "CRM Access Settings", "field": "manager_outside_hierarchy"}
-	):
-		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", MANAGER_SCOPES[1])
+	frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+	frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", MANAGER_SCOPES[1])
 
 
 def add_default_lead_statuses():

@@ -104,10 +104,11 @@ def _hidden_for(role: str) -> list[str]:
 def manager_outside_hierarchy_sees_all() -> bool:
 	"""Whether a Sales Manager who is not in the tree reads the whole site.
 
-	``get_single_value`` reads ``tabSingles`` and returns ``None`` for a Single
-	that has never been saved, so the historical answer has to be the fallback
-	here and not only the field default -- otherwise installing this feature
-	would silently narrow every existing site on the next request.
+	``get_single_value`` casts a Single that has never been saved to the
+	fieldtype's zero value -- ``""`` for this Select field -- which is falsy, so
+	the historical answer has to be the ``or`` fallback here and not only the
+	field default -- otherwise installing this feature would silently narrow
+	every existing site on the next request.
 
 	Not actually uncached: ``get_single_value`` keeps its own per-connection
 	``value_cache``, and ``set_single_value`` invalidates it -- so a write is
