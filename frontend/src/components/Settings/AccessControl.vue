@@ -271,10 +271,20 @@ const dataAccess = createResource({
 
 const hierarchyCopy = computed(() => {
   const size = dataAccess.data?.hierarchy_size || 0
-  return dataAccess.data?.enable_sales_hierarchy
+  if (dataAccess.data?.enable_sales_hierarchy) {
+    return __(
+      'On. Leads and deals are scoped to the reporting tree — {0} people are in it.',
+      [size],
+    )
+  }
+  // "Off" always takes every manager out of the tree (org_hierarchy.py's
+  // in_tree is hierarchy_enabled() and _in_hierarchy(user)), but what that
+  // means depends on the scope below: the default ("All records") hands
+  // every manager the whole site, while "Own records only" narrows every
+  // manager to their own records, same as a rep.
+  return dataAccess.data?.manager_outside_hierarchy === 'Own records only'
     ? __(
-        'On. Leads and deals are scoped to the reporting tree — {0} people are in it.',
-        [size],
+        'Off, and every manager is outside the tree, so each reads only their own leads, deals and target — the same as a rep. Turning it on restores subtree access to managers already in it.',
       )
     : __(
         "Off. Every manager reads every lead and deal on the site, and every rep's targets.",
@@ -306,14 +316,22 @@ function saveDataAccess(payload, message) {
 }
 
 function onHierarchyToggle(value) {
-  // Only the *disabling* direction is confirmed: that is the one that widens
-  // what a manager can read. Same shape as Hierarchy.vue.
+  // Only the *disabling* direction is confirmed -- its consequence depends on
+  // the scope below (widens under "All records", narrows under "Own records
+  // only"), which is exactly what the message branches on. Same shape as
+  // Hierarchy.vue.
   if (!value) {
+    const message =
+      dataAccess.data?.manager_outside_hierarchy === 'Own records only'
+        ? __(
+            'Every manager will be narrowed to their own leads, deals and sales target — the same as a rep, since none of them will be in the tree. Are you sure?',
+          )
+        : __(
+            'Every manager will be able to read every lead, deal and sales target on the site. Are you sure?',
+          )
     $dialog({
       title: __('Stop restricting by hierarchy?'),
-      message: __(
-        'Every manager will be able to read every lead, deal and sales target on the site. Are you sure?',
-      ),
+      message,
       actions: [
         {
           label: __('Stop restricting'),
