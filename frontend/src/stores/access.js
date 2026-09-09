@@ -36,7 +36,6 @@ export const accessStore = defineStore('crm-access', () => {
 
   const visibility = createResource({
     url: 'crm.api.access.get_visibility',
-    cache: 'access-visibility',
     auto: false,
     onSuccess(data) {
       state.role = data?.role || 'Sales User'
