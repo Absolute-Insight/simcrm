@@ -374,7 +374,7 @@ or not the settings pane ships at all.
 
 ### What shipped
 
-- **`CRM Access Settings`** — a Single, `rwcd` to System Manager and nobody else — holding
+- **`CRM Access Settings`** — a Single, `rwc` (no delete) to System Manager and nobody else — holding
   `manager_outside_hierarchy` and a sparse `hidden_surfaces` child table (`CRM Role Surface`:
   `role` + `surface`). A row's existence means hidden; there is no `visible` field for it to
   fall out of sync with.

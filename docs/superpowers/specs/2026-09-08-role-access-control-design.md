@@ -95,7 +95,7 @@ Two switches, both of which change what the database returns:
 ### §2 Surface visibility — chrome, admin and manager
 
 A role × surface matrix over the two lists of surfaces the app already has: the
-13 nav links in `AppSidebar.vue` and the 26 settings items in `Settings.vue`.
+13 nav links in `AppSidebar.vue` and the 27 settings items in `Settings.vue`.
 The section header says what it is: hiding a surface tidies the app, it does not
 protect data. Where the data behind a surface is already row-scoped (Dashboard,
 Reports, Planner all pin a rep to their own numbers server-side), hiding is
