@@ -62,6 +62,7 @@
             {{ __('Restrict visibility using a reporting tree') }}
           </span>
           <Button
+            v-if="canEdit"
             variant="solid"
             :loading="fcrmSettings.setValue.loading"
             @click="toggleEnable(false)"

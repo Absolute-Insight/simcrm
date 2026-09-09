@@ -334,6 +334,49 @@ class AccessApiTest(IntegrationTestCase):
 			set_data_access(manager_outside_hierarchy="Everything")
 
 
+class FCRMSettingsHierarchyGuardTest(IntegrationTestCase):
+	"""``FCRMSettings.guard_sales_hierarchy_toggle`` -- the second door onto
+	``enable_sales_hierarchy`` that ``set_data_access``'s own
+	``frappe.only_for("System Manager", True)`` never reaches. ``fcrm_settings.json``
+	grants Sales Manager create/read/write/delete on this Single, and there is no
+	``has_permission`` hook for FCRM Settings, so ``frappe.client.set_value`` --
+	the generic document API, and the transport Hierarchy.vue's own Enable/Disable
+	buttons use -- is a wide-open second door onto the same field.
+
+	A document save is the path that transport actually takes, and so the one
+	this test has to go through: ``frappe.db.set_single_value`` bypasses
+	``validate()`` entirely and would prove nothing about this guard.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		ensure_user(ADMIN, "Access Admin", "System Manager")
+		ensure_user(MANAGER, "Access Manager", "Sales Manager")
+		self.original = frappe.db.get_single_value("FCRM Settings", "enable_sales_hierarchy")
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 0)
+		self.addCleanup(self._restore)
+
+	def _restore(self):
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", self.original or 0)
+
+	def test_a_sales_manager_cannot_flip_it_through_a_document_save(self):
+		frappe.set_user(MANAGER)
+		doc = frappe.get_single("FCRM Settings")
+		doc.enable_sales_hierarchy = 1
+		with self.assertRaises(frappe.PermissionError):
+			doc.save()
+		self.assertEqual(frappe.db.get_single_value("FCRM Settings", "enable_sales_hierarchy"), 0)
+
+	def test_a_system_manager_can_flip_it_through_a_document_save(self):
+		frappe.set_user(ADMIN)
+		doc = frappe.get_single("FCRM Settings")
+		doc.enable_sales_hierarchy = 1
+		doc.save()
+		self.assertEqual(frappe.db.get_single_value("FCRM Settings", "enable_sales_hierarchy"), 1)
+
+
 class InstallDefaultsTest(IntegrationTestCase):
 	"""A new install starts scoped; an existing one is never touched."""
 
