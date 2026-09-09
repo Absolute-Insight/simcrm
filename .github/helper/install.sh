@@ -4,6 +4,8 @@ set -e
 
 cd ~ || ex
 
+# The runner image ships Google's Chrome apt source; nothing here installs from it, and a stale index there fails `apt update` outright.
+sudo rm -f /etc/apt/sources.list.d/google-chrome*
 sudo apt update
 sudo apt remove mysql-server mysql-client
 sudo apt install libcups2-dev redis-server mariadb-client libmariadb-dev

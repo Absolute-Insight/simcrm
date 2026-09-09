@@ -100,6 +100,8 @@ jobs:
 
       - name: Install MariaDB Client
         run: |
+          # The runner image ships Google's Chrome apt source; nothing here installs from it, and a stale index there fails `apt update` outright.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*
           sudo apt update
           sudo apt-get install mariadb-client
 
