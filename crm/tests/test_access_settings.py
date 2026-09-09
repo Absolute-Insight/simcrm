@@ -441,3 +441,15 @@ class InstallDefaultsTest(IntegrationTestCase):
 			frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy"),
 			"All records",
 		)
+
+	def test_after_install_calls_ensure_access_defaults(self):
+		"""Both tests above call ``ensure_access_defaults()`` directly, so on
+		their own they would stay green even if the call at the end of
+		``after_install`` were deleted -- silently shipping fresh installs on
+		the old unsafe defaults. Same idiom as
+		``test_exchange_rate.py``'s ``test_after_install_makes_the_same_guarantee_as_the_patch``."""
+		import inspect
+
+		from crm import install
+
+		self.assertIn("ensure_access_defaults()", inspect.getsource(install.after_install))
