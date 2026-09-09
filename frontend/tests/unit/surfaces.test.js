@@ -57,11 +57,12 @@ function keySet(src, prefix) {
  * Map of key -> that item's own `condition:` text, or `null` if it has none.
  *
  * Slices from one `key:` occurrence to the next (or to the end of `src` for
- * the last one). Both shells always write an item's fields in the same
- * order -- label, key, icon, component, then an optional condition -- last,
- * right before the item's closing brace. So an item's own condition, when it
- * has one, is always inside its own slice and never inside its neighbour's,
- * even though the slice also drags in the start of the next item.
+ * the last one). The two shells don't share a field list -- Settings.vue's
+ * items carry `icon`/`component`, AppSidebar.vue's carry `icon`/`to`/`action`/
+ * `tint` -- but both always write `condition:`, when an item has one, as the
+ * last field before its closing brace. So an item's own condition is always
+ * inside its own slice and never inside its neighbour's, even though the
+ * slice also drags in the start of the next item's fields.
  */
 function itemGates(src, prefix) {
   const occurrences = keyOccurrences(src, prefix)

@@ -271,18 +271,25 @@ const dataAccess = createResource({
 
 const hierarchyCopy = computed(() => {
   const size = dataAccess.data?.hierarchy_size || 0
+  // Both "on" and "off" only ever scope managers who are actually in the
+  // tree (org_hierarchy.py's in_tree is hierarchy_enabled() and
+  // _in_hierarchy(user)); an out-of-tree manager -- everyone, on a site
+  // whose tree is still empty -- falls through to manager_outside_hierarchy
+  // either way, so both branches below have to say what that scope does.
+  const ownRecordsOnly =
+    dataAccess.data?.manager_outside_hierarchy === 'Own records only'
   if (dataAccess.data?.enable_sales_hierarchy) {
-    return __(
-      'On. Leads and deals are scoped to the reporting tree — {0} people are in it.',
-      [size],
-    )
+    return ownRecordsOnly
+      ? __(
+          'On. Managers in the tree are scoped to their subtree — {0} people are in it — and a manager outside it reads only their own leads, deals and target, the same as a rep.',
+          [size],
+        )
+      : __(
+          'On. Managers in the tree are scoped to their subtree — {0} people are in it — but a manager outside it still reads every lead and deal on the site.',
+          [size],
+        )
   }
-  // "Off" always takes every manager out of the tree (org_hierarchy.py's
-  // in_tree is hierarchy_enabled() and _in_hierarchy(user)), but what that
-  // means depends on the scope below: the default ("All records") hands
-  // every manager the whole site, while "Own records only" narrows every
-  // manager to their own records, same as a rep.
-  return dataAccess.data?.manager_outside_hierarchy === 'Own records only'
+  return ownRecordsOnly
     ? __(
         'Off, and every manager is outside the tree, so each reads only their own leads, deals and target — the same as a rep. Turning it on restores subtree access to managers already in it.',
       )
