@@ -442,6 +442,18 @@ class TestCRMLead(IntegrationTestCase):
 		self.assertEqual(org.organization_name, "API Test Corp")
 		self.assertEqual(org.annual_revenue, 300000)
 
+	def test_convert_to_deal_api_refuses_a_converted_lead(self):
+		"""A second convert call (double-click, slow server) must not create a second deal."""
+		lead = create_lead(first_name="Twice", email="twice@example.com", organization="Twice Corp")
+		deal_name = convert_to_deal(lead=lead.name)
+		self.assertTrue(deal_name)
+
+		with self.assertRaises(frappe.ValidationError):
+			convert_to_deal(lead=lead.name)
+
+		self.assertEqual(frappe.db.count("CRM Deal", {"lead": lead.name}), 1)
+		self.assertEqual(frappe.db.count("CRM Organization", {"organization_name": "Twice Corp"}), 1)
+
 	def test_convert_to_deal_api_with_existing_records(self):
 		"""Test convert_to_deal API with existing contact and organization parameters"""
 		# Create existing contact

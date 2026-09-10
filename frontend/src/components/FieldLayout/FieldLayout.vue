@@ -99,7 +99,14 @@ provide(
 provide('hasTabs', hasTabs)
 provide('doctype', props.doctype)
 provide('docname', resolvedDocname)
-provide('preview', props.preview)
+// A computed, not the raw prop: Field.vue reads `preview.value`, and a plain
+// boolean provided here made that `undefined` on every field, so the preview
+// branch of isFieldVisible never ran and a Quick Entry preview silently dropped
+// every depends_on field, every empty read-only field and every hidden one.
+provide(
+  'preview',
+  computed(() => props.preview),
+)
 provide('isGridRow', props.isGridRow)
 provide('fieldLayoutContext', props.context)
 </script>

@@ -161,6 +161,26 @@ describe('SURFACES', () => {
     }
   })
 
+  it('floors every pane whose doctype the server keeps to System Manager', () => {
+    // A floor that is softer than the server's own permission is a pane the
+    // role can open and cannot use. Email Template gives Desk User read and
+    // keeps create, write and delete to System Manager (and install.py adds
+    // custom fields, not a DocPerm), so a Sales Manager met "Failed to update
+    // template" on every toggle. Same for the framework doctypes beside it.
+    const adminOnly = [
+      'settings.email_accounts',
+      'settings.email_templates',
+      'settings.assignment_rules',
+      'settings.assistant',
+      'settings.knowledge',
+    ]
+    for (const key of adminOnly) {
+      const surface = SURFACES.find((s) => s.key === key)
+      expect(surface, key).toBeTruthy()
+      expect(surface.floor, key).toBe(ADMIN_ROLE)
+    }
+  })
+
   it('covers the nav links and the settings panes', () => {
     expect(surfacesByGroup('nav').length).toBe(13)
     expect(surfacesByGroup('settings').length).toBe(27)

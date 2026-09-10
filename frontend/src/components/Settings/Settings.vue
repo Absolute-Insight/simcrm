@@ -276,8 +276,12 @@ const tabs = computed(() => {
           // cannot have one — a rep configures their own agent number there),
           // so an ungated item here falls through to reps. Templates is an
           // authoring surface; a rep *uses* templates from the composer, not
-          // from Settings.
-          condition: () => isManager(),
+          // from Settings. Core Email Template gives Desk User read and keeps
+          // create, write and delete to System Manager, and install.py adds
+          // custom fields rather than a DocPerm — so a Sales Manager could
+          // open the pane but every toggle and every New came back "Failed to
+          // update/create template". isAdmin() is the gate the server enforces.
+          condition: () => isAdmin(),
         },
       ],
     },

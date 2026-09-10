@@ -390,15 +390,28 @@ function openEditor(rule) {
 
 async function save() {
   saveError.value = ''
-  if (!draft.title?.trim()) {
+  const title = draft.title?.trim()
+  if (!title) {
     saveError.value = __('Give the rule a name.')
     return
   }
   saving.value = true
   const { name, ...values } = draft
+  values.title = title
   try {
     if (name) {
-      await rules.setValue.submit({ name, ...values })
+      // The doctype is named by its title, and Frappe rewrites the title back
+      // to the name on every save -- so a set_value on title was undone before
+      // it reached the database and the pane still toasted "Rule saved". A
+      // rename is what actually changes it, as AssignmentRuleView does.
+      if (title !== name) {
+        await call('frappe.client.rename_doc', {
+          doctype: 'CRM Automation Rule',
+          old_name: name,
+          new_name: title,
+        })
+      }
+      await rules.setValue.submit({ name: title, ...values })
     } else {
       await rules.insert.submit(values)
     }
