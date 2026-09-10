@@ -12,7 +12,7 @@ from frappe.tests import IntegrationTestCase
 
 from crm.agent import api as api_mod
 from crm.agent.config import AgentConfig
-from crm.agent.errors import AgentUnavailable
+from crm.agent.errors import AgentUnavailable, SchemaMismatch
 from crm.agent.schemas import ThreadSummary
 
 DISABLED = AgentConfig(enabled=False, base_url="http://x/v1", model="m", timeout=5, max_tokens=64)
@@ -605,3 +605,114 @@ class ThrottleReasonTest(IntegrationTestCase):
 		):
 			result = api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001")
 		self.assertEqual(result, {"status": "unavailable"})
+
+
+class UnreachableModelRefundTest(IntegrationTestCase):
+	"""A model that could not be reached must not spend the day.
+
+	The throttle charges both day counters before the call; until this the
+	refund ran only when the inflight slot refused. A connection refused, a 5xx
+	or the deadline kept the charge, so a dead endpoint cost a site with a few
+	reps its whole 500-call day in under an hour -- and every surface then said
+	the allowance was used up, with Try again hidden, after the endpoint was
+	back. A ``SchemaMismatch`` is different: the model was reached and answered,
+	which is what the budget meters, so that charge stays.
+	"""
+
+	BUDGET = 3
+
+	def setUp(self):
+		super().setUp()
+		self.cfg = AgentConfig(
+			enabled=True,
+			base_url="http://x/v1",
+			model="m",
+			timeout=5,
+			max_tokens=64,
+			daily_call_budget=self.BUDGET,
+			analyst_enabled=True,
+		)
+		for key in (api_mod.budget_key(), api_mod.user_budget_key(), api_mod._inflight_key()):
+			frappe.cache().delete(key)
+			self.addCleanup(frappe.cache().delete, key)
+
+	def counters(self):
+		return (
+			int(frappe.cache().get(api_mod.budget_key()) or 0),
+			int(frappe.cache().get(api_mod.user_budget_key()) or 0),
+		)
+
+	def stubs(self, failure):
+		return (
+			mock.patch.object(api_mod, "get_config", return_value=self.cfg),
+			mock.patch.object(api_mod, "user_rate_limited", return_value=False),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
+			mock.patch.object(api_mod, "_knowledge_articles", return_value=[{"name": "a", "title": "A"}]),
+			mock.patch.object(api_mod.analyst_data, "enabled_erp", return_value=None),
+			mock.patch.object(api_mod.analyst_data, "run_plan", return_value=[]),
+			mock.patch.object(api_mod.client, "complete", side_effect=failure),
+		)
+
+	def every_call_site(self):
+		return (
+			lambda: api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001"),
+			lambda: api_mod.draft_reply("CRM Deal", "CRM-DEAL-0001"),
+			lambda: api_mod.ask_mentor("how do targets work?"),
+			lambda: api_mod.ask_assistant("what do we sell?"),
+			lambda: api_mod.ask_analyst("how did revenue go?"),
+		)
+
+	def test_an_unreachable_model_leaves_both_day_counters_untouched_at_every_call_site(self):
+		patches = self.stubs(AgentUnavailable("http://x/v1: connection refused"))
+		with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+			for call in self.every_call_site():
+				# more calls than the budget allows: with the charge kept, the
+				# later ones would read as a spent day rather than an outage
+				for _ in range(self.BUDGET + 1):
+					self.assertEqual(call(), {"status": "unavailable"})
+		self.assertEqual(self.counters(), (0, 0))
+
+	def test_the_tier_does_not_read_as_spent_after_an_outage(self):
+		"""After the endpoint is back, the next call must reach the model."""
+		outage = self.stubs(AgentUnavailable("down"))
+		with outage[0], outage[1], outage[2], outage[3], outage[4], outage[5], outage[6], outage[7]:
+			for _ in range(self.BUDGET * 2):
+				api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001")
+
+		recovered = self.stubs(None)
+		with (
+			recovered[0],
+			recovered[1],
+			recovered[2],
+			recovered[3],
+			mock.patch.object(api_mod.client, "complete", return_value=SUMMARY) as complete,
+		):
+			result = api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001")
+		self.assertEqual(result["status"], "ok")
+		complete.assert_called_once()
+		self.assertEqual(self.counters(), (1, 1))
+
+	def test_a_schema_mismatch_keeps_the_charge(self):
+		patches = self.stubs(SchemaMismatch("not JSON"))
+		with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+			self.assertEqual(api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001"), {"status": "unavailable"})
+		self.assertEqual(self.counters(), (1, 1))
+
+	def test_the_analyst_refunds_once_when_both_its_completions_fail(self):
+		"""Two completions, one budget unit: a plan that could not be reached
+		falls back to keywords and is not refunded on its own, or the answer
+		failing too would give back two units for one question."""
+		patches = self.stubs(AgentUnavailable("down"))
+		with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+			self.assertEqual(api_mod.ask_analyst("how did revenue go?"), {"status": "unavailable"})
+		self.assertEqual(self.counters(), (0, 0))
+
+		from crm.agent.schemas import AnalystAnswer
+
+		answered = AnalystAnswer(answer="Revenue was flat.", highlights=[], caveats=[])
+		patches = self.stubs([AgentUnavailable("down"), answered])
+		with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+			self.assertEqual(api_mod.ask_analyst("how did revenue go?")["status"], "ok")
+		# the plan failed but the answer was made: that question cost its unit
+		self.assertEqual(self.counters(), (1, 1))

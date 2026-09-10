@@ -19,7 +19,7 @@ import frappe
 from frappe.rate_limiter import rate_limit
 from frappe.utils import strip_html_tags
 
-from crm.agent import actions, analyst, analyst_data, client, knowledge, tools
+from crm.agent import actions, analyst, analyst_data, client, context, knowledge, tools
 from crm.agent.config import get_config, get_signal_config
 from crm.agent.context import build_thread_messages
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
@@ -71,6 +71,18 @@ BUDGET_CACHE_KEY = "crm_agent_daily_calls"
 RATE_LIMITED = "rate_limited"
 USER_BUDGET = "user_budget"
 SITE_BUDGET = "budget"
+
+# Not a throttle reason: the endpoint answered, and refused the prompt as longer
+# than the model's context window. It is carried on the same ``reason`` channel
+# because the surfaces need to tell it apart from weather -- a retry cannot help,
+# and the fix (clear the conversation, or raise ``context_tokens`` to match what
+# the server serves) is one the reader can act on.
+CONTEXT_LENGTH = "context_length"
+
+# What the fence, header and task line cost around a quoted thread. Subtracted
+# from the prompt budget so the fence gets what is actually left rather than the
+# whole window.
+THREAD_PROMPT_OVERHEAD_CHARS = 1200
 
 
 def budget_key() -> str:
@@ -210,6 +222,18 @@ def _throttled(cfg) -> str | None:
 	return _budget_spent(cfg)
 
 
+def _thread_chars(cfg) -> int:
+	"""Characters the quoted thread may occupy in a prompt for ``cfg``.
+
+	Capped at the module default so a large context window does not turn every
+	summary into a 100k-character request: the summariser reads a conversation,
+	and the last 12,000 characters of one is a conversation. The budget only
+	ever makes it *smaller*, which is the direction that was missing.
+	"""
+	spare = client.prompt_char_budget(cfg) - THREAD_PROMPT_OVERHEAD_CHARS
+	return max(len(context.TRUNCATION_NOTE) + 1, min(context.DEFAULT_MAX_CHARS, spare))
+
+
 def _unavailable(reason=None) -> dict:
 	"""The degrade status, naming the throttle reason when there is one. A model
 	that could not be reached has no reason: that really is weather."""
@@ -245,18 +269,18 @@ def summarise_thread(reference_doctype: str, reference_name: str) -> dict:
 		return {"status": "empty"}
 	if reason := _throttled(cfg):
 		return _unavailable(reason)
-	messages = build_thread_messages(record, thread)
+	messages = build_thread_messages(record, thread, max_chars=_thread_chars(cfg))
 
 	with _model_call_slot() as free:
 		if not free:
 			# refused after the budgets were charged: a refused call costs nobody anything
 			_refund_budget(cfg)
 			return {"status": "unavailable"}
-		try:
-			summary = client.complete(cfg, ThreadSummary, messages)
-		except (AgentUnavailable, SchemaMismatch) as exc:
-			frappe.log_error(title="CRM agent summary failed", message=str(exc))
-			return {"status": "unavailable"}
+		summary, failed = _model_call(
+			cfg, "CRM agent summary failed", lambda: client.complete(cfg, ThreadSummary, messages)
+		)
+		if failed:
+			return failed
 
 	return {"status": "ok", "summary": summary.model_dump()}
 
@@ -288,11 +312,13 @@ def draft_reply(reference_doctype: str, reference_name: str) -> dict:
 			# refused after the budgets were charged: a refused call costs nobody anything
 			_refund_budget(cfg)
 			return {"status": "unavailable"}
-		try:
-			draft = actions.propose_reply(cfg, record, thread)
-		except (AgentUnavailable, SchemaMismatch) as exc:
-			frappe.log_error(title="CRM agent reply draft failed", message=str(exc))
-			return {"status": "unavailable"}
+		draft, failed = _model_call(
+			cfg,
+			"CRM agent reply draft failed",
+			lambda: actions.propose_reply(cfg, record, thread, max_chars=_thread_chars(cfg)),
+		)
+		if failed:
+			return failed
 
 	return {"status": "ok", "draft": draft.model_dump()}
 
@@ -319,11 +345,13 @@ def ask_mentor(question: str, history: str | list | None = None) -> dict:
 
 	articles = load_articles()
 	selected = knowledge.select_articles(question, articles)
-	messages = knowledge.build_assistant_messages(question, selected, _parse_history(history))
+	messages = knowledge.build_assistant_messages(
+		question, selected, _parse_history(history), max_chars=client.prompt_char_budget(cfg)
+	)
 
-	reply = _complete_chat(cfg, messages, "CRM mentor answer failed")
-	if reply is None:
-		return {"status": "unavailable"}
+	reply, failed = _complete_chat(cfg, messages, "CRM mentor answer failed")
+	if failed:
+		return failed
 
 	# The model cites articles by name; only names that actually exist survive,
 	# so an invented citation cannot become a dead link in the help center.
@@ -383,11 +411,12 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 		system_prompt=knowledge.ASSISTANT_SYSTEM_PROMPT.format(company=company),
 		no_match_note=knowledge.ASSISTANT_NO_MATCH_NOTE,
 		heading="Knowledge base",
+		max_chars=client.prompt_char_budget(cfg),
 	)
 
-	reply = _complete_chat(cfg, messages, "CRM assistant answer failed")
-	if reply is None:
-		return {"status": "unavailable"}
+	reply, failed = _complete_chat(cfg, messages, "CRM assistant answer failed")
+	if failed:
+		return failed
 
 	titles = {article["name"]: article["title"] for article in articles}
 	cited = [name for name in reply.related_articles if name in titles]
@@ -435,18 +464,47 @@ def _clean_question(question: str) -> str:
 	return question[:ASSISTANT_QUESTION_MAX_CHARS]
 
 
-def _complete_chat(cfg, messages: list[dict], log_title: str) -> AssistantAnswer | None:
-	"""One guarded model call for the chat tiers; ``None`` means degrade."""
+def _complete_chat(cfg, messages: list[dict], log_title: str) -> tuple[AssistantAnswer | None, dict | None]:
+	"""One guarded model call for the chat tiers: ``(reply, None)`` or ``(None, degrade status)``."""
 	with _model_call_slot() as free:
 		if not free:
 			# refused after the budgets were charged: a refused call costs nobody anything
 			_refund_budget(cfg)
-			return None
-		try:
-			return client.complete(cfg, AssistantAnswer, messages)
-		except (AgentUnavailable, SchemaMismatch) as exc:
-			frappe.log_error(title=log_title, message=str(exc))
-			return None
+			return None, {"status": "unavailable"}
+		return _model_call(cfg, log_title, lambda: client.complete(cfg, AssistantAnswer, messages))
+
+
+def _model_call(cfg, log_title: str, call, *, refund: bool = True) -> tuple:
+	"""Run one model call and turn its failure into a degrade status.
+
+	Returns ``(result, None)`` or ``(None, status)``. Every call site goes through
+	here so the budget rule is in one place: a model that could not be reached
+	(``AgentUnavailable`` -- connection refused, a 5xx, the deadline) is a call
+	that cost nobody anything, so the day-units :func:`_budget_spent` charged are
+	given back. Without that a dead endpoint spent a site's whole day in under an
+	hour on calls that never happened, and every surface then said the allowance
+	was used up -- with Try again hidden -- long after the endpoint was back.
+
+	A ``SchemaMismatch`` keeps the charge: the model was reached and answered,
+	twice, and that is exactly what the budget meters.
+
+	``refund=False`` is for a call whose failure the caller survives (the
+	Analyst's plan falls back to keywords); refunding there and again when the
+	answer fails would give back two units for one question.
+	"""
+	try:
+		return call(), None
+	except AgentUnavailable as exc:
+		frappe.log_error(title=log_title, message=str(exc))
+		if refund:
+			_refund_budget(cfg)
+		# A prompt the endpoint refused as too long is not weather: it is up, and
+		# the same question will be refused again. Say which it was.
+		reason = CONTEXT_LENGTH if isinstance(exc, client.ContextTooLong) else None
+		return None, _unavailable(reason)
+	except SchemaMismatch as exc:
+		frappe.log_error(title=log_title, message=str(exc))
+		return None, _unavailable()
 
 
 @frappe.whitelist()
@@ -497,31 +555,41 @@ def ask_analyst(question: str, history: str | list | None = None) -> dict:
 
 		# The plan may fail: a small model that will not follow the schema still
 		# gets a keyword plan, because a question with no plan has no answer.
-		try:
-			raw_plan = client.complete(
+		raw_plan, _failed = _model_call(
+			cfg,
+			"CRM analyst plan failed",
+			lambda: client.complete(
 				cfg,
 				AnalystPlan,
 				analyst.build_plan_messages(question, analyst.catalogue_entries(available), today, turns),
 				deadline=deadline,
-			)
-		except (AgentUnavailable, SchemaMismatch) as exc:
-			frappe.log_error(title="CRM analyst plan failed", message=str(exc))
-			raw_plan = None
+			),
+			# the answer call is the one that decides whether the question cost anything
+			refund=False,
+		)
 		plan = analyst.normalise_plan(raw_plan, available, today, question=question)
 
-		tables = analyst_data.run_plan(plan, erp)
+		# The same deadline the two completions share. Without it the step
+		# between them had no clock: an ERP read pages 100 rows at a time up to
+		# 5,000, thirty seconds a page, while the proxy gave up at two timeouts
+		# and the admin was told the model could not be reached.
+		tables = analyst_data.run_plan(plan, erp, deadline=deadline)
 		period = {"from_date": plan["from_date"], "to_date": plan["to_date"]}
 
-		try:
-			reply = client.complete(
+		reply, failed = _model_call(
+			cfg,
+			"CRM analyst answer failed",
+			lambda: client.complete(
 				cfg,
 				AnalystAnswer,
-				analyst.build_answer_messages(question, tables, period, turns),
+				analyst.build_answer_messages(
+					question, tables, period, turns, max_chars=client.prompt_char_budget(cfg)
+				),
 				deadline=deadline,
-			)
-		except (AgentUnavailable, SchemaMismatch) as exc:
-			frappe.log_error(title="CRM analyst answer failed", message=str(exc))
-			return {"status": "unavailable"}
+			),
+		)
+		if failed:
+			return failed
 
 	sources = []
 	for table in tables:
@@ -661,6 +729,7 @@ def get_settings() -> dict:
 		"model": cfg.model,
 		"timeout": cfg.timeout,
 		"max_tokens": cfg.max_tokens,
+		"context_tokens": cfg.context_tokens,
 		"daily_call_budget": cfg.daily_call_budget,
 		"assistant_reads_products": int(cfg.assistant_reads_products),
 		"analyst_enabled": int(cfg.analyst_enabled),

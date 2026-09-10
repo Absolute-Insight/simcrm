@@ -61,7 +61,7 @@ class ClientRequestShapeTest(UnitTestCase):
 
 
 class ClientRetryTest(UnitTestCase):
-	def test_invalid_reply_is_retried_once_with_the_error_fed_back(self):
+	def test_invalid_reply_is_retried_once_with_the_error_and_the_reply_fed_back(self):
 		replies = [_reply("Here you go!"), _reply(GOOD)]
 		with mock.patch.object(client_mod.requests, "post", side_effect=replies) as post:
 			result = client_mod.complete(CFG, ThreadSummary, MESSAGES)
@@ -69,8 +69,19 @@ class ClientRetryTest(UnitTestCase):
 		self.assertEqual(result.summary, "Deal is stalled on pricing.")
 		self.assertEqual(post.call_count, 2)
 		retry_messages = post.call_args_list[1][1]["json"]["messages"]
-		self.assertEqual(len(retry_messages), len(MESSAGES) + 1)
+		# the rejected reply goes back as the assistant turn it was, then the
+		# complaint: a model that cannot see what it got wrong repeats it
+		self.assertEqual(len(retry_messages), len(MESSAGES) + 2)
+		self.assertEqual(retry_messages[-2], {"role": "assistant", "content": "Here you go!"})
 		self.assertIn("rejected", retry_messages[-1]["content"])
+
+	def test_an_empty_reply_is_not_retried(self):
+		"""Nothing came back, so there is nothing to correct. The retry used to be
+		the same request again -- two round trips and two timeouts for one refusal."""
+		with mock.patch.object(client_mod.requests, "post", return_value=_reply("")) as post:
+			with self.assertRaises(SchemaMismatch):
+				client_mod.complete(CFG, ThreadSummary, MESSAGES)
+		self.assertEqual(post.call_count, 1)
 
 	def test_two_invalid_replies_raise_schema_mismatch(self):
 		replies = [_reply("nope"), _reply("still nope")]
@@ -191,3 +202,80 @@ class ClientDeadlineTest(UnitTestCase):
 		with mock.patch.object(client_mod.requests, "post", return_value=_reply(GOOD)) as post:
 			client_mod.complete(CFG, ThreadSummary, MESSAGES)
 		self.assertEqual(post.call_args[1]["timeout"], CFG.timeout)
+
+
+class PromptBudgetTest(UnitTestCase):
+	"""#13: a prompt larger than the window is not an error anyone sees.
+
+	Ollama truncates from the head -- the system instruction and the grounding --
+	and answers 200; vLLM and llama.cpp answer 400 and the client called that
+	"unreachable". Both are prevented by deciding the size before sending.
+	"""
+
+	def test_the_budget_is_the_window_less_the_reply(self):
+		cfg = CFG.with_overrides(context_tokens=8192, max_tokens=2048)
+		self.assertEqual(client_mod.prompt_budget(cfg), 8192 - 2048)
+		self.assertEqual(
+			client_mod.prompt_char_budget(cfg),
+			int((8192 - 2048) * client_mod.prompting.CHARS_PER_TOKEN),
+		)
+
+	def test_a_window_smaller_than_the_reply_still_leaves_room_for_a_prompt(self):
+		cfg = CFG.with_overrides(context_tokens=1024, max_tokens=2048)
+		self.assertEqual(client_mod.prompt_budget(cfg), client_mod.MIN_PROMPT_TOKENS)
+
+	def test_history_is_dropped_oldest_first_and_the_instruction_is_never_touched(self):
+		cfg = CFG.with_overrides(context_tokens=1200, max_tokens=64)
+		long_turn = "x" * 4000
+		messages = [
+			{"role": "system", "content": "SYSTEM INSTRUCTION"},
+			{"role": "user", "content": f"oldest {long_turn}"},
+			{"role": "assistant", "content": f"middle {long_turn}"},
+			{"role": "user", "content": "the question"},
+		]
+		with mock.patch.object(client_mod.requests, "post", return_value=_reply(GOOD)) as post:
+			client_mod.complete(cfg, ThreadSummary, messages)
+
+		sent = post.call_args[1]["json"]["messages"]
+		self.assertEqual(sent[0]["content"], "SYSTEM INSTRUCTION")
+		self.assertEqual(sent[-1]["content"], "the question")
+		self.assertNotIn("oldest", " ".join(m["content"] for m in sent))
+
+	def test_a_prompt_that_already_fits_is_sent_unchanged(self):
+		with mock.patch.object(client_mod.requests, "post", return_value=_reply(GOOD)) as post:
+			client_mod.complete(CFG, ThreadSummary, MESSAGES)
+		self.assertEqual(post.call_args[1]["json"]["messages"], MESSAGES)
+
+
+class ContextLengthRefusalTest(UnitTestCase):
+	"""#13: a 4xx that says the prompt did not fit gets its own exception."""
+
+	BODIES = (
+		b'{"error": {"message": "This model\'s maximum context length is 4096 tokens"}}',
+		b'{"object":"error","message":"The prompt has too many tokens"}',
+		b"Requested tokens exceed context window of 4096",
+	)
+
+	def _refusal(self, body: bytes, status_code: int = 400):
+		response = mock.Mock()
+		response.status_code = status_code
+		response.raise_for_status.side_effect = requests.HTTPError("400 Client Error")
+		response.iter_content.return_value = iter([body])
+		return response
+
+	def test_a_context_length_4xx_is_named_rather_than_reported_as_unreachable(self):
+		for body in self.BODIES:
+			with self.subTest(body=body):
+				with mock.patch.object(client_mod.requests, "post", return_value=self._refusal(body)):
+					with self.assertRaises(client_mod.ContextTooLong) as caught:
+						client_mod.complete(CFG, ThreadSummary, MESSAGES)
+				self.assertIsInstance(caught.exception, AgentUnavailable)
+				self.assertIn("context window", str(caught.exception))
+
+	def test_any_other_4xx_stays_an_ordinary_unavailable(self):
+		with mock.patch.object(
+			client_mod.requests, "post", return_value=self._refusal(b'{"error": "model not found"}', 404)
+		):
+			with self.assertRaises(AgentUnavailable) as caught:
+				client_mod.complete(CFG, ThreadSummary, MESSAGES)
+		self.assertNotIsInstance(caught.exception, client_mod.ContextTooLong)

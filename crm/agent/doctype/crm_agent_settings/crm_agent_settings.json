@@ -13,6 +13,7 @@
   "column_break_endpoint",
   "timeout",
   "max_tokens",
+  "context_tokens",
   "daily_call_budget",
   "surfaces_section",
   "assistant_reads_products",
@@ -75,6 +76,13 @@
    "fieldname": "max_tokens",
    "fieldtype": "Int",
    "label": "Max Tokens"
+  },
+  {
+   "default": "8192",
+   "description": "How large a context window the endpoint actually serves. Prompts are sized to this minus Max Tokens; history, grounding articles and quoted threads are trimmed to fit. Set it to what the server is configured for, never higher: ollama defaults to 4096 and silently drops the head of an over-long prompt -- the system instruction and the grounding -- rather than refusing it.",
+   "fieldname": "context_tokens",
+   "fieldtype": "Int",
+   "label": "Context Window (tokens)"
   },
   {
    "default": "500",
@@ -163,7 +171,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-01 20:00:00.000000",
+ "modified": "2026-09-10 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Agent",
  "name": "CRM Agent Settings",

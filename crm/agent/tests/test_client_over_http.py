@@ -145,7 +145,12 @@ class HttpTransportTest(UnitTestCase):
 		self.assertEqual(result.summary, "Stalled on pricing.")
 		self.assertEqual(len(self.handler.seen), 2)
 		retry_messages = self.handler.seen[1]["body"]["messages"]
-		self.assertEqual(len(retry_messages), len(MESSAGES) + 1)
+		# The rejected reply goes back with the complaint, so the model can see
+		# what it actually produced: without it the retry was byte-identical to
+		# the first attempt and cost a second timeout to fail the same way.
+		self.assertEqual(len(retry_messages), len(MESSAGES) + 2)
+		self.assertEqual(retry_messages[-2]["role"], "assistant")
+		self.assertIn("Sure! Here is your summary.", retry_messages[-2]["content"])
 		self.assertIn("rejected", retry_messages[-1]["content"])
 
 	def test_two_unusable_replies_raise_schema_mismatch(self):
