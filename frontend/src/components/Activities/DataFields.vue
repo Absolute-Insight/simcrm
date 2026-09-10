@@ -37,6 +37,7 @@
   <div v-else class="pb-8">
     <FieldLayout
       v-if="tabs.data"
+      v-model:activeTab="activeDataTab"
       :tabs="tabs.data"
       :data="document.doc"
       :doctype="doctype"
@@ -65,6 +66,7 @@ import LoadingIndicator from '@/components/Icons/LoadingIndicator.vue'
 import { usersStore } from '@/stores/users'
 import { useDocument } from '@/data/document'
 import { isMobileView } from '@/composables/settings'
+import { useStorage } from '@vueuse/core'
 import { ref, watch, getCurrentInstance } from 'vue'
 
 const props = defineProps({
@@ -80,6 +82,18 @@ const instance = getCurrentInstance()
 const attrs = instance?.vnode?.props ?? {}
 
 const showDataFieldsModal = ref(false)
+
+// Activities renders this panel behind a v-else-if, so leaving the Data tab
+// and coming back -- and any save that re-renders the branch -- tore the
+// FieldLayout down and its tab selection reset to the first tab. Park the
+// selection per record for the session instead of holding it in the component.
+// A tab that no longer exists after a layout edit is harmless: Tabs falls back
+// to the first selectable value on its own.
+const activeDataTab = useStorage(
+  () => `fieldLayoutTab:${props.doctype}:${props.docname}`,
+  '',
+  sessionStorage,
+)
 
 const { document } = useDocument(props.doctype, props.docname)
 
