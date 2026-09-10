@@ -552,6 +552,38 @@ def _read_manifest(path: Path) -> set[str]:
 	return set(json.loads(path.read_text()).get("deals", []))
 
 
+def _write_manifest(
+	path: Path, previous: set[str], manifest: set[str], rejects: Rejects, *, crashed: bool = False
+) -> None:
+	"""Record what the import has created, next to the workbook it created it from.
+
+	Called from a ``finally``, so it runs on the way out of a crash too -- which is
+	the case that needs it, since ``_commit_every`` commits a batch every 50 rows and
+	those deals are on the site whether the run finished or not.
+
+	After a crash the last batch was rolled back, so order numbers THIS run added are
+	kept only if their deal survived: recording one that did not would tell the next
+	run it had already arrived and skip it for good. Entries from earlier runs are
+	kept verbatim either way -- one of those with no deal on the site was deleted by
+	a rep, and forgetting it is exactly what resurrects it.
+
+	Left unguarded on purpose: if the manifest cannot be written the operator must
+	hear about it before re-running, and Python chains that onto whatever was already
+	unwinding rather than hiding it."""
+	added = manifest - previous
+	if crashed and added:
+		landed = set(
+			frappe.get_all(
+				"CRM Deal",
+				filters={"acumatica_sales_quote": ("in", sorted(added))},
+				pluck="acumatica_sales_quote",
+			)
+		)
+		manifest = previous | (added & landed)
+	path.write_text(json.dumps({"deals": sorted(manifest)}, indent=1))
+	path.with_name("import-rejects.json").write_text(json.dumps(rejects.rows, indent=1))
+
+
 def import_workbooks(
 	customers,
 	sales_orders,
@@ -591,7 +623,9 @@ def import_workbooks(
 			raise ValueError(f"owner {owner} is not a User on this site; create the users first")
 	rejects = Rejects()
 	manifest_path = _manifest_path(sales_orders)
-	manifest = _read_manifest(manifest_path)
+	previous_manifest = _read_manifest(manifest_path)
+	manifest = set(previous_manifest)
+	crashed = False
 	warnings: list[str] = []
 
 	# pre-flight: a fact about the site, not about what this run writes, so it is
@@ -634,6 +668,7 @@ def import_workbooks(
 		# the current batch rolls back; batches already committed by
 		# `_commit_every` stay, and a re-run is idempotent so the operator
 		# resumes rather than restores
+		crashed = True
 		frappe.db.rollback()
 		raise
 	else:
@@ -644,11 +679,15 @@ def import_workbooks(
 	finally:
 		frappe.flags.spreadsheet_import_dry_run = False
 		frappe.flags.bulk_assign_quietly = False
+		if not dry:
+			# In the finally, not after the block: `_commit_every` commits a batch every
+			# 50 rows, so a run that dies part-way has already written deals the manifest
+			# is the only record of. Written only on a clean finish, that record was lost
+			# exactly when it mattered -- and the prescribed re-run then recreated every
+			# deal the operator had since deleted, because nothing said they had arrived.
+			_write_manifest(manifest_path, previous_manifest, manifest, rejects, crashed=crashed)
 
 	summary["rejects"] = len(rejects)
-	if not dry:
-		manifest_path.write_text(json.dumps({"deals": sorted(manifest)}, indent=1))
-		manifest_path.with_name("import-rejects.json").write_text(json.dumps(rejects.rows, indent=1))
 	summary["reject_rows"] = rejects.rows
 	# bench execute prints the return value; make the numbers readable
 	for section in ("customers", "sales_orders", "invoices"):

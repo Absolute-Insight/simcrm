@@ -19,7 +19,8 @@
   "section_break_jnbn",
   "create_customer_on_status_change",
   "column_break_kbhw",
-  "deal_status"
+  "deal_status",
+  "last_customer_push_error"
  ],
  "fields": [
   {
@@ -113,12 +114,20 @@
    "label": "Deal Status",
    "mandatory_depends_on": "create_customer_on_status_change",
    "options": "CRM Deal Status"
+  },
+  {
+   "depends_on": "enabled",
+   "fieldname": "last_customer_push_error",
+   "fieldtype": "Small Text",
+   "label": "Last Customer Push Error",
+   "no_copy": 1,
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-07-13 12:49:50.042124",
+ "modified": "2026-09-10 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "ERPNext CRM Settings",
@@ -143,13 +152,6 @@
    "role": "Sales Manager",
    "share": 1,
    "write": 1
-  },
-  {
-   "email": 1,
-   "print": 1,
-   "read": 1,
-   "role": "Sales User",
-   "share": 1
   }
  ],
  "row_format": "Dynamic",

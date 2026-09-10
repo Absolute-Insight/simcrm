@@ -374,6 +374,18 @@
                 >
                   {{ unsyncedSummary }}
                 </div>
+                <!-- The customer push runs in a background job, off the rep's
+                     save, so its last failure has nowhere else to be seen. -->
+                <div
+                  v-if="
+                    activeProductSyncLogTab === 'failed' &&
+                    lastCustomerPushError
+                  "
+                  class="rounded-[var(--v-radius-control)] bg-surface-gray-2 px-3 py-2 text-p-sm text-ink-red-9"
+                >
+                  {{ __('Last customer push failed') }}:
+                  {{ lastCustomerPushError }}
+                </div>
                 <div
                   v-if="!currentProductSyncRows.length"
                   class="rounded-[var(--v-radius-control)] border border-outline-elevation-2 px-3 py-2 text-p-sm text-ink-gray-5"
@@ -425,9 +437,19 @@
                     </div>
                     <div
                       v-if="!isSyncedDocumentLog"
-                      class="shrink-0 text-p-sm text-ink-gray-5"
+                      class="flex shrink-0 items-center gap-2"
                     >
-                      {{ getSyncRowMeta(row) }}
+                      <span class="text-p-sm text-ink-gray-5">
+                        {{ getSyncRowMeta(row) }}
+                      </span>
+                      <!-- Nothing called dismiss_sync_issue before, so product
+                           sync issues piled up with no way to clear them. -->
+                      <Button
+                        variant="ghost"
+                        :label="__('Dismiss')"
+                        :loading="dismissing === row.name"
+                        @click="dismissIssue(row)"
+                      />
                     </div>
                   </div>
                 </div>
@@ -471,6 +493,7 @@
 import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import {
   Button,
+  call,
   Combobox,
   createDocumentResource,
   createResource,
@@ -565,6 +588,27 @@ const currentProductSyncRows = computed(
 const isSyncedDocumentLog = computed(() =>
   ['products', 'items'].includes(activeProductSyncLogTab.value),
 )
+
+const lastCustomerPushError = computed(
+  () => productSyncStatus.data?.last_customer_push_error || '',
+)
+
+const dismissing = ref('')
+
+async function dismissIssue(row) {
+  dismissing.value = row.name
+  try {
+    await call(
+      'crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.dismiss_sync_issue',
+      { issue_name: row.name },
+    )
+    await productSyncStatus.submit()
+  } catch (e) {
+    toast.error(e?.messages?.[0] || __('Could not dismiss the issue'))
+  } finally {
+    dismissing.value = ''
+  }
+}
 
 const unsyncedSummary = computed(() => {
   const data = productSyncStatus.data?.unsynced

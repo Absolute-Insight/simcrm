@@ -25,6 +25,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import socket
+import time
 from urllib.parse import urlparse
 
 import frappe
@@ -35,6 +36,14 @@ HTML_CONTENT_TYPES = ("text/html", "application/xhtml")
 RETRY_STATUS_FORCELIST = (429, 500, 502, 503, 504)
 # Cap redirect chases ourselves (we follow manually to re-check each hop).
 MAX_REDIRECTS = 5
+# Total wall-clock seconds one fetch() may spend, redirects and body read included.
+# `request_timeout` is per socket read and restarts on every byte, so it bounds
+# nothing against a host that trickles; this does. Derived from the configured
+# per-read timeout so the preview path (which lowers it) gets a tighter budget than
+# a background crawl, and capped so no setting can hand a web worker away for long.
+# Override with the `max_fetch_seconds` setting for an absolute value.
+FETCH_BUDGET_FACTOR = 3
+MAX_FETCH_SECONDS = 30
 # Default crawler UA: a current desktop-Chrome string so bot walls that reject bare
 # clients serve HTML. Overridable via the CRM Enrichment Settings ``user_agent`` field.
 DEFAULT_USER_AGENT = (
@@ -286,15 +295,27 @@ def _sniff_html_charset(raw: bytes) -> str | None:
 	return None
 
 
-def _read_capped(resp, max_bytes: int) -> str:
+def _read_capped(resp, max_bytes: int, deadline: float | None = None) -> str:
+	"""Read at most ``max_bytes``, and for at most as long as ``deadline`` allows.
+
+	The byte cap alone does not bound the read: ``requests``'s timeout is per socket
+	read, and it restarts on every byte, so a host trickling one byte every few
+	seconds never trips it and holds the worker until gunicorn kills it. The
+	monotonic deadline is the bound that a cooperative-looking server cannot reset.
+	Whatever arrived before it is kept and parsed, exactly as for the byte cap: a
+	truncated page is still worth extracting from, and the point is to let go of the
+	worker."""
 	chunks = []
 	total = 0
 	for chunk in resp.iter_content(chunk_size=16_384, decode_unicode=False):
-		if not chunk:
-			continue
-		total += len(chunk)
-		chunks.append(chunk)
-		if total >= max_bytes:
+		if chunk:
+			total += len(chunk)
+			chunks.append(chunk)
+			if total >= max_bytes:
+				break
+		# checked on empty chunks too: keep-alive dribble is exactly the shape of
+		# traffic that keeps the per-read timeout from ever firing
+		if deadline is not None and time.monotonic() >= deadline:
 			break
 	raw = b"".join(chunks)
 	# requests defaults text/* without an explicit charset to ISO-8859-1, which
@@ -308,6 +329,20 @@ def _read_capped(resp, max_bytes: int) -> str:
 		return raw.decode(encoding, errors="replace")
 	except (LookupError, TypeError):
 		return raw.decode("utf-8", errors="replace")
+
+
+def _fetch_budget(cfg, timeout: int) -> float:
+	"""Total wall-clock seconds one ``fetch`` may spend.
+
+	Defaults to a multiple of the per-read timeout so a caller that already asked for
+	a short one (the preview path lowers ``request_timeout`` to ``preview_timeout``)
+	gets a proportionally short budget, capped by ``MAX_FETCH_SECONDS`` so no setting
+	can hand a web worker over for minutes. The ``max_fetch_seconds`` setting
+	overrides it outright."""
+	configured = cfg.setting("max_fetch_seconds", None) if cfg else None
+	if configured:
+		return float(configured)
+	return float(min(timeout * FETCH_BUDGET_FACTOR, MAX_FETCH_SECONDS))
 
 
 def fetch(url: str, cfg, session=None, html_only: bool = True):
@@ -331,19 +366,27 @@ def fetch(url: str, cfg, session=None, html_only: bool = True):
 	timeout = int(cfg.setting("request_timeout")) if cfg else 10
 	max_bytes = int(cfg.setting("max_download_bytes")) if cfg else 3_000_000
 	retries = int(cfg.setting("retry_count")) if cfg else 2
+	budget = _fetch_budget(cfg, timeout)
+	deadline = time.monotonic() + budget
 
 	own_session = session is None
 	session = session or build_session(cfg)
 	current = url
 	try:
 		for _hop in range(MAX_REDIRECTS + 1):
+			remaining = deadline - time.monotonic()
+			if remaining <= 0:
+				# A redirect chain of slow hops spends the budget just as effectively
+				# as one slow body, so the deadline is checked per hop as well.
+				return 0, "", f"exceeded the {budget:g}s fetch budget", current
 			try:
 				ips = _validated_ips(current, cfg)
 			except SSRFError as exc:
 				return 0, "", f"blocked by SSRF guard: {exc}", current
 
 			# Redirects are followed manually (each hop re-validated and re-pinned).
-			resp = _pinned_get(session, current, ips[0], timeout, retries)
+			# No single hop may outlast the budget the whole fetch has left.
+			resp = _pinned_get(session, current, ips[0], min(timeout, remaining), retries)
 
 			if resp.is_redirect or resp.is_permanent_redirect:
 				location = resp.headers.get("Location")
@@ -359,7 +402,7 @@ def fetch(url: str, cfg, session=None, html_only: bool = True):
 				resp.close()
 				return status, "", f"skipped non-HTML content-type: {content_type}", current
 
-			html = _read_capped(resp, max_bytes)
+			html = _read_capped(resp, max_bytes, deadline)
 			status = resp.status_code
 			resp.close()
 			return status, html, "", current
