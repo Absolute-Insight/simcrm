@@ -331,7 +331,12 @@ class ReInviteTest(FrappeTestCase):
 	def drop_account(self):
 		if frappe.db.exists("User", self.EMAIL):
 			frappe.delete_doc("User", self.EMAIL, force=True, ignore_permissions=True)
-			frappe.db.commit()
+			# Deliberate: creating a User commits, so the row this removes outlived
+			# the transaction that made it. The delete has to outlive rollback the
+			# same way, or the account survives into the next test and the invite
+			# there finds an existing member and quietly creates nothing -- exactly
+			# the failure setUp's comment describes.
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 	def invite(self):
 		from crm.api import invite_by_email
