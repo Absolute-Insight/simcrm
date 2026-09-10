@@ -263,6 +263,52 @@ that window reps are on new code against an old schema, which is the one
 combination nothing is tested against. Maintenance mode gives them an honest
 "be right back" instead of errors that look like data loss.
 
+### Bumping the database image
+
+`db` is pinned by **digest**, not by tag:
+
+```yaml
+image: mariadb:10.6.28@sha256:553351e2...
+```
+
+That is not pedantry. `mariadb:10.6` is a moving pointer, and it moved between
+2026-09-08 and 2026-09-10. The consequence was that the `docker compose up -d`
+in the runbook above — which an operator also runs to apply an unrelated `.env`
+change — recreated the production database container with a cold restart in the
+middle of the day. The next move of that tag is to 10.6.29, and on a floating
+tag the engine would upgrade in place, unrehearsed, with no backup taken.
+
+So a database upgrade is now something you ask for, and it has a backup in
+front of it:
+
+```bash
+# 0. a backup you could restore from, and check it landed
+docker compose exec backend bench --site all backup --with-files
+
+# 1. find the digest of the version you want
+docker buildx imagetools inspect mariadb:10.6.29 --format '{{.Manifest.Digest}}'
+
+# 2. edit docker-compose.yml: image: mariadb:10.6.29@sha256:<that digest>
+docker compose pull db
+docker compose up -d db
+
+# 3. watch it come back before touching anything else
+docker compose ps db                       # expect `running (healthy)`
+docker compose logs db | tail -40          # look for a mariadb-upgrade prompt
+docker compose exec backend bench --site <site> doctor
+```
+
+Across a **patch** bump inside 10.6 the on-disk format does not change and
+nothing else is needed. Across a **minor** bump (10.6 → 10.11) the system
+tables do change and `mariadb-upgrade` has to run; this stack leaves
+`MARIADB_AUTO_UPGRADE` unset deliberately, so that never happens behind your
+back. Rehearse a minor bump on a restore of a real backup before doing it on
+the host that holds the data.
+
+The same digest is pinned in `.devcontainer/docker-compose.yml` and in the
+three CI workflows that run a database. Bump all five together, or a schema bug
+gets to hide behind "works on my machine".
+
 ### Maintenance mode lags by a minute
 
 `set-maintenance-mode` writes a flag to `site_config.json`, and a running web
@@ -430,12 +476,46 @@ Error Log), fix forward if the cause is obvious, and restore if it is not.
 
 ## Backups
 
+A `backup` service takes one every night and prunes to a week. You do not have
+to remember anything for the routine case.
+
+```bash
+docker compose logs backup | tail            # when the last one ran
+docker compose exec backend ls -lh sites/$SITE_NAME/private/backups
+```
+
+Two `.env` keys steer it:
+
+| Key | Default | What it does |
+|---|---|---|
+| `BACKUP_HOUR` | `2` | Hour of the day, container local time |
+| `BACKUP_TARGET` | *(empty)* | An rclone destination, e.g. `s3:vectora-backups/mbp`. Empty means local only |
+
+**Set `BACKUP_TARGET` before a customer's data lands.** A backup on the machine
+it protects is a copy, not a backup, and the whole point is surviving the loss
+of the host. The copy step needs `rclone` in the image and an `rclone.conf` the
+container can read; if the target is set and rclone is missing, the nightly log
+says so rather than failing quietly.
+
+### Why this is a service and not a note in a runbook
+
+Until it existed the only backup on a Vectora host was the one an operator
+remembered to take before an upgrade — and frappe deletes backups older than
+`keep_backups_for_hours` on *every* `bench backup`, a value no site set, so it
+defaulted to 23. Taking the pre-upgrade backup destroyed the previous one. A
+rep bulk-deleting deals on Monday was unrecoverable by Tuesday afternoon, and
+the restore drill below restored a file that no longer existed.
+
+`create-site` now writes `keep_backups_for_hours: 168` on every boot, so a
+week of nightlies is on the host at any time.
+
+Ad-hoc, before something you are unsure about:
+
 ```bash
 docker compose exec backend bench --site all backup --with-files
 ```
 
-Backups land in the `sites` volume under `<site>/private/backups`. Copy them
-off the host; a backup on the machine it protects is a copy, not a backup.
+Backups land in the `sites` volume under `<site>/private/backups`.
 
 ## Operating the proactive tier
 

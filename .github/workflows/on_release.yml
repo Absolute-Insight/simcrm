@@ -11,6 +11,12 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  # semantic-release dispatches builds.yml on the tag it has just created (see
+  # successCmd in .releaserc). GitHub suppresses push and create events raised
+  # by GITHUB_TOKEN, which is why a release tag never built an image and v3.2.0
+  # shipped without one -- but workflow_dispatch is not suppressed, so this is
+  # the one event that closes the gap.
+  actions: write
 
 jobs:
   release:

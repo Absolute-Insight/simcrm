@@ -1,10 +1,9 @@
 <!doctype html>
-{#- frappe's Jinja environment has autoescape off. Everything below comes from
-    a form author (a Sales Manager typing a label) or from records a Sales User
-    can name (a Link option's label), and lands on the company's public page in
-    front of a prospect, so the whole document renders escaped. The |tojson
-    values are Markup already and are not touched by this. -#}
-{% autoescape true %}
+{#- frappe's Jinja environment has autoescape off. Everything below comes from a
+form author (a Sales Manager typing a label) or from records a Sales User can
+name (a Link option's label), and lands on the company's public page in front of
+a prospect, so the whole document renders escaped. The |tojson values are Markup
+already and are not touched by this. -#} {% autoescape true %}
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -20,27 +19,39 @@
     <style>
       :root {
         /* espresso / frappe-ui light-theme tokens (pure-neutral grays) */
-        --ink-strong: oklch(0.168 0 0);       /* ink-gray-9 — headings */
-        --ink: oklch(0.205 0 0);              /* ink-gray-8 — field text */
-        --muted: oklch(0.586 0 0);            /* ink-gray-5 — labels */
-        --faint: oklch(0.683 0 0);            /* ink-gray-4 — placeholders */
-        --border: oklch(0.913 0 0);           /* outline-gray-2 */
-        --border-focus: oklch(0.83 0 0);      /* outline-gray-3 */
-        --bg: oklch(0.964 0 0);               /* surface-gray-2 — page */
-        --card: oklch(1 0 0);                 /* white surface */
-        --field: oklch(0.964 0 0);            /* surface-gray-2 — inputs */
-        --accent: oklch(0.205 0 0);           /* surface-gray-10 — button */
-        --accent-hover: oklch(0.341 0 0);     /* surface-gray-9 */
-        --danger: oklch(0.507 0.165 25.286);  /* ink-red-5 */
+        --ink-strong: oklch(0.168 0 0); /* ink-gray-9 — headings */
+        --ink: oklch(0.205 0 0); /* ink-gray-8 — field text */
+        --muted: oklch(0.586 0 0); /* ink-gray-5 — labels */
+        --faint: oklch(0.683 0 0); /* ink-gray-4 — placeholders */
+        --border: oklch(0.913 0 0); /* outline-gray-2 */
+        --border-focus: oklch(0.83 0 0); /* outline-gray-3 */
+        --bg: oklch(0.964 0 0); /* surface-gray-2 — page */
+        --card: oklch(1 0 0); /* white surface */
+        --field: oklch(0.964 0 0); /* surface-gray-2 — inputs */
+        --accent: oklch(0.205 0 0); /* surface-gray-10 — button */
+        --accent-hover: oklch(0.341 0 0); /* surface-gray-9 */
+        --danger: oklch(0.507 0.165 25.286); /* ink-red-5 */
         --danger-bg: oklch(0.978 0.011 17.34); /* surface-red-1 */
         --success-bg: oklch(0.965 0.03 155.987); /* surface-green-2 */
         --success-ink: oklch(0.506 0.118 155.358); /* ink-green-5 */
         --ring: oklch(0.586 0 0 / 0.15);
       }
-      * { box-sizing: border-box; }
-      html, body { margin: 0; padding: 0; }
+      * {
+        box-sizing: border-box;
+      }
+      html,
       body {
-        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family:
+          "Inter",
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
         background: var(--bg);
         color: var(--ink);
         min-height: 100vh;
@@ -58,28 +69,95 @@
         border: 1px solid var(--border);
         border-radius: 14px;
         padding: 28px 28px 26px;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 32px rgba(0, 0, 0, 0.05);
+        box-shadow:
+          0 1px 2px rgba(0, 0, 0, 0.04),
+          0 12px 32px rgba(0, 0, 0, 0.05);
       }
       /* embed mode (?embed=1): drop the page chrome so the form sits flush inside
          the host page — no gray backdrop, no card border/shadow, full width */
-      body.embed { background: transparent; padding: 0; min-height: 0; }
-      body.embed .card { max-width: none; border: none; border-radius: 0; box-shadow: none; padding: 0; }
-      body.embed .draft-banner { max-width: none; }
-      .title { font-size: 20px; font-weight: 600; color: var(--ink-strong); margin: 0 0 14px; letter-spacing: -0.01em; line-height: 1.3; }
+      body.embed {
+        background: transparent;
+        padding: 0;
+        min-height: 0;
+      }
+      body.embed .card {
+        max-width: none;
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
+        padding: 0;
+      }
+      body.embed .draft-banner {
+        max-width: none;
+      }
+      .title {
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--ink-strong);
+        margin: 0 0 14px;
+        letter-spacing: -0.01em;
+        line-height: 1.3;
+      }
       /* with no description, the title supplies the gap the subtitle normally would */
-      .title.title-only { margin-bottom: 22px; }
-      .subtitle { font-size: 14px; color: var(--muted); margin: 0 0 22px; line-height: 1.5; white-space: pre-wrap; }
-      .section { margin-bottom: 4px; }
-      .section-title { font-size: 15px; font-weight: 600; color: var(--ink-strong); margin: 20px 0 12px; }
-      .section:first-child .section-title { margin-top: 0; }
-      .cols { display: grid; gap: 0 20px; }
-      @media (max-width: 520px) { .cols { grid-template-columns: 1fr !important; } }
-      .field { margin-bottom: 16px; }
-      .field label { display: block; font-size: 13px; font-weight: 400; margin-bottom: 6px; color: var(--muted); }
-      .field .req { color: var(--danger); margin-left: 2px; }
-      .field .desc { font-size: 12px; color: var(--muted); margin-top: 5px; line-height: 1.4; }
-      input[type="text"], input[type="email"], input[type="tel"], input[type="number"],
-      input[type="date"], input[type="datetime-local"], textarea, select {
+      .title.title-only {
+        margin-bottom: 22px;
+      }
+      .subtitle {
+        font-size: 14px;
+        color: var(--muted);
+        margin: 0 0 22px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+      }
+      .section {
+        margin-bottom: 4px;
+      }
+      .section-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--ink-strong);
+        margin: 20px 0 12px;
+      }
+      .section:first-child .section-title {
+        margin-top: 0;
+      }
+      .cols {
+        display: grid;
+        gap: 0 20px;
+      }
+      @media (max-width: 520px) {
+        .cols {
+          grid-template-columns: 1fr !important;
+        }
+      }
+      .field {
+        margin-bottom: 16px;
+      }
+      .field label {
+        display: block;
+        font-size: 13px;
+        font-weight: 400;
+        margin-bottom: 6px;
+        color: var(--muted);
+      }
+      .field .req {
+        color: var(--danger);
+        margin-left: 2px;
+      }
+      .field .desc {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 5px;
+        line-height: 1.4;
+      }
+      input[type="text"],
+      input[type="email"],
+      input[type="tel"],
+      input[type="number"],
+      input[type="date"],
+      input[type="datetime-local"],
+      textarea,
+      select {
         width: 100%;
         font: inherit;
         font-size: 14px;
@@ -90,10 +168,18 @@
         border-radius: 8px;
         padding: 6px 10px;
         outline: none;
-        transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
+        transition:
+          border-color 0.12s,
+          box-shadow 0.12s,
+          background 0.12s;
       }
-      ::placeholder { color: var(--faint); }
-      textarea { min-height: 68px; resize: vertical; }
+      ::placeholder {
+        color: var(--faint);
+      }
+      textarea {
+        min-height: 68px;
+        resize: vertical;
+      }
       select {
         appearance: none;
         -webkit-appearance: none;
@@ -104,20 +190,41 @@
         background-position: right 10px center;
         cursor: pointer;
       }
-      input:focus, textarea:focus, select:focus {
+      input:focus,
+      textarea:focus,
+      select:focus {
         border-color: var(--border-focus);
         box-shadow: 0 0 0 2px var(--ring);
         background: var(--card);
       }
-      .has-error, .has-error:focus {
+      .has-error,
+      .has-error:focus {
         border-color: var(--danger);
         box-shadow: 0 0 0 2px var(--danger-bg);
       }
-      .check { display: flex; align-items: center; gap: 9px; }
-      .check input { width: 16px; height: 16px; accent-color: var(--accent); }
-      .check label { margin: 0; font-weight: 400; font-size: 14px; }
-      .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
-      button.submit, button.discard {
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+      }
+      .check input {
+        width: 16px;
+        height: 16px;
+        accent-color: var(--accent);
+      }
+      .check label {
+        margin: 0;
+        font-weight: 400;
+        font-size: 14px;
+      }
+      .actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 8px;
+      }
+      button.submit,
+      button.discard {
         font: inherit;
         font-size: 14px;
         font-weight: 500;
@@ -125,14 +232,31 @@
         border-radius: 8px;
         padding: 8px 18px;
         cursor: pointer;
-        transition: background 0.12s, transform 0.02s;
+        transition:
+          background 0.12s,
+          transform 0.02s;
       }
-      button.submit { color: oklch(1 0 0); background: var(--accent); }
-      button.submit:hover { background: var(--accent-hover); }
-      button.submit:active { transform: translateY(1px); }
-      button.submit:disabled { opacity: 0.5; cursor: default; }
-      button.discard { color: var(--ink); background: var(--field); }
-      button.discard:hover { background: var(--border); }
+      button.submit {
+        color: oklch(1 0 0);
+        background: var(--accent);
+      }
+      button.submit:hover {
+        background: var(--accent-hover);
+      }
+      button.submit:active {
+        transform: translateY(1px);
+      }
+      button.submit:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      button.discard {
+        color: var(--ink);
+        background: var(--field);
+      }
+      button.discard:hover {
+        background: var(--border);
+      }
       .form-error {
         display: none;
         background: var(--danger-bg);
@@ -152,40 +276,101 @@
         padding: 10px 12px;
         margin-bottom: 16px;
       }
-      .success { text-align: center; padding: 20px 4px 8px; }
-      .success .check-ring {
-        width: 48px; height: 48px; border-radius: 999px; margin: 0 auto 16px;
-        background: var(--success-bg); color: var(--success-ink); display: flex; align-items: center;
-        justify-content: center; font-size: 24px;
+      .success {
+        text-align: center;
+        padding: 20px 4px 8px;
       }
-      .success h2 { font-size: 19px; color: var(--ink-strong); margin: 0 0 6px; }
-      .success p { color: var(--muted); font-size: 14px; margin: 0; line-height: 1.5; }
-      .redirect-note { margin-top: 12px !important; font-size: 13px; }
-      .redirect-note a { color: var(--ink-strong); text-decoration: underline; margin-left: 4px; }
+      .success .check-ring {
+        width: 48px;
+        height: 48px;
+        border-radius: 999px;
+        margin: 0 auto 16px;
+        background: var(--success-bg);
+        color: var(--success-ink);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+      }
+      .success h2 {
+        font-size: 19px;
+        color: var(--ink-strong);
+        margin: 0 0 6px;
+      }
+      .success p {
+        color: var(--muted);
+        font-size: 14px;
+        margin: 0;
+        line-height: 1.5;
+      }
+      .redirect-note {
+        margin-top: 12px !important;
+        font-size: 13px;
+      }
+      .redirect-note a {
+        color: var(--ink-strong);
+        text-decoration: underline;
+        margin-left: 4px;
+      }
       /* frappe-ui Alert — yellow, subtle: surface-amber-2 bg, amber triangle-alert
          icon, ink-gray-9 text, rounded-md, px-4 py-3.5, gap-3, text-base */
       .draft-banner {
-        display: flex; align-items: flex-start; gap: 12px;
-        width: 100%; max-width: 560px; margin: 0 auto 12px;
-        padding: 14px 16px; border-radius: 6px;
-        background: oklch(0.967 0.045 91.733);  /* surface-amber-2 */
-        color: var(--ink-strong);               /* ink-gray-9 */
-        font: 400 14px/1.5 "Inter", sans-serif; text-align: left;
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        width: 100%;
+        max-width: 560px;
+        margin: 0 auto 12px;
+        padding: 14px 16px;
+        border-radius: 6px;
+        background: oklch(0.967 0.045 91.733); /* surface-amber-2 */
+        color: var(--ink-strong); /* ink-gray-9 */
+        font:
+          400 14px/1.5 "Inter",
+          sans-serif;
+        text-align: left;
       }
-      .draft-banner svg { flex-shrink: 0; width: 16px; height: 16px; margin-top: 1px; color: oklch(0.599 0.141 56.803); }
+      .draft-banner svg {
+        flex-shrink: 0;
+        width: 16px;
+        height: 16px;
+        margin-top: 1px;
+        color: oklch(0.599 0.141 56.803);
+      }
     </style>
   </head>
   <body class="{% if embed %}embed{% endif %}">
     {% if draft_preview %}
     <div class="draft-banner">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-      <span>{{ _("Draft preview — only you can see this. Publish the form to make it public.") }}</span>
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path
+          d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"
+        />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </svg>
+      <span
+        >{{ _("Draft preview — only you can see this. Publish the form to make
+        it public.") }}</span
+      >
     </div>
     {% endif %}
     <div class="card">
       <div id="form-view">
-        <h1 class="title{% if not form_description %} title-only{% endif %}">{{ form_title }}</h1>
-        {% if form_description %}<p class="subtitle">{{ form_description }}</p>{% endif %}
+        <h1 class="title{% if not form_description %} title-only{% endif %}">
+          {{ form_title }}
+        </h1>
+        {% if form_description %}
+        <p class="subtitle">{{ form_description }}</p>
+        {% endif %}
 
         <div class="form-error" id="form-error"></div>
         <div class="form-ok" id="form-ok"></div>
@@ -193,48 +378,180 @@
         <form id="web-form" novalidate>
           {% for section in layout %}
           <div class="section">
-            {% if section.label %}<div class="section-title">{{ section.label }}</div>{% endif %}
-            <div class="cols" style="grid-template-columns: repeat({{ section.columns|length }}, minmax(0, 1fr))">
+            {% if section.label %}
+            <div class="section-title">{{ section.label }}</div>
+            {% endif %}
+            <div
+              class="cols"
+              style="grid-template-columns: repeat({{ section.columns|length }}, minmax(0, 1fr))"
+            >
               {% for col in section.columns %}
               <div class="col">
                 {% for f in col %}
                 <div class="field">
                   {% if f.fieldtype == "Check" %}
                   <div class="check">
-                    <input type="checkbox" id="{{ f.fieldname }}" name="{{ f.fieldname }}" />
-                    <label for="{{ f.fieldname }}">{{ f.label }}{% if f.reqd or f.mandatory_depends_on %}<span class="req"{% if not f.reqd %} style="display: none"{% endif %}>*</span>{% endif %}</label>
+                    <input
+                      type="checkbox"
+                      id="{{ f.fieldname }}"
+                      name="{{ f.fieldname }}"
+                    />
+                    <label for="{{ f.fieldname }}"
+                      >{{ f.label }}{% if f.reqd or f.mandatory_depends_on
+                      %}<span
+                        class="req"
+                        {%
+                        if
+                        not
+                        f.reqd
+                        %}
+                        style="display: none"
+                        {%
+                        endif
+                        %}
+                        >*</span
+                      >{% endif %}</label
+                    >
                   </div>
                   {% else %}
-                  <label for="{{ f.fieldname }}">{{ f.label }}{% if f.reqd or f.mandatory_depends_on %}<span class="req"{% if not f.reqd %} style="display: none"{% endif %}>*</span>{% endif %}</label>
-                  {% if f.fieldtype in ("Small Text", "Text", "Long Text", "Text Editor", "HTML Editor", "Markdown Editor") %}
-                  <textarea id="{{ f.fieldname }}" name="{{ f.fieldname }}" placeholder="{{ f.placeholder }}" {% if f.reqd %}required{% endif %}></textarea>
+                  <label for="{{ f.fieldname }}"
+                    >{{ f.label }}{% if f.reqd or f.mandatory_depends_on %}<span
+                      class="req"
+                      {%
+                      if
+                      not
+                      f.reqd
+                      %}
+                      style="display: none"
+                      {%
+                      endif
+                      %}
+                      >*</span
+                    >{% endif %}</label
+                  >
+                  {% if f.fieldtype in ("Small Text", "Text", "Long Text", "Text
+                  Editor", "HTML Editor", "Markdown Editor") %}
+                  <textarea
+                    id="{{ f.fieldname }}"
+                    name="{{ f.fieldname }}"
+                    placeholder="{{ f.placeholder }}"
+                    {%
+                    if
+                    f.reqd
+                    %}required{%
+                    endif
+                    %}
+                  ></textarea>
                   {% elif f.fieldtype == "Select" %}
-                  <select id="{{ f.fieldname }}" name="{{ f.fieldname }}" {% if f.reqd %}required{% endif %}>
+                  <select
+                    id="{{ f.fieldname }}"
+                    name="{{ f.fieldname }}"
+                    {%
+                    if
+                    f.reqd
+                    %}required{%
+                    endif
+                    %}
+                  >
                     <option value="">Select…</option>
-                    {% for opt in f.options.split("\n") %}{% if opt %}<option value="{{ opt }}">{{ opt }}</option>{% endif %}{% endfor %}
+                    {% for opt in f.options.split("\n") %}{% if opt %}
+                    <option value="{{ opt }}">{{ opt }}</option>
+                    {% endif %}{% endfor %}
                   </select>
                   {% elif f.fieldtype == "Link" %}
-                  <select id="{{ f.fieldname }}" name="{{ f.fieldname }}" {% if f.reqd %}required{% endif %}>
+                  <select
+                    id="{{ f.fieldname }}"
+                    name="{{ f.fieldname }}"
+                    {%
+                    if
+                    f.reqd
+                    %}required{%
+                    endif
+                    %}
+                  >
                     <option value="">{{ f.placeholder or "Select…" }}</option>
-                    {% for opt in link_options.get(f.fieldname, []) %}<option value="{{ opt.value }}">{{ opt.label }}</option>{% endfor %}
+                    {% for opt in link_options.get(f.fieldname, []) %}
+                    <option value="{{ opt.value }}">{{ opt.label }}</option>
+                    {% endfor %}
                   </select>
-                  {% elif f.fieldtype in ("Int", "Float", "Currency", "Percent") %}
-                  <input type="number" id="{{ f.fieldname }}" name="{{ f.fieldname }}" placeholder="{{ f.placeholder }}" {% if f.reqd %}required{% endif %} />
+                  {% elif f.fieldtype in ("Int", "Float", "Currency", "Percent")
+                  %}
+                  <input
+                    type="number"
+                    id="{{ f.fieldname }}"
+                    name="{{ f.fieldname }}"
+                    placeholder="{{ f.placeholder }}"
+                    {%
+                    if
+                    f.reqd
+                    %}required{%
+                    endif
+                    %}
+                  />
                   {% elif f.fieldtype == "Date" %}
-                  <input type="date" id="{{ f.fieldname }}" name="{{ f.fieldname }}" {% if f.reqd %}required{% endif %} />
+                  <input
+                    type="date"
+                    id="{{ f.fieldname }}"
+                    name="{{ f.fieldname }}"
+                    {%
+                    if
+                    f.reqd
+                    %}required{%
+                    endif
+                    %}
+                  />
                   {% elif f.fieldtype == "Datetime" %}
-                  <input type="datetime-local" id="{{ f.fieldname }}" name="{{ f.fieldname }}" {% if f.reqd %}required{% endif %} />
+                  <input
+                    type="datetime-local"
+                    id="{{ f.fieldname }}"
+                    name="{{ f.fieldname }}"
+                    {%
+                    if
+                    f.reqd
+                    %}required{%
+                    endif
+                    %}
+                  />
                   {% elif f.fieldtype == "Time" %}
-                  <input type="time" id="{{ f.fieldname }}" name="{{ f.fieldname }}" {% if f.reqd %}required{% endif %} />
+                  <input
+                    type="time"
+                    id="{{ f.fieldname }}"
+                    name="{{ f.fieldname }}"
+                    {%
+                    if
+                    f.reqd
+                    %}required{%
+                    endif
+                    %}
+                  />
                   {% elif f.fieldtype == "Color" %}
-                  <input type="color" id="{{ f.fieldname }}" name="{{ f.fieldname }}" {% if f.reqd %}required{% endif %} />
+                  <input
+                    type="color"
+                    id="{{ f.fieldname }}"
+                    name="{{ f.fieldname }}"
+                    {%
+                    if
+                    f.reqd
+                    %}required{%
+                    endif
+                    %}
+                  />
                   {% else %}
                   <input
                     type="{% if f.options == 'Email' %}email{% elif f.options == 'Phone' or f.fieldtype == 'Phone' %}tel{% else %}text{% endif %}"
-                    id="{{ f.fieldname }}" name="{{ f.fieldname }}" placeholder="{{ f.placeholder }}" {% if f.reqd %}required{% endif %} />
+                    id="{{ f.fieldname }}"
+                    name="{{ f.fieldname }}"
+                    placeholder="{{ f.placeholder }}"
+                    {%
+                    if
+                    f.reqd
+                    %}required{%
+                    endif
+                    %}
+                  />
+                  {% endif %} {% endif %} {% if f.description %}
+                  <div class="desc">{{ f.description }}</div>
                   {% endif %}
-                  {% endif %}
-                  {% if f.description %}<div class="desc">{{ f.description }}</div>{% endif %}
                 </div>
                 {% endfor %}
               </div>
@@ -244,8 +561,12 @@
           {% endfor %}
 
           <div class="actions">
-            <button type="reset" class="discard" id="discard-btn">{{ _("Discard") }}</button>
-            <button type="submit" class="submit" id="submit-btn">{{ submit_label }}</button>
+            <button type="reset" class="discard" id="discard-btn">
+              {{ _("Discard") }}
+            </button>
+            <button type="submit" class="submit" id="submit-btn">
+              {{ submit_label }}
+            </button>
           </div>
         </form>
       </div>

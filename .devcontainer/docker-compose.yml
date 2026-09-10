@@ -1,6 +1,10 @@
 services:
   mariadb:
-    image: mariadb:10.6
+    # Same digest as deploy/docker-compose.yml, on purpose: `mariadb:10.6` is a
+    # moving tag, and a dev bench silently running a different engine than
+    # production is how a "works on my machine" schema bug gets shipped. Bump
+    # both together -- see "Bumping the database image" in deploy/README.md.
+    image: mariadb:10.6.28@sha256:553351e202c5f01c9e703d7d1d2b037a0aedb43c4fed79b3615d9183655f02c5
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
@@ -81,11 +85,16 @@ services:
       # volumes, so it is unaffected, but anything with a `-v` needs care.
       - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /home/frappe/frappe-bench
+    # Bound to loopback. Docker's published ports are DNAT'd ahead of ufw, so
+    # an unprefixed mapping is reachable from the whole LAN whatever the
+    # firewall says -- and this is a developer_mode site with ignore_csrf on
+    # and admin/admin. VS Code's port forwarding tunnels over the loopback
+    # binding, so nothing about the workflow changes.
     ports:
-      - 8000-8005:8000-8005
-      - 9000-9005:9000-9005
+      - 127.0.0.1:8000-8005:8000-8005
+      - 127.0.0.1:9000-9005:9000-9005
       # vite dev server (frontend/yarn dev)
-      - 8080:8080
+      - 127.0.0.1:8080:8080
     # Expose the host GPU to the container. The NVIDIA Container Toolkit injects
     # the host driver libraries and nvidia-smi at runtime -- do NOT install an
     # NVIDIA driver inside the container, and never inside WSL itself.

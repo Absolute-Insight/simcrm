@@ -43,6 +43,9 @@ index_html_path = "../crm/www/crm.html"
 
 [tool.ruff]
 line-length = 110
+# The bench runs 3.14 and requires-python allows 3.10+, but the floor is what
+# ruff must target: pyupgrade rules rewrite to the oldest supported version's
+# syntax, and rewriting past it would break an install on that floor.
 target-version = "py310"
 exclude = [
     "**/doctype/*/boilerplate/*.py" # boilerplate are template strings, not valid python

@@ -51,12 +51,42 @@ x-app: &app
 
 services:
   db:
-    image: mariadb:10.6
+    # Pinned by DIGEST, not by tag. `mariadb:10.6` is a moving pointer: its
+    # digest changed between 2026-09-08 and 2026-09-10, so the routine
+    # `docker compose up -d` in the upgrade runbook recreated the production
+    # database container with a cold restart in the middle of the day -- for an
+    # operator who was only changing a proxy setting. Worse, the day that tag
+    # moves to 10.6.29 the engine upgrades in place, unrehearsed, with no backup
+    # taken. A digest cannot move.
+    #
+    # The tag is kept beside it so the file still says which version this is;
+    # docker resolves the digest and ignores the tag. Bumping it is a deliberate
+    # act with a backup in front of it -- see "Bumping the database image" in
+    # README.md.
+    image: mariadb:10.6.28@sha256:553351e202c5f01c9e703d7d1d2b037a0aedb43c4fed79b3615d9183655f02c5
     logging: *logging
     restart: unless-stopped
     healthcheck:
-      test: mysqladmin ping -h localhost --password=${DB_ROOT_PASSWORD}
-      interval: 1s
+      # The image's own script, with no password anywhere near it. The old check
+      # was `mysqladmin ping --password=$DB_ROOT_PASSWORD`, which contradicted
+      # this file's own rule about secrets on command lines: it put the
+      # production root password in the host's process table once a second and
+      # in `docker inspect db` forever. It did not even work as a check --
+      # `mysqladmin ping` exits 0 on "access denied", so it went green on a
+      # server that would refuse every real connection. healthcheck.sh
+      # authenticates over the unix socket as the container's own user, and
+      # --innodb_initialized is the part that says recovery finished.
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      # After a crash on a real dataset InnoDB recovery takes minutes, not
+      # seconds. The old `interval: 1s, retries: 20` with no start_period gave
+      # recovery exactly 20 seconds before the container was declared unhealthy,
+      # `up -d` aborted with "dependency failed to start", and every app service
+      # stayed down until someone intervened. This tolerates ~160s (60s of grace
+      # plus 20 × 5s); raise start_period if your database is large enough to
+      # need it.
+      start_period: 60s
+      interval: 5s
+      timeout: 5s
       retries: 20
     command:
       - --character-set-server=utf8mb4
@@ -93,6 +123,11 @@ services:
     image: redis:6.2-alpine
     logging: *logging
     restart: unless-stopped
+    # Append-only, not the default snapshot rules. This instance holds the job
+    # queue and the socketio channel: with RDB alone a crash or an OOM at the
+    # 256m ceiling silently drops up to a minute of enqueued work -- queued
+    # email, automation actions, an ERP sync somebody pressed Sync Now for.
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-queue-data:/data
     healthcheck:
@@ -183,11 +218,74 @@ services:
             --install-app crm
         fi
         bench --site "${SITE_NAME}" enable-scheduler
+        # Frappe deletes backups older than keep_backups_for_hours on every
+        # `bench backup`, and the default is 23 -- so the pre-upgrade backup
+        # step in the runbook silently destroyed yesterday's. A week is the
+        # floor worth having: long enough that a Monday mistake is still
+        # recoverable on Friday.
+        bench --site "${SITE_NAME}" set-config -p keep_backups_for_hours 168
     deploy:
       resources:
         limits:
           memory: 1g
           cpus: "1.5"
+
+  # Nightly backups. Until this existed the only backup on a Vectora host was
+  # the one an operator remembered to take before an upgrade -- and because
+  # frappe prunes on every run, taking that one destroyed the previous. A rep
+  # bulk-deleting deals on Monday was unrecoverable by Tuesday.
+  #
+  # A loop rather than cron: the image has no crond, and a container whose only
+  # job is to sleep and run one command is easier to reason about than a
+  # scheduler inside a scheduler. It shares the sites volume with the backend,
+  # so the dumps land where `bench restore` looks for them.
+  backup:
+    <<: *app
+    restart: unless-stopped
+    depends_on:
+      create-site:
+        condition: service_completed_successfully
+    environment:
+      # Where off-host copies go, e.g. s3:vectora-backups/<host>. Empty means
+      # local only -- which is better than nothing but does not survive losing
+      # the machine, so set it before a customer's data lands.
+      BACKUP_TARGET: ${BACKUP_TARGET:-}
+      BACKUP_HOUR: ${BACKUP_HOUR:-2}
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        set -u
+        while true; do
+          # Sleep until the next BACKUP_HOUR, recomputed each pass so the
+          # schedule survives a restart at any time of day.
+          now=$$(date +%s)
+          next=$$(date -d "today ${BACKUP_HOUR}:00" +%s)
+          [ "$$next" -le "$$now" ] && next=$$(date -d "tomorrow ${BACKUP_HOUR}:00" +%s)
+          sleep $$((next - now))
+
+          echo "[backup] $$(date -Is) starting"
+          if bench --site all backup --with-files; then
+            echo "[backup] $$(date -Is) done"
+            if [ -n "$${BACKUP_TARGET}" ]; then
+              # rclone is the one dependency this needs and the image may not
+              # carry it; say so rather than failing silently every night.
+              if command -v rclone >/dev/null; then
+                rclone copy "sites/${SITE_NAME}/private/backups" "$${BACKUP_TARGET}" \
+                  && echo "[backup] copied to $${BACKUP_TARGET}" \
+                  || echo "[backup] OFF-HOST COPY FAILED to $${BACKUP_TARGET}"
+              else
+                echo "[backup] BACKUP_TARGET is set but rclone is not installed in this image"
+              fi
+            fi
+          else
+            echo "[backup] $$(date -Is) FAILED"
+          fi
+        done
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
 
   backend:
     <<: *app
@@ -211,6 +309,18 @@ services:
 
   websocket:
     <<: *app
+    healthcheck:
+      # The socket server answers the engine.io handshake; if it does not, the
+      # app loses its badges and live list refreshes with no error anywhere.
+      test:
+        [
+          "CMD-SHELL",
+          'curl -fsS "http://localhost:9000/socket.io/?EIO=4&transport=polling" >/dev/null || exit 1',
+        ]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
     deploy:
       resources:
@@ -230,6 +340,10 @@ services:
       - sites:/home/frappe/frappe-bench/sites
       - logs:/home/frappe/frappe-bench/logs
       - ./nginx/security_headers.conf:/etc/nginx/snippets/security_headers.conf:ro
+      # Defines $vectora_csp / $vectora_xfo in the http context, which is the
+      # only place a `map` is allowed -- the snippet above is included inside
+      # the generated server block.
+      - ./nginx/csp_map.conf:/etc/nginx/conf.d/00-vectora-csp.conf:ro
     environment:
       BACKEND: backend:8000
       SOCKETIO: websocket:9000
@@ -274,6 +388,20 @@ services:
 
   queue-short:
     <<: *app
+    healthcheck:
+      # "Up" is not the same as "consuming". A worker that lost its redis
+      # connection sits there looking healthy while the queue backs up -- and
+      # the queues are where the hourly signal run, the digests and every ERP
+      # push actually happen, so the failure is silent by construction.
+      test:
+        [
+          "CMD-SHELL",
+          'rq info --url redis://redis-queue:6379 >/dev/null 2>&1 || exit 1',
+        ]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     command: ["bench", "worker", "--queue", "short,default"]
     deploy:
       resources:
@@ -283,6 +411,20 @@ services:
 
   queue-long:
     <<: *app
+    healthcheck:
+      # "Up" is not the same as "consuming". A worker that lost its redis
+      # connection sits there looking healthy while the queue backs up -- and
+      # the queues are where the hourly signal run, the digests and every ERP
+      # push actually happen, so the failure is silent by construction.
+      test:
+        [
+          "CMD-SHELL",
+          'rq info --url redis://redis-queue:6379 >/dev/null 2>&1 || exit 1',
+        ]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     command: ["bench", "worker", "--queue", "long,default,short"]
     deploy:
       resources:
@@ -292,6 +434,20 @@ services:
 
   scheduler:
     <<: *app
+    healthcheck:
+      # The scheduler going quiet is the failure this stack is least likely to
+      # notice: nothing errors, the container stays up, and the hourly signal
+      # run and the daily digest simply stop. A restore from backup can also
+      # bring enable_scheduler=0 back with it.
+      test:
+        [
+          "CMD-SHELL",
+          'bench --site "${SITE_NAME}" execute frappe.utils.scheduler.is_scheduler_inactive | grep -q False || exit 1',
+        ]
+      interval: 300s
+      timeout: 30s
+      retries: 2
+      start_period: 120s
     command: ["bench", "schedule"]
     deploy:
       resources:
@@ -333,6 +489,15 @@ services:
       # Weights unload between calls without this, and the first call after a
       # quiet period pays the reload before it answers.
       OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+      # The window the model actually gets. ollama's default is 4096, and the
+      # Mentor and Assistant prompts -- grounding articles plus history -- run
+      # past that on a fourth follow-up. ollama truncates from the head, which
+      # is where the system instruction and the grounding live, and still
+      # answers 200: the answer arrives ungrounded, with citation chips
+      # pointing at articles the model never saw. Must agree with
+      # `context_tokens` in CRM Agent Settings, which is what the prompts are
+      # trimmed against.
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-16384}
     volumes:
       - ollama-models:/root/.ollama
     healthcheck:

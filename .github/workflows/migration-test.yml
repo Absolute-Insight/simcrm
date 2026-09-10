@@ -4,6 +4,11 @@ name: Migration
 # to the PR code. Catches broken patches / schema changes before release.
 
 on:
+    # Also on push: this lane was pull_request-only and was named in no
+    # branch protection rule, so a PR whose migration check was red could be
+    # merged and promoted with nothing stopping it.
+    push:
+        branches: [develop, main]
     pull_request:
         paths-ignore:
             - "**.css"
@@ -27,7 +32,10 @@ jobs:
 
         services:
             mysql:
-                image: mariadb:10.6
+                # Digest-pinned to match deploy/docker-compose.yml and the
+                # devcontainer: `mariadb:10.6` moves, and a suite that ran on a
+                # different engine than production proves less than it claims.
+                image: mariadb:10.6.28@sha256:553351e202c5f01c9e703d7d1d2b037a0aedb43c4fed79b3615d9183655f02c5
                 env:
                     MYSQL_ROOT_PASSWORD: root
                 ports:

@@ -39,7 +39,10 @@ jobs:
         ports:
           - 11000:6379
       mariadb:
-        image: mariadb:10.6
+        # Digest-pinned to match deploy/docker-compose.yml and the devcontainer:
+        # `mariadb:10.6` moves, and a suite that ran on a different engine than
+        # production proves less than it claims.
+        image: mariadb:10.6.28@sha256:553351e202c5f01c9e703d7d1d2b037a0aedb43c4fed79b3615d9183655f02c5
         env:
           MYSQL_ROOT_PASSWORD: root
         ports:
@@ -94,7 +97,10 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('package.json') }}
+          # Keyed on the lockfile, not package.json: the range in package.json
+          # does not change when the resolved version does, so the cache used
+          # to serve browsers for a different Playwright than the one installed.
+          key: ${{ runner.os }}-playwright-${{ hashFiles('yarn.lock') }}
           restore-keys: |
             ${{ runner.os }}-playwright-
 
@@ -193,7 +199,12 @@ jobs:
 
       - name: Install Playwright
         run: |
-          npm install --ignore-scripts
+          # --frozen-lockfile against the tracked root yarn.lock. `npm install`
+          # ignored that lockfile entirely, so @playwright/test floated on its
+          # ^1.49 range: a Playwright release that changed selector or
+          # auto-wait semantics turned this required check red on a PR that had
+          # touched nothing.
+          yarn install --frozen-lockfile
           npx playwright install --with-deps chromium
 
       - name: Run Playwright Tests
