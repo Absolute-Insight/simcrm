@@ -404,10 +404,14 @@ services:
       # connection sits there looking healthy while the queue backs up -- and
       # the queues are where the hourly signal run, the digests and every ERP
       # push actually happen, so the failure is silent by construction.
+      # rq lives in the bench virtualenv, not on PATH, and the summary line is
+      # what says whether anything is actually registered -- `rq info` exits 0
+      # against an empty pool too. Reported unhealthy on a working stack until
+      # both of those were right, which is worse than no check at all.
       test:
         [
           "CMD-SHELL",
-          'rq info --url redis://redis-queue:6379 >/dev/null 2>&1 || exit 1',
+          '/home/frappe/frappe-bench/env/bin/rq info --url redis://redis-queue:6379 2>/dev/null | grep -qE "^[1-9][0-9]* workers"',
         ]
       interval: 60s
       timeout: 10s
@@ -427,10 +431,14 @@ services:
       # connection sits there looking healthy while the queue backs up -- and
       # the queues are where the hourly signal run, the digests and every ERP
       # push actually happen, so the failure is silent by construction.
+      # rq lives in the bench virtualenv, not on PATH, and the summary line is
+      # what says whether anything is actually registered -- `rq info` exits 0
+      # against an empty pool too. Reported unhealthy on a working stack until
+      # both of those were right, which is worse than no check at all.
       test:
         [
           "CMD-SHELL",
-          'rq info --url redis://redis-queue:6379 >/dev/null 2>&1 || exit 1',
+          '/home/frappe/frappe-bench/env/bin/rq info --url redis://redis-queue:6379 2>/dev/null | grep -qE "^[1-9][0-9]* workers"',
         ]
       interval: 60s
       timeout: 10s
@@ -450,10 +458,15 @@ services:
       # notice: nothing errors, the container stays up, and the hourly signal
       # run and the daily digest simply stop. A restore from backup can also
       # bring enable_scheduler=0 back with it.
+      # `bench execute` prints a return value only when it is truthy, so the
+      # healthy answer here is *no output*: is_scheduler_inactive returns False
+      # when the scheduler is running, and False prints nothing. Grepping for
+      # "False" therefore failed on a perfectly healthy scheduler. Inverted,
+      # and the exit status is checked separately so a traceback cannot pass.
       test:
         [
           "CMD-SHELL",
-          'bench --site "${SITE_NAME}" execute frappe.utils.scheduler.is_scheduler_inactive | grep -q False || exit 1',
+          'cd /home/frappe/frappe-bench && out=$$(bench --site "${SITE_NAME}" execute frappe.utils.scheduler.is_scheduler_inactive 2>&1) || exit 1; case "$$out" in *True*) exit 1 ;; esac',
         ]
       interval: 300s
       timeout: 30s
