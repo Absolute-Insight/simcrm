@@ -14,12 +14,6 @@ class CRMTerritory(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		is_group: DF.Check
-		lft: DF.Int
-		old_parent: DF.Link | None
-		parent_crm_territory: DF.Link | None
-		rgt: DF.Int
-		territory_manager: DF.Link | None
 		territory_name: DF.Data
 	# end: auto-generated types
 

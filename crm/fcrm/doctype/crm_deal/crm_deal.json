@@ -145,7 +145,8 @@
    "fieldname": "deal_owner",
    "fieldtype": "Link",
    "label": "Deal Owner",
-   "options": "User"
+   "options": "User",
+   "search_index": 1
   },
   {
    "default": "CRM-DEAL-.YYYY.-",
@@ -455,12 +456,14 @@
   {
    "fieldname": "expected_closure_date",
    "fieldtype": "Date",
-   "label": "Expected Closure Date"
+   "label": "Expected Closure Date",
+   "search_index": 1
   },
   {
    "fieldname": "closed_date",
    "fieldtype": "Date",
-   "label": "Closed Date"
+   "label": "Closed Date",
+   "search_index": 1
   },
   {
    "fieldname": "section_break_mwvg",
@@ -536,7 +539,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-08-31 12:00:00.000000",
+ "modified": "2026-09-10 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM Deal",

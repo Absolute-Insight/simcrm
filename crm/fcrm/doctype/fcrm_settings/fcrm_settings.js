@@ -15,7 +15,7 @@ frappe.ui.form.on("FCRM Settings", {
 	},
 	restore_defaults: function (frm) {
 		let message = __(
-			"This will restore (if not exist) all the default statuses, custom fields and layouts. Delete & Restore will delete default layouts and then restore them."
+			"Restore puts back any default that is missing — statuses, industries, sources, quick filters, custom fields, layouts and standard scripts — and changes nothing that already exists. Delete & Restore also replaces the standard Quick Entry, Side Panel and Data Fields layouts and the Manager Dashboard with their shipped versions, so any field you added to one of those layouts is lost. Neither changes the AI endpoint, the access settings, or your records."
 		);
 		let d = new frappe.ui.Dialog({
 			title: __("Restore Defaults"),

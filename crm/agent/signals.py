@@ -1005,12 +1005,41 @@ def purge_old_suggestions(limit: int = 5000) -> int:
 	return len(names)
 
 
+def unlink_from_plans(suggestions) -> None:
+	"""Let go of suggestions a rep planned their week around, before they go.
+
+	``CRM Rep Plan Item.suggestion`` is a plain Link and the suggestion is
+	deleted with ``force``/``db.delete``, so nothing follows it: the item stayed
+	on the rep's planner pointing at a row that no longer exists, with nothing
+	on the page to explain it. The planned activity is the rep's and stays --
+	the same call ``clear_plan_item_references`` makes about the record a plan
+	item was about.
+	"""
+	names = [n for n in (suggestions or []) if n]
+	if not names:
+		return
+	frappe.db.set_value(
+		"CRM Rep Plan Item",
+		{"suggestion": ["in", names]},
+		"suggestion",
+		None,
+		update_modified=False,
+	)
+
+
 def clear_suggestions_for(doctype: str, docname: str) -> None:
 	"""Drop a record's suggestions when the record goes.
 
 	``ignore_links_on_delete`` lets the deal be deleted; without this the rows it
 	leaves behind point at nothing and still show up in an inbox.
 	"""
+	unlink_from_plans(
+		frappe.get_all(
+			"CRM Suggestion",
+			filters={"reference_doctype": doctype, "reference_docname": docname},
+			pluck="name",
+		)
+	)
 	frappe.db.delete("CRM Suggestion", {"reference_doctype": doctype, "reference_docname": docname})
 
 

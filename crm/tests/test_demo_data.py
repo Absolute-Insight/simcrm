@@ -281,6 +281,49 @@ class TestDerivedDemoCleanup(IntegrationTestCase):
 		self.clear()
 		self.assertTrue(frappe.db.exists("CRM Suggestion", name))
 
+	def make_plan(self, user: str, week_start: str, suggestion: str | None = None) -> str:
+		item = {"activity_type": "Call", "planned_date": week_start}
+		if suggestion:
+			item["suggestion"] = suggestion
+		plan = frappe.get_doc(
+			{"doctype": "CRM Rep Plan", "user": user, "week_start": week_start, "items": [item]}
+		).insert(ignore_permissions=True)
+		self.addCleanup(
+			lambda n=plan.name: (
+				frappe.db.exists("CRM Rep Plan", n) and frappe.delete_doc("CRM Rep Plan", n, force=True)
+			)
+		)
+		return plan.name
+
+	def test_a_real_reps_plan_lets_go_of_a_suggestion_that_is_cleared(self):
+		"""The suggestion is about a demo deal, so it goes when the deal does --
+		but the rep's planned activity is theirs and stays. It used to keep the
+		link, leaving the planner pointing at a row that no longer existed with
+		nothing on the page to explain it.
+
+		The same call ``clear_plan_item_references`` makes about the record a
+		plan item was about.
+		"""
+		name = self.make_suggestion(self.REAL_USER, reference=self.demo_deal)
+		plan = self.make_plan(self.REAL_USER, "2026-08-24", suggestion=name)
+
+		self.clear()
+
+		self.assertFalse(frappe.db.exists("CRM Suggestion", name))
+		self.assertTrue(frappe.db.exists("CRM Rep Plan", plan))
+		self.assertIsNone(frappe.db.get_value("CRM Rep Plan Item", {"parent": plan}, "suggestion"))
+
+	def test_a_suggestion_only_a_demo_reps_plan_points_at_still_goes(self):
+		"""The plan holding it is demo data too and is removed by the same pass,
+		so the link is not a reason to keep the suggestion."""
+		name = self.make_suggestion(self.DEMO_USERS[0], reference=self.demo_deal)
+		plan = self.make_plan(self.DEMO_USERS[0], "2026-08-31", suggestion=name)
+
+		self.clear()
+
+		self.assertFalse(frappe.db.exists("CRM Suggestion", name))
+		self.assertFalse(frappe.db.exists("CRM Rep Plan", plan))
+
 	def test_a_demo_rep_plan_and_its_items_are_removed(self):
 		plan = frappe.get_doc(
 			{
@@ -350,9 +393,10 @@ class TestDemoSeedWithForecastingOn(IntegrationTestCase):
 		self.previous = frappe.db.get_single_value("FCRM Settings", "enable_forecasting")
 		frappe.db.set_single_value("FCRM Settings", "enable_forecasting", 1)
 		frappe.clear_cache()
-		# The seed commits as it goes, so the flag has to be committed too --
-		# and restored with a commit, or the framework's rollback would leave
-		# forecasting on for every test that runs after this one.
+		# Committed, not just set, so the flag on disk agrees with the cache
+		# `clear_cache()` has just emptied -- and tearDown restores it the same
+		# way, so an interrupted run cannot leave forecasting on for every test
+		# after this one.
 		frappe.db.commit()
 
 	def tearDown(self):
