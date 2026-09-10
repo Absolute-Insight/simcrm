@@ -263,6 +263,36 @@ def update_in_standard_filter(fieldname, doctype, value):
 		)
 
 
+def kanban_link_columns(target: str) -> list[dict]:
+	"""The rows of a kanban's Link column field, read with the caller's own rights.
+
+	``frappe.get_all`` here ignored permissions altogether, so a rep asking for
+	the deal board grouped by ``lead`` was handed every lead name on the site,
+	and grouping by an owner field handed them the whole User table.
+
+	``get_list`` applies the target's permission query conditions. User is the
+	exception -- frappe gives every desk user ``select`` on it and it carries no
+	conditions -- so that one is narrowed to the CRM's own users, which is the
+	only population an owner field can hold anyway.
+	"""
+	if target == "User":
+		from crm.api.session import crm_user_names
+
+		return frappe.get_all(
+			"User",
+			filters={"name": ["in", list(crm_user_names())]},
+			fields=["name"],
+			order_by="full_name asc",
+		)
+
+	try:
+		return frappe.get_list(target, fields=["name"], order_by="modified asc")
+	except frappe.PermissionError:
+		# Grouped by a doctype the caller may not read at all: no columns, rather
+		# than a 403 that takes the whole list request down with it.
+		return []
+
+
 @frappe.whitelist()
 def get_data(
 	doctype: str,
@@ -395,11 +425,7 @@ def get_data(
 		if not kanban_columns and column_field:
 			field_meta = frappe.get_meta(doctype).get_field(column_field)
 			if field_meta.fieldtype == "Link":
-				kanban_columns = frappe.get_all(
-					field_meta.options,
-					fields=["name"],
-					order_by="modified asc",
-				)
+				kanban_columns = kanban_link_columns(field_meta.options)
 			elif field_meta.fieldtype == "Select":
 				kanban_columns = [{"name": option} for option in field_meta.options.split("\n")]
 
@@ -626,6 +652,16 @@ def remove_assignments(doctype: str, name: str, assignees: str | list):
 
 	if not assignees:
 		return
+
+	# frappe's set_status only asks for read. Cancelling an assignment takes a
+	# rep's visibility of the record away, and cancelling the owner's own
+	# assignment clears the owner field with it (crm.api.todo.clear_owner_on_unassign),
+	# so this is a write to the record and is gated like one.
+	if not frappe.has_permission(doctype, "write", doc=name):
+		frappe.throw(
+			_("Not permitted to change assignments on {0} {1}").format(_(doctype), name),
+			frappe.PermissionError,
+		)
 
 	for assign_to in assignees:
 		set_status(doctype, name, todo=None, assign_to=assign_to, status="Cancelled")
