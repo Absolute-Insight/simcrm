@@ -12,8 +12,10 @@
 
 /* ── tokens ──────────────────────────────────────────────────────────────
  * Sampled from the artwork rather than invented: the panel's vertical falloff
- * is brand.jpeg's own top and bottom edge tone (#d0d7de / #a5adb7), and the
- * inks are the flat lockup's wordmark navy and mark blue.
+ * is the original brand.jpeg's top and bottom edge tone (#d0d7de / #a5adb7);
+ * brand.png replaced it with the same lockup on a lighter ground, which the
+ * feather below blends into this metal. The inks are the flat lockup's
+ * wordmark navy and mark blue.
  */
 body:has(.login-content) {
   --v-metal-top: #d0d7de;
@@ -74,8 +76,8 @@ body:has(.login-content)::after {
 }
 
 /* The mask must be smaller than the artwork in BOTH axes, or whichever axis it
- * overshoots keeps a hard edge. brand.jpeg is 1454x720, so at min(96%, 700px)
- * wide it renders ~347px tall: half-extents of ~45% of the panel's width but
+ * overshoots keeps a hard edge. brand.png is 775x384 (the same 2:1 shape as
+ * the JPEG it replaced), so at min(96%, 700px) wide it renders ~347px tall: half-extents of ~45% of the panel's width but
  * only ~19% of its height. An earlier 30% vertical radius sat outside the
  * image, which is why its top and bottom edges stayed visible however much the
  * sides were feathered.
@@ -84,7 +86,7 @@ body:has(.login-content)::after {
  * reverted: `filter` on a fixed pseudo-element cannot be clipped to the panel,
  * so the blur bled across the form column.) */
 body:has(.login-content)::after {
-  background: url("/assets/crm/images/brand.jpeg") center center /
+  background: url("/assets/crm/images/brand.png") center center /
     min(96%, 700px) auto no-repeat;
   -webkit-mask-image: radial-gradient(
     ellipse 44% 18% at 50% 50%,
@@ -281,7 +283,7 @@ body:has(.login-content) a:focus-visible {
 
   /* No feather here: the banner is full-bleed, so the artwork has no free edge
    * to give itself away. Feathering at this size actively hurt --
-   * brand.jpeg's lockup fills most of its frame, so there is almost no metal
+   * brand.png's lockup fills most of its frame, so there is almost no metal
    * margin to fade into and the mask ate into the wordmark instead. `cover`
    * crops a little top and bottom, which the lockup has room for. */
   body:has(.login-content)::after {
