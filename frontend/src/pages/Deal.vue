@@ -498,15 +498,19 @@ watch(
 
 const organization = computed(() => organizationDocument.value?.doc || {})
 
+/* Passed to `off` by reference: a bare `off('crm_customer_created')` drops
+   every listener on the event, not only this page's. */
+function onCustomerCreated() {
+  toast.success(__('Customer Created Successfully'))
+}
+
 onMounted(async () => {
-  $socket.on('crm_customer_created', () => {
-    toast.success(__('Customer Created Successfully'))
-  })
+  $socket.on('crm_customer_created', onCustomerCreated)
   if (document.doc) await triggerOnRender()
 })
 
 onBeforeUnmount(() => {
-  $socket.off('crm_customer_created')
+  $socket.off('crm_customer_created', onCustomerCreated)
 })
 
 const reload = ref(false)
