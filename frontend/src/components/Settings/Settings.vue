@@ -104,6 +104,7 @@ import SettingsIcon2 from '@/components/Icons/SettingsIcon2.vue'
 import Users from '@/components/Settings/Users.vue'
 import Hierarchy from '@/components/Settings/Hierarchy/Hierarchy.vue'
 import Quotas from '@/components/Settings/Quotas.vue'
+import AccessControl from '@/components/Settings/AccessControl.vue'
 import AutomationRules from '@/components/Settings/AutomationRules.vue'
 import AssistantSettings from '@/components/Settings/AssistantSettings.vue'
 import KnowledgeSettings from '@/components/Settings/KnowledgeSettings.vue'
@@ -128,6 +129,7 @@ import EmailConfig from '@/components/Settings/EmailConfig.vue'
 import Icon from '@/components/Icon.vue'
 import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
 import { usersStore } from '@/stores/users'
+import { accessStore } from '@/stores/access'
 import {
   showSettings,
   activeSettingsPage,
@@ -139,9 +141,11 @@ import { Dialog, Avatar, SidebarItem, Button } from 'frappe-ui'
 import { ref, markRaw, computed, watch, h } from 'vue'
 import AssignmentRulePage from './AssignmentRules/AssignmentRulePage.vue'
 import { PhShieldCheck as ShieldCheck } from '@phosphor-icons/vue'
+import { PhLockKey as LockKey } from '@phosphor-icons/vue'
 import SlaConfig from './Sla/SlaConfig.vue'
 
 const { isManager, isAdmin, getUser } = usersStore()
+const { canSee } = accessStore()
 
 const user = computed(() => getUser() || {})
 
@@ -152,6 +156,7 @@ const tabs = computed(() => {
       items: [
         {
           label: __('Profile'),
+          key: 'settings.profile',
           icon: () =>
             h(Avatar, {
               size: 'xs',
@@ -162,6 +167,7 @@ const tabs = computed(() => {
         },
         {
           label: __('Preferences'),
+          key: 'settings.preferences',
           icon: SlidersIcon,
           component: markRaw(PreferencesSettings),
         },
@@ -172,16 +178,19 @@ const tabs = computed(() => {
       items: [
         {
           label: __('General'),
+          key: 'settings.general',
           component: markRaw(GeneralSettings),
           icon: SettingsIcon,
         },
         {
           label: __('Dashboard'),
+          key: 'settings.dashboard',
           component: markRaw(DashboardSettings),
           icon: LucideLayoutDashboard,
         },
         {
           label: __('Defaults'),
+          key: 'settings.defaults',
           component: markRaw(DefaultsSettings),
           icon: MonitorCogIcon,
           // System Settings is a System Manager doctype; a Sales Manager
@@ -190,11 +199,13 @@ const tabs = computed(() => {
         },
         {
           label: __('Brand'),
+          key: 'settings.brand',
           icon: SparkleIcon,
           component: markRaw(BrandSettings),
         },
         {
           label: __('Calendar'),
+          key: 'settings.calendar',
           icon: CalendarIcon,
           component: markRaw(CalendarSettings),
         },
@@ -206,26 +217,37 @@ const tabs = computed(() => {
       items: [
         {
           label: __('Users'),
+          key: 'settings.users',
           icon: 'lucide-user',
           component: markRaw(Users),
           condition: () => isManager(),
         },
         {
           label: __('Invite User'),
+          key: 'settings.invite_user',
           icon: 'lucide-user-plus',
           component: markRaw(InviteUserPage),
           condition: () => isManager(),
         },
         {
           label: __('Sales Hierarchy'),
+          key: 'settings.sales_hierarchy',
           icon: LucideNetwork,
           component: markRaw(Hierarchy),
           condition: () => isManager(),
         },
         {
           label: __('Sales Targets'),
+          key: 'settings.sales_targets',
           icon: LucideTarget,
           component: markRaw(Quotas),
+          condition: () => isManager(),
+        },
+        {
+          label: __('Access Control'),
+          key: 'settings.access_control',
+          icon: markRaw(h(LockKey)),
+          component: markRaw(AccessControl),
           condition: () => isManager(),
         },
       ],
@@ -236,6 +258,7 @@ const tabs = computed(() => {
       items: [
         {
           label: __('Accounts'),
+          key: 'settings.email_accounts',
           icon: Email2Icon,
           component: markRaw(EmailConfig),
           // The site's outgoing and incoming mail accounts, which Frappe keeps
@@ -246,8 +269,15 @@ const tabs = computed(() => {
         },
         {
           label: __('Templates'),
+          key: 'settings.email_templates',
           icon: EmailTemplateIcon,
           component: markRaw(EmailTemplatePage),
+          // The Email group carries no group condition (Telephony's group
+          // cannot have one — a rep configures their own agent number there),
+          // so an ungated item here falls through to reps. Templates is an
+          // authoring surface; a rep *uses* templates from the composer, not
+          // from Settings.
+          condition: () => isManager(),
         },
       ],
     },
@@ -256,6 +286,7 @@ const tabs = computed(() => {
       items: [
         {
           label: __('Assignment Rules'),
+          key: 'settings.assignment_rules',
           icon: markRaw(h(SettingsIcon2, { class: 'rotate-90' })),
           component: markRaw(AssignmentRulePage),
           // Assignment Rule is a framework doctype readable by System Manager
@@ -266,16 +297,19 @@ const tabs = computed(() => {
         },
         {
           label: __('SLA Policies'),
+          key: 'settings.sla_policies',
           icon: markRaw(h(ShieldCheck)),
           component: markRaw(SlaConfig),
         },
         {
           label: __('Automation Rules'),
+          key: 'settings.automation_rules',
           icon: markRaw(h(LucideWorkflow)),
           component: markRaw(AutomationRules),
         },
         {
           label: __('Assistant'),
+          key: 'settings.assistant',
           icon: markRaw(h(LucideSparkles)),
           component: markRaw(AssistantSettings),
           // CRM Agent Settings grants read and write to System Manager only,
@@ -285,6 +319,7 @@ const tabs = computed(() => {
         },
         {
           label: __('Knowledge'),
+          key: 'settings.knowledge',
           icon: markRaw(h(LucideBookOpenText)),
           component: markRaw(KnowledgeSettings),
           // Writes are System Manager only; reads are open, but a page that
@@ -293,11 +328,13 @@ const tabs = computed(() => {
         },
         {
           label: __('Report Digests'),
+          key: 'settings.report_digests',
           icon: markRaw(h(LucideMailCheck)),
           component: markRaw(ReportDigests),
         },
         {
           label: __('Forms'),
+          key: 'settings.forms',
           component: markRaw(FormsSettings),
           icon: markRaw(LucideTextCursorInput),
         },
@@ -309,6 +346,7 @@ const tabs = computed(() => {
       items: [
         {
           label: __('Home Actions'),
+          key: 'settings.home_actions',
           component: markRaw(HomeActions),
           icon: 'lucide-house',
         },
@@ -320,29 +358,34 @@ const tabs = computed(() => {
       items: [
         {
           label: __('Telephony'),
+          key: 'settings.telephony',
           icon: PhoneIcon,
           component: markRaw(TelephonyPage),
         },
         {
           label: __('WhatsApp'),
+          key: 'settings.whatsapp',
           icon: WhatsAppIcon,
           component: markRaw(WhatsAppSettings),
           condition: () => isWhatsappInstalled.value && isManager(),
         },
         {
           label: __('SIMERP'),
+          key: 'settings.simerp',
           icon: ERPNextIcon,
           component: markRaw(ERPNextSettings),
           condition: () => isManager(),
         },
         {
           label: __('Acumatica'),
+          key: 'settings.acumatica',
           icon: ERPNextIcon,
           component: markRaw(AcumaticaSettings),
           condition: () => isManager(),
         },
         {
           label: __('Lead Syncing'),
+          key: 'settings.lead_syncing',
           icon: 'lucide-refresh-cw',
           component: markRaw(LeadSyncSourcePage),
           condition: () => leadSyncingEnabled.value && isManager(),
@@ -351,19 +394,33 @@ const tabs = computed(() => {
     },
   ]
 
-  return _tabs.filter((tab) => {
-    if (tab.condition && !tab.condition()) return false
-    if (tab.items) {
-      tab.items = tab.items.filter((item) => {
-        if (item.condition && !item.condition()) return false
+  return (
+    _tabs
+      .filter((tab) => {
+        if (tab.condition && !tab.condition()) return false
+        if (tab.items) {
+          tab.items = tab.items.filter((item) => {
+            // canSee only ever narrows: an item still has to pass the role
+            // condition it already carried. See @/utils/surfaces.
+            if (item.key && !canSee(item.key)) return false
+            if (item.condition && !item.condition()) return false
+            return true
+          })
+        }
         return true
       })
-    }
-    return true
-  })
+      // Drop groups left with no items — a heading for an empty category
+      // confuses the navigation and contradicts the intent of per-item gates.
+      .filter((tab) => !tab.items || tab.items.length > 0)
+  )
 })
 
-const activeTab = ref(tabs.value[0].items[0])
+// Optional chaining, not a bare index: with hiding available, a manager can
+// have every item in the first surviving group hidden from them (or, in the
+// limit, every item in every group), leaving `tabs.value` with nothing to
+// point at. `activeTab` then stays undefined, which the template already
+// treats as "no page open" (`v-if="activeTab"`).
+const activeTab = ref(tabs.value[0]?.items?.[0])
 
 function setActiveTab(tabName) {
   activeTab.value =
@@ -372,7 +429,7 @@ function setActiveTab(tabName) {
         .map((tab) => tab.items)
         .flat()
         .find((tab) => tab.label === tabName)) ||
-    tabs.value[0].items[0]
+    tabs.value[0]?.items?.[0]
 }
 
 watch(activeSettingsPage, (activePage) => setActiveTab(activePage))

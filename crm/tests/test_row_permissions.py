@@ -115,6 +115,17 @@ class RowPermissionTest(IntegrationTestCase):
 		frappe.set_user("Administrator")
 		self.assertTrue(frappe.has_permission("CRM Rep Plan", doc=self.bobs_plan.name, ptype="read"))
 
+		# A manager reading another rep's plan is the "All records" boundary. A fresh install (CI) sets
+		# the out-of-tree manager to "Own records only" (crm.install), so the test
+		# has to say which boundary it is asserting rather than inherit the site's.
+		saved_scope = frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy")
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		self.addCleanup(
+			frappe.db.set_single_value,
+			"CRM Access Settings",
+			"manager_outside_hierarchy",
+			saved_scope or "All records",
+		)
 		manager = "rowperm-manager@crmtest.test"
 		if not frappe.db.exists("User", manager):
 			user = frappe.get_doc(
@@ -322,8 +333,10 @@ class ProductMasterDataPermissionTest(IntegrationTestCase):
 			{"doctype": "CRM Product", "product_code": "ROWPERM-VALVE", "standard_rate": 12500}
 		).insert(ignore_permissions=True, ignore_if_duplicate=True)
 		self.addCleanup(
-			lambda: frappe.db.exists("CRM Product", self.product.name)
-			and frappe.delete_doc("CRM Product", self.product.name, force=True, ignore_permissions=True)
+			lambda: (
+				frappe.db.exists("CRM Product", self.product.name)
+				and frappe.delete_doc("CRM Product", self.product.name, force=True, ignore_permissions=True)
+			)
 		)
 
 	def test_the_doctype_gives_a_sales_user_read_only(self):

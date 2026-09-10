@@ -26,8 +26,14 @@ def _permission_query_conditions(user: str | None, doctype: str):
 
 	in_tree = hierarchy_enabled() and _in_hierarchy(user)
 
-	# Sales Manager outside the tree retains the default ie sees everything
-	if "Sales Manager" in roles and not in_tree:
+	from crm.api.access import manager_outside_hierarchy_sees_all
+
+	# A Sales Manager outside the tree sees everything -- unless an administrator
+	# has said otherwise. The historical answer is the fallback (see
+	# manager_outside_hierarchy_sees_all), so an existing site is unchanged; a
+	# new install is set to "Own records only", without which defaulting the
+	# hierarchy on does nothing on a site whose tree nobody has built yet.
+	if "Sales Manager" in roles and not in_tree and manager_outside_hierarchy_sees_all():
 		return ""
 
 	owner_field = _OWNER_FIELD[doctype]
@@ -84,7 +90,10 @@ def _has_permission(doc, ptype, user, doctype: str) -> bool | None:
 		return True
 
 	in_tree = hierarchy_enabled() and _in_hierarchy(user)
-	if "Sales Manager" in roles and not in_tree:
+
+	from crm.api.access import manager_outside_hierarchy_sees_all
+
+	if "Sales Manager" in roles and not in_tree and manager_outside_hierarchy_sees_all():
 		return True
 
 	conditions = _permission_query_conditions(user, doctype)

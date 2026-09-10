@@ -60,6 +60,29 @@ class FCRMSettings(Document):
 		self.do_not_allow_to_delete_if_standard()
 		self.setup_forecasting()
 		self.make_currency_read_only()
+		self.guard_sales_hierarchy_toggle()
+
+	def guard_sales_hierarchy_toggle(self):
+		"""``enable_sales_hierarchy`` decides what every manager can read (see
+		``crm.permissions.org_hierarchy``), so it needs the same protection
+		``crm.api.access.set_data_access`` gives it -- but that endpoint's
+		``frappe.only_for("System Manager", True)`` only covers its own
+		transport. This doctype's permissions grant Sales Manager create, read,
+		write and delete (see fcrm_settings.json), so ``frappe.client.set_value``
+		-- the generic document API, and the very transport Hierarchy.vue's own
+		Enable/Disable buttons use -- is a second, wide-open door onto the same
+		field. Guard it here instead, where every save reaches regardless of
+		which door it came through.
+		"""
+		if not self.has_value_changed("enable_sales_hierarchy"):
+			return
+		user = frappe.session.user
+		if user == "Administrator" or "System Manager" in frappe.get_roles(user):
+			return
+		frappe.throw(
+			_("Only an administrator can change the sales hierarchy restriction."),
+			frappe.PermissionError,
+		)
 
 	def do_not_allow_to_delete_if_standard(self):
 		if not self.has_value_changed("dropdown_items"):

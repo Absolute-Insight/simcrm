@@ -3,6 +3,7 @@ import { call } from 'frappe-ui'
 import { usersStore } from '@/stores/users'
 import { sessionStore } from '@/stores/session'
 import { viewsStore } from '@/stores/views'
+import { accessStore } from '@/stores/access'
 import { reloadOnceForStaleChunk } from '@/utils/staleChunk'
 
 let personaChecked = false
@@ -182,12 +183,31 @@ router.beforeEach(async (to, from, next) => {
 
   const { isLoggedIn, user } = sessionStore()
   const { users, isCrmUser, isAdmin } = usersStore()
+  const { attempted: accessAttempted, reload: reloadAccess } = accessStore()
 
   if (isLoggedIn && !users.fetched) {
     try {
       await users.promise
     } catch (error) {
       console.error('Error loading users', error)
+    }
+  }
+
+  // Awaited here rather than in the sidebar so the shell paints once with the
+  // right set instead of showing a link and then retracting it. Gated on
+  // isCrmUser(), not just isLoggedIn: get_visibility refuses anyone with no
+  // CRM role, and such a user is sent to Not Permitted below regardless, so
+  // fetching for them would only guarantee a 403 on every navigation. Gated
+  // on `attempted`, not the resource's own `fetched`: a failed fetch never
+  // flips `fetched` (see stores/access.js), so checking that here would retry
+  // -- and re-throw past this catch -- on every navigation. A failure is
+  // swallowed on purpose: the store leaves nothing hidden, which is the right
+  // fail-open for chrome.
+  if (isLoggedIn && isCrmUser() && !accessAttempted) {
+    try {
+      await reloadAccess()
+    } catch (error) {
+      console.error('Error loading access settings', error)
     }
   }
 

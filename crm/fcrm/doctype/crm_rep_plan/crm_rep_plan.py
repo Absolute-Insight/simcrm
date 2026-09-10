@@ -29,7 +29,14 @@ def visible_users(user=None) -> list[str] | None:
 	if hierarchy_enabled() and _in_hierarchy(user):
 		return [user, *(_team_mem_query(user).run(pluck=True) or [])]
 
-	if "Sales Manager" in roles:
+	from crm.api.access import manager_outside_hierarchy_sees_all
+
+	# A Sales Manager outside the tree sees everything -- unless an administrator
+	# has said otherwise. The historical answer is the fallback (see
+	# manager_outside_hierarchy_sees_all), so an existing site is unchanged; a
+	# new install is set to "Own records only", without which defaulting the
+	# hierarchy on does nothing on a site whose tree nobody has built yet.
+	if "Sales Manager" in roles and manager_outside_hierarchy_sees_all():
 		return None
 
 	return [user]

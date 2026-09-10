@@ -149,6 +149,17 @@ class TestOrgHierarchy(IntegrationTestCase):
 	# ------------------------------------------------------------------
 
 	def test_hierarchy_disabled_sales_user_still_restricted_to_own(self):
+		# "Sees everything" is the "All records" boundary. A fresh install (CI) sets
+		# the out-of-tree manager to "Own records only" (crm.install), so the test
+		# has to say which boundary it is asserting rather than inherit the site's.
+		saved_scope = frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy")
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		self.addCleanup(
+			frappe.db.set_single_value,
+			"CRM Access Settings",
+			"manager_outside_hierarchy",
+			saved_scope or "All records",
+		)
 		settings = frappe.get_single("FCRM Settings")
 		settings.enable_sales_hierarchy = 0
 		settings.save(ignore_permissions=True)
@@ -156,20 +167,31 @@ class TestOrgHierarchy(IntegrationTestCase):
 			lead = make_lead("rep1@hier.test")
 			# Sales User default: cannot read another user's lead even when feature is off
 			self.assertFalse(has_lead_permission(lead, "read", "outsider@hier.test"))
-			# Sales Manager default: sees everything when feature is off
+			# Sales Manager at the "All records" boundary: sees everything when feature is off
 			self.assertTrue(has_lead_permission(lead, "read", "manager@hier.test"))
 		finally:
 			settings.enable_sales_hierarchy = 1
 			settings.save(ignore_permissions=True)
 
 	def test_query_conditions_when_hierarchy_disabled(self):
+		# "Sees everything" is the "All records" boundary. A fresh install (CI) sets
+		# the out-of-tree manager to "Own records only" (crm.install), so the test
+		# has to say which boundary it is asserting rather than inherit the site's.
+		saved_scope = frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy")
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		self.addCleanup(
+			frappe.db.set_single_value,
+			"CRM Access Settings",
+			"manager_outside_hierarchy",
+			saved_scope or "All records",
+		)
 		settings = frappe.get_single("FCRM Settings")
 		settings.enable_sales_hierarchy = 0
 		settings.save(ignore_permissions=True)
 		try:
 			# Sales User still gets a filter (own + assigned)
 			self.assertTrue(get_lead_permission_query_conditions("rep1@hier.test"))
-			# Sales Manager has no filter (sees everything)
+			# Sales Manager at the "All records" boundary has no filter (sees everything)
 			self.assertFalse(get_lead_permission_query_conditions("manager@hier.test"))
 		finally:
 			settings.enable_sales_hierarchy = 1
@@ -230,3 +252,78 @@ def assign_todo(doctype, docname, allocated_to, status="Open"):
 			"description": f"Test assignment to {allocated_to}",
 		}
 	).insert(ignore_permissions=True)
+
+
+class ManagerOutsideHierarchyTest(IntegrationTestCase):
+	"""The out-of-tree manager used to be hardcoded to "sees everything".
+
+	That is a fair escape hatch for a manager who runs the whole book, and it is
+	also what every manager got on a site whose tree nobody had built -- so
+	defaulting the hierarchy on, alone, just moved the problem. It is now a
+	setting, and this is the test that it is actually read.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		email = "outside-manager@crmtest.test"
+		if not frappe.db.exists("User", email):
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": email,
+					"first_name": "Outside Manager",
+					"send_welcome_email": 0,
+				}
+			).insert(ignore_permissions=True).add_roles("Sales Manager")
+		self.manager = email
+
+		self.saved_hierarchy = frappe.db.get_single_value("FCRM Settings", "enable_sales_hierarchy")
+		self.saved_scope = frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy")
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+		self.addCleanup(self._restore)
+
+	def _restore(self):
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", self.saved_hierarchy or 0)
+		frappe.db.set_single_value(
+			"CRM Access Settings", "manager_outside_hierarchy", self.saved_scope or "All records"
+		)
+
+	def test_all_records_leaves_an_out_of_tree_manager_unrestricted(self):
+		from crm.permissions.org_hierarchy import get_deal_permission_query_conditions
+
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		self.assertEqual(get_deal_permission_query_conditions(self.manager), "")
+
+	def test_own_records_only_scopes_an_out_of_tree_manager(self):
+		from crm.permissions.org_hierarchy import get_deal_permission_query_conditions
+
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		condition = get_deal_permission_query_conditions(self.manager)
+		self.assertNotEqual(condition, "")
+		self.assertIn(self.manager, condition)
+
+	def test_the_setting_also_governs_direct_deal_access(self):
+		"""get_deal_permission_query_conditions governs list and report views; a
+		deal opened directly by name goes through has_deal_permission instead.
+		Both anchors read the same setting, so they must scope the same way -- a
+		manager who cannot list a deal but can still open it by name/URL is a
+		worse failure than an inconsistent list."""
+		make_user("someone-else@crmtest.test")
+		deal = make_deal("someone-else@crmtest.test")
+
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		self.assertTrue(has_deal_permission(deal, "read", self.manager))
+
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		self.assertFalse(has_deal_permission(deal, "read", self.manager))
+
+	def test_an_unsaved_setting_reads_as_all_records(self):
+		"""get_single_value casts a Single that was never saved to the fieldtype's
+		zero value -- "" for this Select field, not None -- which is falsy, so an
+		existing site upgrading into this feature must not change behaviour."""
+		from crm.api.access import manager_outside_hierarchy_sees_all
+
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", None)
+		self.assertTrue(manager_outside_hierarchy_sees_all())

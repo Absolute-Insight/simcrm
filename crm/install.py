@@ -8,6 +8,7 @@ from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 from crm.agent.install import apply_endpoint_defaults, ensure_agent_role
 from crm.domain_enrichment.install import seed_default_rules_and_mappings
+from crm.fcrm.doctype.crm_access_settings.crm_access_settings import MANAGER_SCOPES
 from crm.fcrm.doctype.crm_dashboard.crm_dashboard import create_default_manager_dashboard
 from crm.fcrm.doctype.crm_products.crm_products import create_product_details_script
 from crm.integrations.acumatica.install import ensure_custom_fields as ensure_acumatica_fields
@@ -43,6 +44,7 @@ def after_install(force=False):
 	ensure_visit_event_category()
 	ensure_app_logo()
 	ensure_acumatica_fields()
+	ensure_access_defaults()
 	# install/migrate runs outside a request, so nothing else will commit the
 	# fixtures created above.
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
@@ -138,6 +140,28 @@ def ensure_visit_event_category():
 		return
 	make_property_setter("Event", "event_category", "options", f"{options}\n{VISIT_EVENT_CATEGORY}", "Text")
 	frappe.clear_cache(doctype="Event")
+
+
+def ensure_access_defaults():
+	"""A fresh site scopes managers to their own team until a tree exists.
+
+	First install only. ``FCRMSettings.restore_defaults`` also calls
+	``after_install``, and "restore defaults" must not silently change who can
+	see which records on a site someone is already running -- managers would
+	just stop seeing most of the pipeline, with no error and no explanation.
+
+	``frappe.flags.in_install`` is the discriminator rather than the presence of
+	a ``Singles`` row: ``add_standard_dropdown_items`` saves ``FCRM Settings``
+	earlier in ``after_install``, and ``update_single`` rewrites a row for every
+	field of a Single, so by the time this runs the row always exists and says
+	nothing about intent.
+	"""
+	if not frappe.flags.in_install:
+		return
+
+	frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+	# MANAGER_SCOPES[1] is "Own records only", the narrower of the two.
+	frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", MANAGER_SCOPES[1])
 
 
 def add_default_lead_statuses():
