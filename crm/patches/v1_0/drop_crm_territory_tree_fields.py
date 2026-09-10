@@ -53,10 +53,17 @@ def execute():
 
 def _holds_data(column: str) -> bool:
 	"""Raw SQL on purpose: the column is no longer in the meta, so the query
-	builder will not accept it. The name comes from ``DEAD_COLUMNS``, never from
-	a caller. '' and 0 both read as empty -- the int columns default to 0."""
+	builder will not accept it. '' and 0 both read as empty -- the int columns
+	default to 0."""
+	# A column name cannot be a bound parameter, so it has to be interpolated.
+	# Refusing anything outside DEAD_COLUMNS makes that safe by construction
+	# instead of by the caller's good behaviour, which is what lets the
+	# interpolation below stand.
+	if column not in DEAD_COLUMNS:
+		raise ValueError(f"refusing to query an unknown column: {column!r}")
+
 	return bool(
-		frappe.db.sql(
+		frappe.db.sql(  # nosemgrep: frappe-sql-format-injection
 			f"select 1 from `tabCRM Territory` where ifnull(`{column}`, '') not in ('', '0') limit 1"
 		)
 	)
