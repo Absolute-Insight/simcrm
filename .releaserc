@@ -16,7 +16,8 @@
 		[
 			"@semantic-release/exec",
 			{
-				"prepareCmd": "sed -i \"s/[0-9]*\\.[0-9]*\\.[0-9]*/${nextRelease.version}/\" crm/__init__.py"
+				"prepareCmd": "sed -i \"s/[0-9]*\\.[0-9]*\\.[0-9]*/${nextRelease.version}/\" crm/__init__.py",
+				"successCmd": "gh workflow run builds.yml --ref v${nextRelease.version}"
 			}
 		],
 		[

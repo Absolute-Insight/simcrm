@@ -56,6 +56,7 @@ jobs:
             Playwright E2E Tests
             Server Tests
             Unit Tests & Coverage
+            Migration
         run: |
           set -euo pipefail
 
@@ -346,3 +347,57 @@ jobs:
             exit 1
           fi
           echo "$ref contains the crm app."
+
+      # And then boot it. "Contains the app" is a weaker claim than it sounds:
+      # the historical failure was an image with no app, but an image whose
+      # create-site step fails -- a bad patch, a missing dependency, a site
+      # config the entrypoint cannot write -- is equally unpublishable and
+      # equally invisible until a customer runs it. Nothing in CI had ever
+      # started the artifact that gets pushed.
+      - name: Boot the image and serve a page
+        env:
+          VECTORA_IMAGE: ghcr.io/${{ env.IMAGE_REPO }}
+          VECTORA_TAG: ${{ env.IMAGE_SHA_TAG }}
+          SITE_NAME: smoke.localhost
+          DB_ROOT_PASSWORD: smoke-root-pw
+          ADMIN_PASSWORD: smoke-admin-pw
+          HTTP_BIND_ADDRESS: 127.0.0.1
+          HTTP_PUBLISH_PORT: "8099"
+          VECTORA_AGENT_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          cd deploy
+          docker compose up -d create-site
+          # create-site is one-shot; wait for it rather than for a health state.
+          for i in $(seq 1 60); do
+            state=$(docker compose ps -a --format json create-site | head -1 \
+              | python3 -c 'import sys,json;d=json.loads(sys.stdin.read() or "{}");print(d.get("State",""))')
+            [ "$state" = "exited" ] && break
+            sleep 10
+          done
+          code=$(docker compose ps -a --format json create-site | head -1 \
+            | python3 -c 'import sys,json;d=json.loads(sys.stdin.read() or "{}");print(d.get("ExitCode",1))')
+          if [ "$code" != "0" ]; then
+            echo "::error::create-site failed on the built image"
+            docker compose logs create-site | tail -60
+            exit 1
+          fi
+
+          docker compose up -d frontend backend websocket
+          for i in $(seq 1 30); do
+            if curl -fsS -H "Host: $SITE_NAME" "http://127.0.0.1:8099/api/method/ping" >/dev/null; then
+              break
+            fi
+            sleep 5
+          done
+          curl -fsS -H "Host: $SITE_NAME" "http://127.0.0.1:8099/api/method/ping" | tee /dev/stderr | grep -q pong
+
+          # The app shell itself, not just the API: a guest hitting /crm is
+          # redirected to the login page, which is a 200 once followed.
+          status=$(curl -sS -o /dev/null -L -w '%{http_code}' -H "Host: $SITE_NAME" "http://127.0.0.1:8099/crm")
+          echo "GET /crm -> $status"
+          [ "$status" = "200" ]
+
+      - name: Smoke teardown
+        if: always()
+        run: cd deploy && docker compose down -v --remove-orphans || true

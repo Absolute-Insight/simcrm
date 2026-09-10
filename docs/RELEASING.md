@@ -1,16 +1,18 @@
 # Releasing Vectora
 
-Cutting a release is mostly automatic and has exactly one manual step that looks
-automatic. That step is why v3.2.0 shipped as a GitHub release with no container image
-behind it. Read [The tag does not build itself](#the-tag-does-not-build-itself) before
-your first release.
+Cutting a release is automatic, including the image build. That last part was
+manual until 2026-09-10 and is the reason v3.2.0 shipped as a GitHub release
+with no container image behind it. Read
+[The tag does not build itself](#the-tag-does-not-build-itself) anyway: the
+gap it describes is real, the automation just steps over it now, and you still
+have to check the image arrived.
 
 ## The path
 
 ```
 feature branch ──PR──▶ develop ──push──▶ main ──▶ semantic-release ──▶ tag + GitHub release
                                                                             │
-                                                        you dispatch builds.yml on the tag
+                                          semantic-release dispatches builds.yml
                                                                             │
                                                                     image in ghcr
                                                                             │
@@ -50,11 +52,13 @@ pushing to it *is* cutting a release. Nothing else triggers one.
    git log --format=%s origin/main..origin/develop | grep -oE '^[a-z]+(\([a-z-]+\))?!?:' | sort | uniq -c
    ```
 
-4. **Dispatch the image build on the new tag.** See below — this is the step that is not
-   automatic.
+4. **The image build starts itself.** semantic-release dispatches `builds.yml` on
+   the tag it has just created (`successCmd` in `.releaserc`). Watch it, and if it
+   did not start — the dispatch is one `gh` call and can fail — run it by hand:
 
    ```bash
-   gh workflow run builds.yml --ref vX.Y.Z
+   gh run list --workflow builds.yml --limit 3
+   gh workflow run builds.yml --ref vX.Y.Z   # only if the automatic one did not fire
    ```
 
 5. **Verify the image is actually in the registry.** A green build is not proof; ask the
@@ -95,6 +99,12 @@ happens.
 
 This is why v3.1.4, v3.1.5 and v3.2.1 each have a `workflow_dispatch` run of `builds.yml`
 in their history. Those are not retries of a failure; they are the release.
+
+**What closes it.** GitHub suppresses `push` and `create` events from
+`GITHUB_TOKEN`, but not `workflow_dispatch`. So semantic-release now asks for
+the build itself, from `successCmd` in `.releaserc`, with `actions: write` on
+the release job. The step above is the same command; it is just no longer
+yours to remember. Verifying the image arrived still is.
 
 **A release is not finished when the GitHub release appears. It is finished when the image
 is in ghcr.**

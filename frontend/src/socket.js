@@ -2,12 +2,24 @@ import { io } from 'socket.io-client'
 import { getCachedListResource, getCachedResource } from 'frappe-ui'
 
 export function initSocket() {
-  let socketio_port = window.socketio_port || 9000
-  let host = window.location.hostname
   let siteName = window.site_name
-  let port = window.location.port ? `:${socketio_port}` : ''
-  let protocol = port ? 'http' : 'https'
-  let url = `${protocol}://${host}${port}/${siteName}`
+
+  // In production the socket goes back to the origin the page came from, and
+  // nginx proxies /socket.io to the websocket service. The old code switched to
+  // `http://<host>:<socketio_port>` whenever the URL carried a port -- but the
+  // stack publishes no 9000, so a customer proxying the app on, say, :8443 got
+  // a cross-origin call to a closed port, blocked as mixed content: no
+  // suggestion badge, no notification popups, no live list refreshes, and
+  // nothing in the UI to say so. It also meant the localhost:8090 rehearsal in
+  // the runbook could never prove realtime worked.
+  //
+  // Only the vite dev server needs the direct port, because nothing proxies for
+  // it there.
+  let url = `${window.location.origin}/${siteName}`
+  if (import.meta.env.DEV) {
+    let socketio_port = window.socketio_port || 9000
+    url = `http://${window.location.hostname}:${socketio_port}/${siteName}`
+  }
 
   // socket.io's default is to keep retrying with backoff. The previous cap of
   // five attempts (~20 s) meant a laptop that slept through a coffee break came
