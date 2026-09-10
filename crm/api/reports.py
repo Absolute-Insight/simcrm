@@ -56,7 +56,11 @@ def _rep_display(rows: list[dict]) -> list[dict]:
 	anything programmatic still gets the email.
 	"""
 	for row in rows:
-		row["rep"] = frappe.utils.get_fullname(row.get("user")) or row.get("user")
+		user = row.get("user")
+		# ``get_fullname`` answers with the *session* user's name when handed
+		# nothing, so a row nobody owns read as the viewer's own -- an
+		# administrator saw their name against a team's unassigned cancellations
+		row["rep"] = (frappe.utils.get_fullname(user) or user) if user else _("Unassigned")
 	return rows
 
 
@@ -176,7 +180,9 @@ def _quota_attainment_by_rep(from_date, to_date, user, territory=None):
 				"quota": round(quota, 2),
 				"actual": round(actual, 2),
 				"gap": round(actual - quota, 2),
-				"attainment": round(actual / quota * 100) if quota else 0,
+				# no target is not 0% of one: a rep who closed business before a
+				# target was set has nothing to attain, and 0 ranked them worst
+				"attainment": round(actual / quota * 100) if quota else None,
 			}
 		)
 	return _rep_display(rows)

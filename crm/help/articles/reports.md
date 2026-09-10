@@ -37,5 +37,5 @@ the number on a tile are the same number for the same period.
 
 **Settings → Report Digests** emails a report on a schedule. Each recipient
 gets the report scoped to *their own* visibility — a rep receives their rows,
-a manager the team's. Recipients must be active users with a CRM role. See
-**Scheduled digests**.
+a manager the team's. Recipients must be active users with a sales role — the
+same people the Reports page admits. See **Scheduled digests**.

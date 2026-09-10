@@ -952,8 +952,14 @@ const PANEL_CATALOGUE = computed(() => {
       emptyTitle: __('No targets set'),
       emptyDescription: __('Set monthly targets in Settings → Sales Targets.'),
       rows: computed(() => teamQuota.data?.rows || []),
-      cell: (row) => `${row.attainment}%`,
-      tone: (row) => (row.attainment < 80 ? 'text-ink-orange-9' : ''),
+      // No target is not 0% of one: the report sends null for a rep with
+      // nothing set, and 0% in orange ranked them as the worst performer.
+      cell: (row) =>
+        row.attainment == null ? __('No target') : `${row.attainment}%`,
+      tone: (row) =>
+        row.attainment != null && row.attainment < 80
+          ? 'text-ink-orange-9'
+          : '',
     },
   )
   return panels

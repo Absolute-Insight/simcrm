@@ -21,6 +21,7 @@ from crm.fcrm.doctype.crm_report_digest import crm_report_digest
 from crm.fcrm.doctype.crm_report_digest.crm_report_digest import (
 	TD_STYLE,
 	_render_digest,
+	can_read_reports,
 	send_due_digests,
 )
 
@@ -35,6 +36,13 @@ def ensure_user(email: str, first_name: str, role: str) -> None:
 			{"doctype": "User", "email": email, "first_name": first_name, "send_welcome_email": 0}
 		).insert(ignore_permissions=True)
 		user.add_roles(role)
+
+
+def crm_report_digest_get_report():
+	"""The unpatched ``get_report``, captured before a test patches the name."""
+	from crm.api.reports import get_report
+
+	return get_report
 
 
 class ReportDigestTest(IntegrationTestCase):
@@ -259,6 +267,103 @@ class ReportDigestTest(IntegrationTestCase):
 			).insert(ignore_permissions=True)
 		with self.assertRaises(frappe.ValidationError):
 			self.make_digest(recipients=outsider)
+
+	def test_an_admin_only_account_is_refused_at_save_with_the_reason(self):
+		"""System Manager alone passed validation and then raised inside the
+		send loop: ``get_report`` admits Administrator and the two sales roles,
+		not System Manager. Refuse it where the admin can read the message."""
+		admin_only = "digest-admin-only@crmtest.test"
+		ensure_user(admin_only, "Digest Admin Only", "System Manager")
+		with self.assertRaisesRegex(frappe.ValidationError, "no sales role"):
+			self.make_digest(recipients=admin_only)
+
+	def test_the_save_rule_is_the_report_gate(self):
+		"""``can_read_reports(user)`` must answer exactly as ``sales_user_only``
+		would for a request made as that user -- the predicate is reproduced
+		rather than imported, so hold the two together here."""
+		from crm.utils import is_sales_user
+
+		admin_only = "digest-admin-only@crmtest.test"
+		outsider = "digest-outsider@crmtest.test"
+		ensure_user(admin_only, "Digest Admin Only", "System Manager")
+		if not frappe.db.exists("User", outsider):
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": outsider,
+					"first_name": "Digest Outsider",
+					"send_welcome_email": 0,
+				}
+			).insert(ignore_permissions=True)
+		self.addCleanup(frappe.set_user, "Administrator")
+		for user in ("Administrator", RECIPIENT, REP, admin_only, outsider):
+			with self.subTest(user=user):
+				frappe.set_user(user)
+				gate = is_sales_user()
+				frappe.set_user("Administrator")
+				self.assertEqual(can_read_reports(user), gate)
+		self.assertTrue(can_read_reports(RECIPIENT))
+		self.assertFalse(can_read_reports(admin_only))
+
+	def test_a_recipient_demoted_to_admin_only_is_skipped_and_the_rest_still_get_mail(self):
+		"""The scenario from the audit: recipients admin, rep. The admin-only
+		account raised under ``set_user`` and the rep after it never got mail."""
+		self.make_digest(recipients=f"{RECIPIENT}, {REP}")
+		user = frappe.get_doc("User", RECIPIENT)
+		user.remove_roles("Sales Manager")
+		user.add_roles("System Manager")
+		self.addCleanup(lambda: frappe.get_doc("User", RECIPIENT).remove_roles("System Manager"))
+		self.addCleanup(lambda: frappe.get_doc("User", RECIPIENT).add_roles("Sales Manager"))
+
+		with patch.object(
+			crm_report_digest.frappe, "sendmail", wraps=crm_report_digest.frappe.sendmail
+		) as mail:
+			self.assertEqual(send_due_digests(), 1)
+		self.assertEqual([call.kwargs["recipients"] for call in mail.call_args_list], [[REP]])
+
+	def test_one_recipient_whose_report_raises_does_not_cost_the_others_their_mail(self):
+		"""_still_entitled screens the failures it can predict. A render can
+		still throw for a reason nobody screened for -- a deleted hierarchy
+		node, a report that raises under one person's scope -- and the loop
+		used to sit inside the per-digest try, so everybody after them lost
+		their mail while everybody before had already been sent theirs."""
+		self.make_digest(recipients=f"{RECIPIENT}, {REP}")
+
+		real_get_report = crm_report_digest_get_report()
+
+		def explode_for_the_first(report, from_date, to_date):
+			if frappe.session.user == RECIPIENT:
+				raise ValueError("no rows for this one")
+			return real_get_report(report, from_date, to_date)
+
+		with (
+			patch("crm.api.reports.get_report", side_effect=explode_for_the_first),
+			patch.object(
+				crm_report_digest.frappe, "sendmail", wraps=crm_report_digest.frappe.sendmail
+			) as mail,
+		):
+			self.assertEqual(send_due_digests(), 1)
+
+		self.assertEqual([call.kwargs["recipients"] for call in mail.call_args_list], [[REP]])
+
+	def test_yesterdays_plan_items_are_settled_before_adherence_is_rendered(self):
+		"""Both jobs are in the daily bucket and neither waits for the other, so
+		the digest could report a rep who hit every commitment at 0%."""
+		self.make_digest()
+		with patch("crm.rep_planning.match_actuals") as matcher:
+			send_due_digests()
+		matcher.assert_called_once()
+
+	def test_a_matcher_that_fails_does_not_stop_the_mail(self):
+		self.make_digest()
+		with (
+			patch("crm.rep_planning.match_actuals", side_effect=ValueError("boom")),
+			patch.object(
+				crm_report_digest.frappe, "sendmail", wraps=crm_report_digest.frappe.sendmail
+			) as mail,
+		):
+			self.assertEqual(send_due_digests(), 1)
+		self.assertTrue(mail.call_args_list)
 
 	def test_a_stage_name_reaches_the_email_escaped(self):
 		"""Frappe forbids angle brackets in a document name, so the worst a stage

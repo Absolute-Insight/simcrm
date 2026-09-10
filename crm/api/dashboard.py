@@ -1820,6 +1820,10 @@ def activity_cancellations(
 		frappe.qb.from_(Task)
 		.where(Task.status == "Canceled")
 		.where((Task.modified >= from_date) & (Task.modified < end))
+		# a cancellation is a rep's only when a rep was named on the task; an
+		# unassigned one grouped under NULL, which the report then labelled
+		# with the viewer's own name (get_fullname(None) is the session user)
+		.where(Task.assigned_to.isnotnull() & (Task.assigned_to != ""))
 		.select(Task.assigned_to.as_("user"), Count(Task.name).as_("cancelled"))
 		.groupby(Task.assigned_to)
 	)
@@ -2556,12 +2560,13 @@ def get_quota_attainment(
 
 	Both sides are in the base currency and both come from the same functions the
 	reports use, so the dashboard tile and the quota report can never disagree.
-	With no quota set the tile reports 0% and says so in its tooltip rather than
-	dividing by zero or hiding.
+	With no quota set the tile reports no value -- ``None``, which the gauge
+	draws as an empty ring -- and says so in its tooltip. Not 0%: a rep with no
+	target has nothing to attain, and 0 read as the worst number on the page.
 	"""
 	quota = quota_in_period(from_date, to_date, user)
 	actual = won_value_in_period(from_date, to_date, user)
-	attainment = round(actual / quota * 100) if quota else 0
+	attainment = round(actual / quota * 100) if quota else None
 
 	if quota:
 		tooltip = _("{0} of {1} closed-won against quota").format(
@@ -2615,6 +2620,8 @@ def forecast_accuracy_rows(user: str | None = None) -> list[dict]:
 	earlier. ``actual`` is queried live rather than read from the snapshot, so a
 	month keeps converging on the truth after the snapshots for it stop;
 	``actual_at_snapshot`` stays on the row as the record of what was known then.
+	Months that have not started yet are left out: they have a forecast and no
+	actual, which is a forecast chart's job, not this one's.
 
 	The series is picked by :func:`forecast_accuracy_scope`, never by ``user``
 	alone.
@@ -2636,7 +2643,12 @@ def forecast_accuracy_rows(user: str | None = None) -> list[dict]:
 			entry["forecasted"] = snap.forecasted
 		entry["actual_at_snapshot"] = snap.actual_at_snapshot
 
-	rows = [e for e in by_month.values() if e["forecasted"] is not None]
+	# Snapshots run six months ahead, and every one of those is "pre-month", so
+	# without this every future month charted its forecast against a live
+	# actual of zero. Accuracy is a question about months that have started;
+	# the current one stays in as the live, still-converging comparison.
+	this_month = str(get_first_day(nowdate()))[:7]
+	rows = [e for e in by_month.values() if e["forecasted"] is not None and e["month"] <= this_month]
 	if not rows:
 		return []
 

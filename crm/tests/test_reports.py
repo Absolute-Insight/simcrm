@@ -277,6 +277,28 @@ class CancellationsTest(IntegrationTestCase):
 		self.assertIsNone(row["adherence"])
 		self.assertEqual(row["planned"], 0)
 
+	def test_an_unassigned_cancellation_is_not_charged_to_the_viewer(self):
+		"""``get_fullname(None)`` is the *session* user's name, so a cancelled task
+		nobody was assigned grouped under NULL and an administrator opening the
+		by-rep report read their own name against it. An unrestricted viewer is
+		the one who reaches the NULL group: a scoped one is filtered to their reps."""
+		from crm.api.reports import _rep_display
+
+		task = self._task("Canceled")
+		frappe.db.set_value("CRM Task", task.name, "assigned_to", None, update_modified=False)
+		self.assertEqual(frappe.session.user, "Administrator")
+
+		today = frappe.utils.nowdate()
+		rows = plan_adherence(today, today, group_by_user=True)
+		self.assertEqual([r for r in rows if not r["user"]], [])
+
+		report = get_report("plan_adherence_by_rep", today, today)
+		me = frappe.utils.get_fullname("Administrator")
+		self.assertNotIn(me, [r["rep"] for r in report["rows"] if r["user"] != "Administrator"])
+
+		self.assertEqual(_rep_display([{"user": None}])[0]["rep"], "Unassigned")
+		self.assertEqual(_rep_display([{"user": ""}])[0]["rep"], "Unassigned")
+
 
 class ClientReliabilityTest(IntegrationTestCase):
 	USER = "reliab-rep@crmtest.test"
