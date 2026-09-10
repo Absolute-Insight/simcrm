@@ -365,7 +365,10 @@ class RepPlanApiTest(IntegrationTestCase):
 		theirs = frappe.get_doc(
 			{"doctype": "CRM Task", "title": "Someone else's work", "status": "Done", "assigned_to": OTHER}
 		).insert(ignore_permissions=True)
-		self.addCleanup(frappe.delete_doc, "CRM Task", theirs.name, force=True)
+		# Fixture teardown, and it runs while the session is still REP -- who,
+		# now that CRM Task is scoped to the record it hangs off, may not touch
+		# another rep's task. That is the behaviour under test elsewhere.
+		self.addCleanup(frappe.delete_doc, "CRM Task", theirs.name, force=True, ignore_permissions=True)
 		frappe.set_user(REP)
 		out = save_plan(self.monday, [{"activity_type": "Task", "planned_date": self.monday}])
 		with self.assertRaises(frappe.ValidationError):
