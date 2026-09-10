@@ -305,3 +305,88 @@ class InvitationPermissionTest(FrappeTestCase):
 		frappe.set_user(MANAGER)
 		with self.assertRaises(frappe.PermissionError):
 			invitation.accept_invitation()
+
+
+class ReInviteTest(FrappeTestCase):
+	"""An invitation nobody clicked must not lock the address out for good.
+
+	``existing_invites`` matched on email and role with no status, so once a row
+	had expired every later invite for that address was silently filtered out and
+	no email was ever sent again -- while the page reported success.
+	"""
+
+	EMAIL = "reinvite@example.com"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		frappe.db.delete("CRM Invitation", {"email": self.EMAIL})
+		self.addCleanup(frappe.db.delete, "CRM Invitation", {"email": self.EMAIL})
+		# One test in this class signs the address up for real, and creating a
+		# User commits -- so without this the invite in every later test finds
+		# an existing member and quietly creates nothing.
+		self.drop_account()
+		self.addCleanup(self.drop_account)
+
+	def drop_account(self):
+		if frappe.db.exists("User", self.EMAIL):
+			frappe.delete_doc("User", self.EMAIL, force=True, ignore_permissions=True)
+			# Deliberate: creating a User commits, so the row this removes outlived
+			# the transaction that made it. The delete has to outlive rollback the
+			# same way, or the account survives into the next test and the invite
+			# there finds an existing member and quietly creates nothing -- exactly
+			# the failure setUp's comment describes.
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit
+
+	def invite(self):
+		from crm.api import invite_by_email
+
+		with patch.object(frappe, "sendmail") as sendmail:
+			result = invite_by_email(self.EMAIL, "Sales User")
+		return result, sendmail
+
+	def expire_the_invitation(self, name: str):
+		from crm.fcrm.doctype.crm_invitation.crm_invitation import expire_invitations
+
+		frappe.db.set_value("CRM Invitation", name, "creation", add_days(now(), -4), update_modified=False)
+		expire_invitations()
+		self.assertEqual(frappe.db.get_value("CRM Invitation", name, "status"), "Expired")
+
+	def test_a_live_invitation_is_reported_rather_than_sent_twice(self):
+		self.invite()
+		result, sendmail = self.invite()
+
+		sendmail.assert_not_called()
+		self.assertEqual(result["existing_invites"], [self.EMAIL])
+		self.assertEqual(result["to_invite"], [])
+
+	def test_an_expired_invitation_can_be_sent_again(self):
+		self.invite()
+		name = frappe.db.get_value("CRM Invitation", {"email": self.EMAIL})
+		self.expire_the_invitation(name)
+
+		result, sendmail = self.invite()
+
+		sendmail.assert_called_once()
+		self.assertEqual(result["to_invite"], [self.EMAIL])
+		self.assertEqual(result["existing_invites"], [])
+		# the dead row is gone rather than reopened: expiry counts from `creation`,
+		# so a revived row would go straight back to Expired on the next nightly run
+		self.assertFalse(frappe.db.exists("CRM Invitation", name))
+		rows = frappe.get_all("CRM Invitation", filters={"email": self.EMAIL}, pluck="status")
+		self.assertEqual(rows, ["Pending"])
+
+	def test_an_address_that_already_has_an_account_is_reported_not_invited(self):
+		frappe.get_doc(
+			doctype="User",
+			user_type="System User",
+			email=self.EMAIL,
+			send_welcome_email=0,
+			first_name="Already A Member",
+		).insert(ignore_permissions=True)
+
+		result, sendmail = self.invite()
+
+		sendmail.assert_not_called()
+		self.assertEqual(result["existing_members"], [self.EMAIL])
+		self.assertEqual(result["to_invite"], [])

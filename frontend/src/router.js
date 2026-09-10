@@ -5,6 +5,7 @@ import { sessionStore } from '@/stores/session'
 import { viewsStore } from '@/stores/views'
 import { accessStore } from '@/stores/access'
 import { reloadOnceForStaleChunk } from '@/utils/staleChunk'
+import { MOBILE_BREAKPOINT_PX } from '@/composables/settings'
 
 let personaChecked = false
 export const PERSONA_DONE_KEY = 'crm_persona_captured'
@@ -169,8 +170,28 @@ const routes = [
   },
 ]
 
+/**
+ * The mobile or desktop variant of a record page.
+ *
+ * The width comes from the shared constant, not a second literal: this read
+ * 768 while App.vue picked its layout at 640, so an iPad in split view got the
+ * mobile Deal page -- no Events tab, a mobile header -- inside the desktop
+ * shell, with a sidebar and slide-over panels beside it.
+ *
+ * It is still evaluated once, when the route's chunk is first imported, so
+ * rotating across the breakpoint after that keeps the variant it resolved. The
+ * obvious fix -- a wrapper component that picks at render time -- would take
+ * these four pages out of the router's own lazy-import path, and with them the
+ * `router.onError` handler that reloads a tab whose chunk a release has
+ * deleted (see utils/staleChunk). Trading the stale-chunk recovery on the four
+ * most-visited pages for a rotation nobody does mid-record is the wrong trade.
+ * App.vue's shell does follow the viewport, so the two halves at least agree
+ * about where the boundary is.
+ */
 const handleMobileView = (componentName) => {
-  return window.innerWidth < 768 ? `Mobile${componentName}` : componentName
+  return window.innerWidth < MOBILE_BREAKPOINT_PX
+    ? `Mobile${componentName}`
+    : componentName
 }
 
 let router = createRouter({
@@ -183,7 +204,11 @@ router.beforeEach(async (to, from, next) => {
 
   const { isLoggedIn, user } = sessionStore()
   const { users, isCrmUser, isAdmin } = usersStore()
-  const { attempted: accessAttempted, reload: reloadAccess } = accessStore()
+  const {
+    attempted: accessAttempted,
+    reload: reloadAccess,
+    canSee,
+  } = accessStore()
 
   if (isLoggedIn && !users.fetched) {
     try {
@@ -247,9 +272,15 @@ router.beforeEach(async (to, from, next) => {
     // Eight of MBP's reps have muscle memory in an app whose home screen is
     // their week. A rep looking for "what am I doing Tuesday" must not have
     // to learn a route on day one; managers keep the views-driven default.
+    //
+    // Unless an admin has hidden the planner in Settings → Access Control, in
+    // which case landing every rep on it each login put them on a page with no
+    // nav entry to get back to. `canSee` narrows only, so it can decide between
+    // two surfaces the rep may already reach; the access resource was awaited
+    // above and fails open, so an outage still lands on the Planner.
     const { isManager } = usersStore()
     if (!isManager()) {
-      next({ name: 'Planner' })
+      next({ name: canSee('nav.planner') ? 'Planner' : 'Leads' })
       return
     }
     const { views, getDefaultView } = viewsStore()

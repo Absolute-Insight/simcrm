@@ -13,7 +13,7 @@
         :tooltip="__('Mark all as read')"
         :label="__('Mark all as read')"
         :iconLeft="MarkAsDoneIcon"
-        @click="() => mark_as_read.reload()"
+        @click="markAllAsRead"
       />
     </template>
   </LayoutHeader>
@@ -24,10 +24,10 @@
     >
       <RouterLink
         v-for="n in notifications.data"
-        :key="n.comment"
-        :to="getRoute(n)"
+        :key="notificationKey(n)"
+        :to="notificationRoute(n)"
         class="flex cursor-pointer items-start gap-3 px-2.5 py-3 hover:bg-surface-gray-2"
-        @click="mark_doc_as_read(n.comment || n.notification_type_doc)"
+        @click="mark_doc_as_read(n.notification_type_doc)"
       >
         <div class="mt-1 flex items-center gap-2.5">
           <div
@@ -59,6 +59,15 @@
         </div>
       </RouterLink>
     </div>
+    <!-- "No New Notifications" was the answer to a failed fetch as well as an
+         empty one, so an outage read as a cleared inbox. The desktop panel
+         grew its own branch for this; the page had none. -->
+    <ErrorState
+      v-else-if="notifications.error"
+      :error="notifications.error"
+      :title="__('Could not load notifications')"
+      :retry="() => notifications.reload()"
+    />
     <div v-else class="flex flex-1 flex-col items-center justify-center gap-2">
       <NotificationsIcon class="h-20 w-20 text-ink-gray-2" />
       <div class="text-lg-medium text-ink-gray-4">
@@ -68,6 +77,7 @@
   </div>
 </template>
 <script setup>
+import ErrorState from '@/components/ui/ErrorState.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import WhatsAppIcon from '@/components/Icons/WhatsAppIcon.vue'
 import MarkAsDoneIcon from '@/components/Icons/MarkAsDoneIcon.vue'
@@ -76,35 +86,31 @@ import UserAvatar from '@/components/UserAvatar.vue'
 import { notifications, notificationsStore } from '@/stores/notifications'
 import { globalStore } from '@/stores/global'
 import { timeAgo, sanitizeHTML } from '@/utils'
+import { notificationKey, notificationRoute } from '@/utils/notificationRoute'
+import { quiet } from '@/utils/quiet'
 import { Breadcrumbs } from 'frappe-ui'
 import { onMounted, onBeforeUnmount } from 'vue'
 
 const { $socket } = globalStore()
-const { mark_as_read, mark_doc_as_read } = notificationsStore()
+const { mark_all_as_read, mark_doc_as_read } = notificationsStore()
+
+/* Passed to `off` by reference. A bare `off('crm_notification')` removes every
+   listener on the event, including the sidebar's -- and this route is not
+   width-guarded, so a desktop user who opens /notifications from a bookmark and
+   clicks away used to stop the bell and the panel updating for the session. */
+function onCrmNotification() {
+  quiet(notifications.reload())
+}
 
 onBeforeUnmount(() => {
-  $socket.off('crm_notification')
+  $socket.off('crm_notification', onCrmNotification)
 })
 
 onMounted(() => {
-  $socket.on('crm_notification', () => {
-    notifications.reload()
-  })
+  $socket.on('crm_notification', onCrmNotification)
 })
 
-function getRoute(notification) {
-  let params = {
-    leadId: notification.reference_name,
-  }
-  if (notification.route_name === 'Deal') {
-    params = {
-      dealId: notification.reference_name,
-    }
-  }
-  return {
-    name: notification.route_name,
-    params: params,
-    hash: '#' + notification.comment || notification.notification_type_doc,
-  }
+function markAllAsRead() {
+  mark_all_as_read()
 }
 </script>

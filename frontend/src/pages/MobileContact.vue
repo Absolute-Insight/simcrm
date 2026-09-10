@@ -155,11 +155,20 @@
       </template>
     </Tabs>
   </div>
+  <!-- Without this a record outside the rep's hierarchy, or one that has
+       been deleted, rendered as an empty screen: no header, no back
+       button, only a toast that had already gone. -->
+  <ErrorPage
+    v-else-if="errorTitle"
+    :errorTitle="errorTitle"
+    :errorMessage="errorMessage"
+  />
 </template>
 
 <script setup>
 import Icon from '@/components/Icon.vue'
 import SidePanelLayout from '@/components/SidePanelLayout.vue'
+import ErrorPage from '@/components/ErrorPage.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import DetailsIcon from '@/components/Icons/DetailsIcon.vue'
 import PhoneIcon from '@/components/Icons/PhoneIcon.vue'
@@ -170,7 +179,13 @@ import { validateIsImageFile } from '@/utils'
 import { useContactFields } from '@/composables/useContactFields'
 import { timestampCell } from '@/composables/useTimelinePreferences'
 import { getView } from '@/utils/view'
-import { useDocument } from '@/data/document'
+import {
+  useDocument,
+  markDocumentAsDeleted,
+  unmarkDocumentAsDeleted,
+  expireDeletionMarker,
+} from '@/data/document'
+import { useDocumentError } from '@/composables/useDocumentError'
 import { getSettings } from '@/stores/settings'
 import { getMeta } from '@/stores/meta'
 import { globalStore } from '@/stores/global.js'
@@ -214,7 +229,10 @@ const {
   document: contact,
   permissions,
   triggerOnRender,
+  error: loadError,
 } = useDocument('Contact', props.contactId)
+
+const { errorTitle, errorMessage } = useDocumentError(loadError)
 
 const canDelete = computed(() => permissions.data?.permissions?.delete || false)
 
@@ -284,10 +302,20 @@ async function deleteContact() {
         theme: 'red',
         variant: 'solid',
         async onClick({ close }) {
-          await call('frappe.client.delete', {
-            doctype: 'Contact',
-            name: props.contactId,
-          })
+          // The delete emits a realtime doc_update that would make the
+          // still-mounted document resource refetch and flash a spurious
+          // "Document does not exist" on the way out.
+          markDocumentAsDeleted('Contact', props.contactId)
+          try {
+            await call('frappe.client.delete', {
+              doctype: 'Contact',
+              name: props.contactId,
+            })
+          } catch (err) {
+            unmarkDocumentAsDeleted('Contact', props.contactId)
+            throw err
+          }
+          expireDeletionMarker('Contact', props.contactId)
           close()
           router.push({ name: 'Contacts' })
         },

@@ -473,3 +473,99 @@ Full contract, including exact payload shapes and the two-step recipe for adding
   rewrites both access settings over an administrator's own configuration. Correct semantics
   for a forced install — it is meant to reset the app — but worth knowing before running one
   against a site an admin has already tuned.
+
+---
+
+## Upstream port — frappe/crm v1.83.0
+
+**Completed 2026-09-10.** Branch `fix/upstream-v1.83-port`, ten commits, one per fix.
+
+### Where upstream actually is, relative to us
+
+We descend from upstream **`develop`** (which calls itself `2.0.0-dev`), not from the line
+its releases are cut on. `git merge-base develop upstream/develop` is `7dcd8430d`,
+2026-08-13 — upstream's own PR #2664 — with 144 upstream develop commits landed since.
+Upstream's `main` / `main-hotfix`, where every `v1.x` tag lives, split off `develop` at
+`0fa0ae132` on 2025-03-24 and has been maintained by backport ever since.
+
+Two consequences worth writing down, because both cost time to rediscover:
+
+- **No `v1.x` release tag is an ancestor of our history** — all 258 checked. "Which upstream
+  release are we on" has no clean answer; the honest one is "roughly `v1.81.2`-era develop",
+  that release having been cut the same morning as our merge base. The familiar "17 months
+  diverged" figure is the distance to the *release* line, not to develop.
+- **An upstream range must be read as a net per-file diff, never as a series of
+  cherry-pickable commits.** `2826f2d35` in this very range ships literal `<<<<<<< HEAD`
+  markers in `Field.vue`, cleaned up only by a later "resolve merge conflicts" commit.
+  `git cherry -v develop <new> <old>` is the right first filter — it found 5 of the 41
+  commits already present verbatim — but it is patch-id exact, so a fix we already carry in
+  adapted form reads as missing and every remaining commit still needs reading against our
+  file. Three of the "missing" ones turned out to be present, one of them with a fuller
+  rationale than upstream's and extended to `crm/api/whatsapp.py` besides.
+
+### What was ported
+
+Ten fixes: the erpnext `standard_rate` `None` that made `frappe.db.set_value` raise
+IntegrityError on a NOT NULL Currency column; the `delete_doc` realtime race that flashed
+"Document does not exist" for a delete that succeeded; the kanban task three-dot opening the
+edit modal, its unawaited delete, and the missing confirmation; HTML email templates silently
+not applying; grid `read_only` on the two controls that reach it; list scroll position across
+grouping; filter date pickers ignoring the system date format; the Data tab resetting on save;
+silent activity-timeline load failures; and duplicated numeric field descriptions.
+
+### What was deliberately not ported
+
+Each of these is a decision of its own, not an oversight:
+
+- **`fetch_from` support.** The one genuine capability gap in the range — we have no
+  `fetch_from` handling anywhere in the frontend, and Frappe doctypes use it freely. A
+  feature, though, not a fix, and it drags in `utils/fetchFrom.js`, an `applyFetchFrom` hop in
+  `document.js`, and the `Grid.vue` `disabled` rework.
+- **Visited-record `_seen` dimming.** A feature, and it adds a whitelisted endpoint
+  (`crm.api.doc.add_seen`), `track_seen` on Deal and Lead, and a patch.
+- **The frappe-ui/editor migration** (`RichTextField.vue`, `TextEditorControl`, the bubble
+  toolbar, and the seven call sites that follow). We are on frappe-ui beta.55 against
+  upstream's beta.29; check what we already did differently before adopting theirs.
+- **`ViewControls.vue` param stabilisation.** Defensive, not a live bug: we set
+  `list.value.params` immediately after creating the resource, and we have roughly ten more
+  `list.value.params` call sites than the patch covers.
+- **`@vitejs/plugin-vue` in `vitest.config.js`** — needed only for component tests, which
+  our coverage config excludes on purpose.
+
+### Load-bearing decisions
+
+- **The Data-tab fix is deliberately not upstream's.** Our `Tabs` is the frappe-ui v1 one: it
+  selects by trigger *value*, and it already falls back to the first selectable tab when the
+  bound value is not among them. Upstream's index-plus-name dual model exists to reconcile a
+  numeric index we do not use, and porting it verbatim would have added reconciliation logic
+  fighting our own Tabs. `FieldLayout` instead gained a single optional `activeTab` model —
+  the other fifteen call sites bind nothing and keep the local ref they had — and `DataFields`
+  parks the value in `sessionStorage` per doctype and docname. That also removed the need to
+  thread state through `Activities.vue` at all, which upstream had to do.
+- **Most of the new grid `read_only` bindings are unreachable, and that is the point.** The
+  cell block opens with a read-only *display* control whose `v-if` claims every fieldtype
+  except a named list, so a `read_only` Link, Select, Date or textarea never reaches its real
+  control. Only Check (excluded from that list, and honouring `editable_grid` but not
+  `read_only`) and the fallback control (reached by a `read_only` Geolocation, HTML or Text
+  Editor) were live bugs. The other seven bindings are added for consistency with `Password`,
+  which already carried the same unreachable binding, so the block states the rule one way
+  throughout and narrowing that exclusion list later cannot quietly reintroduce the bug.
+  Upstream needs all of them because its `fetch_from` disables fields that are not `read_only`.
+- **The delete race is fixed at three call sites, not one.** Upstream patched
+  `DeleteLinkedDocModal`; `MobileContact.vue` and `MobileOrganization.vue` are ours and call
+  `useDocument` for the record they then delete, so they had the identical race and upstream's
+  patch could not have covered them.
+- **The task delete gained a confirmation** because fixing the three-dot click made an
+  unconfirmed, irreversible Delete reachable for the first time. It uses our own
+  `ConfirmDelete` two-step, the idiom the settings lists already use, rather than upstream's
+  `DeleteLinkedDocModal`.
+
+### Verification
+
+572 frontend unit tests and 1786 python tests (four blocks, all OK) pass, `ruff`, `eslint` and
+`prettier` at the CI-pinned 3.2.5 are clean, and the production build succeeds. Playwright was
+run twice against the same dev site, once serving this branch and once serving `develop`, and
+produced an **identical 9-failure / 16-pass / 2-not-run result** — no regression either way.
+Those nine are pre-existing in that environment: the manager demo account 401s on login, which
+strands the `manager` project, and `convert` leaves its dialog open. They are not this port's
+and are not fixed by it.

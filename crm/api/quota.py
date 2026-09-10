@@ -40,6 +40,22 @@ def _only_own_team(user: str):
 		frappe.throw(_("{0} is not on your team.").format(user), frappe.PermissionError)
 
 
+def _not_the_caller(user: str):
+	"""A manager does not set their own target.
+
+	Attainment against a quota is a compensation figure, and ``visible_reps``
+	always contains the caller, so the team check alone let a manager write the
+	number they are then measured against. Only a System Manager -- who is
+	administering the site rather than carrying a bag on it -- may set a target
+	for themselves, and in practice sets everyone else's too.
+	"""
+	if user == frappe.session.user and "System Manager" not in frappe.get_roles():
+		frappe.throw(
+			_("Your own target has to be set by an administrator."),
+			frappe.PermissionError,
+		)
+
+
 def _months(year: int) -> list[str]:
 	return [f"{year}-{month:02d}-01" for month in range(1, 13)]
 
@@ -119,6 +135,7 @@ def set_quota(user: str, period_start: str, amount: float | str):
 	"""Upsert one cell of the grid. Zero or blank clears the target for that month."""
 	_only_managers()
 	_only_own_team(user)
+	_not_the_caller(user)
 	if user not in _sales_users():
 		frappe.throw(_("{0} is not a sales user.").format(user))
 
@@ -152,6 +169,9 @@ def copy_quota_forward(user: str, from_period: str, months: int | str = 11):
 	# scoped before the source is read, so the copy neither reveals nor
 	# rewrites a target outside the caller's subtree
 	_only_own_team(user)
+	# ``set_quota`` refuses each write too, but only after the source row has been
+	# read; refusing here stops the call before it reads anything
+	_not_the_caller(user)
 	source = get_first_day(getdate(from_period))
 	amount = frappe.db.get_value("CRM Quota", {"user": user, "period_start": source}, "amount")
 	if not amount:

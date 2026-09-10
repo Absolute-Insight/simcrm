@@ -195,6 +195,7 @@ import { useContactFields } from '@/composables/useContactFields'
 import { timestampCell } from '@/composables/useTimelinePreferences'
 import { getView } from '@/utils/view'
 import { useDocument } from '@/data/document'
+import { useDocumentError } from '@/composables/useDocumentError'
 import { getSettings } from '@/stores/settings'
 import { getMeta } from '@/stores/meta'
 import { globalStore } from '@/stores/global.js'
@@ -236,15 +237,18 @@ const props = defineProps({
 const route = useRoute()
 const router = useRouter()
 
-const errorTitle = ref('')
-const errorMessage = ref('')
-
 const {
   document: contact,
   permissions,
   scripts,
   triggerOnRender,
+  error: loadError,
 } = useDocument('Contact', props.contactId)
+
+/* These two were declared and rendered but never assigned: the ErrorPage
+   branch below has been dead since it was written, so a record the rep may not
+   see showed a blank page. */
+const { errorTitle, errorMessage } = useDocumentError(loadError)
 
 const canDelete = computed(() => permissions.data?.permissions?.delete || false)
 

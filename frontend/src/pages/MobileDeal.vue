@@ -272,6 +272,7 @@ import ActivityIcon from '@/components/Icons/ActivityIcon.vue'
 import EmailIcon from '@/components/Icons/EmailIcon.vue'
 import Email2Icon from '@/components/Icons/Email2Icon.vue'
 import CommentIcon from '@/components/Icons/CommentIcon.vue'
+import EventIcon from '@/components/Icons/EventIcon.vue'
 import PhoneIcon from '@/components/Icons/PhoneIcon.vue'
 import TaskIcon from '@/components/Icons/TaskIcon.vue'
 import NoteIcon from '@/components/Icons/NoteIcon.vue'
@@ -455,6 +456,16 @@ const tabs = computed(() => {
       name: 'Data',
       label: __('Data'),
       icon: DetailsIcon,
+    },
+    // A rep who accepts a "Schedule call" suggestion, or whose week the
+    // planner filled in, has meetings on this record and had no way to see
+    // them from a phone -- the desktop pages have had this tab all along, and
+    // the Calendar nav entry is hidden on mobile. Activities already renders
+    // the Events pane; only the tab was missing.
+    {
+      name: 'Events',
+      label: __('Events'),
+      icon: EventIcon,
     },
     {
       name: 'Calls',

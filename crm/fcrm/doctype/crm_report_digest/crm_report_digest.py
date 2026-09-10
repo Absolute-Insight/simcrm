@@ -6,7 +6,10 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import escape_html, fmt_money, validate_email_address
 
-CRM_ROLES = ("Sales User", "Sales Manager", "System Manager")
+# The roles the Reports page admits. A digest is that page rendered as the
+# recipient, so the recipient must be someone the page would let in -- see
+# ``can_read_reports``.
+REPORT_ROLES = ("Sales User", "Sales Manager")
 
 # each recipient is a full report render under their own session plus an email;
 # a digest is a team's worth of people, not a mailing list
@@ -67,32 +70,75 @@ class CRMReportDigest(Document):
 
 	def validate_internal_user(self, email: str) -> None:
 		"""A digest carries deal values, so it may only go to someone who could
-		already read them in the app — never to an arbitrary outside address."""
+		already read them in the app — never to an arbitrary outside address.
+
+		"Could read them in the app" is ``get_report``'s gate, exactly. This used
+		to admit System Manager as well, but that gate does not: an account
+		holding only System Manager passed validation here and then raised
+		``PermissionError`` inside the send loop, under ``set_user`` -- and took
+		every recipient after it down too. Refusing it at save, with the reason,
+		is the fix; widening the gate would hand an account the Reports page
+		refuses a copy of it by email instead.
+		"""
 		if not frappe.db.exists("User", {"name": email, "enabled": 1}):
 			frappe.throw(_("{0} is not an enabled user of this site.").format(email))
-		if not set(frappe.get_roles(email)) & set(CRM_ROLES):
-			frappe.throw(_("{0} has no CRM role, so they cannot receive CRM data.").format(email))
+		if not can_read_reports(email):
+			frappe.throw(
+				_(
+					"{0} holds no sales role, so the Reports page is closed to them and a digest"
+					" cannot be rendered for them. Give them Sales User or Sales Manager to include them."
+				).format(email)
+			)
 
 	def recipient_list(self) -> list[str]:
 		return [e.strip() for e in (self.recipients or "").split(",") if e.strip()]
 
 
+def can_read_reports(user: str) -> bool:
+	"""Whether ``get_report`` would answer a request made as ``user``.
+
+	The same predicate as ``crm.utils.sales_user_only``, written out rather
+	than imported: ``crm.utils.is_sales_user(user)`` tests *the session user*
+	for Administrator regardless of the ``user`` it is handed, so asked here --
+	on a save made by an administrator -- it says yes to everyone.
+	``test_report_digest`` holds the two to the same answers.
+	"""
+	if user == "Administrator":
+		return True
+	return bool(set(frappe.get_roles(user)) & set(REPORT_ROLES))
+
+
 def _still_entitled(email: str) -> bool:
 	"""The save-time rule from ``validate_internal_user``, asked again at send.
 
-	Same two conditions -- an enabled user of this site, holding a CRM role --
-	expressed as a predicate because the send loop must skip a recipient rather
-	than throw and take the whole digest down with it.
+	Same two conditions -- an enabled user of this site, whom the Reports page
+	admits -- expressed as a predicate because the send loop must skip a
+	recipient rather than throw and take the whole digest down with it.
 	"""
 	if not frappe.db.exists("User", {"name": email, "enabled": 1}):
 		return False
-	return bool(set(frappe.get_roles(email)) & set(CRM_ROLES))
+	return can_read_reports(email)
 
 
 def send_due_digests():
 	"""Daily scheduler entry. Weekly digests fire on Mondays."""
 	from crm.api.dashboard import get_base_currency
 	from crm.api.reports import REPORTS, get_report
+
+	# Settle yesterday's plan items first. Both jobs sit in the daily bucket and
+	# each becomes its own job on the default queue, which two workers consume in
+	# no particular order -- so the digest could render plan adherence before the
+	# matcher had marked yesterday's calls and tasks Done, and a rep who hit
+	# every commitment read 0% in the morning mail. match_actuals is idempotent
+	# (test_a_second_run_changes_nothing), so running it here costs a no-op on
+	# the ordering that already worked.
+	try:
+		from crm.rep_planning import match_actuals
+
+		match_actuals()
+	except Exception:
+		# The digests are still worth sending on yesterday's un-matched figures.
+		frappe.log_error(frappe.get_traceback(), "CRM Report Digest: pre-send match_actuals failed")
 
 	is_monday = frappe.utils.getdate().weekday() == 0
 	digests = frappe.get_all(
@@ -136,29 +182,48 @@ def send_due_digests():
 			if not recipients:
 				continue
 
+			delivered = 0
 			for recipient in recipients:
-				# rendered as the recipient, not as the scheduler: a rep gets
-				# their own rows and a manager gets the team's, exactly as each
-				# would see on the Reports page
-				original_user = frappe.session.user
+				# One recipient's failure is theirs alone. This loop used to sit
+				# inside the per-digest try below, so a single render that threw
+				# -- a deleted hierarchy node, a report that raises under one
+				# person's scope -- skipped every recipient after it while the
+				# ones before had already been mailed, and the only trace was an
+				# Error Log.
 				try:
-					# Deliberate: this is what scopes the digest to its recipient, and the
-					# finally below restores the scheduler user unconditionally.
-					# nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser
-					frappe.set_user(recipient)
-					report = get_report(digest.report, str(from_date), str(to_date))
-				finally:
-					# nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser
-					frappe.set_user(original_user)
+					# rendered as the recipient, not as the scheduler: a rep gets
+					# their own rows and a manager gets the team's, exactly as each
+					# would see on the Reports page
+					original_user = frappe.session.user
+					try:
+						# Deliberate: this is what scopes the digest to its recipient, and the
+						# finally below restores the scheduler user unconditionally.
+						# nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser
+						frappe.set_user(recipient)
+						report = get_report(digest.report, str(from_date), str(to_date))
+					finally:
+						# nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser
+						frappe.set_user(original_user)
 
-				frappe.sendmail(
-					recipients=[recipient],
-					subject=_("Vectora digest: {0}").format(report["title"]),
-					message=_render_digest(report, from_date, to_date, currency=get_base_currency()),
-					reference_doctype="CRM Report Digest",
-					reference_name=digest.name,
-				)
-			sent += 1
+					frappe.sendmail(
+						recipients=[recipient],
+						subject=_("Vectora digest: {0}").format(report["title"]),
+						message=_render_digest(report, from_date, to_date, currency=get_base_currency()),
+						reference_doctype="CRM Report Digest",
+						reference_name=digest.name,
+					)
+				except Exception:
+					frappe.log_error(
+						frappe.get_traceback(),
+						f"CRM Report Digest {digest.name}: {recipient} failed",
+					)
+					continue
+				delivered += 1
+
+			# Counted as sent when it reached somebody, so a digest whose every
+			# recipient failed is not reported as delivered.
+			if delivered:
+				sent += 1
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), f"CRM Report Digest {digest.name} failed")
 			continue

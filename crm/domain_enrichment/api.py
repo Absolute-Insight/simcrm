@@ -83,6 +83,15 @@ def enrich(reference_doctype: str, reference_name: str) -> dict:
 	"""
 	_check_user_rate_limit()
 	cfg = get_config()
+	# The allow-list gates the lookup, not just the enqueue. Loading the document
+	# first made "no such record" and "not enabled for X" two distinguishable
+	# answers for any doctype/name pair a caller cared to try, which is an
+	# existence oracle for records they cannot read.
+	if reference_doctype not in _enabled_doctypes(cfg):
+		frappe.throw(
+			_("Enrichment is not enabled for {0}.").format(reference_doctype),
+			frappe.ValidationError,
+		)
 	doc = frappe.get_doc(reference_doctype, reference_name)
 	website = (doc.get("website") or "").strip()
 	return _enqueue_run(cfg, reference_doctype, reference_name, website)

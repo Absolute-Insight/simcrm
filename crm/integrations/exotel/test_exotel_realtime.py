@@ -93,8 +93,11 @@ class ExotelWebhookAuthTest(IntegrationTestCase):
 	def validate_with(self, key, token="s3cret-token"):
 		from crm.integrations.exotel.handler import validate_request
 
+		# Patched at the accessor, not at frappe.db: the token is a Password
+		# field now, so it comes out of __Auth via get_password rather than
+		# off the Singles row.
 		with (
-			patch.object(frappe.db, "get_single_value", return_value=token),
+			patch("crm.integrations.exotel.handler._webhook_verify_token", return_value=token),
 			patch.object(frappe, "request", frappe._dict(args={"key": key})),
 		):
 			validate_request()

@@ -74,11 +74,53 @@ def update_profile(changes: dict | str) -> dict:
 			# client might send on a row is dropped, and the Link validation on
 			# User Email still refuses an account that does not exist
 			rows = value if isinstance(value, list) else frappe.parse_json(value or "[]")
-			doc.set("user_emails", [{key: (row or {}).get(key) for key in USER_EMAIL_FIELDS} for row in rows])
+			rows = [{key: (row or {}).get(key) for key in USER_EMAIL_FIELDS} for row in rows]
+			_reject_other_peoples_mailboxes(doc, rows)
+			doc.set("user_emails", rows)
 		else:
 			doc.set(field, value)
 	doc.save(ignore_permissions=True)
 	return get_profile()
+
+
+def _reject_other_peoples_mailboxes(doc, rows: list[dict]) -> None:
+	"""A rep may not link an Email Account that belongs to somebody else.
+
+	These rows are what the composer offers as From, so linking a colleague's
+	account advertised their mailbox as a sender -- and this endpoint saves with
+	``ignore_permissions``, so nothing else was standing in the way.
+
+	The test is ownership, not self-ownership: an account whose address is
+	another *user's* address is refused, while a shared or role mailbox
+	(sales@, support@ -- an address no user account answers to) stays
+	linkable, which is what those accounts exist for.
+
+	An account that does not exist is left alone: the Link validation on User
+	Email refuses it, and with the message that names the real problem.
+
+	Only rows the caller is *adding* are checked, so an administrator may link
+	a mailbox from the desk without the owner's next profile save failing on
+	it. A System Manager, who can edit any User row anyway, keeps the wider
+	choice.
+	"""
+	if "System Manager" in frappe.get_roles():
+		return
+
+	already_linked = {row.email_account for row in doc.get("user_emails") or []}
+	own_address = (doc.email or "").strip().lower()
+	for row in rows:
+		account = row.get("email_account")
+		if not account or account in already_linked:
+			continue
+		address = (frappe.db.get_value("Email Account", account, "email_id") or "").strip().lower()
+		if not address or address == own_address:
+			continue
+		owner = frappe.db.exists("User", {"email": address, "enabled": 1})
+		if owner:
+			frappe.throw(
+				_("Email Account {0} belongs to {1}").format(account, address),
+				frappe.PermissionError,
+			)
 
 
 @frappe.whitelist()

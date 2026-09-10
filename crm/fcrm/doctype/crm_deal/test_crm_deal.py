@@ -197,15 +197,23 @@ class TestCRMDeal(IntegrationTestCase):
 		assign_add({"assign_to": ["crm.user2@example.com"], "doctype": "CRM Deal", "name": deal.name})
 		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "deal_owner"), "crm.user2@example.com")
 
-	def test_removing_any_assignee_clears_owner(self):
-		"""Accepted simplification: cancelling ANY assignment clears the owner,
-		even when other assignees remain (owner is single-valued, _assign is a list)."""
+	def test_removing_a_co_assignee_leaves_the_owner_alone(self):
+		"""Only the owner's own assignment clears the owner.
+
+		This used to clear on ANY cancellation -- recorded as an accepted
+		simplification, but it meant a co-assignee could be removed and take
+		the deal out of the owner's pipeline and out of every owner-based
+		report and quota with them.
+		"""
 		deal = create_test_deal(organization="Wrinkle Org", deal_owner="crm.user1@example.com")
 		assign_add({"assign_to": ["crm.user2@example.com"], "doctype": "CRM Deal", "name": deal.name})
 		# newest assignment owns
 		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "deal_owner"), "crm.user2@example.com")
 
 		assign_remove("CRM Deal", deal.name, "crm.user1@example.com")  # remove a non-owner assignee
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "deal_owner"), "crm.user2@example.com")
+
+		assign_remove("CRM Deal", deal.name, "crm.user2@example.com")  # remove the owner's own
 		self.assertIsNone(frappe.db.get_value("CRM Deal", deal.name, "deal_owner"))
 
 	def test_task_unassign_does_not_touch_owner(self):

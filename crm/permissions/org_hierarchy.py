@@ -13,28 +13,40 @@ def hierarchy_enabled() -> bool:
 	return bool(frappe.db.get_single_value("FCRM Settings", "enable_sales_hierarchy"))
 
 
+def sees_everything(user: str) -> bool:
+	"""Whether ``user`` is outside row scoping altogether.
+
+	Administrator and System Manager always. A Sales Manager outside the tree
+	sees everything -- unless an administrator has said otherwise. The
+	historical answer is the fallback (see manager_outside_hierarchy_sees_all),
+	so an existing site is unchanged; a new install is set to "Own records
+	only", without which defaulting the hierarchy on does nothing on a site
+	whose tree nobody has built yet.
+	"""
+	if user == "Administrator":
+		return True
+
+	roles = frappe.get_roles(user)
+	if "System Manager" in roles:
+		return True
+
+	if "Sales Manager" not in roles:
+		return False
+
+	from crm.api.access import manager_outside_hierarchy_sees_all
+
+	in_tree = hierarchy_enabled() and _in_hierarchy(user)
+	return not in_tree and manager_outside_hierarchy_sees_all()
+
+
 def _permission_query_conditions(user: str | None, doctype: str):
 	if not user:
 		user = frappe.session.user
 
-	if user == "Administrator":
-		return ""
-
-	roles = frappe.get_roles(user)
-	if "System Manager" in roles:
+	if sees_everything(user):
 		return ""
 
 	in_tree = hierarchy_enabled() and _in_hierarchy(user)
-
-	from crm.api.access import manager_outside_hierarchy_sees_all
-
-	# A Sales Manager outside the tree sees everything -- unless an administrator
-	# has said otherwise. The historical answer is the fallback (see
-	# manager_outside_hierarchy_sees_all), so an existing site is unchanged; a
-	# new install is set to "Own records only", without which defaulting the
-	# hierarchy on does nothing on a site whose tree nobody has built yet.
-	if "Sales Manager" in roles and not in_tree and manager_outside_hierarchy_sees_all():
-		return ""
 
 	owner_field = _OWNER_FIELD[doctype]
 	DT = frappe.qb.DocType(doctype)
@@ -79,21 +91,10 @@ def _has_permission(doc, ptype, user, doctype: str) -> bool | None:
 	if not user:
 		user = frappe.session.user
 
-	if user == "Administrator":
-		return True
-
-	roles = frappe.get_roles(user)
-	if "System Manager" in roles:
+	if sees_everything(user):
 		return True
 
 	if ptype == "create" or not doc.name:
-		return True
-
-	in_tree = hierarchy_enabled() and _in_hierarchy(user)
-
-	from crm.api.access import manager_outside_hierarchy_sees_all
-
-	if "Sales Manager" in roles and not in_tree and manager_outside_hierarchy_sees_all():
 		return True
 
 	conditions = _permission_query_conditions(user, doctype)

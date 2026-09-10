@@ -7,7 +7,7 @@
     }"
   >
     <Tabs
-      v-model="tabIndex"
+      v-model="activeTab"
       :tabs="processedTabs"
       :class="[
         !hasTabs ? `[&_[role='tablist']]:hidden` : '',
@@ -29,7 +29,7 @@
 import Section from '@/components/FieldLayout/Section.vue'
 import { useDocument } from '@/data/document'
 import { Tabs } from 'frappe-ui'
-import { ref, computed, provide } from 'vue'
+import { computed, provide } from 'vue'
 
 const props = defineProps({
   tabs: { type: Array, default: () => [] },
@@ -41,7 +41,11 @@ const props = defineProps({
   context: { type: Object, default: null },
 })
 
-const tabIndex = ref(null)
+// The selected tab, as a trigger value (the tab's name) -- see processedTabs
+// below. Optional model: parents that want the selection to outlive this
+// component being torn down can own it, and those that do not get the same
+// purely local ref as before.
+const activeTab = defineModel('activeTab', { type: String, default: null })
 
 // The authoritative document name. Prefer the explicit docname prop (known
 // synchronously by the parent modal) over data.name, which is empty while the
@@ -95,7 +99,14 @@ provide(
 provide('hasTabs', hasTabs)
 provide('doctype', props.doctype)
 provide('docname', resolvedDocname)
-provide('preview', props.preview)
+// A computed, not the raw prop: Field.vue reads `preview.value`, and a plain
+// boolean provided here made that `undefined` on every field, so the preview
+// branch of isFieldVisible never ran and a Quick Entry preview silently dropped
+// every depends_on field, every empty read-only field and every hidden one.
+provide(
+  'preview',
+  computed(() => props.preview),
+)
 provide('isGridRow', props.isGridRow)
 provide('fieldLayoutContext', props.context)
 </script>

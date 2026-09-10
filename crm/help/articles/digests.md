@@ -15,7 +15,7 @@ pipeline review does not depend on somebody remembering to export it.
 |---|---|
 | **Report** | Any of the six built-in reports. |
 | **Frequency** | Daily, or Weekly. |
-| **Recipients** | Who receives it. Active users with a CRM role. |
+| **Recipients** | Who receives it. Active users who can open the Reports page — a Sales User or Sales Manager role. An account holding only System Manager is refused at save, with the reason. |
 | **Enabled** | Off is a valid state — keep a digest configured without sending it. |
 
 Weekly digests go out on Monday. Both frequencies are sent by the daily

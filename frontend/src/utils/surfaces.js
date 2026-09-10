@@ -146,7 +146,7 @@ export const SURFACES = [
     group: 'settings',
     section: 'Email',
     label: 'Templates',
-    floor: MANAGER_ROLE,
+    floor: ADMIN_ROLE,
   },
   {
     key: 'settings.assignment_rules',

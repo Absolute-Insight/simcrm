@@ -72,6 +72,7 @@ import { useOnboarding } from '@framework/ui/components/Onboarding'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { createResource, call, toast } from 'frappe-ui'
 import { useDocument } from '@/data/document'
+import { resetNewDocument } from '@/utils/newDocument'
 import { computed, onMounted, ref, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -221,7 +222,9 @@ async function createNewLead() {
         capture('lead_created')
         isLeadCreating.value = false
         show.value = false
-        lead.doc = {}
+        // `{}` dropped the doctype key with it, and every getField() against
+        // the shared buffer returned null for the rest of the session.
+        resetNewDocument(lead, 'CRM Lead')
         router.push({ name: 'Lead', params: { leadId: data.name } })
         updateOnboardingStep('create_first_lead', true, false, () => {
           localStorage.setItem('firstLead' + user, data.name)
@@ -246,6 +249,9 @@ function openQuickEntryModal() {
 }
 
 onMounted(() => {
+  // Shared for the session, like CRM Deal's: without this the form opens on
+  // whatever the last lead left behind.
+  resetNewDocument(lead, 'CRM Lead')
   lead.doc.no_of_employees = '1-10'
   Object.assign(lead.doc, props.defaults)
 
