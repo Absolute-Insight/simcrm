@@ -50,13 +50,17 @@ jobs:
           # Every one of these must actually run on a push to main -- a
           # workflow that triggers only on pull_request is absent here and
           # cannot be required. One check name per line, exactly as it appears
-          # in the checks UI. "Server Tests" is the fixed-name wrap-up job in
+          # in the checks UI -- which is the JOB's name, not the workflow's.
+          # "Upgrade base branch -> PR" is the migration lane (workflow
+          # "Migration", job "migrate"); requiring it as "Migration" matched
+          # nothing and left the v3.13.0 build waiting on a check that could
+          # never arrive. "Server Tests" is the fixed-name wrap-up job in
           # server-tests.yml, not the matrix legs, whose names vary by branch.
           REQUIRED: |
             Playwright E2E Tests
             Server Tests
             Unit Tests & Coverage
-            Migration
+            Upgrade base branch -> PR
         run: |
           set -euo pipefail
 
