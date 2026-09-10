@@ -258,9 +258,20 @@ services:
         while true; do
           # Sleep until the next BACKUP_HOUR, recomputed each pass so the
           # schedule survives a restart at any time of day.
+          #
+          # $$BACKUP_HOUR, not $${BACKUP_HOUR}: compose interpolates a single
+          # $ everywhere in this file including inside command strings, so the
+          # unescaped form was substituted at config time with whatever .env
+          # had -- nothing -- leaving `date -d "today :00"`, an empty `next`,
+          # and a loop that spun instead of sleeping.
           now=$$(date +%s)
-          next=$$(date -d "today ${BACKUP_HOUR}:00" +%s)
-          [ "$$next" -le "$$now" ] && next=$$(date -d "tomorrow ${BACKUP_HOUR}:00" +%s)
+          next=$$(date -d "today $$BACKUP_HOUR:00" +%s)
+          [ "$$next" -le "$$now" ] && next=$$(date -d "tomorrow $$BACKUP_HOUR:00" +%s)
+          if [ -z "$$next" ]; then
+            echo "[backup] cannot work out the next run time; retrying in an hour"
+            sleep 3600
+            continue
+          fi
           sleep $$((next - now))
 
           echo "[backup] $$(date -Is) starting"
