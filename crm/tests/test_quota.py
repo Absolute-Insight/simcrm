@@ -377,3 +377,36 @@ class QuotaScopeTest(IntegrationTestCase):
 		frappe.set_user(self.MANAGER)
 		self.assertIn(OTHER, [r["user"] for r in quota_api.get_quota_grid(2026)["rows"]])
 		self.assertEqual(quota_api.set_quota(OTHER, "2026-04-01", 5_000), {"amount": 5_000})
+
+	# --- nobody sets their own target ------------------------------------
+
+	def test_a_manager_cannot_set_their_own_target(self):
+		# ``visible_reps`` always contains the caller, so the team check alone let
+		# a manager write the number their own attainment is measured against.
+		frappe.set_user(self.MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			quota_api.set_quota(self.MANAGER, "2026-03-01", 500_000)
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.count("CRM Quota", {"user": self.MANAGER}), 0)
+
+	def test_a_manager_cannot_copy_their_own_target_forward(self):
+		self.make_quota(self.MANAGER, "2026-03-01", 100_000)
+		frappe.set_user(self.MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			quota_api.copy_quota_forward(self.MANAGER, "2026-03-01", 3)
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.count("CRM Quota", {"user": self.MANAGER}), 1)
+
+	def test_a_manager_cannot_rewrite_their_own_target_through_the_client_api(self):
+		self.make_quota(self.MANAGER, "2026-03-01", 100_000)
+		name = frappe.db.get_value("CRM Quota", {"user": self.MANAGER, "period_start": "2026-03-01"})
+		frappe.set_user(self.MANAGER)
+		self.assertTrue(frappe.has_permission("CRM Quota", doc=name, ptype="read"))
+		self.assertFalse(frappe.has_permission("CRM Quota", doc=name, ptype="write"))
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Quota", name, "amount", 1)
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("CRM Quota", name, "amount"), 100_000)
+
+	def test_an_administrator_still_sets_a_managers_target(self):
+		self.assertEqual(quota_api.set_quota(self.MANAGER, "2026-03-01", 300_000), {"amount": 300_000})

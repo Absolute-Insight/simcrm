@@ -22,7 +22,7 @@ class CRMExotelSettings(Document):
 		enabled: DF.Check
 		record_call: DF.Check
 		subdomain: DF.Data | None
-		webhook_verify_token: DF.Data | None
+		webhook_verify_token: DF.Password | None
 	# end: auto-generated types
 
 	def validate(self):

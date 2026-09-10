@@ -4,7 +4,10 @@ from frappe import _
 
 @frappe.whitelist()
 def create_email_account(data: dict):
-	frappe.only_for(["System Manager", "Sales Manager"], True)
+	# Email Account is a System Manager doctype in Frappe, so a Sales Manager who
+	# got this far only reached the save and had their PermissionError rewritten
+	# below as "could not connect to the mail server". The floor is the truth.
+	frappe.only_for("System Manager", True)
 	service = data.get("service")
 	if service == "Custom":
 		service_config = custom_service_config(data)
@@ -56,6 +59,10 @@ def create_email_account(data: dict):
 
 		# if correct credentials, save the email account
 		email_doc.save()
+	except frappe.PermissionError:
+		# A refusal is not a connection failure: rewriting it sent the caller to
+		# look at the mail host for a problem that is on this site.
+		raise
 	except Exception:
 		# The raw exception can carry the mail host's banner and the credentials
 		# we just sent; log it for the admin and give the user a generic message.

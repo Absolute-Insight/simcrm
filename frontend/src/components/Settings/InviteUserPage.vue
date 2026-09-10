@@ -180,20 +180,49 @@ const inviteByEmail = createResource({
       role: role.value,
     }
   },
-  onSuccess() {
+  onSuccess(data) {
     role.value = 'Sales User'
     error.value = null
     invitees.value = []
     pendingInvitations.reload()
-    toast.success(__('Invitations sent successfully'))
-    updateOnboardingStep('invite_your_team')
-    capture('user_invited')
+    const sent = reportInviteOutcome(data)
+    if (sent) {
+      updateOnboardingStep('invite_your_team')
+      capture('user_invited')
+    }
   },
   onError(err) {
     error.value = err?.messages?.[0]
     toast.error(error.value)
   },
 })
+
+// The endpoint answers with what it actually did: an address that already has an
+// account, or already holds a live invitation, is skipped and no email goes out.
+// A blanket 'Invitations sent successfully' over that told the manager mail had
+// been sent when none had -- which is exactly how an unclicked invitation went
+// unnoticed for weeks. Returns how many invitations really went out.
+function reportInviteOutcome(data) {
+  const sent = data?.to_invite ?? []
+  const members = data?.existing_members ?? []
+  const invited = data?.existing_invites ?? []
+
+  if (sent.length) {
+    toast.success(__('Invitation sent to {0}', [sent.join(', ')]))
+  }
+  if (members.length) {
+    toast.warning(__('{0} already has an account', [members.join(', ')]))
+  }
+  if (invited.length) {
+    toast.warning(
+      __('{0} already has an invitation waiting', [invited.join(', ')]),
+    )
+  }
+  if (!sent.length && !members.length && !invited.length) {
+    toast.warning(__('No invitations were sent'))
+  }
+  return sent.length
+}
 
 const pendingInvitations = createListResource({
   type: 'list',

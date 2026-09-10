@@ -70,3 +70,33 @@ class CRMTelephonyAgent(Document):
 
 		primary = next((d for d in self.phone_nos if d.get("is_primary") == 1), None)
 		self.mobile_no = primary.get("number") if primary else ""
+
+
+def _is_manager(user: str) -> bool:
+	roles = frappe.get_roles(user)
+	return "System Manager" in roles or "Sales Manager" in roles
+
+
+def get_permission_query_conditions(user=None):
+	"""A rep lists their own routing row; managers and administrators list them all."""
+	user = user or frappe.session.user
+	if _is_manager(user):
+		return ""
+	return f"`tabCRM Telephony Agent`.`user` = {frappe.db.escape(user)}"
+
+
+def has_permission(doc, ptype="read", user=None):
+	"""One row per user, named by that user, and it decides where their calls go.
+
+	Sales User holds write and delete on the doctype, and the settings pane
+	writes through ``frappe.client`` with nothing but the session user's rights,
+	so without this a rep could point a colleague's ``twilio_number`` at their
+	own phone or delete the colleague's agent and let their inbound calls fail.
+	Only the row's own user, a Sales Manager or a System Manager may touch it.
+	"""
+	user = user or frappe.session.user
+	if _is_manager(user):
+		return True
+	# ``doc.user`` is the autoname source; on an existing row it equals ``doc.name``,
+	# on a new one it is the only thing that says whose row this is
+	return (doc.user or doc.name) == user
