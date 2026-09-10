@@ -39,6 +39,13 @@ def _catalogue_data(doc) -> dict:
 	rate = get_item_price_rate(doc.name, doc.get("stock_uom"))
 	if rate is not None:
 		data["standard_rate"] = rate
+	# An Item with neither an Item Price nor a standard rate leaves this None,
+	# and on_update writes the payload with frappe.db.set_value, which passes
+	# raw values straight to the column (no flt coercion, unlike doc.insert).
+	# standard_rate is a NOT NULL Currency, so the write raised IntegrityError.
+	# Coercing here also stops payload_differs seeing None != 0.0 forever and
+	# rewriting the row on every Item save.
+	data["standard_rate"] = frappe.utils.flt(data["standard_rate"])
 	return data
 
 
