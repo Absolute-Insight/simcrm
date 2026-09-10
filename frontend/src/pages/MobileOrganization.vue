@@ -147,11 +147,20 @@
       </template>
     </Tabs>
   </div>
+  <!-- Without this a record outside the rep's hierarchy, or one that has
+       been deleted, rendered as an empty screen: no header, no back
+       button, only a toast that had already gone. -->
+  <ErrorPage
+    v-else-if="errorTitle"
+    :errorTitle="errorTitle"
+    :errorMessage="errorMessage"
+  />
 </template>
 
 <script setup>
 import SidePanelLayout from '@/components/SidePanelLayout.vue'
 import Icon from '@/components/Icon.vue'
+import ErrorPage from '@/components/ErrorPage.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import DealsListView from '@/components/ListViews/DealsListView.vue'
 import ContactsListView from '@/components/ListViews/ContactsListView.vue'
@@ -165,6 +174,7 @@ import {
   unmarkDocumentAsDeleted,
   expireDeletionMarker,
 } from '@/data/document'
+import { useDocumentError } from '@/composables/useDocumentError'
 import { getSettings } from '@/stores/settings'
 import { getMeta } from '@/stores/meta'
 import { globalStore } from '@/stores/global'
@@ -211,7 +221,10 @@ const {
   document: organization,
   permissions,
   triggerOnRender,
+  error: loadError,
 } = useDocument('CRM Organization', props.organizationId)
+
+const { errorTitle, errorMessage } = useDocumentError(loadError)
 
 const canDelete = computed(() => permissions.data?.permissions?.delete || false)
 
