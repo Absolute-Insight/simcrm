@@ -111,10 +111,45 @@ class QuotaTest(IntegrationTestCase):
 
 	# --- attainment -----------------------------------------------------
 
-	def test_attainment_without_a_quota_reports_zero_and_says_why(self):
+	def test_attainment_without_a_quota_reports_no_value_and_says_why(self):
+		"""No target is not 0% of one. The gauge draws ``None`` as an empty ring
+		with the tooltip's explanation; 0 drew a rep with no target as the worst
+		number on the page."""
 		out = get_quota_attainment("2026-03-01", "2026-03-31", USER)
-		self.assertEqual(out["value"], 0)
+		self.assertIsNone(out["value"])
 		self.assertIn("No quota", out["tooltip"])
+
+	def test_a_rep_with_wins_and_no_target_has_no_attainment_rather_than_zero(self):
+		"""The report lists anyone who closed business in the period, target or
+		not; a new rep's first month landed as ``quota 0, attainment 0`` and the
+		manager panel ranked them worst in orange."""
+		won_status = frappe.get_all("CRM Deal Status", filters={"type": "Won"}, pluck="name")
+		if not won_status:
+			self.skipTest("site has no Won deal status")
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Quota Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		deal = frappe.get_doc(
+			{
+				"doctype": "CRM Deal",
+				"organization": org,
+				"deal_owner": USER,
+				"status": won_status[0],
+				"deal_value": 200_000,
+				"exchange_rate": 1,
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True)
+		frappe.db.set_value("CRM Deal", deal.name, "closed_date", "2026-03-15", update_modified=False)
+
+		report = get_report("quota_attainment_by_rep", "2026-03-01", "2026-03-31", USER)
+		row = next(r for r in report["rows"] if r["user"] == USER)
+		self.assertEqual(row["quota"], 0)
+		self.assertEqual(row["actual"], 200_000)
+		self.assertIsNone(row["attainment"])
+		self.assertIsNone(get_quota_attainment("2026-03-01", "2026-03-31", USER)["value"])
 
 	def test_attainment_is_won_revenue_over_quota(self):
 		won_status = frappe.get_all("CRM Deal Status", filters={"type": "Won"}, pluck="name")

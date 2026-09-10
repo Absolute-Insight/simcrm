@@ -6,11 +6,19 @@ from frappe.model.document import Document
 
 
 def get_permission_query_conditions(user=None):
-	"""A rep sees their own suggestions; managers see the whole queue.
+	"""A rep sees their own suggestions; a manager sees their subtree's.
 
 	The API endpoints scope by ``user`` too, but they are not the only door: the
 	generic document API reaches this doctype directly, so the rule has to live
 	on the doctype or it is not a rule.
+
+	An unowned suggestion -- a signal on a record with no owner -- belongs to
+	nobody's queue and is listed only for a viewer whose ``visible_users`` is
+	unrestricted. That is the same set of people who can read an unowned deal:
+	``crm.permissions.org_hierarchy`` shows an in-tree manager the records their
+	subtree owns or is assigned, and an ownerless one is neither. Listing the
+	suggestion to them anyway gave every team lead rows they could neither open
+	nor act on -- accept and dismiss check the record and threw "not permitted".
 	"""
 	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
 
@@ -18,16 +26,12 @@ def get_permission_query_conditions(user=None):
 	users = visible_users(user)
 	if users is None:
 		return ""
-	# an unowned suggestion is a team-wide signal with no rep attached; it stays
-	# visible to anyone who manages a team rather than belonging to one of them
 	escaped = ", ".join(frappe.db.escape(name) for name in users)
-	own = f"`tabCRM Suggestion`.`user` in ({escaped})"
-	if "Sales Manager" in frappe.get_roles(user):
-		return f"({own} or ifnull(`tabCRM Suggestion`.`user`, '') = '')"
-	return own
+	return f"`tabCRM Suggestion`.`user` in ({escaped})"
 
 
 def has_permission(doc, ptype="read", user=None):
+	"""The record door, answering exactly as the list door does."""
 	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
 
 	user = user or frappe.session.user
@@ -35,8 +39,9 @@ def has_permission(doc, ptype="read", user=None):
 	if users is None:
 		return True
 	if not doc.user:
-		# unowned suggestions are team-wide signals and stay in manager views only
-		return "Sales Manager" in frappe.get_roles(user)
+		# unowned suggestions are listed only to an unrestricted viewer, so they
+		# are actionable only by one
+		return False
 	return doc.user in users
 
 
