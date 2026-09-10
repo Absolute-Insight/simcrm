@@ -174,11 +174,14 @@ body:has(.login-content) .page-card-subtitle {
 }
 
 body:has(.login-content) .sign-up-message,
-body:has(.login-content) .sign-up-message a {
+body:has(.login-content) .sign-up-message a,
+body:has(.login-content) .resend-link,
+body:has(.login-content) .resend-link a {
   color: var(--v-ink-link);
 }
 
-body:has(.login-content) .sign-up-message a:hover {
+body:has(.login-content) .sign-up-message a:hover,
+body:has(.login-content) .resend-link a:hover {
   color: var(--v-ink);
 }
 
@@ -346,41 +349,81 @@ body:has(.login-content) a[href="#forgot"]:hover {
   background-color: var(--v-ink);
 }
 
-/* ── buttons ─────────────────────────────────────────────────────────────*/
-body:has(.login-content) .es-button[data-variant="solid"] {
-  background: var(--v-ink);
+/* ── buttons and banners ─────────────────────────────────────────────────
+ * Everything that stacks with the fields takes the field's own height, so
+ * the column reads as one set of equal rows: inputs, the two actions, and
+ * the success/error banner above the field on the email-link and forgot
+ * screens. The vendor fixes `.es-button` at 28px, so height is set here
+ * with the same `.page-card` hop the field rules use.
+ */
+body:has(.login-content) .page-card .es-button {
+  height: var(--v-field-h);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
   border-radius: 6px;
+  font-size: 14px;
   font-weight: 600;
-  padding: 10px 16px;
+  line-height: 1;
+}
+
+body:has(.login-content) .page-card .es-button[data-variant="solid"] {
+  background: var(--v-ink);
+  color: #fff;
   transition: background 120ms ease;
 }
 
-body:has(.login-content) .es-button[data-variant="solid"]:hover {
+body:has(.login-content) .page-card .es-button[data-variant="solid"]:hover {
   background: #22415f;
+  color: #fff;
 }
 
 /* The secondary action takes a light tint of the mark's blue rather than the
  * stock grey: on the metal ground a grey button reads as disabled. Navy label
  * on the tint measures well clear of AA, and the fill is light enough that it
- * still reads as secondary beside the solid navy primary. */
-body:has(.login-content) .btn-login-with-email-link,
-body:has(.login-content) .btn-login-option {
+ * still reads as secondary beside the solid navy primary.
+ *
+ * `.btn-login-with-email-link` is on two different things: the secondary
+ * link on the sign-in screen AND the solid submit button on the email-link
+ * screen. Excluding the solid variant keeps this tint off the submit, which
+ * otherwise inherited the navy label and vanished into its own background. */
+body:has(.login-content)
+  .page-card
+  .btn-login-with-email-link:not([data-variant="solid"]),
+body:has(.login-content) .page-card .btn-login-option {
   background: var(--v-tint);
   border: 1px solid var(--v-tint-line);
   color: var(--v-ink);
-  border-radius: 6px;
-  font-weight: 600;
-  padding: 10px 16px;
   transition:
     background 120ms ease,
     border-color 120ms ease;
 }
 
-body:has(.login-content) .btn-login-with-email-link:hover,
-body:has(.login-content) .btn-login-option:hover {
+body:has(.login-content)
+  .page-card
+  .btn-login-with-email-link:not([data-variant="solid"]):hover,
+body:has(.login-content) .page-card .btn-login-option:hover {
   background: var(--v-tint-hover);
   border-color: var(--v-focus);
   color: var(--v-ink);
+}
+
+/* The banners ("Please check your email.", errors) share the field height
+ * too. The vendor's 14px vertical padding made them the tallest row in the
+ * column; a min-height lets a long error still wrap. */
+body:has(.login-content) .page-card .es-alert {
+  min-height: var(--v-field-h);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+
+body:has(.login-content) .page-card .es-alert.hidden {
+  display: none;
 }
 
 /* Keyboard focus must stay obvious on every actionable element, including the

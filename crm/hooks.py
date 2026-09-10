@@ -58,6 +58,18 @@ require_type_annotated_api_methods = True
 web_include_css = "vectora-login.bundle.css"
 # web_include_js = "/assets/crm/js/crm.js"
 
+# Website-page context defaults. Frappe's base template falls back to its own
+# favicon unless Website Settings names one, and Website Settings is per-site
+# data that a fresh install never fills in -- so the login tab carried the
+# framework's icon while the app behind it carried ours. The hook wins over the
+# empty setting on every site this app is installed on; a site that sets its
+# own favicon in Website Settings is still honoured, because Frappe applies the
+# hook first and the settings on top.
+website_context = {
+	"favicon": "/assets/crm/frontend/favicon.png",
+	"splash_image": "/assets/crm/images/logo.svg",
+}
+
 # include custom scss in every website theme (without file extension ".scss")
 # website_theme_scss = "crm/public/scss/website"
 
