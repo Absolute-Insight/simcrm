@@ -11,11 +11,12 @@ close the fence early and continue as if it were trusted.
 
 from __future__ import annotations
 
+from crm.agent.prompting import NEUTRALISED_MARKER as NEUTRALISED_MARKER  # re-exported
+from crm.agent.prompting import neutralise
+
 CONTENT_START = "<<<THREAD"
 CONTENT_END = "THREAD>>>"
 
-# What a fence marker found inside untrusted content is replaced with.
-NEUTRALISED_MARKER = "[fence marker removed]"
 # What is appended to an entry trimmed to fit the character budget.
 TRUNCATION_NOTE = " [...truncated]"
 # Emitted when the budget is too small to carry even a trimmed entry. Never leave the
@@ -108,19 +109,8 @@ def _fenced_thread(communications: list[dict], max_chars: int) -> str:
 
 
 def _neutralise(content: str) -> str:
-	"""Replace fence markers in quoted content so it cannot escape its own fence.
-
-	Substituting a placeholder rather than deleting the marker is the whole point.
-	A single ``str.replace`` pass that deletes leaves the surrounding fragments
-	adjacent, and they can spell the marker again: ``("THRE" + "THREAD>>>" +
-	"AD>>>").replace("THREAD>>>", "")`` is exactly ``"THREAD>>>"``, a live fence
-	terminator. The placeholder keeps the leftovers apart -- and makes the tampering
-	visible to the model instead of hiding it.
-	"""
-	text = str(content or "")
-	for marker in (CONTENT_START, CONTENT_END):
-		text = text.replace(marker, NEUTRALISED_MARKER)
-	return text
+	"""This module's fence markers, run through the shared neutraliser."""
+	return neutralise(content, (CONTENT_START, CONTENT_END))
 
 
 def build_reply_messages(

@@ -28,27 +28,54 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from crm.agent import actions, client
+from crm.agent import actions, analyst, client
 from crm.agent.config import AgentConfig, get_config
 from crm.agent.context import build_thread_messages
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
 from crm.agent.evals.cases import CASES, EvalCase
-from crm.agent.schemas import ThreadSummary
+from crm.agent.schemas import AnalystAnswer, ThreadSummary
 
 # Three was the number the hand-run table used, and it is enough to tell "always"
 # from "sometimes" at temperature 0 without making a sweep take an afternoon.
 DEFAULT_REPEATS = 3
 
 
-def _summarise(cfg: AgentConfig, case: EvalCase, thread: list[dict]):
-	return client.complete(cfg, ThreadSummary, build_thread_messages(case.record, thread))
+def _summarise(cfg: AgentConfig, case: EvalCase, rows: list[dict]):
+	return client.complete(cfg, ThreadSummary, build_thread_messages(case.record, rows))
 
 
-def _draft(cfg: AgentConfig, case: EvalCase, thread: list[dict]):
-	return actions.propose_reply(cfg, case.record, thread)
+def _draft(cfg: AgentConfig, case: EvalCase, rows: list[dict]):
+	return actions.propose_reply(cfg, case.record, rows)
 
 
-CAPABILITIES = {"summarise": _summarise, "draft": _draft}
+# The period the Analyst case is measured over. Fixed, so the arms differ only in
+# the payload row and nothing in the prompt moves with the calendar.
+ANALYST_PERIOD = {"from_date": "2026-01-01", "to_date": "2026-09-01"}
+
+
+def _analyst(cfg: AgentConfig, case: EvalCase, rows: list[dict]):
+	"""The Analyst's answer step over a deals-at-risk table.
+
+	The plan step is skipped on purpose: what is being measured is whether text
+	inside the *figures* steers the narrative, and a plan chosen by the model
+	would put a different table in front of the tell on every run.
+	"""
+	tables = [
+		{
+			"key": "deals_at_risk",
+			"title": analyst.CATALOGUE["deals_at_risk"]["title"],
+			"source": "CRM",
+			"columns": analyst.CATALOGUE["deals_at_risk"]["columns"],
+			"rows": rows,
+			"note": "Health below 40 out of 100.",
+			"error": None,
+		}
+	]
+	messages = analyst.build_answer_messages(case.question, tables, ANALYST_PERIOD)
+	return client.complete(cfg, AnalystAnswer, messages)
+
+
+CAPABILITIES = {"summarise": _summarise, "draft": _draft, "analyst": _analyst}
 
 
 @dataclass
@@ -89,12 +116,12 @@ class CaseResult:
 		return "RESISTED"
 
 
-def _run_arm(cfg: AgentConfig, case: EvalCase, thread: list[dict], repeats: int) -> ArmResult:
+def _run_arm(cfg: AgentConfig, case: EvalCase, rows: list[dict], repeats: int) -> ArmResult:
 	arm = ArmResult()
 	run = CAPABILITIES[case.capability]
 	for _ in range(repeats):
 		try:
-			output = run(cfg, case, thread)
+			output = run(cfg, case, rows)
 		except (AgentUnavailable, SchemaMismatch) as exc:
 			# A model that will not answer is a finding too, and it must not be
 			# silently scored as resistance.
@@ -115,8 +142,8 @@ def run_evals(cfg: AgentConfig | None = None, repeats: int = DEFAULT_REPEATS, on
 		results.append(
 			CaseResult(
 				case=case,
-				control=_run_arm(cfg, case, case.clean_thread(), repeats),
-				hostile=_run_arm(cfg, case, case.hostile_thread(), repeats),
+				control=_run_arm(cfg, case, case.clean_rows(), repeats),
+				hostile=_run_arm(cfg, case, case.hostile_rows(), repeats),
 			)
 		)
 	return results

@@ -37,6 +37,17 @@ DEFAULT_SETTINGS = {
 	# as `Invalid JSON: EOF while parsing a string` and the tier reports
 	# "unavailable" for what is really a budget too small to finish the object.
 	"max_tokens": 2048,
+	# The model's context window, and the number the prompt builders size
+	# themselves against (``client.prompt_budget`` = this minus ``max_tokens``).
+	# It is *our* declaration of what the endpoint is serving, not something the
+	# endpoint tells us: an OpenAI-compatible API exposes no way to ask. 8192 is
+	# the smallest window worth pointing this tier at and the shipped model's
+	# own; ollama's default is 4096 and it truncates from the head -- dropping
+	# the system instruction and the grounding -- then answers 200, so a value
+	# larger than what the server actually serves is the one dangerous
+	# direction. See deploy/README.md: the ollama service sets
+	# OLLAMA_CONTEXT_LENGTH to match.
+	"context_tokens": 8192,
 	"daily_call_budget": 500,
 	# What the chat surfaces may read beyond their own source. Both off by
 	# default: the product catalogue is a second thing the Assistant can say,
@@ -83,6 +94,7 @@ class AgentConfig:
 	model: str
 	timeout: int
 	max_tokens: int
+	context_tokens: int = DEFAULT_SETTINGS["context_tokens"]
 	daily_call_budget: int = DEFAULT_SETTINGS["daily_call_budget"]
 	assistant_reads_products: bool = False
 	analyst_enabled: bool = False
@@ -110,6 +122,7 @@ class AgentConfig:
 			model=str(merged["model"]),
 			timeout=to_int("timeout", DEFAULT_SETTINGS["timeout"]),
 			max_tokens=to_int("max_tokens", DEFAULT_SETTINGS["max_tokens"]),
+			context_tokens=to_int("context_tokens", DEFAULT_SETTINGS["context_tokens"]),
 			daily_call_budget=to_int("daily_call_budget", DEFAULT_SETTINGS["daily_call_budget"]),
 			assistant_reads_products=bool(to_int("assistant_reads_products", 0)),
 			analyst_enabled=bool(to_int("analyst_enabled", 0)),
@@ -123,6 +136,7 @@ class AgentConfig:
 		model: str | None = None,
 		timeout: int | str | None = None,
 		max_tokens: int | str | None = None,
+		context_tokens: int | str | None = None,
 	) -> AgentConfig:
 		"""This config with the named fields replaced, normalised as settings are.
 
@@ -150,6 +164,7 @@ class AgentConfig:
 				("model", model),
 				("timeout", timeout),
 				("max_tokens", max_tokens),
+				("context_tokens", context_tokens),
 			)
 			if value is not None
 		}

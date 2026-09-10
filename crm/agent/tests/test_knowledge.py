@@ -110,3 +110,61 @@ class MessageBuildingTest(UnitTestCase):
 		history = [{"role": "user", "content": "y" * (knowledge.HISTORY_CHAR_CAP + 500)}]
 		messages = knowledge.build_assistant_messages("q", [], history)
 		self.assertEqual(len(messages[1]["content"]), knowledge.HISTORY_CHAR_CAP)
+
+
+class BudgetTest(UnitTestCase):
+	"""#13: the prompt is sized to the model's context window before it is sent.
+
+	Four full articles and eight full history turns are ~32k characters between
+	them -- more than twice an 8k-token window. Ollama truncates from the head,
+	which is where the instruction and the grounding live, and answers 200.
+	"""
+
+	def articles(self, count=4, size=4000):
+		return [
+			{"name": f"a{index}", "title": f"Article {index}", "content": f"body{index} " + "x" * size}
+			for index in range(count)
+		]
+
+	def history(self, turns=6, size=1800):
+		return [
+			{"role": "user" if index % 2 == 0 else "assistant", "content": f"turn{index} " + "y" * size}
+			for index in range(turns)
+		]
+
+	def test_without_a_budget_nothing_changes(self):
+		messages = knowledge.build_assistant_messages("q", self.articles(), self.history())
+		self.assertIn("body3", messages[0]["content"])
+		self.assertEqual(len(messages), 8)
+
+	def test_the_prompt_is_held_under_the_budget(self):
+		messages = knowledge.build_assistant_messages("q", self.articles(), self.history(), max_chars=8000)
+		self.assertLessEqual(
+			sum(len(m["content"]) for m in messages), 8000 + len(knowledge.MENTOR_SYSTEM_PROMPT)
+		)
+
+	def test_history_loses_its_oldest_turns_first(self):
+		messages = knowledge.build_assistant_messages(
+			"q", self.articles(count=1, size=100), self.history(), max_chars=8000
+		)
+		kept = " ".join(m["content"] for m in messages[1:-1])
+		self.assertNotIn("turn0", kept)
+		self.assertIn("turn5", kept)
+
+	def test_the_best_scoring_article_survives_and_the_rest_are_dropped(self):
+		"""``articles`` arrives ranked, so spending the budget in order spends it
+		on what is most likely to answer the question."""
+		system = knowledge.build_assistant_messages("q", self.articles(), [], max_chars=5000)[0]["content"]
+		self.assertIn("body0", system)
+		self.assertNotIn("body3", system)
+
+	def test_the_instruction_and_the_question_are_never_trimmed(self):
+		messages = knowledge.build_assistant_messages(
+			"the question", self.articles(), self.history(), max_chars=200
+		)
+		self.assertTrue(messages[0]["content"].startswith(knowledge.MENTOR_SYSTEM_PROMPT))
+		self.assertEqual(messages[-1], {"role": "user", "content": "the question"})
+
+	def test_a_budget_too_small_for_any_article_says_there_is_no_material(self):
+		system = knowledge.build_assistant_messages("q", self.articles(), [], max_chars=100)[0]["content"]
+		self.assertIn(knowledge.NO_MATCH_NOTE, system)

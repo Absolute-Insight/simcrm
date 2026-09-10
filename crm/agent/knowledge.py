@@ -80,6 +80,14 @@ CONTENT_HIT_CAP = 5
 HISTORY_TURN_LIMIT = 8
 HISTORY_CHAR_CAP = 2000
 
+# When a character budget is given, the share of it history may take before the
+# documentation starts losing articles. Four full articles and eight full turns
+# are ~32k characters between them -- more than twice a 8k-token window -- and
+# without a split the newest thing in the prompt (the history) would push the
+# grounding out, which is exactly backwards for a tier whose whole value is
+# being grounded.
+HISTORY_BUDGET_SHARE = 0.3
+
 _WORD = re.compile(r"[a-z0-9']+")
 
 # Function words that would otherwise dominate overlap scoring. Deliberately
@@ -133,6 +141,7 @@ def build_assistant_messages(
 	system_prompt: str = MENTOR_SYSTEM_PROMPT,
 	no_match_note: str = NO_MATCH_NOTE,
 	heading: str = "Product documentation",
+	max_chars: int | None = None,
 ) -> list[dict]:
 	"""System + prior turns + the question, with the selected articles in the system message.
 
@@ -142,13 +151,38 @@ def build_assistant_messages(
 	rather than trusted, and only the most recent turns are kept. The Mentor
 	and the Assistant share this builder and differ only in the persona and
 	the source they are handed.
+
+	``max_chars`` is the whole prompt's character budget, derived by the caller
+	from the model's context window. Only the builder knows where the
+	instruction ends and the quoted material begins, so the trimming is here:
+	history loses its oldest turns first, then the documentation loses its
+	lowest-scoring articles, and the instruction and the question are never
+	touched. Left ``None``, the prompt is built to the old fixed caps.
 	"""
-	documentation = _documentation_block(articles, no_match_note, heading)
+	turns = _usable_history(history)
+	documentation_budget = None
+	if max_chars is not None:
+		spare = max(0, max_chars - len(system_prompt) - len(question))
+		turns = _fit_history(turns, int(spare * HISTORY_BUDGET_SHARE))
+		documentation_budget = spare - sum(len(turn["content"]) for turn in turns)
+	documentation = _documentation_block(articles, no_match_note, heading, documentation_budget)
 	messages = [{"role": "system", "content": f"{system_prompt}\n\n{documentation}"}]
-	for turn in _usable_history(history):
+	for turn in turns:
 		messages.append(turn)
 	messages.append({"role": "user", "content": question})
 	return messages
+
+
+def _fit_history(turns: list[dict], budget: int) -> list[dict]:
+	"""The newest turns that fit ``budget`` characters between them."""
+	kept: list[dict] = []
+	for turn in reversed(turns):
+		budget -= len(turn["content"])
+		if budget < 0:
+			break
+		kept.append(turn)
+	kept.reverse()
+	return kept
 
 
 def article_from_product(row: dict, currency: str) -> dict:
@@ -174,16 +208,38 @@ def article_from_product(row: dict, currency: str) -> dict:
 
 
 def _documentation_block(
-	articles: list[dict], no_match_note: str = NO_MATCH_NOTE, heading: str = "Product documentation"
+	articles: list[dict],
+	no_match_note: str = NO_MATCH_NOTE,
+	heading: str = "Product documentation",
+	budget: int | None = None,
 ) -> str:
+	"""The grounding block, best-scoring article first, inside ``budget`` characters.
+
+	``articles`` arrives ranked, so spending the budget in order spends it on
+	the articles most likely to answer the question. An article that does not
+	fit whole is truncated and marked; once the budget is gone the rest are
+	dropped rather than included as stubs, because a heading with no body reads
+	to the model as an article that had nothing to say.
+	"""
 	if not articles:
 		return f"# {heading}\n\n{no_match_note}"
+	remaining = budget
 	sections = []
 	for article in articles:
+		header = f"## Article `{article.get('name', '')}`: {article.get('title', '')}\n"
+		cap = ARTICLE_CHAR_CAP
+		if remaining is not None:
+			cap = min(cap, remaining - len(header))
+			if cap <= len(TRUNCATION_NOTE):
+				break
 		content = article.get("content", "")
-		if len(content) > ARTICLE_CHAR_CAP:
-			content = content[: ARTICLE_CHAR_CAP - len(TRUNCATION_NOTE)] + TRUNCATION_NOTE
-		sections.append(f"## Article `{article.get('name', '')}`: {article.get('title', '')}\n{content}")
+		if len(content) > cap:
+			content = content[: cap - len(TRUNCATION_NOTE)] + TRUNCATION_NOTE
+		if remaining is not None:
+			remaining -= len(header) + len(content)
+		sections.append(f"{header}{content}")
+	if not sections:
+		return f"# {heading}\n\n{no_match_note}"
 	return f"# {heading}\n\n" + "\n\n".join(sections)
 
 

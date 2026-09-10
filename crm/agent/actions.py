@@ -21,11 +21,21 @@ from crm.agent.context import build_reply_messages
 from crm.agent.schemas import ReplyDraft
 
 
-def propose_reply(cfg: AgentConfig, record: dict, thread: list[dict]) -> ReplyDraft:
+def propose_reply(
+	cfg: AgentConfig, record: dict, thread: list[dict], max_chars: int | None = None
+) -> ReplyDraft:
 	"""A reply draft for the latest inbound message on ``record``'s thread.
+
+	``max_chars`` bounds the quoted thread so the prompt fits the model's
+	context window; the API layer derives it from ``cfg``. Left ``None``, the
+	prompt builder's own default applies.
 
 	Raises AgentUnavailable / SchemaMismatch like every client call; the API
 	layer turns those into a degrade status.
 	"""
-	messages = build_reply_messages(record, thread)
+	messages = (
+		build_reply_messages(record, thread)
+		if max_chars is None
+		else build_reply_messages(record, thread, max_chars=max_chars)
+	)
 	return client.complete(cfg, ReplyDraft, messages)
