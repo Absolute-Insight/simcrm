@@ -155,11 +155,20 @@
       </template>
     </Tabs>
   </div>
+  <!-- Without this a record outside the rep's hierarchy, or one that has
+       been deleted, rendered as an empty screen: no header, no back
+       button, only a toast that had already gone. -->
+  <ErrorPage
+    v-else-if="errorTitle"
+    :errorTitle="errorTitle"
+    :errorMessage="errorMessage"
+  />
 </template>
 
 <script setup>
 import Icon from '@/components/Icon.vue'
 import SidePanelLayout from '@/components/SidePanelLayout.vue'
+import ErrorPage from '@/components/ErrorPage.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import DetailsIcon from '@/components/Icons/DetailsIcon.vue'
 import PhoneIcon from '@/components/Icons/PhoneIcon.vue'
@@ -171,6 +180,7 @@ import { useContactFields } from '@/composables/useContactFields'
 import { timestampCell } from '@/composables/useTimelinePreferences'
 import { getView } from '@/utils/view'
 import { useDocument } from '@/data/document'
+import { useDocumentError } from '@/composables/useDocumentError'
 import { getSettings } from '@/stores/settings'
 import { getMeta } from '@/stores/meta'
 import { globalStore } from '@/stores/global.js'
@@ -214,7 +224,10 @@ const {
   document: contact,
   permissions,
   triggerOnRender,
+  error: loadError,
 } = useDocument('Contact', props.contactId)
+
+const { errorTitle, errorMessage } = useDocumentError(loadError)
 
 const canDelete = computed(() => permissions.data?.permissions?.delete || false)
 
