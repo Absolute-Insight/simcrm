@@ -246,10 +246,6 @@ services:
       create-site:
         condition: service_completed_successfully
     environment:
-      # Where off-host copies go, e.g. s3:vectora-backups/<host>. Empty means
-      # local only -- which is better than nothing but does not survive losing
-      # the machine, so set it before a customer's data lands.
-      BACKUP_TARGET: ${BACKUP_TARGET:-}
       BACKUP_HOUR: ${BACKUP_HOUR:-2}
     entrypoint: ["bash", "-c"]
     command:
@@ -275,19 +271,11 @@ services:
           sleep $$((next - now))
 
           echo "[backup] $$(date -Is) starting"
+          # Taking the backup is all this service does. Getting it off the
+          # host is the `backup-offsite` service below, on an image that
+          # actually carries rclone.
           if bench --site all backup --with-files; then
             echo "[backup] $$(date -Is) done"
-            if [ -n "$${BACKUP_TARGET}" ]; then
-              # rclone is the one dependency this needs and the image may not
-              # carry it; say so rather than failing silently every night.
-              if command -v rclone >/dev/null; then
-                rclone copy "sites/${SITE_NAME}/private/backups" "$${BACKUP_TARGET}" \
-                  && echo "[backup] copied to $${BACKUP_TARGET}" \
-                  || echo "[backup] OFF-HOST COPY FAILED to $${BACKUP_TARGET}"
-              else
-                echo "[backup] BACKUP_TARGET is set but rclone is not installed in this image"
-              fi
-            fi
           else
             echo "[backup] $$(date -Is) FAILED"
           fi
@@ -297,6 +285,77 @@ services:
         limits:
           memory: 1g
           cpus: "1.0"
+
+  # Gets the nightly dumps off the machine they protect. A backup that only
+  # exists on the host it is protecting is a copy: it survives a bad delete,
+  # not a lost server, and losing the server is the case the customer actually
+  # fears.
+  #
+  # Its own service rather than a step inside `backup`, because the app image
+  # carries no rclone and adding one would put a release between an operator
+  # and their first off-host copy. The official image is pinned by tag+digest
+  # for the same reason the database is.
+  #
+  # It runs hourly and copies rather than syncs: `rclone copy` never deletes
+  # at the destination, so the seven-day local retention does not propagate to
+  # the archive, and a copy that failed at 02:00 is retried at 03:00 instead of
+  # waiting a day. Re-copying is free -- rclone skips files already there.
+  backup-offsite:
+    image: rclone/rclone:1.68.2@sha256:74c51b8817e5431bd6d7ed27cb2a50d8ee78d77f6807b72a41ef6f898845942b
+    logging: *logging
+    restart: unless-stopped
+    profiles: ["offsite"]
+    depends_on:
+      create-site:
+        condition: service_completed_successfully
+    volumes:
+      # Read-only: this service must never be able to damage the thing it is
+      # archiving.
+      - sites:/data/sites:ro
+    environment:
+      # The remote is defined entirely by environment, so there is no
+      # rclone.conf to mount, template or keep in sync -- and no credentials
+      # on disk in the compose directory.
+      RCLONE_CONFIG_OFFSITE_TYPE: ${OFFSITE_TYPE:-b2}
+      RCLONE_CONFIG_OFFSITE_ACCOUNT: ${B2_ACCOUNT_ID:?set B2_ACCOUNT_ID in .env, or run without the offsite profile}
+      RCLONE_CONFIG_OFFSITE_KEY: ${B2_APPLICATION_KEY:?set B2_APPLICATION_KEY in .env, or run without the offsite profile}
+      # Where they land. The site name is part of the path so one bucket can
+      # hold more than one deployment without them overwriting each other.
+      BACKUP_TARGET: ${BACKUP_TARGET:-offsite:vecmbp}
+      SITE_NAME: ${SITE_NAME:?}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -u
+        src="/data/sites/$${SITE_NAME}/private/backups"
+        dest="$${BACKUP_TARGET}/$${SITE_NAME}"
+        echo "[offsite] copying $$src -> $$dest, hourly"
+        while true; do
+          if [ -d "$$src" ]; then
+            if rclone copy "$$src" "$$dest" --log-level NOTICE --stats 0; then
+              echo "[offsite] $$(date -Is) ok"
+            else
+              echo "[offsite] $$(date -Is) COPY FAILED"
+            fi
+          else
+            echo "[offsite] $$(date -Is) no backups directory yet at $$src"
+          fi
+          sleep 3600
+        done
+    healthcheck:
+      # Can this service still reach the bucket with the key it was given? A
+      # silent credential expiry is the failure that leaves an operator
+      # believing they have off-host copies when they stopped weeks ago.
+      test: ["CMD-SHELL", 'rclone lsd "$$BACKUP_TARGET" >/dev/null 2>&1']
+      interval: 300s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
 
   backend:
     <<: *app

@@ -1,8 +1,9 @@
 # Vectora — 60-second launch video
 
-Script for InVideo AI (Agent 2 Pro). Theme: **Vectora notices. You decide.** The machine
-watches everything and never gets tired; the person brings judgement and makes the call.
-Together they sell better than either alone.
+Script for InVideo AI (Agent 2 Pro). Theme: **Vectora notices. People decide.** One
+system watches every deal around the clock; three kinds of people use what it sees. The
+rep gets a short list. The manager gets a clear view of the team. The head of the
+company gets numbers they can trust. Human judgement and machine attention, one team.
 
 Two parts: the **paste-ready prompt** for the agent, and the **scene-by-scene script**
 to paste when it asks for one or when you regenerate a scene.
@@ -13,34 +14,41 @@ to paste when it asks for one or when you regenerate a scene.
 
 ```
 Create a 60-second premium product launch video for "Vectora", a sales CRM built on a
-simple idea: the software notices, the person decides. It watches every deal around the
-clock and brings the salesperson what matters. The salesperson brings judgement and
-makes the call. Human and AI working as one team.
+simple idea: the software notices, people decide. It watches every deal around the clock
+and serves three people in a sales company: the salesperson, the sales manager, and the
+head of the company. Each gets what they need from the same system. Human judgement and
+AI attention working as one team.
 
 FORMAT: 16:9, 60 seconds, cinematic and premium, in the style of Apple, Linear or
 Stripe product films. Dark, calm, confident. No stock footage of people cheering in
 offices, no handshakes, no robots.
 
+STRUCTURE: A hook, then three short chapters, one per person, then a closing idea and
+the logo. Each chapter opens with a quiet portrait of that person in their own setting:
+the rep at a desk with a phone, the manager standing by a window with a tablet, the head
+of the company in a boardroom or car, reading on a laptop or phone. Then the visual moves
+to what they see on screen.
+
 VISUAL STYLE: Deep indigo-black backgrounds (#0c0c1a to #14152b) with one accent colour,
-electric indigo #5b5fe8, and a soft tint #a5a8f2 for glows. The recurring visual motif is
-TWO lights: a cool indigo light for Vectora and a warm white light for the person. They
-start apart and gradually move together, until in the final scene they merge into the
-logo. Clean floating glass cards, soft rim light, slow camera pushes, shallow depth of
-field. Real human moments are allowed but intimate: a hand on a trackpad, a face lit by a
-screen, a person nodding once and clicking.
+electric indigo #5b5fe8, and a soft tint #a5a8f2 for glows. Recurring motif: a single
+cool indigo light that represents Vectora, and warm white light on every person. The
+indigo light appears in each chapter next to a different person, and in the final scene
+the three warm lights and the indigo light come together and become the logo. Clean
+floating glass cards, soft rim light, slow camera pushes, shallow depth of field.
 
 TYPOGRAPHY: Clean sans-serif (Plus Jakarta Sans or Inter). Big, short lines, white on
-dark, one at a time. Gentle fade-up, never bouncing.
+dark, one at a time. Gentle fade-up, never bouncing. Chapter titles are small and
+understated: "For the rep", "For the manager", "For the head of the company".
 
-VOICEOVER: Warm, calm, human, unhurried. Neutral or British English. Speaks to one
-salesperson, not to a boardroom. Sounds like a trusted colleague, not an advert.
+VOICEOVER: Warm, calm, human, unhurried. Neutral or British English. Sounds like a
+trusted colleague, not an advert.
 
-MUSIC: Cinematic and warm. Starts with a single soft piano note over a low pad, a gentle
-heartbeat-like pulse from 0:12, strings and a steady beat build from 0:30, full warm swell
-at 0:45, cut to near-silence on the final logo at 0:55. No vocals.
+MUSIC: Cinematic and warm. A single soft piano note over a low pad, a gentle pulse from
+0:10, strings and a steady beat build from 0:26, full warm swell at 0:46, drop to one
+held note on the logo at 0:55. No vocals.
 
-PACING: 8 scenes, one idea each. Soft cuts, no hard flashes. Give each headline half a
-second of air before it appears.
+PACING: 8 scenes, one idea each. Soft cuts, no hard flashes. Half a second of air before
+each headline.
 
 Use the scene-by-scene script exactly for voiceover and on-screen text. Do not add
 features, numbers, statistics or customer names. Do not use the words "revolutionary",
@@ -52,133 +60,136 @@ features, numbers, statistics or customer names. Do not use the words "revolutio
 
 ## Part 2 — Scene-by-scene script
 
-Voiceover is about 140 words, which lands at 60 seconds at a warm, unhurried pace.
+Voiceover is about 150 words, which lands at 60 seconds at a warm, steady pace.
 
 | # | Time | Idea |
 |---|---|---|
-| 1 | 0:00–0:06 | You can't watch everything. It can. |
-| 2 | 0:06–0:14 | It brings you what matters, and says why |
-| 3 | 0:14–0:22 | It spots trouble early |
-| 4 | 0:22–0:30 | It shows its reasoning, you make the call |
-| 5 | 0:30–0:38 | It plans, you approve, it keeps score honestly |
-| 6 | 0:38–0:46 | AI helpers that do the busywork, you do the thinking |
-| 7 | 0:46–0:54 | Two kinds of intelligence, one team |
+| 1 | 0:00–0:06 | Hook: one system watches, everyone sees clearly |
+| 2 | 0:06–0:15 | For the rep: a short list, and why |
+| 3 | 0:15–0:22 | For the rep: it notices early, you decide |
+| 4 | 0:22–0:31 | For the manager: see the whole team, coach not chase |
+| 5 | 0:31–0:39 | For the manager: plans and targets that keep themselves honest |
+| 6 | 0:39–0:48 | For the head of the company: numbers you can trust, ask in plain English |
+| 7 | 0:48–0:54 | The idea: it notices, people decide |
 | 8 | 0:54–1:00 | Logo and tagline |
 
-### Scene 1 — You can't watch everything (0:00–0:06)
+### Scene 1 — Hook (0:00–0:06)
 
 **Voiceover**
-> You are good at selling. Nobody is good at watching a hundred deals at once.
+> A sales team is a lot of moving parts. Nobody can watch all of them. Vectora can.
 
 **On-screen text**
-`You can't watch everything.` → `Something can.`
+`Nobody can watch everything.` → `Vectora can.`
 
 **Visual**
-A salesperson at a desk in a dim room, warm light on their face, a long list of deals
-scrolling past on the screen too fast to read. On "something can", a small cool indigo
-light appears in the corner of the screen and the scrolling slows and settles.
+Three quick portraits in dim warm light: a rep on the phone, a manager by a window, an
+executive reading a screen in a car. Between them, a wall of deal cards scrolling. A
+single cool indigo light appears at the centre and the wall settles and comes into
+focus.
 
 ---
 
-### Scene 2 — It brings you what matters (0:06–0:14)
+### Scene 2 — For the rep: what needs you today (0:06–0:15)
 
 **Voiceover**
-> Vectora watches every deal, all day, every day. Each morning it hands you a short list: what needs you today, and why.
+> For the salesperson, it turns a hundred deals into a short list each morning. What needs you today, and why.
 
 **On-screen text**
-`Every deal. Every day.`
-then: `Here is what needs you. Here is why.`
+small: `For the rep`
+`A short list. Every morning.`
+then: `What needs you. And why.`
 
 **Visual**
-The indigo light sweeps across a wall of deal cards like a lighthouse beam. A handful of
-cards lift out and stack into a neat short list. Under each one, a plain-English line
-fades in: "Gone quiet for two weeks", "Closing next week, still early", "Nobody
-followed up". The rest of the wall dims respectfully.
+The indigo light sweeps the wall of cards like a lighthouse. A handful lift out and
+stack into a short list on the rep's screen. Under each, a plain line: "Gone quiet for
+two weeks", "Closing next week, still early", "Nobody followed up". The rep reads it
+with a coffee, calm.
 
 ---
 
-### Scene 3 — It spots trouble early (0:14–0:22)
+### Scene 3 — For the rep: it notices early, you decide (0:15–0:22)
 
 **Voiceover**
-> It notices a deal cooling off before it goes cold. It notices the follow-up nobody made. Early, while there is still time to do something.
+> It spots a deal cooling off before it goes cold, and shows you what it saw. Then you decide. You know the customer. It doesn't.
 
 **On-screen text**
 `It notices early.`
-then, indigo: `While there's still time.`
-
-**Visual**
-Close on one deal card. Little dots of contact, evenly spaced, start drifting further
-apart. Before the gap gets wide, the indigo light pulses gently on the card and a small
-note appears: "This one is cooling". Cut: a hand reaches for the phone. The gentle
-pulse in the music begins.
-
----
-
-### Scene 4 — It shows its reasoning, you decide (0:22–0:30)
-
-**Voiceover**
-> It never just gives you a number. It tells you what it saw. Then you decide, because you know the customer, and it doesn't.
-
-**On-screen text**
-`Deal health: 58`
-under it, one by one: `Quiet for 11 days` · `No next step` · `Contact slowing down`
 then, warm white: `You know the customer. You decide.`
 
 **Visual**
-A soft dial settles at 58. Three short reasons appear beside it in plain words. Then the
-camera turns to the person: they read it, nod once, and click. The warm white light on
-their face brightens a touch. The cool light and the warm light are now side by side.
+Dots of contact on one card drift apart; before the gap gets wide the light pulses and a
+note appears: "This one is cooling". Beside it a soft dial reads 58 with three plain
+reasons. The rep nods once and picks up the phone. Gentle pulse in the music.
 
 ---
 
-### Scene 5 — It plans, you approve, it keeps score (0:30–0:38)
+### Scene 4 — For the manager: see the team (0:22–0:31)
 
 **Voiceover**
-> Ask it to plan your week and it drafts one from what matters most. You change what you like, then save. Through the week it quietly checks what actually got done.
+> For the manager, it shows the whole team on one screen. Who is on track, who is behind, which deals need a second pair of eyes. So you coach instead of chase.
 
 **On-screen text**
-`It drafts your week.` → `You approve it.`
-then: `Planned 12 · Done 9`
+small: `For the manager`
+`The whole team. One screen.`
+then, warm white: `Coach. Don't chase.`
 
 **Visual**
-An empty Monday-to-Friday grid. A button, **Propose my week**, is pressed and calls and
-tasks slide into place. A hand drags two of them to a different day, then presses Save.
-Time-lapse through the week: items tick green one by one as real calls and emails happen.
-Strings and beat build.
+The manager by the window, tablet in hand. On screen, a team dashboard: a row of tiles,
+a bar per rep against their target, a short list of deals marked at risk. The manager
+taps a rep's name and the screen slides to that rep's week. Cut to the manager pulling
+a chair up beside the rep. Strings begin.
 
 ---
 
-### Scene 6 — AI helpers, when you want them (0:38–0:46)
+### Scene 5 — For the manager: plans and targets that stay honest (0:31–0:39)
 
 **Voiceover**
-> Switch on the AI helpers and they take the busywork: reading a long email thread for you, drafting a first reply, answering a question about your numbers in plain English. You still read it. You still press send.
+> Every rep plans their week; Vectora quietly checks what actually got done. Targets, plans and results all sit side by side, kept honest by the system, not by memory.
 
 **On-screen text**
-`It reads. It drafts. It answers.`
-then, warm white: `You still press send.`
+`Planned. Done. Missed.`
+then: `Kept honest by the system.`
 
 **Visual**
-A long email thread folds down into three calm lines. A reply writes itself into a
-compose box and stops, cursor blinking, next to a Send button. A finger hovers, reads,
-then presses it. Cut: someone types "How is the team doing this quarter?" and a clean
-little table and a friendly paragraph appear.
+A Monday-to-Friday grid fills with calls and tasks. Time-lapse through the week: items
+tick green as real calls and emails happen, a few dim to "missed". Pull back to the
+manager's view: one row per rep, plan kept and target reached, side by side.
 
 ---
 
-### Scene 7 — Two kinds of intelligence, one team (0:46–0:54)
+### Scene 6 — For the head of the company: numbers you can trust (0:39–0:48)
 
 **Voiceover**
-> It never gets tired, never forgets, and never acts without you. You bring judgement, relationships and the final word. That is not AI replacing people. That is people with better eyes.
+> For the head of the company, one set of numbers everywhere. The forecast is graded against what really closed. And you can simply ask: how is the business doing this quarter? and get an answer in plain English, from your own figures.
+
+**On-screen text**
+small: `For the head of the company`
+`One set of numbers.`
+then: `Forecast, graded against reality.`
+then a typed question: `How is the business doing this quarter?`
+
+**Visual**
+The executive, laptop open, evening light. A revenue chart with two lines, forecast and
+actual, converging month by month. They type the question; a clean table and a short
+friendly paragraph appear beneath it. A small line under the answer: "Figures from your
+CRM and ERP". Full swell begins.
+
+---
+
+### Scene 7 — The idea (0:48–0:54)
+
+**Voiceover**
+> It never gets tired, never forgets, and never acts without a person. People bring judgement and the final word. Not AI instead of people. People with better eyes.
 
 **On-screen text**
 `It never forgets.` (indigo)
-`You make the call.` (warm white)
-then both together: `Better together.`
+`People make the call.` (warm white)
+then: `Better together.`
 
 **Visual**
-The two lights, cool indigo and warm white, drift toward each other across a dark
-field and begin to orbit. Between them, small moments flash: a won deal, a thank-you
-email, a team photo on a desk. Full warm swell of the music.
+The three warm lights, rep, manager, executive, drift in from the edges toward the cool
+indigo light at the centre and begin to orbit it. Between them, quick flashes: a won
+deal, a thank-you email, a team laughing at a whiteboard.
 
 ---
 
@@ -193,28 +204,30 @@ Below: `A CRM that tells you what needs doing.`
 Small footer: `Your data stays yours. Runs where you choose.`
 
 **Visual**
-The two lights merge into one and become the logo. Music drops to a single held note.
-Hold two full seconds on the tagline. Fade to black.
+The four lights merge into one and become the logo. Music drops to one held note. Hold
+two seconds on the tagline. Fade to black.
 
 ---
 
 ## Production notes
 
-- **Upload** `crm/public/images/logo.svg` and `brand.png`. For real product footage in
-  scenes 2, 4, 5 and 6, record 6–8s dark-theme screen captures of the Suggestions panel,
-  a deal's Needs attention section, the Planner after Propose my week, and the Assistant
-  chat. Tell the agent "use my uploaded clips for scenes 2, 4, 5 and 6".
-- **The two lights are the whole film.** Cool indigo = Vectora, warm white = the person.
-  Apart at the start, side by side by scene 4, orbiting in scene 7, one light in scene 8.
-  If the agent drops the motif, ask it to restore it by name.
+- **Upload** `crm/public/images/logo.svg` and `brand.png`. For real product footage,
+  record 6–8s dark-theme captures: the Suggestions panel and a deal's Needs attention
+  section (scenes 2–3), the manager dashboard and Planner (scenes 4–5), the forecast chart
+  and Analyst chat (scene 6). Tell the agent which clip goes with which scene.
+- **The lights are the whole film.** Cool indigo = Vectora. Warm white = each person.
+  One warm light per chapter, all three gather around the indigo light in scene 7, and
+  they become the logo in scene 8. If the agent drops the motif, ask for it back by name.
 - **Colours**: background #0c0c1a–#14152b, accent #5b5fe8, tint #a5a8f2, warm white
-  #fff4e6 for the human light. No second accent colour.
-- **Voice**: warm and human, not corporate. Reject anything that sounds like an advert.
-  Ask for about 140 words per minute.
+  #fff4e6 for the people. No second accent colour.
+- **Casting**: three different people, clearly different settings (desk, window, car or
+  boardroom). Keep them real and understated; no suits-and-skyline clichés.
+- **Voice**: warm and human, about 150 words per minute. Reject anything that sounds
+  like an advert.
 - **Words to keep out**: revolutionary, supercharge, 10x, disrupt, any customer name or
-  statistic. Keep every sentence something you would say to a colleague over coffee.
-- **Handy regeneration prompts**: "scene 4, hold longer on the person's face before the
-  click", "scene 7, make the two lights orbit slower and closer", "scene 6, show a real
-  hand pressing Send, not an animated cursor".
-- **Cut-downs**: 30s version keeps scenes 1, 2, 4, 7 and 8. 15s social cut keeps scenes 1,
-  4 and 8 with on-screen text only.
+  statistic.
+- **Handy regeneration prompts**: "scene 4, show the manager sitting down next to the
+  rep, not looking at the screen alone", "scene 6, make the executive's setting an
+  evening office, not a boardroom", "scene 7, slow the orbit and bring the lights closer".
+- **Cut-downs**: 30s keeps scenes 1, 2, 4, 6 and 8 (one line per person). 15s social
+  cut keeps scenes 1, 7 and 8 with on-screen text only.
