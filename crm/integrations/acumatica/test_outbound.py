@@ -1,3 +1,4 @@
+import re
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -104,9 +105,103 @@ class TestCreateCustomer(FrappeTestCase):
 		org, deal = _make_deal(status="Won")  # organization_name is longer than 10 chars
 		client = MagicMock()
 		ClientCls.return_value = client
+		client.get_page.return_value = []  # the derived id is free in Acumatica
 		client.put.return_value = _wrapped(NoteID="n", CustomerID="X")
 		outbound.push_customer_for_deal(deal.name)
 		self.assertLessEqual(len(client.put.call_args.args[1]["CustomerID"]), 10)
+
+
+class TestDerivedCustomerIdCollisions(FrappeTestCase):
+	"""'From Organization Name' truncates the name to the CUSTOMER ID segment, so two
+	different organizations can derive one id -- and Acumatica's Customer PUT is an
+	upsert keyed on it, which would rename the first customer and link both
+	organizations to it. A taken id must be refused, not sent."""
+
+	def tearDown(self):
+		frappe.db.rollback()
+		_disable()
+
+	def _issues(self, org_name):
+		return [
+			row
+			for row in frappe.get_doc("CRM Acumatica Settings").sync_issues
+			if row.remote_id == org_name and row.kind == "Push Failed"
+		]
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_refuses_an_id_another_crm_organization_already_holds(self, ClientCls):
+		_enable(customer_numbering="From Organization Name", customer_id_max_length=10)
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.get_page.return_value = []
+		org, deal = _make_deal(status="Won")
+		derived = re.sub(r"[^A-Z0-9]", "", org.organization_name.upper())[:10]
+		rival = frappe.get_doc(
+			{"doctype": "CRM Organization", "organization_name": f"Rival-{frappe.generate_hash(length=8)}"}
+		).insert(ignore_permissions=True)
+		frappe.db.set_value("CRM Organization", rival.name, "acumatica_id", derived)
+
+		outbound.push_customer_for_deal(deal.name)
+
+		client.put.assert_not_called()
+		self.assertTrue(any(rival.name in row.detail for row in self._issues(org.name)))
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_refuses_an_id_that_already_exists_in_acumatica(self, ClientCls):
+		_enable(customer_numbering="From Organization Name", customer_id_max_length=10)
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.get_page.return_value = [_wrapped(CustomerID="TAKEN")]
+		org, deal = _make_deal(status="Won")
+
+		outbound.push_customer_for_deal(deal.name)
+
+		client.put.assert_not_called()
+		self.assertTrue(any("already exists in Acumatica" in row.detail for row in self._issues(org.name)))
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_failed_collision_check_refuses_rather_than_guessing_the_id_is_free(self, ClientCls):
+		from crm.integrations.acumatica.client import AcumaticaError
+
+		_enable(customer_numbering="From Organization Name", customer_id_max_length=10)
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.get_page.side_effect = AcumaticaError("gateway timeout", status_code=504)
+		org, deal = _make_deal(status="Won")
+
+		outbound.push_customer_for_deal(deal.name)
+
+		client.put.assert_not_called()
+		self.assertTrue(any("could not check" in row.detail for row in self._issues(org.name)))
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_free_id_is_still_pushed(self, ClientCls):
+		_enable(customer_numbering="From Organization Name", customer_id_max_length=10)
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.get_page.return_value = []
+		client.put.return_value = _wrapped(NoteID="g-free", CustomerID="FREE01")
+		org, deal = _make_deal(status="Won")
+
+		outbound.push_customer_for_deal(deal.name)
+
+		client.put.assert_called_once()
+		self.assertEqual(self._issues(org.name), [])
+		self.assertEqual(frappe.db.get_value("CRM Organization", org.name, "acumatica_id"), "FREE01")
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_autonumbering_never_asks_acumatica_for_a_derived_id(self, ClientCls):
+		"""Acumatica assigns the id in AutoNumber mode, so there is nothing to collide."""
+		_enable(customer_numbering="AutoNumber")
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.return_value = _wrapped(NoteID="g-auto", CustomerID="AUTO01")
+		org, deal = _make_deal(status="Won")
+
+		outbound.push_customer_for_deal(deal.name)
+
+		client.get_page.assert_not_called()
+		client.put.assert_called_once()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_skips_when_org_already_linked(self, ClientCls):
@@ -347,6 +442,60 @@ class TestCreateSalesQuote(FrappeTestCase):
 			outbound.create_sales_quote_from_deal(deal.name)
 
 		self.assertEqual(client.put.call_count, 1)
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_rechecks_the_quote_with_a_row_lock_before_the_put(self, ClientCls):
+		"""The first read of acumatica_sales_quote is unlocked, so two quick clicks are
+		two requests that both pass it before either has an OrderNbr to store -- and
+		SalesOrder is a PUT with no key in the body, so the second would create a
+		second order in the client's ERP. The re-read right before the PUT must take
+		a row lock: that is what makes the loser block until the winner commits."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.return_value = _wrapped(OrderNbr="QT000125")
+		org, deal = _mapped_deal()
+
+		real_get_value = frappe.db.get_value
+		locked_reads = []
+
+		def spy(doctype, filters=None, fieldname="name", *args, **kwargs):
+			if doctype == "CRM Deal" and "acumatica_sales_quote" in _names(fieldname):
+				locked_reads.append(kwargs.get("for_update"))
+			return real_get_value(doctype, filters, fieldname, *args, **kwargs)
+
+		with patch("crm.integrations.acumatica.outbound.frappe.db.get_value", side_effect=spy):
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertIn(True, locked_reads, "the pre-PUT re-check of the quote must pass for_update=True")
+		client.put.assert_called_once()
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_quote_written_between_the_first_read_and_the_lock_stops_the_second_put(self, ClientCls):
+		"""Simulates the double click without threads: the unlocked read sees no quote,
+		the locked re-check -- standing in for the first click's commit landing in
+		between -- does. The second request must refuse instead of PUTting again."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		org, deal = _mapped_deal()
+
+		real_get_value = frappe.db.get_value
+
+		def racing_winner(doctype, filters=None, fieldname="name", *args, **kwargs):
+			if (
+				doctype == "CRM Deal"
+				and "acumatica_sales_quote" in _names(fieldname)
+				and kwargs.get("for_update")
+			):
+				return "QT000126"
+			return real_get_value(doctype, filters, fieldname, *args, **kwargs)
+
+		with patch("crm.integrations.acumatica.outbound.frappe.db.get_value", side_effect=racing_winner):
+			with self.assertRaises(frappe.ValidationError):
+				outbound.create_sales_quote_from_deal(deal.name)
+
+		client.put.assert_not_called()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_throws_when_no_product_is_mapped_instead_of_sending_an_empty_quote(self, ClientCls):

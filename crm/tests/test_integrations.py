@@ -1,6 +1,7 @@
 # Copyright (c) 2024, Frappe Technologies Pvt. Ltd. and Contributors
 # See license.txt
 
+import time
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -562,6 +563,71 @@ class TestRecordingProxyCredentials(IntegrationTestCase):
 			self.assertEqual(integrations_api._configured_exotel_host(), "api.exotel.com")
 		with patch.object(frappe.db, "get_single_value", return_value=None):
 			self.assertEqual(integrations_api._configured_exotel_host(), "")
+
+	def _drain(self, recording_url="https://api.twilio.com/x.mp3", **resp_kwargs):
+		"""Run the proxy over a fake upstream and return the bytes it passed through."""
+		resp = MagicMock()
+		resp.is_redirect = False
+		resp.status_code = 200
+		resp.headers = resp_kwargs.get("headers", {"Content-Type": "audio/mpeg"})
+		resp.iter_content.return_value = resp_kwargs["chunks"]
+		log = create_test_call_log(recording_url=recording_url, telephony_medium="Twilio")
+		with (
+			patch.object(integrations_api, "_safe_get", return_value=(resp, MagicMock())),
+			patch.object(integrations_api, "_get_recording_credentials", return_value=self.CREDENTIALS),
+			patch.object(frappe, "get_request_header", return_value=None),
+		):
+			response = get_recording_url(log.name)
+			return b"".join(response.response), resp
+
+	def test_a_recording_that_declares_it_is_too_large_is_refused_before_streaming(self):
+		"""``recording_url`` is writable by anyone who can edit a call log, so the
+		proxy must not agree to relay an unbounded body."""
+		resp = MagicMock()
+		resp.is_redirect = False
+		resp.status_code = 200
+		resp.headers = {
+			"Content-Type": "audio/mpeg",
+			"Content-Length": str(integrations_api.MAX_RECORDING_BYTES + 1),
+		}
+		log = create_test_call_log(recording_url="https://api.twilio.com/x.mp3", telephony_medium="Twilio")
+		with (
+			patch.object(integrations_api, "_safe_get", return_value=(resp, MagicMock())),
+			patch.object(integrations_api, "_get_recording_credentials", return_value=self.CREDENTIALS),
+			patch.object(frappe, "get_request_header", return_value=None),
+		):
+			with self.assertRaises(frappe.ValidationError):
+				get_recording_url(log.name)
+		resp.iter_content.assert_not_called()
+
+	def test_a_host_that_never_stops_sending_is_cut_off_at_the_byte_cap(self):
+		"""A host that declares no length, or lies about it, is bounded by the read."""
+
+		def endless():
+			while True:
+				yield b"0123456789"
+
+		with patch.object(integrations_api, "MAX_RECORDING_BYTES", 25):
+			body, _resp = self._drain(chunks=endless())
+
+		self.assertEqual(len(body), 25)
+
+	def test_a_host_that_trickles_is_cut_off_at_the_deadline(self):
+		"""requests' timeout is per socket read and restarts on every byte, so a host
+		sending one keep-alive dribble every few seconds never trips it and would hold
+		the worker until gunicorn killed it. Only a wall-clock deadline ends that."""
+
+		def dribble():
+			while True:
+				time.sleep(0.01)
+				yield b""
+
+		with patch.object(integrations_api, "MAX_RECORDING_SECONDS", 0.05):
+			started = time.monotonic()
+			body, _resp = self._drain(chunks=dribble())
+
+		self.assertEqual(body, b"")
+		self.assertLess(time.monotonic() - started, 5)
 
 	def test_the_proxy_is_rate_limited_per_user(self):
 		log = create_test_call_log(recording_url="https://api.twilio.com/x.mp3", telephony_medium="Twilio")

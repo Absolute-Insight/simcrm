@@ -763,7 +763,7 @@ class ImportWorkbooksTest(SpreadsheetImportTestCase):
 		)
 		self.assertFalse(frappe.flags.spreadsheet_import_dry_run)
 
-	def test_an_exception_mid_run_commits_nothing_and_writes_no_files(self):
+	def test_an_exception_mid_run_commits_nothing_and_records_no_deals(self):
 		with patch(
 			"crm.integrations.acumatica.spreadsheet.import_sales_orders", side_effect=RuntimeError("boom")
 		):
@@ -772,8 +772,44 @@ class ImportWorkbooksTest(SpreadsheetImportTestCase):
 					self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2}
 				)
 		self.assertFalse(frappe.db.exists("CRM Organization", "Proserve (Pty) Ltd"))
-		self.assertFalse((self.dir / "import-manifest.json").exists())
+		# the manifest is written on the way out of the crash too, but it names only
+		# deals that survived -- this run never got as far as creating one
+		self.assertEqual(json.loads((self.dir / "import-manifest.json").read_text())["deals"], [])
 		self.assertFalse(frappe.flags.spreadsheet_import_dry_run)
+
+	def test_a_crashed_run_records_the_deals_that_landed_and_not_the_rolled_back_batch(self):
+		"""`_commit_every` commits a batch every 50 rows, so a run that dies later has
+		already put deals on the site -- and the manifest, written only on a clean
+		finish, forgot them: the prescribed re-run then recreated every deal a rep had
+		deleted since. It is written on the way out of a crash now, but the batch the
+		crash rolled back must stay out of it, or those deals would be skipped for
+		good on the re-run."""
+		ss.import_workbooks(self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2})
+		self.assertTrue(frappe.db.exists("CRM Deal", {"acumatica_sales_quote": "QT103012"}))
+		path = self.dir / "import-manifest.json"
+
+		ss._write_manifest(
+			path,
+			{"QT000001"},  # an earlier run's entry; its deal was deleted by a rep
+			{"QT000001", "QT103012", "QT999999"},  # QT999999 died with the last batch
+			ss.Rejects(),
+			crashed=True,
+		)
+
+		self.assertEqual(json.loads(path.read_text())["deals"], ["QT000001", "QT103012"])
+
+	def test_a_crash_keeps_an_earlier_runs_manifest_intact(self):
+		"""Its entries are the reason a re-run does not resurrect deleted deals, so a
+		later crash must not quietly forget them."""
+		(self.dir / "import-manifest.json").write_text(json.dumps({"deals": ["QT000001"]}))
+		with patch(
+			"crm.integrations.acumatica.spreadsheet.import_sales_orders", side_effect=RuntimeError("boom")
+		):
+			with self.assertRaises(RuntimeError):
+				ss.import_workbooks(
+					self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2}
+				)
+		self.assertEqual(json.loads((self.dir / "import-manifest.json").read_text())["deals"], ["QT000001"])
 
 	def test_a_real_run_assigns_deals_quietly(self):
 		"""A real run assigns thousands of deals in one go; assign_to._add's

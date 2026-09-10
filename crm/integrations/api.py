@@ -1,5 +1,6 @@
 import ipaddress
 import socket
+import time
 from urllib.parse import urlparse, urlunparse
 
 import frappe
@@ -17,6 +18,17 @@ from crm.utils import are_same_phone_number, parse_phone_number, sales_user_only
 # a script needs to walk every call log's recording through the proxy.
 RECORDING_RATE_LIMIT = 30
 RECORDING_RATE_SCOPE = "recording_url"
+
+# The proxy streams whatever `recording_url` points at, and that field is writable by
+# anyone who can edit a call log. Two bounds, because neither closes the hole alone:
+# the byte cap stops a host that answers fast and never ends, and the wall-clock
+# deadline stops one that trickles -- requests' timeout is per socket read and
+# restarts on every byte, so a byte every 29 seconds never trips a 30s read timeout
+# and holds a gunicorn worker indefinitely. 50 MB is ~100 minutes of a 64 kbps
+# recording; 10 minutes of streaming for it means 85 KB/s, below which the audio
+# element could not play it in real time anyway.
+MAX_RECORDING_BYTES = 50 * 1024 * 1024
+MAX_RECORDING_SECONDS = 600
 
 TWILIO_RECORDING_DOMAIN = ".twilio.com"
 EXOTEL_RECORDING_DOMAIN = ".exotel.com"
@@ -311,6 +323,14 @@ def _safe_get(url: str, auth, headers: dict):
 	return resp, session
 
 
+def _close_upstream(resp) -> None:
+	"""Release the provider response and the session pinned to its IP."""
+	resp.close()
+	session = getattr(resp, "_pinned_session", None)
+	if session is not None:
+		session.close()
+
+
 def _fetch_recording(url: str, auth, headers: dict):
 	# Follow redirects manually so every hop is validated and IP-pinned: a provider URL can
 	# 302 to a signed CDN URL (legitimate), but without per-hop checks a redirect to an
@@ -374,14 +394,30 @@ def get_recording_url(call_log_name: str):
 	upstream = _fetch_recording(log.recording_url, auth, req_headers)
 	upstream.raise_for_status()
 
+	declared = upstream.headers.get("Content-Length") or ""
+	if declared.isdigit() and int(declared) > MAX_RECORDING_BYTES:
+		# Refuse before streaming a byte when the host says up front how big it is;
+		# the loop below is the bound for the ones that do not.
+		_close_upstream(upstream)
+		frappe.throw(_("Recording is too large to play through the CRM"), frappe.ValidationError)
+
 	def _stream():
+		sent = 0
+		deadline = time.monotonic() + MAX_RECORDING_SECONDS
 		try:
-			yield from upstream.iter_content(chunk_size=64 * 1024)
+			for chunk in upstream.iter_content(chunk_size=64 * 1024):
+				if chunk:
+					if sent + len(chunk) >= MAX_RECORDING_BYTES:
+						yield chunk[: MAX_RECORDING_BYTES - sent]
+						return
+					sent += len(chunk)
+					yield chunk
+				# checked on empty chunks too: keep-alive dribble is exactly what
+				# keeps the per-read timeout from ever firing
+				if time.monotonic() >= deadline:
+					return
 		finally:
-			upstream.close()
-			session = getattr(upstream, "_pinned_session", None)
-			if session is not None:
-				session.close()
+			_close_upstream(upstream)
 
 	response = Response(
 		_stream(),

@@ -70,12 +70,18 @@ def push_customer_for_deal(deal: str) -> None:
 			frappe.db.set_value("CRM Deal", doc.name, "acumatica_customer", org.get("acumatica_id"))
 		return
 
+	client = AcumaticaClient(settings)
 	payload = {"CustomerName": org.organization_name}
 	if settings.customer_numbering == "From Organization Name":
 		# Acumatica's default CUSTOMER ID segment is 10; the setting exists for
 		# tenants that widened it.
 		limit = int(settings.get("customer_id_max_length") or 10)
-		payload["CustomerID"] = re.sub(r"[^A-Z0-9]", "", org.organization_name.upper())[:limit]
+		customer_id = re.sub(r"[^A-Z0-9]", "", org.organization_name.upper())[:limit]
+		collision = _customer_id_collision(client, customer_id, org.name)
+		if collision:
+			record_sync_issue("Customer", org.name, "Push Failed", collision)
+			return
+		payload["CustomerID"] = customer_id
 
 	# enqueue_after_commit only defers the ENQUEUE into frappe.db.after_commit -- a plain
 	# deque with no de-duplication of its own. Two deals on the same organization saved
@@ -95,7 +101,7 @@ def push_customer_for_deal(deal: str) -> None:
 		return
 
 	try:
-		created = AcumaticaClient(settings).put("Customer", payload)
+		created = client.put("Customer", payload)
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
 		# This runs in a background job, off the user's deal save -- but a raised
 		# exception here still fails silently from their point of view, so a DNS
@@ -111,6 +117,44 @@ def push_customer_for_deal(deal: str) -> None:
 		{"acumatica_noteid": v(created, "NoteID"), "acumatica_id": v(created, "CustomerID")},
 	)
 	frappe.db.set_value("CRM Deal", doc.name, "acumatica_customer", v(created, "CustomerID"))
+
+
+def _customer_id_collision(client, customer_id: str, org_name: str) -> str | None:
+	"""Why ``customer_id`` must not be PUT for ``org_name`` -- or None when it is free.
+
+	Acumatica's Customer PUT is an upsert keyed on CustomerID, and in "From
+	Organization Name" mode that key is the name stripped to alphanumerics and
+	truncated to the CUSTOMER ID segment: "Acme Industries" and "Acme Industrial
+	Ltd" both derive ACMEINDUST. Sending the second would RENAME the first
+	customer in the client's ERP and leave two CRM organizations pointing at one
+	record -- silent, and not undoable from here. A taken id is refused instead,
+	and the sync issue tells an admin to widen the segment or set the id by hand.
+
+	A read that cannot answer counts as taken too: the point is never to PUT over
+	somebody else's customer, and "the check failed" is not "the id is free".
+	"""
+	holder = frappe.db.get_value(
+		"CRM Organization", {"acumatica_id": customer_id, "name": ("!=", org_name)}, "name"
+	)
+	if holder:
+		return f"CustomerID {customer_id} derived from the name is already held by CRM Organization {holder}"
+	try:
+		taken = _remote_customer_exists(client, customer_id)
+	except (AcumaticaError, requests.RequestException, ValueError) as e:
+		return f"could not check whether CustomerID {customer_id} is free: {e} :: {getattr(e, 'body', '')}"
+	if taken:
+		return f"CustomerID {customer_id} derived from the name already exists in Acumatica"
+	return None
+
+
+def _remote_customer_exists(client, customer_id: str) -> bool:
+	"""A filtered read rather than GET Customer/<id>: Acumatica answers a missing key
+	with a 500 "No entity satisfies the condition" on some versions and a 404 on
+	others, while an empty filtered page means "not found" on all of them. The id is
+	alphanumeric by construction (the regex above strips everything else), so it
+	needs no OData quoting."""
+	page = client.get_page("Customer", top=1, filter=f"CustomerID eq '{customer_id}'", select="CustomerID")
+	return bool(page)
 
 
 @frappe.whitelist()
@@ -171,6 +215,15 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 	}
 	if details:
 		payload["Details"] = details
+
+	# The check above read the deal without a lock. Two quick clicks are two requests
+	# that both pass it before either has an OrderNbr to store, and SalesOrder is a
+	# PUT with no key in the body -- so the second creates a second order in the
+	# client's ERP. Re-read under a row lock right before the PUT: the second request
+	# blocks here until the first commits, then sees its OrderNbr and refuses.
+	locked_quote = frappe.db.get_value("CRM Deal", deal.name, "acumatica_sales_quote", for_update=True)
+	if locked_quote:
+		frappe.throw(_("Sales quote {0} already exists in Acumatica").format(locked_quote))
 
 	created = AcumaticaClient(settings).put("SalesOrder", payload)
 	order_nbr = v(created, "OrderNbr") or ""

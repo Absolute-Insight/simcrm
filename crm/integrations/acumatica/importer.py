@@ -13,6 +13,14 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 from crm.integrations.acumatica.client import AcumaticaClient, v
 from crm.integrations.acumatica.names import normalise_account_name
 
+try:
+	from rq.timeouts import JobTimeoutException
+except ImportError:  # pragma: no cover - rq is a frappe dependency; guard for bench-less imports
+
+	class JobTimeoutException(BaseException):
+		"""Stand-in that is never raised, so the except clauses below stay valid."""
+
+
 COMMIT_EVERY = 50  # keep transactions short; a 50k-customer backfill must not hold one tx
 
 # One name for the whole sync. Three things start it -- the manual backfill button,
@@ -107,13 +115,18 @@ def upsert_organization(rec) -> str:
 
 def _find_matching_contact(first, last, company_name, email):
 	"""Contact autonames on first/last/company and appends "-1" on collision, so an
-	unmatched import duplicates a person the CRM already knows ("Ana Diaz-1")."""
-	filters = {"first_name": first, "last_name": last or ""}
+	unmatched import duplicates a person the CRM already knows ("Ana Diaz-1").
+
+	A name alone is only a match inside a company. When the business account does not
+	resolve to an organization there is nothing to scope the name by, and "Ana Diaz"
+	at one customer would adopt -- and take over the NoteID of -- her namesake at
+	another; only a primary-email match identifies the person then."""
 	if company_name:
-		filters["company_name"] = company_name
-	name = frappe.db.get_value("Contact", filters, "name")
-	if name:
-		return name
+		name = frappe.db.get_value(
+			"Contact", {"first_name": first, "last_name": last or "", "company_name": company_name}, "name"
+		)
+		if name:
+			return name
 	if email:
 		return frappe.db.get_value(
 			"Contact Email", {"email_id": email, "is_primary": 1, "parenttype": "Contact"}, "parent"
@@ -228,6 +241,13 @@ def _retry_pending(client, pending: dict, counts: dict) -> None:
 				if upsert(rec) is not None:
 					counts[counter] += 1
 				del queued[noteid]
+			except JobTimeoutException:
+				# rq raises this (an Exception subclass) inside whatever line the job's
+				# time limit interrupts. It is the run's deadline, not this record's
+				# fault: swallowing it below would log a healthy record as failed and
+				# let the sweep carry on with no limit at all.
+				frappe.db.rollback(save_point="acumatica_retry")
+				raise
 			except Exception as e:
 				frappe.db.rollback(save_point="acumatica_retry")
 				attempts += 1
@@ -291,8 +311,35 @@ def _import_all(modified_since: str | None) -> dict:
 	started_at = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
 
 	pending = get_pending_retries()
-	_retry_pending(client, pending, counts)
+	try:
+		_retry_pending(client, pending, counts)
+		_import_entities(client, filter_, pending, counts)
+	except Exception:
+		# The run died outside any one record (see run_backfill), after the retry
+		# pass had already counted attempts and the main loop had already queued new
+		# failures. Written only on a clean finish, that work evaporated with the
+		# crash: a record that fails every sweep and crashes the run behind it never
+		# reached the give-up cap. Persist what this run learned; run_backfill's
+		# handler commits it alongside last_sync_error.
+		set_pending_retries(pending)
+		raise
 
+	# Written last, and only here: everything above appends sync issues through
+	# whole-document saves, which would carry a stale queue back over this one.
+	set_pending_retries(pending)
+	# High-water mark is when this run STARTED: anything modified mid-run is
+	# picked up again next sweep rather than lost in the gap.
+	frappe.db.set_single_value("CRM Acumatica Settings", "last_synced_at", started_at)
+	# The run finished, so whatever killed the last one is history.
+	frappe.db.set_single_value("CRM Acumatica Settings", "last_sync_error", "")
+	# The high-water mark must be durable the moment it is set -- the next sweep
+	# reads it from a different worker process.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
+	return counts
+
+
+def _import_entities(client, filter_, pending: dict, counts: dict) -> None:
+	"""The paging pass: every entity, every record Acumatica returns for ``filter_``."""
 	for entity, upsert, counter in _ENTITIES:
 		done_in_entity = 0
 		for rec in client.iter_all(entity, filter=filter_):
@@ -306,6 +353,10 @@ def _import_all(modified_since: str | None) -> dict:
 					raise ValueError("record has no NoteID")
 				if upsert(rec) is not None:
 					counts[counter] += 1
+			except JobTimeoutException:
+				# see _retry_pending: the deadline is the run's, never the record's
+				frappe.db.rollback(save_point="acumatica_rec")
+				raise
 			except Exception as e:
 				frappe.db.rollback(save_point="acumatica_rec")
 				counts["issues"] += 1
@@ -327,19 +378,6 @@ def _import_all(modified_since: str | None) -> dict:
 				frappe.db.commit()  # nosemgrep: frappe-manual-commit
 		# Entity boundary: same reasoning as the per-page commit above.
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit
-
-	# Written last, and only here: everything above appends sync issues through
-	# whole-document saves, which would carry a stale queue back over this one.
-	set_pending_retries(pending)
-	# High-water mark is when this run STARTED: anything modified mid-run is
-	# picked up again next sweep rather than lost in the gap.
-	frappe.db.set_single_value("CRM Acumatica Settings", "last_synced_at", started_at)
-	# The run finished, so whatever killed the last one is history.
-	frappe.db.set_single_value("CRM Acumatica Settings", "last_sync_error", "")
-	# The high-water mark must be durable the moment it is set -- the next sweep
-	# reads it from a different worker process.
-	frappe.db.commit()  # nosemgrep: frappe-manual-commit
-	return counts
 
 
 def schedule_sweep() -> None:
