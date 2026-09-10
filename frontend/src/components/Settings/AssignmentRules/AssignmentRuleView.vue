@@ -723,7 +723,12 @@ const priorityOptions = [
 
 const updateAssignmentRule = async () => {
   isLoading.value = true
-  await call('frappe.client.set_value', {
+  /* The catch here used to toast and clear the spinner without returning, so a
+     refused save still fell through to the rename and to `reload()` + "rule
+     updated": the rep saw red then green, the form was refetched from the
+     server, and every edit they had just made was thrown away while a pending
+     rename applied anyway. Fail closed instead. */
+  const saved = await call('frappe.client.set_value', {
     doctype: 'Assignment Rule',
     name: assignmentRuleData.value.name,
     fieldname: {
@@ -753,13 +758,19 @@ const updateAssignmentRule = async () => {
         ? JSON.stringify(assignmentRuleData.value.unassignConditionJson)
         : null,
     },
-  }).catch((er) => {
-    const error =
-      er?.messages?.[0] ||
-      __('Some error occurred while updating assignment rule')
-    toast.error(error)
-    isLoading.value = false
   })
+    .then(() => true)
+    .catch((er) => {
+      const error =
+        er?.messages?.[0] ||
+        __('Some error occurred while updating assignment rule')
+      toast.error(error)
+      return false
+    })
+  if (!saved) {
+    isLoading.value = false
+    return
+  }
   if (
     assignmentRuleData.value.name !==
     assignmentRuleData.value.assignmentRuleName
