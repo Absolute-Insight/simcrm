@@ -140,6 +140,11 @@
 <script setup>
 import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
 import { describeError } from '@/utils/describeError'
+import {
+  markDocumentAsDeleted,
+  unmarkDocumentAsDeleted,
+  expireDeletionMarker,
+} from '@/data/document'
 import { createResource, call, toast } from 'frappe-ui'
 import { useRouter } from 'vue-router'
 import { computed, ref } from 'vue'
@@ -276,10 +281,20 @@ const removeDocLinks = () => {
 }
 
 const deleteDoc = async () => {
-  await call('frappe.client.delete', {
-    doctype: props.doctype,
-    name: props.docname,
-  })
+  // Mark before the request starts: the backend's delete_doc fires a realtime
+  // doc_update that can reach the still-mounted document resource before this
+  // awaited call resolves here.
+  markDocumentAsDeleted(props.doctype, props.docname)
+  try {
+    await call('frappe.client.delete', {
+      doctype: props.doctype,
+      name: props.docname,
+    })
+  } catch (err) {
+    unmarkDocumentAsDeleted(props.doctype, props.docname)
+    throw err
+  }
+  expireDeletionMarker(props.doctype, props.docname)
   router.push({ name: props.name })
   props?.reload?.()
 }

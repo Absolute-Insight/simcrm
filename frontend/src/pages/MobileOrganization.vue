@@ -159,7 +159,12 @@ import DetailsIcon from '@/components/Icons/DetailsIcon.vue'
 import CameraIcon from '@/components/Icons/CameraIcon.vue'
 import DealsIcon from '@/components/Icons/DealsIcon.vue'
 import ContactsIcon from '@/components/Icons/ContactsIcon.vue'
-import { useDocument } from '@/data/document'
+import {
+  useDocument,
+  markDocumentAsDeleted,
+  unmarkDocumentAsDeleted,
+  expireDeletionMarker,
+} from '@/data/document'
 import { getSettings } from '@/stores/settings'
 import { getMeta } from '@/stores/meta'
 import { globalStore } from '@/stores/global'
@@ -279,10 +284,20 @@ async function deleteOrganization() {
         theme: 'red',
         variant: 'solid',
         async onClick({ close }) {
-          await call('frappe.client.delete', {
-            doctype: 'CRM Organization',
-            name: props.organizationId,
-          })
+          // The delete emits a realtime doc_update that would make the
+          // still-mounted document resource refetch and flash a spurious
+          // "Document does not exist" on the way out.
+          markDocumentAsDeleted('CRM Organization', props.organizationId)
+          try {
+            await call('frappe.client.delete', {
+              doctype: 'CRM Organization',
+              name: props.organizationId,
+            })
+          } catch (err) {
+            unmarkDocumentAsDeleted('CRM Organization', props.organizationId)
+            throw err
+          }
+          expireDeletionMarker('CRM Organization', props.organizationId)
           close()
           router.push({ name: 'Organizations' })
         },
