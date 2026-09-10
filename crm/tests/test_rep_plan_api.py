@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
@@ -365,7 +367,10 @@ class RepPlanApiTest(IntegrationTestCase):
 		theirs = frappe.get_doc(
 			{"doctype": "CRM Task", "title": "Someone else's work", "status": "Done", "assigned_to": OTHER}
 		).insert(ignore_permissions=True)
-		self.addCleanup(frappe.delete_doc, "CRM Task", theirs.name, force=True)
+		# Fixture teardown, and it runs while the session is still REP -- who,
+		# now that CRM Task is scoped to the record it hangs off, may not touch
+		# another rep's task. That is the behaviour under test elsewhere.
+		self.addCleanup(frappe.delete_doc, "CRM Task", theirs.name, force=True, ignore_permissions=True)
 		frappe.set_user(REP)
 		out = save_plan(self.monday, [{"activity_type": "Task", "planned_date": self.monday}])
 		with self.assertRaises(frappe.ValidationError):
@@ -381,6 +386,71 @@ class RepPlanApiTest(IntegrationTestCase):
 			fulfilled_by_doctype="CRM Task",
 			fulfilled_by=self.make_task(assigned_to=REP),
 		)
+		self.assertEqual(out["items"][0]["status"], "Done")
+
+	def make_call(self, **fields):
+		call = frappe.get_doc(
+			{
+				"doctype": "CRM Call Log",
+				"telephony_medium": "Twilio",
+				"type": "Outgoing",
+				"from": "+27110000000",
+				"to": "+27110000001",
+				"status": "Completed",
+				"caller": REP,
+				"start_time": frappe.utils.now_datetime(),
+				**fields,
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Call Log", call.name, force=True)
+		return str(call.name)
+
+	def test_one_record_cannot_be_named_by_two_items(self):
+		"""``_claimed_actuals`` is the matcher's rule that one record fulfils one
+		item; a hand override was the way round it, and two items pointed at the
+		same call both counted towards adherence."""
+		frappe.set_user(REP)
+		out = save_plan(
+			self.monday,
+			[
+				{"activity_type": "Task", "planned_date": self.monday, "note": "first"},
+				{"activity_type": "Task", "planned_date": self.monday, "note": "second"},
+			],
+		)
+		first, second = out["items"][0]["name"], out["items"][1]["name"]
+		task = self.make_task(assigned_to=REP)
+		mark_fulfilled(first, fulfilled_by_doctype="CRM Task", fulfilled_by=task)
+		with self.assertRaises(frappe.ValidationError):
+			mark_fulfilled(second, fulfilled_by_doctype="CRM Task", fulfilled_by=task)
+		self.assertEqual(frappe.db.get_value("CRM Rep Plan Item", second, "status"), "Planned")
+
+	def test_the_item_that_already_holds_a_record_can_be_re_marked_with_it(self):
+		frappe.set_user(REP)
+		out = save_plan(self.monday, [{"activity_type": "Task", "planned_date": self.monday}])
+		item = out["items"][0]["name"]
+		task = self.make_task(assigned_to=REP)
+		mark_fulfilled(item, fulfilled_by_doctype="CRM Task", fulfilled_by=task)
+		out = mark_fulfilled(item, fulfilled_by_doctype="CRM Task", fulfilled_by=task)
+		self.assertEqual(out["items"][0]["status"], "Done")
+
+	def test_a_record_from_another_week_cannot_fulfil_this_weeks_item(self):
+		"""The matcher only ever assigns an actual inside the item's own week, so
+		an override that reaches outside it claims what the job never would."""
+		frappe.set_user(REP)
+		out = save_plan(self.monday, [{"activity_type": "Call", "planned_date": self.monday}])
+		item = out["items"][0]["name"]
+		last_week = frappe.utils.get_datetime(self.monday) - timedelta(days=3)
+		call = self.make_call(start_time=last_week)
+		with self.assertRaises(frappe.ValidationError):
+			mark_fulfilled(item, fulfilled_by_doctype="CRM Call Log", fulfilled_by=call)
+		self.assertEqual(frappe.db.get_value("CRM Rep Plan Item", item, "status"), "Planned")
+
+	def test_a_record_from_the_items_own_week_still_fulfils_it(self):
+		frappe.set_user(REP)
+		out = save_plan(self.monday, [{"activity_type": "Call", "planned_date": self.monday}])
+		item = out["items"][0]["name"]
+		call = self.make_call(start_time=frappe.utils.get_datetime(self.monday))
+		out = mark_fulfilled(item, fulfilled_by_doctype="CRM Call Log", fulfilled_by=call)
 		self.assertEqual(out["items"][0]["status"], "Done")
 
 	def test_propose_week_keeps_a_meeting_a_meeting(self):
@@ -441,7 +511,7 @@ class RepPlanApiTest(IntegrationTestCase):
 			duplicate.insert(ignore_permissions=True)
 
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from crm.install import ensure_visit_event_category
 
@@ -532,6 +602,13 @@ class UnplannedVisitTest(IntegrationTestCase):
 	def test_an_unknown_organization_is_refused(self):
 		with self.assertRaises(frappe.DoesNotExistError):
 			log_unplanned_visit("Nobody Ltd", "x")
+
+	def test_a_visit_cannot_be_logged_before_it_happens(self):
+		"""Only the lower end of the horizon was checked, so a visit dated next
+		month went in as Done and inflated adherence until its date came round."""
+		later = frappe.utils.now_datetime() + timedelta(days=3)
+		with self.assertRaises(frappe.ValidationError):
+			log_unplanned_visit(self.org.name, "not yet", when=str(later))
 
 	def test_lands_in_the_week_of_the_visit_not_today(self):
 		when = frappe.utils.get_datetime(_this_monday()) - timedelta(days=7)

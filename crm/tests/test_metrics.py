@@ -393,6 +393,31 @@ class MetricsTest(IntegrationTestCase):
 		march = next(r for r in get_forecast_accuracy(user=USER)["data"] if r["month"] == "2026-03-01")
 		self.assertEqual(march["actual"], 30_000)
 
+	def test_forecast_accuracy_leaves_out_months_that_have_not_started(self):
+		"""Snapshots run six months ahead and every one of those is pre-month,
+		so the chart showed the next half year at forecast R1.2M, actual R0."""
+		today = frappe.utils.nowdate()
+		this_month = str(frappe.utils.get_first_day(today))[:7]
+		next_month = str(frappe.utils.add_months(frappe.utils.get_first_day(today), 1))[:7]
+		last_month = str(frappe.utils.add_months(frappe.utils.get_first_day(today), -1))[:7]
+		for month in (last_month, this_month, next_month):
+			snapshot = frappe.get_doc(
+				{
+					"doctype": "CRM Forecast Snapshot",
+					"snapshot_date": frappe.utils.add_months(today, -2),
+					"month": month,
+					"user": USER,
+					"forecasted": 1_200_000,
+					"actual_at_snapshot": 0,
+				}
+			).insert(ignore_permissions=True)
+			self.addCleanup(frappe.delete_doc, "CRM Forecast Snapshot", snapshot.name, force=True)
+
+		months = [r["month"][:7] for r in get_forecast_accuracy(user=USER)["data"]]
+		self.assertIn(last_month, months)
+		self.assertIn(this_month, months)
+		self.assertNotIn(next_month, months)
+
 	# --- funnel ---------------------------------------------------------
 
 	def test_the_funnel_counts_deals_that_were_later_lost(self):

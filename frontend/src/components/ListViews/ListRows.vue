@@ -1,5 +1,9 @@
 <template>
-  <div v-if="showGroupedRows" class="v-list h-full overflow-y-auto">
+  <div
+    v-if="showGroupedRows"
+    ref="groupedScrollContainer"
+    class="v-list h-full overflow-y-auto"
+  >
     <div v-for="group in reactivieRows" :key="group.group">
       <ListGroupHeader :group="group">
         <div
@@ -27,7 +31,7 @@
       </ListGroupRows>
     </div>
   </div>
-  <ListRows v-else ref="scrollContainer" class="v-list" @scroll="handleScroll">
+  <ListRows v-else ref="scrollContainer" class="v-list">
     <ListRow
       v-for="row in reactivieRows"
       :key="row.name"
@@ -48,7 +52,7 @@ import {
   ListGroupHeader,
   ListGroupRows,
 } from 'frappe-ui/experimental'
-import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 
 const props = defineProps({
   rows: { type: Array, required: true },
@@ -70,23 +74,40 @@ let showGroupedRows = computed(() => {
 
 const scrollPosition = useStorage(`scrollPosition${props.doctype}`, 0)
 const scrollContainer = ref(null)
+const groupedScrollContainer = ref(null)
 
-const handleScroll = () => {
-  if (scrollContainer.value) {
-    scrollPosition.value = scrollContainer.value.$el.scrollTop
-  }
+const handleScroll = (e) => {
+  scrollPosition.value = e.target.scrollTop
 }
 
-onBeforeUnmount(() => {
-  if (scrollContainer.value) {
-    scrollContainer.value.$el.removeEventListener('scroll', handleScroll)
-  }
-})
+// Grouping toggles at runtime as props.rows reshapes, without this component
+// remounting, so wiring the listener once in onMounted lost it on every switch
+// and the grouped container -- which had no ref at all -- never saved or
+// restored anything. Track whichever container is currently in the DOM.
+let activeScrollEl = null
 
-onMounted(() => {
-  if (scrollContainer.value) {
-    scrollContainer.value.$el.addEventListener('scroll', handleScroll)
-    scrollContainer.value.$el.scrollTop = scrollPosition.value
+watch(
+  [scrollContainer, groupedScrollContainer],
+  () => {
+    const el =
+      scrollContainer.value?.$el || groupedScrollContainer.value || null
+    if (el === activeScrollEl) return
+
+    if (activeScrollEl) {
+      activeScrollEl.removeEventListener('scroll', handleScroll)
+    }
+    activeScrollEl = el
+    if (activeScrollEl) {
+      activeScrollEl.addEventListener('scroll', handleScroll)
+      activeScrollEl.scrollTop = scrollPosition.value
+    }
+  },
+  { immediate: true, flush: 'post' },
+)
+
+onBeforeUnmount(() => {
+  if (activeScrollEl) {
+    activeScrollEl.removeEventListener('scroll', handleScroll)
   }
 })
 </script>

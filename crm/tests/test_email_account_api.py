@@ -165,3 +165,44 @@ class TestCreateCustomEmailAccount(IntegrationTestCase):
 			"password": "pw",
 		}
 		self.assertRaises(frappe.ValidationError, create_email_account, data)
+
+
+class TestCreateEmailAccountPermission(IntegrationTestCase):
+	"""Email Account is a System Manager doctype in Frappe.
+
+	The endpoint used to admit a Sales Manager, whose save then raised
+	PermissionError -- which the blanket except rewrote as "could not connect to
+	the mail server", sending the admin to look at a mail host that was fine.
+	"""
+
+	MANAGER = "emailacct-manager@crmtest.test"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		if not frappe.db.exists("User", self.MANAGER):
+			user = frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": self.MANAGER,
+					"first_name": "Email Manager",
+					"send_welcome_email": 0,
+				}
+			).insert(ignore_permissions=True)
+			user.add_roles("Sales Manager")
+		self.addCleanup(frappe.set_user, "Administrator")
+		self.addCleanup(frappe.db.rollback)
+
+	def test_a_sales_manager_is_refused_rather_than_blamed_on_the_mail_server(self):
+		frappe.set_user(self.MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			create_email_account({"service": "GMail", "email_id": "nope@example.com"})
+
+	def test_a_permission_error_is_not_rewritten_as_a_connection_failure(self):
+		with (
+			patch("frappe.get_doc", side_effect=frappe.PermissionError("not permitted")),
+			patch("frappe.log_error") as log_error,
+			self.assertRaises(frappe.PermissionError),
+		):
+			create_email_account({"service": "GMail", "email_id": "nope@example.com"})
+		log_error.assert_not_called()

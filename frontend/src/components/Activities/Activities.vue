@@ -554,6 +554,9 @@ const all_activities = createResource({
     return { versions, calls, notes, tasks, attachments }
   },
   onSuccess: () => nextTick(() => scroll()),
+  onError: (error) => {
+    toast.error(error.messages?.[0] || __('Failed to load activities'))
+  },
 })
 
 const showWhatsappTemplates = ref(false)
@@ -578,8 +581,20 @@ watch(
   { immediate: true },
 )
 
+/* By reference, like handleDocinfoUpdate beside it: an anonymous listener
+   could only be removed with a bare `off('whatsapp_message')`, which drops
+   every other component's listener on the event too. */
+function handleWhatsappMessage(data) {
+  if (
+    data.reference_doctype === props.doctype &&
+    data.reference_name === props.docname
+  ) {
+    whatsappMessages.reload()
+  }
+}
+
 onBeforeUnmount(() => {
-  $socket.off('whatsapp_message')
+  $socket.off('whatsapp_message', handleWhatsappMessage)
   $socket.off('docinfo_update', handleDocinfoUpdate)
   $socket.emit('doc_unsubscribe', props.doctype, props.docname)
 })
@@ -587,14 +602,7 @@ onBeforeUnmount(() => {
 onMounted(() => {
   $socket.emit('doc_subscribe', props.doctype, props.docname)
   $socket.on('docinfo_update', handleDocinfoUpdate)
-  $socket.on('whatsapp_message', (data) => {
-    if (
-      data.reference_doctype === props.doctype &&
-      data.reference_name === props.docname
-    ) {
-      whatsappMessages.reload()
-    }
-  })
+  $socket.on('whatsapp_message', handleWhatsappMessage)
 
   nextTick(() => {
     const hash = route.hash.slice(1) || null

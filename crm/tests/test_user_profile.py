@@ -99,6 +99,34 @@ class OwnProfileEmailTest(IntegrationTestCase):
 		self.assertEqual(profile["email_signature"], "<p>Kind regards</p>")
 		self.assertEqual(profile["user_emails"], [])
 
+	def test_a_rep_cannot_link_another_users_mailbox(self):
+		"""These rows are what the composer offers as From, and this endpoint
+		saves with ignore_permissions -- so without this a rep could advertise
+		a colleague's mailbox as one of their own sender addresses."""
+		ensure_rep(OTHER, "Profile Other")
+		theirs = frappe.db.get_value("Email Account", {"email_id": OTHER})
+		if not theirs:
+			theirs = (
+				frappe.get_doc(
+					{
+						"doctype": "Email Account",
+						"email_account_name": "Profile Other Desk",
+						"email_id": OTHER,
+						"enable_outgoing": 1,
+						"smtp_server": "smtp.example.com",
+						"login_id_is_different": 0,
+						"password": "x",
+					}
+				)
+				.insert(ignore_permissions=True)
+				.name
+			)
+
+		frappe.set_user(REP)
+		with self.assertRaises(frappe.PermissionError):
+			update_profile({"user_emails": [{"email_account": theirs, "email_id": OTHER}]})
+		self.assertEqual(get_profile()["user_emails"], [])
+
 	def test_an_account_that_does_not_exist_is_refused_by_the_link(self):
 		frappe.set_user(REP)
 		with self.assertRaises(frappe.ValidationError):
@@ -106,20 +134,38 @@ class OwnProfileEmailTest(IntegrationTestCase):
 				{"user_emails": [{"email_account": "No Such Account", "email_id": "x@example.com"}]}
 			)
 
+	def shared_mailbox(self):
+		"""An outgoing account on an address no user answers to -- sales@, in
+		effect. Linkable by anyone, which is what those accounts are for."""
+		address = "shared-desk@crmtest.test"
+		name = frappe.db.get_value("Email Account", {"email_id": address})
+		if name:
+			return frappe.get_doc("Email Account", name)
+		return frappe.get_doc(
+			{
+				"doctype": "Email Account",
+				"email_account_name": "Shared Desk",
+				"email_id": address,
+				"enable_outgoing": 1,
+				"smtp_server": "smtp.example.com",
+				"login_id_is_different": 0,
+				"password": "x",
+			}
+		).insert(ignore_permissions=True)
+
 	def test_extra_row_fields_are_dropped_not_written(self):
-		account = frappe.get_all(
-			"Email Account", filters={"enable_outgoing": 1}, fields=["name", "email_id"], limit=1
-		)
-		if not account:
-			self.skipTest("no outgoing Email Account on this site")
+		# A shared mailbox, deliberately: an account whose address belongs to
+		# another user is refused outright (see the test below), and the
+		# fixture accounts on a stock site are exactly that.
+		account = self.shared_mailbox()
 		frappe.set_user(REP)
 		profile = update_profile(
 			{
 				"user_emails": [
-					{"email_account": account[0].name, "email_id": account[0].email_id, "parenttype": "Role"}
+					{"email_account": account.name, "email_id": account.email_id, "parenttype": "Role"}
 				]
 			}
 		)
 		self.assertEqual(
-			profile["user_emails"], [{"email_account": account[0].name, "email_id": account[0].email_id}]
+			profile["user_emails"], [{"email_account": account.name, "email_id": account.email_id}]
 		)

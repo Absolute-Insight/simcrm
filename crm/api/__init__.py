@@ -151,16 +151,32 @@ def invite_by_email(emails: str, role: str):
 	if not email_list:
 		return
 	existing_members = frappe.db.get_all("User", filters={"email": ["in", email_list]}, pluck="email")
+	# Only a live invitation stands in the way of a new one. Without the status
+	# filter an expired row counted too, so once someone had let three days pass
+	# every later invite for that address sent nothing at all -- while the manager
+	# was told "Invitations sent successfully".
 	existing_invites = frappe.db.get_all(
 		"CRM Invitation",
 		filters={
 			"email": ["in", email_list],
 			"role": ["in", ["System Manager", "Sales Manager", "Sales User"]],
+			"status": "Pending",
 		},
 		pluck="email",
 	)
 
 	to_invite = list(set(email_list) - set(existing_members) - set(existing_invites))
+
+	if to_invite:
+		# The dead rows go, rather than being revived: expiry is measured from
+		# ``creation`` (see expire_invitations), so a reopened row would expire
+		# again on the next nightly run and the address would be stuck for good.
+		for name in frappe.db.get_all(
+			"CRM Invitation",
+			filters={"email": ["in", to_invite], "status": "Expired"},
+			pluck="name",
+		):
+			frappe.delete_doc("CRM Invitation", name, force=True, ignore_permissions=True)
 
 	for email in to_invite:
 		frappe.get_doc(doctype="CRM Invitation", email=email, role=role).insert(ignore_permissions=True)

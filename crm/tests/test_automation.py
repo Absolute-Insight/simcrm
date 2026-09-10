@@ -587,6 +587,27 @@ class RuleLifecycleTest(IntegrationTestCase):
 			"CRM Deal Status", filters={"type": ("in", ("Open", "Ongoing"))}, pluck="name", limit=count
 		)
 
+	def rename_rule(self, rule, new_name):
+		"""Rename through the real API, then clean up durably.
+
+		``frappe.rename_doc`` commits, so everything the test created up to that
+		point outlives the rollback this suite relies on -- while the deal's
+		name is handed back by the rolled-back naming counter and reused by the
+		next test, which then sees the previous test's automation task on its
+		own fresh deal. Anything committed here has to be removed the same way.
+		"""
+		frappe.rename_doc("CRM Automation Rule", rule.name, new_name)
+		self.addCleanup(self._purge_committed, new_name)
+		return new_name
+
+	def _purge_committed(self, rule_name):
+		frappe.db.delete("CRM Task", {"automation_rule": rule_name})
+		frappe.db.delete("CRM Suggestion", {"signal": f"rule:{rule_name}"})
+		frappe.db.delete("CRM Automation Rule", {"name": rule_name})
+		for doctype, name in self._made:
+			frappe.db.delete(doctype, {"name": name})
+		frappe.db.commit()
+
 	def test_a_dismissed_rule_suggestion_is_not_recreated_inside_the_cooldown(self):
 		"""A rep who said no to this rule's suggestion must not be overruled by
 		the next status flap -- the old duplicate check only saw Open rows, so a
@@ -675,3 +696,60 @@ class RuleLifecycleTest(IntegrationTestCase):
 		make_rule(title="R2", title_template="Same task title")
 		deal = self.make_deal()
 		self.assertEqual(len(self.tasks_for(deal)), 2)
+
+	def test_renaming_a_rule_carries_its_task_guard(self):
+		"""The rule is named by its title, so renaming is how an author edits the
+		name -- and CRM Task.automation_rule is Data, not a Link, so nothing
+		follows it. Left behind, the next flap writes a second task on a record
+		this rule had already handled."""
+		statuses = self.working_statuses()
+		rule = make_rule(
+			title="Before rename",
+			trigger="Status Changed",
+			title_template="Follow up: {{ doc.status }}",
+		)
+		deal = self.make_deal(status=statuses[0])
+		deal.status = statuses[1]
+		deal.save()
+		self.assertEqual(len(self.tasks_for(deal)), 1)
+
+		self.rename_rule(rule, "After rename")
+
+		self.assertEqual(
+			frappe.db.get_value(
+				"CRM Task",
+				{"reference_doctype": "CRM Deal", "reference_docname": deal.name},
+				"automation_rule",
+			),
+			"After rename",
+		)
+		deal.reload()
+		deal.status = statuses[0]
+		deal.save()
+		self.assertEqual(len(self.tasks_for(deal)), 1)
+
+	def test_renaming_a_rule_carries_its_suggestion_signal(self):
+		"""Same for the suggestion side: the signal embeds the rule name, and the
+		whole lifecycle -- open, dismissed, cooldown -- is keyed on it."""
+		statuses = self.working_statuses()
+		rule = make_rule(
+			title="Suggest before rename",
+			trigger="Status Changed",
+			action="Create Suggestion",
+			title_template="Chase {{ doc.organization }}",
+		)
+		deal = self.make_deal(status=statuses[0], deal_owner=self.owner)
+		deal.status = statuses[1]
+		deal.save()
+		self.assertEqual(len(self.suggestions_for(deal)), 1)
+
+		self.rename_rule(rule, "Suggest after rename")
+
+		self.assertEqual(
+			frappe.db.get_value("CRM Suggestion", {"reference_docname": deal.name}, "signal"),
+			"rule:Suggest after rename",
+		)
+		deal.reload()
+		deal.status = statuses[0]
+		deal.save()
+		self.assertEqual(len(self.suggestions_for(deal)), 1)

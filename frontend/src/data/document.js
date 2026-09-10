@@ -1,4 +1,5 @@
 import { getScript } from '@/data/script'
+import { newDocumentDraft } from '@/utils/newDocument'
 import { globalStore } from '@/stores/global'
 import { getMeta } from '@/stores/meta'
 import { useAttachments } from '@/composables/useAttachments'
@@ -13,6 +14,57 @@ const documentsCache = {}
 const controllersCache = {}
 const assigneesCache = {}
 const permissionsCache = {}
+/* Setups in flight, keyed the same way as controllersCache. The re-entrancy
+   guard used to be `controllersCache[...] = {}` written before the await, which
+   doubled as a permanent "already tried" marker: a script that threw while
+   being set up left an empty controller map behind and was never evaluated
+   again for that record, not even on a fresh mount. */
+const setupPromises = {}
+
+/**
+ * Surface a Form Script failure the way a blocked save already does.
+ *
+ * onValidate was fixed to toast; onLoad, onRender, onSave and onError were
+ * called without an await and without a catch, so a script that threw in one
+ * of them produced an unhandled rejection in the console and nothing at all on
+ * screen -- a record with no scripted behaviour and no explanation.
+ *
+ * Takes the promise rather than being wrapped around the call so it reads the
+ * same at every site, and stays fire-and-forget: reporting must not make the
+ * caller wait, and it must never reject in turn.
+ */
+function reportScriptFailure(promise, fallback) {
+  return Promise.resolve(promise).catch((err) => {
+    const message = validationErrorMessage(err, fallback)
+    if (message) toast.error(message)
+    console.error(err)
+  })
+}
+
+// Deleting a doc makes the framework emit a realtime `doc_update` as part of
+// delete_doc, so the still-mounted document resource refetches and hits a
+// DoesNotExistError just as we navigate away. Docs listed here have that one
+// expected error swallowed instead of flashed as a toast and an error page.
+const intentionallyDeletedDocs = new Set()
+
+export function markDocumentAsDeleted(doctype, docname) {
+  intentionallyDeletedDocs.add(`${doctype}:${docname}`)
+}
+
+// Called once the delete request has finished, so a reused docname does not
+// have a later, unrelated error silently swallowed. Kept separate from
+// markDocumentAsDeleted so the marker covers the whole (possibly slow) request
+// rather than a fixed window starting before it.
+export function expireDeletionMarker(doctype, docname) {
+  const key = `${doctype}:${docname}`
+  setTimeout(() => intentionallyDeletedDocs.delete(key), 10000)
+}
+
+// Called when the delete request itself fails, so a legitimate later
+// DoesNotExistError for this doc is not swallowed.
+export function unmarkDocumentAsDeleted(doctype, docname) {
+  intentionallyDeletedDocs.delete(`${doctype}:${docname}`)
+}
 
 export function useDocument(doctype, docname, resourceOverrides = {}) {
   if (typeof docname === 'number') docname = String(docname)
@@ -37,6 +89,14 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
           name: docname,
           onSuccess: async () => await setupFormScript(),
           onError: (err) => {
+            const deletionKey = `${doctype}:${docname}`
+            if (
+              err.exc_type === 'DoesNotExistError' &&
+              intentionallyDeletedDocs.has(deletionKey)
+            ) {
+              intentionallyDeletedDocs.delete(deletionKey)
+              return
+            }
             error.value = err
             if (err.exc_type === 'DoesNotExistError') {
               toast.error(__(err.messages[0] || 'Document does not exist'))
@@ -52,12 +112,18 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
           },
           setValue: {
             onSuccess: () => {
-              triggerOnSave()
+              reportScriptFailure(
+                triggerOnSave(),
+                __('This form script failed after the save.'),
+              )
               toast.success(__('Document updated successfully'))
               processPendingDeletions()
             },
             onError: (err) => {
-              triggerOnError(err)
+              reportScriptFailure(
+                triggerOnError(err),
+                __('This form script failed while reporting an error.'),
+              )
 
               if (err.exc_type == 'MandatoryError') {
                 const fieldName = err.messages
@@ -119,7 +185,7 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
       }
     } else {
       documentsCache[doctype][''] = reactive({
-        doc: { __newDocument: true, doctype },
+        doc: newDocumentDraft(doctype),
         fieldPropertyOverrides: {},
       })
       setupFormScript()
@@ -157,50 +223,76 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
   }
 
   async function setupFormScript() {
-    if (
-      controllersCache[doctype] &&
-      typeof controllersCache[doctype][docname || ''] === 'object'
-    ) {
-      return
-    }
+    const key = docname || ''
 
-    if (!controllersCache[doctype]) {
-      controllersCache[doctype] = {}
-    }
+    if (typeof controllersCache[doctype]?.[key] === 'object') return
 
-    controllersCache[doctype][docname || ''] = {}
+    // A second caller while the first is still awaiting the script joins it
+    // rather than evaluating the class twice.
+    setupPromises[doctype] = setupPromises[doctype] || {}
+    if (setupPromises[doctype][key]) return setupPromises[doctype][key]
 
-    const { makeCall } = globalStore()
+    const run = (async () => {
+      const { makeCall } = globalStore()
 
-    let helpers = {}
+      let helpers = {}
 
-    helpers.crm = {
-      makePhoneCall: makeCall,
-      openSettings: (page) => {
-        showSettings.value = true
-        activeSettingsPage.value = page
-      },
-    }
-
-    const controllersArray = await setupScript(
-      documentsCache[doctype][docname || ''],
-      helpers,
-    )
-
-    if (!controllersArray || controllersArray.length === 0) return
-
-    const organizedControllers = {}
-    for (const controller of controllersArray) {
-      const controllerKey = controller._className || controller.constructor.name
-      if (!organizedControllers[controllerKey]) {
-        organizedControllers[controllerKey] = []
+      helpers.crm = {
+        makePhoneCall: makeCall,
+        openSettings: (page) => {
+          showSettings.value = true
+          activeSettingsPage.value = page
+        },
       }
-      organizedControllers[controllerKey].push(controller)
-    }
-    controllersCache[doctype][docname || ''] = organizedControllers
 
-    triggerOnLoad()
-    triggerOnRender()
+      const controllersArray = await setupScript(
+        documentsCache[doctype][key],
+        helpers,
+      )
+
+      controllersCache[doctype] = controllersCache[doctype] || {}
+
+      if (!controllersArray || controllersArray.length === 0) {
+        // A doctype with no script is a settled answer, not a failure: cache
+        // the empty map so the fetch is not repeated on every mount.
+        controllersCache[doctype][key] = {}
+        return
+      }
+
+      const organizedControllers = {}
+      for (const controller of controllersArray) {
+        const controllerKey =
+          controller._className || controller.constructor.name
+        if (!organizedControllers[controllerKey]) {
+          organizedControllers[controllerKey] = []
+        }
+        organizedControllers[controllerKey].push(controller)
+      }
+      controllersCache[doctype][key] = organizedControllers
+
+      // Reported rather than rethrown, and onRender still runs when onLoad
+      // throws: they are independent hooks, and the controllers are already
+      // cached by this point, so a broken onLoad must not cost the record its
+      // buttons and onChange handlers as well.
+      await reportScriptFailure(
+        triggerOnLoad(),
+        __('This form script failed while loading the record.'),
+      )
+      await reportScriptFailure(
+        triggerOnRender(),
+        __('This form script failed while rendering the record.'),
+      )
+    })()
+
+    // Guarded before it is shared, so a joining caller cannot be handed a
+    // promise that rejects into nothing.
+    const guarded = reportScriptFailure(
+      run,
+      __('This form script could not be loaded.'),
+    ).finally(() => delete setupPromises[doctype][key])
+
+    setupPromises[doctype][key] = guarded
+    return guarded
   }
 
   function getControllers(row = null) {

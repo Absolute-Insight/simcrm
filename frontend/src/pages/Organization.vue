@@ -200,6 +200,7 @@ import DeleteLinkedDocModal from '@/components/DeleteLinkedDocModal.vue'
 import CustomActions from '@/components/CustomActions.vue'
 import EnrichFromWebsite from '@/components/EnrichFromWebsite.vue'
 import { useDocument } from '@/data/document'
+import { useDocumentError } from '@/composables/useDocumentError'
 import { getSettings } from '@/stores/settings'
 import { globalStore } from '@/stores/global'
 import { getMeta } from '@/stores/meta'
@@ -244,9 +245,6 @@ const { capture } = useTelemetry()
 const route = useRoute()
 const router = useRouter()
 
-const errorTitle = ref('')
-const errorMessage = ref('')
-
 const showDeleteLinkedDocModal = ref(false)
 
 const {
@@ -254,7 +252,13 @@ const {
   permissions,
   scripts,
   triggerOnRender,
+  error: loadError,
 } = useDocument('CRM Organization', props.organizationId)
+
+/* These two were declared and rendered but never assigned: the ErrorPage
+   branch below has been dead since it was written, so a record the rep may not
+   see showed a blank page. */
+const { errorTitle, errorMessage } = useDocumentError(loadError)
 
 const canDelete = computed(() => permissions.data?.permissions?.delete || false)
 

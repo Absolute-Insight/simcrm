@@ -19,6 +19,24 @@ def get_session_role_flags():
 	}
 
 
+def crm_user_names() -> set[str]:
+	"""Every account with a CRM role, plus Administrator.
+
+	The population the CRM is allowed to talk about: whose names the frontend
+	may resolve, and which users an owner field can name.
+	"""
+	names = set(
+		frappe.get_all(
+			"Has Role",
+			filters={"parenttype": "User", "role": ["in", CRM_ALLOWED_ROLES]},
+			pluck="parent",
+			distinct=True,
+		)
+	)
+	names.add("Administrator")
+	return names
+
+
 USER_FIELDS = [
 	"name",
 	"email",
@@ -56,19 +74,11 @@ def get_users(include_all: bool = False):
 
 	# Always need the CRM user name set — used both as the filter for the
 	# fast path and as the membership check on the full path.
-	crm_user_names = set(
-		frappe.get_all(
-			"Has Role",
-			filters={"parenttype": "User", "role": ["in", CRM_ALLOWED_ROLES]},
-			pluck="parent",
-			distinct=True,
-		)
-	)
-	crm_user_names.add("Administrator")
+	crm_names = crm_user_names()
 
 	user_filters = {"enabled": 1}
 	if not include_all:
-		user_filters["name"] = ["in", list(crm_user_names)]
+		user_filters["name"] = ["in", list(crm_names)]
 
 	users = frappe.qb.get_query(
 		"User",
@@ -89,7 +99,7 @@ def get_users(include_all: bool = False):
 	if include_all:
 		role_filters = {"parenttype": "User"}
 	else:
-		role_filters = {"parenttype": "User", "parent": ["in", list(crm_user_names)]}
+		role_filters = {"parenttype": "User", "parent": ["in", list(crm_names)]}
 	role_rows = frappe.get_all("Has Role", filters=role_filters, fields=["parent", "role"])
 	roles_by_user = {}
 	for row in role_rows:
@@ -138,21 +148,33 @@ def get_users(include_all: bool = False):
 def get_user_info(users: str | list):
 	"""Resolve display info for a batch of User names.
 
-	Used by the frontend to fill in name/avatar info for non-CRM users
-	referenced in CRM activity (comment authors, doc owners, etc.) when
-	the background full-list fetch has not yet landed. Gated behind a
-	CRM role; capped at 200 names per call to limit enumeration cost.
+	Used by the frontend to fill in name/avatar info for users referenced in
+	CRM activity (comment authors, doc owners, etc.) when the background
+	full-list fetch has not yet landed. Capped at 200 names per call to limit
+	enumeration cost.
+
+	Resolves the population ``get_users`` would hand the same caller: the CRM
+	users for everyone, every account only for a System Manager. Before that,
+	any CRM role could confirm and put a name to arbitrary system accounts by
+	guessing addresses at 200 a call.
 	"""
-	get_session_role_flags()
+	session_roles = get_session_role_flags()
 
 	if isinstance(users, str):
 		users = frappe.parse_json(users)
 	if not users:
 		return []
 
+	names = list(users)[:200]
+	if not session_roles["is_system_manager"]:
+		allowed = crm_user_names()
+		names = [name for name in names if name in allowed]
+	if not names:
+		return []
+
 	return frappe.get_all(
 		"User",
-		filters={"name": ["in", list(users)[:200]]},
+		filters={"name": ["in", names]},
 		fields=["name", "email", "full_name", "user_image", "user_type"],
 	)
 

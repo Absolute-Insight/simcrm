@@ -34,13 +34,13 @@ def _scope_filters(filters: dict) -> dict:
 	"""Narrow ``filters`` to what the session user may see.
 
 	The doctype's ``get_permission_query_conditions`` already applies through
-	``get_list`` -- own rows for a rep, the subtree plus unowned team-wide rows
-	for an in-tree manager, everything for one outside the tree. This only adds
-	the explicit owner filter for a non-manager, so the two rules stay visibly in
-	step even if someone reads this file without the other.
+	``get_list`` -- own rows for a rep, the subtree for an in-tree manager,
+	everything (unowned rows included) for an unrestricted viewer. This only
+	adds the explicit owner filter for a non-manager, so the two rules stay
+	visibly in step even if someone reads this file without the other.
 	"""
 	if not _is_manager():
-		# unowned suggestions surface only in manager views
+		# unowned suggestions surface only in unrestricted views
 		return filters | {"user": frappe.session.user}
 	return filters
 
@@ -50,11 +50,12 @@ def _get_for_update(name: str):
 
 	doc = frappe.get_doc("CRM Suggestion", name)
 	# the doctype's own rule: a rep acts on their own rows, a manager on their
-	# subtree's; an unowned suggestion is a team-wide signal and stays
-	# manager-only rather than actionable by whichever rep names it first. Checked
-	# here too because the save below runs with ignore_permissions, and because
-	# the reference check that follows is skipped for an orphan whose record is
-	# gone -- without this an out-of-subtree manager could clear anyone's orphan.
+	# subtree's; an unowned suggestion is listed only to an unrestricted viewer
+	# and is actionable only by one, rather than by whichever rep names it
+	# first. Checked here too because the save below runs with
+	# ignore_permissions, and because the reference check that follows is
+	# skipped for an orphan whose record is gone -- without this an
+	# out-of-subtree manager could clear anyone's orphan.
 	if not has_permission(doc, "read"):
 		frappe.throw(
 			_("This suggestion belongs to another user."),

@@ -107,38 +107,45 @@
               v-if="index !== slaPolicyListResource.list.data.length - 1"
               class="mx-2 border-outline-gray-2"
             />
-            <Dialog
-              v-model:open="duplicateDialog.show"
-              :title="__('Duplicate SLA Policy')"
-            >
-              <template #default>
-                <div class="flex flex-col gap-4">
-                  <FormControl
-                    v-model="duplicateDialog.name"
-                    :label="__('New SLA Policy Name')"
-                    type="text"
-                    maxlength="100"
-                  />
-                </div>
-              </template>
-              <template #actions>
-                <div class="flex gap-2 justify-end">
-                  <Button
-                    variant="subtle"
-                    :label="__('Close')"
-                    @click="duplicateDialog.show = false"
-                  />
-                  <Button
-                    variant="solid"
-                    :label="__('Duplicate')"
-                    @click="() => duplicate(sla)"
-                  />
-                </div>
-              </template>
-            </Dialog>
           </div>
         </div>
       </div>
+      <!-- One dialog for the whole list: inside the v-for every row mounted its
+           own copy bound to the same flag, and the last one mounted won, so
+           duplicating a policy copied the last row's conditions under the name
+           of the row whose menu was clicked. The source row lives in the
+           dialog's state instead. -->
+      <Dialog
+        v-model:open="duplicateDialog.show"
+        :title="__('Duplicate SLA Policy')"
+      >
+        <template #default>
+          <div class="flex flex-col gap-4">
+            <FormControl
+              v-model="duplicateDialog.name"
+              :label="__('New SLA Policy Name')"
+              type="text"
+              maxlength="100"
+            />
+          </div>
+        </template>
+        <template #actions>
+          <div class="flex gap-2 justify-end">
+            <Button
+              variant="subtle"
+              :label="__('Close')"
+              @click="duplicateDialog.show = false"
+            />
+            <Button
+              variant="solid"
+              :label="__('Duplicate')"
+              :loading="duplicating"
+              :disabled="duplicating || !duplicateDialog.name"
+              @click="duplicate"
+            />
+          </div>
+        </template>
+      </Dialog>
     </template>
   </SettingsLayoutBase>
 </template>
@@ -150,7 +157,7 @@ import { PhShieldCheck as ShieldCheck } from '@phosphor-icons/vue'
 import {
   Badge,
   Button,
-  createResource,
+  call,
   Dialog,
   Dropdown,
   FormControl,
@@ -174,7 +181,10 @@ function createNewSlaPolicy() {
 const duplicateDialog = ref({
   show: false,
   name: '',
+  source: null,
 })
+
+const duplicating = ref(false)
 
 const isConfirmingDelete = ref(false)
 
@@ -185,6 +195,7 @@ const dropdownOptions = (sla) => [
       duplicateDialog.value = {
         show: true,
         name: sla.name + ' (Copy)',
+        source: sla,
       }
     },
     icon: 'lucide-copy',
@@ -195,40 +206,41 @@ const dropdownOptions = (sla) => [
   }),
 ]
 
-const duplicate = (sla) => {
-  createResource({
-    url: 'frappe.client.get',
-    params: {
+const duplicate = async () => {
+  const source = duplicateDialog.value.source
+  if (!source || duplicating.value) return
+
+  duplicating.value = true
+  try {
+    const data = await call('frappe.client.get', {
       doctype: 'CRM Service Level Agreement',
-      name: sla.name,
-    },
-    onSuccess: (data) => {
-      createResource({
-        url: 'frappe.client.insert',
-        params: {
-          doc: {
-            ...data,
-            default: false,
-            sla_name: duplicateDialog.value.name,
-          },
-        },
-        auto: true,
-        onSuccess(newSlaData) {
-          slaPolicyListResource.reload()
-          toast.success(__('SLA policy duplicated'))
-          duplicateDialog.value = {
-            show: false,
-            name: '',
-          }
-          resetSlaData()
-          setTimeout(() => {
-            updateStep('view', newSlaData, true)
-          }, 250)
-        },
-      })
-    },
-    auto: true,
-  })
+      name: source.name,
+    })
+    const newSlaData = await call('frappe.client.insert', {
+      doc: {
+        ...data,
+        default: false,
+        sla_name: duplicateDialog.value.name,
+      },
+    })
+    slaPolicyListResource.reload()
+    toast.success(__('SLA policy duplicated'))
+    duplicateDialog.value = {
+      show: false,
+      name: '',
+      source: null,
+    }
+    resetSlaData()
+    setTimeout(() => {
+      updateStep('view', newSlaData, true)
+    }, 250)
+  } catch (err) {
+    toast.error(
+      err.messages?.[0] || __('Something went wrong, try again later'),
+    )
+  } finally {
+    duplicating.value = false
+  }
 }
 
 const deleteSla = (sla) => {

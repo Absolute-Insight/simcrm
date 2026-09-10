@@ -131,6 +131,37 @@ class SuggestionApiTest(IntegrationTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			dismiss(name, reason="not mine either")
 
+	def test_an_in_tree_manager_neither_lists_nor_clears_an_unowned_suggestion(self):
+		"""An unowned deal is invisible to an in-tree manager -- the hierarchy
+		shows them what their subtree owns or is assigned -- yet its suggestion
+		was listed and badged for every Sales Manager, and Accept or Dismiss then
+		threw "not permitted" on the record check. Through ``get_list`` as a real
+		manager, not as Administrator: the earlier test ran unrestricted."""
+		manager = "suggestion-manager@crmtest.test"
+		make_sales_user(manager, "Suggestion Manager")
+		frappe.get_doc("User", manager).add_roles("Sales Manager")
+		self.make_hierarchy(manager, OWNER)
+		org = frappe.db.get_value("CRM Deal", self.deal, "organization")
+		nobodys = (
+			frappe.get_doc({"doctype": "CRM Deal", "organization": org, "deal_owner": None}).insert().name
+		)
+		unowned = make_suggestion(None, nobodys, title="Unowned")
+		make_suggestion(OWNER, self.deal)
+
+		frappe.set_user(manager)
+		self.assertFalse(frappe.has_permission("CRM Deal", doc=nobodys, ptype="read"))
+		self.assertNotIn(unowned, frappe.get_list("CRM Suggestion", pluck="name"))
+		self.assertEqual([s.title for s in get_suggestions()], ["Re-engage Acme"])
+		self.assertEqual(get_open_count(), 1)
+		self.assertFalse(frappe.has_permission("CRM Suggestion", doc=unowned, ptype="read"))
+		with self.assertRaises(frappe.PermissionError):
+			dismiss(unowned, reason="not my team")
+
+		frappe.set_user("Administrator")
+		self.assertIn(unowned, frappe.get_list("CRM Suggestion", pluck="name"))
+		self.assertIn("Unowned", [s.title for s in get_suggestions()])
+		self.assertEqual(dismiss(unowned, reason="nobody's")["status"], "Dismissed")
+
 	def test_dismiss_records_the_reason(self):
 		name = make_suggestion(OWNER, self.deal)
 		frappe.set_user(OWNER)

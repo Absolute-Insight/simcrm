@@ -48,6 +48,30 @@ class CRMAutomationRule(Document):
 				pass
 		self.validate_templates()
 
+	def after_rename(self, old_name, new_name, merge=False):
+		"""Carry the rule's dedupe keys across a rename.
+
+		The rule is named by its title, so renaming it is how an author edits the
+		name -- and both places the engine records "this rule already acted here"
+		store that name as plain Data, not a Link, so nothing follows it. Left
+		behind, the next trigger sees no prior task and no prior suggestion and
+		writes a second one on records the rule had already handled.
+		"""
+		frappe.db.set_value(
+			"CRM Task",
+			{"automation_rule": old_name},
+			"automation_rule",
+			new_name,
+			update_modified=False,
+		)
+		frappe.db.set_value(
+			"CRM Suggestion",
+			{"signal": f"rule:{old_name}"},
+			"signal",
+			f"rule:{new_name}",
+			update_modified=False,
+		)
+
 	def validate_templates(self):
 		"""A template that will not compile fails at save, not on somebody's deal.
 

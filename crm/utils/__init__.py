@@ -238,7 +238,9 @@ def create_lead_from_incoming_email(doc: Communication, method: str | None = Non
 	if doc.doctype != "Communication":
 		return
 
-	if doc.sent_or_received != "Received" and doc.communication_type != "Communication":
+	# Either disqualifies: a Sent row is the rep's own outgoing mail, whatever
+	# its type, and would otherwise become a lead named after the rep.
+	if doc.sent_or_received != "Received" or doc.communication_type != "Communication":
 		return
 
 	if doc.reference_doctype and doc.reference_name:

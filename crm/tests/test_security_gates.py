@@ -195,3 +195,164 @@ class SecurityGateTest(IntegrationTestCase):
 			frappe.db.set_value("User", "Administrator", "email_signature", None)
 		self.assertIn("<b>Hi</b>", signature)
 		self.assertNotIn("<script>", signature)
+
+
+class DirectoryLeakTest(IntegrationTestCase):
+	"""The helpers that answer "who works here" and "what does the team look at".
+
+	``get_user_info`` resolved any 200 User names a caller cared to name, so a
+	rep could confirm and put a name to arbitrary system accounts by guessing
+	addresses; ``get_views`` had no CRM gate at all; and ``update_profile`` let a
+	rep attach anyone's Email Account to their own profile, advertising someone
+	else's mailbox as a From address in the composer.
+	"""
+
+	OUTSIDER = "secgate-outsider@crmtest.test"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		ensure_user(REP, "Rep", "Sales User")
+		ensure_user(NOBODY, "Nobody", None)
+		ensure_user(self.OUTSIDER, "Outsider", None)
+		self.addCleanup(frappe.set_user, "Administrator")
+
+	# --- get_user_info ---------------------------------------------------
+
+	def test_a_rep_cannot_resolve_a_non_crm_account(self):
+		from crm.api.session import get_user_info
+
+		frappe.set_user(REP)
+		self.assertEqual(get_user_info([self.OUTSIDER]), [])
+
+	def test_a_rep_still_resolves_their_colleagues(self):
+		from crm.api.session import get_user_info
+
+		frappe.set_user(REP)
+		self.assertEqual([row["name"] for row in get_user_info([REP])], [REP])
+
+	def test_a_system_manager_still_resolves_everyone(self):
+		from crm.api.session import get_user_info
+
+		frappe.set_user("Administrator")
+		self.assertEqual([row["name"] for row in get_user_info([self.OUTSIDER])], [self.OUTSIDER])
+
+	def test_a_user_without_a_crm_role_gets_nothing(self):
+		from crm.api.session import get_user_info
+
+		frappe.set_user(NOBODY)
+		with self.assertRaises(frappe.PermissionError):
+			get_user_info([REP])
+
+	# --- get_views -------------------------------------------------------
+
+	def test_a_user_without_a_crm_role_cannot_read_the_teams_views(self):
+		from crm.api.views import get_views
+
+		frappe.set_user(NOBODY)
+		with self.assertRaises(frappe.PermissionError):
+			get_views("CRM Deal")
+
+	def test_a_rep_still_reads_views(self):
+		from crm.api.views import get_views
+
+		frappe.set_user(REP)
+		self.assertIsInstance(get_views("CRM Deal"), list)
+
+	# --- update_profile --------------------------------------------------
+
+	def _email_account(self, name: str, address: str):
+		if frappe.db.exists("Email Account", name):
+			return frappe.get_doc("Email Account", name)
+		account = frappe.get_doc(
+			{
+				"doctype": "Email Account",
+				"email_account_name": name,
+				"email_id": address,
+				"enable_outgoing": 1,
+			}
+		)
+		account.flags.ignore_mandatory = True
+		account.flags.ignore_validate = True
+		account.insert(ignore_permissions=True)
+		self.addCleanup(
+			lambda: (
+				frappe.db.exists("Email Account", account.name)
+				and frappe.delete_doc("Email Account", account.name, force=True, ignore_permissions=True)
+			)
+		)
+		return account
+
+	def test_a_rep_cannot_attach_someone_elses_mailbox(self):
+		from crm.api.user import update_profile
+
+		# The address has to answer to a real account for this to be somebody
+		# else's mailbox rather than a shared one -- see the test below.
+		other = "secgate-someone-else@crmtest.test"
+		ensure_user(other, "Secgate Someone", "Sales User")
+		theirs = self._email_account("Secgate Someone Else", other)
+		frappe.set_user(REP)
+		with self.assertRaises(frappe.PermissionError):
+			update_profile({"user_emails": [{"email_account": theirs.name, "email_id": theirs.email_id}]})
+		frappe.set_user("Administrator")
+		self.assertFalse(frappe.db.exists("User Email", {"parent": REP, "email_account": theirs.name}))
+
+	def test_a_rep_may_attach_a_shared_mailbox(self):
+		"""sales@ and support@ answer to no user account, and linking one is
+		what those accounts are for -- the rule is about claiming a colleague's
+		mailbox, not about the address matching your own."""
+		from crm.api.user import update_profile
+
+		shared = self._email_account("Secgate Shared Desk", "secgate-shared@crmtest.test")
+		frappe.set_user(REP)
+		update_profile({"user_emails": [{"email_account": shared.name, "email_id": shared.email_id}]})
+		frappe.set_user("Administrator")
+		self.assertTrue(frappe.db.exists("User Email", {"parent": REP, "email_account": shared.name}))
+
+	def test_a_rep_may_attach_their_own_mailbox(self):
+		from crm.api.user import update_profile
+
+		mine = self._email_account("Secgate Rep Mailbox", REP)
+		frappe.set_user(REP)
+		update_profile({"user_emails": [{"email_account": mine.name, "email_id": mine.email_id}]})
+		frappe.set_user("Administrator")
+		self.assertTrue(frappe.db.exists("User Email", {"parent": REP, "email_account": mine.name}))
+
+
+class KanbanColumnEnumerationTest(IntegrationTestCase):
+	"""A kanban's columns are the rows of the field it groups by, and they used to
+	be read with ``frappe.get_all`` -- so asking for the deal board grouped by
+	``lead`` handed a rep every lead name on the site."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		ensure_user(REP, "Rep", "Sales User")
+		ensure_user(NOBODY, "Nobody", None)
+		self.addCleanup(frappe.set_user, "Administrator")
+		self.lead = frappe.get_doc(
+			{"doctype": "CRM Lead", "first_name": "Kanban", "lead_owner": "Administrator"}
+		).insert(ignore_permissions=True)
+		self.addCleanup(
+			lambda: frappe.delete_doc("CRM Lead", self.lead.name, force=True, ignore_permissions=True)
+		)
+
+	def test_a_rep_does_not_get_leads_they_cannot_see_as_columns(self):
+		from crm.api.doc import kanban_link_columns
+
+		frappe.set_user(REP)
+		self.assertNotIn(self.lead.name, [row["name"] for row in kanban_link_columns("CRM Lead")])
+
+	def test_the_owner_still_gets_their_own_lead_as_a_column(self):
+		from crm.api.doc import kanban_link_columns
+
+		frappe.set_user("Administrator")
+		self.assertIn(self.lead.name, [row["name"] for row in kanban_link_columns("CRM Lead")])
+
+	def test_user_columns_are_the_crm_users_not_the_whole_user_table(self):
+		from crm.api.doc import kanban_link_columns
+
+		frappe.set_user(REP)
+		names = [row["name"] for row in kanban_link_columns("User")]
+		self.assertIn(REP, names)
+		self.assertNotIn(NOBODY, names)
