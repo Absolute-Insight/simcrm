@@ -104,6 +104,14 @@ const validateForm = () => {
   return true
 }
 
+// props.priority is a copy the list builds for this dialog, never a member of
+// slaData.priorities, so indexOf was always -1 and splice(-1, 1) dropped the
+// last row instead of the edited one. Find the row by its priority key.
+const findPriorityIndex = () =>
+  slaData.value.priorities.findIndex(
+    (p) => p.priority === props.priority.priority,
+  )
+
 const deleteItem = (event) => {
   event.preventDefault()
   if (!isConfirmingDelete.value) {
@@ -111,29 +119,36 @@ const deleteItem = (event) => {
     return
   }
 
-  slaData.value.priorities.splice(
-    slaData.value.priorities.indexOf(props.priority),
-    1,
-  )
+  const index = findPriorityIndex()
+  if (index === -1) {
+    toast.error(__('That priority is no longer in the list'))
+    dialog.value = false
+    return
+  }
+
+  slaData.value.priorities.splice(index, 1)
   dialog.value = false
 }
 
 const onSave = () => {
-  if (!validateForm()) return
-  const index = slaData.value.priorities.findIndex(
-    (p) => p.priority === props.priority.priority,
-  )
-  const priority = slaData.value.priorities[index]
-  if (index !== -1) {
-    priority.priority = priorityData.value.priority
-    priority.first_response_time = priorityData.value.first_response_time
-    priority.default_priority = priorityData.value.default_priority
+  const index = findPriorityIndex()
+  if (index === -1) {
+    toast.error(__('That priority is no longer in the list'))
+    dialog.value = false
+    return
   }
+  if (!validateForm()) return
+
+  const priority = slaData.value.priorities[index]
+  priority.priority = priorityData.value.priority
+  priority.first_response_time = priorityData.value.first_response_time
+  priority.default_priority = priorityData.value.default_priority
 
   dialog.value = false
 }
 
 watch(dialog, (newValue) => {
+  isConfirmingDelete.value = false
   if (newValue) {
     priorityData.value = {
       priority: props.priority.priority,
