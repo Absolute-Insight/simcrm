@@ -8,20 +8,24 @@
  *
  * We do NOT override frappe/www/login.html. The markup is the vendor's; only
  * its presentation is ours, which keeps the login logic upstream's problem.
+ * Everything below -- the brand above the form, labels acting as
+ * placeholders, the forgot-password link folded into the password field -- is
+ * done by re-positioning the vendor's own elements, so the DOM (and with it
+ * the accessibility tree and the login JS) is untouched.
  */
 
 /* ── tokens ──────────────────────────────────────────────────────────────
- * Sampled from the artwork rather than invented: the panel's vertical falloff
+ * Sampled from the artwork rather than invented: the ground's vertical falloff
  * is the original brand.jpeg's top and bottom edge tone (#d0d7de / #a5adb7);
- * brand.png replaced it with the same lockup on a lighter ground, which the
- * feather below blends into this metal. The inks are the flat lockup's
+ * brand.png carries the same lockup on a lighter ground, which the feather on
+ * the brand block blends into this metal. The inks are the flat lockup's
  * wordmark navy and mark blue.
  */
 body:has(.login-content) {
   --v-metal-top: #d0d7de;
   --v-metal-bottom: #a5adb7;
   --v-ink: #18304c;
-  --v-ink-soft: #5b6b80; /* icons and other non-text marks */
+  --v-ink-soft: #5b6b80; /* icons, and the in-field placeholders on white */
   /* Text inks for the metal ground -- see the secondary-text block below for
      why these are darker than the greys Frappe ships. */
   --v-ink-muted: #2f4055;
@@ -32,136 +36,148 @@ body:has(.login-content) {
   --v-tint-line: #b6cfe2;
   --v-line: #dfe3ea;
   --v-focus: #2f6d95;
-  --v-panel-w: 54vw;
+  --v-field-h: 40px;
 
-  /* Fallback under the fixed layers; matches the gradient's midpoint so a
+  /* Fallback under the fixed layer; matches the gradient's midpoint so a
      paint before ::before lands is not a white flash. */
   background: #bdc4cd;
 }
 
-/* ── the brand panel ─────────────────────────────────────────────────────
- * Two fixed layers: a metal ground (::before) and the lockup (::after),
- * feathered into it. Fixed rather than absolute so the artwork stays
- * optically still while a longer form (sign-up) scrolls beside it.
+/* ── the ground ──────────────────────────────────────────────────────────
+ * One continuous metal surface across the whole viewport, fixed so it stays
+ * optically still while a longer form (sign-up) scrolls over it. The
+ * highlight sits where the brand block lands -- upper middle -- so the lockup
+ * keeps its sheen and the form beneath gets the softer falloff.
  */
-body:has(.login-content)::before,
-body:has(.login-content)::after {
+body:has(.login-content)::before {
   content: "";
   position: fixed;
-  pointer-events: none;
-}
-
-/* One continuous metal surface across the whole viewport -- the form sits on
- * the same ground as the artwork rather than on a white column beside it. The
- * gradient is vertical, so it carries across the full width with no seam.
- *
- * The highlight stays centred over the artwork (27% == the middle of the left
- * panel, not the middle of the page), so the lockup keeps its sheen and the
- * form side gets the softer falloff. */
-body:has(.login-content)::before {
   inset: 0;
+  pointer-events: none;
   background: radial-gradient(
-      90% 90% at 27% 38%,
+      70% 60% at 50% 30%,
       rgba(255, 255, 255, 0.55) 0%,
-      rgba(255, 255, 255, 0) 68%
+      rgba(255, 255, 255, 0) 70%
     ),
     linear-gradient(180deg, var(--v-metal-top) 0%, var(--v-metal-bottom) 100%);
   z-index: 0;
 }
 
-/* The artwork stays on its half. */
-body:has(.login-content)::after {
-  inset: 0 auto 0 0;
-  width: var(--v-panel-w);
-}
-
-/* The mask must be smaller than the artwork in BOTH axes, or whichever axis it
- * overshoots keeps a hard edge. brand.png is 775x384 (the same 2:1 shape as
- * the JPEG it replaced), so at min(96%, 700px) wide it renders ~347px tall: half-extents of ~45% of the panel's width but
- * only ~19% of its height. An earlier 30% vertical radius sat outside the
- * image, which is why its top and bottom edges stayed visible however much the
- * sides were feathered.
- *
- * (An attempt to solve this by blurring the same photograph as the ground was
- * reverted: `filter` on a fixed pseudo-element cannot be clipped to the panel,
- * so the blur bled across the form column.) */
-body:has(.login-content)::after {
-  background: url("/assets/crm/images/brand.png") center center /
-    min(96%, 700px) auto no-repeat;
-  -webkit-mask-image: radial-gradient(
-    ellipse 44% 18% at 50% 50%,
-    #000 52%,
-    transparent 100%
-  );
-  mask-image: radial-gradient(
-    ellipse 44% 18% at 50% 50%,
-    #000 52%,
-    transparent 100%
-  );
-  z-index: 1;
-}
-
-/* ── the form column ─────────────────────────────────────────────────────*/
+/* ── the column ──────────────────────────────────────────────────────────
+ * Brand on top, form beneath, the pair centred in the viewport as one group.
+ * The wrapper is a full-height flex box; the card inside it is Frappe's own
+ * flex column, so the brand block (a ::before on the card) is an in-flow item
+ * and the group's height -- and therefore its centring -- accounts for it.
+ */
 body:has(.login-content) .page-content-wrapper {
-  margin-left: var(--v-panel-w);
   min-height: 100vh;
   display: flex;
   align-items: center;
+  justify-content: center;
   position: relative;
-  z-index: 1;
+  /* No z-index: a stacking context here would isolate the brand block's
+   * multiply blend from the ground. Being positioned and later in the tree
+   * is enough to paint above the fixed ::before. */
 }
 
 body:has(.login-content) main.container {
   max-width: 480px;
   width: 100%;
+  margin: 0 auto;
   padding: 40px 32px;
 }
 
-/* Flat, not floating: the panel beside it already carries the depth, and two
- * competing elevations read as indecision. */
-body:has(.login-content) .login-content.page-card {
+/* Flat, not floating: the ground already carries the depth, and two
+ * competing elevations read as indecision. Below 576px the vendor also
+ * stretches the card to the viewport (min-height: 100vh, 60px top padding)
+ * so it fills a phone on its own; here the wrapper does the centring, so the
+ * card must stay content-sized or the group pins to the top and the page
+ * scrolls. The extra `.page_content` hop is specificity, not structure. */
+body:has(.login-content) .page_content .login-content.page-card {
   background: transparent;
   border: 0;
   box-shadow: none;
   padding: 0;
+  margin: 0;
+  min-height: 0;
   max-width: none;
   width: 100%;
 }
 
-body:has(.login-content) .app-logo {
-  width: 44px;
-  height: 44px;
+/* ── the brand block ─────────────────────────────────────────────────────
+ * brand.png is 775x384 (2:1), sized by the column so it never exceeds the
+ * form beneath it. Its ground is near-white, and the lockup spans ~90% of
+ * its frame, so a feathered mask (the previous treatment) either left a
+ * visible edge or ate the ends of the wordmark. Multiply-blending it onto
+ * the metal instead makes the white ground vanish outright -- white
+ * multiplies to the backdrop -- while the navy wordmark and the blue mark
+ * only deepen a touch (the wordmark's ends stay crisp, which no mask
+ * managed). For the blend to see the ground, nothing between
+ * this element and the root may open a stacking context, which is why the
+ * column wrapper below carries no z-index.
+ */
+body:has(.login-content) .login-content.page-card::before {
+  content: "";
+  display: block;
+  width: 100%;
+  aspect-ratio: 775 / 384;
+  background: url("/assets/crm/images/brand.png") center center / contain
+    no-repeat;
+  mix-blend-mode: multiply;
+  /* The ground is not quite white (246-254 per channel at the edges), so it
+   * would multiply through as a faint slab. A 6% lift clips it to white before
+   * the blend; the inks sit near black, so it moves them by a single step. */
+  filter: brightness(1.06);
   margin-bottom: 4px;
+  pointer-events: none;
+}
+
+/* The card head (app logo, "Sign In", "Welcome! …") duplicates what the brand
+ * block now says. It goes on the sign-in screens -- both the password form
+ * and the email-link variant, which share the same heading. The forgot-
+ * password head stays: its subtitle is the only thing telling the user what
+ * the single field in front of them does. */
+body:has(.login-content) .for-login .page-card-head,
+body:has(.login-content) .for-login-with-email-link .page-card-head {
+  display: none;
+}
+
+body:has(.login-content) .app-logo {
+  display: none;
+}
+
+body:has(.login-content) .page-card-head {
+  align-items: center;
+  text-align: center;
 }
 
 body:has(.login-content) .page-card-head-text h1,
+body:has(.login-content) .page-card-head-text h4,
 body:has(.login-content) .page-card-head-text .page-card-head-title {
   color: var(--v-ink);
   font-weight: 700;
   letter-spacing: -0.02em;
+  text-align: center;
 }
 
 /* Secondary text has to be re-inked for this ground.
  *
  * Frappe's muted greys are tuned for a white page; on the metal they measured
- * 2.25-3.22:1 -- the subtitle, both field labels and the "Forgot password?"
- * link all failed AA the moment the form stopped sitting on white. These are
- * the same hues pulled down until they clear 4.5:1 against the darkest point
- * of the gradient (rgb(184,191,200), at the bottom of the column).
+ * 2.25-3.22:1 -- the subtitle and the sign-up links all failed AA the moment
+ * the form stopped sitting on white. These are the same hues pulled down
+ * until they clear 4.5:1 against the darkest point of the gradient
+ * (rgb(184,191,200), at the bottom of the column).
  */
-body:has(.login-content) .page-card-subtitle,
-body:has(.login-content) .form-group label,
-body:has(.login-content) label.text-ink-gray-5 {
+body:has(.login-content) .page-card-subtitle {
   color: var(--v-ink-muted);
+  text-align: center;
 }
 
-body:has(.login-content) a[href="#forgot"],
 body:has(.login-content) .sign-up-message,
 body:has(.login-content) .sign-up-message a {
   color: var(--v-ink-link);
 }
 
-body:has(.login-content) a[href="#forgot"]:hover,
 body:has(.login-content) .sign-up-message a:hover {
   color: var(--v-ink);
 }
@@ -173,21 +189,29 @@ body:has(.login-content) .web-footer {
   display: none;
 }
 
-/* ── controls ────────────────────────────────────────────────────────────
+/* ── fields ──────────────────────────────────────────────────────────────
  * Matched to the app's own control radius and focus treatment, so signing in
  * and using the product feel like one product.
  */
 
 /* The field wrappers size to their content by default, which left the inputs
  * visibly narrower than the buttons beneath them once the column was
- * constrained. Everything in the form shares one measure. */
+ * constrained. Everything in the form shares one measure.
+ *
+ * Frappe's login bundle addresses these inputs as
+ * `.for-login .page-card .page-card-body input[type="text"]` -- four classes
+ * and an element -- so a plain `.form-control` rule here loses to it whatever
+ * the load order, and the fields silently kept the vendor's 28px height and
+ * 8px padding. The input rules below carry four classes and two elements so
+ * they win on specificity alone. */
 body:has(.login-content) .email-field,
 body:has(.login-content) .password-field {
   width: 100%;
 }
 
-body:has(.login-content) .form-control {
+body:has(.login-content) .page-card .page-card-body input.form-control {
   width: 100%;
+  height: var(--v-field-h);
   border-radius: 6px;
   border: 1px solid var(--v-line);
   padding: 9px 12px;
@@ -197,22 +221,69 @@ body:has(.login-content) .form-control {
     box-shadow 120ms ease;
 }
 
-body:has(.login-content) .form-control:focus,
-body:has(.login-content) .form-control:focus-visible {
+body:has(.login-content) .page-card .page-card-body input.form-control:focus,
+body:has(.login-content)
+  .page-card
+  .page-card-body
+  input.form-control:focus-visible {
   border-color: var(--v-focus);
   box-shadow: 0 0 0 3px rgba(47, 109, 149, 0.18);
   outline: none;
 }
 
-/* The show/hide-password control is positioned by the vendor against a field
- * box we have just re-sized, so we re-anchor it rather than let it fall
- * beneath the input. Padding keeps typed text clear of it. */
-body:has(.login-content) .password-field {
+/* Labels become the placeholders.
+ *
+ * Frappe's inputs ship with sample placeholders ("jane@example.com", dots)
+ * and a label above each. The label is kept -- it is what screen readers
+ * announce and what `for` binds -- but drawn inside the field where the
+ * placeholder would be, and the vendor placeholder is made invisible rather
+ * than removed so `:placeholder-shown` still reports an empty field. Once
+ * there is a value (typed or autofilled) the label fades out.
+ *
+ * Each label's containing block is the element that holds both it and its
+ * field: `.form-group` for email, the inner wrapper for password. The label
+ * is out of flow, so the field is the first in-flow child and starts at 0. */
+body:has(.login-content) .form-group,
+body:has(.login-content) .form-group > .flex.flex-col {
   position: relative;
+  width: 100%;
 }
 
-body:has(.login-content) .password-field .form-control {
-  padding-right: 38px;
+body:has(.login-content) .form-group label {
+  position: absolute;
+  top: 0;
+  left: 13px;
+  height: var(--v-field-h);
+  line-height: var(--v-field-h);
+  margin: 0;
+  padding: 0;
+  width: auto;
+  font-size: 14px;
+  color: var(--v-ink-soft);
+  pointer-events: none;
+  transition: opacity 120ms ease;
+  z-index: 1;
+}
+
+body:has(.login-content)
+  .page-card
+  .page-card-body
+  input.form-control::placeholder {
+  color: transparent;
+}
+
+body:has(.login-content)
+  .form-group:has(.form-control:not(:placeholder-shown))
+  label,
+body:has(.login-content) .form-group:has(.form-control:-webkit-autofill) label {
+  opacity: 0;
+}
+
+/* The show/hide-password control is positioned by the vendor against a field
+ * box we have just re-sized, so we re-anchor it rather than let it fall
+ * beneath the input. */
+body:has(.login-content) .password-field {
+  position: relative;
 }
 
 body:has(.login-content) .password-field .toggle-password {
@@ -225,6 +296,57 @@ body:has(.login-content) .password-field .toggle-password {
   color: var(--v-ink-soft);
 }
 
+/* "Forgot password?" folds into the password field as a key icon beside the
+ * eye. The vendor wraps the link in a right-aligned <p> that is a sibling of
+ * the field's wrapper inside the same `.form-group`, so with the group
+ * positioned the paragraph can be pinned to the field's top-right. The link
+ * text stays in the DOM at zero size for assistive tech; the icon is a mask
+ * so it takes the same ink as the eye. Padding on the input keeps typed text
+ * clear of both controls. */
+body:has(.login-content)
+  .page-card
+  .page-card-body
+  .password-field
+  input.form-control {
+  padding-right: 66px;
+}
+
+body:has(.login-content) .form-group > p:has(> a[href="#forgot"]) {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: var(--v-field-h);
+  width: 66px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 12px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+body:has(.login-content) a[href="#forgot"] {
+  display: block;
+  width: 16px;
+  height: 16px;
+  font-size: 0;
+  line-height: 0;
+  color: transparent;
+  pointer-events: auto;
+  background-color: var(--v-ink-soft);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z'/%3E%3Ccircle cx='16.5' cy='7.5' r='.5' fill='black'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z'/%3E%3Ccircle cx='16.5' cy='7.5' r='.5' fill='black'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  transition: background-color 120ms ease;
+}
+
+body:has(.login-content) a[href="#forgot"]:hover {
+  background-color: var(--v-ink);
+}
+
+/* ── buttons ─────────────────────────────────────────────────────────────*/
 body:has(.login-content) .es-button[data-variant="solid"] {
   background: var(--v-ink);
   border-radius: 6px;
@@ -262,7 +384,8 @@ body:has(.login-content) .btn-login-option:hover {
 }
 
 /* Keyboard focus must stay obvious on every actionable element, including the
- * secondary link-buttons that carry no background of their own. */
+ * icon link and the secondary link-buttons that carry no background of their
+ * own. */
 body:has(.login-content) .es-button:focus-visible,
 body:has(.login-content) a:focus-visible {
   outline: 2px solid var(--v-focus);
@@ -270,52 +393,19 @@ body:has(.login-content) a:focus-visible {
 }
 
 /* ── narrow screens ──────────────────────────────────────────────────────
- * Below 900px the split stops earning its space: the panel becomes a short
- * banner above the form rather than squeezing both into half a phone.
+ * The column already fits a phone; only the gutters tighten.
  */
-@media (max-width: 900px) {
-  /* The ground still covers the whole page -- the form keeps the same surface
-   * it has on desktop. Only the artwork shrinks to a banner. */
-  body:has(.login-content)::before {
-    inset: 0;
-    width: auto;
-  }
-
-  /* No feather here: the banner is full-bleed, so the artwork has no free edge
-   * to give itself away. Feathering at this size actively hurt --
-   * brand.png's lockup fills most of its frame, so there is almost no metal
-   * margin to fade into and the mask ate into the wordmark instead. `cover`
-   * crops a little top and bottom, which the lockup has room for. */
-  body:has(.login-content)::after {
-    position: absolute;
-    inset: 0 0 auto 0;
-    width: 100%;
-    height: 176px;
-    background-size: cover;
-    background-position: center;
-    -webkit-mask-image: none;
-    mask-image: none;
-  }
-
-  body:has(.login-content) .page-content-wrapper {
-    margin-left: 0;
-    min-height: auto;
-    align-items: flex-start;
-    padding-top: 176px; /* clears the absolutely-positioned banner above */
-  }
-
+@media (max-width: 600px) {
   body:has(.login-content) main.container {
-    margin: 0 auto;
-    padding: 28px 20px 48px;
+    padding: 28px 20px 40px;
   }
 }
 
-/* A fixed layer behaves like a parallax surface while the column scrolls.
- * Someone who has asked for less motion should get a panel that scrolls with
- * the page instead. */
+/* A fixed ground behaves like a parallax surface while the column scrolls.
+ * Someone who has asked for less motion should get one that scrolls with the
+ * page instead. */
 @media (prefers-reduced-motion: reduce) {
-  body:has(.login-content)::before,
-  body:has(.login-content)::after {
+  body:has(.login-content)::before {
     position: absolute;
   }
 }
