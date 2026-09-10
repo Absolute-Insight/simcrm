@@ -260,10 +260,19 @@ def create_lead_from_call_log(call_log: str | dict, lead_details: str | dict | N
 	if not call_log_name:
 		frappe.throw(_("A valid call log is required."), frappe.ValidationError)
 
+	# Lock the call log row before reading it, so a second click on a slow server waits
+	# for the first request to commit and then sees the lead it linked, instead of both
+	# reading an unlinked call and creating a lead each.
+	frappe.db.get_value("CRM Call Log", call_log_name, "modified", for_update=True)
+
 	call_doc = frappe.get_doc("CRM Call Log", call_log_name)
 
 	if not call_doc.has_permission("write"):
 		frappe.throw(_("You are not permitted to update this call log."), frappe.PermissionError)
+
+	existing_lead = get_linked_lead(call_doc)
+	if existing_lead:
+		return existing_lead
 
 	if not frappe.has_permission("CRM Lead", "create"):
 		frappe.throw(_("You are not permitted to create leads."), frappe.PermissionError)
@@ -297,6 +306,16 @@ def create_lead_from_call_log(call_log: str | dict, lead_details: str | dict | N
 	call_doc.save()
 
 	return lead.name
+
+
+def get_linked_lead(call_doc):
+	"""The lead this call is already attached to, by reference or by link row, or None."""
+	if call_doc.get("reference_doctype") == "CRM Lead" and call_doc.get("reference_docname"):
+		return call_doc.reference_docname
+	for link in call_doc.get("links") or []:
+		if link.link_doctype == "CRM Lead" and link.link_name:
+			return link.link_name
+	return None
 
 
 def on_doctype_update():

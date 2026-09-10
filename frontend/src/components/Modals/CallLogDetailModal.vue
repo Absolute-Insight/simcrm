@@ -168,6 +168,8 @@
           class="w-full"
           variant="solid"
           :label="__('Create Lead')"
+          :loading="creatingLead"
+          :disabled="creatingLead"
           @click="createLead"
         />
       </div>
@@ -358,28 +360,35 @@ const detailFields = computed(() => {
 
 const d = ref({})
 const leadDetails = ref({})
+const creatingLead = ref(false)
 
 async function createLead() {
-  await d.value.triggerOnCreateLead?.(
-    callLog.value?.data,
-    leadDetails.value,
-    () => (show.value = false),
-  )
+  if (creatingLead.value) return
+  creatingLead.value = true
+  try {
+    await d.value.triggerOnCreateLead?.(
+      callLog.value?.data,
+      leadDetails.value,
+      () => (show.value = false),
+    )
 
-  call('crm.fcrm.doctype.crm_call_log.crm_call_log.create_lead_from_call_log', {
-    call_log: callLog.value?.data,
-    lead_details: leadDetails.value,
-  })
-    .then((d) => {
-      if (d) {
-        router.push({ name: 'Lead', params: { leadId: d } })
-      }
-    })
-    .catch((err) => {
-      toast.error(
-        __('Error creating lead: {0}', [err.messages?.[0] || err.message]),
-      )
-    })
+    const leadName = await call(
+      'crm.fcrm.doctype.crm_call_log.crm_call_log.create_lead_from_call_log',
+      {
+        call_log: callLog.value?.data,
+        lead_details: leadDetails.value,
+      },
+    )
+    if (leadName) {
+      router.push({ name: 'Lead', params: { leadId: leadName } })
+    }
+  } catch (err) {
+    toast.error(
+      __('Error creating lead: {0}', [err.messages?.[0] || err.message]),
+    )
+  } finally {
+    creatingLead.value = false
+  }
 }
 
 function openCallLogModal() {
