@@ -484,18 +484,49 @@ docker compose logs backup | tail            # when the last one ran
 docker compose exec backend ls -lh sites/$SITE_NAME/private/backups
 ```
 
-Two `.env` keys steer it:
+`BACKUP_HOUR` (default `2`) is the hour it runs, container local time.
 
-| Key | Default | What it does |
-|---|---|---|
-| `BACKUP_HOUR` | `2` | Hour of the day, container local time |
-| `BACKUP_TARGET` | *(empty)* | An rclone destination, e.g. `s3:vectora-backups/mbp`. Empty means local only |
+### Getting them off the host
 
-**Set `BACKUP_TARGET` before a customer's data lands.** A backup on the machine
-it protects is a copy, not a backup, and the whole point is surviving the loss
-of the host. The copy step needs `rclone` in the image and an `rclone.conf` the
-container can read; if the target is set and rclone is missing, the nightly log
-says so rather than failing quietly.
+A backup that only exists on the machine it protects survives a bad delete,
+not a lost server — and losing the server is the case a customer actually
+fears. The `backup-offsite` service copies the dumps to Backblaze B2 every
+hour. It is behind a compose profile, so it starts only when you ask:
+
+```bash
+docker compose --profile offsite up -d backup-offsite
+docker compose logs -f backup-offsite        # first copy, then hourly
+```
+
+Three `.env` keys, all documented in `.env.example`:
+
+| Key | What it is |
+|---|---|
+| `B2_ACCOUNT_ID` | The application key's **keyID** |
+| `B2_APPLICATION_KEY` | The application key itself, shown once at creation |
+| `BACKUP_TARGET` | The bucket as an rclone destination, e.g. `offsite:vecmbp` |
+
+Make an **application key scoped to the one bucket** (Backblaze → App Keys →
+Add a New Application Key), never the master key. It needs `listBuckets`,
+`listFiles` and `writeFiles` on that bucket and nothing else. The site name is
+appended to the destination automatically, so one bucket can hold several
+deployments without them overwriting each other.
+
+It copies rather than syncs, deliberately: `rclone copy` never deletes at the
+destination, so the seven-day local retention does not propagate to the
+archive, and a copy that failed at 02:00 is retried at 03:00 rather than a day
+later. Re-copying costs nothing — rclone skips what is already there.
+
+Check it is still working, rather than assuming:
+
+```bash
+docker compose ps backup-offsite             # healthy == the key still opens the bucket
+docker compose exec backup-offsite rclone ls "$BACKUP_TARGET/$SITE_NAME" | tail
+```
+
+The healthcheck lists the bucket every five minutes, so an expired or revoked
+key shows up as unhealthy instead of as an archive that quietly stopped weeks
+ago.
 
 ### Why this is a service and not a note in a runbook
 
