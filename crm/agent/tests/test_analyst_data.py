@@ -6,6 +6,7 @@ from stubbed adapters, and an ERP failure marks its table rather than raising.""
 
 from __future__ import annotations
 
+from typing import ClassVar
 from unittest import mock
 
 import frappe
@@ -80,8 +81,8 @@ class RunPlanTest(IntegrationTestCase):
 		]
 		payments = [{"date": "2026-01-15", "amount": 100.0}, {"date": "2026-02-02", "amount": 25.0}]
 		with (
-			mock.patch.object(analyst_data, "acumatica_invoices", return_value=invoices),
-			mock.patch.object(analyst_data, "acumatica_payments", return_value=payments),
+			mock.patch.object(analyst_data, "acumatica_invoices", return_value=(invoices, False)),
+			mock.patch.object(analyst_data, "acumatica_payments", return_value=(payments, False)),
 		):
 			tables = analyst_data.run_plan(
 				{
@@ -195,3 +196,90 @@ class QuietAccountsTest(IntegrationTestCase):
 		entry = next(row for row in rows if row["organization"] == self.org)
 		self.assertEqual(entry["deals"], 1)
 		self.assertIn("close date near", entry["reason"])
+
+
+class DeadlineTest(IntegrationTestCase):
+	"""#27: the step between the two completions used to have no clock at all.
+
+	Invoice and payment reads page 100 rows at a time up to 5,000, each page a
+	30-second request, while deal scoring runs in the same worker. One cashflow
+	question could hold a web worker and one of four site-wide model slots for
+	minutes -- long after nginx had returned a 504 and the admin had been told
+	the model could not be reached.
+	"""
+
+	PLAN: ClassVar[dict] = {
+		"metrics": ["won_revenue_by_month", "erp_invoices_by_month"],
+		"from_date": "2026-01-01",
+		"to_date": "2026-02-28",
+	}
+
+	def test_without_a_deadline_everything_runs(self):
+		with mock.patch.object(analyst_data, "acumatica_invoices", return_value=([], False)):
+			tables = analyst_data.run_plan(self.PLAN, "acumatica")
+		self.assertEqual([table["error"] for table in tables], [None, None])
+
+	def test_a_passed_deadline_reports_the_remaining_tables_rather_than_computing_them(self):
+		with (
+			mock.patch.object(analyst_data, "acumatica_invoices", return_value=([], False)) as read,
+			mock.patch.object(analyst_data.time, "monotonic", return_value=1000.0),
+		):
+			tables = analyst_data.run_plan(self.PLAN, "acumatica", deadline=999.0)
+		self.assertEqual(
+			[table["key"] for table in tables], ["won_revenue_by_month", "erp_invoices_by_month"]
+		)
+		self.assertEqual([table["error"] for table in tables], [analyst_data.SKIPPED_NOTE] * 2)
+		read.assert_not_called()
+
+	def test_a_partial_erp_read_is_flagged_in_the_figures(self):
+		"""The answer prompt carries a table's note into the FIGURES block, so a
+		floor can be described as a floor instead of read as a total."""
+		with mock.patch.object(analyst_data, "acumatica_invoices", return_value=([], True)):
+			tables = analyst_data.run_plan({**self.PLAN, "metrics": ["erp_invoices_by_month"]}, "acumatica")
+		self.assertIn(analyst_data.PARTIAL_NOTE, tables[0]["note"])
+		self.assertIsNone(tables[0]["error"])
+
+	def test_pagination_stops_when_less_than_one_page_of_time_is_left(self):
+		"""Checked before the fetch, because the generator has already paid for a
+		page by the time its rows arrive."""
+		pages = [
+			{"Date": {"value": "2026-01-10"}, "Amount": {"value": 10}, "Balance": {"value": 0}}
+			for _ in range(250)
+		]
+		clock = iter([0.0] + [float(index) for index in range(1, 400)])
+		client = mock.Mock()
+		client.iter_all.return_value = iter(pages)
+		with (
+			mock.patch.object(analyst_data, "_acumatica_client", return_value=client),
+			mock.patch.object(analyst_data.time, "monotonic", side_effect=lambda: next(clock)),
+		):
+			# 60 seconds of budget: the first rows are read, and the read stops
+			# once fewer than ERP_TIMEOUT seconds remain
+			rows, partial = analyst_data.acumatica_invoices("2026-01-01", "2026-02-28", deadline=60.0)
+		self.assertTrue(partial)
+		self.assertLess(len(rows), len(pages))
+
+	def test_an_erpnext_request_is_bounded_by_the_time_left(self):
+		self.assertEqual(analyst_data._erpnext_timeout(None), analyst_data.ERP_TIMEOUT)
+		with mock.patch.object(analyst_data.time, "monotonic", return_value=100.0):
+			self.assertEqual(analyst_data._erpnext_timeout(105.0), 5.0)
+			self.assertEqual(analyst_data._erpnext_timeout(1000.0), float(analyst_data.ERP_TIMEOUT))
+			# never zero or negative: requests reads that as "no timeout at all"
+			self.assertEqual(analyst_data._erpnext_timeout(50.0), 1.0)
+
+
+class OwnerlessDealTest(IntegrationTestCase):
+	"""#24: get_fullname() substitutes the session user when its argument is falsy."""
+
+	def test_an_unowned_at_risk_deal_is_not_reported_under_the_asker_s_name(self):
+		scored = [{"name": "CRM-DEAL-OWNERLESS", "score": 10, "factors": []}]
+		detail = frappe._dict(
+			{"name": "CRM-DEAL-OWNERLESS", "organization": "Acme", "deal_owner": None, "deal_value": 100}
+		)
+		with (
+			mock.patch("crm.api.dashboard._at_risk_deals", return_value=scored),
+			mock.patch.object(frappe, "get_list", return_value=[detail]),
+		):
+			rows, _note = analyst_data._deals_at_risk("2026-01-01", "2026-02-28")
+		self.assertEqual(rows[0]["owner"], "")
+		self.assertNotIn(frappe.utils.get_fullname(frappe.session.user), rows[0]["owner"])

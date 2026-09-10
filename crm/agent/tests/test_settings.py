@@ -35,6 +35,10 @@ class AgentSettingsTest(IntegrationTestCase):
 		# 2048, not 1024: the shipped default model truncates mid-object on a long
 		# thread at 1024 and the reply arrives as invalid JSON.
 		self.assertEqual(meta.get_field("max_tokens").default, "2048")
+		# The window the endpoint is configured with. Prompts are trimmed to fit
+		# inside it, so a wrong value here silently truncates the grounding
+		# rather than failing.
+		self.assertEqual(meta.get_field("context_tokens").default, "8192")
 
 	def test_declared_defaults_match_the_config_modules_copy(self):
 		"""``config.DEFAULT_SETTINGS`` exists because an unsaved Single has no row to read
@@ -42,7 +46,7 @@ class AgentSettingsTest(IntegrationTestCase):
 		two copies in step: assert every field agrees, or the flag could ship on in one
 		place and off in the other."""
 		meta = frappe.get_meta("CRM Agent Settings")
-		self.assertEqual(len(DEFAULT_SETTINGS), 8)
+		self.assertEqual(len(DEFAULT_SETTINGS), 9)
 		self.assertEqual(len(SIGNAL_DEFAULTS), 6)
 		for fieldname, default in {**DEFAULT_SETTINGS, **SIGNAL_DEFAULTS}.items():
 			field = meta.get_field(fieldname)

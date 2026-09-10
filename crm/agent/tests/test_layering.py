@@ -3,7 +3,7 @@
 
 """The module's import direction is an invariant, so assert it rather than document it.
 
-`errors` <- `config`/`schemas`/`context` <- `client` <- `tools`/`api`. No module may
+`errors`/`prompting` <- `config`/`schemas`/`context` <- `client` <- `tools`/`api`. No module may
 import one to its right. This is what keeps the pure layers testable without a site and
 keeps the transport the only place that knows a model exists -- both properties the rest
 of the suite silently relies on, and neither one visible in a diff that breaks it.
@@ -24,13 +24,17 @@ PACKAGE = "crm.agent"
 ALLOWED_SIBLING_IMPORTS = {
 	"errors": set(),
 	"config": set(),
+	# prompting is the leftmost layer with errors: token arithmetic and the fence
+	# neutraliser, shared by every builder and by the client. Pure by the same
+	# rule as context -- it may not know a site exists.
+	"prompting": set(),
 	"schemas": {"errors"},
-	"context": set(),
+	"context": {"prompting"},
 	# knowledge grounds the chat assistant on the help articles. Pure like
 	# context: it takes articles as plain dicts and builds messages; loading
 	# them (crm.help, itself frappe-free) is the caller's job.
 	"knowledge": set(),
-	"client": {"config", "errors", "schemas"},
+	"client": {"config", "errors", "prompting", "schemas"},
 	"tools": set(),
 	# actions is the write-tier proposal layer: drafts only. It may reach the
 	# client but never frappe (test_actions enforces the frappe ban on top).
@@ -63,7 +67,7 @@ ALLOWED_SIBLING_IMPORTS = {
 	# The Analyst: analyst is the pure half (catalogue, plan taming, prompts,
 	# projection maths) and may not know a site exists; analyst_data runs the
 	# catalogue against the metrics layer and the ERP clients.
-	"analyst": set(),
+	"analyst": {"prompting"},
 	"analyst_data": {"analyst", "config", "predict", "signals"},
 }
 
@@ -100,7 +104,7 @@ class LayeringTest(UnitTestCase):
 	def test_the_pure_layers_import_no_frappe(self):
 		"""``context`` and ``errors`` stay importable with no site at all -- that is what
 		makes the prompt builder and the exception types usable from any tier later."""
-		for module in ("errors", "context", "knowledge"):
+		for module in ("errors", "context", "knowledge", "prompting"):
 			with self.subTest(module=module):
 				source = Path(frappe.get_app_path("crm", "agent", f"{module}.py")).read_text()
 				imported = set()

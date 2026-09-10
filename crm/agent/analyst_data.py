@@ -18,6 +18,7 @@ takes catalogue keys and dates, nothing else.
 from __future__ import annotations
 
 import json
+import time
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -39,6 +40,15 @@ ERP_ROW_CAP = 5000
 ERP_TIMEOUT = 30
 OVERDUE_AFTER_DAYS = 30
 
+# What a table says about itself when the clock stopped the read part-way. It
+# goes in the table's ``note``, which the answer prompt carries into the figures
+# block, so the narrative can say the number is a floor rather than a total.
+PARTIAL_NOTE = (
+	"PARTIAL: the request ran out of time before this source finished; "
+	"the figures below cover only what had been read."
+)
+SKIPPED_NOTE = "the request ran out of time before this table was computed"
+
 
 # --- which ERP -----------------------------------------------------------------
 
@@ -58,11 +68,23 @@ ERP_LABELS = {"acumatica": "Acumatica", "erpnext": "ERPNext"}
 # --- running a plan --------------------------------------------------------------
 
 
-def run_plan(plan: dict, erp: str | None) -> list[dict]:
+def run_plan(plan: dict, erp: str | None, deadline: float | None = None) -> list[dict]:
 	"""Compute one table per metric in ``plan["metrics"]``, in order.
 
 	Unknown keys are skipped (the pure half already dropped them; this is the
 	belt to its braces). ERP metrics with no ERP enabled are skipped too.
+
+	``deadline`` is the caller's absolute ``time.monotonic()`` limit for the
+	whole web request -- the same one the two completions share. This step used
+	to run with no clock at all between them: invoice and payment reads page 100
+	rows at a time up to 5,000, each page a 30-second request, while deal
+	scoring runs in the same worker. One cashflow question could hold a worker
+	and one of four site-wide model slots for minutes, long after nginx had
+	returned a 504 and the admin had been told the model could not be reached.
+
+	Past the deadline a table is reported as unavailable rather than computed,
+	and an ERP read that is already running stops paging; either way the answer
+	is a partial one that says so, which is a better answer than a timeout.
 	"""
 	from_date, to_date = plan["from_date"], plan["to_date"]
 	tables = []
@@ -70,17 +92,37 @@ def run_plan(plan: dict, erp: str | None) -> list[dict]:
 		metric = analyst.CATALOGUE.get(key)
 		if not metric:
 			continue
-		if metric["source"] == analyst.ERP:
-			if not erp:
-				continue
-			tables.append(_erp_table(key, metric, erp, from_date, to_date))
+		is_erp = metric["source"] == analyst.ERP
+		if is_erp and not erp:
 			continue
-		runner = _CRM_RUNNERS.get(key)
-		if not runner:
+		runner = None if is_erp else _CRM_RUNNERS.get(key)
+		if not is_erp and not runner:
+			continue
+		label = ERP_LABELS[erp] if is_erp else "CRM"
+		if _out_of_time(deadline):
+			tables.append(_table(key, metric, label, [], from_date, to_date, "", error=SKIPPED_NOTE))
+			continue
+		if is_erp:
+			tables.append(_erp_table(key, metric, erp, from_date, to_date, deadline))
 			continue
 		rows, note = runner(from_date, to_date)
 		tables.append(_table(key, metric, "CRM", rows, from_date, to_date, note))
 	return tables
+
+
+def _out_of_time(deadline: float | None) -> bool:
+	return deadline is not None and time.monotonic() >= deadline
+
+
+def _time_for_a_page(deadline: float | None) -> bool:
+	"""Whether there is room for one more ERP page before the deadline.
+
+	One page is one HTTP request bounded by :data:`ERP_TIMEOUT`, so a page
+	started with less than that left is a page that can outlive the request it
+	belongs to. Checking *before* the fetch is the only check that helps: the
+	generator has already paid for a page by the time its rows arrive.
+	"""
+	return deadline is None or (deadline - time.monotonic()) >= ERP_TIMEOUT
 
 
 def _table(key, metric, source, rows, from_date, to_date, note="", error=None) -> dict:
@@ -209,9 +251,13 @@ def _deals_at_risk(from_date, to_date):
 			{
 				"deal": row["name"],
 				"organization": detail.get("organization") or "",
+				# get_fullname() substitutes the *session* user when its argument is
+				# falsy, so an ownerless deal used to be reported under the name of
+				# whoever asked -- an admin reading "twelve of your deals are at
+				# risk" about deals nobody owns.
 				"owner": frappe.utils.get_fullname(detail.get("deal_owner"))
-				or detail.get("deal_owner")
-				or "",
+				if detail.get("deal_owner")
+				else "",
 				"health_score": int(row["score"]),
 				"value": float(detail.get("deal_value") or 0) * float(detail.get("exchange_rate") or 1),
 				"reasons": "; ".join(
@@ -351,14 +397,17 @@ _CRM_RUNNERS = {
 # --- ERP -------------------------------------------------------------------------
 
 
-def _erp_table(key, metric, erp, from_date, to_date) -> dict:
+def _erp_table(key, metric, erp, from_date, to_date, deadline=None) -> dict:
 	label = ERP_LABELS[erp]
+	partial = False
 	try:
 		invoices = payments = None
 		if key in ("erp_invoices_by_month", "erp_receivables", "erp_cashflow_by_month"):
-			invoices = _erp_invoices(erp, from_date, to_date)
+			invoices, cut = _erp_invoices(erp, from_date, to_date, deadline)
+			partial = partial or cut
 		if key in ("erp_payments_by_month", "erp_cashflow_by_month"):
-			payments = _erp_payments(erp, from_date, to_date)
+			payments, cut = _erp_payments(erp, from_date, to_date, deadline)
+			partial = partial or cut
 	except Exception as exc:
 		frappe.log_error(title="CRM analyst ERP read failed", message=f"{erp} {key}: {exc}")
 		return _table(key, metric, label, [], from_date, to_date, "", error="unreachable")
@@ -388,7 +437,10 @@ def _erp_table(key, metric, erp, from_date, to_date) -> dict:
 			}
 			for month in months
 		]
-	return _table(key, metric, label, rows, from_date, to_date, f"Figures from {label}, in its own currency.")
+	note = f"Figures from {label}, in its own currency."
+	if partial:
+		note = f"{PARTIAL_NOTE} {note}"
+	return _table(key, metric, label, rows, from_date, to_date, note)
 
 
 def _sum_by_month(months, records, amount_key, total_label, count_label) -> list[dict]:
@@ -422,18 +474,20 @@ def _receivables(invoices, as_of: date) -> list[dict]:
 
 
 # Normalised record shapes: invoices -> {date, amount, balance, due}; payments -> {date, amount}.
+# Each reader returns ``(rows, partial)``: ``partial`` is True when the read was
+# stopped by the request deadline rather than by the end of the data.
 
 
-def _erp_invoices(erp: str, from_date: str, to_date: str) -> list[dict]:
+def _erp_invoices(erp: str, from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
 	if erp == "acumatica":
-		return acumatica_invoices(from_date, to_date)
-	return erpnext_invoices(from_date, to_date)
+		return acumatica_invoices(from_date, to_date, deadline)
+	return erpnext_invoices(from_date, to_date, deadline)
 
 
-def _erp_payments(erp: str, from_date: str, to_date: str) -> list[dict]:
+def _erp_payments(erp: str, from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
 	if erp == "acumatica":
-		return acumatica_payments(from_date, to_date)
-	return erpnext_payments(from_date, to_date)
+		return acumatica_payments(from_date, to_date, deadline)
+	return erpnext_payments(from_date, to_date, deadline)
 
 
 def _acumatica_client():
@@ -448,16 +502,24 @@ def _acumatica_window(field: str, from_date: str, to_date: str) -> str:
 	)
 
 
-def acumatica_invoices(from_date: str, to_date: str) -> list[dict]:
+def acumatica_invoices(from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
 	from crm.integrations.acumatica.client import v
 
 	client = _acumatica_client()
 	rows = []
+	partial = False
 	for record in client.iter_all(
 		"SalesInvoice",
 		filter=_acumatica_window("Date", from_date, to_date),
 		select="Date,Amount,Balance,DueDate,Type",
 	):
+		# Checked per row, which is per *page* in effect: breaking out of the
+		# generator is what stops it fetching the next page, and one page is one
+		# 30-second request. Up to fifty of them fit inside a plan the caller
+		# thinks it has bounded.
+		if not _time_for_a_page(deadline):
+			partial = True
+			break
 		if str(v(record, "Type") or "").lower().startswith("credit"):
 			continue
 		rows.append(
@@ -470,19 +532,23 @@ def acumatica_invoices(from_date: str, to_date: str) -> list[dict]:
 		)
 		if len(rows) >= ERP_ROW_CAP:
 			break
-	return rows
+	return rows, partial
 
 
-def acumatica_payments(from_date: str, to_date: str) -> list[dict]:
+def acumatica_payments(from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
 	from crm.integrations.acumatica.client import v
 
 	client = _acumatica_client()
 	rows = []
+	partial = False
 	for record in client.iter_all(
 		"Payment",
 		filter=_acumatica_window("ApplicationDate", from_date, to_date),
 		select="ApplicationDate,PaymentAmount,Type",
 	):
+		if not _time_for_a_page(deadline):
+			partial = True
+			break
 		if str(v(record, "Type") or "").lower() not in ("payment", "prepayment", ""):
 			continue
 		rows.append(
@@ -490,10 +556,13 @@ def acumatica_payments(from_date: str, to_date: str) -> list[dict]:
 		)
 		if len(rows) >= ERP_ROW_CAP:
 			break
-	return rows
+	return rows, partial
 
 
-def _erpnext_get(doctype: str, fields: list[str], filters: list) -> list[dict]:
+def _erpnext_get(doctype: str, fields: list[str], filters: list, deadline=None) -> list[dict]:
+	"""One request for the whole window -- ERPNext pages server-side under
+	``limit_page_length``, so there is nothing to stop half-way. The deadline
+	bounds the single request instead of the paging."""
 	settings = frappe.get_cached_doc("ERPNext CRM Settings")
 	secret = settings.get_password("api_secret", raise_exception=False) or ""
 	response = requests.get(
@@ -504,17 +573,25 @@ def _erpnext_get(doctype: str, fields: list[str], filters: list) -> list[dict]:
 			"limit_page_length": ERP_ROW_CAP,
 		},
 		headers={"Authorization": f"token {settings.api_key}:{secret}"},
-		timeout=ERP_TIMEOUT,
+		timeout=_erpnext_timeout(deadline),
 	)
 	response.raise_for_status()
 	return response.json().get("data") or []
 
 
-def erpnext_invoices(from_date: str, to_date: str) -> list[dict]:
+def _erpnext_timeout(deadline) -> float:
+	"""``ERP_TIMEOUT``, or the time actually left, whichever is smaller."""
+	if deadline is None:
+		return ERP_TIMEOUT
+	return max(1.0, min(float(ERP_TIMEOUT), deadline - time.monotonic()))
+
+
+def erpnext_invoices(from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
 	records = _erpnext_get(
 		"Sales Invoice",
 		["posting_date", "grand_total", "outstanding_amount", "due_date", "is_return"],
 		[["posting_date", "between", [from_date, to_date]], ["docstatus", "=", 1]],
+		deadline,
 	)
 	return [
 		{
@@ -525,10 +602,10 @@ def erpnext_invoices(from_date: str, to_date: str) -> list[dict]:
 		}
 		for r in records
 		if not r.get("is_return")
-	]
+	], False
 
 
-def erpnext_payments(from_date: str, to_date: str) -> list[dict]:
+def erpnext_payments(from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
 	records = _erpnext_get(
 		"Payment Entry",
 		["posting_date", "paid_amount", "payment_type"],
@@ -537,7 +614,8 @@ def erpnext_payments(from_date: str, to_date: str) -> list[dict]:
 			["docstatus", "=", 1],
 			["payment_type", "=", "Receive"],
 		],
+		deadline,
 	)
 	return [
 		{"date": str(r.get("posting_date") or "")[:10], "amount": r.get("paid_amount") or 0} for r in records
-	]
+	], False

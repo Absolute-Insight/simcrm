@@ -61,6 +61,7 @@ class ERPNextCRMSettings(Document):
 		erpnext_company: DF.Data | None
 		erpnext_site_url: DF.Data | None
 		is_erpnext_in_different_site: DF.Check
+		last_customer_push_error: DF.SmallText | None
 		sync_issues: DF.Table[CRMProductSyncIssue]
 		sync_products: DF.Check
 	# end: auto-generated types
@@ -262,25 +263,53 @@ def get_open_sync_issues():
 
 @frappe.whitelist()
 def dismiss_sync_issue(issue_name: str):
+	frappe.only_for(["System Manager", "Sales Manager"], True)
 	settings = frappe.get_single("ERPNext CRM Settings")
 	for issue in settings.sync_issues:
-		if issue.name == issue_name:
+		# Child rows autoincrement, so the name is an int here and arrives from the
+		# client as a string: the comparison never matched and nothing was ever
+		# dismissable. str() both sides, as the Acumatica endpoint does.
+		if str(issue.name) == str(issue_name):
 			issue.dismissed = 1
-			settings.save()
+			# Clearing a log row must not re-run the config validations: validate()
+			# creates custom fields and, in remote mode, calls the other site.
+			settings.flags.ignore_validate = True
+			settings.save(ignore_permissions=True)
 			return True
 	return False
+
+
+@frappe.whitelist()
+def is_enabled() -> bool:
+	"""The one bit the Deal form script needs.
+
+	It used to read it with ``frappe.client.get_single_value``, which needs read
+	access to the whole singleton -- and that document holds the ERP's API key and
+	site URL, so every Sales User could read the client's ERP credentials out of it.
+	"""
+	if frappe.session.user == "Guest":
+		frappe.throw(_("Not permitted"), frappe.PermissionError)
+	return bool(frappe.db.get_single_value("ERPNext CRM Settings", "enabled"))
 
 
 @frappe.whitelist()
 def get_product_sync_status():
 	if not frappe.has_permission("CRM Product", "read"):
 		return {}
-	return {
+	status = {
 		"products": _get_products(),
 		"items": _get_synced_items(),
 		"failed": get_open_sync_issues(),
 		"unsynced": _get_unsynced_counts(),
 	}
+	if frappe.has_permission("ERPNext CRM Settings", "read"):
+		# The customer push runs in a background job now, so its failures have to
+		# surface somewhere. Only for the roles that can read the settings: the
+		# message quotes the remote site's own error text.
+		status["last_customer_push_error"] = frappe.db.get_single_value(
+			"ERPNext CRM Settings", "last_customer_push_error"
+		)
+	return status
 
 
 def _get_unsynced_counts():
@@ -536,6 +565,15 @@ def get_organization_address(organization: str | None = None):
 
 
 def create_customer_in_erpnext(doc, method):
+	"""CRM Deal ``on_update`` handler. Cheap checks only, then hand the push to a job.
+
+	This fires on EVERY save of a deal sitting on the trigger status, and in remote
+	mode ``create_customer_from_deal`` is three HTTP round trips at 5s connect / 30s
+	read. Run inline it made a rep adding a note to a Won deal wait up to 35 seconds
+	and then lose the edit to "Error while creating customer in ERPNext" whenever the
+	ERP was down. The Acumatica twin (``outbound.queue_customer_push``) was fixed for
+	exactly this shape; this is the same fix.
+	"""
 	erpnext_crm_settings = frappe.get_single("ERPNext CRM Settings")
 	if (
 		not erpnext_crm_settings.enabled
@@ -544,7 +582,74 @@ def create_customer_in_erpnext(doc, method):
 	):
 		return
 
-	create_customer_from_deal(doc, erpnext_crm_settings)
+	if doc.get("erpnext_customer"):
+		# Already pushed. Without this the deal re-pushed on every later save --
+		# three round trips per note, per status touch, per rep.
+		return
+
+	frappe.enqueue(
+		"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.push_customer_for_deal",
+		deal=doc.name,
+		queue="short",
+		# One push in flight per organization: the customer is created under the
+		# organization's name, so two of its deals reaching the trigger status
+		# together would otherwise race to create the same customer twice.
+		job_id=f"erpnext_customer_{doc.organization or doc.name}",
+		deduplicate=True,
+		enqueue_after_commit=True,
+	)
+
+
+def push_customer_for_deal(deal: str) -> None:
+	"""Worker: the ERPNext customer push itself, off the rep's save.
+
+	Re-loads and re-checks, because time has passed since the hook enqueued this and
+	the deal's status may have moved on. Nothing here may raise: it runs after the
+	save has already been reported as successful, so a failure belongs in the log and
+	on the settings, not in a traceback nobody is looking at.
+	"""
+	doc = frappe.get_doc("CRM Deal", deal)
+	erpnext_crm_settings = frappe.get_single("ERPNext CRM Settings")
+	if (
+		not erpnext_crm_settings.enabled
+		or not erpnext_crm_settings.create_customer_on_status_change
+		or doc.status != erpnext_crm_settings.deal_status
+	):
+		return
+
+	if doc.get("erpnext_customer"):
+		return
+	if not erpnext_crm_settings.is_erpnext_in_different_site and get_local_customer(deal):
+		# A Customer already carries this deal -- created from a quotation, or by an
+		# earlier run of this job that stored it on the ERP side only.
+		return
+
+	try:
+		create_customer_from_deal(doc, erpnext_crm_settings)
+	except Exception as e:
+		# Roll back first: create_customer_from_deal can fail part-way through a
+		# local Customer insert, and the job would otherwise commit the half of it
+		# that succeeded.
+		frappe.db.rollback()
+		_record_customer_push_error(deal, e)
+		return
+
+	if erpnext_crm_settings.get("last_customer_push_error"):
+		frappe.db.set_single_value("ERPNext CRM Settings", "last_customer_push_error", "")
+
+
+def _record_customer_push_error(deal: str, error: Exception) -> None:
+	"""Where a failed push lands now that it no longer reaches the rep's save.
+
+	The Acumatica twin appends to a sync-issues table; SIMERP's is a *product* sync
+	log -- its rows link a CRM Product and its ``kind`` has exactly one option -- so
+	a customer push has no row shape there. The settings' own error field is the
+	equivalent surface (the Logs tab reads it), with the traceback in the Error Log.
+	"""
+	frappe.log_error(frappe.get_traceback(), f"Error while creating customer in ERPNext for CRM Deal: {deal}")
+	frappe.db.set_single_value(
+		"ERPNext CRM Settings", "last_customer_push_error", f"{deal}: {str(error)[:400]}"
+	)
 
 
 def create_customer_on_sales_order(doc, method):
@@ -678,14 +783,10 @@ def get_crm_form_script():
 	onLoad() {
 		if (this.doc.__newDocument) return
 		call(
-			"frappe.client.get_single_value",
-			{
-				doctype: "ERPNext CRM Settings",
-				field: "enabled"
-			}
+			"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.is_enabled"
 		).then((enabled) => {
 			if (enabled) this.doc.trigger('setActions')
-		})
+		}).catch(() => {})
 	}
 	setActions() {
 		// Add Create Quotation Button

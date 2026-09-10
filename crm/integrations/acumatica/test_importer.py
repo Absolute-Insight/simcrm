@@ -176,17 +176,50 @@ class TestAdoptOnMatch(ImporterTestCase):
 		self.assertEqual(frappe.db.get_value("CRM Product", name, "acumatica_noteid"), "g-adopt-3")
 		self.assertEqual(frappe.db.count("CRM Product", {"product_code": code}), 1)
 
-	def test_upsert_contact_adopts_pre_existing_contact_by_name(self):
+	def test_upsert_contact_adopts_a_namesake_inside_the_same_company(self):
+		"""A name is only an identity within one company, so adoption by name needs the
+		BusinessAccount to resolve to a CRM Organization first."""
 		last = f"Adoptee{frappe.generate_hash(length=6)}"
-		existing = frappe.get_doc({"doctype": "Contact", "first_name": "Ana", "last_name": last}).insert(
-			ignore_permissions=True
-		)
+		customer_id = f"ADOPT{frappe.generate_hash(length=5)}"
+		org = frappe.get_doc(
+			{"doctype": "CRM Organization", "organization_name": f"Adopting-{frappe.generate_hash(length=6)}"}
+		).insert(ignore_permissions=True)
+		frappe.db.set_value("CRM Organization", org.name, "acumatica_id", customer_id)
+		existing = frappe.get_doc(
+			{"doctype": "Contact", "first_name": "Ana", "last_name": last, "company_name": org.name}
+		).insert(ignore_permissions=True)
 
-		name = importer.upsert_contact(C(NoteID="g-adopt-4", ContactID="41", FirstName="Ana", LastName=last))
+		name = importer.upsert_contact(
+			C(
+				NoteID="g-adopt-4",
+				ContactID="41",
+				FirstName="Ana",
+				LastName=last,
+				BusinessAccount=customer_id,
+			)
+		)
 
 		self.assertEqual(name, existing.name)
 		self.assertEqual(frappe.db.get_value("Contact", name, "acumatica_noteid"), "g-adopt-4")
 		self.assertEqual(frappe.db.count("Contact", {"first_name": "Ana", "last_name": last}), 1)
+
+	def test_a_namesake_at_an_unresolved_company_is_not_adopted(self):
+		"""With no organization to scope the name by, "Ana Diaz" at one customer would
+		otherwise adopt -- and take over the NoteID of -- her namesake at another.
+		Only a primary-email match identifies a person across companies."""
+		last = f"Namesake{frappe.generate_hash(length=6)}"
+		stranger = frappe.get_doc({"doctype": "Contact", "first_name": "Ana", "last_name": last}).insert(
+			ignore_permissions=True
+		)
+
+		# BusinessAccount names a customer this site has never imported, so it
+		# resolves to no organization -- and the record carries no email.
+		name = importer.upsert_contact(
+			C(NoteID="g-namesake", ContactID="42", FirstName="Ana", LastName=last, BusinessAccount="NOPE")
+		)
+
+		self.assertNotEqual(name, stranger.name)
+		self.assertFalse(frappe.db.get_value("Contact", stranger.name, "acumatica_noteid"))
 
 	def test_upsert_contact_adopts_on_primary_email_when_the_name_differs(self):
 		email = f"{frappe.generate_hash(length=8)}@example.com"
@@ -443,6 +476,63 @@ class TestBackfill(ImporterTestCase):
 			if row.remote_id == f"retry-{suffix}"
 		]
 		self.assertEqual([row.kind for row in issues], ["Gave Up"])
+
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_a_job_timeout_ends_the_run_instead_of_blaming_the_record(self, ClientCls):
+		"""rq raises JobTimeoutException inside whatever line the job's time limit
+		interrupts, and it subclasses Exception -- so the per-record handler used to
+		swallow the run's own deadline, log a healthy record as Import Failed, queue it
+		for retry, and carry on through every remaining page with no limit at all."""
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.settings.request_pause = 0
+		suffix = frappe.generate_hash(length=6)
+		rec = _customer(suffix, f"Timeout {suffix}")
+		client.iter_all.side_effect = lambda entity, **kw: iter([rec] if entity == "Customer" else [])
+
+		def timed_out(record):
+			raise importer.JobTimeoutException("Task exceeded maximum timeout value")
+
+		# _ENTITIES binds the upsert functions at import time, so the fake goes there.
+		with patch.object(importer, "_ENTITIES", (("Customer", timed_out, "customers"),)):
+			with self.assertRaises(importer.JobTimeoutException):
+				importer.run_backfill()
+
+		issues = [
+			row
+			for row in frappe.get_doc("CRM Acumatica Settings").sync_issues
+			if row.remote_id == f"RETRY{suffix}"
+		]
+		self.assertEqual(issues, [], "the run's deadline is not the record's fault")
+		self.assertNotIn(f"retry-{suffix}", self._pending().get("Customer", {}))
+
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_a_run_that_crashes_keeps_the_retry_attempt_it_counted(self, ClientCls):
+		"""Retry state used to be written only on a clean finish, so a record that
+		fails every sweep AND crashes the run behind it never reached the give-up cap:
+		its attempt count evaporated with the crash, every single time."""
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.settings.request_pause = 0
+		suffix = frappe.generate_hash(length=6)
+		bad = _customer(suffix, self._contested_org(suffix))
+		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
+		client.get_page.return_value = [bad]
+
+		importer.run_backfill()
+		self.assertEqual(self._pending()["Customer"][f"retry-{suffix}"], 1)
+
+		# The retry pass tries it again and it fails again (attempt 2); then the run
+		# dies outside any one record -- expired credentials, a dropped connection.
+		def dead_endpoint(entity, **kw):
+			raise RuntimeError("token expired")
+
+		client.iter_all.side_effect = dead_endpoint
+
+		with self.assertRaises(RuntimeError):
+			importer.run_backfill()
+
+		self.assertEqual(self._pending()["Customer"][f"retry-{suffix}"], 2)
 
 	def test_two_syncs_do_not_run_at_once(self):
 		"""The manual backfill, the webhook and the scheduler all reach run_backfill;
