@@ -170,6 +170,9 @@ before_uninstall = "crm.uninstall.before_uninstall"
 permission_query_conditions = {
 	"CRM Lead": "crm.permissions.org_hierarchy.get_lead_permission_query_conditions",
 	"CRM Deal": "crm.permissions.org_hierarchy.get_deal_permission_query_conditions",
+	"FCRM Note": "crm.permissions.linked_records.get_note_permission_query_conditions",
+	"CRM Task": "crm.permissions.linked_records.get_task_permission_query_conditions",
+	"CRM Call Log": "crm.permissions.linked_records.get_call_log_permission_query_conditions",
 	"CRM Notification": "crm.fcrm.doctype.crm_notification.crm_notification.get_permission_query_conditions",
 	"CRM Quota": "crm.fcrm.doctype.crm_quota.crm_quota.get_permission_query_conditions",
 	"CRM Suggestion": "crm.fcrm.doctype.crm_suggestion.crm_suggestion.get_permission_query_conditions",
@@ -182,6 +185,9 @@ permission_query_conditions = {
 has_permission = {
 	"CRM Lead": "crm.permissions.org_hierarchy.has_lead_permission",
 	"CRM Deal": "crm.permissions.org_hierarchy.has_deal_permission",
+	"FCRM Note": "crm.permissions.linked_records.has_note_permission",
+	"CRM Task": "crm.permissions.linked_records.has_task_permission",
+	"CRM Call Log": "crm.permissions.linked_records.has_call_log_permission",
 	"CRM Notification": "crm.fcrm.doctype.crm_notification.crm_notification.has_permission",
 	"CRM Quota": "crm.fcrm.doctype.crm_quota.crm_quota.has_permission",
 	"CRM Suggestion": "crm.fcrm.doctype.crm_suggestion.crm_suggestion.has_permission",
@@ -217,6 +223,7 @@ doc_events = {
 		"before_insert": ["crm.extends.notification_log.before_insert"],
 	},
 	"ToDo": {
+		"before_insert": ["crm.api.todo.before_insert"],
 		"after_insert": ["crm.api.todo.after_insert"],
 		"on_update": ["crm.api.todo.on_update"],
 	},
