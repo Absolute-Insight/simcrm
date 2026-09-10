@@ -23,8 +23,9 @@ test.describe('Manager dashboard', () => {
 
 		await page.goto('/crm/dashboard')
 
-		// the rep filter exists only for managers and admins
-		await expect(page.getByPlaceholder('Sales User')).toBeVisible()
+		// the rep filter exists only for managers and admins; it reads "All reps"
+		// when nothing is chosen (77b4eb51f)
+		await expect(page.getByPlaceholder('All reps')).toBeVisible()
 		await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible()
 		await page.waitForLoadState('networkidle')
 

@@ -18,7 +18,7 @@ test.describe('Mobile smoke @smoke', () => {
 
 		await page.goto('/crm/deals')
 		await expect(page).toHaveURL((url) => url.pathname.startsWith('/crm/deals'))
-		await expect(page.getByRole('heading', { name: 'Deals' }).first()).toBeVisible()
+		await expect(page.getByRole('link', { name: 'Deals', exact: true }).first()).toBeVisible()
 		await page.waitForLoadState('networkidle')
 
 		// the page must fit the viewport: a horizontal scrollbar on a phone is
