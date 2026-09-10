@@ -20,7 +20,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-01-28 17:10:00.827558",
+ "modified": "2026-09-10 15:29:03.456965",
  "modified_by": "shariq@frappe.io",
  "module": "FCRM",
  "name": "CRM Communication Status",
@@ -52,16 +52,12 @@
    "write": 1
   },
   {
-   "create": 1,
-   "delete": 1,
    "email": 1,
    "export": 1,
    "print": 1,
    "read": 1,
    "report": 1,
-   "role": "Sales User",
-   "share": 1,
-   "write": 1
+   "role": "Sales User"
   }
  ],
  "quick_entry": 1,
