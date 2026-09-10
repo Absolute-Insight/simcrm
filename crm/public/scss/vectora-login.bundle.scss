@@ -185,6 +185,13 @@ body:has(.login-content) .resend-link a:hover {
   color: var(--v-ink);
 }
 
+/* The vendor lays the resend line out as a left-aligned flex row; in a
+ * centred column it reads as a stray. */
+body:has(.login-content) .resend-link {
+  justify-content: center;
+  text-align: center;
+}
+
 /* Frappe's web footer renders here as a 140px block whose every child measures
  * zero height -- empty chrome. Left in place it pushes past the full-height
  * wrapper and puts a scrollbar on a page that otherwise fits. */
