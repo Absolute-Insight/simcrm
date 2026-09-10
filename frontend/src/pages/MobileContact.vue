@@ -170,7 +170,12 @@ import { validateIsImageFile } from '@/utils'
 import { useContactFields } from '@/composables/useContactFields'
 import { timestampCell } from '@/composables/useTimelinePreferences'
 import { getView } from '@/utils/view'
-import { useDocument } from '@/data/document'
+import {
+  useDocument,
+  markDocumentAsDeleted,
+  unmarkDocumentAsDeleted,
+  expireDeletionMarker,
+} from '@/data/document'
 import { getSettings } from '@/stores/settings'
 import { getMeta } from '@/stores/meta'
 import { globalStore } from '@/stores/global.js'
@@ -284,10 +289,20 @@ async function deleteContact() {
         theme: 'red',
         variant: 'solid',
         async onClick({ close }) {
-          await call('frappe.client.delete', {
-            doctype: 'Contact',
-            name: props.contactId,
-          })
+          // The delete emits a realtime doc_update that would make the
+          // still-mounted document resource refetch and flash a spurious
+          // "Document does not exist" on the way out.
+          markDocumentAsDeleted('Contact', props.contactId)
+          try {
+            await call('frappe.client.delete', {
+              doctype: 'Contact',
+              name: props.contactId,
+            })
+          } catch (err) {
+            unmarkDocumentAsDeleted('Contact', props.contactId)
+            throw err
+          }
+          expireDeletionMarker('Contact', props.contactId)
           close()
           router.push({ name: 'Contacts' })
         },
