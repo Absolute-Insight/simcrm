@@ -1,4 +1,5 @@
 import { getScript } from '@/data/script'
+import { newDocumentDraft } from '@/utils/newDocument'
 import { globalStore } from '@/stores/global'
 import { getMeta } from '@/stores/meta'
 import { useAttachments } from '@/composables/useAttachments'
@@ -119,7 +120,7 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
       }
     } else {
       documentsCache[doctype][''] = reactive({
-        doc: { __newDocument: true, doctype },
+        doc: newDocumentDraft(doctype),
         fieldPropertyOverrides: {},
       })
       setupFormScript()

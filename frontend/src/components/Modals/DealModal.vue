@@ -96,6 +96,7 @@ import { statusesStore } from '@/stores/statuses'
 import { isMobileView } from '@/composables/settings'
 import { showQuickEntryModal, quickEntryProps } from '@/composables/modals'
 import { useDocument } from '@/data/document'
+import { resetNewDocument } from '@/utils/newDocument'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { Switch, createResource, call, toast } from 'frappe-ui'
 import { computed, ref, onMounted, nextTick, watch } from 'vue'
@@ -276,6 +277,9 @@ async function createDeal() {
       capture('deal_created')
       isDealCreating.value = false
       show.value = false
+      // Leave nothing behind for the next form to inherit; the modal is kept
+      // alive by its parent, so onMounted does not run again.
+      resetNewDocument(deal, 'CRM Deal')
       router.push({ name: 'Deal', params: { dealId: name } })
     },
     onError(err) {
@@ -296,6 +300,12 @@ function openQuickEntryModal() {
 }
 
 onMounted(() => {
+  // The buffer behind `useDocument('CRM Deal')` is shared for the session, so
+  // it still holds whatever the last creation form -- or ConvertToDealModal,
+  // which fills it with the lead's organization, contact and value -- left in
+  // it. Assigning defaults on top of that left the previous customer's
+  // organization selected under a new title. Start from an empty record.
+  resetNewDocument(deal, 'CRM Deal')
   deal.doc.no_of_employees = '1-10'
   Object.assign(deal.doc, props.defaults)
 
