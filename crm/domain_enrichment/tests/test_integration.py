@@ -153,6 +153,26 @@ class ApiPermissionTest(IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			enrich("ToDo", "anything")
 
+	def test_a_disallowed_doctype_answers_the_same_whether_the_record_exists(self):
+		"""``get_doc`` used to run before the allow-list, so "no such record" and
+		"enrichment is not enabled for X" were two distinguishable answers for any
+		doctype/name pair -- an existence oracle for records the caller cannot read.
+		(``DoesNotExistError`` subclasses ``ValidationError``, which is why the
+		test above passed either way.)"""
+		from crm.domain_enrichment.api import enrich
+
+		todo = frappe.get_doc({"doctype": "ToDo", "description": "enrich probe"}).insert(
+			ignore_permissions=True
+		)
+		self.addCleanup(frappe.delete_doc, "ToDo", todo.name, force=True, ignore_permissions=True)
+
+		answers = set()
+		for name in (todo.name, "no-such-todo-at-all"):
+			with self.assertRaises(frappe.ValidationError) as raised:
+				enrich("ToDo", name)
+			answers.add(str(raised.exception))
+		self.assertEqual(len(answers), 1, answers)
+
 	def test_enrich_requires_write_permission(self):
 		from crm.domain_enrichment.api import enrich
 

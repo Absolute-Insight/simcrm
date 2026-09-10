@@ -1,4 +1,5 @@
 import json
+import re
 
 import frappe
 from frappe import _
@@ -32,6 +33,49 @@ def validate_access(reference_doctype=None, reference_name=None, permtype="read"
 		return reference_doc
 
 	return None
+
+
+def _record_numbers(reference_doc) -> list[str]:
+	"""Every number the record itself names: its own mobile_no and phone, and on
+	a deal those of its contacts. The record's own mobile_no comes first, because
+	that is the one the composer sends and so the one a blank ``to`` means."""
+	numbers = [reference_doc.get("mobile_no"), reference_doc.get("phone")]
+	for row in reference_doc.get("contacts") or []:
+		numbers.extend((row.get("mobile_no"), row.get("phone")))
+	return [number for number in dict.fromkeys(numbers) if number]
+
+
+def _digits(number: str) -> str:
+	return re.sub(r"\D", "", number or "")
+
+
+def resolve_destination(reference_doc, to: str | None = None) -> str:
+	"""The number a message about ``reference_doc`` may go to.
+
+	The composer only ever sends the record's own ``mobile_no``, but the server
+	took whatever ``to`` it was given: a rep with read on any lead could send
+	business-account messages, approved templates included, to any number and
+	have them filed on that lead's thread. The destination now comes from the
+	record: blank means its primary number, and anything else has to be one of
+	the numbers the record carries, compared digit-for-digit so that a differently
+	formatted spelling of the same number is still accepted.
+	"""
+	numbers = _record_numbers(reference_doc)
+	if not numbers:
+		frappe.throw(
+			_("{0} {1} has no phone number to message.").format(reference_doc.doctype, reference_doc.name),
+			frappe.ValidationError,
+		)
+	if not to:
+		return numbers[0]
+	wanted = _digits(to)
+	match = next((number for number in numbers if wanted and _digits(number) == wanted), None)
+	if not match:
+		frappe.throw(
+			_("{0} is not a phone number of {1} {2}.").format(to, reference_doc.doctype, reference_doc.name),
+			frappe.ValidationError,
+		)
+	return match
 
 
 def validate(doc, method):
@@ -265,12 +309,14 @@ def create_whatsapp_message(
 	reference_doctype: str,
 	reference_name: str,
 	message: str,
-	to: str,
-	attach: str,
-	reply_to: str,
+	to: str | None = None,
+	attach: str | None = None,
+	reply_to: str | None = None,
 	content_type: str = "text",
 ):
-	validate_access(reference_doctype, reference_name)
+	# sending on a record's behalf is a write to its thread, not a read of it
+	reference_doc = validate_access(reference_doctype, reference_name, permtype="write")
+	to = resolve_destination(reference_doc, to)
 	doc = frappe.new_doc("WhatsApp Message")
 
 	if reply_to:
@@ -304,8 +350,9 @@ def create_whatsapp_message(
 
 
 @frappe.whitelist()
-def send_whatsapp_template(reference_doctype: str, reference_name: str, template: str, to: str):
-	validate_access(reference_doctype, reference_name)
+def send_whatsapp_template(reference_doctype: str, reference_name: str, template: str, to: str | None = None):
+	reference_doc = validate_access(reference_doctype, reference_name, permtype="write")
+	to = resolve_destination(reference_doc, to)
 	doc = frappe.new_doc("WhatsApp Message")
 	doc.update(
 		{

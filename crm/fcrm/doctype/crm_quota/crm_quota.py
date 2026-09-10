@@ -86,7 +86,11 @@ def has_permission(doc, ptype="read", user=None):
 		return True
 	if doc.user not in users:
 		return False
-	# a rep may read their own target and nothing else — writing is a manager act
-	if doc.user == user and "Sales Manager" not in frappe.get_roles(user):
+	# Nobody writes their own target. A rep never could; a manager could, because
+	# their own row is inside their own subtree — and attainment against a quota
+	# is a compensation figure, so the person measured must not be the person who
+	# typed the number. A System Manager is exempt (and is the one who sets a
+	# manager's target); ``users is None`` above has already let them through.
+	if doc.user == user:
 		return ptype == "read"
 	return True

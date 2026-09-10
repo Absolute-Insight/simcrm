@@ -221,10 +221,23 @@ def _webhook_payload(kwargs: dict) -> dict:
 	return {k: v for k, v in kwargs.items() if k not in WEBHOOK_TRANSPORT_KEYS}
 
 
+def _webhook_verify_token() -> str | None:
+	"""The webhook token, out of the encrypted store.
+
+	It used to be a plain Data field, which every Sales User could read through
+	``frappe.client.get_single_value`` -- and it is the only thing standing in
+	front of an unauthenticated endpoint. It is a Password field now, so the
+	column holds asterisks and the value comes from ``__Auth``; ``get_password``
+	still returns a legacy plaintext value on a site that has not run the patch.
+	"""
+	settings = frappe.get_cached_doc("CRM Exotel Settings")
+	return settings.get_password("webhook_verify_token", raise_exception=False)
+
+
 def get_status_updater_url():
 	from frappe.utils.data import get_url
 
-	webhook_verify_token = frappe.db.get_single_value("CRM Exotel Settings", "webhook_verify_token")
+	webhook_verify_token = _webhook_verify_token()
 	return get_url(
 		f"api/method/crm.integrations.exotel.handler.handle_request"
 		f"?key={webhook_verify_token}&agent={frappe.session.user}"
@@ -238,7 +251,7 @@ def get_exotel_settings():
 def validate_request():
 	# workaround security since exotel does not support request signature
 	# /api/method/<exotel-integration-method>?key=<exotel-webhook=verify-token>
-	webhook_verify_token = frappe.db.get_single_value("CRM Exotel Settings", "webhook_verify_token")
+	webhook_verify_token = _webhook_verify_token()
 	key = frappe.request.args.get("key")
 	# compare_digest rather than ==: this is the only thing standing in front of
 	# an unauthenticated endpoint, and a plain comparison returns as soon as it

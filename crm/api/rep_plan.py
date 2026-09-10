@@ -22,7 +22,14 @@ import frappe
 from frappe import _
 
 from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
-from crm.rep_planning import ACTUAL_SOURCES, KIND_BY_DOCTYPE, MATCH_HORIZON_WEEKS, _query_source, week_of
+from crm.rep_planning import (
+	ACTUAL_SOURCES,
+	KIND_BY_DOCTYPE,
+	MATCH_HORIZON_WEEKS,
+	_claimed_actuals,
+	_query_source,
+	week_of,
+)
 from crm.utils import sales_user_only
 
 ITEM_FIELDS = (
@@ -299,6 +306,46 @@ def _own_plan_of(item: str):
 	return plan
 
 
+def _refuse_a_second_claim(item: str, fulfilled_by_doctype: str, fulfilled_by: str):
+	"""One record fulfils one item, ever.
+
+	That is the matcher's own rule (``_claimed_actuals``), and a hand override was
+	the one way round it: naming the same call on two items made both Done and
+	counted one call twice towards adherence.
+	"""
+	horizon = frappe.utils.getdate() - timedelta(weeks=MATCH_HORIZON_WEEKS)
+	holder = _claimed_actuals(horizon).get((fulfilled_by_doctype, str(fulfilled_by)))
+	if holder and holder != item:
+		frappe.throw(
+			_("{0} {1} is already what fulfils another planned item.").format(
+				fulfilled_by_doctype, fulfilled_by
+			)
+		)
+
+
+def _refuse_a_record_from_another_week(kind: str, actual: dict, plan, fulfilled_by_doctype, fulfilled_by):
+	"""A record fulfils an item only inside the week that item was planned for --
+	the same window :func:`match_items` matches in, so an override cannot claim
+	what the job would never have assigned.
+
+	Skipped for the kinds whose timestamp is not the activity's moment: CRM Task
+	carries no completion time and falls back to ``modified``, which moves every
+	time the task is touched, so a task genuinely done in the planned week can
+	read as this week by the time the rep corrects the item.
+	"""
+	if not ACTUAL_SOURCES[kind]["when_is_activity_time"]:
+		return
+	when = actual.get("when")
+	if not when:
+		return
+	when = when.date() if hasattr(when, "date") else frappe.utils.getdate(when)
+	start, end = week_of(frappe.utils.getdate(plan.week_start))
+	if when < start or when > end:
+		frappe.throw(
+			_("{0} {1} did not happen in the week of {2}.").format(fulfilled_by_doctype, fulfilled_by, start)
+		)
+
+
 @frappe.whitelist()
 @sales_user_only
 def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled_by: str | None = None):
@@ -328,10 +375,13 @@ def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled
 			kind = item_kind
 		else:
 			kind = KIND_BY_DOCTYPE[fulfilled_by_doctype]
-		if not _query_source(kind, frappe.session.user, None, names=[fulfilled_by]):
+		rows = _query_source(kind, frappe.session.user, None, names=[fulfilled_by])
+		if not rows:
 			frappe.throw(
 				_("{0} {1} is not a completed activity of yours.").format(fulfilled_by_doctype, fulfilled_by)
 			)
+		_refuse_a_second_claim(item, fulfilled_by_doctype, fulfilled_by)
+		_refuse_a_record_from_another_week(kind, rows[0], plan, fulfilled_by_doctype, fulfilled_by)
 
 	frappe.db.set_value(
 		"CRM Rep Plan Item",
@@ -453,6 +503,11 @@ def log_unplanned_visit(
 		frappe.throw(_("{0} cannot be the subject of a visit.").format(reference_doctype))
 
 	when_dt = frappe.utils.get_datetime(when) if when else frappe.utils.now_datetime()
+	if when_dt > frappe.utils.now_datetime():
+		# only the lower end of the horizon was checked, so a visit dated next month
+		# was written straight in as Done and inflated adherence until its date
+		# came round
+		frappe.throw(_("A visit cannot be logged before it happens."), frappe.ValidationError)
 	monday, _sunday = week_of(when_dt.date())
 	horizon = frappe.utils.getdate() - timedelta(weeks=MATCH_HORIZON_WEEKS)
 	if monday < horizon:
