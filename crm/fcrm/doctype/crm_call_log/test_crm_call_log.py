@@ -395,6 +395,28 @@ class TestCRMCallLog(IntegrationTestCase):
 		self.assertTrue(lead.first_name.startswith("Lead from call"))
 		self.assertEqual(lead.mobile_no, "+1112223333")
 
+	def test_create_lead_from_call_log_twice_returns_the_existing_lead(self):
+		"""A second click must return the lead the call already has, not create another."""
+		call = create_test_call_log(type="Incoming", from_number="+1231231234")
+
+		first = create_lead_from_call_log(call_log=frappe.as_json({"name": call.name}))
+		second = create_lead_from_call_log(
+			call_log=frappe.as_json({"name": call.name}),
+			lead_details=frappe.as_json({"first_name": "Duplicate"}),
+		)
+
+		self.assertEqual(first, second)
+		self.assertEqual(frappe.db.count("CRM Lead", {"mobile_no": "+1231231234"}), 1)
+		call.reload()
+		self.assertEqual(len([link for link in call.links if link.link_doctype == "CRM Lead"]), 1)
+
+	def test_create_lead_from_call_log_returns_the_reference_lead(self):
+		"""A call already filed under a lead by reference does not get a second lead."""
+		lead = frappe.get_doc({"doctype": "CRM Lead", "first_name": "Referenced"}).insert()
+		call = create_test_call_log(reference_doctype="CRM Lead", reference_docname=lead.name)
+
+		self.assertEqual(create_lead_from_call_log(call_log=frappe.as_json({"name": call.name})), lead.name)
+
 	def test_create_lead_from_call_log_invalid_call_log(self):
 		"""Test that invalid call log throws error"""
 		with self.assertRaises(frappe.DoesNotExistError):

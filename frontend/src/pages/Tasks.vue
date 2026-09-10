@@ -163,9 +163,12 @@
           class="flex items-center gap-2"
           :options="actions(itemName)"
           variant="ghost"
-          @click.stop.prevent
         >
-          <Button icon="lucide-more-horizontal" variant="ghost" />
+          <Button
+            icon="lucide-more-horizontal"
+            variant="ghost"
+            @click.stop.prevent
+          />
         </Dropdown>
       </div>
     </template>
@@ -218,7 +221,7 @@ import KanbanView from '@/components/Kanban/KanbanView.vue'
 import { useDoctypeModal } from '@/composables/doctypeModal'
 import { getMeta } from '@/stores/meta'
 import { usersStore } from '@/stores/users'
-import { formatDate } from '@/utils'
+import { formatDate, ConfirmDelete } from '@/utils'
 import { timestampCell } from '@/composables/useTimelinePreferences'
 import { useOnboarding } from '@framework/ui/components/Onboarding'
 import { useTelemetry } from '@framework/ui/telemetry'
@@ -244,6 +247,7 @@ const loadMore = ref(1)
 const triggerResize = ref(1)
 const updatedPageCount = ref(20)
 const viewControls = ref(null)
+const confirmDelete = ref(false)
 
 function getRow(name, field) {
   function getValue(value) {
@@ -381,16 +385,10 @@ function createTask(column) {
 }
 
 function actions(name) {
-  return [
-    {
-      label: __('Delete'),
-      icon: 'lucide-trash-2',
-      onClick: () => {
-        deleteTask(name)
-        tasks.value.reload()
-      },
-    },
-  ]
+  return ConfirmDelete({
+    isConfirmingDelete: confirmDelete,
+    onConfirmDelete: () => deleteTask(name),
+  })
 }
 
 async function deleteTask(name) {
@@ -398,6 +396,7 @@ async function deleteTask(name) {
     doctype: 'CRM Task',
     name,
   })
+  tasks.value.reload()
 }
 
 function redirect(doctype, docname) {

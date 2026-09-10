@@ -153,6 +153,7 @@
                         :onCreate="
                           (value, close) => field.create(v, field, row, close)
                         "
+                        :disabled="Boolean(field.read_only)"
                         @change="(v) => fieldChange(v, field, row)"
                       />
                       <Link
@@ -163,6 +164,7 @@
                         :filters="field.filters"
                         :placeholder="field.placeholder"
                         :hideMe="true"
+                        :disabled="Boolean(field.read_only)"
                         @change="(v) => fieldChange(v, field, row)"
                       >
                         <template #prefix>
@@ -194,7 +196,10 @@
                         <Checkbox
                           v-model="row[field.fieldname]"
                           class="cursor-pointer duration-300"
-                          :disabled="!gridSettings.editable_grid"
+                          :disabled="
+                            !gridSettings.editable_grid ||
+                            Boolean(field.read_only)
+                          "
                           @change="
                             (e) => fieldChange(e.target.checked, field, row)
                           "
@@ -206,6 +211,7 @@
                         variant="outline"
                         :format="getFormat('', '', false, true, false)"
                         input-class="border-none text-sm text-ink-gray-8"
+                        :disabled="Boolean(field.read_only)"
                         @change="(v) => fieldChange(v, field, row)"
                       />
                       <DatePicker
@@ -214,6 +220,7 @@
                         variant="outline"
                         :format="getFormat('', '', true, false, false)"
                         input-class="border-none text-sm text-ink-gray-8"
+                        :disabled="Boolean(field.read_only)"
                         @change="(v) => fieldChange(v, field, row)"
                       />
                       <DateTimePicker
@@ -222,6 +229,7 @@
                         variant="outline"
                         :format="getFormat('', '', true, true, false)"
                         input-class="border-none text-sm text-ink-gray-8"
+                        :disabled="Boolean(field.read_only)"
                         @change="(v) => fieldChange(v, field, row)"
                       />
                       <FormControl
@@ -234,6 +242,7 @@
                         type="textarea"
                         variant="outline"
                         :value="row[field.fieldname]"
+                        :disabled="Boolean(field.read_only)"
                         @change="fieldChange($event.target.value, field, row)"
                       />
                       <FormControl
@@ -243,6 +252,7 @@
                         type="select"
                         variant="outline"
                         :options="field.options"
+                        :disabled="Boolean(field.read_only)"
                         @update:modelValue="(e) => fieldChange(e, field, row)"
                       />
                       <Password
@@ -403,6 +413,7 @@
                         type="text"
                         variant="outline"
                         :options="field.options"
+                        :disabled="Boolean(field.read_only)"
                         @change="fieldChange($event.target.value, field, row)"
                       />
                     </template>

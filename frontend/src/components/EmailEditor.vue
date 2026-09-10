@@ -300,19 +300,27 @@ function removeAttachment(attachment) {
 const showEmailTemplateSelectorModal = ref(false)
 
 async function applyEmailTemplate(template) {
+  let doc = modelValue.value
+
   let data = await call(
     'frappe.email.doctype.email_template.email_template.get_email_template',
     {
       template_name: template.name,
-      doc: modelValue.value,
+      // The fields are the render context, so nesting the doc under `doc` as
+      // well lets templates written as {{ doc.field }} resolve too.
+      doc: { ...doc, doc },
     },
   )
 
-  if (template.subject) {
+  // Gate on what came back, not on the list row: a use_html template keeps its
+  // body in response_html and leaves `response` empty, so checking
+  // template.response threw away the rendered message and the template
+  // appeared to do nothing.
+  if (data.subject) {
     subject.value = data.subject
   }
 
-  if (template.response) {
+  if (data.message) {
     content.value = data.message
   }
   showEmailTemplateSelectorModal.value = false

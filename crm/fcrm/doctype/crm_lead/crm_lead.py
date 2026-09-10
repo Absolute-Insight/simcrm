@@ -533,6 +533,12 @@ def convert_to_deal(
 		frappe.throw(_("Not allowed to convert Lead to Deal"), frappe.PermissionError)
 
 	lead = frappe.get_cached_doc("CRM Lead", lead)
+	# A double-click, or a retry against a slow server, must not produce a second deal
+	# (and a second contact and organization) for one lead. Read the flag under a row
+	# lock so a request that arrives while the first is still running waits for it and
+	# then sees the committed flag, rather than racing past a stale cached value.
+	if frappe.db.get_value("CRM Lead", lead.name, "converted", for_update=True):
+		frappe.throw(_("Lead {0} has already been converted to a deal.").format(lead.name))
 	if frappe.db.exists("CRM Lead Status", "Qualified"):
 		lead.db_set("status", "Qualified")
 	lead.db_set("converted", 1)
