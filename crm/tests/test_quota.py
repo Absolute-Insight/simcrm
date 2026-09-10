@@ -361,6 +361,17 @@ class QuotaScopeTest(IntegrationTestCase):
 		self.assertNotIn(OTHER, rows)
 
 	def test_a_manager_outside_the_tree_still_sees_everyone(self):
+		# "Sees everything" is the "All records" boundary. A fresh install (CI) sets
+		# the out-of-tree manager to "Own records only" (crm.install), so the test
+		# has to say which boundary it is asserting rather than inherit the site's.
+		saved_scope = frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy")
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		self.addCleanup(
+			frappe.db.set_single_value,
+			"CRM Access Settings",
+			"manager_outside_hierarchy",
+			saved_scope or "All records",
+		)
 		frappe.db.delete("CRM Sales Hierarchy", {"user": self.MANAGER})
 		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
 		frappe.set_user(self.MANAGER)
