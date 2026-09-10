@@ -173,7 +173,8 @@
    "fieldname": "lead_owner",
    "fieldtype": "Link",
    "label": "Lead Owner",
-   "options": "User"
+   "options": "User",
+   "search_index": 1
   },
   {
    "fieldname": "source",
@@ -478,7 +479,7 @@
  "image_field": "image",
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-04 12:33:17.177897",
+ "modified": "2026-09-10 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM Lead",

@@ -9,7 +9,7 @@ from frappe.custom.doctype.property_setter.property_setter import delete_propert
 from frappe.model.document import Document
 
 from crm.demo.api import create_demo_data
-from crm.install import after_install
+from crm.install import restore_defaults as restore_install_defaults
 
 
 class FCRMSettings(Document):
@@ -45,8 +45,12 @@ class FCRMSettings(Document):
 
 	@frappe.whitelist()
 	def restore_defaults(self, force: bool = False):
+		# ``crm.install.restore_defaults``, not ``after_install``: the install
+		# tail re-seeds the agent endpoint from the container's env and resets
+		# access scoping, neither of which a "restore defaults" click should
+		# touch on a running site.
 		frappe.only_for("System Manager", True)
-		after_install(force)
+		restore_install_defaults(force)
 
 	@frappe.whitelist()
 	def restore_demo_data(self):

@@ -19,6 +19,35 @@ def before_install():
 
 
 def after_install(force=False):
+	restore_defaults(force)
+	# Install-only: these write settings an admin owns from then on. Neither
+	# may run again from the Restore Defaults button (see ``restore_defaults``).
+	apply_endpoint_defaults()
+	ensure_access_defaults()
+	# install/migrate runs outside a request, so nothing else will commit the
+	# fixtures created above.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
+
+
+def restore_defaults(force=False):
+	"""The fixtures a site can be brought back to at any time.
+
+	Shared by ``after_install`` and the Restore Defaults button on FCRM
+	Settings (``FCRMSettings.restore_defaults``), so everything here has to be
+	safe to repeat on a site someone is already running: every step is
+	skip-if-exists, and ``force`` only widens the standard fields layouts and
+	the Manager Dashboard to "replace" -- which is exactly what the button's
+	Delete & Restore action says it does.
+
+	What is *not* here, deliberately: ``apply_endpoint_defaults`` (re-reads the
+	container's ``VECTORA_AGENT_*`` env and would silently repoint an agent
+	endpoint the admin had changed) and ``ensure_access_defaults`` (would
+	silently narrow what managers can see). Both are install-only and live in
+	``after_install``.
+
+	No commit: the button runs inside a request, which commits on success and
+	rolls back on failure, and ``after_install`` commits for itself.
+	"""
 	add_default_lead_statuses()
 	add_default_deal_statuses()
 	add_default_communication_statuses()
@@ -38,16 +67,11 @@ def after_install(force=False):
 	add_assignment_rule_property_setters()
 	seed_default_rules_and_mappings()
 	ensure_agent_role()
-	apply_endpoint_defaults()
 	ensure_zar_currency()
 	ensure_sa_provinces()
 	ensure_visit_event_category()
 	ensure_app_logo()
 	ensure_acumatica_fields()
-	ensure_access_defaults()
-	# install/migrate runs outside a request, so nothing else will commit the
-	# fixtures created above.
-	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 
 def ensure_app_logo():
@@ -145,10 +169,12 @@ def ensure_visit_event_category():
 def ensure_access_defaults():
 	"""A fresh site scopes managers to their own team until a tree exists.
 
-	First install only. ``FCRMSettings.restore_defaults`` also calls
-	``after_install``, and "restore defaults" must not silently change who can
-	see which records on a site someone is already running -- managers would
-	just stop seeing most of the pipeline, with no error and no explanation.
+	First install only: "restore defaults" must not silently change who can see
+	which records on a site someone is already running -- managers would just
+	stop seeing most of the pipeline, with no error and no explanation. That is
+	why this is called from ``after_install`` and not from ``restore_defaults``;
+	the ``in_install`` guard below covers anyone re-running ``after_install`` by
+	hand (``bench execute``) on a live site.
 
 	``frappe.flags.in_install`` is the discriminator rather than the presence of
 	a ``Singles`` row: ``add_standard_dropdown_items`` saves ``FCRM Settings``

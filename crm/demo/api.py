@@ -3,6 +3,8 @@ import json
 import frappe
 from frappe.utils.telemetry import capture
 
+from crm.agent.signals import unlink_from_plans
+
 DEMO_STATE_KEY = "crm_demo_data_created"
 DEMO_CREATED_AT_KEY = "crm_demo_data_created_at"
 DEMO_SEED_CONFIG_KEY = "crm_seed_demo_data"
@@ -158,6 +160,10 @@ def delete_derived_demo_records(lead_names: list, deal_data: dict, demo_users: l
 		suggestions.update(
 			frappe.get_all("CRM Suggestion", filters={"user": ["in", demo_users]}, pluck="name")
 		)
+	# A real rep may have planned their week around one of these. The row goes
+	# either way -- the deal it is about is going with it -- but the plan item
+	# has to let go of it first, or the planner holds a link to nothing.
+	unlink_from_plans(suggestions)
 	for name in suggestions:
 		frappe.delete_doc("CRM Suggestion", name, ignore_permissions=True, force=True)
 	removed["CRM Suggestion"] = len(suggestions)

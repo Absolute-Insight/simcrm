@@ -437,4 +437,6 @@ class TestZarOnFreshInstalls(FrappeTestCase):
 
 		from crm import install
 
-		self.assertIn("ensure_zar_currency()", inspect.getsource(install.after_install))
+		# after_install delegates its repeatable fixtures to restore_defaults.
+		self.assertIn("restore_defaults(force)", inspect.getsource(install.after_install))
+		self.assertIn("ensure_zar_currency()", inspect.getsource(install.restore_defaults))

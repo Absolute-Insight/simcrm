@@ -53,3 +53,4 @@ crm.patches.v1_0.expire_overdue_close_at_risk_suggestions
 crm.patches.v1_0.strip_public_form_links_to_people
 crm.patches.v1_0.encrypt_exotel_webhook_token
 crm.patches.v1_0.reset_erpnext_form_script #10-09-2026
+crm.patches.v1_0.drop_crm_territory_tree_fields

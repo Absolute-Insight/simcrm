@@ -52,7 +52,7 @@ class SecurityGateTest(IntegrationTestCase):
 	def test_rep_cannot_restore_defaults(self):
 		frappe.set_user(REP)
 		settings = frappe.get_single("FCRM Settings")
-		with patch("crm.fcrm.doctype.fcrm_settings.fcrm_settings.after_install") as install:
+		with patch("crm.fcrm.doctype.fcrm_settings.fcrm_settings.restore_install_defaults") as install:
 			with self.assertRaises(frappe.PermissionError):
 				settings.restore_defaults()
 			install.assert_not_called()
