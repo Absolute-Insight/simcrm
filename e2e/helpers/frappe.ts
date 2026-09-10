@@ -1,5 +1,6 @@
 import * as fs from 'fs'
-import { APIRequestContext } from '@playwright/test'
+import { test, type APIRequestContext } from '@playwright/test'
+import { csrfFile, roleOfAuthFile, type Role } from '../roles'
 
 /**
  * Frappe API response wrapper.
@@ -11,35 +12,55 @@ export interface FrappeResponse<T = unknown> {
 	_server_messages?: string
 }
 
-// CSRF token file saved by auth.setup.ts
-const CSRF_FILE = 'e2e/.auth/csrf.json'
-
-let csrfTokenCache: string | null = null
-
 /**
- * Read the CSRF token saved during auth setup (from window.frappe.csrf_token).
+ * CSRF tokens, one per session.
+ *
+ * Frappe binds the token to the sid, so a request context carrying the rep's
+ * cookies has to send the rep's token. Each role project's setup writes its
+ * own `e2e/.auth/<role>.csrf.json`; the token for the project's default
+ * `request` fixture is read from the file matching the project's storageState,
+ * and a context built by hand (the `admin` fixture) registers its token here.
  */
-function getCsrfToken(): string {
-	if (csrfTokenCache !== null) {
-		return csrfTokenCache
-	}
+const registeredTokens = new WeakMap<APIRequestContext, string>()
+const fileTokens = new Map<string, string>()
 
-	try {
-		if (fs.existsSync(CSRF_FILE)) {
-			const data = JSON.parse(fs.readFileSync(CSRF_FILE, 'utf-8'))
-			csrfTokenCache = data.csrf_token || ''
-			return csrfTokenCache
-		}
-	} catch (error) {
-		console.warn('Failed to read CSRF token file:', error)
-	}
-
-	csrfTokenCache = ''
-	return ''
+export function registerCsrfToken(request: APIRequestContext, token: string) {
+	registeredTokens.set(request, token)
 }
 
-function jsonHeaders(): Record<string, string> {
-	const csrfToken = getCsrfToken()
+/** The token auth.setup.ts saved for a role; '' when that setup did not run. */
+export function readCsrfToken(role: Role): string {
+	const file = csrfFile(role)
+	const cached = fileTokens.get(file)
+	if (cached !== undefined) return cached
+
+	let token = ''
+	try {
+		if (fs.existsSync(file)) {
+			token = JSON.parse(fs.readFileSync(file, 'utf-8')).csrf_token || ''
+		}
+	} catch (error) {
+		console.warn(`Failed to read CSRF token file ${file}:`, error)
+	}
+	fileTokens.set(file, token)
+	return token
+}
+
+function csrfTokenFor(request: APIRequestContext): string {
+	const registered = registeredTokens.get(request)
+	if (registered !== undefined) return registered
+
+	let role: Role | null = null
+	try {
+		role = roleOfAuthFile(test.info().project.use.storageState)
+	} catch {
+		// outside a test (a global setup, a script): fall through to admin
+	}
+	return readCsrfToken(role || 'admin')
+}
+
+function jsonHeaders(request: APIRequestContext): Record<string, string> {
+	const csrfToken = csrfTokenFor(request)
 	return {
 		'Content-Type': 'application/json',
 		...(csrfToken ? { 'X-Frappe-CSRF-Token': csrfToken } : {}),
@@ -56,7 +77,7 @@ export async function createDoc<T = Record<string, unknown>>(
 ): Promise<T> {
 	const response = await request.post(`/api/resource/${doctype}`, {
 		data: doc,
-		headers: jsonHeaders(),
+		headers: jsonHeaders(request),
 	})
 
 	if (!response.ok()) {
@@ -99,7 +120,7 @@ export async function deleteDoc(
 ): Promise<void> {
 	const response = await request.delete(
 		`/api/resource/${doctype}/${encodeURIComponent(name)}`,
-		{ headers: jsonHeaders() },
+		{ headers: jsonHeaders(request) },
 	)
 
 	if (!response.ok()) {
@@ -119,7 +140,7 @@ export async function callMethod<T = unknown>(
 ): Promise<T> {
 	const response = await request.post(`/api/method/${method}`, {
 		data: args,
-		headers: jsonHeaders(),
+		headers: jsonHeaders(request),
 	})
 
 	if (!response.ok()) {
