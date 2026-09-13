@@ -20,7 +20,7 @@ feature branch ──PR──▶ develop ──push──▶ main ──▶ sema
 ```
 
 `develop` is the default branch and every PR targets it. `main` is the release branch:
-pushing to it *is* cutting a release. Nothing else triggers one.
+pushing to it _is_ cutting a release. Nothing else triggers one.
 
 ## Steps
 
@@ -59,6 +59,22 @@ pushing to it *is* cutting a release. Nothing else triggers one.
    ```bash
    gh run list --workflow builds.yml --limit 3
    gh workflow run builds.yml --ref vX.Y.Z   # only if the automatic one did not fire
+   ```
+
+   **Check before you dispatch.** Two builds of one commit are not the same
+   image: transitive dependencies resolve at build time, so the second push
+   rewrites the version tag and `stable` to a different digest. On 2026-09-13 a
+   manual dispatch 30 seconds behind the automatic one did this to v3.14.0 and
+   v3.14.1, and production was left running an image its own release tag no
+   longer named — both builds were green and smoke-tested, so nothing looked
+   wrong anywhere. `builds.yml` now has a `concurrency` guard that cancels the
+   older run, but the guard only narrows the window.
+
+   To ask what a host is _actually_ running, and to pin it:
+
+   ```bash
+   docker inspect vectora-backend-1 --format '{{.Image}}'
+   docker image inspect <that id> --format '{{index .RepoDigests 0}}'
    ```
 
 5. **Verify the image is actually in the registry.** A green build is not proof; ask the
@@ -127,7 +143,7 @@ to walk the parent of anything else.
 
 The practical consequence: **the parent's checks must be green at the moment you promote.**
 If they are red, that release cannot be published, and it cannot be repaired after the
-fact — re-running the checks on that commit uses the workflow files *from that commit*, so
+fact — re-running the checks on that commit uses the workflow files _from that commit_, so
 a CI bug fixed later on `main` does not retroactively fix them. That is exactly how v3.2.0
 ended up as a release with no image, and why the fix had to ship as v3.2.1.
 
@@ -143,8 +159,8 @@ built from — but the inherited mapping sent anything that was not `develop` to
 `develop` and `vectora`) and could not run on version-15 in any case, since `pyproject.toml`
 requires `frappe >=16.0.0-dev`. The clone failed before a single test ran. It stayed hidden
 because the suite ran only on `pull_request`, and pull requests target `develop`.
-`migration-test.yml` had already hit the same mapping and called it *"green only by never
-running."*
+`migration-test.yml` had already hit the same mapping and called it _"green only by never
+running."_
 
 **`paths-ignore` applies to PRs but not to pushes.** `frontend-tests.yml` and
 `server-tests.yml` skip paths on `pull_request` and deliberately do not on `push`, because

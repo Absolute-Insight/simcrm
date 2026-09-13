@@ -7,6 +7,22 @@ on:
     tags:
       - "*"
 
+# One publishing run per ref. semantic-release dispatches this workflow itself
+# (successCmd in .releaserc), so a second dispatch by hand -- which the release
+# runbook allows as a fallback when the automatic one does not fire -- can race
+# the first. That is not harmless: two builds of one commit produce two
+# different digests (see Set Image Tag), and the later push silently rewrites
+# the version tag and `stable`. It happened to v3.14.0 and v3.14.1: prod was
+# left running an image its own release tag no longer named.
+#
+# cancel-in-progress, because a duplicate arrives within seconds of the first
+# -- long before anything is pushed -- and the survivor should be the most
+# recent request. This workflow's own check runs are excluded from the guard
+# job's evaluation, so a cancelled run here cannot veto a later release.
+concurrency:
+  group: builds-${{ github.ref }}
+  cancel-in-progress: true
+
 # The repo's default workflow token is read-only; without packages:write the
 # ghcr push is rejected after a full multi-arch build.
 permissions:
