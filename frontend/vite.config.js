@@ -143,9 +143,16 @@ export default defineConfig(async ({ mode }) => {
           // ink on the CTA gradient, and it sits well over both themes.
           theme_color: '#0e1830',
           background_color: '#ffffff',
+          // Two crops of the same mark, not one file declared twice.
+          // Android masks a `maskable` icon down to a centre circle of 80% of
+          // its width, so that file carries the mark small enough to survive
+          // the cut; `any` is shown whole and would look lost at that size.
+          // Both are opaque -- a transparent launcher icon is filled with
+          // black by iOS, not with the wallpaper. Regenerate all five with
+          // frontend/scripts/generate_pwa_icons.py when the mark changes.
           icons: [
             {
-              src: '/assets/crm/manifest/manifest-icon-192.maskable.png',
+              src: '/assets/crm/manifest/manifest-icon-192.png',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any',
@@ -157,7 +164,7 @@ export default defineConfig(async ({ mode }) => {
               purpose: 'maskable',
             },
             {
-              src: '/assets/crm/manifest/manifest-icon-512.maskable.png',
+              src: '/assets/crm/manifest/manifest-icon-512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any',
