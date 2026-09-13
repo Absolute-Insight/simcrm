@@ -1,8 +1,18 @@
 name: Regenerate POT file (translatable strings)
+# Manual only. This is upstream's workflow and .github/helper/update_pot_file.sh
+# still points at upstream: it sets the `upstream` remote to frappe/crm, pushes
+# the generated branch there and opens the PR with `-R frappe/crm`. In this fork
+# it cannot succeed -- it fails on `gh` having no token, and the one thing a
+# token would buy is an attempt to push a branch to a repository we do not own.
+#
+# It used to run every Sunday at 09:30 UTC and attach a `failure` check to
+# whatever commit was develop's HEAD at the time. That is not cosmetic:
+# builds.yml refuses to publish a commit carrying any failing check, and a
+# release bump inherits its parent's checks -- so a Sunday cron could make the
+# week's release unbuildable, which is what it did to 1fb427f09. Dropping the
+# schedule leaves the workflow runnable by hand for whoever fixes the script to
+# target this fork, without it vetoing releases in the meantime.
 on:
-  schedule:
-    # 9:30 UTC => 3 PM IST Sunday
-    - cron: "30 9 * * 0"
   workflow_dispatch:
 
 jobs:
