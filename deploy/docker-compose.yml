@@ -317,8 +317,18 @@ services:
       # rclone.conf to mount, template or keep in sync -- and no credentials
       # on disk in the compose directory.
       RCLONE_CONFIG_OFFSITE_TYPE: ${OFFSITE_TYPE:-b2}
-      RCLONE_CONFIG_OFFSITE_ACCOUNT: ${B2_ACCOUNT_ID:?set B2_ACCOUNT_ID in .env, or run without the offsite profile}
-      RCLONE_CONFIG_OFFSITE_KEY: ${B2_APPLICATION_KEY:?set B2_APPLICATION_KEY in .env, or run without the offsite profile}
+      # `:-`, not `:?`. Compose interpolates every service's variables when it
+      # parses the file, BEFORE it filters services by profile -- so a `:?`
+      # here did not just guard this service, it made every `docker compose`
+      # command in this directory fail on any stack without B2 credentials,
+      # profile activated or not. It took out the QA stack and the release
+      # smoke test in builds.yml, which is how v3.14.0 shipped an image that
+      # was never booted. `docker compose config` reproduces it in one line.
+      #
+      # The requirement is real, so it moves to run time, where it can only
+      # stop the service it belongs to -- see the guard at the top of command.
+      RCLONE_CONFIG_OFFSITE_ACCOUNT: ${B2_ACCOUNT_ID:-}
+      RCLONE_CONFIG_OFFSITE_KEY: ${B2_APPLICATION_KEY:-}
       # Where they land. The site name is part of the path so one bucket can
       # hold more than one deployment without them overwriting each other.
       BACKUP_TARGET: ${BACKUP_TARGET:-offsite:vecmbp}
@@ -327,6 +337,12 @@ services:
     command:
       - |
         set -u
+        # What the `:?` above used to do, but scoped to this service. Only
+        # reachable when somebody actually activates the offsite profile.
+        if [ -z "$${RCLONE_CONFIG_OFFSITE_ACCOUNT}" ] || [ -z "$${RCLONE_CONFIG_OFFSITE_KEY}" ]; then
+          echo "[offsite] refusing to start: set B2_ACCOUNT_ID and B2_APPLICATION_KEY in .env to run the offsite profile" >&2
+          exit 1
+        fi
         src="/data/sites/$${SITE_NAME}/private/backups"
         dest="$${BACKUP_TARGET}/$${SITE_NAME}"
         echo "[offsite] copying $$src -> $$dest, hourly"

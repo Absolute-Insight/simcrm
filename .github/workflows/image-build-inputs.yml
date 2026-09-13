@@ -18,6 +18,8 @@ on:
             - ".github/workflows/image-build-inputs.yml"
             - "scripts/frappe-pin.env"
             - "scripts/fetch-frappe.sh"
+            - "deploy/docker-compose.yml"
+            - "deploy/docker-compose.override.yml"
     workflow_dispatch:
 
 permissions:
@@ -66,3 +68,33 @@ jobs:
               # ref. This is the check that would have caught the `base` stage
               # being added while only `builder` was rewritten.
               run: bash .github/helper/prepare-containerfile.sh builds/images/layered/Containerfile
+
+            - name: deploy/ parses with no optional credentials
+              # builds.yml boots this compose file from a generated .env that
+              # carries only the required keys. Compose interpolates EVERY
+              # service's variables at parse time, before it filters by
+              # profile, so a `${FOO:?}` on an opt-in service breaks every
+              # command in deploy/ for everyone who does not use it -- which is
+              # how v3.14.0 published an image its own smoke test never booted,
+              # and took the QA stack down with it.
+              #
+              # Parsing with nothing but the required keys set is the whole
+              # test: an optional service that demands a value at parse time
+              # cannot pass it.
+              run: |
+                  set -euo pipefail
+                  cat > /tmp/minimal.env <<'EOF'
+                  VECTORA_IMAGE=ghcr.io/absolute-insight/simcrm
+                  VECTORA_TAG=stable
+                  SITE_NAME=smoke.localhost
+                  DB_ROOT_PASSWORD=smoke-root-pw
+                  ADMIN_PASSWORD=smoke-admin-pw
+                  EOF
+                  cd deploy
+                  for profiles in "" "--profile offsite"; do
+                    echo "::group::docker compose config ${profiles:-(no profiles)}"
+                    docker compose -f docker-compose.yml --env-file /tmp/minimal.env \
+                      $profiles config --quiet
+                    echo "::endgroup::"
+                  done
+                  echo "deploy/docker-compose.yml parses with only the required keys set."

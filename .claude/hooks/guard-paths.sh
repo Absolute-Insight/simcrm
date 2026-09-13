@@ -30,7 +30,25 @@ case "$rel" in
   crm/www/crm.html|crm/public/frontend/*|crm/public/dist/*)
     deny "$rel is build output from 'yarn build' (vite -> copy-html-entry). Change the frontend source instead; this file is gitignored and regenerated." ;;
   .env|deploy/.env|deploy/.env.bak-*)
-    deny "$rel holds DB_ROOT_PASSWORD / ADMIN_PASSWORD and is gitignored for that reason. Edit deploy/.env.example, or have the user edit the real .env by hand." ;;
+    # One exception: retagging VECTORA_TAG is step 1 of the documented upgrade
+    # (deploy/README.md "Upgrading"), and skipping it is the failure mode that
+    # runbook warns about -- pull re-fetches the same pin and nothing upgrades.
+    # Denying it outright pushed every upgrade into editing this file by hand
+    # or reaching around the hook, which is worse than allowing the one line.
+    #
+    # Kept deliberately narrow: an Edit (never a whole-file Write) whose old
+    # and new strings are each nothing but a complete VECTORA_TAG= line. A
+    # secret-bearing line cannot match, and neither can an edit that carries a
+    # tag change plus anything else.
+    tool=$(printf '%s' "$payload" | jq -r '.tool_name // empty')
+    old=$(printf '%s' "$payload" | jq -r '.tool_input.old_string // empty')
+    new=$(printf '%s' "$payload" | jq -r '.tool_input.new_string // empty')
+    if [[ "$tool" == "Edit" ]] \
+       && [[ "$old" =~ ^VECTORA_TAG=[A-Za-z0-9._-]+$ ]] \
+       && [[ "$new" =~ ^VECTORA_TAG=[A-Za-z0-9._-]+$ ]]; then
+      exit 0
+    fi
+    deny "$rel holds DB_ROOT_PASSWORD / ADMIN_PASSWORD and is gitignored for that reason. Edit deploy/.env.example, or have the user edit the real .env by hand. (A lone VECTORA_TAG= line is the one permitted edit.)" ;;
   yarn.lock|frontend/yarn.lock|package-lock.json)
     deny "$rel is a lockfile -- let the package manager write it (yarn add / yarn install)." ;;
   crm/__init__.py)

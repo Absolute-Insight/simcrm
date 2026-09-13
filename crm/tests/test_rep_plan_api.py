@@ -511,8 +511,6 @@ class RepPlanApiTest(IntegrationTestCase):
 			duplicate.insert(ignore_permissions=True)
 
 
-from datetime import datetime
-
 from crm.install import ensure_visit_event_category
 
 
@@ -544,7 +542,14 @@ class MarkFulfilledByKindTest(IntegrationTestCase):
 		fields = {
 			"doctype": "Event",
 			"subject": "x",
-			"starts_on": datetime.now(),
+			# frappe's clock, not the OS's. _this_monday() derives the plan's week
+			# from frappe.utils.getdate(), which reads the site time zone -- and
+			# frappe defaults that to Asia/Kolkata when site_config sets none, as
+			# CI's does not. From 18:30 UTC the two clocks disagree about the date:
+			# getdate() had rolled over to Monday while datetime.now() was still
+			# Sunday, so the event landed in the week before the plan's and
+			# mark_fulfilled correctly refused it. A nightly failure, not a flake.
+			"starts_on": frappe.utils.now_datetime(),
 			"event_type": "Private",
 		}
 		if category:
