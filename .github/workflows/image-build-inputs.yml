@@ -20,6 +20,8 @@ on:
             - "scripts/fetch-frappe.sh"
             - "deploy/docker-compose.yml"
             - "deploy/docker-compose.override.yml"
+            - ".github/helper/promote-image.sh"
+            - ".github/helper/test-promote-image.sh"
     workflow_dispatch:
 
 permissions:
@@ -98,3 +100,18 @@ jobs:
                     echo "::endgroup::"
                   done
                   echo "deploy/docker-compose.yml parses with only the required keys set."
+
+            - name: Release tagging promotes what it verified
+              # builds.yml runs only on a push to main or a tag, so until this
+              # existed the promotion step could not be executed anywhere but a
+              # live release -- and a release is a bad place to discover that a
+              # shell loop mishandles its input. It is not hypothetical: the
+              # first draft of promote-image.sh dropped the last tag of the
+              # list, so a release would have published the version tag and
+              # silently left `stable` behind. These checks caught it.
+              #
+              # DRY_RUN, so nothing is pushed and no registry credentials are
+              # needed. What it covers is the part that was wrong: which tags
+              # get promoted, that a non-main ref never promotes `stable`, and
+              # that malformed input fails loudly instead of becoming --tag "".
+              run: bash .github/helper/test-promote-image.sh
