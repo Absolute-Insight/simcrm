@@ -73,3 +73,24 @@ if [ "${INSTALL_ERPNEXT}" = "true" ]; then
 else
     bench --verbose --site test_site install-app crm
 fi
+
+# Pin the site's clock to the runner's.
+#
+# frappe.utils.get_system_timezone() is
+#   frappe.get_system_settings("time_zone") or "Asia/Kolkata"
+# and a fresh install leaves that setting empty, so the site's clock ran
+# +05:30 against a UTC runner. Any test that took a date from frappe
+# (getdate, now_datetime) and a timestamp from the OS (datetime.now), or the
+# reverse, then disagreed about what day it was for the five and a half hours
+# after 18:30 UTC -- and passed the other eighteen. It reads as flakiness and
+# is not: MarkFulfilledByKindTest failed every night until 2026-09-13, and
+# Server Tests is one of the three checks builds.yml requires, so an evening
+# release was unbuildable.
+#
+# This has to be the System Settings DocType. get_system_settings reads the
+# doc from the database, so putting time_zone in site_config.json changes
+# nothing -- verified before writing this.
+bench --site test_site execute frappe.db.set_single_value \
+    --args "['System Settings', 'time_zone', 'UTC']"
+bench --site test_site clear-cache
+bench --site test_site execute frappe.utils.get_system_timezone
