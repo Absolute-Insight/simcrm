@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate the PWA home-screen icons from the current brand mark.
+"""Regenerate the PWA home-screen icons and iOS splash screens from the mark.
 
 Committed rather than run-and-deleted because the icons are derived art: the
 mark has been replaced three times and each time the hand-made icons in
@@ -16,6 +16,11 @@ a launcher icon over the wallpaper -- iOS fills transparency with black, which
 is why the installed app showed a silver tick floating on a black square. Every
 icon written here is fully opaque on the brand white, the same ground the
 wordmark lockup and the splash screens use.
+
+*Splash screens.* iOS paints one of these while the installed app boots.
+They are keyed to exact device resolutions, so the set is a fixed list that
+index.html's media queries must keep matching -- this script rewrites the
+artwork of whatever files are already there and never invents or drops one.
 
 *Safe zone.* Android masks a `maskable` icon to whatever shape the launcher
 prefers (circle, squircle, teardrop), keeping only a centre circle of 80% of
@@ -58,6 +63,12 @@ TARGETS = [
 	("manifest-icon-512.maskable.png", 512, True),
 ]
 
+# The mark's longest side as a fraction of the splash's *short* edge, which is
+# what keeps it the same physical size in portrait and landscape. Matches the
+# proportion the previous splash set used, so only the artwork changes.
+SPLASH_SCALE = 0.198
+SPLASH_QUALITY = 90
+
 
 def trimmed_mark() -> Image.Image:
 	"""The mark cropped to its own ink, so padding is set here and not by
@@ -79,6 +90,24 @@ def target_size(mark: Image.Image, size: int, maskable: bool) -> tuple[int, int]
 	return max(1, round(w * scale)), max(1, round(h * scale))
 
 
+def write_splashes(mark: Image.Image) -> int:
+	"""Repaint every apple-splash-*.jpg in place, at its existing size."""
+	count = 0
+	for path in sorted(OUT.glob("apple-splash-*.jpg")):
+		with Image.open(path) as existing:
+			width, height = existing.size
+		scale = (min(width, height) * SPLASH_SCALE) / max(mark.size)
+		w, h = max(1, round(mark.width * scale)), max(1, round(mark.height * scale))
+		canvas = Image.new("RGBA", (width, height), BACKGROUND)
+		canvas.alpha_composite(
+			mark.resize((w, h), Image.LANCZOS),
+			((width - w) // 2, (height - h) // 2),
+		)
+		canvas.convert("RGB").save(path, "JPEG", quality=SPLASH_QUALITY, optimize=True)
+		count += 1
+	return count
+
+
 def main() -> None:
 	mark = trimmed_mark()
 	for name, size, maskable in TARGETS:
@@ -96,6 +125,7 @@ def main() -> None:
 		# keeping one invites the transparency this script exists to remove.
 		canvas.convert("RGB").save(OUT / name, "PNG", optimize=True)
 		print(f"{name:34} {size}x{size}  mark {w}x{h}")
+	print(f"{write_splashes(mark)} splash screens repainted")
 
 
 if __name__ == "__main__":
