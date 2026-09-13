@@ -511,7 +511,6 @@ class RepPlanApiTest(IntegrationTestCase):
 			duplicate.insert(ignore_permissions=True)
 
 
-
 from crm.install import ensure_visit_event_category
 
 
