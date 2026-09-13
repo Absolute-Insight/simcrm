@@ -431,23 +431,4 @@ jobs:
       # test needs a pullable ref to test. What a failed run can no longer do is
       # move a version tag or `stable`.
       - name: Promote the verified image to its release tags
-        run: |
-          set -euo pipefail
-          src="${IMAGE_BUILD_TAG}"
-          echo "verified candidate: $src"
-          IFS=',' read -ra tags <<< "${IMAGE_RELEASE_TAGS}"
-          args=()
-          for t in "${tags[@]}"; do
-            [ -n "$t" ] || continue
-            echo "  -> $t"
-            args+=(--tag "$t")
-          done
-          docker buildx imagetools create "${args[@]}" "$src"
-
-          # Say what actually landed, by digest, so the log answers "which
-          # bytes" and not just "which tag".
-          for t in "${tags[@]}"; do
-            [ -n "$t" ] || continue
-            docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$t" \
-              | sed "s|^|  $t = |"
-          done
+        run: bash .github/helper/promote-image.sh "$IMAGE_BUILD_TAG" "$IMAGE_RELEASE_TAGS"
