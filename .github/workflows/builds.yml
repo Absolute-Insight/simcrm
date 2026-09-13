@@ -249,17 +249,22 @@ jobs:
         # build, so a `gh workflow run builds.yml --ref develop` -- the
         # documented way to rehearse -- silently pointed "newest main" at a
         # develop commit. Any other ref gets the two immutable-ish tags only.
+        #
+        # The build pushes ONLY sha-<short>. The other tags are applied after
+        # the image has been verified -- see "Promote the verified image".
         run: |
           repo="ghcr.io/${GITHUB_REPOSITORY,,}"
           sha_tag="sha-$(git rev-parse --short HEAD)"
-          tags="$repo:$GITHUB_REF_NAME,$repo:$sha_tag"
+          release_tags="$repo:$GITHUB_REF_NAME"
           case "$GITHUB_REF" in
-            refs/heads/main|refs/tags/v*) tags="$tags,$repo:stable" ;;
+            refs/heads/main|refs/tags/v*) release_tags="$release_tags,$repo:stable" ;;
           esac
-          echo "IMAGE_TAGS=$tags" >> $GITHUB_ENV
+          echo "IMAGE_BUILD_TAG=$repo:$sha_tag" >> $GITHUB_ENV
+          echo "IMAGE_RELEASE_TAGS=$release_tags" >> $GITHUB_ENV
           echo "IMAGE_SHA_TAG=$sha_tag" >> $GITHUB_ENV
           echo "IMAGE_REPO=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
-          echo "tags: $tags"
+          echo "candidate: $repo:$sha_tag"
+          echo "release tags (applied only after the smoke test): $release_tags"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -308,7 +313,10 @@ jobs:
           context: builds
           file: builds/images/layered/Containerfile
           platforms: linux/amd64,linux/arm64
-          tags: ${{ env.IMAGE_TAGS }}
+          # The candidate tag alone. Publishing the release tags here is what
+          # let v3.14.0 ship -- and `stable` move to it -- after a smoke test
+          # that failed before it started a container.
+          tags: ${{ env.IMAGE_BUILD_TAG }}
           build-args: |
             "FRAPPE_BRANCH=${{ env.FRAPPE_BRANCH }}"
             "FRAPPE_PATH=${{ env.FRAPPE_PATH }}"
@@ -405,3 +413,41 @@ jobs:
       - name: Smoke teardown
         if: always()
         run: cd deploy && docker compose down -v --remove-orphans || true
+
+      # Only now does the image get the tags anybody deploys. Everything above
+      # this line is a candidate; `imagetools create` copies the manifest list
+      # that was just verified, so the bytes behind v3.14.1 and :stable are the
+      # exact bytes the smoke test booted -- no rebuild, no second resolution
+      # of transitive dependencies, no window in which the two could differ.
+      #
+      # This is the step whose absence let v3.14.0 publish. `Build and push`
+      # ran before the smoke test, so a smoke test that died at compose config
+      # parse -- before starting a single container -- still left the release
+      # tag published and `stable` pointing at an image nothing had booted. A
+      # red build was not evidence that nothing shipped.
+      #
+      # A failed run can still leave sha-<short> in the registry. That is the
+      # point: it names a commit, nothing deploys it by default, and the smoke
+      # test needs a pullable ref to test. What a failed run can no longer do is
+      # move a version tag or `stable`.
+      - name: Promote the verified image to its release tags
+        run: |
+          set -euo pipefail
+          src="${IMAGE_BUILD_TAG}"
+          echo "verified candidate: $src"
+          IFS=',' read -ra tags <<< "${IMAGE_RELEASE_TAGS}"
+          args=()
+          for t in "${tags[@]}"; do
+            [ -n "$t" ] || continue
+            echo "  -> $t"
+            args+=(--tag "$t")
+          done
+          docker buildx imagetools create "${args[@]}" "$src"
+
+          # Say what actually landed, by digest, so the log answers "which
+          # bytes" and not just "which tag".
+          for t in "${tags[@]}"; do
+            [ -n "$t" ] || continue
+            docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$t" \
+              | sed "s|^|  $t = |"
+          done
