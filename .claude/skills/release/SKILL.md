@@ -21,9 +21,13 @@ not fire_ — and why v3.1.4, v3.1.5 and v3.2.1 each carry a manual
 different digests, and the later push silently rewrites the version tag and
 `stable`. On 2026-09-13 a manual dispatch 30s behind the automatic one did
 exactly that to v3.14.0 and v3.14.1, leaving production running an image its
-own release tag no longer named. `builds.yml` now carries a concurrency guard,
-so a duplicate cancels the first rather than racing it — but the guard is a
-net, not a reason to throw.
+own release tag no longer named.
+
+The `build` job's `concurrency` **queues** same-ref runs rather than cancelling
+them (deliberately: a release tag build must never be killed by a main push
+landing behind it). So a duplicate does not race the first — it waits, then
+rebuilds and overwrites the tag anyway. Nothing in CI stops this. Not
+dispatching twice is the whole defence.
 
 ## Steps
 
