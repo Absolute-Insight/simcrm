@@ -2051,14 +2051,7 @@
   resolved "https://registry.yarnpkg.com/@tiptap/extension-bold/-/extension-bold-3.27.0.tgz#715476237c70cfc144523857fd2bf39f34bd99d6"
   integrity sha512-GbnnDVbChgp9KWv+6EBuNNYEvNVbtLPYXPm809DQPi7rvb2SI/LOzLgWgVKByQqhoh498WWVBhsg/pvQ9Va9tw==
 
-"@tiptap/extension-bubble-menu@^3.26.0":
-  version "3.30.2"
-  resolved "https://registry.yarnpkg.com/@tiptap/extension-bubble-menu/-/extension-bubble-menu-3.30.2.tgz#7b2315ebfe04cc94402e9308ca403e91347301b0"
-  integrity sha512-oS0WiWNXHKpiPYMkcnHm1j7iEvufTGGtLFtcJJd3olb5OS6V2acoXVDL0nNJDmRQ32K3QXut3fbRcMseMxT+lw==
-  dependencies:
-    "@floating-ui/dom" "^1.0.0"
-
-"@tiptap/extension-bubble-menu@^3.31.3":
+"@tiptap/extension-bubble-menu@^3.26.0", "@tiptap/extension-bubble-menu@^3.31.3":
   version "3.31.3"
   resolved "https://registry.yarnpkg.com/@tiptap/extension-bubble-menu/-/extension-bubble-menu-3.31.3.tgz#79e8ed9ec774900994b1ab1d320b5d10247c17d4"
   integrity sha512-EV6ZnwKc++2OM/OcD54n8s1B7C9LP7GKAtdEPwu0t3BYJf3sG8Ueoinf7SgGPO9oMPg96GneOkDNm1urMV167g==
@@ -3636,10 +3629,10 @@ foreground-child@^3.3.1:
     cross-spawn "^7.0.6"
     signal-exit "^4.0.1"
 
-frappe-ui@1.0.0-beta.56:
-  version "1.0.0-beta.56"
-  resolved "https://registry.yarnpkg.com/frappe-ui/-/frappe-ui-1.0.0-beta.56.tgz#4a90662a58114aede964c55cada102efc78c5e93"
-  integrity sha512-Ez3AZKC+7jFAbUW7Dceosz5uzmzV4MakQkUTNa464nGiX0OFrF/+eNRZAXbooR9Gz61Ur0KQVvUhp07LOUB4FQ==
+frappe-ui@1.0.0-beta.63:
+  version "1.0.0-beta.63"
+  resolved "https://registry.yarnpkg.com/frappe-ui/-/frappe-ui-1.0.0-beta.63.tgz#4538261c9fd8bad4802d55b9b46c3f42548cb1bd"
+  integrity sha512-wUVIAFwpBGQTnmItSfWaDVu1/OxT885ENWMH7FUVb9j9NGDnSwcQDwaPAJyRUjGp+91jL4Be2xS0cBCzhXcpvA==
   dependencies:
     "@codemirror/lang-css" "^6.3.0"
     "@codemirror/lang-html" "^6.4.9"
