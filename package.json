@@ -24,8 +24,8 @@
 		"test:e2e:debug": "playwright test --debug"
 	},
 	"devDependencies": {
-		"@playwright/test": "^1.49.0",
-		"@types/node": "^26.4.1",
+		"@playwright/test": "^1.63.0",
+		"@types/node": "^26.5.1",
 		"vitest": "^5.0.0"
 	}
 }
