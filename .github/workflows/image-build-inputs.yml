@@ -9,109 +9,121 @@ name: Image Build Inputs
 # This runs the same scripts builds.yml runs, on every PR that touches a pin or
 # the scripts themselves, without building or pushing anything. About a minute.
 on:
-    pull_request:
-        paths:
-            - ".github/helper/image-pins.env"
-            - ".github/helper/prepare-containerfile.sh"
-            - ".github/helper/check-build-toolchain.sh"
-            - ".github/workflows/builds.yml"
-            - ".github/workflows/image-build-inputs.yml"
-            - "scripts/frappe-pin.env"
-            - "scripts/fetch-frappe.sh"
-            - "deploy/docker-compose.yml"
-            - "deploy/docker-compose.override.yml"
-            - ".github/helper/promote-image.sh"
-            - ".github/helper/test-promote-image.sh"
-    workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/helper/image-pins.env"
+      - ".github/helper/prepare-containerfile.sh"
+      - ".github/helper/check-build-toolchain.sh"
+      - ".github/workflows/builds.yml"
+      - ".github/workflows/image-build-inputs.yml"
+      - "scripts/frappe-pin.env"
+      - "scripts/fetch-frappe.sh"
+      - "deploy/docker-compose.yml"
+      - "deploy/docker-compose.override.yml"
+      - ".github/helper/promote-image.sh"
+      - ".github/helper/set-image-tags.sh"
+      - ".github/helper/test-set-image-tags.sh"
+      - ".github/helper/test-promote-image.sh"
+  workflow_dispatch:
 
 permissions:
-    contents: read
+  contents: read
 
 concurrency:
-    group: image-build-inputs-${{ github.event.number || github.ref }}
-    cancel-in-progress: true
+  group: image-build-inputs-${{ github.event.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-    inputs:
-        name: Image Build Inputs
-        runs-on: ubuntu-latest
-        timeout-minutes: 15
-        steps:
-            - name: Clone
-              uses: actions/checkout@v7
+  inputs:
+    name: Image Build Inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Clone
+        uses: actions/checkout@v7
 
-            - name: Load image pins
-              run: |
-                  set -euo pipefail
-                  set -a; source .github/helper/image-pins.env; set +a
-                  for v in FRAPPE_DOCKER_REF FRAPPE_BUILD_IMAGE FRAPPE_BASE_IMAGE; do
-                    [ -n "${!v:-}" ] || { echo "::error::$v is empty in image-pins.env"; exit 1; }
-                    echo "$v=${!v}" >> "$GITHUB_ENV"
-                  done
+      - name: Load image pins
+        run: |
+          set -euo pipefail
+          set -a; source .github/helper/image-pins.env; set +a
+          for v in FRAPPE_DOCKER_REF FRAPPE_BUILD_IMAGE FRAPPE_BASE_IMAGE; do
+            [ -n "${!v:-}" ] || { echo "::error::$v is empty in image-pins.env"; exit 1; }
+            echo "$v=${!v}" >> "$GITHUB_ENV"
+          done
 
-            - name: Check out frappe_docker at the pin
-              uses: actions/checkout@v7
-              with:
-                  repository: frappe/frappe_docker
-                  path: builds
-                  ref: ${{ env.FRAPPE_DOCKER_REF }}
+      - name: Check out frappe_docker at the pin
+        uses: actions/checkout@v7
+        with:
+          repository: frappe/frappe_docker
+          path: builds
+          ref: ${{ env.FRAPPE_DOCKER_REF }}
 
-            - name: Fetch the pinned frappe
-              # Only the metadata is read here (package.json engines,
-              # pyproject requires-python), but it is the same fetch builds.yml
-              # does, so a broken pin fails here too.
-              run: bash scripts/fetch-frappe.sh builds/frappe-src
+      - name: Fetch the pinned frappe
+        # Only the metadata is read here (package.json engines,
+        # pyproject requires-python), but it is the same fetch builds.yml
+        # does, so a broken pin fails here too.
+        run: bash scripts/fetch-frappe.sh builds/frappe-src
 
-            - name: Check the builder image can build the pinned frappe
-              run: bash .github/helper/check-build-toolchain.sh builds/frappe-src
+      - name: Check the builder image can build the pinned frappe
+        run: bash .github/helper/check-build-toolchain.sh builds/frappe-src
 
-            - name: Prepare the Containerfile
-              # Proves both rewrites still match upstream's file at the pinned
-              # ref. This is the check that would have caught the `base` stage
-              # being added while only `builder` was rewritten.
-              run: bash .github/helper/prepare-containerfile.sh builds/images/layered/Containerfile
+      - name: Prepare the Containerfile
+        # Proves both rewrites still match upstream's file at the pinned
+        # ref. This is the check that would have caught the `base` stage
+        # being added while only `builder` was rewritten.
+        run: bash .github/helper/prepare-containerfile.sh builds/images/layered/Containerfile
 
-            - name: deploy/ parses with no optional credentials
-              # builds.yml boots this compose file from a generated .env that
-              # carries only the required keys. Compose interpolates EVERY
-              # service's variables at parse time, before it filters by
-              # profile, so a `${FOO:?}` on an opt-in service breaks every
-              # command in deploy/ for everyone who does not use it -- which is
-              # how v3.14.0 published an image its own smoke test never booted,
-              # and took the QA stack down with it.
-              #
-              # Parsing with nothing but the required keys set is the whole
-              # test: an optional service that demands a value at parse time
-              # cannot pass it.
-              run: |
-                  set -euo pipefail
-                  cat > /tmp/minimal.env <<'EOF'
-                  VECTORA_IMAGE=ghcr.io/absolute-insight/simcrm
-                  VECTORA_TAG=stable
-                  SITE_NAME=smoke.localhost
-                  DB_ROOT_PASSWORD=smoke-root-pw
-                  ADMIN_PASSWORD=smoke-admin-pw
-                  EOF
-                  cd deploy
-                  for profiles in "" "--profile offsite"; do
-                    echo "::group::docker compose config ${profiles:-(no profiles)}"
-                    docker compose -f docker-compose.yml --env-file /tmp/minimal.env \
-                      $profiles config --quiet
-                    echo "::endgroup::"
-                  done
-                  echo "deploy/docker-compose.yml parses with only the required keys set."
+      - name: deploy/ parses with no optional credentials
+        # builds.yml boots this compose file from a generated .env that
+        # carries only the required keys. Compose interpolates EVERY
+        # service's variables at parse time, before it filters by
+        # profile, so a `${FOO:?}` on an opt-in service breaks every
+        # command in deploy/ for everyone who does not use it -- which is
+        # how v3.14.0 published an image its own smoke test never booted,
+        # and took the QA stack down with it.
+        #
+        # Parsing with nothing but the required keys set is the whole
+        # test: an optional service that demands a value at parse time
+        # cannot pass it.
+        run: |
+          set -euo pipefail
+          cat > /tmp/minimal.env <<'EOF'
+          VECTORA_IMAGE=ghcr.io/absolute-insight/simcrm
+          VECTORA_TAG=stable
+          SITE_NAME=smoke.localhost
+          DB_ROOT_PASSWORD=smoke-root-pw
+          ADMIN_PASSWORD=smoke-admin-pw
+          EOF
+          cd deploy
+          for profiles in "" "--profile offsite"; do
+            echo "::group::docker compose config ${profiles:-(no profiles)}"
+            docker compose -f docker-compose.yml --env-file /tmp/minimal.env \
+              $profiles config --quiet
+            echo "::endgroup::"
+          done
+          echo "deploy/docker-compose.yml parses with only the required keys set."
 
-            - name: Release tagging promotes what it verified
-              # builds.yml runs only on a push to main or a tag, so until this
-              # existed the promotion step could not be executed anywhere but a
-              # live release -- and a release is a bad place to discover that a
-              # shell loop mishandles its input. It is not hypothetical: the
-              # first draft of promote-image.sh dropped the last tag of the
-              # list, so a release would have published the version tag and
-              # silently left `stable` behind. These checks caught it.
-              #
-              # DRY_RUN, so nothing is pushed and no registry credentials are
-              # needed. What it covers is the part that was wrong: which tags
-              # get promoted, that a non-main ref never promotes `stable`, and
-              # that malformed input fails loudly instead of becoming --tag "".
-              run: bash .github/helper/test-promote-image.sh
+      - name: Release tagging promotes what it verified
+        # builds.yml runs only on a push to main or a tag, so until this
+        # existed the promotion step could not be executed anywhere but a
+        # live release -- and a release is a bad place to discover that a
+        # shell loop mishandles its input. It is not hypothetical: the
+        # first draft of promote-image.sh dropped the last tag of the
+        # list, so a release would have published the version tag and
+        # silently left `stable` behind. These checks caught it.
+        #
+        # DRY_RUN, so nothing is pushed and no registry credentials are
+        # needed. What it covers is the part that was wrong: which tags
+        # get promoted, that a non-main ref never promotes `stable`, and
+        # that malformed input fails loudly instead of becoming --tag "".
+        run: bash .github/helper/test-promote-image.sh
+
+      - name: Only a tag build publishes :stable
+        # Every release produces two builds -- semantic-release pushes the
+        # version bump to main (one build) and then the tag (another) --
+        # from DIFFERENT commits, since the main build predates the bump.
+        # Both used to write `stable`, so whichever finished last won, and
+        # a main build landing last left `stable` on an image whose
+        # crm/__init__.py still named the previous version. Nothing in the
+        # release output showed it; only comparing digests did.
+        run: bash .github/helper/test-set-image-tags.sh
