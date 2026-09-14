@@ -67,8 +67,10 @@ pushing to it _is_ cutting a release. Nothing else triggers one.
    manual dispatch 30 seconds behind the automatic one did this to v3.14.0 and
    v3.14.1, and production was left running an image its own release tag no
    longer named — both builds were green and smoke-tested, so nothing looked
-   wrong anywhere. `builds.yml` now has a `concurrency` guard that cancels the
-   older run, but the guard only narrows the window.
+   wrong anywhere. The `build` job's `concurrency` queues same-ref runs rather
+   than cancelling them -- on purpose, so a release build is never killed by a
+   main push behind it -- which means a duplicate waits its turn and then
+   overwrites the tag regardless. Not dispatching twice is the only defence.
 
    To ask what a host is _actually_ running, and to pin it:
 
