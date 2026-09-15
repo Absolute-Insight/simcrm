@@ -37,10 +37,12 @@ AGENTS.md
 # repo's rules -- the generated files nobody should hand-edit, the branches
 # pre-commit refuses a commit on, and the release procedure whose one manual
 # step is easy to miss -- so they belong to the repo, not to one machine.
-# Two paths inside it do not: settings.local.json is per-developer overrides,
-# and format.log is the formatter hook's own record of tools it could not find.
+# Three paths inside it do not: settings.local.json is per-developer overrides,
+# and the two *.log files are the hooks' own records -- which tools the
+# formatter could not find, and when the Stop gate ran, passed or stood down.
 .claude/settings.local.json
 .claude/hooks/format.log
+.claude/hooks/verify.log
 
 # deploy/README.md's first boot step is `cp .env.example .env` *inside this
 # working tree*, and that file holds DB_ROOT_PASSWORD and ADMIN_PASSWORD. This
