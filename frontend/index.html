@@ -55,13 +55,17 @@
          under it and needs safe-area padding this layout does not carry. -->
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
 
-    <!-- PWA -->
+    <!-- The tab favicon, not a launcher icon: transparent and cropped to the
+         mark, where the manifest icons are opaque tiles for home screens. The
+         same file hooks.py gives the login page. -->
     <link
       rel="icon"
       type="image/png"
-      sizes="192x192"
-      href="/assets/crm/manifest/manifest-icon-192.png"
+      sizes="256x256"
+      href="/assets/crm/frontend/favicon.png"
     />
+
+    <!-- PWA -->
     <link
       rel="apple-touch-icon"
       href="/assets/crm/manifest/apple-icon-180.png"

@@ -69,6 +69,14 @@ TARGETS = [
 SPLASH_SCALE = 0.198
 SPLASH_QUALITY = 90
 
+# The browser-tab favicon is the one icon that keeps its transparency: a tab
+# strip *does* composite over its own ground, in light and dark, and a white
+# tile there reads as a sticker. At 16px every pixel of padding is mark lost, so
+# it fills the canvas, less a sliver so the antialiased edge is not clipped.
+FAVICON = ROOT / "frontend" / "public" / "favicon.png"
+FAVICON_SIZE = 256
+FAVICON_SCALE = 0.96
+
 
 def trimmed_mark() -> Image.Image:
 	"""The mark cropped to its own ink, so padding is set here and not by
@@ -108,6 +116,18 @@ def write_splashes(mark: Image.Image) -> int:
 	return count
 
 
+def write_favicon(mark: Image.Image) -> None:
+	scale = (FAVICON_SIZE * FAVICON_SCALE) / max(mark.size)
+	w, h = max(1, round(mark.width * scale)), max(1, round(mark.height * scale))
+	canvas = Image.new("RGBA", (FAVICON_SIZE, FAVICON_SIZE), (0, 0, 0, 0))
+	canvas.alpha_composite(
+		mark.resize((w, h), Image.LANCZOS),
+		((FAVICON_SIZE - w) // 2, (FAVICON_SIZE - h) // 2),
+	)
+	canvas.save(FAVICON, "PNG", optimize=True)
+	print(f"{FAVICON.name:34} {FAVICON_SIZE}x{FAVICON_SIZE}  mark {w}x{h}  transparent")
+
+
 def main() -> None:
 	mark = trimmed_mark()
 	for name, size, maskable in TARGETS:
@@ -126,6 +146,7 @@ def main() -> None:
 		canvas.convert("RGB").save(OUT / name, "PNG", optimize=True)
 		print(f"{name:34} {size}x{size}  mark {w}x{h}")
 	print(f"{write_splashes(mark)} splash screens repainted")
+	write_favicon(mark)
 
 
 if __name__ == "__main__":
