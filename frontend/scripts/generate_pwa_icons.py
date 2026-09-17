@@ -41,10 +41,27 @@ OUT = ROOT / "crm" / "public" / "manifest"
 
 BACKGROUND = (255, 255, 255, 255)
 
-# Fraction of the icon's width the mark's longest side may occupy when the
-# icon is shown whole. 0.78 leaves the ~11% breathing room either side that
-# reads as deliberate padding rather than a mark cropped to its own bounds.
+# Fraction of the icon's width the mark's longest side may occupy on an opaque
+# tile. 0.78 leaves the ~11% breathing room either side that reads as
+# deliberate padding rather than a mark cropped to its own bounds.
 FULL_BLEED_SCALE = 0.78
+
+# A transparent icon carries padding badly: with no tile edge for the gap to
+# belong to, it just renders the mark smaller than the space it was given. So
+# these fill the canvas, less a sliver to keep the antialiased edge off the
+# boundary.
+TRANSPARENT_SCALE = 0.96
+
+CLEAR = (0, 0, 0, 0)
+
+# A transparent icon fills its canvas, so when the canvas is larger than the
+# mark's own pixels the choice is a softer mark or a smaller one -- and these
+# files are consumed downscaled (a taskbar button, a shortcut, a window
+# corner), where fill shows and a 1.2x resample does not. Opaque tiles take no
+# such licence: their padding means they never need it. The ceiling is here so
+# that a genuinely undersized source still fails loudly rather than shipping
+# mush.
+MAX_UPSCALE = 1.5
 
 # Android's maskable safe zone is the centre circle of diameter 0.8 * width.
 # The constraint is on the mark's *diagonal*, not its width: a wide-and-short
@@ -53,14 +70,25 @@ FULL_BLEED_SCALE = 0.78
 SAFE_ZONE_DIAMETER = 0.80
 SAFE_ZONE_FILL = 0.95
 
-# (filename, pixel size, maskable) -- apple-icon-180 is iOS, which applies its
-# own squircle with no bleed allowance and so takes the full-bleed crop.
+# (filename, pixel size, mode). Three modes, because the consumers disagree
+# about what transparency means:
+#
+#   "tile"         opaque and padded. apple-icon-180 only: iOS composites a
+#                  home-screen icon over black, not over the wallpaper, and
+#                  applies its own squircle with no bleed allowance.
+#   "maskable"     opaque, mark held inside Android's centre-circle safe zone.
+#   "transparent"  the `any` icons. Chrome dresses the installed app's window,
+#                  its taskbar button and the desktop shortcut from these, and
+#                  each of those has a ground of its own -- so an opaque tile
+#                  reads as a white card stuck behind the mark. Android takes
+#                  the maskable pair for the launcher and never shows these
+#                  bare, which is what makes dropping the tile here safe.
 TARGETS = [
-	("apple-icon-180.png", 180, False),
-	("manifest-icon-192.png", 192, False),
-	("manifest-icon-512.png", 512, False),
-	("manifest-icon-192.maskable.png", 192, True),
-	("manifest-icon-512.maskable.png", 512, True),
+	("apple-icon-180.png", 180, "tile"),
+	("manifest-icon-192.png", 192, "transparent"),
+	("manifest-icon-512.png", 512, "transparent"),
+	("manifest-icon-192.maskable.png", 192, "maskable"),
+	("manifest-icon-512.maskable.png", 512, "maskable"),
 ]
 
 # The mark's longest side as a fraction of the splash's *short* edge, which is
@@ -69,13 +97,10 @@ TARGETS = [
 SPLASH_SCALE = 0.198
 SPLASH_QUALITY = 90
 
-# The browser-tab favicon is the one icon that keeps its transparency: a tab
-# strip *does* composite over its own ground, in light and dark, and a white
-# tile there reads as a sticker. At 16px every pixel of padding is mark lost, so
-# it fills the canvas, less a sliver so the antialiased edge is not clipped.
+# The browser-tab favicon. A tab strip composites over its own ground, in light
+# and dark, so this is transparent on the same terms as the `any` icons above.
 FAVICON = ROOT / "frontend" / "public" / "favicon.png"
 FAVICON_SIZE = 256
-FAVICON_SCALE = 0.96
 
 
 def trimmed_mark() -> Image.Image:
@@ -88,14 +113,23 @@ def trimmed_mark() -> Image.Image:
 	return mark.crop(box)
 
 
-def target_size(mark: Image.Image, size: int, maskable: bool) -> tuple[int, int]:
+def target_size(mark: Image.Image, size: int, mode: str) -> tuple[int, int]:
 	w, h = mark.size
-	if maskable:
+	if mode == "maskable":
 		diagonal = (w**2 + h**2) ** 0.5
 		scale = (size * SAFE_ZONE_DIAMETER * SAFE_ZONE_FILL) / diagonal
+	elif mode == "transparent":
+		scale = (size * TRANSPARENT_SCALE) / max(w, h)
 	else:
 		scale = (size * FULL_BLEED_SCALE) / max(w, h)
 	return max(1, round(w * scale)), max(1, round(h * scale))
+
+
+def centred(mark: Image.Image, size: int, box: tuple[int, int], ground) -> Image.Image:
+	w, h = box
+	canvas = Image.new("RGBA", (size, size), ground)
+	canvas.alpha_composite(mark.resize((w, h), Image.LANCZOS), ((size - w) // 2, (size - h) // 2))
+	return canvas
 
 
 def write_splashes(mark: Image.Image) -> int:
@@ -117,34 +151,32 @@ def write_splashes(mark: Image.Image) -> int:
 
 
 def write_favicon(mark: Image.Image) -> None:
-	scale = (FAVICON_SIZE * FAVICON_SCALE) / max(mark.size)
-	w, h = max(1, round(mark.width * scale)), max(1, round(mark.height * scale))
-	canvas = Image.new("RGBA", (FAVICON_SIZE, FAVICON_SIZE), (0, 0, 0, 0))
-	canvas.alpha_composite(
-		mark.resize((w, h), Image.LANCZOS),
-		((FAVICON_SIZE - w) // 2, (FAVICON_SIZE - h) // 2),
-	)
-	canvas.save(FAVICON, "PNG", optimize=True)
+	w, h = target_size(mark, FAVICON_SIZE, "transparent")
+	centred(mark, FAVICON_SIZE, (w, h), CLEAR).save(FAVICON, "PNG", optimize=True)
 	print(f"{FAVICON.name:34} {FAVICON_SIZE}x{FAVICON_SIZE}  mark {w}x{h}  transparent")
 
 
 def main() -> None:
 	mark = trimmed_mark()
-	for name, size, maskable in TARGETS:
-		w, h = target_size(mark, size, maskable)
-		if w > mark.width or h > mark.height:
+	for name, size, mode in TARGETS:
+		w, h = target_size(mark, size, mode)
+		upscale = max(w / mark.width, h / mark.height)
+		if upscale > 1 and (mode != "transparent" or upscale > MAX_UPSCALE):
 			sys.exit(
 				f"{name} needs the mark at {w}x{h} but the source is only "
 				f"{mark.width}x{mark.height}; upscaling would soften it. "
 				f"Replace {SOURCE.name} with a larger export."
 			)
-		canvas = Image.new("RGBA", (size, size), BACKGROUND)
-		resized = mark.resize((w, h), Image.LANCZOS)
-		canvas.alpha_composite(resized, ((size - w) // 2, (size - h) // 2))
-		# Flatten to RGB: an opaque icon has no use for an alpha channel, and
-		# keeping one invites the transparency this script exists to remove.
-		canvas.convert("RGB").save(OUT / name, "PNG", optimize=True)
-		print(f"{name:34} {size}x{size}  mark {w}x{h}")
+		transparent = mode == "transparent"
+		canvas = centred(mark, size, (w, h), CLEAR if transparent else BACKGROUND)
+		# Flatten the opaque ones to RGB: a tile has no use for an alpha channel,
+		# and keeping one invites transparency back into the icons that must not
+		# have it.
+		if not transparent:
+			canvas = canvas.convert("RGB")
+		canvas.save(OUT / name, "PNG", optimize=True)
+		note = f"  upscaled {upscale:.2f}x" if upscale > 1 else ""
+		print(f"{name:34} {size}x{size}  mark {w}x{h}  {mode}{note}")
 	print(f"{write_splashes(mark)} splash screens repainted")
 	write_favicon(mark)
 
