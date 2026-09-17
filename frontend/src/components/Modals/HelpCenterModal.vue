@@ -207,7 +207,7 @@
 
 <script setup>
 import { PhBookOpen as LucideBookOpen, PhCaretLeft } from '@phosphor-icons/vue'
-import { budgetStatusMessage, isBudgetReason } from '@/utils/agentStatus'
+import { unavailableReasonMessage } from '@/utils/agentStatus'
 import AgentChat from '@/components/AgentChat.vue'
 import SparkleIcon from '@/components/Icons/SparkleIcon.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -244,8 +244,8 @@ function mentorFailureCopy(failure) {
       'The mentor is switched off for this site. The manual on the left works either way.',
     )
   }
-  if (isBudgetReason(mentorFailureReason.value)) {
-    return budgetStatusMessage(mentorFailureReason.value)
+  if (unavailableReasonMessage(mentorFailureReason.value)) {
+    return unavailableReasonMessage(mentorFailureReason.value)
   }
   return __(
     'The mentor could not be reached right now. Your question was not lost — try again in a moment.',

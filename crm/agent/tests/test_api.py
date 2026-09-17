@@ -615,6 +615,19 @@ class ThrottleReasonTest(IntegrationTestCase):
 			self.assertEqual(result, {"status": "unavailable", "reason": "budget"}, result)
 		complete.assert_not_called()
 
+	def test_a_reply_that_ran_out_of_room_is_named(self):
+		"""#237: the model was reached and spent its whole reply budget thinking. That
+		is not an outage and asking again changes nothing, so the surface is told."""
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			no_budget_check(),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=ONE_MESSAGE),
+			mock.patch.object(api_mod.client, "complete", side_effect=api_mod.client.ReplyCutOff("no room")),
+		):
+			result = api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001")
+		self.assertEqual(result, {"status": "unavailable", "reason": "reply_length"})
+
 	def test_an_unreachable_model_still_reports_a_bare_unavailable(self):
 		with (
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
