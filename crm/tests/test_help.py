@@ -30,6 +30,7 @@ class ParseArticleTest(UnitTestCase):
 				"category": "Getting started",
 				"order": 3,
 				"content": "Body text.",
+				"tags": "",
 			},
 		)
 
@@ -117,6 +118,31 @@ AI_AND_AUTOMATION_HEADINGS = (
 	"## When it runs",
 	"## What it never does",
 )
+
+
+class MentorRetrievalTest(UnitTestCase):
+	"""The Mentor answers only from the articles its retrieval selects, and retrieval
+	is keyword overlap. Asked how to record being "called out to a customer site
+	unexpectedly" it never selected the planner article -- no word in common with
+	"Log a visit" -- and told the rep to create a task (#237)."""
+
+	def test_tags_are_optional_and_passed_through(self):
+		text = "---\ntitle: T\ncategory: Getting started\norder: 1\ntags: site visit, call-out\n---\nBody"
+		self.assertEqual(parse_article("t", text)["tags"], "site visit, call-out")
+		untagged = "---\ntitle: T\ncategory: Getting started\norder: 1\n---\nBody"
+		self.assertEqual(parse_article("t", untagged)["tags"], "")
+
+	def test_a_rep_s_own_words_for_a_visit_find_the_planner(self):
+		from crm.agent.knowledge import select_articles
+
+		articles = load_articles()
+		for question in (
+			"I was called out to a customer site unexpectedly. How do I record that?",
+			"How do I log a visit?",
+			"I dropped in on a customer without planning it",
+		):
+			with self.subTest(question=question):
+				self.assertEqual(select_articles(question, articles)[0]["name"], "planner")
 
 
 class AiAndAutomationArticlesTest(UnitTestCase):
