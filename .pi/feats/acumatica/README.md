@@ -59,7 +59,9 @@ logged as an "Import Failed" sync issue and queued in the settings' hidden
 `pending_retries` JSON field, keyed by NoteID per entity. Because nothing about
 a mishandled record changes in Acumatica, the `LastModifiedDateTime` filter
 would never offer it again — so every sweep re-fetches whatever is queued, by
-NoteID, before it does its normal filtered pass. After `MAX_RETRY_ATTEMPTS` (5)
+NoteID (`client.get_by_id`, i.e. `GET …/<Entity>/<id>` — a record's `id` is its
+NoteID; a 404 means it was deleted and the entry is dropped), before it does its
+normal filtered pass. After `MAX_RETRY_ATTEMPTS` (5)
 failures the record is dropped from the queue and gets a "Gave Up" sync issue
 instead of retrying forever. A run that dies outside any single record's
 try/except (expired credentials, a dropped connection) writes its message to
@@ -83,9 +85,12 @@ does not error.
 `CustomerID` derived from the organization name (`customer_numbering` =
 *From Organization Name*) strips non-alphanumerics and truncates to
 `customer_id_max_length` (Int, default `10` — Acumatica's stock CUSTOMER ID
-segment); widen the setting if the tenant's segment was widened. The token
-request also sends `branch` in the body whenever the setting is non-empty —
-some tenants reject a login that doesn't name one.
+segment); widen the setting if the tenant's segment was widened. When `branch`
+is set, every API request carries it as the `PX-CbApiBranch` header: under OAuth
+there is no session to hold a branch, so Acumatica reads it per call, and without
+the header a quote lands in the API user's default branch. (The token request
+still names it in the body too; the identity server ignores what it does not
+know.)
 
 **Create Sales Quote** (`create_sales_quote_from_deal`) refuses the whole quote
 if any product on the deal is not linked to an Acumatica inventory item
@@ -93,6 +98,14 @@ if any product on the deal is not linked to an Acumatica inventory item
 codes so they can be fixed and retried. It used to skip an unlinked row and
 still save a shortened quote with a success toast, which gave the rep no signal
 that a line was silently dropped.
+
+A PUT Acumatica refuses is reported with Acumatica's own reason.
+`AcumaticaError.detail()` walks the response JSON for it, because a rejected PUT
+echoes the entity back with the `error` nested inside whichever field failed —
+truncating the raw body usually cut the reason off. Writes get `WRITE_TIMEOUT`
+(120s) against a read's 30s, and a quote that still times out tells the rep the
+order may exist and to check before retrying: there is no idempotency key on a
+SalesOrder PUT, so a blind retry is a duplicate order.
 
 ## Webhook setup (Acumatica side)
 
@@ -149,6 +162,19 @@ The panel also lists open sync issues with a **Dismiss** button per row
   entity URL usually means the version, not the entity, is wrong.
 - Historical quotations are NOT imported as deals — fabricated deal history
   would poison forecasting, health scoring, and quota analytics.
+
+## Unproven until a real tenant answers
+
+Written against documentation; none of this has met a live instance yet.
+
+- `$orderby=NoteID` on paged reads. Sources disagree on whether the contract API
+  honours, ignores or rejects `$orderby`. **Test connection deliberately omits
+  it**, so a green test followed by a backfill that fails on its first page
+  points here — pass `orderby=None` from `iter_all`'s callers if so.
+- The customer PUT sends only `CustomerName` (+ `CustomerID`): it relies on the
+  tenant's default customer class supplying statement cycle, terms, tax zone.
+- The quote PUT sends no `Branch`/`LocationID`/`CurrencyID`/`ManualPrice`, and
+  the deal's currency is never compared with the customer's.
 
 ## Known limitations
 
