@@ -135,7 +135,7 @@ const intro = __(
 const exampleQuestions = [
   __('Which valve do we recommend for a mine slurry line?'),
   __('What pressure classes do our gate valves come in?'),
-  __('Which standards do our valves comply with?'),
+  __('Which ISO certifications does the company hold?'),
 ]
 
 function failureCopy(failure) {
