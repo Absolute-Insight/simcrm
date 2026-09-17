@@ -20,7 +20,8 @@ export function isBudgetReason(reason) {
 
 /** Whether a Try again action is honest for this `unavailable` reason. */
 export function canRetryUnavailable(reason) {
-  return !isBudgetReason(reason)
+  // the same question runs out of room the same way; only a different one helps
+  return !isBudgetReason(reason) && !LIMIT_REASONS.includes(reason)
 }
 
 /**
@@ -39,4 +40,34 @@ export function budgetStatusMessage(reason) {
     )
   }
   return ''
+}
+
+/** `reason` values where the model was reached but the question did not fit it. */
+export const LIMIT_REASONS = ['reply_length', 'context_length']
+
+/**
+ * The sentence for a question the model had no room for, or '' otherwise.
+ *
+ * Neither is weather. `reply_length`: a reasoning model spent its whole reply
+ * budget thinking and wrote no answer. `context_length`: the prompt was longer
+ * than the window the endpoint serves. Asking the same thing again fails the
+ * same way, so the honest advice is to ask differently, not to wait.
+ */
+export function limitStatusMessage(reason) {
+  if (reason === 'reply_length') {
+    return __(
+      'The model ran out of room before it could answer. Ask something shorter or more specific.',
+    )
+  }
+  if (reason === 'context_length') {
+    return __(
+      'This question needs more room than the model is set up for. Clear the conversation or ask something narrower.',
+    )
+  }
+  return ''
+}
+
+/** Whichever named sentence applies to this `unavailable` reason, or ''. */
+export function unavailableReasonMessage(reason) {
+  return budgetStatusMessage(reason) || limitStatusMessage(reason)
 }

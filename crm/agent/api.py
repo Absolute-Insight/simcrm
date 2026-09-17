@@ -78,6 +78,8 @@ SITE_BUDGET = "budget"
 # and the fix (clear the conversation, or raise ``context_tokens`` to match what
 # the server serves) is one the reader can act on.
 CONTEXT_LENGTH = "context_length"
+# The model spent its whole reply budget before answering (client.ReplyCutOff).
+REPLY_LENGTH = "reply_length"
 
 # What the fence, header and task line cost around a quoted thread. Subtracted
 # from the prompt budget so the fence gets what is actually left rather than the
@@ -513,7 +515,12 @@ def _model_call(cfg, log_title: str, call, *, refund: bool = True) -> tuple:
 			_refund_budget(cfg)
 		# A prompt the endpoint refused as too long is not weather: it is up, and
 		# the same question will be refused again. Say which it was.
-		reason = CONTEXT_LENGTH if isinstance(exc, client.ContextTooLong) else None
+		reason = None
+		if isinstance(exc, client.ContextTooLong):
+			reason = CONTEXT_LENGTH
+		elif isinstance(exc, client.ReplyCutOff):
+			# also not weather, and also not the user's to fix by asking again
+			reason = REPLY_LENGTH
 		return None, _unavailable(reason)
 	except SchemaMismatch as exc:
 		frappe.log_error(title=log_title, message=str(exc))

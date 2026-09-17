@@ -161,6 +161,18 @@ class ContextTooLong(AgentUnavailable):
 	"""
 
 
+class ReplyCutOff(AgentUnavailable):
+	"""The reply budget ran out before the model wrote any of its answer.
+
+	A reasoning model's thinking is charged to ``max_tokens`` like the answer is.
+	When the thinking takes all of it the endpoint answers 200 with empty content
+	and ``finish_reason: "length"``. Like ``ContextTooLong`` this is not weather --
+	the endpoint is up and the same question fails the same way -- so it is named:
+	the fix is a larger ``max_tokens`` (and a ``timeout`` that allows for it), or a
+	smaller prompt for the model to reason over.
+	"""
+
+
 # Substrings that mark a 4xx as "the prompt did not fit", across vLLM, llama.cpp,
 # SGLang, TGI and the OpenAI API itself. Matched against a bounded slice of the
 # error body, lower-cased. A miss costs nothing: the request is still an
@@ -273,4 +285,11 @@ def _read_bounded(cfg: AgentConfig, response, deadline: float, timeout: float) -
 
 
 def _content(raw: bytes) -> str:
-	return json.loads(raw)["choices"][0]["message"]["content"]
+	choice = json.loads(raw)["choices"][0]
+	content = choice["message"]["content"]
+	if choice.get("finish_reason") == "length" and not str(content or "").strip():
+		raise ReplyCutOff(
+			"the reply budget (max_tokens) ran out before the model wrote an answer; a "
+			"reasoning model spends part of it thinking"
+		)
+	return content

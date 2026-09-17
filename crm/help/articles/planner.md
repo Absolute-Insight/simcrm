@@ -2,6 +2,7 @@
 title: The weekly planner
 category: Proactive selling
 order: 3
+tags: plan my week, weekly plan, visit, site visit, customer site, called out, call-out, breakdown, unplanned, unexpected, drop in, record a visit, log a visit, plan adherence
 ---
 
 The **Planner** page is your week as concrete activities: calls, emails,

@@ -72,7 +72,8 @@
    "label": "Timeout"
   },
   {
-   "default": "2048",
+   "default": "4096",
+   "description": "The most the model may write per reply. A reasoning model's thinking counts against this as well as its answer: too low and the reply comes back empty ('ran out of room'). It also bounds the worst-case wait, so raise Timeout with it.",
    "fieldname": "max_tokens",
    "fieldtype": "Int",
    "label": "Max Tokens"
@@ -171,7 +172,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-10 12:00:00.000000",
+ "modified": "2026-09-17 23:30:00.000000",
  "modified_by": "Administrator",
  "module": "Agent",
  "name": "CRM Agent Settings",

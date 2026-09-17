@@ -106,9 +106,8 @@
  */
 import { PhCircleNotch as LucideLoaderCircle } from '@phosphor-icons/vue'
 import {
-  budgetStatusMessage,
+  unavailableReasonMessage,
   canRetryUnavailable,
-  isBudgetReason,
 } from '@/utils/agentStatus'
 import { nextTick, ref, watch } from 'vue'
 
@@ -145,8 +144,12 @@ const failureCopy = {
 }
 
 function failureText(failure) {
-  if (failure === 'unavailable' && isBudgetReason(props.failureReason)) {
-    return budgetStatusMessage(props.failureReason)
+  if (
+    failure === 'unavailable' &&
+    unavailableReasonMessage(props.failureReason)
+  ) {
+    // a spent budget or a question the model had no room for is not weather
+    return unavailableReasonMessage(props.failureReason)
   }
   return failureCopy[failure]
 }

@@ -10,6 +10,7 @@ and any transport failure becomes ``AgentUnavailable`` so callers can degrade.
 
 from __future__ import annotations
 
+import json
 from unittest import mock
 
 import requests
@@ -245,6 +246,48 @@ class PromptBudgetTest(UnitTestCase):
 		with mock.patch.object(client_mod.requests, "post", return_value=_reply(GOOD)) as post:
 			client_mod.complete(CFG, ThreadSummary, MESSAGES)
 		self.assertEqual(post.call_args[1]["json"]["messages"], MESSAGES)
+
+
+class ReplyCutOffTest(UnitTestCase):
+	"""#237: a reasoning model's thinking is charged to ``max_tokens``. When it spends
+	the whole budget there, the endpoint answers 200 with empty content and
+	``finish_reason: "length"`` -- which used to surface as a schema mismatch ("Invalid
+	JSON: EOF ... line 1 column 0") and, to the user, as an endpoint that was down."""
+
+	def _cut_off(self, content="", finish_reason="length"):
+		response = mock.Mock()
+		response.status_code = 200
+		response.raise_for_status.return_value = None
+		body = {"choices": [{"message": {"content": content}, "finish_reason": finish_reason}]}
+		response.iter_content.return_value = iter([json.dumps(body).encode()])
+		return response
+
+	def test_an_empty_reply_that_ran_out_of_tokens_is_named(self):
+		with mock.patch.object(client_mod.requests, "post", return_value=self._cut_off()) as post:
+			with self.assertRaises(client_mod.ReplyCutOff) as caught:
+				client_mod.complete(CFG, ThreadSummary, MESSAGES)
+		self.assertIsInstance(caught.exception, AgentUnavailable)
+		self.assertIn("max_tokens", str(caught.exception))
+		# the same request would run out of room the same way: no second attempt
+		self.assertEqual(post.call_count, 1)
+
+	def test_whitespace_counts_as_empty(self):
+		with mock.patch.object(client_mod.requests, "post", return_value=self._cut_off(" \n")):
+			with self.assertRaises(client_mod.ReplyCutOff):
+				client_mod.complete(CFG, ThreadSummary, MESSAGES)
+
+	def test_a_partial_reply_is_still_a_schema_problem(self):
+		"""Cut off mid-JSON is a different fault: there is a reply to correct."""
+		with mock.patch.object(
+			client_mod.requests, "post", side_effect=lambda *a, **k: self._cut_off('{"summary": "half')
+		):
+			with self.assertRaises(SchemaMismatch):
+				client_mod.complete(CFG, ThreadSummary, MESSAGES)
+
+	def test_an_empty_reply_that_simply_stopped_is_not_renamed(self):
+		with mock.patch.object(client_mod.requests, "post", return_value=self._cut_off("", "stop")):
+			with self.assertRaises(SchemaMismatch):
+				client_mod.complete(CFG, ThreadSummary, MESSAGES)
 
 
 class ContextLengthRefusalTest(UnitTestCase):

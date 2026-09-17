@@ -165,9 +165,8 @@
 <script setup>
 import { PhDownloadSimple as LucideDownload } from '@phosphor-icons/vue'
 import {
-  budgetStatusMessage,
+  unavailableReasonMessage,
   canRetryUnavailable,
-  isBudgetReason,
 } from '@/utils/agentStatus'
 import { PhEraser as LucideEraser } from '@phosphor-icons/vue'
 import AgentChat from '@/components/AgentChat.vue'
@@ -192,6 +191,7 @@ const intro = __(
 const exampleQuestions = [
   __('How did revenue grow over the last six months?'),
   __('Which reps are behind quota this quarter?'),
+  __('Which deals and accounts are likely to go quiet?'),
   __('Project revenue for the next quarter'),
   __(
     'What came in as cash last month against what we invoiced? (needs an ERP)',
@@ -210,8 +210,12 @@ function periodLabel(period) {
 }
 
 function failureCopy(failure) {
-  if (failure === 'unavailable' && isBudgetReason(analystFailureReason.value)) {
-    return budgetStatusMessage(analystFailureReason.value)
+  if (
+    failure === 'unavailable' &&
+    unavailableReasonMessage(analystFailureReason.value)
+  ) {
+    // a spent budget or a question the model had no room for is not weather
+    return unavailableReasonMessage(analystFailureReason.value)
   }
   if (failure === 'disabled') {
     return analystFailureReason.value === 'analyst_off'

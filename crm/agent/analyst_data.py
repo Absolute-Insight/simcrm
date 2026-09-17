@@ -106,7 +106,15 @@ def run_plan(plan: dict, erp: str | None, deadline: float | None = None) -> list
 			tables.append(_erp_table(key, metric, erp, from_date, to_date, deadline))
 			continue
 		rows, note = runner(from_date, to_date)
-		tables.append(_table(key, metric, "CRM", rows, from_date, to_date, note))
+		table = _table(key, metric, "CRM", rows, from_date, to_date, note)
+		if key in _ROW_LISTS:
+			# the model gets the counting done for it and the head of the list; the
+			# screen gets every row (#237)
+			table["model_rows"] = analyst.ROW_LIST_MODEL_ROWS
+			summarise = _ROW_LISTS[key]
+			if summarise:
+				table["summary"] = summarise(rows)
+		tables.append(table)
 	return tables
 
 
@@ -123,6 +131,10 @@ def _time_for_a_page(deadline: float | None) -> bool:
 	generator has already paid for a page by the time its rows arrive.
 	"""
 	return deadline is None or (deadline - time.monotonic()) >= ERP_TIMEOUT
+
+
+# Tables that are lists of records rather than aggregates, and what counts them.
+_ROW_LISTS = {"deals_at_risk": analyst.summarise_at_risk, "accounts_going_quiet": None}
 
 
 def _table(key, metric, source, rows, from_date, to_date, note="", error=None) -> dict:

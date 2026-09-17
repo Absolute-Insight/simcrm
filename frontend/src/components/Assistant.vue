@@ -114,9 +114,8 @@ import {
 } from '@/stores/assistant'
 import { openHelpCenter } from '@/stores/help'
 import {
-  budgetStatusMessage,
+  unavailableReasonMessage,
   canRetryUnavailable,
-  isBudgetReason,
 } from '@/utils/agentStatus'
 import { usersStore } from '@/stores/users'
 import { activeSettingsPage, showSettings } from '@/composables/settings'
@@ -141,10 +140,10 @@ const exampleQuestions = [
 function failureCopy(failure) {
   if (
     failure === 'unavailable' &&
-    isBudgetReason(assistantFailureReason.value)
+    unavailableReasonMessage(assistantFailureReason.value)
   ) {
-    // a spent day budget is not weather: no retry will help until tomorrow
-    return budgetStatusMessage(assistantFailureReason.value)
+    // a spent budget or a question the model had no room for is not weather
+    return unavailableReasonMessage(assistantFailureReason.value)
   }
   if (failure === 'disabled') {
     return isAdmin()

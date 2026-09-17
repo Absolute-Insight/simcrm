@@ -63,7 +63,7 @@ def _load_articles_once() -> list[dict]:
 
 
 def parse_article(name: str, text: str) -> dict:
-	"""One markdown file into ``{name, title, category, order, content}``.
+	"""One markdown file into ``{name, title, category, order, content, tags}``.
 
 	Raises ``ValueError`` on a malformed file rather than skipping it: these
 	files ship with the code, so a bad one is a bug for the test suite to catch,
@@ -112,4 +112,7 @@ def parse_article(name: str, text: str) -> dict:
 		"category": meta["category"],
 		"order": order,
 		"content": content,
+		# Optional. The words a rep uses for the thing when they are not the words
+		# on the button -- the Mentor's retrieval scores them like the title.
+		"tags": meta.get("tags", ""),
 	}
