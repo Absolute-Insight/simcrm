@@ -32,9 +32,10 @@ class AgentSettingsTest(IntegrationTestCase):
 		meta = frappe.get_meta("CRM Agent Settings")
 		self.assertEqual(meta.get_field("enabled").default, "0")
 		self.assertEqual(meta.get_field("timeout").default, "30")
-		# 2048, not 1024: the shipped default model truncates mid-object on a long
-		# thread at 1024 and the reply arrives as invalid JSON.
-		self.assertEqual(meta.get_field("max_tokens").default, "2048")
+		# 4096, not 2048: the shipped default model reasons before it answers and the
+		# reasoning is charged to this budget. At 1024 it truncated mid-object; at 2048
+		# an awkward question spent the lot thinking and the reply was empty (#237).
+		self.assertEqual(meta.get_field("max_tokens").default, "4096")
 		# The window the endpoint is configured with. Prompts are trimmed to fit
 		# inside it, so a wrong value here silently truncates the grounding
 		# rather than failing.

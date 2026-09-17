@@ -36,7 +36,10 @@ DEFAULT_SETTINGS = {
 	# 1024 truncates this model mid-JSON on a long thread -- the reply comes back
 	# as `Invalid JSON: EOF while parsing a string` and the tier reports
 	# "unavailable" for what is really a budget too small to finish the object.
-	"max_tokens": 2048,
+	# Room for a reasoning model to think AND answer: its thinking is charged to this
+	# budget too, and at 2048 an awkward question spent all of it and the reply came
+	# back empty (#237). An ordinary answer uses ~1,500; the rest is headroom.
+	"max_tokens": 4096,
 	# The model's context window, and the number the prompt builders size
 	# themselves against (``client.prompt_budget`` = this minus ``max_tokens``).
 	# It is *our* declaration of what the endpoint is serving, not something the
