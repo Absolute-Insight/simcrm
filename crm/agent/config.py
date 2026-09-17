@@ -113,6 +113,22 @@ class AgentConfig:
 				_warn_discarded(field, value)
 				return default
 
+		def to_positive_int(field, default):
+			"""For the settings where zero cannot be an instruction.
+
+			A Single's field default is not applied to a record that already exists, so a
+			site that upgrades across the release that added ``context_tokens`` loads it
+			as 0 and the next save stores that. Read literally it sized every prompt to
+			the ``MIN_PROMPT_TOKENS`` floor. A window, a reply budget or a timeout of
+			zero means nothing an admin could intend -- so it is "not set"."""
+			value = to_int(field, default)
+			if value <= 0:
+				if str(merged[field]).strip() not in ("0", "0.0"):
+					# a stored 0 is the upgrade's doing, not a typo worth a warning
+					_warn_discarded(field, merged[field])
+				return default
+			return value
+
 		return cls(
 			# Also via to_int: this module's contract is to degrade, never to raise, and a
 			# bare int() on a hand-edited or fixture-supplied value ("yes") threw a
@@ -120,9 +136,9 @@ class AgentConfig:
 			enabled=bool(to_int("enabled", DEFAULT_SETTINGS["enabled"])),
 			base_url=str(merged["base_url"]).rstrip("/"),
 			model=str(merged["model"]),
-			timeout=to_int("timeout", DEFAULT_SETTINGS["timeout"]),
-			max_tokens=to_int("max_tokens", DEFAULT_SETTINGS["max_tokens"]),
-			context_tokens=to_int("context_tokens", DEFAULT_SETTINGS["context_tokens"]),
+			timeout=to_positive_int("timeout", DEFAULT_SETTINGS["timeout"]),
+			max_tokens=to_positive_int("max_tokens", DEFAULT_SETTINGS["max_tokens"]),
+			context_tokens=to_positive_int("context_tokens", DEFAULT_SETTINGS["context_tokens"]),
 			daily_call_budget=to_int("daily_call_budget", DEFAULT_SETTINGS["daily_call_budget"]),
 			assistant_reads_products=bool(to_int("assistant_reads_products", 0)),
 			analyst_enabled=bool(to_int("analyst_enabled", 0)),
