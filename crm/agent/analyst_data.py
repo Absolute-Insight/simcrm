@@ -144,6 +144,8 @@ def _table(key, metric, source, rows, from_date, to_date, note="", error=None) -
 def _won_series(from_date, to_date) -> list[tuple[str, float]]:
 	from crm.api.dashboard import actual_by_month
 
+	# history only: a month that has not happened is unknown, not zero
+	to_date = min(str(to_date), frappe.utils.nowdate())
 	by_month = actual_by_month(from_date, to_date)
 	return [(month, float(by_month.get(month, 0.0))) for month in analyst.months_between(from_date, to_date)]
 
@@ -161,12 +163,18 @@ def _forecast_by_month(from_date, to_date):
 	return rows, "Open pipeline weighted by stage probability, by expected close month."
 
 
+def _history(from_date, to_date) -> tuple[str, str]:
+	return analyst.history_window(str(from_date), str(to_date), frappe.utils.getdate(frappe.utils.nowdate()))
+
+
 def _growth_rates(from_date, to_date):
-	return analyst.growth_rates(_won_series(from_date, to_date)), "Change is against the previous month."
+	return analyst.growth_rates(
+		_won_series(*_history(from_date, to_date))
+	), "Change is against the previous month."
 
 
 def _revenue_projection(from_date, to_date):
-	projection = analyst.project_revenue(_won_series(from_date, to_date))
+	projection = analyst.project_revenue(_won_series(*_history(from_date, to_date)))
 	return projection["points"], f"Projected months use a {projection['method']}; a trend, not booked deals."
 
 

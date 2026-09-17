@@ -192,7 +192,6 @@ const intro = __(
 const exampleQuestions = [
   __('How did revenue grow over the last six months?'),
   __('Which reps are behind quota this quarter?'),
-  __('Which deals and accounts are likely to go quiet?'),
   __('Project revenue for the next quarter'),
   __(
     'What came in as cash last month against what we invoiced? (needs an ERP)',
