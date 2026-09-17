@@ -1,3 +1,4 @@
+import json
 import time
 
 import frappe
@@ -5,6 +6,11 @@ import requests
 
 TOKEN_CACHE_PREFIX = "acumatica_token::"
 TIMEOUT = 30
+# A SalesOrder PUT runs the tenant's whole order pipeline (pricing, tax, customisations)
+# and routinely outlasts a read. Timing out a write that then succeeds is the expensive
+# mistake: the deal never learns its OrderNbr, and the rep's retry makes a second order.
+WRITE_TIMEOUT = 120
+_DETAIL_KEYS = ("error", "exceptionMessage", "message")
 
 
 class AcumaticaError(Exception):
@@ -12,6 +18,36 @@ class AcumaticaError(Exception):
 		super().__init__(message)
 		self.status_code = status_code
 		self.body = body
+
+	def detail(self, limit=500):
+		"""The human-readable reason inside the response body.
+
+		Acumatica answers a rejected PUT by echoing the entity back with an `error` key
+		nested inside whichever field failed, so the reason sits arbitrarily deep and
+		cutting the raw body at N characters usually cuts it off. Walk the JSON for it;
+		fall back to the raw text for a body that is not JSON (a proxy's HTML page)."""
+		body = self.body or ""
+		try:
+			parsed = json.loads(body) if isinstance(body, str) else body
+		except ValueError:
+			return str(body)[:limit]
+		found = []
+
+		def walk(node, path):
+			if isinstance(node, dict):
+				for key, val in node.items():
+					if key in _DETAIL_KEYS and isinstance(val, str) and val.strip():
+						msg = f"{path}: {val.strip()}" if path and key == "error" else val.strip()
+						if msg not in found:
+							found.append(msg)
+					else:
+						walk(val, key if isinstance(val, dict) else path)
+			elif isinstance(node, list):
+				for item in node:
+					walk(item, path)
+
+		walk(parsed, "")
+		return ("; ".join(found) or str(body))[:limit]
 
 
 def v(rec, field, default=None):
@@ -88,8 +124,15 @@ class AcumaticaClient:
 			token = self._token(force=attempt == 1)
 			headers = kw.pop("headers", {}) or {}
 			headers["Authorization"] = f"Bearer {token}"
+			branch = getattr(self.settings, "branch", None)
+			if branch:
+				# Under OAuth there is no session to carry a branch: Acumatica reads it
+				# from this header on every request, and without it a quote lands in
+				# the API user's default branch.
+				headers["PX-CbApiBranch"] = branch
 			fn = getattr(requests, method)
-			resp = fn(url, headers=headers, timeout=TIMEOUT, **dict(kw))
+			timeout = TIMEOUT if method == "get" else WRITE_TIMEOUT
+			resp = fn(url, headers=headers, timeout=timeout, **dict(kw))
 			if resp.status_code == 401 and attempt == 0:
 				frappe.cache().delete_value(self._cache_key())
 				continue
@@ -106,7 +149,9 @@ class AcumaticaClient:
 	def get_page(self, entity, top=100, skip=0, filter=None, select=None, expand=None, orderby="NoteID"):
 		# $skip paging over an unordered result set is undefined -- the server may return
 		# a record twice and skip another. NoteID is stable and present on every entity.
-		params = {"$top": top, "$skip": skip, "$orderby": orderby}
+		params = {"$top": top, "$skip": skip}
+		if orderby:
+			params["$orderby"] = orderby
 		if filter:
 			params["$filter"] = filter
 		if select:
@@ -114,6 +159,15 @@ class AcumaticaClient:
 		if expand:
 			params["$expand"] = expand
 		return self._request("get", self.entity_url(entity), params=params).json()
+
+	def get_by_id(self, entity, record_id):
+		"""One record by its `id` (the NoteID), or None when Acumatica no longer has it."""
+		try:
+			return self._request("get", f"{self.entity_url(entity)}/{record_id}").json()
+		except AcumaticaError as e:
+			if e.status_code == 404:
+				return None
+			raise
 
 	def iter_all(self, entity, page_size=100, **kw):
 		skip = 0
@@ -139,5 +193,7 @@ class AcumaticaClient:
 		"""One cheap, read-only call an admin's "Test connection" button can afford to
 		make synchronously. Errors are left to propagate -- the caller is the one that
 		knows whether to swallow them for a status panel or let them surface."""
-		page = self.get_page("Customer", top=1, select="CustomerID")
+		# No $orderby: one row needs no order, and the button that tells an admin whether
+		# the credentials work should not also depend on a query option.
+		page = self.get_page("Customer", top=1, select="CustomerID", orderby=None)
 		return {"ok": True, "sample": v(page[0], "CustomerID") if page else None}

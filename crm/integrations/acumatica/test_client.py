@@ -42,6 +42,28 @@ class TestValueHelpers(unittest.TestCase):
 		self.assertEqual(out["Details"][0]["InventoryID"], {"value": "W1"})
 
 
+class TestErrorDetail(unittest.TestCase):
+	def test_finds_the_field_error_nested_in_an_echoed_entity(self):
+		body = (
+			'{"id": "x", "CustomerID": {"value": "ZZZ", "error": "Customer cannot be found."},'
+			' "Details": [{"InventoryID": {"value": "V1", "error": "Item is inactive."}}],'
+			' "padding": "' + "p" * 2000 + '"}'
+		)
+		detail = AcumaticaError("PUT -> 422", status_code=422, body=body).detail()
+		self.assertIn("CustomerID: Customer cannot be found.", detail)
+		self.assertIn("InventoryID: Item is inactive.", detail)
+
+	def test_reads_the_exception_message_of_a_500(self):
+		body = '{"message": "An error has occurred.", "exceptionMessage": "Branch is required."}'
+		self.assertIn("Branch is required.", AcumaticaError("x", body=body).detail())
+
+	def test_falls_back_to_raw_text_for_a_body_that_is_not_json(self):
+		self.assertEqual(
+			AcumaticaError("x", body="<html>Bad gateway</html>").detail(), "<html>Bad gateway</html>"
+		)
+		self.assertEqual(AcumaticaError("x").detail(), "")
+
+
 class TestClient(FrappeTestCase):
 	def setUp(self):
 		frappe.cache().delete_value("acumatica_token::https://t.acumatica.com")
@@ -97,6 +119,49 @@ class TestClient(FrappeTestCase):
 
 	@patch("crm.integrations.acumatica.client.requests.post")
 	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_branch_rides_on_every_request_as_a_header(self, rget, rpost):
+		"""OAuth has no session to hold a branch; Acumatica reads PX-CbApiBranch per call."""
+		rpost.return_value = _resp(200, {"access_token": "t", "expires_in": 3600})
+		rget.return_value = _resp(200, [])
+		AcumaticaClient(_settings(branch="MAIN")).get_page("Customer")
+		self.assertEqual(rget.call_args.kwargs["headers"]["PX-CbApiBranch"], "MAIN")
+		AcumaticaClient(_settings()).get_page("Customer")
+		self.assertNotIn("PX-CbApiBranch", rget.call_args.kwargs["headers"])
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.put")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_a_write_is_given_longer_than_a_read(self, rget, rput, rpost):
+		from crm.integrations.acumatica.client import TIMEOUT, WRITE_TIMEOUT
+
+		rpost.return_value = _resp(200, {"access_token": "t", "expires_in": 3600})
+		rget.return_value = _resp(200, [])
+		rput.return_value = _resp(200, {})
+		c = AcumaticaClient(_settings())
+		c.get_page("Customer")
+		c.put("SalesOrder", {"OrderType": "QT"})
+		self.assertEqual(rget.call_args.kwargs["timeout"], TIMEOUT)
+		self.assertEqual(rput.call_args.kwargs["timeout"], WRITE_TIMEOUT)
+		self.assertGreater(WRITE_TIMEOUT, TIMEOUT)
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_get_by_id_fetches_the_record_url_and_treats_404_as_gone(self, rget, rpost):
+		rpost.return_value = _resp(200, {"access_token": "t", "expires_in": 3600})
+		rget.return_value = _resp(200, {"CustomerID": {"value": "A"}})
+		c = AcumaticaClient(_settings())
+		self.assertEqual(v(c.get_by_id("Customer", "g-1"), "CustomerID"), "A")
+		self.assertEqual(
+			rget.call_args[0][0], "https://t.acumatica.com/entity/Default/24.200.001/Customer/g-1"
+		)
+		rget.return_value = _resp(404, {})
+		self.assertIsNone(c.get_by_id("Customer", "g-gone"))
+		rget.return_value = _resp(500, {})
+		with self.assertRaises(AcumaticaError):
+			c.get_by_id("Customer", "g-1")
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
 	def test_401_reauthenticates_once_then_raises(self, rget, rpost):
 		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": 3600})
 		rget.return_value = _resp(401, {})
@@ -132,6 +197,8 @@ class TestClient(FrappeTestCase):
 		self.assertEqual(out, {"ok": True, "sample": "A"})
 		self.assertEqual(rget.call_args.kwargs["params"]["$top"], 1)
 		self.assertEqual(rget.call_args.kwargs["params"]["$select"], "CustomerID")
+		# the credentials check must not hinge on a query option a tenant may refuse
+		self.assertNotIn("$orderby", rget.call_args.kwargs["params"])
 
 	@patch("crm.integrations.acumatica.client.requests.post")
 	@patch("crm.integrations.acumatica.client.requests.get")

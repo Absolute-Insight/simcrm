@@ -60,7 +60,7 @@ def test_connection() -> dict:
 		return client.ping()
 	except AcumaticaError as e:
 		if e.status_code:
-			error = f"{e.status_code}: {(e.body or '')[:300]}"
+			error = f"{e.status_code}: {e.detail(300)}"
 		else:
 			error = str(e)
 		return {"ok": False, "error": error}
