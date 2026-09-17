@@ -16,6 +16,7 @@ import {
   draftStatusMessage,
   fieldUpdateSpec,
   isDraftUsable,
+  draftBodyToHtml,
   labelFieldsFor,
   nextMorning,
   parseActionPayload,
@@ -272,14 +273,17 @@ export const suggestionsStore = defineStore('crm-suggestions', () => {
    */
   async function sendReply(suggestion, payload) {
     let draft = null
+    let replyTo = ''
     let degraded = ''
     try {
       const result = await call('crm.agent.api.draft_reply', {
         reference_doctype: suggestion.reference_doctype,
         reference_name: suggestion.reference_docname,
       })
-      if (isDraftUsable(result)) draft = result.draft
-      else degraded = draftStatusMessage(result?.status, result?.reason)
+      if (isDraftUsable(result)) {
+        draft = result.draft
+        replyTo = result.reply_to || ''
+      } else degraded = draftStatusMessage(result?.status, result?.reason)
     } catch {
       // rate limit, permission, anything: the reply is still writable by hand
       degraded = draftStatusMessage('unavailable')
@@ -304,9 +308,9 @@ export const suggestionsStore = defineStore('crm-suggestions', () => {
       ],
       required: ['recipients', 'subject', 'content'],
       defaults: {
-        recipients: payload.recipients || '',
+        recipients: payload.recipients || replyTo,
         subject: draft?.subject || payload.title || suggestion.title,
-        content: sanitizeHTML(draft?.body || ''),
+        content: sanitizeHTML(draftBodyToHtml(draft?.body)),
       },
       submitLabel: __('Send email'),
       cancelLabel: __('Cancel'),

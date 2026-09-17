@@ -18,6 +18,7 @@ import {
   healthBand,
   healthMeterPercent,
   isDraftUsable,
+  draftBodyToHtml,
   labelFieldsFor,
   nextMorning,
   parseActionPayload,
@@ -514,5 +515,33 @@ describe('spent budget on the record surfaces', () => {
       /could not be reached/,
     )
     expect(draftStatusMessage('unavailable')).toMatch(/could not be reached/)
+  })
+})
+
+describe('draftBodyToHtml', () => {
+  // The model writes plain text; the compose window is an HTML editor, which
+  // folds every newline away and shows markdown markers as literal asterisks.
+  it('turns blank-line paragraphs and single newlines into markup', () => {
+    expect(draftBodyToHtml('Hi Thabo,\n\nLine one\nLine two\n\nRegards')).toBe(
+      '<p>Hi Thabo,</p><p>Line one<br>Line two</p><p>Regards</p>',
+    )
+  })
+
+  it('renders markdown bold instead of showing the asterisks', () => {
+    expect(draftBodyToHtml('1. **Lead time**: six weeks')).toBe(
+      '<p>1. <strong>Lead time</strong>: six weeks</p>',
+    )
+  })
+
+  it('escapes markup, because the draft is written from a counterparty thread', () => {
+    expect(draftBodyToHtml('a <img src=x onerror=alert(1)> & b')).toBe(
+      '<p>a &lt;img src=x onerror=alert(1)&gt; &amp; b</p>',
+    )
+  })
+
+  it('has nothing to say about an empty draft', () => {
+    expect(draftBodyToHtml('')).toBe('')
+    expect(draftBodyToHtml(null)).toBe('')
+    expect(draftBodyToHtml('  \n\n ')).toBe('')
   })
 })
