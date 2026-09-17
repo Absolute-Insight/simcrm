@@ -56,6 +56,13 @@ docker compose exec backend bench --site all migrate
 docker compose exec backend bench --site <site> set-maintenance-mode off
 ```
 
+**Running the local model? Add `--profile local-model` to `pull` and `up -d`.** A
+service behind a profile is invisible to a plain `up -d`: `ollama` is never
+recreated and never picks up a changed setting. Production sat on a 4096-token
+server for seventeen days this way while prompts were sized for 8192. Verify with
+`docker inspect <project>-ollama-1 ... | grep OLLAMA_CONTEXT_LENGTH`, not by
+reading the compose file.
+
 Maintenance mode is not ceremony: `up -d` serves new code immediately and
 `migrate` then takes minutes on a real dataset — new code against old schema is
 the one combination nothing is tested against. Note `set-maintenance-mode` takes

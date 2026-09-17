@@ -250,6 +250,21 @@ docker compose exec backend bench --site all migrate
 docker compose exec backend bench --site <site> set-maintenance-mode off
 ```
 
+**If you run the local model, say so on every `pull` and `up`** —
+`docker compose --profile local-model pull` and
+`docker compose --profile local-model up -d` (or set `COMPOSE_PROFILES=local-model`
+in `.env` once). A service behind a profile is invisible to a plain `up -d`, so
+`ollama` is never recreated and never picks up a changed setting. Production ran
+for seventeen days on a container created before `OLLAMA_CONTEXT_LENGTH` existed:
+the server stayed at ollama's 4096 default while prompts were sized for 8192, so
+the Analyst's larger tables were refused as `context_length` and long Assistant
+and Mentor prompts lost their head — the system instruction and the grounding.
+Check what the server is actually running with, not what the file says:
+
+```bash
+docker inspect <project>-ollama-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep OLLAMA_CONTEXT_LENGTH
+```
+
 **If you skip step 1, nothing upgrades** — `pull` re-fetches the same pinned
 tag and `up -d` finds nothing to replace. That is the intended trade: an
 upgrade you have to ask for, and a `.env` that records what is running when
