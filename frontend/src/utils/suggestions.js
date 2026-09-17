@@ -352,6 +352,33 @@ export function isDraftUsable(result) {
   return result?.status === 'ok' && Boolean(result.draft)
 }
 
+/**
+ * A model's plain-text draft as markup for the compose editor.
+ *
+ * The editor is HTML: handed raw text it folds every newline into one paragraph
+ * and shows markdown bold as literal asterisks. Everything is escaped first —
+ * the draft is written from a thread the counterparty contributed to — and only
+ * then do the paragraph, line-break and bold tags go in.
+ */
+export function draftBodyToHtml(text) {
+  const escaped = String(text || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  return escaped
+    .split(/\n\s*\n/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((block) => {
+      const html = block
+        .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n/g, '<br>')
+      return `<p>${html}</p>`
+    })
+    .join('')
+}
+
 function pad(value) {
   return String(value).padStart(2, '0')
 }
