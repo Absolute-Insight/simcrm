@@ -105,6 +105,27 @@ class AgentConfigTest(UnitTestCase):
 		cfg = AgentConfig.from_settings({"api_key": "sk-secret"}).with_overrides(model="candidate")
 		self.assertEqual(cfg.api_key, "sk-secret")
 
+	def test_a_zero_window_timeout_or_reply_budget_falls_back_to_the_default(self):
+		"""A site that upgraded across the release that added Context Window loads the
+		new Int field as 0 (a Single's field default is not applied to a record that
+		already exists), and the next save stores it. Taken literally, 0 sized every
+		prompt to the 512-token floor: grounding articles and figures were trimmed to
+		almost nothing, and any table that could not fit was refused as context_length.
+		None of the three can mean anything at zero, so zero is "not set"."""
+		cfg = AgentConfig.from_settings({"context_tokens": 0, "max_tokens": "0", "timeout": -5})
+		self.assertEqual(cfg.context_tokens, DEFAULT_SETTINGS["context_tokens"])
+		self.assertEqual(cfg.max_tokens, DEFAULT_SETTINGS["max_tokens"])
+		self.assertEqual(cfg.timeout, DEFAULT_SETTINGS["timeout"])
+
+	def test_a_zero_daily_budget_is_kept_because_it_means_something(self):
+		self.assertEqual(AgentConfig.from_settings({"daily_call_budget": 0}).daily_call_budget, 0)
+
+	def test_a_zero_window_does_not_starve_the_prompt_budget(self):
+		from crm.agent.client import MIN_PROMPT_TOKENS, prompt_budget
+
+		cfg = AgentConfig.from_settings({"context_tokens": 0})
+		self.assertGreater(prompt_budget(cfg), MIN_PROMPT_TOKENS)
+
 	def test_the_daily_budget_has_a_default_and_survives_a_bad_value(self):
 		self.assertEqual(
 			AgentConfig.from_settings({}).daily_call_budget, DEFAULT_SETTINGS["daily_call_budget"]
