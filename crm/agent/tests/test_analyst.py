@@ -96,6 +96,51 @@ class FallbackPlanTest(UnitTestCase):
 		)
 
 
+class RowListSummaryTest(UnitTestCase):
+	"""A reasoning model walks a row list row by row, and its thinking is charged to
+	the reply budget (#237). Vectora does the counting; the model reads the result."""
+
+	ROWS = (
+		{
+			"deal": "D1",
+			"owner": "Ann",
+			"value": 100.0,
+			"reasons": "No activity for 12 days; No open task scheduled",
+		},
+		{
+			"deal": "D2",
+			"owner": "Ann",
+			"value": 50.0,
+			"reasons": "No activity for 40 days; Expected close date passed 3 days ago",
+		},
+		{"deal": "D3", "owner": "", "value": 25.5, "reasons": "No open task scheduled"},
+	)
+
+	def test_it_counts_totals_owners_and_reasons(self):
+		lines = analyst.summarise_at_risk(list(self.ROWS))
+		self.assertIn("3 deals at risk, total value 175.5", lines[0])
+		joined = "\n".join(lines)
+		self.assertIn("Ann: 2 deals, value 150.0", joined)
+		self.assertIn("(no owner): 1 deals, value 25.5", joined)
+		# the day counts differ per deal; the reason is the same reason
+		self.assertIn("No activity for some days: 2 deals", joined)
+		self.assertIn("No open task scheduled: 2 deals", joined)
+
+	def test_it_says_the_rows_shown_are_only_the_worst(self):
+		"""Shown the twelve lowest-scoring rows, the model reported that all 2,055 deals
+		scored 19."""
+		rows = [
+			{"deal": "D1", "health_score": 19, "value": 1.0},
+			{"deal": "D2", "health_score": 38, "value": 1.0},
+		]
+		summary = "\n".join(analyst.summarise_at_risk(rows))
+		self.assertIn("Health scores run from 19 to 38", summary)
+		self.assertIn("Deals by health score: 10-19: 1 deals, 30-39: 1 deals", summary)
+
+	def test_no_rows_no_summary(self):
+		self.assertEqual(analyst.summarise_at_risk([]), [])
+
+
 class HistoryWindowTest(UnitTestCase):
 	"""Won revenue is history. The plan's period comes from a model, and asked to
 	"project next quarter" it names the quarter it wants to know about -- on
@@ -315,6 +360,49 @@ class AnswerBudgetTest(UnitTestCase):
 		self.assertIn(analyst.FIGURES_TRUNCATION_NOTE, system)
 		self.assertNotIn("Table 3", system)
 		self.assertTrue(system.rstrip().endswith(analyst.FIGURES_END))
+
+	def test_a_table_too_big_for_the_budget_keeps_the_rows_that_fit(self):
+		"""#237: the at-risk table (60 rows, ~15k characters) was dropped whole once the
+		budget fell below it. The model was handed an empty block under the table's
+		name and answered with figures that were in no table at all."""
+		table = {
+			"key": "deals_at_risk",
+			"title": "Deals at risk",
+			"source": "CRM",
+			"rows": [{"deal": f"D-{index:04d}", "reasons": "r" * 200} for index in range(60)],
+		}
+		system = analyst.build_answer_messages("q", [table], {}, max_chars=5000)[0]["content"]
+		self.assertIn("Deals at risk", system)
+		self.assertIn("D-0000", system)
+		self.assertNotIn("D-0059", system)
+		self.assertIn("more rows not shown", system)
+		self.assertLessEqual(len(system), 5000)
+
+	def test_a_summary_is_written_before_the_rows_and_survives_trimming(self):
+		table = {
+			"key": "deals_at_risk",
+			"title": "Deals at risk",
+			"source": "CRM",
+			"summary": ["2055 deals, total value 357358471.0", "MBP Rep 2 (018): 140 deals"],
+			"rows": [{"deal": f"D-{index:04d}", "reasons": "r" * 200} for index in range(60)],
+		}
+		system = analyst.build_answer_messages("q", [table], {}, max_chars=3200)[0]["content"]
+		self.assertIn("2055 deals, total value 357358471.0", system)
+		self.assertLess(system.index("2055 deals"), system.index("D-0000"))
+
+	def test_a_table_may_hand_the_model_fewer_rows_than_the_screen_gets(self):
+		table = {
+			"key": "deals_at_risk",
+			"title": "Deals at risk",
+			"source": "CRM",
+			"model_rows": 5,
+			"rows": [{"deal": f"D-{index:04d}"} for index in range(40)],
+		}
+		system = analyst.build_answer_messages("q", [table], {})[0]["content"]
+		self.assertIn("D-0004", system)
+		self.assertNotIn("D-0005", system)
+		self.assertIn("35 more rows not shown", system)
+		self.assertEqual(len(table["rows"]), 40)  # the caller's table is not cut
 
 	def test_history_loses_its_oldest_turns_before_the_figures_do(self):
 		history = [{"role": "user", "content": f"turn{i} " + "y" * 1500} for i in range(6)]

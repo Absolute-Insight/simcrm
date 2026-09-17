@@ -464,6 +464,73 @@ def project_revenue(series: list[tuple[str, float]], horizon: int = PROJECTION_H
 	}
 
 
+# --- row lists ---------------------------------------------------------------
+
+# A row list is evidence, not the finding. A reasoning model walks it row by row
+# and its thinking is charged to the reply budget (#237): sixty at-risk deals cost
+# 7,000 tokens of thought against a 2,048-token reply, and the answer never came.
+# Vectora does the counting and the model is handed the result plus the rows at
+# the top of the list; the screen still gets every row.
+ROW_LIST_MODEL_ROWS = 12
+SUMMARY_GROUPS = 8
+_DIGITS = re.compile(r"\d+(?:\.\d+)?")
+
+
+def summarise_at_risk(rows: list[dict]) -> list[str]:
+	"""Totals, owners and reasons for the at-risk list, as lines for the figures block.
+
+	Reasons differ per deal only in their numbers ("No activity for 12 days"), so
+	the numbers are folded to "some" -- a word, because the model repeats whatever
+	placeholder it is given: what a manager wants is how many deals share a
+	reason, not sixty sentences that say the same thing.
+	"""
+	if not rows:
+		return []
+	total = round(sum(float(row.get("value") or 0) for row in rows), 2)
+	lines = [f"{len(rows)} deals at risk, total value {total}"]
+	scores = [int(row["health_score"]) for row in rows if row.get("health_score") is not None]
+	if scores:
+		# the rows shown are the worst ones, and read alone they say "every deal scores 19"
+		lines.append(
+			f"Health scores run from {min(scores)} to {max(scores)}; the rows below are the lowest-scoring only"
+		)
+		bands: dict[int, int] = {}
+		for score in scores:
+			bands[score // 10 * 10] = bands.get(score // 10 * 10, 0) + 1
+		lines.append(
+			"Deals by health score: "
+			+ ", ".join(f"{low}-{low + 9}: {count} deals" for low, count in sorted(bands.items()))
+		)
+
+	owners: dict[str, list[float]] = {}
+	for row in rows:
+		owners.setdefault(row.get("owner") or "(no owner)", []).append(float(row.get("value") or 0))
+	ranked = sorted(owners.items(), key=lambda item: (-len(item[1]), item[0]))
+	lines.append("By owner:")
+	lines.extend(
+		f"- {owner}: {len(values)} deals, value {round(sum(values), 2)}"
+		for owner, values in ranked[:SUMMARY_GROUPS]
+	)
+	if len(ranked) > SUMMARY_GROUPS:
+		lines.append(f"- ({len(ranked) - SUMMARY_GROUPS} more owners not shown)")
+
+	reasons: dict[str, int] = {}
+	for row in rows:
+		for reason in str(row.get("reasons") or "").split(";"):
+			reason = _DIGITS.sub("some", reason.strip())
+			if reason:
+				reasons[reason] = reasons.get(reason, 0) + 1
+	if reasons:
+		lines.append("By reason (a deal can have several):")
+		lines.extend(
+			f"- {reason}: {count} deals"
+			for reason, count in sorted(reasons.items(), key=lambda item: (-item[1], item[0]))[
+				:SUMMARY_GROUPS
+			]
+		)
+	return lines
+
+
 # --- prompts -----------------------------------------------------------------
 
 PLAN_SYSTEM_PROMPT = (
@@ -586,28 +653,49 @@ def _figures_block(tables: list[dict], period: dict, budget: int | None = None, 
 		entry = [f"\n## {_fenced(table.get('title', table.get('key', '')))} [{source}]"]
 		if table.get("note"):
 			entry.append(_fenced(table["note"]))
+		# computed by Vectora, so the model reads a count instead of doing one
+		entry.extend(_fenced(line) for line in table.get("summary") or [])
+		rows = []
 		if table.get("error"):
 			entry.append(f"UNAVAILABLE: this source could not be reached ({_fenced(table['error'])}).")
 		else:
 			rows = table.get("rows") or []
 			if not rows:
 				entry.append("(no rows in the period)")
-			else:
-				shown = rows[:FIGURES_ROW_CAP]
-				entry.append(_fenced(json.dumps(shown, default=str, ensure_ascii=False)))
-				if len(rows) > len(shown):
-					entry.append(f"({len(rows) - len(shown)} more rows not shown)")
+		wanted = min(len(rows), FIGURES_ROW_CAP, int(table.get("model_rows") or FIGURES_ROW_CAP))
+		shown = rows[:wanted]
 		if remaining is not None:
-			cost = sum(len(line) + 1 for line in entry)
-			if cost > remaining:
+			fixed = sum(len(line) + 1 for line in entry)
+			# A table that does not fit whole keeps the rows that do. Dropping it whole
+			# left its heading over nothing, and the model answered from nothing.
+			while shown and fixed + _rows_cost(shown, len(rows)) > remaining:
+				shown = shown[: len(shown) * 3 // 4]
+			if fixed + (_rows_cost(shown, len(rows)) if shown else 0) > remaining or (rows and not shown):
 				truncated = True
 				break
-			remaining -= cost
+			# a table capped on purpose is not one that was cut to fit
+			truncated = truncated or len(shown) < wanted
+		entry.extend(_row_lines(shown, len(rows)))
+		if remaining is not None:
+			remaining -= sum(len(line) + 1 for line in entry)
 		lines.extend(entry)
 	if truncated:
 		lines.append(FIGURES_TRUNCATION_NOTE)
 	lines.append(FIGURES_END)
 	return "\n".join(lines)
+
+
+def _row_lines(shown: list[dict], total: int) -> list[str]:
+	if not shown:
+		return []
+	lines = [_fenced(json.dumps(shown, default=str, ensure_ascii=False))]
+	if total > len(shown):
+		lines.append(f"({total - len(shown)} more rows not shown)")
+	return lines
+
+
+def _rows_cost(shown: list[dict], total: int) -> int:
+	return sum(len(line) + 1 for line in _row_lines(shown, total))
 
 
 def _fenced(value) -> str:
