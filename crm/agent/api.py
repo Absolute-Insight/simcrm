@@ -320,7 +320,20 @@ def draft_reply(reference_doctype: str, reference_name: str) -> dict:
 		if failed:
 			return failed
 
-	return {"status": "ok", "draft": draft.model_dump()}
+	return {"status": "ok", "draft": draft.model_dump(), "reply_to": _latest_outside_sender(thread)}
+
+
+def _latest_outside_sender(thread: list[dict]) -> str:
+	"""Who a reply to this thread goes to: the newest sender who is not one of us.
+
+	The thread is newest first and mixes inbound mail with the team's own outbound
+	messages, whose sender is a User. The rep still reads and can change the address
+	-- this only saves them retyping one the record already holds."""
+	for row in thread:
+		sender = (row.get("sender") or "").strip()
+		if sender and not frappe.db.exists("User", sender):
+			return sender
+	return ""
 
 
 @frappe.whitelist()

@@ -92,6 +92,26 @@ class EmptyThreadTest(IntegrationTestCase):
 		throttled.assert_not_called()
 		complete.assert_not_called()
 
+	def test_draft_reply_names_the_latest_outside_sender_as_the_recipient(self):
+		"""The compose window opened with an empty To: on a reply to a known sender.
+		The thread is newest first; a colleague's own outbound mail is not who to answer."""
+		thread = [
+			{"name": "C3", "creation": "2026-08-03", "sender": "Administrator", "content": "internal"},
+			{"name": "C2", "creation": "2026-08-02", "sender": "buyer@acme.test", "content": "any news?"},
+			{"name": "C1", "creation": "2026-08-01", "sender": "first@acme.test", "content": "hello"},
+		]
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			no_budget_check(),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=thread),
+			mock.patch.object(api_mod.actions, "propose_reply") as propose,
+		):
+			propose.return_value.model_dump.return_value = {"subject": "Re: hello", "body": "Hi"}
+			result = api_mod.draft_reply("CRM Deal", "CRM-DEAL-0001")
+		self.assertEqual(result["status"], "ok")
+		self.assertEqual(result["reply_to"], "buyer@acme.test")
+
 	def test_draft_reply_reports_empty_the_same_way(self):
 		with (
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
