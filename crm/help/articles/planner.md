@@ -39,6 +39,19 @@ deleted, the Done goes away again. Items past the matching horizon are settled
 as Missed and the week becomes read-only. A missed item is itself a signal: it
 comes back to you in the suggestions inbox as a *stale plan*.
 
+## Logging a visit you did not plan
+
+Called to site for a breakdown, or dropped in on a customer while you were
+nearby? Use **Log a visit** at the top of the Planner rather than creating a
+task. Choose the **Organization**, say **what happened**, and optionally set
+**When** (it defaults to now) and relate the visit to a **Deal** or **Lead**.
+
+Logging it does three things in one step: it adds a meeting to your calendar at
+that time, adds an item to that week's plan already marked **Done**, and counts
+towards your plan adherence. If the visit belongs to a different week than the
+one on screen, the Planner tells you which week it went to. A logged visit is
+your word as the record — the daily matcher leaves it alone.
+
 ## Correcting the matcher
 
 If the matcher gets an item wrong, mark it fulfilled or missed yourself — a
