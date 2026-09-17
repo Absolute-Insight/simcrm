@@ -108,7 +108,7 @@ def push_customer_for_deal(deal: str) -> None:
 		# blip, a read timeout or an HTML error page from a proxy (json() raises
 		# ValueError/JSONDecodeError) must land in the sync-issues table like any
 		# other push failure rather than just dying in the worker log.
-		record_sync_issue("Customer", org.name, "Push Failed", f"{e} :: {getattr(e, 'body', '')}")
+		record_sync_issue("Customer", org.name, "Push Failed", f"{e} :: {_reason(e)}")
 		return
 
 	frappe.db.set_value(
@@ -117,6 +117,10 @@ def push_customer_for_deal(deal: str) -> None:
 		{"acumatica_noteid": v(created, "NoteID"), "acumatica_id": v(created, "CustomerID")},
 	)
 	frappe.db.set_value("CRM Deal", doc.name, "acumatica_customer", v(created, "CustomerID"))
+
+
+def _reason(e) -> str:
+	return e.detail() if isinstance(e, AcumaticaError) else str(e)
 
 
 def _customer_id_collision(client, customer_id: str, org_name: str) -> str | None:
@@ -141,7 +145,7 @@ def _customer_id_collision(client, customer_id: str, org_name: str) -> str | Non
 	try:
 		taken = _remote_customer_exists(client, customer_id)
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
-		return f"could not check whether CustomerID {customer_id} is free: {e} :: {getattr(e, 'body', '')}"
+		return f"could not check whether CustomerID {customer_id} is free: {e} :: {_reason(e)}"
 	if taken:
 		return f"CustomerID {customer_id} derived from the name already exists in Acumatica"
 	return None
@@ -225,7 +229,21 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 	if locked_quote:
 		frappe.throw(_("Sales quote {0} already exists in Acumatica").format(locked_quote))
 
-	created = AcumaticaClient(settings).put("SalesOrder", payload)
+	try:
+		created = AcumaticaClient(settings).put("SalesOrder", payload)
+	except requests.Timeout:
+		# Not "it failed": the order may well exist. Say so, or the natural retry
+		# makes a second one in the client's ERP.
+		frappe.throw(
+			_(
+				"Acumatica did not answer in time. The quote may still have been created — "
+				"check Sales Orders in Acumatica for this customer before trying again."
+			)
+		)
+	except (AcumaticaError, requests.RequestException, ValueError) as e:
+		# The status line alone ("PUT ... -> 422") tells a rep nothing; the reason
+		# Acumatica gave is in the body.
+		frappe.throw(_("Acumatica refused the sales quote: {0}").format(_reason(e)))
 	order_nbr = v(created, "OrderNbr") or ""
 	if order_nbr:
 		frappe.db.set_value("CRM Deal", deal.name, "acumatica_sales_quote", order_nbr)

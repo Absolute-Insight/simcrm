@@ -10,7 +10,7 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 	record_sync_issue,
 	set_pending_retries,
 )
-from crm.integrations.acumatica.client import AcumaticaClient, v
+from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError, v
 from crm.integrations.acumatica.names import normalise_account_name
 
 try:
@@ -231,13 +231,14 @@ def _retry_pending(client, pending: dict, counts: dict) -> None:
 			frappe.db.savepoint("acumatica_retry")
 			rec = None
 			try:
-				page = client.get_page(entity, top=1, filter=f"NoteID eq guid'{noteid}'")
-				if not page:
+				# By id, not by $filter: a record's `id` IS its NoteID, and retrieval by id
+				# is documented where a guid literal inside $filter is not.
+				rec = client.get_by_id(entity, noteid)
+				if not rec:
 					# Deleted in Acumatica since it failed: there is nothing left to
 					# import and nothing to warn anybody about.
 					del queued[noteid]
 					continue
-				rec = page[0]
 				if upsert(rec) is not None:
 					counts[counter] += 1
 				del queued[noteid]
@@ -282,7 +283,8 @@ def run_backfill(modified_since: str | None = None) -> dict:
 				# The run died where the per-record savepoint could not catch it --
 				# expired credentials, a dropped connection. Without this an admin sees
 				# only a high-water mark that quietly stopped moving.
-				frappe.db.set_single_value("CRM Acumatica Settings", "last_sync_error", str(e)[:500])
+				reason = f"{e} :: {e.detail(400)}" if isinstance(e, AcumaticaError) else str(e)
+				frappe.db.set_single_value("CRM Acumatica Settings", "last_sync_error", reason[:500])
 				# the failing job's transaction is about to be rolled back around us
 				frappe.db.commit()  # nosemgrep: frappe-manual-commit
 				raise

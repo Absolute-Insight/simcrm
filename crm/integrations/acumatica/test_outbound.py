@@ -430,6 +430,42 @@ class TestCreateSalesQuote(FrappeTestCase):
 		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "acumatica_sales_quote"), "QT000123")
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_refused_quote_tells_the_rep_why(self, ClientCls):
+		"""The status line says "PUT ... -> 422"; the reason is nested in the body."""
+		from crm.integrations.acumatica.client import AcumaticaError
+
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.side_effect = AcumaticaError(
+			"Acumatica PUT SalesOrder -> 422",
+			status_code=422,
+			body='{"CustomerID": {"value": "X", "error": "Customer is on credit hold."}}',
+		)
+		_org, deal = _mapped_deal()
+
+		with self.assertRaises(frappe.ValidationError) as ctx:
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertIn("Customer is on credit hold.", str(ctx.exception))
+		self.assertFalse(frappe.db.get_value("CRM Deal", deal.name, "acumatica_sales_quote"))
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_timed_out_quote_warns_that_it_may_exist(self, ClientCls):
+		import requests
+
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.side_effect = requests.ReadTimeout("read timed out")
+		_org, deal = _mapped_deal()
+
+		with self.assertRaises(frappe.ValidationError) as ctx:
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertIn("may still have been created", str(ctx.exception))
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_second_call_refuses_to_create_a_duplicate_quote(self, ClientCls):
 		_enable()
 		client = MagicMock()

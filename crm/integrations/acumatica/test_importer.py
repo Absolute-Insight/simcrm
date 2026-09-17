@@ -365,7 +365,7 @@ class TestBackfill(ImporterTestCase):
 		suffix = frappe.generate_hash(length=6)
 		bad = _customer(suffix, self._contested_org(suffix))
 		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
-		client.get_page.return_value = [bad]
+		client.get_by_id.return_value = bad
 
 		importer.run_backfill()
 
@@ -397,14 +397,14 @@ class TestBackfill(ImporterTestCase):
 		suffix = frappe.generate_hash(length=6)
 		bad = _customer(suffix, self._contested_org(suffix))
 		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
-		client.get_page.return_value = [bad]
+		client.get_by_id.return_value = bad
 
 		importer.run_backfill()
 		self.assertEqual(self._pending()["Customer"][f"retry-{suffix}"], 1)
 
 		# the admin renames the customer in Acumatica; the retry re-fetches it and it lands
 		client.iter_all.side_effect = lambda entity, **kw: iter([])
-		client.get_page.return_value = [_customer(suffix, f"Freed {suffix}")]
+		client.get_by_id.return_value = _customer(suffix, f"Freed {suffix}")
 
 		importer.run_backfill()
 
@@ -432,7 +432,7 @@ class TestBackfill(ImporterTestCase):
 		bad = _customer(suffix, self._contested_org(suffix))
 		# offered by BOTH passes on every run, which is what an unfiltered backfill does
 		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
-		client.get_page.return_value = [bad]
+		client.get_by_id.return_value = bad
 
 		for _ in range(importer.MAX_RETRY_ATTEMPTS):
 			importer.run_backfill()
@@ -465,7 +465,7 @@ class TestBackfill(ImporterTestCase):
 		importer.run_backfill()
 
 		client.iter_all.side_effect = lambda entity, **kw: iter([])
-		client.get_page.side_effect = RuntimeError("Acumatica GET Customer -> 503")
+		client.get_by_id.side_effect = RuntimeError("Acumatica GET Customer -> 503")
 		for _ in range(importer.MAX_RETRY_ATTEMPTS - 1):
 			importer.run_backfill()  # must not let a dead endpoint abort the sweep
 
@@ -517,7 +517,7 @@ class TestBackfill(ImporterTestCase):
 		suffix = frappe.generate_hash(length=6)
 		bad = _customer(suffix, self._contested_org(suffix))
 		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
-		client.get_page.return_value = [bad]
+		client.get_by_id.return_value = bad
 
 		importer.run_backfill()
 		self.assertEqual(self._pending()["Customer"][f"retry-{suffix}"], 1)
