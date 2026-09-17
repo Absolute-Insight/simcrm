@@ -596,7 +596,12 @@ def ask_analyst(question: str, history: str | list | None = None) -> dict:
 				cfg,
 				AnalystAnswer,
 				analyst.build_answer_messages(
-					question, tables, period, turns, max_chars=client.prompt_char_budget(cfg)
+					question,
+					tables,
+					period,
+					turns,
+					max_chars=client.prompt_char_budget(cfg),
+					currency=get_base_currency(),
 				),
 				deadline=deadline,
 			),

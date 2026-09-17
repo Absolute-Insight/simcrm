@@ -304,6 +304,26 @@ def months_between(from_date: str, to_date: str) -> list[str]:
 	return months
 
 
+# A least-squares line through fewer months than this is a line through noise.
+MIN_HISTORY_MONTHS = 3
+
+
+def history_window(from_date: str, to_date: str, today: date) -> tuple[str, str]:
+	"""The part of a period that has happened, for the metrics that read history.
+
+	Won revenue exists only up to today, but the period is chosen by a model, and a
+	model asked to "project next quarter" names the quarter it wants to know about.
+	Every month of that is a future month worth 0, and a trend fitted through zeros
+	projects zero. So the window stops at today, and a window left with too little
+	history to fit anything becomes the default trailing one.
+	"""
+	start = _parse_date(from_date) or add_months(today, -DEFAULT_PERIOD_MONTHS)
+	end = min(_parse_date(to_date) or today, today)
+	if start > end or len(months_between(start.isoformat(), end.isoformat())) < MIN_HISTORY_MONTHS:
+		start, end = add_months(today, -DEFAULT_PERIOD_MONTHS), today
+	return start.isoformat(), end.isoformat()
+
+
 def _parse_date(value) -> date | None:
 	if not isinstance(value, str) or not value.strip():
 		return None
@@ -505,8 +525,12 @@ def build_answer_messages(
 	period: dict,
 	history: list[dict] | None = None,
 	max_chars: int | None = None,
+	currency: str = "",
 ) -> list[dict]:
 	"""System prompt with the fenced figures block, prior turns, then the question.
+
+	``currency`` is the site's base currency code. The rows carry bare numbers, and
+	a model with nothing to go on writes rand as dollars.
 
 	``max_chars`` is the whole prompt's character budget (see
 	``client.prompt_char_budget``). History loses its oldest turns first and the
@@ -519,7 +543,7 @@ def build_answer_messages(
 		spare = max(0, max_chars - len(ANSWER_SYSTEM_PROMPT) - len(question))
 		turns = _fit_history(turns, int(spare * HISTORY_BUDGET_SHARE))
 		figures_budget = spare - sum(len(turn["content"]) for turn in turns)
-	figures = _figures_block(tables, period, figures_budget)
+	figures = _figures_block(tables, period, figures_budget, currency)
 	messages = [{"role": "system", "content": f"{ANSWER_SYSTEM_PROMPT}\n\n{figures}"}]
 	messages.extend(turns)
 	messages.append({"role": "user", "content": question})
@@ -538,7 +562,7 @@ def _fit_history(turns: list[dict], budget: int) -> list[dict]:
 	return kept
 
 
-def _figures_block(tables: list[dict], period: dict, budget: int | None = None) -> str:
+def _figures_block(tables: list[dict], period: dict, budget: int | None = None, currency: str = "") -> str:
 	"""The computed tables, fenced and neutralised, inside ``budget`` characters.
 
 	Every string that reaches the fence goes through :func:`neutralise` --
@@ -548,6 +572,11 @@ def _figures_block(tables: list[dict], period: dict, budget: int | None = None) 
 	asked for last.
 	"""
 	head = f"{FIGURES_START}\n# FIGURES (period {period.get('from_date', '')} to {period.get('to_date', '')})"
+	if currency:
+		head += (
+			f"\nMoney values are in {_fenced(currency)}. Write amounts with that code, "
+			"never with another currency's symbol."
+		)
 	tail = f"\n{FIGURES_END}"
 	lines = [head]
 	remaining = None if budget is None else budget - len(head) - len(tail)
