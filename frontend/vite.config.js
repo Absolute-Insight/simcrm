@@ -147,9 +147,15 @@ export default defineConfig(async ({ mode }) => {
           // Android masks a `maskable` icon down to a centre circle of 80% of
           // its width, so that file carries the mark small enough to survive
           // the cut; `any` is shown whole and would look lost at that size.
-          // Both are opaque -- a transparent launcher icon is filled with
-          // black by iOS, not with the wallpaper. Regenerate all five with
-          // frontend/scripts/generate_pwa_icons.py when the mark changes.
+          // The maskable pair stays opaque, since a mask wants a filled tile
+          // and Android prefers it for the launcher. The `any` pair is
+          // transparent: Chrome dresses the installed window, the taskbar
+          // button and the desktop shortcut from it, and each composites over
+          // a ground of its own, where a white tile reads as a card behind
+          // the mark. iOS is unaffected -- it takes apple-icon-180, which is
+          // opaque because iOS fills transparency with black. Regenerate all
+          // five with frontend/scripts/generate_pwa_icons.py when the mark
+          // changes.
           icons: [
             {
               src: '/assets/crm/manifest/manifest-icon-192.png',
