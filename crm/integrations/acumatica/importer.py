@@ -100,7 +100,9 @@ def upsert_organization(rec) -> str:
 				existing = frappe.db.exists("CRM Organization", organization_name)
 		name = _adopt("CRM Organization", existing, noteid)
 	elif name and organization_name:
-		holder = frappe.db.exists("CRM Organization", organization_name)
+		# the unique index is on the organization_name COLUMN, and a record created as
+		# "Name (CustomerID)" may still hold the plain name there
+		holder = frappe.db.get_value("CRM Organization", {"organization_name": organization_name}, "name")
 		if holder and holder != name:
 			# found by its own link, but its plain name belongs to another organization:
 			# keep the suffixed name it was created under rather than collide on rename
@@ -172,6 +174,10 @@ def upsert_contact(rec) -> str | None:
 	doc.acumatica_noteid = noteid
 	doc.acumatica_id = v(rec, "ContactID")
 
+	# "johan@latlog": Contact's validation fails the whole person over an address
+	# nobody could mail anyway
+	if email and not frappe.utils.validate_email_address(email):
+		email = None
 	if email and not any(row.email_id == email for row in doc.email_ids):
 		doc.append("email_ids", {"email_id": email, "is_primary": not doc.email_ids})
 	phone = v(rec, "Phone1")
