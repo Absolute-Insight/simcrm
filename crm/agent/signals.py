@@ -309,6 +309,9 @@ def find_close_date_at_risk(
 					CLOSE_RISK_SCORE_CAP,
 					CLOSE_RISK_SCORE_BASE + (horizon_days - days_to_close) * CLOSE_RISK_SCORE_PER_DAY_CLOSER,
 				),
+				# "in 3 days" is only true until the date: past it the row would
+				# sit in the inbox for the rest of the TTL saying something false
+				"expires_on": datetime.combine(due + timedelta(days=1), datetime.min.time()),
 			}
 		)
 	return out
@@ -920,7 +923,9 @@ def run_signals() -> int:
 	created = 0
 	notify: set[str] = set()
 	for candidate in fresh[:MAX_NEW_PER_RUN]:
-		if _insert_suggestion(candidate, expires_on):
+		# a detector may know its claim's own shelf life; the TTL is the ceiling
+		own = candidate.get("expires_on")
+		if _insert_suggestion(candidate, min(expires_on, own) if own else expires_on):
 			created += 1
 			if candidate.get("user"):
 				notify.add(candidate["user"])
