@@ -186,8 +186,30 @@ def _growth_rates(from_date, to_date):
 
 
 def _revenue_projection(from_date, to_date):
-	projection = analyst.project_revenue(_won_series(*_history(from_date, to_date)))
-	return projection["points"], f"Projected months use a {projection['method']}; a trend, not booked deals."
+	today = frappe.utils.getdate(frappe.utils.nowdate())
+	window = analyst.history_window(
+		str(from_date), str(to_date), today, min_months=analyst.PROJECTION_MIN_MONTHS
+	)
+	series = _won_series(*window)
+	fit = analyst.trend_series(series, today)
+	current = analyst.month_key(today)
+	to_date_row = next(
+		({"month": m, "value": v, "kind": "month to date"} for m, v in series if m == current), None
+	)
+	projection = analyst.project_revenue(fit, after=current if to_date_row else None)
+	points = projection["points"]
+	if to_date_row:
+		# the current month is shown for what it is, and fitted through nothing
+		points = (
+			[p for p in points if p["kind"] == "actual"]
+			+ [to_date_row]
+			+ [p for p in points if p["kind"] == "projected"]
+		)
+	note = (
+		f"Projected months use a {projection['method']} of complete months; the current month is "
+		"shown to date and not fitted. A trend, not booked deals."
+	)
+	return points, note
 
 
 def _pipeline_by_stage(from_date, to_date):
