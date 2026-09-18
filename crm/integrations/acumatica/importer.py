@@ -91,10 +91,20 @@ def upsert_organization(rec) -> str:
 		if existing and customer_id:
 			other = frappe.db.get_value("CRM Organization", existing, "acumatica_id")
 			if other and other != customer_id:
-				# a differently-linked customer already holds this exact name -- adopting it
-				# would silently merge two Acumatica customers into one CRM Organization
-				raise ValueError(f"CRM Organization {existing} already belongs to Acumatica customer {other}")
+				# A differently-linked customer already holds this exact name: MBP's
+				# tenant has three accounts called "Sibanye Rustenburg Platinum Mines".
+				# Adopting it would merge two Acumatica customers into one CRM
+				# Organization; refusing it queued a retry that fails the same way every
+				# night. Name the second one by its ID, as the spreadsheet import does.
+				organization_name = f"{organization_name} ({customer_id})"
+				existing = frappe.db.exists("CRM Organization", organization_name)
 		name = _adopt("CRM Organization", existing, noteid)
+	elif name and organization_name:
+		holder = frappe.db.exists("CRM Organization", organization_name)
+		if holder and holder != name:
+			# found by its own link, but its plain name belongs to another organization:
+			# keep the suffixed name it was created under rather than collide on rename
+			organization_name = f"{organization_name} ({customer_id})"
 	doc = frappe.get_doc("CRM Organization", name) if name else frappe.new_doc("CRM Organization")
 	doc.organization_name = organization_name
 	if noteid:
@@ -149,7 +159,13 @@ def upsert_contact(rec) -> str | None:
 
 	name = _find_by_noteid("Contact", noteid)
 	if not name:
-		name = _adopt("Contact", _find_matching_contact(first, last, company_name, email), noteid)
+		try:
+			name = _adopt("Contact", _find_matching_contact(first, last, company_name, email), noteid)
+		except ValueError:
+			# The namesake is somebody else's -- a second person with the same name at
+			# the same customer, or a duplicate the office should merge. Either way
+			# this record is new here; Contact's autoname suffixes the collision.
+			name = None
 	doc = frappe.get_doc("Contact", name) if name else frappe.new_doc("Contact")
 	doc.first_name = first
 	doc.last_name = last
@@ -159,7 +175,13 @@ def upsert_contact(rec) -> str | None:
 	if email and not any(row.email_id == email for row in doc.email_ids):
 		doc.append("email_ids", {"email_id": email, "is_primary": not doc.email_ids})
 	phone = v(rec, "Phone1")
-	if phone and not any(row.phone == phone for row in doc.phone_nos):
+	# Phone1 held a street address on a few hundred of MBP's contacts, and Contact's
+	# own validation then failed the whole person over a field we can do without.
+	if (
+		phone
+		and frappe.utils.validate_phone_number(phone)
+		and not any(row.phone == phone for row in doc.phone_nos)
+	):
 		doc.append("phone_nos", {"phone": phone})
 
 	if company_name:
@@ -177,7 +199,10 @@ def upsert_product(rec) -> str:
 		name = _adopt("CRM Product", frappe.db.exists("CRM Product", product_code), noteid)
 	doc = frappe.get_doc("CRM Product", name) if name else frappe.new_doc("CRM Product")
 	doc.product_code = product_code
-	doc.product_name = v(rec, "Description") or product_code
+	description = v(rec, "Description") or product_code
+	doc.product_name = _fit_name(description)
+	if description != doc.product_name:
+		doc.description = description
 	doc.standard_rate = v(rec, "DefaultPrice") or 0
 	doc.acumatica_noteid = noteid
 	doc.acumatica_id = product_code
@@ -188,6 +213,17 @@ def upsert_product(rec) -> str:
 		# would silently revert here. db_set writes it through without a rename.
 		doc.db_set("product_code", product_code)
 	return doc.name
+
+
+# CRM Product.product_name is a Data field; MBP's water-trap descriptions run past it.
+NAME_LENGTH = 140
+
+
+def _fit_name(text: str) -> str:
+	text = (text or "").strip()
+	if len(text) <= NAME_LENGTH:
+		return text
+	return text[: NAME_LENGTH - 1].rstrip() + "…"
 
 
 _ENTITIES = (

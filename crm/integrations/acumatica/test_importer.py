@@ -95,6 +95,75 @@ class TestUpserts(ImporterTestCase):
 		self.assertEqual(frappe.db.get_value("CRM Product", name, "product_code"), "NEWCODE")
 		self.assertEqual(frappe.db.get_value("CRM Product", name, "product_name"), "New")
 
+	def test_a_second_customer_with_a_taken_name_is_created_with_its_id_as_a_suffix(self):
+		"""MBP's tenant has three accounts named "Sibanye Rustenburg Platinum Mines (Pty)
+		Ltd". CRM Organization autonames on the name, so the second collided in the
+		database and was queued for a retry that fails the same way every night."""
+		importer.upsert_organization(
+			C(NoteID="g-sib-1", CustomerID="C-SIB001", CustomerName="Sibanye Twin Ltd")
+		)
+		second = importer.upsert_organization(
+			C(NoteID="g-sib-2", CustomerID="C-SIB002", CustomerName="Sibanye Twin Ltd")
+		)
+		self.assertEqual(second, "Sibanye Twin Ltd (C-SIB002)")
+		self.assertEqual(frappe.db.get_value("CRM Organization", second, "acumatica_noteid"), "g-sib-2")
+		# the first keeps its plain name and its own link
+		self.assertEqual(
+			frappe.db.get_value("CRM Organization", "Sibanye Twin Ltd", "acumatica_noteid"), "g-sib-1"
+		)
+		# and a re-sync of the second finds it by NoteID, not by making a third
+		self.assertEqual(
+			importer.upsert_organization(
+				C(NoteID="g-sib-2", CustomerID="C-SIB002", CustomerName="Sibanye Twin Ltd")
+			),
+			second,
+		)
+
+	def test_an_unusable_phone_does_not_block_the_contact(self):
+		"""Acumatica's Phone1 held a street address on a few hundred of MBP's contacts:
+		"12 Delfos Boulevard is not a valid Phone Number" failed the whole person."""
+		name = importer.upsert_contact(
+			C(
+				NoteID="g-ph-1",
+				ContactID=9001,
+				FirstName="Thabo",
+				LastName="Address",
+				Phone1="12 Delfos Boulevard",
+				Email="thabo.address@example.test",
+			)
+		)
+		doc = frappe.get_doc("Contact", name)
+		self.assertEqual([row.phone for row in doc.phone_nos], [])
+		self.assertEqual([row.email_id for row in doc.email_ids], ["thabo.address@example.test"])
+
+	def test_a_namesake_already_linked_elsewhere_becomes_a_second_contact(self):
+		"""Two Acumatica contacts with the same name at the same customer are two people
+		(or a duplicate the office should merge) -- either way the second is not
+		"already linked", it is new."""
+		importer.upsert_organization(
+			C(NoteID="g-org-twin", CustomerID="C-TWIN01", CustomerName="Twin Contacts Ltd")
+		)
+		first = importer.upsert_contact(
+			C(NoteID="g-c-1", ContactID=9101, FirstName="Portia", LastName="Twin", BusinessAccount="C-TWIN01")
+		)
+		second = importer.upsert_contact(
+			C(NoteID="g-c-2", ContactID=9102, FirstName="Portia", LastName="Twin", BusinessAccount="C-TWIN01")
+		)
+		self.assertNotEqual(first, second)
+		self.assertEqual(frappe.db.get_value("Contact", first, "acumatica_noteid"), "g-c-1")
+		self.assertEqual(frappe.db.get_value("Contact", second, "acumatica_noteid"), "g-c-2")
+
+	def test_a_long_item_description_is_cut_for_the_name_and_kept_whole(self):
+		long = "450mm Water Trap, Mild Steel Galvanised Body, Flanged to SABS 1123 Table 1000/1600, 10 Bar Rated, Stainless Steel Drain Valve, T-Section complete with Mechanical Autodrain and Sight Glass"
+		self.assertGreater(len(long), 140)
+		name = importer.upsert_product(
+			C(NoteID="g-it-long", InventoryID="2WTFO-TEST", Description=long, DefaultPrice=1.0)
+		)
+		doc = frappe.get_doc("CRM Product", name)
+		self.assertLessEqual(len(doc.product_name), 140)
+		self.assertTrue(doc.product_name.endswith("…"))
+		self.assertIn(long, doc.description)
+
 	def test_a_record_without_noteid_never_adopts_a_stranger(self):
 		# an unrelated org with no NoteID must not be returned by a NULL lookup
 		frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Bystander Ltd"}).insert()
@@ -114,10 +183,13 @@ class TestUpserts(ImporterTestCase):
 			frappe.db.get_value("CRM Organization", first, "organization_name"), "Repeat Limited"
 		)
 
-	def test_a_name_collision_with_another_customer_is_refused(self):
+	def test_a_name_collision_with_another_customer_is_not_merged(self):
+		"""Two Acumatica customers, one name: never one CRM Organization. It used to be
+		refused outright; now the second lives under its ID, and the first is untouched."""
 		importer.upsert_organization(C(CustomerID="C-A", CustomerName="Twin Ltd"))
-		with self.assertRaisesRegex(ValueError, "already belongs"):
-			importer.upsert_organization(C(CustomerID="C-B", CustomerName="Twin Ltd"))
+		second = importer.upsert_organization(C(CustomerID="C-B", CustomerName="Twin Ltd"))
+		self.assertEqual(second, "Twin Ltd (C-B)")
+		self.assertEqual(frappe.db.get_value("CRM Organization", "Twin Ltd", "acumatica_id"), "C-A")
 
 	def test_a_record_without_noteid_does_not_erase_a_synced_noteid(self):
 		importer.upsert_organization(C(NoteID="guid-keep", CustomerID="C-KEEP1", CustomerName="Keeper Ltd"))
@@ -268,14 +340,21 @@ class TestBackfill(ImporterTestCase):
 		return json.loads(frappe.db.get_single_value("CRM Acumatica Settings", "pending_retries") or "{}")
 
 	def _contested_org(self, suffix):
-		"""An organization already linked to a DIFFERENT Acumatica customer. A customer
-		arriving under that name is refused rather than merged into it, which is the
-		shape of failure an admin fixes in Acumatica and expects the CRM to pick up."""
+		"""An organization carrying the incoming customer's ID but a DIFFERENT NoteID.
+		The importer refuses to steal a link (see ``_adopt``), so the record fails on
+		every sweep until an admin fixes the link -- the shape of failure the retry
+		queue exists for. (A plain name collision used to play this part; since a
+		second customer with a taken name is now created under its ID, it no longer
+		fails at all.)"""
 		name = f"Contested {suffix}"
 		frappe.get_doc({"doctype": "CRM Organization", "organization_name": name}).insert(
 			ignore_permissions=True
 		)
-		frappe.db.set_value("CRM Organization", name, "acumatica_id", f"OTHER{suffix}")
+		frappe.db.set_value(
+			"CRM Organization",
+			name,
+			{"acumatica_id": f"RETRY{suffix}", "acumatica_noteid": f"other-{suffix}"},
+		)
 		# tearDown clears out everything carrying this suffix -- this row and whatever
 		# the importer went on to write under it
 		self._retry_suffixes.append(suffix)
@@ -416,7 +495,9 @@ class TestBackfill(ImporterTestCase):
 		importer.run_backfill()
 		self.assertEqual(self._pending()["Customer"][f"retry-{suffix}"], 1)
 
-		# the admin renames the customer in Acumatica; the retry re-fetches it and it lands
+		# the admin clears the stale link on the CRM side; the retry re-fetches the
+		# record, adopts the organization by its ID and it lands
+		frappe.db.set_value("CRM Organization", f"Contested {suffix}", "acumatica_noteid", None)
 		client.iter_all.side_effect = lambda entity, **kw: iter([])
 		client.get_by_id.return_value = _customer(suffix, f"Freed {suffix}")
 
