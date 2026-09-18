@@ -162,9 +162,21 @@ def _won_series(from_date, to_date) -> list[tuple[str, float]]:
 	return [(month, float(by_month.get(month, 0.0))) for month in analyst.months_between(from_date, to_date)]
 
 
+def _to_date_note(series) -> str:
+	"""A current-month figure is a partial month; a table that shows it next to
+	whole months has to say so, or a -44% for eighteen days reads as a collapse."""
+	current = analyst.month_key(frappe.utils.getdate(frappe.utils.nowdate()))
+	if any(month == current for month, _ in series):
+		return f" {analyst.month_label(current)} is month to date."
+	return ""
+
+
 def _won_revenue_by_month(from_date, to_date):
-	rows = [{"month": month, "value": value} for month, value in _won_series(from_date, to_date)]
-	return rows, "Closed-won deal value in the base currency, by the month the deal closed."
+	series = _won_series(from_date, to_date)
+	rows = [{"month": month, "value": value} for month, value in series]
+	return rows, "Closed-won deal value in the base currency, by the month the deal closed." + _to_date_note(
+		series
+	)
 
 
 def _forecast_by_month(from_date, to_date):
@@ -180,9 +192,8 @@ def _history(from_date, to_date) -> tuple[str, str]:
 
 
 def _growth_rates(from_date, to_date):
-	return analyst.growth_rates(
-		_won_series(*_history(from_date, to_date))
-	), "Change is against the previous month."
+	series = _won_series(*_history(from_date, to_date))
+	return analyst.growth_rates(series), "Change is against the previous month." + _to_date_note(series)
 
 
 def _revenue_projection(from_date, to_date):
