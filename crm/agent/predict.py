@@ -218,6 +218,13 @@ def get_deal_health(name: str) -> dict:
 	deal.check_permission("read")
 	now = frappe.utils.now_datetime()
 
+	# A closed deal has no health to score: the model reads idleness, an open
+	# task and days to close, all of which are meaningless once it is Won or
+	# Lost, and a "Nothing done for 13 days" on a won quote reads as a rebuke.
+	# The hourly scorer already un-scores these; the page has to agree with it.
+	if frappe.db.get_value("CRM Deal Status", deal.status, "type") in ("Won", "Lost"):
+		return {"score": None, "factors": [], "closed": True}
+
 	last = _latest_activity([name]).get(name) or deal.creation
 	idle_days = max(0, (now - last).days)
 

@@ -174,7 +174,11 @@
       class="text-sm leading-5 text-ink-gray-5"
       role="status"
     >
-      {{ __('Nothing flagged on this record.') }}
+      {{
+        isClosed
+          ? __('Closed deals are not scored.')
+          : __('Nothing flagged on this record.')
+      }}
     </div>
   </div>
 </template>
@@ -284,6 +288,10 @@ const healthLoading = computed(
 const band = computed(() =>
   health.data ? healthBand(health.data.score) : null,
 )
+
+/* The server returns no score for a Won or Lost deal; say so rather than
+   claim "nothing flagged", which would read as a clean bill of health. */
+const isClosed = computed(() => Boolean(health.data?.closed))
 
 const percent = computed(() => healthMeterPercent(health.data?.score))
 
