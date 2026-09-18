@@ -306,9 +306,14 @@ def months_between(from_date: str, to_date: str) -> list[str]:
 
 # A least-squares line through fewer months than this is a line through noise.
 MIN_HISTORY_MONTHS = 3
+# Enough complete months to fit a trend through. Three said how revenue changed;
+# a line through three points -- one of them eighteen days of a month -- said R0.
+PROJECTION_MIN_MONTHS = 6
 
 
-def history_window(from_date: str, to_date: str, today: date) -> tuple[str, str]:
+def history_window(
+	from_date: str, to_date: str, today: date, min_months: int = MIN_HISTORY_MONTHS
+) -> tuple[str, str]:
 	"""The part of a period that has happened, for the metrics that read history.
 
 	Won revenue exists only up to today, but the period is chosen by a model, and a
@@ -319,7 +324,7 @@ def history_window(from_date: str, to_date: str, today: date) -> tuple[str, str]
 	"""
 	start = _parse_date(from_date) or add_months(today, -DEFAULT_PERIOD_MONTHS)
 	end = min(_parse_date(to_date) or today, today)
-	if start > end or len(months_between(start.isoformat(), end.isoformat())) < MIN_HISTORY_MONTHS:
+	if start > end or len(months_between(start.isoformat(), end.isoformat())) < min_months:
 		start, end = add_months(today, -DEFAULT_PERIOD_MONTHS), today
 	return start.isoformat(), end.isoformat()
 
@@ -428,7 +433,24 @@ def growth_rates(series: list[tuple[str, float]]) -> list[dict]:
 	return rows
 
 
-def project_revenue(series: list[tuple[str, float]], horizon: int = PROJECTION_HORIZON) -> dict:
+def trend_series(series: list[tuple[str, float]], today: date) -> list[tuple[str, float]]:
+	"""The months a revenue trend may be fitted through.
+
+	The current month is not one of them: eighteen days of September fitted as a
+	whole month is a cliff the line falls off. Nor are months before revenue
+	began -- on a site whose history was imported, the months before the import
+	window are unknown, not zero.
+	"""
+	current = month_key(today)
+	fit = [(month, value) for month, value in series if month < current]
+	while fit and not fit[0][1]:
+		fit.pop(0)
+	return fit
+
+
+def project_revenue(
+	series: list[tuple[str, float]], horizon: int = PROJECTION_HORIZON, after: str | None = None
+) -> dict:
 	"""Least-squares line over a monthly series, continued ``horizon`` months.
 
 	Returns the actual points followed by the projected ones, the fitted slope
@@ -437,6 +459,10 @@ def project_revenue(series: list[tuple[str, float]], horizon: int = PROJECTION_H
 	clamped at zero: revenue does not go negative, and a falling line that
 	crosses the axis is telling you the trend is down, not that you will pay
 	customers.
+
+	``after`` is the last month to skip: the projected months start after it
+	rather than after the series, with the line continued through the gap. It
+	is the current, incomplete month -- fitted through nothing, projected over.
 	"""
 	points = [{"month": month, "value": float(value), "kind": "actual"} for month, value in series]
 	n = len(series)
@@ -452,8 +478,12 @@ def project_revenue(series: list[tuple[str, float]], horizon: int = PROJECTION_H
 	intercept = mean_y - slope * mean_x
 
 	last = date.fromisoformat(f"{series[-1][0]}-01")
+	skipped = 0
+	if after and after > series[-1][0]:
+		skipped = len(months_between(series[-1][0] + "-01", after + "-01")) - 1
+		last = date.fromisoformat(f"{after}-01")
 	for step in range(1, horizon + 1):
-		projected = max(0.0, intercept + slope * (n - 1 + step))
+		projected = max(0.0, intercept + slope * (n - 1 + skipped + step))
 		points.append(
 			{"month": month_key(add_months(last, step)), "value": round(projected, 2), "kind": "projected"}
 		)

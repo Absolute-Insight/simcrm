@@ -141,6 +141,49 @@ class RowListSummaryTest(UnitTestCase):
 		self.assertEqual(analyst.summarise_at_risk([]), [])
 
 
+class TrendSeriesTest(UnitTestCase):
+	"""What a revenue trend may be fitted through (#237 follow-up). On production the
+	plan chose "this quarter": July, August and eighteen days of September. A line
+	through 11.4M, 4.6M and 22k projected R0 for the next quarter."""
+
+	TODAY = date(2026, 9, 18)
+	SERIES = (
+		("2025-10", 0.0),
+		("2025-11", 0.0),
+		("2025-12", 4850976.0),
+		("2026-01", 15715600.0),
+		("2026-07", 11358307.0),
+		("2026-08", 4598160.0),
+		("2026-09", 22040.0),
+	)
+
+	def test_the_current_month_is_not_fitted_and_history_starts_with_revenue(self):
+		fit = analyst.trend_series(list(self.SERIES), self.TODAY)
+		self.assertEqual([month for month, _ in fit], ["2025-12", "2026-01", "2026-07", "2026-08"])
+
+	def test_a_completed_month_is_fitted(self):
+		fit = analyst.trend_series([("2026-08", 5.0), ("2026-09", 6.0)], date(2026, 10, 2))
+		self.assertEqual(fit, [("2026-08", 5.0), ("2026-09", 6.0)])
+
+	def test_projection_starts_after_the_current_month(self):
+		out = analyst.project_revenue(
+			[("2026-06", 100.0), ("2026-07", 200.0), ("2026-08", 300.0)], horizon=3, after="2026-09"
+		)
+		self.assertEqual(
+			[p["month"] for p in out["points"] if p["kind"] == "projected"], ["2026-10", "2026-11", "2026-12"]
+		)
+		self.assertAlmostEqual(
+			out["points"][-3]["value"], 500.0
+		)  # the line continues through the skipped month
+
+	def test_the_history_window_can_ask_for_more_months(self):
+		# three months is enough to say how revenue changed, not enough to fit a trend
+		self.assertEqual(
+			analyst.history_window("2026-07-01", "2026-09-30", self.TODAY, min_months=6),
+			("2025-09-18", "2026-09-18"),
+		)
+
+
 class HistoryWindowTest(UnitTestCase):
 	"""Won revenue is history. The plan's period comes from a model, and asked to
 	"project next quarter" it names the quarter it wants to know about -- on
