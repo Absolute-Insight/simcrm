@@ -1,3 +1,5 @@
+import json
+
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
@@ -284,3 +286,65 @@ class TestMutualExclusion(FrappeTestCase):
 		erpnext_settings = frappe.get_doc("ERPNext CRM Settings")
 		erpnext_settings.enabled = 1
 		block_dual_erp(erpnext_settings, "validate")  # must not raise
+
+
+class TestDealLayoutFields(FrappeTestCase):
+	"""The customer and quote ids have to be visible on the deal page once the
+	integration is on -- the custom fields alone put them nowhere."""
+
+	LAYOUTS = ("CRM Deal-Side Panel", "CRM Deal-Data Fields", "CRM Organization-Side Panel")
+
+	def setUp(self):
+		self.saved = {
+			name: frappe.db.get_value("CRM Fields Layout", name, "layout")
+			for name in self.LAYOUTS
+			if frappe.db.exists("CRM Fields Layout", name)
+		}
+		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+
+	def tearDown(self):
+		for name, layout in self.saved.items():
+			frappe.db.set_value("CRM Fields Layout", name, "layout", layout)
+		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+
+	def _fields(self, name):
+		from crm.integrations.acumatica.install import _layout_fields
+
+		return _layout_fields(json.loads(frappe.db.get_value("CRM Fields Layout", name, "layout")))
+
+	def test_disabled_integration_leaves_the_layouts_alone(self):
+		from crm.integrations.acumatica.install import ensure_layout_fields
+
+		ensure_layout_fields()
+		for name in self.saved:
+			self.assertFalse({"acumatica_sales_quote", "acumatica_id"} & self._fields(name), name)
+
+	def test_enabling_adds_the_fields_once(self):
+		from crm.integrations.acumatica.install import ensure_layout_fields
+
+		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 1)
+		ensure_layout_fields()
+		ensure_layout_fields()  # idempotent
+		from crm.integrations.acumatica.install import LAYOUT_FIELDS
+
+		for name in self.saved:
+			layout = json.loads(frappe.db.get_value("CRM Fields Layout", name, "layout"))
+			sections = layout[0]["sections"] if "sections" in layout[0] else layout
+			acumatica = [s for s in sections if s.get("name") == "acumatica_section"]
+			self.assertEqual(len(acumatica), 1, name)
+			self.assertEqual(acumatica[0]["columns"][0]["fields"], LAYOUT_FIELDS[name])
+
+	def test_an_admin_placed_field_is_respected(self):
+		from crm.integrations.acumatica.install import ensure_layout_fields
+
+		name = "CRM Deal-Side Panel"
+		layout = json.loads(self.saved[name])
+		layout[-1]["columns"][0]["fields"].append("acumatica_sales_quote")
+		frappe.db.set_value("CRM Fields Layout", name, "layout", json.dumps(layout))
+
+		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 1)
+		ensure_layout_fields()
+		layout = json.loads(frappe.db.get_value("CRM Fields Layout", name, "layout"))
+		self.assertFalse([s for s in layout if s.get("name") == "acumatica_section"])

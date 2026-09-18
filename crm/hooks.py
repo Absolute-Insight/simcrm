@@ -426,6 +426,10 @@ after_migrate = [
 	# ERP write paths (#166). A hook rather than a patch for the same reason as
 	# ensure_app_logo above. Idempotent.
 	"crm.integrations.acumatica.install.ensure_custom_fields",
+	# The deal form script and the layout section ship with the app; until this
+	# they were only written when the settings doc was saved, so a fixed script
+	# never reached a site that had enabled the integration before the fix.
+	"crm.integrations.acumatica.install.refresh_integration",
 	"crm.api.whatsapp.add_roles",
 	"crm.domain_enrichment.install.seed_default_rules_and_mappings",
 	"crm.agent.install.ensure_agent_role",
