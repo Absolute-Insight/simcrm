@@ -10,6 +10,7 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 	record_sync_issue,
 	set_pending_retries,
 )
+from crm.integrations.acumatica import outcomes
 from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError, v
 from crm.integrations.acumatica.names import normalise_account_name
 
@@ -358,6 +359,10 @@ def _import_all(modified_since: str | None) -> dict:
 	try:
 		_retry_pending(client, pending, counts)
 		_import_entities(client, filter_, pending, counts)
+		# what happened to the quotes: a converted one wins its deal, a declined one
+		# loses it, and one nobody answered expires once its validity plus grace is up
+		counts.update(outcomes.pull_quote_outcomes(client, modified_since))
+		counts.update(outcomes.expire_stale_quotes(getattr(settings, "quote_expiry_grace_days", 0)))
 	except Exception:
 		# The run died outside any one record (see run_backfill), after the retry
 		# pass had already counted attempts and the main loop had already queued new
