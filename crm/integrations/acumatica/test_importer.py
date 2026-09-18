@@ -119,6 +119,55 @@ class TestUpserts(ImporterTestCase):
 			second,
 		)
 
+	def test_a_name_held_in_the_column_by_a_suffixed_organization_still_suffixes(self):
+		"""The spreadsheet import left organizations whose docname is "Name (CustomerID)"
+		while the organization_name column -- which carries the unique index -- still
+		holds the plain name. Nine of MBP's customers collided there although no record
+		was *named* plainly, so a docname lookup saw nothing to avoid."""
+		# A: docname suffixed, column plain -- only reachable through a rename and a raw update
+		frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Column Twin Ltd"}).insert(
+			ignore_permissions=True
+		)
+		frappe.rename_doc(
+			"CRM Organization", "Column Twin Ltd", "Column Twin Ltd (C-COL001)", force=True, show_alert=False
+		)
+		frappe.db.sql(
+			"update `tabCRM Organization` set organization_name=%s, acumatica_id=%s where name=%s",
+			("Column Twin Ltd", "C-COL001", "Column Twin Ltd (C-COL001)"),
+		)
+		# B: the second customer, created suffixed by the spreadsheet import
+		frappe.get_doc(
+			{
+				"doctype": "CRM Organization",
+				"organization_name": "Column Twin Ltd (C-COL002)",
+				"acumatica_id": "C-COL002",
+			}
+		).insert(ignore_permissions=True)
+		# the live record for B arrives with the plain name: found by its id, it must keep its suffix
+		name = importer.upsert_organization(
+			C(NoteID="g-col-2", CustomerID="C-COL002", CustomerName="Column Twin Ltd")
+		)
+		self.assertEqual(name, "Column Twin Ltd (C-COL002)")
+		self.assertEqual(
+			frappe.db.get_value("CRM Organization", name, ["organization_name", "acumatica_noteid"]),
+			("Column Twin Ltd (C-COL002)", "g-col-2"),
+		)
+
+	def test_an_unusable_email_does_not_block_the_contact(self):
+		name = importer.upsert_contact(
+			C(
+				NoteID="g-em-1",
+				ContactID=9002,
+				FirstName="Johan",
+				LastName="NoDomain",
+				Email="johan@latlog",
+				Phone1="0184627560",
+			)
+		)
+		doc = frappe.get_doc("Contact", name)
+		self.assertEqual([row.email_id for row in doc.email_ids], [])
+		self.assertEqual([row.phone for row in doc.phone_nos], ["0184627560"])
+
 	def test_an_unusable_phone_does_not_block_the_contact(self):
 		"""Acumatica's Phone1 held a street address on a few hundred of MBP's contacts:
 		"12 Delfos Boulevard is not a valid Phone Number" failed the whole person."""
