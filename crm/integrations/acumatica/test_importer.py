@@ -450,6 +450,18 @@ class TestBackfill(ImporterTestCase):
 		self.assertEqual(out["issues"], 1)
 		self.assertIsNotNone(frappe.db.get_single_value("CRM Acumatica Settings", "last_synced_at"))
 
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_a_sync_reads_quote_outcomes_after_the_entities(self, ClientCls):
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.settings.request_pause = 0
+		client.settings.quote_order_type = "QT"
+		client.iter_all.side_effect = lambda entity, **kw: iter([])
+		client.get_page.return_value = []
+		out = importer.run_backfill()
+		self.assertIn("won", out)
+		self.assertIn("expired", out)
+
 	def test_nightly_sweep_noop_when_disabled(self):
 		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
 		frappe.clear_cache(doctype="CRM Acumatica Settings")  # get_settings() is cached

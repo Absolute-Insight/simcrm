@@ -60,6 +60,16 @@
           v-model="settings.doc.quote_order_type"
           :label="__('Quote Order Type')"
         />
+        <FormControl
+          v-model="settings.doc.quote_expiry_grace_days"
+          type="number"
+          :label="__('Quote Expiry Grace (days)')"
+          :description="
+            __(
+              'Days past a quote\'s validity before the nightly sync marks its deal Lost as expired. Deals edited in the last 14 days are left alone; 0 switches this off.',
+            )
+          "
+        />
         <div class="flex items-end gap-2">
           <FormControl
             v-model="settings.doc.webhook_verify_token"

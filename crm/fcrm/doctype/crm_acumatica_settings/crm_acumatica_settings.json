@@ -28,6 +28,7 @@
   "deal_status",
   "section_break_ausg",
   "quote_order_type",
+  "quote_expiry_grace_days",
   "column_break_ausj",
   "webhook_verify_token",
   "request_pause",
@@ -176,6 +177,13 @@
    "label": "Quote Order Type"
   },
   {
+   "default": "30",
+   "description": "Days past a quote's validity date before an open deal is marked Lost as \"Quote expired\" by the nightly sweep. A deal a rep edited in the last 14 days is left alone. 0 switches this off.",
+   "fieldname": "quote_expiry_grace_days",
+   "fieldtype": "Int",
+   "label": "Quote Expiry Grace (days)"
+  },
+  {
    "fieldname": "column_break_ausj",
    "fieldtype": "Column Break"
   },
@@ -231,7 +239,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-24 00:00:00.000000",
+ "modified": "2026-09-18 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM Acumatica Settings",
