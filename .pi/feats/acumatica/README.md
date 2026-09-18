@@ -12,7 +12,7 @@ through this app's `doc_events`, refuses the other direction.
 |---|---|---|
 | Customers, Contacts, Stock Items | Acumatica | pulled in (backfill + nightly sweep + webhook) |
 | Leads, Deals | Vectora | deal events push out |
-| Sales quotes | Acumatica | created from a deal via the **Create Sales Quote** action |
+| Sales quotes | Acumatica | created from a deal via the **Create Sales Quote** action; their outcome flows back (`outcomes.py`) |
 
 Identity is Acumatica's `NoteID` GUID (`acumatica_noteid` custom field);
 `acumatica_id` holds the human-readable key for display. All remote writes are
@@ -67,6 +67,25 @@ instead of retrying forever. A run that dies outside any single record's
 try/except (expired credentials, a dropped connection) writes its message to
 `last_sync_error` and re-raises, so an admin sees more than a high-water mark
 that quietly stopped moving; the next clean run clears it.
+
+## Quote outcomes and expiry (`outcomes.py`)
+
+Every sweep, after the entity passes, reads the quotes (`SalesOrder`, the
+configured `quote_order_type`) changed since the high-water mark — the field is
+`LastModified`, not `LastModifiedDateTime` — and closes the deals that carry
+their number in `acumatica_sales_quote`: **Completed** (the quote was copied
+into a sales order) → Won, dated by the quote's last change; **Canceled** /
+**Rejected** → Lost with the reason named. A deal a rep already closed is left
+alone. A full backfill (`start_backfill`) reads every quote, which is how the
+outcomes decided between the spreadsheet export and the first live sync were
+caught up.
+
+Acumatica never expires a quote, so the validity rule lives here: an open deal
+whose `expected_closure_date` (the validity date, set by the import) is more
+than `quote_expiry_grace_days` (default 30, 0 = off) in the past is Lost as
+"Quote expired" — unless a rep edited it in the last 14 days, in which case it
+is theirs to decide. Health scoring does not bump `modified`, so that guard
+measures people, not jobs.
 
 ## Customer push (outbound)
 
