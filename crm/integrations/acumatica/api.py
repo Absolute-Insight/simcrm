@@ -66,6 +66,9 @@ def test_connection() -> dict:
 		return {"ok": False, "error": error}
 	except Exception as e:
 		return {"ok": False, "error": str(e)}
+	finally:
+		# one click, one login, released -- not a session held for an hour
+		client.logout()
 
 
 @frappe.whitelist()

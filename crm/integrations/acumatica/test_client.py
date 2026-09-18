@@ -162,6 +162,38 @@ class TestClient(FrappeTestCase):
 
 	@patch("crm.integrations.acumatica.client.requests.post")
 	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_logout_ends_the_api_session_and_forgets_the_token(self, rget, rpost):
+		"""Every token holds one of the user's concurrent API logins for an hour.
+		Test connection minted one per click and never let go; the tenant's limit
+		was reached on the first day."""
+		rpost.side_effect = [_resp(200, {"access_token": "tok", "expires_in": 3600}), _resp(204)]
+		rget.return_value = _resp(200, [])
+		c = AcumaticaClient(_settings())
+		c.get_page("Customer")
+		c.logout()
+		self.assertEqual(rpost.call_args[0][0], "https://t.acumatica.com/entity/auth/logout")
+		self.assertEqual(rpost.call_args.kwargs["headers"]["Authorization"], "Bearer tok")
+		self.assertIsNone(frappe.cache().get_value("acumatica_token::https://t.acumatica.com"))
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	def test_logout_without_a_session_does_nothing(self, rpost):
+		AcumaticaClient(_settings()).logout()
+		rpost.assert_not_called()
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_logout_never_raises(self, rget, rpost):
+		"""It runs in finally blocks; a logout that fails must not turn a finished
+		sync or a successful ping into an error."""
+		rpost.side_effect = [_resp(200, {"access_token": "tok", "expires_in": 3600}), RuntimeError("dns")]
+		rget.return_value = _resp(200, [])
+		c = AcumaticaClient(_settings())
+		c.get_page("Customer")
+		c.logout()  # must not raise
+		self.assertIsNone(frappe.cache().get_value("acumatica_token::https://t.acumatica.com"))
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
 	def test_401_reauthenticates_once_then_raises(self, rget, rpost):
 		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": 3600})
 		rget.return_value = _resp(401, {})
