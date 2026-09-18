@@ -127,6 +127,10 @@ def get_crm_form_script():
 		}).catch(() => {})
 	}
 	setAcumaticaActions() {
+		// One quote per deal: the server refuses a second one anyway, so a deal
+		// that already carries its quote number gets no button rather than a
+		// button that only ever produces an error.
+		if (this.doc.acumatica_sales_quote) return
 		// The action button has no pending state of its own, and the server round
 		// trip is a PUT into the client's ERP: a second click while the first is in
 		// flight must be ignored, not sent.
