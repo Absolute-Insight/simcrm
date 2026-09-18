@@ -27,7 +27,10 @@ class CRMAcumaticaSettings(Document):
 		# only arms the write paths. Disabling has to undo the one visible thing
 		# enabling did, or the Deal form keeps a dead button forever.
 		if self.enabled:
+			from crm.integrations.acumatica.install import ensure_layout_fields
+
 			self.create_crm_form_script()
+			ensure_layout_fields()
 		else:
 			self.disable_crm_form_script()
 

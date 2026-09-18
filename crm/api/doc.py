@@ -381,6 +381,14 @@ def get_data(
 
 		# check if rows has all keys from columns if not add them
 		visible_columns = []
+		# A column the controller itself names is shown whatever the form says:
+		# frappe's Contact keeps full_name hidden on the form (it is derived),
+		# and dropping it here left the contacts list with no name column.
+		default_keys = (
+			{c.get("key") for c in (_list.default_list_data().get("columns") or [])}
+			if hasattr(_list, "default_list_data")
+			else set()
+		)
 		for column in columns:
 			if column.get("key") not in rows:
 				rows.append(column.get("key"))
@@ -395,7 +403,7 @@ def get_data(
 			# hidden column that happened to follow another hidden one was never
 			# examined and stayed in the view.
 			column_meta = meta.get_field(column.get("key"))
-			if column_meta and column_meta.get("hidden"):
+			if column_meta and column_meta.get("hidden") and column.get("key") not in default_keys:
 				continue
 
 			visible_columns.append(column)

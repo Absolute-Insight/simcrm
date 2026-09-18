@@ -228,6 +228,8 @@ class TestFormScript(FrappeTestCase):
 		self.assertIn("crm.integrations.acumatica.outbound.create_sales_quote_from_deal", script)
 		self.assertIn("crm.integrations.acumatica.api.is_enabled", script)
 		self.assertNotIn("frappe.client.get_single_value", script)
+		# a deal that already has its quote gets no button, not an erroring one
+		self.assertIn("if (this.doc.acumatica_sales_quote) return", script)
 
 	def test_form_script_swallows_the_settings_read_failure(self):
 		"""A rep without read access on the settings would otherwise get an

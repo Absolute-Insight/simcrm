@@ -56,6 +56,26 @@ class RunPlanTest(IntegrationTestCase):
 		self.assertEqual(table["rows"][0]["value"], 0.0)
 		self.assertIsNone(table["error"])
 
+	def test_a_window_that_reaches_today_says_the_current_month_is_partial(self):
+		"""Eighteen days of a month next to whole ones reads as a collapse unless
+		the table says so; a window that ends before this month says nothing."""
+		today = frappe.utils.getdate(frappe.utils.nowdate())
+		label = f"{today.strftime('%B')} {today.year}"
+		for key in ("won_revenue_by_month", "growth_rates"):
+			table = analyst_data.run_plan(
+				{
+					"metrics": [key],
+					"from_date": str(frappe.utils.add_months(today, -3)),
+					"to_date": str(today),
+				},
+				None,
+			)[0]
+			self.assertIn(f"{label} is month to date.", table["note"], key)
+			table = analyst_data.run_plan(
+				{"metrics": [key], "from_date": "2025-01-01", "to_date": "2025-03-31"}, None
+			)[0]
+			self.assertNotIn("month to date", table["note"], key)
+
 	def test_every_crm_metric_runs_without_error(self):
 		"""The catalogue promises these; a runner that raises on an empty site is a bug."""
 		keys = [key for key in analyst_data._CRM_RUNNERS]

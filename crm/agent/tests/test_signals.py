@@ -220,6 +220,13 @@ class CloseDateAtRiskTest(UnitTestCase):
 		self.assertEqual(out[0]["signal"], "close_at_risk")
 		self.assertEqual(out[0]["factors"][0]["value"], 5)
 
+	def test_the_row_expires_the_day_after_the_close_date(self):
+		"""'Expected to close in 5 days' is false from day six; the row must not
+		outlive its claim by the rest of the TTL."""
+		out = find_close_date_at_risk([self.row()], set(), NOW)
+		self.assertEqual(out[0]["expires_on"].date(), NOW.date() + timedelta(days=6))
+		self.assertEqual(out[0]["expires_on"].time(), datetime.min.time())
+
 	def test_a_close_date_beyond_the_horizon_does_not_fire(self):
 		row = self.row(expected_closure_date=NOW.date() + timedelta(days=CLOSE_HORIZON_DAYS + 1))
 		self.assertEqual(find_close_date_at_risk([row], set(), NOW), [])
@@ -647,6 +654,14 @@ class RunSignalsTest(PinnedSignalConfig, IntegrationTestCase):
 		)
 		run_signals()
 		self.assertIn("close_at_risk", self.signals_for_the_fixture())
+		# the row's own shelf life wins over the TTL: gone the day after the date
+		expires_on = frappe.db.get_value(
+			"CRM Suggestion", {"reference_docname": self.deal.name, "signal": "close_at_risk"}, "expires_on"
+		)
+		self.assertEqual(
+			frappe.utils.getdate(expires_on),
+			frappe.utils.getdate(frappe.utils.add_days(frappe.utils.nowdate(), 4)),
+		)
 
 	def test_the_job_returns_nothing_when_signals_are_switched_off(self):
 		off = SignalConfig(

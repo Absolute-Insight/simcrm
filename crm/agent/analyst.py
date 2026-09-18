@@ -292,6 +292,12 @@ def month_key(day: date) -> str:
 	return f"{day.year:04d}-{day.month:02d}"
 
 
+def month_label(key: str) -> str:
+	"""``2026-09`` -> ``September 2026``, for prose."""
+	year, month = key.split("-")
+	return f"{calendar.month_name[int(month)]} {year}"
+
+
 def months_between(from_date: str, to_date: str) -> list[str]:
 	"""Every ``YYYY-MM`` from the first date's month to the last's, inclusive."""
 	start = date.fromisoformat(from_date).replace(day=1)

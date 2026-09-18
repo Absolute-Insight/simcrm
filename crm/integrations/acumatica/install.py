@@ -1,3 +1,5 @@
+import json
+
 import frappe
 from frappe import _
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
@@ -54,6 +56,70 @@ def ensure_custom_fields() -> None:
 		},
 		ignore_validate=True,
 	)
+
+
+# layout -> the ids a rep needs to find the record in Acumatica
+LAYOUT_FIELDS = {
+	"CRM Deal-Side Panel": ["acumatica_customer", "acumatica_sales_quote"],
+	"CRM Deal-Data Fields": ["acumatica_customer", "acumatica_sales_quote"],
+	"CRM Organization-Side Panel": ["acumatica_id"],
+}
+LAYOUT_SECTION = {"label": "Acumatica", "name": "acumatica_section", "opened": True}
+
+
+def _layout_fields(layout) -> set:
+	present = set()
+	for section in layout:
+		for column in section.get("columns", []):
+			present.update(column.get("fields", []))
+		for nested in section.get("sections", []):
+			for column in nested.get("columns", []):
+				present.update(column.get("fields", []))
+	return present
+
+
+def ensure_layout_fields() -> None:
+	"""Put the Acumatica ids on the deal and organization pages.
+
+	The custom fields exist on every site but a page layout is a saved record,
+	so a site that enabled the integration after install showed none of them --
+	a rep whose deal has a quote in Acumatica had no way to read its number.
+	Adds an "Acumatica" section to each layout, once, and leaves a layout alone
+	when an admin has already placed any of the fields."""
+	if not frappe.db.get_single_value("CRM Acumatica Settings", "enabled"):
+		return
+	for name, wanted in LAYOUT_FIELDS.items():
+		if not frappe.db.exists("CRM Fields Layout", name):
+			continue
+		doc = frappe.get_doc("CRM Fields Layout", name)
+		meta = frappe.get_meta(doc.dt)
+		fields = [f for f in wanted if meta.has_field(f)]
+		if not fields:
+			continue
+		try:
+			layout = json.loads(doc.layout or "[]")
+		except (ValueError, TypeError):
+			continue
+		if any(f in _layout_fields(layout) for f in fields):
+			continue
+		section = {
+			**LAYOUT_SECTION,
+			"columns": [{"name": "column_acumatica", "fields": fields}],
+		}
+		# the Data tab nests its sections under a tab; the side panels do not
+		target = layout[0]["sections"] if layout and "sections" in layout[0] else layout
+		target.append(section)
+		doc.layout = json.dumps(layout)
+		doc.save(ignore_permissions=True)
+
+
+def refresh_integration() -> None:
+	"""after_migrate: the form script and the layouts ship with the app, not with
+	the site, so an upgrade re-applies both on a site that has the integration on."""
+	if not frappe.db.get_single_value("CRM Acumatica Settings", "enabled"):
+		return
+	frappe.get_doc("CRM Acumatica Settings").create_crm_form_script()
+	ensure_layout_fields()
 
 
 def block_dual_erp(doc, method=None) -> None:

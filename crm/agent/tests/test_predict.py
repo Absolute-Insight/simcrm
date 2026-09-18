@@ -188,6 +188,17 @@ class GetDealHealthTest(IntegrationTestCase):
 		keys = [f["key"] for f in get_deal_health(deal.name)["factors"]]
 		self.assertIn("close_overdue", keys)
 
+	def test_a_closed_deal_is_not_scored(self):
+		"""Idleness and a missing task say nothing about a deal that is already won;
+		the page must not show 'At risk' over one the hourly scorer has un-scored."""
+		deal = self.make_deal(expected_closure_date=frappe.utils.add_days(frappe.utils.nowdate(), -10))
+		deal.status = "Won"
+		deal.save()
+		out = get_deal_health(deal.name)
+		self.assertIsNone(out["score"])
+		self.assertEqual(out["factors"], [])
+		self.assertTrue(out["closed"])
+
 	def test_a_stage_with_no_history_yields_no_median(self):
 		self.assertIsNone(_stage_median_days("a status no deal has ever left"))
 
