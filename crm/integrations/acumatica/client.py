@@ -145,6 +145,30 @@ class AcumaticaClient:
 			return resp
 		raise AcumaticaError("unreachable")  # pragma: no cover
 
+	def logout(self):
+		"""End the API session behind the cached token, and forget the token.
+
+		A token holds one of the user's concurrent API logins (Users, SM201010)
+		until it expires, an hour later. Test connection minted one per click and
+		a sync one per run, none of them released; the tenant's limit was reached
+		on the first day of testing and every later call answered with the login
+		page. Best effort and never raises: it runs in finally blocks, and a logout
+		that fails must not turn a finished sync or a successful ping into an error.
+		"""
+		token = frappe.cache().get_value(self._cache_key())
+		if not token:
+			return
+		frappe.cache().delete_value(self._cache_key())
+		try:
+			requests.post(
+				f"{self.base}/entity/auth/logout",
+				headers={"Authorization": f"Bearer {token}"},
+				timeout=TIMEOUT,
+			)
+		except Exception:
+			# the session then expires on its own, which is where we were before
+			frappe.logger("crm.acumatica").info("Acumatica logout failed; the session will expire")
+
 	# --- reads ----------------------------------------------------------
 	def get_page(self, entity, top=100, skip=0, filter=None, select=None, expand=None, orderby="NoteID"):
 		# $skip paging over an unordered result set is undefined -- the server may return

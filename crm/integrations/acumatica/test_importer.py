@@ -282,6 +282,20 @@ class TestBackfill(ImporterTestCase):
 		return name
 
 	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_a_sync_logs_out_when_it_finishes_and_when_it_dies(self, ClientCls):
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.settings.request_pause = 0
+		client.iter_all.side_effect = lambda entity, **kw: iter([])
+		importer.run_backfill()
+		client.logout.assert_called_once()
+
+		client.iter_all.side_effect = RuntimeError("token expired mid-run")
+		with self.assertRaises(RuntimeError):
+			importer.run_backfill()
+		self.assertEqual(client.logout.call_count, 2)
+
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
 	def test_run_backfill_counts_and_records_issue_on_bad_record(self, ClientCls):
 		client = MagicMock()
 		ClientCls.return_value = client

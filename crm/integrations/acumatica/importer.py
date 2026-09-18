@@ -325,6 +325,9 @@ def _import_all(modified_since: str | None) -> dict:
 		# handler commits it alongside last_sync_error.
 		set_pending_retries(pending)
 		raise
+	finally:
+		# the run is the session: release the login slot the moment it is over
+		client.logout()
 
 	# Written last, and only here: everything above appends sync issues through
 	# whole-document saves, which would carry a stale queue back over this one.

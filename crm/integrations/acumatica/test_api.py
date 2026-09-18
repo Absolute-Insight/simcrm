@@ -149,6 +149,21 @@ class TestConnection(FrappeTestCase):
 		self.assertEqual(test_connection(), {"ok": True, "sample": "C001"})
 
 	@patch("crm.integrations.acumatica.api.AcumaticaClient")
+	def test_logs_out_after_pinging_whether_or_not_it_worked(self, MockClient):
+		from crm.integrations.acumatica.api import test_connection
+		from crm.integrations.acumatica.client import AcumaticaError
+
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value("CRM Acumatica Settings", "instance_url", "https://t.acumatica.com")
+		MockClient.return_value._cache_key.return_value = "k"
+		MockClient.return_value.ping.return_value = {"ok": True, "sample": "C001"}
+		test_connection()
+		MockClient.return_value.logout.assert_called_once()
+		MockClient.return_value.ping.side_effect = AcumaticaError("boom", status_code=500, body="x")
+		test_connection()
+		self.assertEqual(MockClient.return_value.logout.call_count, 2)
+
+	@patch("crm.integrations.acumatica.api.AcumaticaClient")
 	def test_forces_a_fresh_token_before_pinging(self, MockClient):
 		"""The operator just saved new credentials -- a cached token from the old
 		ones would make the test pass or fail on stale creds instead of the new ones."""
