@@ -132,6 +132,19 @@ that decides whether to show the Acumatica actions calls the whitelisted
 (`enabled`) it needs, rather than reading the singleton (which also holds the
 webhook secret and the API identity) through `frappe.client.get_single_value`.
 
+## API sessions and the concurrent-login limit
+
+Every OAuth token holds one of the API user's **concurrent API logins** (Users,
+SM201010) until it expires an hour later. The client therefore logs out
+(`AcumaticaClient.logout()`, best effort, never raises) after every Test
+connection click and at the end of every sync, whether it finished or died.
+Deal-time calls (a quote, a customer push) keep the cached token — they are short
+and share one session. Ask the tenant to set the API user's limit to **3**: a
+sync, a rep's quote and an admin's Test connection can legitimately overlap. On
+MBP's sandbox (2026-09-18) the default limit was reached on the first day of
+testing, and every later call answered with the login page as HTML — which the
+error parser now reports as such rather than as a stack of markup.
+
 ## Diagnostics: connection test and sync status
 
 The settings panel's **Test connection** button saves the form first, then
@@ -167,10 +180,10 @@ The panel also lists open sync issues with a **Dismiss** button per row
 
 Written against documentation; none of this has met a live instance yet.
 
-- `$orderby=NoteID` on paged reads. Sources disagree on whether the contract API
-  honours, ignores or rejects `$orderby`. **Test connection deliberately omits
-  it**, so a green test followed by a backfill that fails on its first page
-  points here — pass `orderby=None` from `iter_all`'s callers if so.
+- ~~`$orderby=NoteID` on paged reads~~ — **confirmed accepted** on MBP's sandbox
+  (Acumatica 25.201, endpoint Default/25.200.001) on 2026-09-18, as were the
+  `datetimeoffset` filter, retrieve-by-id and the QT SalesOrder PUT (new quotes
+  land On Hold; tax is applied from the customer).
 - The customer PUT sends only `CustomerName` (+ `CustomerID`): it relies on the
   tenant's default customer class supplying statement cycle, terms, tax zone.
 - The quote PUT sends no `Branch`/`LocationID`/`CurrencyID`/`ManualPrice`, and
