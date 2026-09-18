@@ -189,6 +189,19 @@ Written against documentation; none of this has met a live instance yet.
 - The quote PUT sends no `Branch`/`LocationID`/`CurrencyID`/`ManualPrice`, and
   the deal's currency is never compared with the customer's.
 
+## Shapes the first live pull taught us (MBP, 2026-09-18)
+
+- Several Acumatica customers share one name (three "Sibanye Rustenburg Platinum
+  Mines (Pty) Ltd"). The second and later are created as `Name (CustomerID)`, never
+  merged into the first; a re-sync keeps that name.
+- A second contact with the same name at the same customer is a second contact
+  (Contact's autoname suffixes it), not a refusal — Acumatica had "Portia Portia"
+  twice at one account.
+- `Phone1` sometimes holds a street address. An unusable phone is dropped and the
+  contact still lands; Contact's own validation used to fail the whole person.
+- Stock item descriptions run past `product_name`'s 140 characters: the name is
+  cut with an ellipsis and the full text kept in `description`.
+
 ## Known limitations
 
 - A contact's primary email is only ever appended to, never replaced: if the
