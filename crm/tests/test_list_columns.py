@@ -75,3 +75,51 @@ class ListColumnVisibilityTest(IntegrationTestCase):
 	def test_visible_columns_keep_their_order_and_are_untouched(self):
 		keys = self.visible_keys([column("modified"), column("name")])
 		self.assertEqual(keys, ["modified", "name"])
+
+
+class DefaultColumnsSurviveHiddenTest(IntegrationTestCase):
+	"""frappe's Contact keeps full_name hidden on the form; the contact list's
+	own default columns name it first, and a list of contacts with no name column
+	is what the hidden-field drop produced."""
+
+	def test_the_contact_list_keeps_its_name_column(self):
+		self.assertTrue(frappe.get_meta("Contact").get_field("full_name").hidden)
+		result = get_data(
+			doctype="Contact",
+			filters={},
+			order_by="modified desc",
+			page_length=1,
+			columns=[],
+			rows=[],
+			view={"view_type": "list"},
+		)
+		self.assertEqual(result["columns"][0].get("key"), "full_name")
+
+	def test_a_hidden_field_outside_the_defaults_is_still_dropped(self):
+		frappe.make_property_setter(
+			{
+				"doctype": "Contact",
+				"fieldname": "designation",
+				"property": "hidden",
+				"value": 1,
+				"property_type": "Check",
+			},
+			is_system_generated=False,
+		)
+		frappe.clear_cache(doctype="Contact")
+		try:
+			result = get_data(
+				doctype="Contact",
+				filters={},
+				order_by="modified desc",
+				page_length=1,
+				columns=[column("full_name"), column("designation")],
+				rows=["name"],
+				view={"view_type": "list"},
+			)
+			self.assertEqual([c.get("key") for c in result["columns"]], ["full_name"])
+		finally:
+			frappe.db.delete(
+				"Property Setter", {"doc_type": "Contact", "field_name": "designation", "property": "hidden"}
+			)
+			frappe.clear_cache(doctype="Contact")
