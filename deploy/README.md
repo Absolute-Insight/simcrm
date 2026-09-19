@@ -121,6 +121,48 @@ Four values differ from a server deployment, and three of them will bite:
 Then browse `http://localhost:8090/crm` and log in as `Administrator` with
 `ADMIN_PASSWORD`.
 
+### Running a QA stack beside production on the same host
+
+The table above assumes the rehearsal *is* the deployment, with a `.env` of its
+own. On a host that runs both — `vectora` for production and `vectora-qa`
+alongside it — there is only one `deploy/.env`, and it holds production's
+values. The two stacks are separated by `-p` and by the override file, **not by
+their environment**, so every variable in that table is production's unless you
+say otherwise on the command line.
+
+Two of them break the QA stack the moment it is recreated:
+
+```bash
+SITE_NAME=vectora.localhost HTTP_PUBLISH_PORT=8091 \
+  docker compose -p vectora-qa -f docker-compose.yml up -d
+```
+
+**`SITE_NAME` decides whether `create-site` creates anything.** It skips only
+when `sites/${SITE_NAME}` exists. Inherit production's name and it looks for
+production's site in the QA volume, does not find it, and runs `bench new-site`
+— which fails at `install_db` with `Access denied for user '_<hash>'`, leaves a
+half-built site directory behind, and then loops, because the
+`bench enable-scheduler` after the skip branch runs unconditionally and cannot
+reach a database that was never created. `restart: on-failure` turns that into
+a restart loop, and every long-running service waits on `create-site`, so the
+whole stack stays down. Recovery is to delete the partial directory from the
+QA `sites` volume and bring it up again with the right name.
+
+**`HTTP_PUBLISH_PORT` is a straight collision.** Both stacks want 8090;
+whichever starts first gets it and the other fails to bind with `port is
+already allocated`. Production publishes 8090 for local access — it is reached
+publicly through the `sim-net` alias, not the published port — so give QA
+8091.
+
+Both are worth passing every time rather than only when recreating, since
+`up -d` recreates whenever the resolved config changes and the first sign of
+getting it wrong is a stack that will not boot.
+
+Sharing the tag is fine and deliberate: QA should run the same version as
+production. Stage an upgrade by setting `VECTORA_TAG` once, recreating
+`vectora-qa` first, checking it, then recreating `vectora`. One declared
+version, two separately-timed rollouts.
+
 ### The image is the part people get wrong
 
 `:stable` is a moving pointer to the newest **main** or release-tag build, and main is the last
@@ -264,6 +306,14 @@ Check what the server is actually running with, not what the file says:
 ```bash
 docker inspect <project>-ollama-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep OLLAMA_CONTEXT_LENGTH
 ```
+
+**`--site all` is not "every directory under `sites/`".** Frappe counts a
+directory as a site only if it contains `site_config.json`, so anything else
+parked there is skipped. The production volume currently holds
+`sites/qa-data-migration`, which is not a site at all — it is four backup files
+from 2026-09-01 left in a folder. Harmless, and `migrate` ignores it, but it
+appears in every `ls sites/` and reads like a second site you have forgotten to
+maintain. Check for `site_config.json` before believing a listing.
 
 **If you skip step 1, nothing upgrades** — `pull` re-fetches the same pinned
 tag and `up -d` finds nothing to replace. That is the intended trade: an
