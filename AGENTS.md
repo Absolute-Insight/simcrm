@@ -110,6 +110,74 @@ Pre-commit hooks run prettier + eslint + oxlint automatically. If they modify a 
 
 ---
 
+## Agent tooling (`.claude/`, `.mcp.json`)
+
+`.claude/` is tracked on purpose: these encode the repo's rules, so they belong
+to the repo rather than to one machine. (A personal, gitignored `CLAUDE.md`
+sits alongside and covers *this host* — where the toolchain actually lives,
+which ports are which. Machine facts go there; repo rules go here.)
+
+### Slash commands
+
+| Command | Does |
+|---|---|
+| `/dev-up` | Bring up / verify the devcontainer stack, deps, dev site |
+| `/test` | Run the suites the way CI runs them (frontend unit, python, e2e) |
+| `/deploy` | Bring up or upgrade the `deploy/` compose stack, then verify |
+| `/release` | Cut a release per [docs/RELEASING.md](./docs/RELEASING.md) |
+| `/backmerge` | Release steps 6+7 — the ones that get missed |
+| `/upstream-port` | Port fixes from upstream `frappe/crm` |
+
+`/deploy`, `/release`, `/backmerge` and `/upstream-port` are
+`disable-model-invocation`: they have side effects and are started deliberately.
+
+### Review agents
+
+`permissions-reviewer` (row scoping and the access boundary),
+`theme-contrast-reviewer` (the `--ink-*` ladder — see **Design system
+gotchas**), `upstream-port-reviewer`, `clock-and-timezone-reviewer` and
+`doctype-migration-reviewer`. The last two exist because CI's test site has no
+`time_zone` and so runs Asia/Kolkata against UTC runners — mixed-clock code
+fails nightly from 18:30 UTC — and because a schema change that passes against
+a freshly built test site can still strand data on a site that already has rows.
+
+### Hooks — enforced, not advisory
+
+- **`guard-paths.sh`** (PreToolUse) refuses writes to generated files, build
+  output, `.env`, lockfiles and `crm/__init__.py`. Its one carve-out, a
+  VECTORA_TAG-only Edit, is dead code for `.env`/`deploy/.env` — the
+  `Read` deny in `settings.json` bars an Edit before the hook runs. The comment
+  in the file explains why that stays and what to do instead.
+- **`guard-commit.sh`** refuses commits on `develop` and `main`.
+- **`guard-compose.sh`** resolves what `docker compose pull/up/create` will
+  *actually* run. It reports a **change**, not a difference — a guard that
+  fires on the normal condition is one you learn to click through.
+- **`format-file.sh`** (PostToolUse) formats edited files so pre-commit does
+  not bounce the commit. It **pins prettier and ruff to the versions CI uses**
+  (currently 3.2.5 and 0.8.1); formatting with a newer version writes a file
+  pre-commit then rewrites differently, which is the bounce it exists to
+  prevent. Bump those constants in the same commit as
+  `.pre-commit-config.yaml`. eslint is unpinned on purpose — pre-commit gives
+  it a caret range, and a linter's `--fix` does not drift like a formatter's.
+- **`verify-tests.sh`** (Stop) runs vitest before a turn ends, but only when
+  the turn touched `frontend/src` or `frontend/tests`, and stands down after
+  three consecutive red runs so a pre-existing failure cannot wedge a session.
+
+All degrade rather than fail when a tool is missing, and each logs its skips
+(`format.log`, `compose.log`, `verify.log`, all gitignored). Check the log
+before concluding a hook did nothing.
+
+### MCP
+
+`.mcp.json` declares **codegraph** at project scope so the "ask
+`codegraph explore` instead" advice above holds in a fresh worktree and for
+anyone else who opens the repo. The binary is a host tool, so inside the
+devcontainer the server does not connect — use the shell form there. Playwright
+is deliberately absent: it arrives via a plugin under another server name, and
+the e2e suite drives it through `npx playwright test` anyway.
+
+---
+
 ## Docs structure
 
 ```
