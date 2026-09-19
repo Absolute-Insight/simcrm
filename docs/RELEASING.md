@@ -92,18 +92,56 @@ pushing to it _is_ cutting a release. Nothing else triggers one.
    ```
 
 6. **Back-merge the bump commit into `develop`**, or the branches diverge and the next
-   promotion is no longer a fast-forward. The `no-commit-to-branch` pre-commit hook blocks
-   committing to `develop` locally, so do it server-side rather than reaching for
-   `--no-verify`:
+   promotion is no longer a fast-forward. Run `/backmerge`, which does steps 6 and 7
+   together.
+
+   This step produces nothing visible — no tag, no release page, no image — which is why
+   it is the one that gets missed. The bill then arrives at the *start of the next
+   release*, when step 2 is rejected as a non-fast-forward. Missed after v3.13.1, v3.14.0
+   and v3.16.0.
+
+   > **This used to document a `gh api .../merges` call. That call does not work:** it
+   > returns `403 Must have admin rights to Repository`, because `develop` is protected
+   > and neither the `aisight-dev` nor the `Absolute-Insight` token carries admin.
+   > Verified 2026-09-19. Don't retry it or go hunting for a token.
+
+   The `no-commit-to-branch` pre-commit hook blocks committing to `develop` locally, and
+   so does `.claude/hooks/guard-commit.sh`. Both are right — don't reach for
+   `--no-verify`. Use an ordinary branch and PR, which is what every back-merge has
+   actually been (#233, #252, #253). Branch from **`origin/main`** so it already carries
+   the bump commit and the PR diff against `develop` is exactly what is missing:
 
    ```bash
-   gh api repos/Absolute-Insight/simcrm/merges \
-     -f base=develop -f head=main \
-     -f commit_message="chore: merge the vX.Y.Z release bump back into develop"
+   git worktree add .worktrees/backmerge-vXYZ -b chore/backmerge-vX.Y.Z origin/main
+   # make step 7's edit on this branch too — same PR, as #233 and #252 did
+   gh auth switch --user Absolute-Insight        # aisight-dev is usually the active one
+   gh pr create --base develop --head chore/backmerge-vX.Y.Z \
+     --title "chore: merge the vX.Y.Z release bump back into develop"
+   gh pr merge <n> --merge                       # a MERGE commit, never a squash
    ```
 
+   Repo-wide auto-merge is **disabled** (`enablePullRequestAutoMerge` is refused), so
+   `--auto` fails — wait for the checks and merge by hand. Full CI runs even on a
+   two-line PR; Playwright and the server tests are the long poles, ~10 minutes.
+
+   Confirm it landed, then delete the branch:
+
+   ```bash
+   git fetch origin
+   git merge-base --is-ancestor origin/main origin/develop && echo "fast-forward restored"
+   git push origin --delete chore/backmerge-vX.Y.Z
+   ```
+
+   Deleting matters: five `chore/backmerge-*` branches (v3.14.7, v3.14.8, v3.14.10,
+   v3.14.11, v3.15.0) sat on the remote for weeks, all long since merged, and each one
+   costs someone a few minutes to re-check. The ancestor check above is the only
+   authority on whether a back-merge is owed; a branch's existence means nothing.
+
 7. **Bump `VECTORA_TAG` in `deploy/.env.example`** so the documented pin is a release that
-   exists.
+   exists — and one whose **image** exists, which is a separate question (see
+   [The tag does not build itself](#the-tag-does-not-build-itself)). Verify with the
+   `curl` in step 5 before pinning. Carry this on the step 6 branch so it lands in the
+   same PR.
 
 ## The tag does not build itself
 
