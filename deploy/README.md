@@ -130,12 +130,36 @@ values. The two stacks are separated by `-p` and by the override file, **not by
 their environment**, so every variable in that table is production's unless you
 say otherwise on the command line.
 
-Two of them break the QA stack the moment it is recreated:
+**Give the QA stack its own env file and pass it every time.** This host keeps
+one at `~/backups/vectora/qa-stack.env` — outside the repository, because it
+holds `DB_ROOT_PASSWORD` and `ADMIN_PASSWORD` and this repository is public:
 
 ```bash
+docker compose -p vectora-qa -f docker-compose.yml \
+  --env-file ~/backups/vectora/qa-stack.env up -d
+```
+
+Overriding only the two variables below on the command line looks equivalent
+and is not:
+
+```bash
+# works, but leaves DB_ROOT_PASSWORD pointing at production's
 SITE_NAME=vectora.localhost HTTP_PUBLISH_PORT=8091 \
   docker compose -p vectora-qa -f docker-compose.yml up -d
 ```
+
+MariaDB sets the root password **once, when the data directory is initialised**,
+and ignores the environment on every later boot. So a QA stack recreated from
+production's `.env` runs perfectly — the site authenticates with its own user
+out of `site_config.json` — while `DB_ROOT_PASSWORD` silently no longer matches
+the database. Nothing notices until something needs root: `bench new-site`,
+`bench restore`, `bench drop-site`. Those fail with `Access denied for user
+'root'`, which reads like a corrupted stack rather than a stale variable.
+
+That is the state this host was left in on 2026-09-19. Harmless day to day,
+and corrected by the next `up -d` that passes `--env-file`.
+
+Two variables in that file are the ones that break the stack outright:
 
 **`SITE_NAME` decides whether `create-site` creates anything.** It skips only
 when `sites/${SITE_NAME}` exists. Inherit production's name and it looks for
@@ -154,9 +178,23 @@ already allocated`. Production publishes 8090 for local access — it is reached
 publicly through the `sim-net` alias, not the published port — so give QA
 8091.
 
-Both are worth passing every time rather than only when recreating, since
-`up -d` recreates whenever the resolved config changes and the first sign of
-getting it wrong is a stack that will not boot.
+Pass the env file on *every* QA command, not only when you intend to recreate:
+`up -d` recreates whenever the resolved config changes, so the moment you get
+it wrong is rarely the moment you expected to.
+
+**And after any recreation, put the extra network back.** QA's backend and both
+queue workers are attached to production's network so the agent can reach
+`vectora-ollama-1`; `up -d` drops that attachment every time, and the agent
+surfaces then fail *silently* — they render normally and never answer. Verify
+rather than assume:
+
+```bash
+for c in vectora-qa-backend-1 vectora-qa-queue-short-1 vectora-qa-queue-long-1; do
+  docker network connect vectora_default "$c"
+  docker exec "$c" curl -s -o /dev/null -w "$c %{http_code}\n" \
+    http://vectora-ollama-1:11434/v1/models        # expect 200
+done
+```
 
 Sharing the tag is fine and deliberate: QA should run the same version as
 production. Stage an upgrade by setting `VECTORA_TAG` once, recreating
