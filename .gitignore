@@ -37,12 +37,17 @@ AGENTS.md
 # repo's rules -- the generated files nobody should hand-edit, the branches
 # pre-commit refuses a commit on, and the release procedure whose one manual
 # step is easy to miss -- so they belong to the repo, not to one machine.
-# Three paths inside it do not: settings.local.json is per-developer overrides,
-# and the two *.log files are the hooks' own records -- which tools the
-# formatter could not find, and when the Stop gate ran, passed or stood down.
+# A few paths inside it do not: settings.local.json is per-developer overrides,
+# the *.log files are the hooks' own records -- which tools the formatter could
+# not find, when the Stop gate ran, passed or stood down, and what the compose
+# guard resolved -- and .compose-ack records the last image-tag mismatch that
+# guard has already reported, so it warns when the situation changes instead of
+# on every pull. All of those describe one machine's history, not the rules.
 .claude/settings.local.json
 .claude/hooks/format.log
 .claude/hooks/verify.log
+.claude/hooks/compose.log
+.claude/hooks/.compose-ack
 
 # deploy/README.md's first boot step is `cp .env.example .env` *inside this
 # working tree*, and that file holds DB_ROOT_PASSWORD and ADMIN_PASSWORD. This
