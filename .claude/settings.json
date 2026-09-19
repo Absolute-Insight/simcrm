@@ -128,6 +128,12 @@
             "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-commit.sh",
             "if": "Bash(git commit:*)",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-compose.sh",
+            "timeout": 20,
+            "statusMessage": "Resolving compose image tags"
           }
         ]
       }
