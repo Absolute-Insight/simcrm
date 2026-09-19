@@ -63,8 +63,15 @@ google-chrome-stable_current_amd64.deb
 # Rotating .env keeps the superseded credentials in the working tree, one
 # `git add -A` away from being published; and an override file is by definition
 # one host's paths, ports and hardware, which nobody else can use.
+#
+# The override's *backups* need the same rule and did not have it, so every
+# rotation left another untracked file in `git status` -- ten of them by
+# 2026-09-19, which is enough noise to hide something that matters. They are
+# backups of an ignored file, so they were never candidates for tracking; this
+# is the missing counterpart to the .env.bak-* line above, not a new policy.
 deploy/.env.bak-*
 deploy/docker-compose.override.yml
+deploy/docker-compose.override.yml.bak-*
 
 # scripts/init.sh tees its output here so a failed devcontainer provision can be
 # read after the Dev Containers terminal has scrolled away.
