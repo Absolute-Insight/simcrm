@@ -2665,7 +2665,7 @@
     "@vue/compiler-core" "3.5.43"
     "@vue/shared" "3.5.43"
 
-"@vue/compiler-sfc@3.5.43", "@vue/compiler-sfc@^3.5.22":
+"@vue/compiler-sfc@3.5.43", "@vue/compiler-sfc@^3.5.13", "@vue/compiler-sfc@^3.5.22":
   version "3.5.43"
   resolved "https://registry.yarnpkg.com/@vue/compiler-sfc/-/compiler-sfc-3.5.43.tgz#19c097f398abacfee9627646075a919d2f57a6ae"
   integrity sha512-FCbrG3XNCRl+js3huuKx4IVHBLTvMkJhVepjbxSPu1gn4yWLaYtGNQdjJGZaMytXB6qb76qQDDmDSLy/vkmleQ==
@@ -3648,10 +3648,10 @@ foreground-child@^3.3.1:
     cross-spawn "^7.0.6"
     signal-exit "^4.0.1"
 
-frappe-ui@1.0.0-beta.63:
-  version "1.0.0-beta.63"
-  resolved "https://registry.yarnpkg.com/frappe-ui/-/frappe-ui-1.0.0-beta.63.tgz#4538261c9fd8bad4802d55b9b46c3f42548cb1bd"
-  integrity sha512-wUVIAFwpBGQTnmItSfWaDVu1/OxT885ENWMH7FUVb9j9NGDnSwcQDwaPAJyRUjGp+91jL4Be2xS0cBCzhXcpvA==
+frappe-ui@1.0.0-beta.70:
+  version "1.0.0-beta.70"
+  resolved "https://registry.yarnpkg.com/frappe-ui/-/frappe-ui-1.0.0-beta.70.tgz#09c4920fcad40b2428610eacb42e7089714bfc02"
+  integrity sha512-agg1ul/9bcZ0WTatbvlyOZr2iMp/hUh/rznnlDQtplCPsqqolcSF8M/LvUS/MhJxl6/GjEXU9Eizg5rkgQsSgA==
   dependencies:
     "@codemirror/lang-css" "^6.3.0"
     "@codemirror/lang-html" "^6.4.9"
@@ -3703,6 +3703,7 @@ frappe-ui@1.0.0-beta.63:
     "@tiptap/starter-kit" "^3.26.0"
     "@tiptap/suggestion" "^3.26.0"
     "@tiptap/vue-3" "^3.26.0"
+    "@vue/compiler-sfc" "^3.5.13"
     "@vueuse/core" "^14.1.0"
     codemirror "^6.0.1"
     dayjs "^1.11.13"
