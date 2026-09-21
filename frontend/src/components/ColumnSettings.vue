@@ -1,5 +1,5 @@
 <template>
-  <Popover placement="bottom-end">
+  <Popover side="bottom" align="end">
     <template #trigger>
       <Button :label="__('Columns')">
         <template v-if="hideLabel" #icon>

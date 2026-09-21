@@ -129,16 +129,16 @@
       :tabs="tabs"
       class="v-lux-stage flex flex-1 overflow-hidden flex-col [&_[role='tablist']]:gap-7.5 [&_[role='tablist']]:px-5 [&_[role='tablist']::-webkit-scrollbar]:h-0 [&_[role='tablist']]:overflow-x-auto [&_[role='tablist']]:min-h-[45px] [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:flex-col [&_[role='tabpanel']:not([hidden])]:grow [&_[role='tabpanel']:not([hidden])]:overflow-hidden"
     >
-      <template #tab-item="{ tab, selected }">
+      <template #tab-item="{ tab, active }">
         <button
           class="group flex items-center gap-2 border-b border-transparent py-2.5 text-base text-ink-gray-5 duration-300 ease-in-out hover:text-ink-gray-9"
-          :class="{ 'text-ink-gray-9': selected }"
+          :class="{ 'text-ink-gray-9': active }"
         >
           <component :is="tab.icon" v-if="tab.icon" class="h-5" />
           {{ __(tab.label) }}
           <Badge
             class="group-hover:bg-surface-gray-10"
-            :class="[selected ? 'bg-surface-gray-10' : 'bg-gray-600']"
+            :class="[active ? 'bg-surface-gray-10' : 'bg-gray-600']"
             variant="solid"
             theme="gray"
             size="sm"

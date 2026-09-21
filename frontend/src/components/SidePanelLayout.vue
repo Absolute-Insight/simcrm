@@ -44,7 +44,7 @@
                     <Tooltip
                       v-if="!['Button', 'HTML'].includes(field.fieldtype)"
                       :text="__(field.label)"
-                      :hoverDelay="1"
+                      :hoverDelay="1000"
                     >
                       <div
                         class="w-[35%] min-w-20 shrink-0 flex items-center gap-0.5"
@@ -215,7 +215,8 @@
                             :modelValue="doc[field.fieldname]"
                             :format="getFormat('', '', true, true, false)"
                             :placeholder="field.placeholder"
-                            placement="left-start"
+                            side="left"
+                            align="start"
                             @change="(v) => fieldChange(v, field)"
                           />
                         </div>
@@ -227,7 +228,8 @@
                             :modelValue="doc[field.fieldname]"
                             :format="getFormat('', '', true, false, false)"
                             :placeholder="field.placeholder"
-                            placement="left-start"
+                            side="left"
+                            align="start"
                             @change="(v) => fieldChange(v, field)"
                           />
                         </div>

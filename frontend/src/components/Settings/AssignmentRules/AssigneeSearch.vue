@@ -1,6 +1,6 @@
 <template>
   <Combobox :multiple="true">
-    <Popover placement="bottom-end">
+    <Popover side="bottom" align="end">
       <template #trigger>
         <Button
           variant="subtle"

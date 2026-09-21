@@ -162,15 +162,11 @@
         class="flex items-center justify-center opacity-0 transition-all ease-in group-hover:opacity-100"
       >
         <IconPicker
-          v-slot="{ togglePopover }"
           v-model="emoji"
           v-model:reaction="reaction"
           @update:modelValue="() => reactOnMessage(whatsapp.name, emoji)"
         >
-          <Button
-            class="rounded-full !size-6 mt-0.5"
-            @click="() => (reaction = true) && togglePopover()"
-          >
+          <Button class="rounded-full !size-6 mt-0.5" @click="reaction = true">
             <template #icon>
               <ReactIcon class="text-ink-gray-3" />
             </template>

@@ -1,5 +1,5 @@
 <template>
-  <Popover placement="bottom-end">
+  <Popover side="bottom" align="end">
     <template #trigger="{ close }">
       <div class="flex items-center">
         <Button

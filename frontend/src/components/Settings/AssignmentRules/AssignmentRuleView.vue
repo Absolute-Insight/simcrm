@@ -159,7 +159,7 @@
               </button>
             </span>
             <div v-if="isOldSla && step.data">
-              <Popover trigger="hover" :hoverDelay="0.25" placement="top-end">
+              <HoverCard :hover-delay="250" side="top" align="end">
                 <template #trigger>
                   <div
                     class="text-sm text-ink-gray-6 flex gap-1 cursor-default text-nowrap items-center"
@@ -170,12 +170,12 @@
                 </template>
                 <template #default>
                   <div
-                    class="text-sm text-ink-gray-6 p-2 bg-surface-elevation-2 rounded-[var(--v-radius-control)] max-w-96 text-wrap whitespace-pre-wrap leading-5"
+                    class="text-sm text-ink-gray-6 p-2 max-w-96 text-wrap whitespace-pre-wrap leading-5"
                   >
                     <code>{{ assignmentRuleData.assignCondition }}</code>
                   </div>
                 </template>
-              </Popover>
+              </HoverCard>
             </div>
           </div>
         </div>
@@ -244,7 +244,7 @@
                 isOldSla && step.data && assignmentRuleData.unassignCondition
               "
             >
-              <Popover trigger="hover" :hoverDelay="0.25" placement="top-end">
+              <HoverCard :hover-delay="250" side="top" align="end">
                 <template #trigger>
                   <div
                     class="text-sm text-ink-gray-6 flex gap-1 cursor-default text-nowrap items-center"
@@ -255,12 +255,12 @@
                 </template>
                 <template #default>
                   <div
-                    class="text-sm text-ink-gray-6 p-2 bg-surface-elevation-2 rounded-[var(--v-radius-control)] max-w-96 text-wrap whitespace-pre-wrap leading-5"
+                    class="text-sm text-ink-gray-6 p-2 max-w-96 text-wrap whitespace-pre-wrap leading-5"
                   >
                     <code>{{ assignmentRuleData.unassignCondition }}</code>
                   </div>
                 </template>
-              </Popover>
+              </HoverCard>
             </div>
           </div>
         </div>
@@ -339,6 +339,7 @@ import {
   FormLabel,
   LoadingIndicator,
   Popover,
+  HoverCard,
   Select,
   Switch,
   toast,

@@ -344,7 +344,8 @@
             :modelValue="_event.toTime"
             :options="toOptions"
             :placeholder="__('End Time')"
-            placement="bottom-end"
+            side="bottom"
+            align="end"
             @update:modelValue="(time) => updateTime(time)"
           />
         </div>

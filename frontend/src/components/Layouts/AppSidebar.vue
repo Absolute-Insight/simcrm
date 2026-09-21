@@ -11,7 +11,7 @@
   <div class="v-shell-sidebar relative flex h-full">
     <Sidebar
       v-model:collapsed="isSidebarCollapsed"
-      :disable-collapse="mobile"
+      :collapsible="!mobile"
       :width="mobile ? '260px' : undefined"
       class="border-r border-[var(--v-shell-hairline)]"
     >
@@ -103,7 +103,7 @@
                 v-for="link in section.views"
                 :id="link.action ? link.action + '-btn' : undefined"
                 :key="link.key"
-                :to="link.to"
+                :route="link.to"
                 :label="__(link.label)"
                 :active="
                   link.action === 'assistant'
@@ -142,7 +142,7 @@
                 <Tooltip
                   :text="__(link.label)"
                   side="right"
-                  :hoverDelay="1.5"
+                  :hoverDelay="1500"
                   :disabled="isCollapsed"
                 >
                   <span class="truncate text-sm">{{ __(link.label) }}</span>
