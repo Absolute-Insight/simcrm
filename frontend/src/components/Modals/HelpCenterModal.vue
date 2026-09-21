@@ -53,7 +53,7 @@
                 v-for="hit in results"
                 :key="hit.article.name"
                 type="button"
-                class="flex w-full flex-col gap-0.5 rounded px-2 py-1.5 text-left transition hover:bg-surface-gray-3"
+                class="flex w-full flex-col gap-0.5 rounded-4 px-2 py-1.5 text-left transition hover:bg-surface-gray-3"
                 @click="openResult(hit.article.name)"
               >
                 <span class="text-base text-ink-gray-8">

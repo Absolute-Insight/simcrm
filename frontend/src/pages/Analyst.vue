@@ -47,7 +47,7 @@
           <div
             v-for="table in formattedTables(message)"
             :key="table.key"
-            class="flex flex-col gap-2 rounded-lg border border-outline-gray-1 bg-surface-elevation-1 p-3"
+            class="flex flex-col gap-2 rounded-6 border border-outline-gray-1 bg-surface-elevation-1 p-3"
           >
             <div class="flex items-center justify-between gap-2">
               <div class="flex min-w-0 items-center gap-2">
@@ -122,7 +122,7 @@
 
           <div
             v-if="message.caveats?.length"
-            class="rounded-lg bg-surface-gray-1 px-3 py-2 text-sm text-ink-gray-6"
+            class="rounded-6 bg-surface-gray-1 px-3 py-2 text-sm text-ink-gray-6"
           >
             <p
               v-for="(line, index) in message.caveats"

@@ -39,7 +39,6 @@
         </template>
       </FileUploader>
       <IconPicker
-        v-slot="{ togglePopover }"
         v-model="emoji"
         @update:modelValue="
           () => {
@@ -51,7 +50,6 @@
       >
         <SmileIcon
           class="flex size-4.5 cursor-pointer rounded-[var(--v-radius-control)] text-2xl leading-none text-ink-gray-4"
-          @click="togglePopover"
         />
       </IconPicker>
     </div>

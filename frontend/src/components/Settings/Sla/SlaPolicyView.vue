@@ -117,12 +117,7 @@
                 @update:model-value="toggleDefaultSla"
               />
               <div v-if="isOldSla && step.data && !slaData.default">
-                <Popover
-                  trigger="hover"
-                  :hoverDelay="0.25"
-                  side="top"
-                  align="end"
-                >
+                <HoverCard :hover-delay="250" side="top" align="end">
                   <template #trigger>
                     <div
                       class="text-sm text-ink-gray-6 flex gap-1 cursor-default"
@@ -133,12 +128,12 @@
                   </template>
                   <template #default>
                     <div
-                      class="text-sm text-ink-gray-6 p-2 bg-surface-elevation-2 rounded-[var(--v-radius-control)] max-w-96 text-wrap whitespace-pre-wrap leading-5"
+                      class="text-sm text-ink-gray-6 p-2 max-w-96 text-wrap whitespace-pre-wrap leading-5"
                     >
                       <code>{{ slaData.condition }}</code>
                     </div>
                   </template>
-                </Popover>
+                </HoverCard>
               </div>
             </div>
             <div class="mt-5">
@@ -259,7 +254,7 @@ import {
   FormControl,
   FormLabel,
   LoadingIndicator,
-  Popover,
+  HoverCard,
   Select,
   Switch,
   toast,

@@ -363,7 +363,7 @@
           <div v-else-if="panel.id === 'pipeline'" class="flex flex-col gap-3">
             <p
               v-if="panel.note?.value"
-              class="flex items-start gap-2 rounded bg-surface-orange-1 px-3 py-2 text-sm text-ink-orange-9"
+              class="flex items-start gap-2 rounded-4 bg-surface-orange-1 px-3 py-2 text-sm text-ink-orange-9"
             >
               <LucideInfo class="mt-0.5 size-4 shrink-0" />
               <span>{{ panel.note.value }}</span>
@@ -405,7 +405,7 @@
                  string the Reports page shows, from the same helper. -->
             <p
               v-if="panel.note?.value"
-              class="mb-3 flex items-start gap-2 rounded bg-surface-orange-1 px-3 py-2 text-sm text-ink-orange-9"
+              class="mb-3 flex items-start gap-2 rounded-4 bg-surface-orange-1 px-3 py-2 text-sm text-ink-orange-9"
             >
               <LucideInfo class="mt-0.5 size-4 shrink-0" />
               <span>{{ panel.note.value }}</span>

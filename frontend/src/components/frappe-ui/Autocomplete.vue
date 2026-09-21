@@ -7,12 +7,12 @@
       :side="side"
       :align="align"
     >
-      <template #trigger="{ open, toggle }">
+      <template #trigger="{ open, setOpen }">
         <slot
           name="trigger"
           v-bind="{
             open,
-            toggle,
+            setOpen,
             selectedValue,
             displayValue,
           }"

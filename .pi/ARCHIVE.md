@@ -569,3 +569,50 @@ produced an **identical 9-failure / 16-pass / 2-not-run result** — no regressi
 Those nine are pre-existing in that environment: the manager demo account 401s on login, which
 strands the `manager` project, and `convert` leaves its dialog open. They are not this port's
 and are not fixed by it.
+
+---
+
+## frappe-ui v1 release-candidate migration (beta.63 → beta.76)
+
+Landed 2026-09-21 on `chore/frappe-ui-v1-beta76`, after dependabot's beta.70 bump (#265)
+went red and was closed as not-a-bump. frappe-ui's beta.65+ is its v1 RC batch: 311
+commits, ~25 marked breaking, and upstream frappe/crm is still on beta.29, so there was
+no port source — the migration was ours to do.
+
+### What actually broke
+
+Far less than the breaking-commit list suggested. The production build had **no loud
+breaks**; every import still resolved. The silent ones, all fixed in the frontend:
+
+- `SidebarItem` `to` → `route` (the one that turned #265 red: every nav row became a
+  button with no href), `Sidebar` `disable-collapse` → `collapsible` inverted.
+- `Tabs` `#tab-item` slot prop `selected` → `active` on the four record pages.
+- `Tooltip`/`HoverCard` `hoverDelay` in milliseconds.
+- `Popover` trigger slot lost `toggle` (now `setOpen`) and **wires its own click** —
+  IconPicker consumers that also called `togglePopover()` would toggle twice and stay shut.
+- `trigger="hover"` Popovers → `HoverCard`; `placement` → `side`+`align` on Popover and
+  Tooltip (dead since beta.63, now anchoring correctly).
+- 19 `rounded`/`rounded-lg` sites had emitted no CSS since the radius aliases went;
+  `tokens-v2 --radius-only` renamed them.
+
+### Load-bearing decisions
+
+- **Codemods first, then grep for what they leave behind.** `navigation-v1` renamed the
+  slot destructuring but not the `:class` that read `selected` three lines down.
+  `tokens-v2` rewrote the `${rounded}` template literal in `utils/gauge.js` into
+  `${rounded-4}` — vitest caught it; revert that file after every run of the codemod.
+- **The tailwind-4 compat layer stays.** frappe-ui's peer is `tailwindcss >=3.4.2 <4`;
+  `tailwind.preset-v4.js` and `src/lib/frappe-ui-compat/` are as necessary at beta.76 as
+  at beta.63. The `frappe-ui/internals` vite alias points at a file upstream deleted;
+  nothing imports it, so it was left for the next person who touches that block.
+- **HoverCard bodies lose their own surface classes.** HoverCard renders its content
+  inside `PopoverPanel`, so the `bg-surface-elevation-2 rounded-*` the old bare Popover
+  needed would have drawn a panel inside a panel.
+
+### Verification
+
+vitest 49 files / 633 tests; Playwright 27/27 against the built app served from the dev
+bench; a scripted pass over every route in both themes recorded zero Vue warnings and no
+page errors. The dev site needed four adjustments to match CI's fresh site for the e2e
+run (test flag, outgoing mail account, demo passwords, forecasting mandatory fields);
+the recipe is in the machine-local memory, not here, because it is about this bench.

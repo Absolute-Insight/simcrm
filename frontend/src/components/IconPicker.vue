@@ -1,7 +1,7 @@
 <template>
   <Popover bare>
-    <template #trigger="{ open, toggle }">
-      <slot v-bind="{ open, toggle, togglePopover: toggle }">
+    <template #trigger="{ open, setOpen }">
+      <slot v-bind="{ open, setOpen }">
         <span class="text-base"> {{ modelValue || '' }} </span>
       </slot>
     </template>

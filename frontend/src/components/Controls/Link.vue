@@ -14,8 +14,8 @@
       :placement="attrs.placement"
       :filterable="false"
     >
-      <template #trigger="{ open, toggle }">
-        <slot name="trigger" v-bind="{ open, toggle }" />
+      <template #trigger="{ open, setOpen }">
+        <slot name="trigger" v-bind="{ open, setOpen }" />
       </template>
 
       <template #prefix>

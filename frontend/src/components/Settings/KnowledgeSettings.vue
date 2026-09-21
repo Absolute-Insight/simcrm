@@ -55,7 +55,7 @@
 
     <div
       v-else-if="!rows.length"
-      class="flex flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-outline-gray-2 p-8 text-center"
+      class="flex flex-1 flex-col items-center justify-center gap-3 rounded-6 border border-dashed border-outline-gray-2 p-8 text-center"
     >
       <p class="text-base text-ink-gray-7">
         {{
@@ -85,7 +85,7 @@
           {{ group.category || __('Uncategorised') }}
         </div>
         <div
-          class="divide-y divide-outline-gray-1 rounded-lg border border-outline-gray-1"
+          class="divide-y divide-outline-gray-1 rounded-6 border border-outline-gray-1"
         >
           <div
             v-for="article in group.articles"
