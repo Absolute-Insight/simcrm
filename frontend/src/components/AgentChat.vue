@@ -27,7 +27,7 @@
         <!-- Answers are model output: plain text on purpose, never v-html. -->
         <div
           v-if="message.role === 'user'"
-          class="ml-8 self-end whitespace-pre-wrap rounded-lg bg-surface-gray-2 px-3 py-2 text-base text-ink-gray-8"
+          class="ml-8 self-end whitespace-pre-wrap rounded-6 bg-surface-gray-2 px-3 py-2 text-base text-ink-gray-8"
         >
           {{ message.content }}
         </div>
@@ -51,7 +51,7 @@
 
       <div
         v-else-if="failure"
-        class="flex flex-col items-start gap-2 rounded-lg bg-surface-gray-1 p-3"
+        class="flex flex-col items-start gap-2 rounded-6 bg-surface-gray-1 p-3"
       >
         <slot name="failure" :failure="failure">
           <p class="text-sm text-ink-gray-6">
@@ -81,7 +81,7 @@
           v-model="draft"
           rows="1"
           :placeholder="placeholder"
-          class="max-h-32 min-h-9 flex-1 resize-none rounded-lg border-0 bg-surface-gray-2 px-3 py-2 text-base text-ink-gray-8 placeholder-ink-gray-4 focus:ring-2 focus:ring-outline-gray-3"
+          class="max-h-32 min-h-9 flex-1 resize-none rounded-6 border-0 bg-surface-gray-2 px-3 py-2 text-base text-ink-gray-8 placeholder-ink-gray-4 focus:ring-2 focus:ring-outline-gray-3"
           @keydown.enter.exact.prevent="send(draft)"
           @input="autosize"
         />

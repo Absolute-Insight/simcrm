@@ -185,7 +185,7 @@ body {
    -- QA measured 3.0:1 light / 3.23:1 dark on the "Start now"/"Continue"
    label, under the 4.5:1 floor. The component exposes no class, id, or
    data-slot hook: the button and every wrapper div around it carry only
-   shared Tailwind utilities (bg-surface-elevation-2, shadow-sm, rounded-lg,
+   shared Tailwind utilities (bg-surface-elevation-2, shadow-sm, rounded-6,
    ...) that appear throughout the app, so there is no selector into
    frappe-ui's own markup that would not also match unrelated elements.
    AppSidebar.vue wraps the banner in `.v-getting-started` instead -- an

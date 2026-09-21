@@ -67,7 +67,7 @@
           <!-- eslint-disable vue/no-v-html -->
           <div
             v-if="preview"
-            class="help-article max-h-[50vh] min-h-48 overflow-y-auto rounded-lg border border-outline-gray-2 p-4"
+            class="help-article max-h-[50vh] min-h-48 overflow-y-auto rounded-6 border border-outline-gray-2 p-4"
             v-html="previewHtml"
           />
           <!-- eslint-enable vue/no-v-html -->
@@ -75,7 +75,7 @@
             v-else
             v-model="draft.body"
             rows="14"
-            class="max-h-[50vh] min-h-48 w-full resize-y rounded-lg border-0 bg-surface-gray-2 px-3 py-2 font-mono text-sm text-ink-gray-8 placeholder-ink-gray-4 focus:ring-2 focus:ring-outline-gray-3"
+            class="max-h-[50vh] min-h-48 w-full resize-y rounded-6 border-0 bg-surface-gray-2 px-3 py-2 font-mono text-sm text-ink-gray-8 placeholder-ink-gray-4 focus:ring-2 focus:ring-outline-gray-3"
             :placeholder="
               __(
                 '## What it is\n\n## Typical sizes and ratings\n\n## Where it is used\n\n## Questions to ask the customer',

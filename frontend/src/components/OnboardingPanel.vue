@@ -18,7 +18,7 @@
 <template>
   <div
     v-if="open"
-    class="fixed bottom-5 right-5 z-40 flex w-80 flex-col rounded-lg bg-surface-elevation-2 text-ink-gray-9"
+    class="fixed bottom-5 right-5 z-40 flex w-80 flex-col rounded-6 bg-surface-elevation-2 text-ink-gray-9"
     :class="collapsed ? '' : 'max-h-[calc(100vh_-_6rem)]'"
     :style="{ 'box-shadow': 'var(--elevation-lg)' }"
     @click.stop
@@ -48,7 +48,7 @@
 
     <div v-show="!collapsed" class="flex min-h-0 flex-col px-3 pb-3">
       <div class="mb-4 mt-2 flex flex-col items-center gap-1">
-        <component :is="logo" class="mb-3 size-10 shrink-0 rounded" />
+        <component :is="logo" class="mb-3 size-10 shrink-0 rounded-4" />
         <div class="text-base font-medium">
           {{ __('Welcome to {0}', [title]) }}
         </div>
@@ -83,7 +83,7 @@
         <div
           v-for="step in steps || []"
           :key="step.name"
-          class="group flex w-full cursor-pointer items-center justify-between gap-2 rounded px-2 py-1.5 hover:bg-surface-gray-1"
+          class="group flex w-full cursor-pointer items-center justify-between gap-2 rounded-4 px-2 py-1.5 hover:bg-surface-gray-1"
           @click.stop="
             () => !step.completed && !isDependent(step) && step.onClick?.()
           "
@@ -129,7 +129,7 @@
       <!-- The in-app help center, not a docs site. -->
       <button
         type="button"
-        class="mt-3 flex w-full items-center gap-2 rounded px-2 py-1.5 text-base text-ink-gray-8 hover:bg-surface-gray-1"
+        class="mt-3 flex w-full items-center gap-2 rounded-4 px-2 py-1.5 text-base text-ink-gray-8 hover:bg-surface-gray-1"
         @click="openHelpCenter()"
       >
         <HelpIcon class="h-4" />
