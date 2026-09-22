@@ -143,7 +143,7 @@ P=/home/frappe/frappe-bench/sites/<site>/private/files/mbp/calls   # CSVs + owne
 bench --site <site> execute crm.integrations.repapp.history.build_company_map --kwargs '{"reports_dir": "'$P'"}'
 #   review $P/company-map.json against $P/company-map-candidates.json, then:
 bench --site <site> execute crm.integrations.repapp.history.import_history \
-  --kwargs '{"reports_dir": "'$P'", "owners": "'$P'/owners.json", "dry_run": true}'
+  --kwargs '{"reports_dir": "'$P'", "owners": "'$P'/owners.json", "dry_run": True}'   # bench evals kwargs as Python, so True not true
 bench --site <site> execute crm.integrations.repapp.history.import_history \
   --kwargs '{"reports_dir": "'$P'", "owners": "'$P'/owners.json"}'
 ```
