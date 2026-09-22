@@ -43,6 +43,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from difflib import get_close_matches
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import frappe
 
@@ -78,6 +79,8 @@ STATUS = {
 
 # the closing note the old app appended when a rep completed an activity
 CONCLUSION_MARKER = "--- Conclusion ---"
+# the wall-clock zone the old app's ``date`` column is written in
+SOURCE_TIMEZONE = "Africa/Johannesburg"
 
 
 # --- pure transforms ---------------------------------------------------------
@@ -107,7 +110,19 @@ def read_reports(directory) -> list[dict]:
 	return rows
 
 
-def shape_row(row: dict, owners: dict[str, str]) -> dict:
+def to_site_time(when: datetime, source_tz: str, site_tz: str) -> datetime:
+	"""The export's wall-clock time as the site's wall-clock time. A no-op on the
+	site the export was made for; on any other (a rehearsal stack still on
+	frappe's +05:30 default) every timestamp would otherwise land hours adrift
+	of that site's own clock with nothing to say so."""
+	if source_tz == site_tz:
+		return when
+	return when.replace(tzinfo=ZoneInfo(source_tz)).astimezone(ZoneInfo(site_tz)).replace(tzinfo=None)
+
+
+def shape_row(
+	row: dict, owners: dict[str, str], source_tz: str | None = None, site_tz: str | None = None
+) -> dict:
 	"""One export row as the importer wants it. Raises ``ValueError`` naming the
 	problem for a row that cannot be placed -- the reason lands in the report."""
 	code = (row.get("Rep Code") or "").strip()
@@ -125,6 +140,8 @@ def shape_row(row: dict, owners: dict[str, str]) -> dict:
 		when = parse_when(row.get("date") or "")
 	except ValueError as exc:
 		raise ValueError(f"date {row.get('date')!r} is not dd/mm/yyyy HH:MM") from exc
+	if source_tz and site_tz:
+		when = to_site_time(when, source_tz, site_tz)
 	note = (row.get("notes") or "").strip()
 	return {
 		"id": (row.get("id") or "").strip(),
@@ -292,16 +309,21 @@ def _plan_for(user: str, week_start):
 	return frappe.new_doc("CRM Rep Plan", user=user, week_start=week_start)
 
 
-def import_history(reports_dir, owners, company_map=None, dry_run: bool = False) -> dict:
+def import_history(
+	reports_dir, owners, company_map=None, dry_run: bool = False, source_tz: str = SOURCE_TIMEZONE
+) -> dict:
 	"""Entry point for ``bench --site <site> execute
 	crm.integrations.repapp.history.import_history --kwargs '{...}'``.
 
 	``owners`` maps the export's ``Rep Code`` to a User (a dict or a JSON path);
 	``company_map`` maps the old app's company names to CRM Organization names
 	(defaults to ``company-map.json`` beside the reports; a missing or ``null``
-	entry imports the row without an organization and reports it).
+	entry imports the row without an organization and reports it);
+	``source_tz`` is the zone the export's ``date`` column is written in, and is
+	converted to the site's zone when the two differ.
 	"""
 	reports_dir = Path(reports_dir)
+	site_tz = frappe.utils.get_system_timezone()
 	owners_map = {str(k): v for k, v in _load_json(owners).items()}
 	for user in set(owners_map.values()):
 		if not frappe.db.exists("User", user):
@@ -320,6 +342,7 @@ def import_history(reports_dir, owners, company_map=None, dry_run: bool = False)
 	unmapped: dict[str, int] = defaultdict(int)
 	by_rep: dict[str, dict[str, dict[str, int]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
 	summary: dict = {"dry_run": dry_run, "rows": 0, "imported": 0, "skipped": 0, "plans": 0, "events": 0}
+	summary["source_tz"], summary["site_tz"] = source_tz, site_tz
 	summary["contacts_matched"] = 0
 	summary["notes_shortened"] = 0
 
@@ -328,7 +351,7 @@ def import_history(reports_dir, owners, company_map=None, dry_run: bool = False)
 	for row in read_reports(reports_dir):
 		summary["rows"] += 1
 		try:
-			shaped = shape_row(row, owners_map)
+			shaped = shape_row(row, owners_map, source_tz, site_tz)
 		except ValueError as exc:
 			rejected.append({"file": row["_file"], "id": row.get("id"), "reason": str(exc)})
 			continue

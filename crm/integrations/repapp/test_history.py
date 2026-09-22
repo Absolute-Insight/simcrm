@@ -95,6 +95,20 @@ class TransformTest(UnitTestCase):
 				h.shape_row(bad, OWNERS)
 			self.assertIn(fragment, str(caught.exception))
 
+	def test_the_export_clock_is_converted_only_when_the_site_runs_another_zone(self):
+		same = h.shape_row(row(), OWNERS, "Africa/Johannesburg", "Africa/Johannesburg")
+		self.assertEqual(same["when"], datetime(2026, 3, 17, 9, 0))
+		# a rehearsal site still on frappe's +05:30 default: 09:00 SAST is 12:30 IST
+		shifted = h.shape_row(row(), OWNERS, "Africa/Johannesburg", "Asia/Kolkata")
+		self.assertEqual(shifted["when"], datetime(2026, 3, 17, 12, 30))
+		# a late visit crosses midnight eastwards and moves week when Sunday becomes Monday
+		late = h.shape_row(row(date="15/03/2026 22:00"), OWNERS, "Africa/Johannesburg", "Asia/Kolkata")
+		self.assertEqual(
+			(late["when"], late["week_start"]), (datetime(2026, 3, 16, 1, 30), date(2026, 3, 16))
+		)
+		untouched = h.shape_row(row(), OWNERS)
+		self.assertEqual(untouched["when"], datetime(2026, 3, 17, 9, 0))
+
 	def test_contact_whitespace_is_folded(self):
 		self.assertEqual(h.shape_row(row(contactPerson="Jaco  Peyper "), OWNERS)["contact"], "Jaco Peyper")
 
@@ -194,6 +208,7 @@ class ImportTest(IntegrationTestCase):
 		summary = self.run_import()
 		self.assertEqual((summary["imported"], summary["plans"], summary["events"]), (1, 1, 1))
 		self.assertEqual(summary["contacts_matched"], 1)
+		self.assertEqual(summary["site_tz"], frappe.utils.get_system_timezone())
 		items = self.items_of(REP)
 		self.assertEqual(len(items), 1)
 		item = items[0]
@@ -208,7 +223,10 @@ class ImportTest(IntegrationTestCase):
 			(event.owner, event.event_category, event.status, event.subject),
 			(REP, "Visit", "Completed", f"Visit: {ORG}"),
 		)
-		self.assertEqual(str(event.starts_on), "2026-03-17 09:00:00")
+		expected = h.to_site_time(
+			datetime(2026, 3, 17, 9, 0), h.SOURCE_TIMEZONE, frappe.utils.get_system_timezone()
+		)
+		self.assertEqual(str(event.starts_on), str(expected))
 		self.assertEqual(
 			{(p.reference_doctype, p.reference_docname) for p in event.event_participants},
 			{
