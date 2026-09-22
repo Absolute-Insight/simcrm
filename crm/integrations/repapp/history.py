@@ -281,7 +281,9 @@ def _insert_event(shaped: dict, organization: str | None, contact: str | None) -
 	if contact:
 		participants.append({"reference_doctype": "Contact", "reference_docname": contact})
 	previous = frappe.session.user
-	frappe.set_user(shaped["user"])
+	# the rep named in the export, never the caller: an operator runs this from
+	# bench, and the value comes from owners.json checked against tabUser above
+	frappe.set_user(shaped["user"])  # nosemgrep: frappe-setuser -- restored in finally
 	try:
 		event = frappe.get_doc(
 			{
@@ -298,7 +300,7 @@ def _insert_event(shaped: dict, organization: str | None, contact: str | None) -
 			}
 		).insert(ignore_permissions=True)
 	finally:
-		frappe.set_user(previous)
+		frappe.set_user(previous)  # nosemgrep: frappe-setuser
 	return event.name
 
 
