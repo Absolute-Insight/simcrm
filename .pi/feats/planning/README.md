@@ -105,11 +105,64 @@ plan, and `has_permission` compares against the stored owner rather than the
 in-memory document (frappe checks write permission after `set_value` has applied
 the caller's changes, so a rewritten `user` used to look like the owner).
 
+## Importing the old rep app's history
+
+`crm/integrations/repapp/history.py`. MBP's reps kept their activity in a
+Firestore visit planner before Vectora; its per-rep export
+(`report_<First>_<Last>_<date>.csv`, one row per activity: company, contact,
+type, date, note, status, rep code) is the history the rep-app spec left as
+"a third import with its own mapping". In MBP's vocabulary every row is a
+"call"; only `Phone Call` rows are telephone calls.
+
+| Export | Becomes |
+|---|---|
+| `Visit`, `Unplanned Meeting` | plan item `Visit`; **Completed / Canceled** also get an `Event` (category Visit, status Completed / Cancelled, the organization and matched contact as participants, the rep as owner, the full note as description) — the record the matcher, `client_reliability` and `activity_cancellations` count |
+| `Phone Call`, `WhatsApp` | plan item `Call`, done on the rep's word (no number to hang a Call Log on) |
+| `E-Mail` | plan item `Email`, likewise |
+| `Completed` | item `Done`, `manual_override` |
+| `Canceled` | item `Missed`, `manual_override`, no fulfilment |
+| `Scheduled`, `Rescheduled` | item `Planned`, **not** overridden — a live item the matcher and the horizon sweep treat like anything planned from now on |
+
+The item's one-line note is the old app's `--- Conclusion ---` when there is
+one (the text above it is the plan, the conclusion is what happened); the
+event keeps the whole note. `date` (dd/mm/yyyy HH:MM, site-local) is the only
+timestamp used; the export's UTC `completedAt` is the planned slot again in
+most rows and is ignored.
+
+Company names are free text — "Impala - Shaft 14", "Harmony Avgold Limited" —
+and only a third match an organization exactly, so the run takes a reviewed
+`company-map.json` (`{"old name": "CRM Organization name" | null}`).
+`build_company_map` drafts it from the site's organizations (normalised exact
+matches filled, `company-map-candidates.json` for the rest). An unmapped row is
+still imported, named in the event subject, and reported — nothing the client
+sent is dropped. Contacts are matched on the whole name among the
+organization's contacts.
+
+```bash
+P=/home/frappe/frappe-bench/sites/<site>/private/files/mbp/calls   # CSVs + owners.json ({"032-IO": "rep@..."})
+bench --site <site> execute crm.integrations.repapp.history.build_company_map --kwargs '{"reports_dir": "'$P'"}'
+#   review $P/company-map.json against $P/company-map-candidates.json, then:
+bench --site <site> execute crm.integrations.repapp.history.import_history \
+  --kwargs '{"reports_dir": "'$P'", "owners": "'$P'/owners.json", "dry_run": true}'
+bench --site <site> execute crm.integrations.repapp.history.import_history \
+  --kwargs '{"reports_dir": "'$P'", "owners": "'$P'/owners.json"}'
+```
+
+A dry run does all the work and rolls back, so its counts, rejects and
+unmapped-company list are real. The real run writes `history-manifest.json`
+beside the CSVs (Firestore id → plan item and event) and skips those ids next
+time, so a re-run with a corrected map or a later export appends only what is
+new. Events are inserted as the rep (`frappe.set_user`) because frappe stamps
+`owner` from the session and every report credits an event to its owner;
+`send_reminder` is off so the daily event digest never mails a rep about a
+visit that happened in March.
+
 ## Key files
 
 | File | Role |
 |---|---|
 | `crm/rep_planning.py` | Pure matcher + the daily job |
+| `crm/integrations/repapp/history.py` | One-shot import of the old rep app's activity export into plan items + visit events |
 | `crm/api/rep_plan.py` | Endpoints, concurrency token, manual override |
 | `crm/fcrm/doctype/crm_rep_plan/crm_rep_plan.py` | Hierarchy visibility, unique index |
 | `frontend/src/pages/Planner.vue` | The week grid |
