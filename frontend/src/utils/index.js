@@ -1,5 +1,3 @@
-import { PhCheck as LucideCheck } from '@phosphor-icons/vue'
-import Icon from '@/components/Icon.vue'
 import TaskStatusIcon from '@/components/Icons/TaskStatusIcon.vue'
 import TaskPriorityIcon from '@/components/Icons/TaskPriorityIcon.vue'
 import { usersStore } from '@/stores/users'
@@ -533,35 +531,6 @@ export function runSequentially(functions) {
   return functions.reduce((promise, fn) => {
     return promise.then(() => fn())
   }, Promise.resolve())
-}
-
-export function DropdownOption({ option, icon, selected, onClick }) {
-  return h(
-    'button',
-    {
-      class:
-        'group flex w-full text-ink-gray-8 justify-between items-center rounded-5 px-2 py-2 text-sm hover:bg-surface-gray-2',
-      onClick,
-    },
-    [
-      h('div', { class: 'flex gap-2' }, [
-        icon
-          ? h(Icon, {
-              icon: icon,
-              class: ['h-4 w-4 shrink-0'],
-              'aria-hidden': true,
-            })
-          : null,
-        h('span', { class: 'whitespace-nowrap' }, option),
-      ]),
-      selected
-        ? h(LucideCheck, {
-            class: ['h-4 w-4 shrink-0 text-ink-gray-7'],
-            'aria-hidden': true,
-          })
-        : null,
-    ],
-  )
 }
 
 export function deepClone(obj) {
