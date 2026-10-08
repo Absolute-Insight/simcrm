@@ -786,30 +786,6 @@ export function orderSensitiveEqual(a, b) {
   return true
 }
 
-export function TemplateOption({ active, option, variant, icon, onClick }) {
-  return h(
-    'button',
-    {
-      class: [
-        active ? 'bg-surface-gray-2' : 'text-ink-gray-7',
-        'group flex w-full gap-2 items-center rounded-5 px-2 py-2 text-base hover:bg-surface-gray-3',
-        variant == 'danger' ? 'text-ink-red-6 hover:bg-ink-red-1' : '',
-      ],
-      onClick: onClick,
-    },
-    [
-      icon
-        ? h(Icon, {
-            icon: icon,
-            class: ['h-4 w-4 shrink-0'],
-            'aria-hidden': true,
-          })
-        : null,
-      h('span', { class: 'whitespace-nowrap' }, option),
-    ],
-  )
-}
-
 /**
  * @param {Ref<boolean>} isConfirmingDelete - Ref to track confirmation state
  * @param {Function} onConfirmDelete - Callback when delete is confirmed
@@ -821,37 +797,30 @@ export function ConfirmDelete({
   onConfirmDelete,
   label = __('Delete'),
 }) {
+  // Handlers live on the options themselves: frappe-ui 1.0's Menu renders a
+  // `component:` row as a plain label and calls only the option's onClick, so
+  // a handler inside one is never reached and the item silently does nothing.
   return [
     {
       label,
-      component: (props) =>
-        TemplateOption({
-          option: label,
-          icon: 'lucide-trash-2',
-          active: props.active,
-          variant: 'grey',
-          onClick: (event) => {
-            event.preventDefault()
-            event.stopImmediatePropagation()
-            isConfirmingDelete.value = true
-          },
-        }),
+      icon: 'lucide-trash-2',
+      // reka closes the menu on select unless the event is default-prevented;
+      // keep it open so the confirm row can replace this one.
+      onClick: (event) => {
+        event?.preventDefault()
+        isConfirmingDelete.value = true
+      },
       condition: () => !isConfirmingDelete.value,
     },
     {
       label: __('Confirm {0}', [label]),
-      component: (props) =>
-        TemplateOption({
-          option: __('Confirm {0}', [label]),
-          icon: 'lucide-trash-2',
-          active: props.active,
-          variant: 'danger',
-          onClick: () => {
-            onConfirmDelete()
-            // Reset state after confirming
-            isConfirmingDelete.value = false
-          },
-        }),
+      icon: 'lucide-trash-2',
+      theme: 'red',
+      onClick: () => {
+        onConfirmDelete()
+        // Reset state after confirming
+        isConfirmingDelete.value = false
+      },
       condition: () => isConfirmingDelete.value,
     },
   ]
