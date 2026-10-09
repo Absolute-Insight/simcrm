@@ -50,11 +50,19 @@
         v-if="document.actions?.length"
         :actions="document.actions"
       />
-      <Button
-        :label="__('Convert')"
-        variant="solid"
-        @click="showConvertToDealModal = true"
-      />
+      <Tooltip
+        :disabled="!isLeadConversionDisabled"
+        :text="__('Cannot convert a lost lead to deal')"
+      >
+        <div class="inline-flex">
+          <Button
+            :label="__('Convert')"
+            variant="solid"
+            :disabled="isLeadConversionDisabled"
+            @click="showConvertToDealModal = true"
+          />
+        </div>
+      </Tooltip>
     </div>
   </div>
   <div v-if="doc.name" class="flex h-full overflow-hidden">
@@ -158,6 +166,7 @@ import { useActiveTabManager } from '@/composables/useActiveTabManager'
 import {
   createResource,
   Dropdown,
+  Tooltip,
   Tabs,
   Breadcrumbs,
   call,
@@ -194,6 +203,10 @@ const {
 } = useDocument('CRM Lead', props.leadId)
 
 const doc = computed(() => document.doc || {})
+// The server refuses Lost-type statuses (Junk, Unqualified, ...); say so up front.
+const isLeadConversionDisabled = computed(
+  () => doc.value.status && getLeadStatus(doc.value.status)?.type === 'Lost',
+)
 
 onMounted(async () => {
   if (document.doc) await triggerOnRender()
