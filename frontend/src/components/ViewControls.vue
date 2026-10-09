@@ -4,6 +4,24 @@
     class="flex flex-col justify-between gap-2 sm:px-[var(--v-page-gutter)] px-3 py-4"
   >
     <div class="flex flex-col gap-2">
+      <!-- Quick filters get their own scrolling row on mobile: squeezed into
+           the toolbar row beside five buttons they had no width left. -->
+      <FadedScrollableDiv
+        v-if="quickFilterList.length"
+        class="flex items-center overflow-x-auto -mx-1 h-9"
+        orientation="horizontal"
+      >
+        <div
+          v-for="filter in quickFilterList"
+          :key="filter.fieldname"
+          class="m-1 min-w-36"
+        >
+          <QuickFilterField
+            :filter="filter"
+            @applyQuickFilter="(f, v) => applyQuickFilter(f, v)"
+          />
+        </div>
+      </FadedScrollableDiv>
       <div class="flex items-center justify-between gap-2 overflow-x-auto">
         <div class="flex gap-2">
           <Filter
