@@ -128,8 +128,12 @@ import ProgressRing from '@/components/ui/ProgressRing.vue'
 import FileAudioIcon from '@/components/Icons/FileAudioIcon.vue'
 import FileVideoIcon from '@/components/Icons/FileVideoIcon.vue'
 import { formatDate, convertSize } from '@/utils'
-import { FormControl, createResource, toast } from 'frappe-ui'
-import { ref, onMounted, watch, onUnmounted } from 'vue'
+import {
+  uploaderRestrictions,
+  uploaderMakesAttachmentsPublic,
+} from '@/utils/fileUploaderDefaults'
+import { FormControl, toast, useCall } from 'frappe-ui'
+import { ref, computed, watch, onUnmounted } from 'vue'
 
 const props = defineProps({
   doctype: { type: String, required: true },
@@ -153,29 +157,22 @@ const allowWebLink = ref(props.options.allowWebLink == false ? false : true)
 const allowTakePhoto = ref(
   props.options.allowTakePhoto || window.navigator.mediaDevices || false,
 )
-const restrictions = ref(props.options.restrictions || {})
-const makeAttachmentsPublic = ref(props.options.makeAttachmentsPublic || false)
-
-onMounted(() => {
-  createResource({
-    url: 'crm.api.get_file_uploader_defaults',
-    params: { doctype: props.doctype },
-    cache: ['file_uploader_defaults', props.doctype],
-    auto: true,
-    transform: (data) => {
-      const propRestrictions = props.options.restrictions || {}
-      restrictions.value = {
-        allowedFileTypes: data.allowed_file_types
-          ? data.allowed_file_types.split('\n').map((ext) => `.${ext}`)
-          : [],
-        maxFileSize: data.max_file_size,
-        maxNumberOfFiles: data.max_number_of_files,
-        ...propRestrictions,
-      }
-      makeAttachmentsPublic.value = Boolean(data.make_attachments_public)
-    },
-  })
+// useCall, not a cached createResource: on a cache hit createResource hands
+// back the first instance's resource, whose transform writes into that
+// (unmounted) instance's refs, so every later open lost the doctype's limits
+// and defaulted files to private.
+const uploaderDefaults = useCall({
+  url: '/api/v2/method/crm.api.get_file_uploader_defaults',
+  params: { doctype: props.doctype },
+  cacheKey: ['file_uploader_defaults', props.doctype],
 })
+
+const restrictions = computed(() =>
+  uploaderRestrictions(uploaderDefaults.data, props.options),
+)
+const makeAttachmentsPublic = computed(() =>
+  uploaderMakesAttachmentsPublic(uploaderDefaults.data, props.options),
+)
 
 function dragover() {
   isDragging.value = true
