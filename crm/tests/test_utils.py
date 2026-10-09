@@ -6,6 +6,7 @@ from frappe.tests import IntegrationTestCase, UnitTestCase
 
 from crm.utils import (
 	_get_communication_status,
+	_is_automated_email_sender,
 	_should_update_modified,
 	are_same_phone_number,
 	create_lead_from_incoming_email,
@@ -637,6 +638,33 @@ class TestCreateLeadFromIncomingEmail(IntegrationTestCase):
 
 		source = frappe.db.get_value("CRM Lead", {"email": "leadsource@example.com"}, "source")
 		self.assertEqual(source, "Email")
+
+	def test_lead_not_created_for_automated_sender(self):
+		"""no-reply, mailer-daemon and postmaster must not become leads."""
+		email_account = self._make_email_account()
+		senders = [
+			"no-reply@dokeos.com",
+			"sc-noreply@google.com",
+			"noreply+notify@example.com",
+			"mailer-daemon@example.com",
+			"postmaster@example.com",
+			"donotreply@example.com",
+			"Notifications <no-reply@example.com>",
+			'"Mailer" <mailer-daemon@example.com>',
+		]
+		leads_before = frappe.db.count("CRM Lead")
+		for sender in senders:
+			with self.subTest(sender=sender):
+				doc = self._incoming_comm(sender, email_account.name)
+				create_lead_from_incoming_email(doc)
+				self.assertFalse(doc.reference_name)
+		self.assertEqual(frappe.db.count("CRM Lead"), leads_before)
+
+	def test_automated_sender_check_leaves_people_alone(self):
+		"""Only the machine local-parts match, not addresses that merely contain them."""
+		for sender in ("reply@example.com", "noreplyhero@example.com", "Jo <jo.noreply.fan@example.com>"):
+			with self.subTest(sender=sender):
+				self.assertFalse(_is_automated_email_sender(sender))
 
 	def test_lead_not_created_for_sent_communication(self):
 		"""Outgoing mail is not a lead, whatever its communication_type.
