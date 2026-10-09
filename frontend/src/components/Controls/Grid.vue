@@ -401,7 +401,7 @@
                         v-model="row[field.fieldname]"
                         class="combobox"
                         variant="outline"
-                        :options="getOptions(field.options)"
+                        :options="getAutocompleteOptions(field, row)"
                         :placeholder="field.placeholder"
                         :disabled="Boolean(field.read_only)"
                         @update:modelValue="(v) => fieldChange(v, field, row)"
@@ -505,7 +505,10 @@ import {
 import { flt } from '@/utils/numberFormat.js'
 import { usersStore } from '@/stores/users'
 import { getMeta } from '@/stores/meta'
-import { parseLinkFilters } from '@/utils/fieldTransforms'
+import {
+  parseLinkFilters,
+  withCustomValueOption,
+} from '@/utils/fieldTransforms'
 import { createDocument } from '@/composables/document'
 import {
   FormControl,
@@ -783,6 +786,15 @@ function getDefaultValue(defaultValue, fieldtype) {
 
   return defaultValue
 }
+
+// FieldLayout/Field.vue does the same for a form's Autocomplete; upstream
+// only covered that one, so a child-table Autocomplete still refused a
+// value that was not in its list.
+const getAutocompleteOptions = (field, row) =>
+  withCustomValueOption(getOptions(field.options), (value) => {
+    row[field.fieldname] = value
+    fieldChange(value, field, row)
+  })
 
 const getOptions = (options) => {
   if (Array.isArray(options)) {
