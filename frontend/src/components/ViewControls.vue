@@ -567,8 +567,28 @@ list.value = createResource({
   },
 })
 
-// createResource leaves `params` null until a fetch passes them explicitly
-list.value.params = getParams()
+// createResource leaves `params` null until a fetch passes them explicitly.
+// With `cache:` set, frappe-ui hands back the cached instance on re-entry, and
+// its params still hold the user's unsaved filter/sort/group change; keep them
+// and flag the view as modified instead of resetting to the saved view.
+// kanban_columns is left out: "load more" mutates it without it being an edit.
+const dirtySignature = (p) =>
+  JSON.stringify([
+    p.filters || {},
+    p.order_by,
+    p.view?.group_by_field,
+    p.column_field,
+    p.title_field,
+    p.kanban_fields,
+  ])
+const initialParams = getParams()
+if (!list.value.params) {
+  list.value.params = initialParams
+} else if (
+  dirtySignature(list.value.params) !== dirtySignature(initialParams)
+) {
+  viewUpdated.value = true
+}
 
 // Refresh the list when a Domain Enrichment enrichment finishes for this
 // doctype, so newly-filled fields (logo, etc.) show without a manual reload.
