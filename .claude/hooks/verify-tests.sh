@@ -30,8 +30,8 @@ root="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
 log="$root/.claude/hooks/verify.log"
 
 # Feature work happens in .worktrees/<branch> while the main checkout sits on
-# develop, so test the tree the session is actually in -- same reasoning as
-# guard-commit.sh reading cwd rather than the project root.
+# develop, so test the tree the session is actually in, read from cwd rather
+# than the project root.
 cwd=$(jq -r '.cwd // empty' <<<"$payload")
 [[ -z "$cwd" || ! -d "$cwd" ]] && cwd="$root"
 repo=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || exit 0

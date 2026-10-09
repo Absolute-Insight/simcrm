@@ -51,7 +51,7 @@
 # Skips are logged to .claude/hooks/compose.log so a mute guard stays
 # diagnosable.
 #
-# Registered in settings.json WITHOUT an `if:` filter, unlike guard-commit.sh.
+# Registered in settings.json WITHOUT an `if:` filter.
 # A `Bash(docker compose:*)` prefix match would miss `cd deploy && docker
 # compose pull`, which is the idiom deploy/README.md and the deploy skill both
 # use -- i.e. it would skip exactly the calls worth checking. The command test
