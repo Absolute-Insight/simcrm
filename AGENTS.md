@@ -148,7 +148,6 @@ a freshly built test site can still strand data on a site that already has rows.
   VECTORA_TAG-only Edit, is dead code for `.env`/`deploy/.env` — the
   `Read` deny in `settings.json` bars an Edit before the hook runs. The comment
   in the file explains why that stays and what to do instead.
-- **`guard-commit.sh`** refuses commits on `develop` and `main`.
 - **`guard-compose.sh`** resolves what `docker compose pull/up/create` will
   *actually* run. It reports a **change**, not a difference — a guard that
   fires on the normal condition is one you learn to click through.

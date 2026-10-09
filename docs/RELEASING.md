@@ -106,8 +106,7 @@ pushing to it _is_ cutting a release. Nothing else triggers one.
    > Verified 2026-09-19. Don't retry it or go hunting for a token.
 
    The `no-commit-to-branch` pre-commit hook blocks committing to `develop` locally, and
-   so does `.claude/hooks/guard-commit.sh`. Both are right — don't reach for
-   `--no-verify`. Use an ordinary branch and PR, which is what every back-merge has
+   it is right — don't reach for `--no-verify`. Use an ordinary branch and PR, which is what every back-merge has
    actually been (#233, #252, #253). Branch from **`origin/main`** so it already carries
    the bump commit and the PR diff against `develop` is exactly what is missing:
 

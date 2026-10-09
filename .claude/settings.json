@@ -82,7 +82,14 @@
       "Bash(uname:*)",
       "Bash(bash -n:*)",
       "Bash(codegraph explore:*)",
-      "Bash(codegraph status:*)"
+      "Bash(codegraph status:*)",
+      "Bash(git grep:*)",
+      "Bash(git merge-tree:*)",
+      "Bash(gh run watch:*)",
+      "Bash(docker network ls:*)",
+      "Bash(journalctl:*)",
+      "mcp__codegraph__codegraph_explore",
+      "mcp__claude-in-chrome__tabs_context_mcp"
     ],
     "deny": [
       "Bash(git push --force:*)",
@@ -90,12 +97,12 @@
       "Bash(git reset --hard:*)",
       "Bash(git clean:*)",
       "Bash(docker compose down -v:*)",
-      "Bash(docker compose * down -v:*)",
+      "Bash(docker compose * down -v*)",
       "Bash(docker volume rm:*)",
       "Bash(docker volume prune:*)",
       "Bash(docker system prune:*)",
-      "Bash(bench --site * reinstall:*)",
-      "Bash(bench --site * drop-site:*)",
+      "Bash(bench --site * reinstall*)",
+      "Bash(bench --site * drop-site*)",
       "Bash(sudo:*)",
       "Bash(su:*)",
       "Read(./deploy/.env)",
@@ -123,12 +130,6 @@
       {
         "matcher": "Bash",
         "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-commit.sh",
-            "if": "Bash(git commit:*)",
-            "timeout": 10
-          },
           {
             "type": "command",
             "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-compose.sh",

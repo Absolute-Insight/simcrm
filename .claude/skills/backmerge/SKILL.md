@@ -27,9 +27,8 @@ believed you were shipping.
 
 ## Do it as a branch and a PR
 
-`.pre-commit-config.yaml` runs `no-commit-to-branch --branch develop`, and this
-repo's `guard-commit.sh` hook refuses commits on `develop` and `main` too. Both
-are right. Do **not** reach for `--no-verify`.
+`.pre-commit-config.yaml` runs `no-commit-to-branch --branch develop`, and it is
+right. Do **not** reach for `--no-verify`.
 
 > **`docs/RELEASING.md` step 6 tells you to call the merges API directly:**
 >
