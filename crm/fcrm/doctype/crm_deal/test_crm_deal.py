@@ -317,6 +317,24 @@ class TestCRMDeal(IntegrationTestCase):
 		self.assertEqual(contact.first_name, "Deal")
 		self.assertEqual(contact.email_id, "dealcreator@example.com")
 
+	def test_create_deal_api_propagates_no_of_employees(self):
+		"""no_of_employees is copied onto the organization create_deal creates."""
+		# A unique name: create_organization reuses an existing org of the same name, so a
+		# fixed one left over from an earlier run would answer with its own band.
+		suffix = frappe.generate_hash(length=8)
+		deal_name = create_deal(
+			{
+				"organization_name": f"Employees Test Org {suffix}",
+				"no_of_employees": "51-200",
+				"first_name": "Employees",
+				"email": f"employeestest-{suffix}@example.com",
+			}
+		)
+
+		deal = frappe.get_doc("CRM Deal", deal_name)
+		org = frappe.get_doc("CRM Organization", deal.organization)
+		self.assertEqual(org.no_of_employees, "51-200")
+
 	def test_create_deal_refuses_a_user_without_a_crm_role(self):
 		"""The endpoint used to insert with ignore_permissions, so any logged-in
 		account could author a deal; it now asks for create on CRM Deal first."""
