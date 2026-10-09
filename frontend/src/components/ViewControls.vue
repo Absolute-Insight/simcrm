@@ -352,6 +352,7 @@ import {
   watch,
   h,
   markRaw,
+  nextTick,
 } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { isMobileView } from '@/composables/settings'
@@ -1152,6 +1153,28 @@ function loadMoreKanban(columnName) {
   list.value.reload()
 }
 
+// Saving the standard view re-reads the views store, which trips the deep
+// `getView` watcher below into rebuilding the list params from the store. For
+// our own save that only replays state already applied locally, and when two
+// saves overlap (typing in a quick filter) the earlier re-read can land last
+// and rewind the filters, and the quick filter input, to the older value.
+//
+// Each save-triggered re-read holds a token from the moment it starts until
+// it has settled and Vue has flushed the watchers its data change queued
+// (nextTick). The watcher stands down while any token is held. The window is
+// tied to the re-read's own lifetime, not to the watcher firing, so a re-read
+// that changes nothing cannot leave a stale skip behind to swallow a later,
+// real change.
+const selfViewReloads = new Set()
+
+function reloadViewAfterSave() {
+  const token = Symbol('self-view-reload')
+  selfViewReloads.add(token)
+  return reloadView().finally(() =>
+    nextTick(() => selfViewReloads.delete(token)),
+  )
+}
+
 function createOrUpdateStandardView() {
   if (route.query.view) return
   view.value.doctype = props.doctype
@@ -1162,7 +1185,7 @@ function createOrUpdateStandardView() {
     },
   )
     .then(() => {
-      reloadView()
+      reloadViewAfterSave()
       view.value = {
         label: view.value.label,
         type: view.value.type || 'list',
@@ -1506,6 +1529,7 @@ defineExpose({
 watch(
   () => getView(route.query.view, route.params.viewType, props.doctype),
   (value, old_value) => {
+    if (selfViewReloads.size) return
     if (isEqual(value, old_value)) return
     reload()
   },
