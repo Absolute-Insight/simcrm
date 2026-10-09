@@ -84,6 +84,32 @@ class TestCRMCallLog(IntegrationTestCase):
 
 		self.assertEqual(call.recording_url, recording_url)
 
+	def test_external_recording_plays_through_proxy(self):
+		call = create_test_call_log(recording_url="https://example.com/recording.wav")
+
+		self.assertEqual(
+			call.as_dict()["recording_url_path"],
+			f"/api/method/crm.integrations.api.get_recording_url?call_log_name={call.name}",
+		)
+
+	def test_uploaded_file_recording_plays_directly(self):
+		"""A recording uploaded to the site has no host for the proxy to fetch from."""
+		for path in ("/files/4308.mp3", "/private/files/4308.wav"):
+			with self.subTest(path=path):
+				call = create_test_call_log(recording_url=path)
+				self.assertEqual(call.as_dict()["recording_url_path"], path)
+
+	def test_recording_paths_that_are_not_site_files_go_through_the_proxy(self):
+		for url in (
+			"//example.com/files/recording.mp3",
+			"/files/../api/method/logout",
+			"/private/files/..%2f..%2fapi",
+			"/files/%2E%2E/api/method/logout",
+		):
+			with self.subTest(url=url):
+				call = create_test_call_log(recording_url=url)
+				self.assertIn("get_recording_url", call.as_dict()["recording_url_path"])
+
 	def test_has_link_method(self):
 		"""Test has_link method to check if document link exists"""
 		# Create a lead for linking

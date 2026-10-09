@@ -155,11 +155,29 @@ class CRMCallLog(Document):
 
 	def as_dict(self, *args, **kwargs):
 		d = super().as_dict(*args, **kwargs)
-		if d.get("recording_url"):
+		recording_url = d.get("recording_url")
+		if not recording_url:
+			return d
+
+		# A recording uploaded to this site plays straight from its file path, where
+		# frappe's own file permission applies; the proxy only fetches recordings
+		# hosted elsewhere, and has no host to fetch a site path from. A path that
+		# climbs out of /files/ is not a file, so it still goes through the proxy.
+		if is_site_file_path(recording_url):
+			d["recording_url_path"] = recording_url
+		else:
 			d["recording_url_path"] = (
 				f"/api/method/crm.integrations.api.get_recording_url?call_log_name={d.get('name')}"
 			)
 		return d
+
+
+def is_site_file_path(url: str) -> bool:
+	# Browsers resolve "..", "%2e%2e" and backslashes as path segments.
+	lowered = url.lower()
+	return url.startswith(("/files/", "/private/files/")) and not any(
+		token in lowered for token in ("..", "%2e", "\\")
+	)
 
 
 def parse_call_log(call):
