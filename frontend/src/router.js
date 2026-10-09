@@ -212,9 +212,17 @@ router.beforeEach(async (to, from, next) => {
 
   if (isLoggedIn && !users.fetched) {
     try {
-      await users.promise
+      // A failed fetch leaves its rejected promise behind, so retry rather than
+      // re-await it, or one network blip would refuse every later navigation.
+      await (users.error ? users.reload() : users.promise)
     } catch (error) {
       console.error('Error loading users', error)
+      // Only a PermissionError means "not a CRM user". Anything else (a timeout,
+      // a 502 during a deploy) left isCrmUser() false for a real CRM user and
+      // sent them to Not Permitted; stay put instead.
+      if (error?.exc_type !== 'PermissionError') {
+        return next(false)
+      }
     }
   }
 
@@ -268,6 +276,9 @@ router.beforeEach(async (to, from, next) => {
 
   if (isLoggedIn && to.name !== 'Not Permitted' && !isCrmUser()) {
     next({ name: 'Not Permitted' })
+  } else if (to.name === 'Not Permitted' && isLoggedIn && isCrmUser()) {
+    // A CRM user parked here by an earlier failure gets out on the next visit.
+    next({ name: 'Home' })
   } else if (to.name === 'Home' && isLoggedIn) {
     // Eight of MBP's reps have muscle memory in an app whose home screen is
     // their week. A rep looking for "what am I doing Tuesday" must not have
@@ -354,8 +365,8 @@ router.beforeEach(async (to, from, next) => {
       const doctype = doctypeMap[to.name]
       let defaultViewType = 'list'
 
-      let globalDefault = getDefaultView()
-      if (globalDefault && globalDefault.route_name === to.name) {
+      let globalDefault = getDefaultView(to.name)
+      if (globalDefault) {
         defaultViewType = globalDefault.type || 'list'
         if (globalDefault.name && !globalDefault.is_standard) {
           next({

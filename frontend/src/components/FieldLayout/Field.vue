@@ -152,7 +152,7 @@
     <Combobox
       v-else-if="field.fieldtype === 'Autocomplete'"
       v-model="data[field.fieldname]"
-      :options="getOptions(field.options)"
+      :options="getAutocompleteOptions(field)"
       :placeholder="getPlaceholder(field)"
       :disabled="Boolean(field.read_only)"
       @update:modelValue="(v) => fieldChange(v, field, data)"
@@ -347,6 +347,7 @@ import { getMeta } from '@/stores/meta'
 import {
   parseLinkFilters,
   applyStateFieldOptions,
+  withCustomValueOption,
 } from '@/utils/fieldTransforms'
 import { usersStore } from '@/stores/users'
 import { useDocument } from '@/data/document'
@@ -496,7 +497,7 @@ const field = computed(() => {
 
   if (field.fieldtype == 'Select' && typeof field.options === 'string') {
     field.options = field.options.split('\n').map((option) => {
-      return { label: option, value: option }
+      return { label: __(option), value: option }
     })
 
     if (field.options[0].value !== '' && !field.reqd) {
@@ -605,12 +606,18 @@ const getOptions = (options) => {
     return options
   } else if (typeof options === 'string') {
     return options.split('\n').map((option) => {
-      return { label: option, value: option }
+      return { label: __(option), value: option }
     })
   } else {
     return []
   }
 }
+
+const getAutocompleteOptions = (field) =>
+  withCustomValueOption(getOptions(field.options), (value) => {
+    data.value[field.fieldname] = value
+    fieldChange(value, field)
+  })
 
 function isExternalUrl(value) {
   return typeof value === 'string' && /^https?:\/\//i.test(value.trim())

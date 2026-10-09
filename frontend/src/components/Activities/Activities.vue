@@ -614,7 +614,10 @@ onMounted(() => {
 })
 
 function handleDocinfoUpdate({ doc, key }) {
-  if (key !== 'comments') return
+  // 'comments' covers comment activity; 'communications' is what frappe's
+  // Communication.notify_change sends when an email is added to or removed
+  // from the record, so a new email shows up without a reload.
+  if (key !== 'comments' && key !== 'communications') return
   if (doc.reference_doctype !== props.doctype) return
   if (doc.reference_name !== props.docname) return
 

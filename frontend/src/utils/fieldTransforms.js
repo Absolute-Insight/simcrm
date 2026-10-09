@@ -15,6 +15,43 @@ export function parseLinkFilters(linkFilters) {
 }
 
 /**
+ * Append a "Use \"<query>\"" row to an Autocomplete field's Combobox options,
+ * so the user can keep a value that is not in the list. The row shows only
+ * once something is typed and that text matches no option's value or label.
+ *
+ * Returns a NEW array; `options` is the normalised [{label, value}] (or plain
+ * string) list the Combobox already gets.
+ *
+ * @param {Array} options
+ * @param {(value: string) => void} onPick - called with the trimmed query
+ * @returns {Array}
+ */
+export function withCustomValueOption(options, onPick) {
+  return [
+    ...options,
+    {
+      type: 'custom',
+      key: '__custom_value',
+      label: __('Use custom value'),
+      slots: {
+        label: ({ query }) => __('Use "{0}"', [query.trim()]),
+      },
+      condition: ({ query }) => {
+        const q = (query || '').trim()
+        if (!q) return false
+        return !options.some((opt) => {
+          const isObject = opt !== null && typeof opt === 'object'
+          const value = isObject ? opt.value : opt
+          const label = isObject ? opt.label : opt
+          return String(value ?? '') === q || String(label ?? '') === q
+        })
+      },
+      onClick: ({ query }) => onPick(query.trim()),
+    },
+  ]
+}
+
+/**
  * Process a raw field meta object into a UI-ready field object.
  * Returns a NEW object — never mutates the input.
  *
@@ -54,7 +91,7 @@ export function processField(rawField, options = {}) {
   // 4. Select options: string → array
   if (field.fieldtype === 'Select' && typeof field.options === 'string') {
     field.options = field.options.split('\n').map((option) => ({
-      label: option,
+      label: __(option),
       value: option,
     }))
 

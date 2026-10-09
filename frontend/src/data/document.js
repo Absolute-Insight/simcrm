@@ -140,7 +140,7 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
                 toast.error(msg)
               })
 
-              if (err.messages?.length === 0) {
+              if (!err.messages?.length) {
                 toast.error(__('An error occurred while updating the document'))
               }
 

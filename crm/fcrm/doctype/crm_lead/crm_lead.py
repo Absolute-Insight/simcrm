@@ -268,6 +268,7 @@ class CRMLead(Document):
 				"territory": self.territory,
 				"industry": self.industry,
 				"annual_revenue": self.annual_revenue,
+				"no_of_employees": self.no_of_employees,
 			}
 		)
 		organization.insert(ignore_permissions=True)
@@ -539,6 +540,10 @@ def convert_to_deal(
 	# then sees the committed flag, rather than racing past a stale cached value.
 	if frappe.db.get_value("CRM Lead", lead.name, "converted", for_update=True):
 		frappe.throw(_("Lead {0} has already been converted to a deal.").format(lead.name))
+	# After the converted check, so a retry of a lead that has since been marked Lost
+	# still hears "already converted" rather than a misleading status error.
+	if frappe.get_cached_value("CRM Lead Status", lead.status, "type") == "Lost":
+		frappe.throw(_("Cannot convert a lead with status {0}").format(lead.status))
 	if frappe.db.exists("CRM Lead Status", "Qualified"):
 		lead.db_set("status", "Qualified")
 	lead.db_set("converted", 1)

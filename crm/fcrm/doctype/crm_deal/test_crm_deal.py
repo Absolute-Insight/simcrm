@@ -6,6 +6,7 @@ from frappe.desk.form.assign_to import add as assign_add
 from frappe.desk.form.assign_to import remove as assign_remove
 from frappe.tests import IntegrationTestCase
 
+from crm.fcrm.doctype.crm_deal.api import get_deal_contacts
 from crm.fcrm.doctype.crm_deal.crm_deal import (
 	add_contact,
 	create_deal,
@@ -287,6 +288,25 @@ class TestCRMDeal(IntegrationTestCase):
 			else:
 				self.assertEqual(c.is_primary, 0)
 
+	def test_get_deal_contacts_orders_primary_first(self):
+		"""get_deal_contacts pins the primary contact to the top regardless of
+		the order contacts were added in, and keeps the rest in row order"""
+		contact1 = create_test_contact(first_name="Alpha", email="alpha@example.com")
+		contact2 = create_test_contact(first_name="Beta", email="beta@example.com")
+		contact3 = create_test_contact(first_name="Gamma", email="gamma@example.com")
+
+		deal = create_test_deal(organization="Contact Order Org")
+		deal.append("contacts", {"contact": contact1.name})
+		deal.append("contacts", {"contact": contact2.name})
+		deal.append("contacts", {"contact": contact3.name, "is_primary": 1})
+		deal.save()
+
+		contacts = get_deal_contacts(deal.name)
+
+		self.assertEqual(contacts[0]["name"], contact3.name)
+		self.assertEqual(contacts[0]["is_primary"], 1)
+		self.assertEqual([c["name"] for c in contacts[1:]], [contact1.name, contact2.name])
+
 	def test_create_deal_api(self):
 		"""Test create_deal API function"""
 		deal_name = create_deal(
@@ -316,6 +336,24 @@ class TestCRMDeal(IntegrationTestCase):
 		contact = frappe.get_doc("Contact", deal.contacts[0].contact)
 		self.assertEqual(contact.first_name, "Deal")
 		self.assertEqual(contact.email_id, "dealcreator@example.com")
+
+	def test_create_deal_api_propagates_no_of_employees(self):
+		"""no_of_employees is copied onto the organization create_deal creates."""
+		# A unique name: create_organization reuses an existing org of the same name, so a
+		# fixed one left over from an earlier run would answer with its own band.
+		suffix = frappe.generate_hash(length=8)
+		deal_name = create_deal(
+			{
+				"organization_name": f"Employees Test Org {suffix}",
+				"no_of_employees": "51-200",
+				"first_name": "Employees",
+				"email": f"employeestest-{suffix}@example.com",
+			}
+		)
+
+		deal = frappe.get_doc("CRM Deal", deal_name)
+		org = frappe.get_doc("CRM Organization", deal.organization)
+		self.assertEqual(org.no_of_employees, "51-200")
 
 	def test_create_deal_refuses_a_user_without_a_crm_role(self):
 		"""The endpoint used to insert with ignore_permissions, so any logged-in

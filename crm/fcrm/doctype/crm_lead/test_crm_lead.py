@@ -454,6 +454,33 @@ class TestCRMLead(IntegrationTestCase):
 		self.assertEqual(frappe.db.count("CRM Deal", {"lead": lead.name}), 1)
 		self.assertEqual(frappe.db.count("CRM Organization", {"organization_name": "Twice Corp"}), 1)
 
+	def test_cannot_convert_lost_lead_to_deal(self):
+		"""Leads with a Lost-type status (Junk, Unqualified, ...) cannot be converted."""
+		if not frappe.db.exists("CRM Lost Reason", "Not interested"):
+			frappe.get_doc({"doctype": "CRM Lost Reason", "lost_reason": "Not interested"}).insert()
+
+		for status in ("Junk", "Unqualified"):
+			with self.subTest(status=status):
+				lead = create_lead(first_name=status, status=status, lost_reason="Not interested")
+				with self.assertRaisesRegex(
+					frappe.ValidationError, f"Cannot convert a lead with status {status}"
+				):
+					convert_to_deal(lead=lead.name)
+				lead.reload()
+				self.assertFalse(lead.converted)
+				self.assertEqual(lead.status, status)
+				self.assertFalse(frappe.db.exists("CRM Deal", {"lead": lead.name}))
+
+	def test_converted_lead_marked_lost_still_reports_already_converted(self):
+		"""A retry must hear "already converted", not the Lost-status refusal."""
+		lead = create_lead(first_name="Retry", email="retry.lost@example.com")
+		convert_to_deal(lead=lead.name)
+		frappe.db.set_value("CRM Lead", lead.name, "status", "Junk")
+		frappe.clear_document_cache("CRM Lead", lead.name)
+
+		with self.assertRaisesRegex(frappe.ValidationError, "already been converted"):
+			convert_to_deal(lead=lead.name)
+
 	def test_convert_to_deal_api_with_existing_records(self):
 		"""Test convert_to_deal API with existing contact and organization parameters"""
 		# Create existing contact
@@ -523,6 +550,25 @@ class TestCRMLead(IntegrationTestCase):
 		self.assertEqual(deal.website, "https://copytest.com")
 		self.assertEqual(deal.annual_revenue, 750000)
 		self.assertEqual(deal.job_title, "CEO")
+
+	def test_no_of_employees_propagated_to_organization_on_conversion(self):
+		"""no_of_employees on the lead is copied to the organization created on conversion."""
+		# A unique name: create_organization reuses an existing org of the same name, so a
+		# fixed one left over from an earlier run would answer with its own band.
+		suffix = frappe.generate_hash(length=8)
+		lead = create_lead(
+			first_name="Employees",
+			last_name="Test",
+			email=f"employeestest-{suffix}@example.com",
+			organization=f"Employees Test Inc {suffix}",
+			no_of_employees="201-500",
+		)
+
+		deal_name = lead.convert_to_deal()
+		deal = frappe.get_doc("CRM Deal", deal_name)
+
+		org = frappe.get_doc("CRM Organization", deal.organization)
+		self.assertEqual(org.no_of_employees, "201-500")
 
 	def test_custom_fields_copied_to_deal_by_label(self):
 		"""Custom Lead fields map to matching custom Deal fields."""

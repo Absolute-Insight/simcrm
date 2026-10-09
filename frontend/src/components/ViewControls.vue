@@ -4,6 +4,24 @@
     class="flex flex-col justify-between gap-2 sm:px-[var(--v-page-gutter)] px-3 py-4"
   >
     <div class="flex flex-col gap-2">
+      <!-- Quick filters get their own scrolling row on mobile: squeezed into
+           the toolbar row beside five buttons they had no width left. -->
+      <FadedScrollableDiv
+        v-if="quickFilterList.length"
+        class="flex items-center overflow-x-auto -mx-1 h-9"
+        orientation="horizontal"
+      >
+        <div
+          v-for="filter in quickFilterList"
+          :key="filter.fieldname"
+          class="m-1 min-w-36"
+        >
+          <QuickFilterField
+            :filter="filter"
+            @applyQuickFilter="(f, v) => applyQuickFilter(f, v)"
+          />
+        </div>
+      </FadedScrollableDiv>
       <div class="flex items-center justify-between gap-2 overflow-x-auto">
         <div class="flex gap-2">
           <Filter
@@ -352,6 +370,7 @@ import {
   watch,
   h,
   markRaw,
+  nextTick,
 } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { isMobileView } from '@/composables/settings'
@@ -567,8 +586,28 @@ list.value = createResource({
   },
 })
 
-// createResource leaves `params` null until a fetch passes them explicitly
-list.value.params = getParams()
+// createResource leaves `params` null until a fetch passes them explicitly.
+// With `cache:` set, frappe-ui hands back the cached instance on re-entry, and
+// its params still hold the user's unsaved filter/sort/group change; keep them
+// and flag the view as modified instead of resetting to the saved view.
+// kanban_columns is left out: "load more" mutates it without it being an edit.
+const dirtySignature = (p) =>
+  JSON.stringify([
+    p.filters || {},
+    p.order_by,
+    p.view?.group_by_field,
+    p.column_field,
+    p.title_field,
+    p.kanban_fields,
+  ])
+const initialParams = getParams()
+if (!list.value.params) {
+  list.value.params = initialParams
+} else if (
+  dirtySignature(list.value.params) !== dirtySignature(initialParams)
+) {
+  viewUpdated.value = true
+}
 
 // Refresh the list when a Domain Enrichment enrichment finishes for this
 // doctype, so newly-filled fields (logo, etc.) show without a manual reload.
@@ -1132,6 +1171,28 @@ function loadMoreKanban(columnName) {
   list.value.reload()
 }
 
+// Saving the standard view re-reads the views store, which trips the deep
+// `getView` watcher below into rebuilding the list params from the store. For
+// our own save that only replays state already applied locally, and when two
+// saves overlap (typing in a quick filter) the earlier re-read can land last
+// and rewind the filters, and the quick filter input, to the older value.
+//
+// Each save-triggered re-read holds a token from the moment it starts until
+// it has settled and Vue has flushed the watchers its data change queued
+// (nextTick). The watcher stands down while any token is held. The window is
+// tied to the re-read's own lifetime, not to the watcher firing, so a re-read
+// that changes nothing cannot leave a stale skip behind to swallow a later,
+// real change.
+const selfViewReloads = new Set()
+
+function reloadViewAfterSave() {
+  const token = Symbol('self-view-reload')
+  selfViewReloads.add(token)
+  return reloadView().finally(() =>
+    nextTick(() => selfViewReloads.delete(token)),
+  )
+}
+
 function createOrUpdateStandardView() {
   if (route.query.view) return
   view.value.doctype = props.doctype
@@ -1142,7 +1203,7 @@ function createOrUpdateStandardView() {
     },
   )
     .then(() => {
-      reloadView()
+      reloadViewAfterSave()
       view.value = {
         label: view.value.label,
         type: view.value.type || 'list',
@@ -1282,7 +1343,7 @@ const viewActions = (view, close) => {
 }
 
 function isDefaultView(v) {
-  let defaultView = getDefaultView()
+  let defaultView = getDefaultView(route.name)
 
   if (!defaultView || !v.name) return false
 
@@ -1486,6 +1547,7 @@ defineExpose({
 watch(
   () => getView(route.query.view, route.params.viewType, props.doctype),
   (value, old_value) => {
+    if (selfViewReloads.size) return
     if (isEqual(value, old_value)) return
     reload()
   },

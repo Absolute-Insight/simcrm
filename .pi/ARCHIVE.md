@@ -616,3 +616,133 @@ bench; a scripted pass over every route in both themes recorded zero Vue warning
 page errors. The dev site needed four adjustments to match CI's fresh site for the e2e
 run (test flag, outgoing mail account, demo passwords, forecasting mandatory fields);
 the recipe is in the machine-local memory, not here, because it is about this bench.
+
+---
+
+## Upstream port — frappe/crm v1.84.0 → v1.86.0
+
+**Completed 2026-10-09.** Branch `fix/upstream-v1.86-port`, 26 commits, one per fix (#2722
+and #2837 share one; #2813 includes its follow-up `9dde67afb`).
+
+### Where upstream is
+
+The merge base is still `7dcd8430d` (2026-08-13), and upstream `develop` is now 742 commits past
+it. As before, no `v1.x` tag is an ancestor. The release notes for v1.84.0, v1.85.0, v1.85.1 and
+v1.86.0 were used only as a **list of PRs to read**. Each fix was taken from its original merge
+commit on `upstream/develop` (`<merge>^1..<merge>`), not from the backport. They are merge
+commits, so `--grep='#NNNN)'` finds nothing; grep `#NNNN` with `--merges`.
+
+### What was ported
+
+- **Email and conversion:**
+  - replies sent with the customer's address as the sender (#2897);
+  - Lost, Junk and Unqualified leads converting to deals and being reset to Qualified (#2813);
+  - no-reply and mailer-daemon mail becoming leads (#2915);
+  - `no_of_employees` dropped on conversion (#2751).
+- **Calls and routing:**
+  - site-file call recordings not playing (#2874);
+  - a TypeError calling a deal with no primary contact (#2903);
+  - a transient users-fetch failure sending a CRM user to Not Permitted (#2261, router half).
+- **Lists:**
+  - one global default view, so setting it on Deals wiped Leads (#2722 + #2837);
+  - an unsaved filter lost on re-entering a cached view (#2905);
+  - the quick filter rewinding while typing (#2822);
+  - no quick filters on mobile (#2786);
+  - the clipped quick-filter select (#2842);
+  - bulk edit swallowing failures and unable to set a Lost status (#2733).
+- **Fields and side panel:**
+  - double error toasts on every failed inline save (#2821);
+  - primary contact not first or expanded (#2699, #2778);
+  - details panel width lost on reload (#2754);
+  - no "Create new" on side-panel Links (#2834);
+  - Autocomplete refusing free text (#2675);
+  - edit-layout tooltip (#2876);
+  - grid header misalignment (#2929);
+  - email-template select placement (#2868);
+  - untranslated Select labels (#2810).
+- **Activity and files:**
+  - new emails not appearing live (#2797, new-email half);
+  - web-link attachments never completing (#2831);
+  - the uploader losing the doctype's public default and limits from the second open
+    (#2918).
+
+### Already present
+
+#2228 (`@me` in export-all), #2610 (notification links into the CRM UI) and #2655 (Phone
+field branch) were in our history. #2787 and #2788 (call-log and deal-contacts read checks)
+were present in our own form. **#2805 (assignment write check) must not be taken:** ours,
+`crm/api/todo.py` `may_assign`, deliberately does not exempt `ignore_permissions`, while
+upstream's does, which leaves the `assign_to.add` path open.
+
+### What was deliberately not ported
+
+- **Features, as product decisions rather than maintenance:** the command palette (#2921 and
+  its fixes #2926 and #2952), workflow automations (#2783, #2945, #2953), the onboarding "first
+  web form" step (#2887), and the ERPNext quotations tab (#2938).
+- **#2846 (LDAP users skip password setup).** We have no password-setup flow.
+- **#2934 (web form stamps the target doctype).** At our frappe pin, `accept()` resolves the
+  doctype server-side; the client value matters only under the Payments app override.
+- **#2926's button half.** Upstream says an exposed ref doesn't write through. That is not
+  true on our Vue 3.5: a minimal mount of our `emailBox` wiring under happy-dom opened the
+  box.
+- **#2623 (read-only TextEditor → `v-html` + sanitizeHTML).** A refactor, not an XSS fix: our
+  read-only TipTap already drops scripts and `on*` attributes through its schema. It belongs
+  with the editor migration deferred in the v1.83.0 port.
+- **#2797's read-receipt half.** Frappe marks an email read with `frappe.db.set_value`, which
+  emits no realtime event, so there is nothing to listen for.
+- **#2261's store edits.** Session expiry is handled globally in `main.js` /
+  `utils/sessionExpiry.js`.
+- **#2751's `OrganizationModal.vue` hunk.** It makes no difference here: the
+  `Object.assign(props.data)` that follows overwrites the default either way.
+- **#2918's `filesUploader.test.js`.** It mounts `.vue` files, and our vitest has no vue plugin
+  on purpose. The derivation moved to `utils/fileUploaderDefaults.js` and is unit-tested there
+  instead.
+- **Vite 8 (#2601).** We were already ahead.
+- **A fix of our own for `get_call_log` naming a lead or deal the caller cannot read.** Built,
+  reviewed and dropped. Hiding `_lead`/`_deal` turned on the modal's "Create Lead" button. That
+  either redirected to the hidden lead, or, for a hidden deal, created a duplicate lead. And the
+  name was still in `reference_docname` and `links[]`, which are permlevel 0 and readable via
+  `/api/resource`. Only the name leaks, never the record. A real fix is a decision about what
+  a call log may reveal of its links, made in the modal and in `create_lead_from_call_log`
+  together.
+
+### Load-bearing decisions
+
+- **#2822 is not upstream's counter.** A skip-counter leaks when a save-triggered re-read
+  changes nothing, and then swallows the next real change. Instead, each re-read holds a token
+  in a `Set` until it settles and Vue has flushed the watchers it queued. The `getView`
+  watcher stands down while any token is held. Known gap, shared with upstream: a real view
+  switch made inside that one-request window is also ignored.
+- **#2261 retries a failed users resource:** `await (users.error ? users.reload() :
+  users.promise)`. frappe-ui never replaces a failed resource's promise, so upstream's
+  `next(false)` alone would refuse every later navigation until a reload.
+- **#2874 hardens upstream's site-file check.** A `recording_url` containing `..`, `%2e` or a
+  backslash still goes through the proxy, so a crafted URL cannot point the audio element at
+  another endpoint on the site.
+- **#2675 also covers the grid Autocomplete** (`Controls/Grid.vue`), which upstream missed.
+  Both use one helper, `withCustomValueOption` in `utils/fieldTransforms.js`.
+- **#2810 also translates two sites of ours:** the side panel and the quick-filter options in
+  `crm/api/doc.py`. The Form Builder's options editor stays untranslated, since it edits the
+  options themselves.
+- **#2733 extracts `Controls/LostReasonFields.vue`,** shared by `LostReasonModal` and bulk edit.
+  It keeps our `reportActionError` catch, the `frappe-ui/experimental` TextEditor import and the
+  "enqueued (≥20)" toast. Frappe also raises its own enqueued alert, so a large bulk edit may
+  show both.
+- **#2786 gives mobile quick filters their own scrolling row** above the toolbar, instead of
+  squeezing them into it.
+
+### Verification
+
+- **Implementation:** four parallel worktrees, one per area, combined onto the branch without
+  conflicts. Bench runs were serialised with `flock` because the worktrees share `test_site`.
+- **Tests:** vitest 55 files / 663 tests. The full python suite passed with
+  `PYTHONPATH=/workspace/.worktrees/upstream-v1.86-port`, and `crm.__file__` resolved to the
+  worktree: 616 + 1181 + 216 (26 skipped) + 53 = 2,066 tests, all OK.
+- **Lint and build:** eslint, prettier 3.2.5 and ruff 0.8.1 are clean, and the production build
+  succeeds.
+- **Review:** the `upstream-port-reviewer` found no local change overwritten. Its one
+  medium-severity finding was the call-log fix above, which was dropped. It also flagged the
+  #2751 tests as able to pass on a dirty site, and they now use unique organization names.
+- **Not done:** Playwright and browser QA. Worth a manual look on the built app: the mobile
+  quick-filter row, the select placements, the lost-reason fields in bulk edit, and the side
+  panel's "Create new".
