@@ -173,3 +173,33 @@ class TestGetFieldsLayout(IntegrationTestCase):
 		finally:
 			doc.layout = previous
 			doc.save(ignore_permissions=True)
+
+
+class TestSelectOptionLabels(IntegrationTestCase):
+	"""get_field_obj translates a Select option's label but not its value.
+
+	The value is what gets stored and filtered on, so translating it would write
+	the user's language into the record; only the label is for display.
+	"""
+
+	def test_labels_are_translated_and_values_are_not(self):
+		dictionary = {"Billing": "Rozliczeniowy", "Shipping": "Wysyłkowy"}
+		field = frappe._dict(
+			{
+				"fieldname": "address_type",
+				"fieldtype": "Select",
+				"label": "Address Type",
+				"options": "Billing\nShipping\nOffice",
+			}
+		)
+		with patch(f"{MODULE}._", side_effect=lambda msg, *a, **k: dictionary.get(msg, msg)):
+			L.get_field_obj(field)
+
+		self.assertEqual(
+			field["options"],
+			[
+				{"label": "Rozliczeniowy", "value": "Billing"},
+				{"label": "Wysyłkowy", "value": "Shipping"},
+				{"label": "Office", "value": "Office"},
+			],
+		)
