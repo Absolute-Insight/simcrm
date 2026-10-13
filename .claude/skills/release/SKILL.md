@@ -43,6 +43,13 @@ gh run list --branch develop --limit 10
 ```
 
 Required by name: `Playwright E2E Tests`, `Server Tests`, `Unit Tests & Coverage`.
+**And nothing red at all**: the gate also refuses on any failing check-run on the
+commit, required or not. `Semgrep Full Scan` (weekly, and on every push to `main`
+or `develop` that touches a `.py` file) counts; check it before promoting:
+
+```bash
+gh run list --workflow "Semgrep Full Scan" --limit 3
+```
 
 **2. Preview what you are about to cut.**
 

@@ -180,7 +180,11 @@ so the guard verifies the commit really is a bump (subject starts `chore(release
 `crm/__init__.py` is the only file touched) and inherits its parent's checks. It refuses
 to walk the parent of anything else.
 
-The practical consequence: **the parent's checks must be green at the moment you promote.**
+The practical consequence: **the parent's checks must be green at the moment you promote,
+and nothing on it may be red.** The gate refuses on _any_ failing check-run on the commit,
+required or not. `Semgrep Full Scan` runs on every push to `main` that touches a `.py` file
+and counts: on 2026-10-13 it was red for a rule upstream had added two weeks earlier, so
+v3.17.1 was tagged and released with no image, and the fix shipped as the next patch.
 If they are red, that release cannot be published, and it cannot be repaired after the
 fact — re-running the checks on that commit uses the workflow files _from that commit_, so
 a CI bug fixed later on `main` does not retroactively fix them. That is exactly how v3.2.0
