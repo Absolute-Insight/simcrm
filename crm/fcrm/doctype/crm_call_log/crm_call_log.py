@@ -185,7 +185,7 @@ def parse_call_log(call):
 	call["_duration"] = seconds_to_duration(call.get("duration"))
 	if call.get("type") == "Incoming":
 		call["activity_type"] = "incoming_call"
-		contact = lookup_contact_by_phone_number(call.get("from"))
+		contact = get_call_contact(call, call.get("from"))
 		receiver = (
 			frappe.db.get_values("User", call.get("receiver"), ["full_name", "user_image"])[0]
 			if call.get("receiver")
@@ -201,7 +201,7 @@ def parse_call_log(call):
 		}
 	elif call.get("type") == "Outgoing":
 		call["activity_type"] = "outgoing_call"
-		contact = lookup_contact_by_phone_number(call.get("to"))
+		contact = get_call_contact(call, call.get("to"))
 		caller = (
 			frappe.db.get_values("User", call.get("caller"), ["full_name", "user_image"])[0]
 			if call.get("caller")
@@ -217,6 +217,41 @@ def parse_call_log(call):
 		}
 
 	return call
+
+
+def get_call_contact(call, phone_number):
+	"""The lead or deal the call points to, or the best match for the number when it
+	points to neither. Two records can share a number, so once the call points to a
+	record the number is never used to guess who it was."""
+	doctype, name = call.get("reference_doctype"), call.get("reference_docname")
+	if doctype not in ("CRM Lead", "CRM Deal") or not name:
+		return lookup_contact_by_phone_number(phone_number)
+
+	# A forced delete leaves the reference dangling, and has_permission on a
+	# missing name raises rather than returning False. Both branches answer
+	# the same, so this does not tell the caller whether the record exists.
+	if not frappe.db.exists(doctype, name) or not frappe.has_permission(doctype, "read", doc=name):
+		return {}
+
+	return get_reference_contact(doctype, name) or {}
+
+
+def get_reference_contact(doctype, name):
+	if doctype == "CRM Lead":
+		lead = frappe.db.get_value("CRM Lead", name, ["lead_name", "image"], as_dict=True)
+		return lead and {"full_name": lead.lead_name, "image": lead.image}
+
+	contact = frappe.db.get_value(
+		"CRM Contacts", {"parenttype": "CRM Deal", "parent": name, "is_primary": 1}, "contact"
+	)
+	if contact:
+		return frappe.db.get_value("Contact", contact, ["full_name", "image"], as_dict=True)
+
+	deal = frappe.db.get_value(
+		"CRM Deal", name, ["lead_name", "organization", "organization_name"], as_dict=True
+	)
+	deal_name = deal and (deal.lead_name or deal.organization or deal.organization_name)
+	return deal_name and {"full_name": deal_name}
 
 
 @frappe.whitelist()
@@ -255,9 +290,11 @@ def get_call_log(name: str):
 					note = frappe.get_cached_doc("FCRM Note", link.get("link_name")).as_dict()
 					notes.append(note)
 			elif link.get("link_doctype") == "CRM Lead":
-				call["_lead"] = link.get("link_name")
+				# The reference is the record the call was logged against; a link
+				# added later must not displace it.
+				call.setdefault("_lead", link.get("link_name"))
 			elif link.get("link_doctype") == "CRM Deal":
-				call["_deal"] = link.get("link_name")
+				call.setdefault("_deal", link.get("link_name"))
 
 	call["_tasks"] = tasks
 	call["_notes"] = notes
