@@ -92,16 +92,21 @@ def handle_request(**kwargs):
 		frappe.log_error(title="Error while creating/updating call record")
 		# The rollback above discarded the half-written call log; this keeps the
 		# error log, which is the only record that the webhook arrived at all.
-		frappe.db.commit()  # nosemgrep: frappe-manual-commit
+		# Exotel's passthru applet calls this with GET, so the method cannot be
+		# restricted; the commit must outlive the GET rollback for the same reason,
+		# and the webhook key checked first is what stands in for CSRF here.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit, whitelisted-side-effect-on-get
 	finally:
 		request_log.save(ignore_permissions=True)
 		# The request log is the audit trail for an inbound webhook and has to
 		# survive whichever way the block above exited, rollback included.
-		frappe.db.commit()  # nosemgrep: frappe-manual-commit
+		# Same terms as the commit above: Exotel calls with GET, so the request log
+		# must be committed past the GET rollback.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit, whitelisted-side-effect-on-get
 
 
 # Outgoing Call
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 @rate_limit(limit=MAKE_CALL_RATE_LIMIT, seconds=60)
 def make_a_call(to_number: str, from_number: str | None = None, caller_id: str | None = None):
 	if user_rate_limited(MAKE_CALL_RATE_SCOPE, MAKE_CALL_RATE_LIMIT):
@@ -177,7 +182,7 @@ def make_a_call(to_number: str, from_number: str | None = None, caller_id: str |
 		except Exception:
 			frappe.db.rollback()
 			frappe.log_error(title="Error while creating Exotel call log")
-			frappe.db.commit()
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit
 			call_log_creation_failed = True
 
 	call_details = response.json().get("Call", {})

@@ -121,7 +121,10 @@ def voice(**kwargs):
 	except Exception:
 		frappe.db.rollback()
 		frappe.log_error(title="Error while creating Twilio call log")
-		frappe.db.commit()
+		# A Twilio webhook arrives with whichever method the TwiML app was set up
+		# with, so the method is not restricted; the signature check that runs first
+		# stands in for CSRF, and the error log must outlive a GET's rollback.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit, whitelisted-side-effect-on-get
 		return Response(_call_failed_response().to_xml(), mimetype="text/xml")
 
 	resp = twilio.generate_twilio_dial_response(from_number, args.To)
@@ -142,7 +145,10 @@ def twilio_incoming_call_handler(**kwargs):
 	except Exception:
 		frappe.db.rollback()
 		frappe.log_error(title="Error while creating Twilio call log")
-		frappe.db.commit()
+		# A Twilio webhook arrives with whichever method the TwiML app was set up
+		# with, so the method is not restricted; the signature check that runs first
+		# stands in for CSRF, and the error log must outlive a GET's rollback.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit, whitelisted-side-effect-on-get
 		return Response(_call_failed_response().to_xml(), mimetype="text/xml")
 
 	resp = IncomingCall(args.From, args.To).process()
@@ -227,7 +233,10 @@ def update_recording_info(**kwargs):
 
 	try:
 		frappe.db.set_value("CRM Call Log", call_sid, "recording_url", recording_url)
-		frappe.db.commit()
+		# Same webhook terms as the handlers above: the method is Twilio's choice,
+		# the signature check stands in for CSRF, and the recording URL must survive
+		# a GET's rollback.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit, whitelisted-side-effect-on-get
 	except Exception as exc:
 		frappe.log_error(title=_("Failed to capture Twilio recording"))
 		raise exc
