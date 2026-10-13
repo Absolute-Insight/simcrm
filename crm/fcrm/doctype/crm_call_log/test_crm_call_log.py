@@ -644,6 +644,372 @@ def create_test_lead(first_name, mobile_no):
 	).insert()
 
 
+HIDDEN_REP = "calllog-rep@crmtest.test"
+HIDDEN_OWNER = "calllog-owner@crmtest.test"
+
+
+class TestCallLogHidesUnreadableReferences(IntegrationTestCase):
+	"""The caller or receiver of a call can read it even when the lead or deal it
+	hangs off belongs to someone else (crm.permissions.linked_records). The call
+	must not name that record on any read path, nor offer to create a lead over it."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		for email, name in ((HIDDEN_REP, "Calllog Rep"), (HIDDEN_OWNER, "Calllog Owner")):
+			if not frappe.db.exists("User", email):
+				frappe.get_doc(
+					{"doctype": "User", "email": email, "first_name": name, "send_welcome_email": 0}
+				).insert(ignore_permissions=True).add_roles("Sales User")
+
+		self.lead = frappe.get_doc(
+			{"doctype": "CRM Lead", "first_name": "Hidden", "lead_owner": HIDDEN_OWNER}
+		).insert(ignore_permissions=True)
+		deal = frappe.get_doc(
+			{"doctype": "CRM Deal", "deal_owner": HIDDEN_OWNER, "organization": "Hidden Org"}
+		)
+		deal.flags.ignore_mandatory = True
+		deal.flags.ignore_links = True
+		self.deal = deal.insert(ignore_permissions=True)
+
+		self.call = create_test_call_log(
+			type="Outgoing",
+			telephony_medium="Twilio",
+			caller=HIDDEN_REP,
+			reference_doctype="CRM Lead",
+			reference_docname=self.lead.name,
+		)
+		self.call.link_with_reference_doc("CRM Deal", self.deal.name)
+		self.call.save(ignore_permissions=True)
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def assertNamesNothingHidden(self, payload):
+		serialized = frappe.as_json(payload)
+		self.assertNotIn(self.lead.name, serialized)
+		self.assertNotIn(self.deal.name, serialized)
+
+	def test_get_call_log_does_not_name_a_hidden_lead_or_deal(self):
+		frappe.set_user(HIDDEN_REP)
+		result = get_call_log(self.call.name)
+
+		self.assertNotIn("_lead", result)
+		self.assertNotIn("_deal", result)
+		self.assertFalse(result.get("reference_docname"))
+		self.assertFalse(
+			[link for link in result["links"] if link["link_doctype"] in ("CRM Lead", "CRM Deal")]
+		)
+		self.assertEqual(result.get("_has_hidden_reference"), 1)
+		self.assertNamesNothingHidden(result)
+
+	def test_frappe_client_get_does_not_name_a_hidden_lead_or_deal(self):
+		frappe.set_user(HIDDEN_REP)
+		result = frappe.client.get("CRM Call Log", self.call.name)
+
+		self.assertFalse(result.get("reference_docname"))
+		self.assertEqual(result.get("_has_hidden_reference"), 1)
+		self.assertNamesNothingHidden(result)
+
+	def test_the_resource_api_does_not_name_a_hidden_lead_or_deal(self):
+		from frappe.api import v1, v2
+
+		frappe.set_user(HIDDEN_REP)
+		frappe.local.form_dict = frappe._dict()
+		self.assertNamesNothingHidden(v1.read_doc("CRM Call Log", self.call.name).as_dict())
+		self.assertNamesNothingHidden(v2.read_doc("CRM Call Log", self.call.name))
+
+	def test_the_desk_form_load_does_not_name_a_hidden_lead_or_deal(self):
+		from frappe.desk.form.load import getdoc
+
+		frappe.set_user(HIDDEN_REP)
+		frappe.local.response = frappe._dict({"docs": []})
+		getdoc("CRM Call Log", self.call.name)
+		self.assertNamesNothingHidden([doc.as_dict() for doc in frappe.response.docs])
+
+	def test_the_call_log_list_does_not_name_a_hidden_lead_or_deal(self):
+		from crm.api.doc import get_data
+
+		frappe.set_user(HIDDEN_REP)
+		result = get_data("CRM Call Log", filters={"name": self.call.name}, order_by="creation desc")
+
+		self.assertEqual([row["name"] for row in result["data"]], [self.call.name])
+		self.assertNamesNothingHidden(result["data"])
+
+	def test_a_readable_records_timeline_does_not_name_a_hidden_deal_on_its_calls(self):
+		from crm.api.activities import get_linked_calls
+
+		own_lead = frappe.get_doc(
+			{"doctype": "CRM Lead", "first_name": "Own", "lead_owner": HIDDEN_REP}
+		).insert(ignore_permissions=True)
+		call = create_test_call_log(caller=HIDDEN_REP, telephony_medium="Twilio")
+		call.link_with_reference_doc("CRM Lead", own_lead.name)
+		call.link_with_reference_doc("CRM Deal", self.deal.name)
+		call.save(ignore_permissions=True)
+
+		frappe.set_user(HIDDEN_REP)
+		result = get_linked_calls(own_lead.name)
+
+		self.assertIn(call.name, [row["name"] for row in result["calls"]])
+		self.assertNamesNothingHidden(result)
+
+	def test_create_lead_is_refused_without_naming_the_record(self):
+		leads_before = frappe.db.count("CRM Lead")
+		frappe.set_user(HIDDEN_REP)
+
+		with self.assertRaises(frappe.PermissionError) as raised:
+			create_lead_from_call_log(call_log=frappe.as_json({"name": self.call.name}))
+
+		self.assertNotIn(self.lead.name, str(raised.exception))
+		self.assertNotIn(self.lead.name, frappe.as_json(frappe.local.message_log))
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.count("CRM Lead"), leads_before)
+		self.call.reload()
+		self.assertEqual([link.link_doctype for link in self.call.links], ["CRM Deal"])
+
+	def test_saving_what_the_rep_was_served_keeps_the_hidden_reference(self):
+		frappe.set_user(HIDDEN_REP)
+		doc = frappe.get_doc("CRM Call Log", self.call.name)
+		doc.apply_fieldlevel_read_permissions()
+		doc.status = "Busy"
+		doc.save()
+
+		frappe.set_user("Administrator")
+		self.call.reload()
+		self.assertEqual(self.call.status, "Busy")
+		self.assertEqual(self.call.reference_docname, self.lead.name)
+		self.assertTrue(self.call.has_link("CRM Deal", self.deal.name))
+
+	def test_the_owner_still_sees_the_lead_and_deal(self):
+		frappe.set_user(HIDDEN_OWNER)
+		result = get_call_log(self.call.name)
+
+		self.assertEqual(result.get("_lead"), self.lead.name)
+		self.assertEqual(result.get("_deal"), self.deal.name)
+		self.assertNotIn("_has_hidden_reference", result)
+		self.assertEqual(
+			frappe.client.get("CRM Call Log", self.call.name)["reference_docname"], self.lead.name
+		)
+
+	def test_the_administrator_still_sees_the_lead_and_deal(self):
+		result = get_call_log(self.call.name)
+
+		self.assertEqual(result.get("_lead"), self.lead.name)
+		self.assertEqual(result.get("_deal"), self.deal.name)
+		self.assertTrue(self.call.has_link("CRM Deal", self.deal.name))
+		self.assertEqual(
+			frappe.client.get("CRM Call Log", self.call.name)["reference_docname"], self.lead.name
+		)
+
+	def test_create_lead_returns_a_readable_lead_already_linked(self):
+		frappe.set_user(HIDDEN_OWNER)
+		call = create_test_call_log(
+			caller=HIDDEN_OWNER, reference_doctype="CRM Lead", reference_docname=self.lead.name
+		)
+		self.assertEqual(
+			create_lead_from_call_log(call_log=frappe.as_json({"name": call.name})), self.lead.name
+		)
+
+	def test_a_hidden_lead_is_not_named_by_matching_its_number_either(self):
+		"""Blanking the reference must not hand the name back through the phone
+		lookup the unreferenced path uses: the lead the rep can't read is the
+		only record on this number."""
+		from crm.api.doc import get_data
+
+		self.lead.db_set("mobile_no", "+919876500099")
+		call = create_test_call_log(
+			type="Outgoing",
+			telephony_medium="Twilio",
+			caller=HIDDEN_REP,
+			to="+919876500099",
+			reference_doctype="CRM Lead",
+			reference_docname=self.lead.name,
+		)
+
+		frappe.set_user(HIDDEN_REP)
+		self.assertEqual(get_call_log(call.name)["_receiver"]["label"], "Unknown")
+		rows = get_data("CRM Call Log", filters={"name": call.name}, order_by="creation desc")["data"]
+		self.assertEqual([row["_receiver"]["label"] for row in rows], ["Unknown"])
+		self.assertNamesNothingHidden(rows)
+
+	def test_a_readable_records_timeline_does_not_name_a_hidden_deal_the_call_references(self):
+		from crm.api.activities import get_linked_calls
+
+		own_lead = frappe.get_doc(
+			{"doctype": "CRM Lead", "first_name": "Own", "lead_owner": HIDDEN_REP}
+		).insert(ignore_permissions=True)
+		call = create_test_call_log(
+			caller=HIDDEN_REP,
+			telephony_medium="Twilio",
+			reference_doctype="CRM Deal",
+			reference_docname=self.deal.name,
+		)
+		call.link_with_reference_doc("CRM Lead", own_lead.name)
+		call.save(ignore_permissions=True)
+
+		frappe.set_user(HIDDEN_REP)
+		result = get_linked_calls(own_lead.name)
+
+		rows = [row for row in result["calls"] if row["name"] == call.name]
+		self.assertEqual(len(rows), 1)
+		self.assertEqual(rows[0].get("_has_hidden_reference"), 1)
+		self.assertNamesNothingHidden(result)
+
+	def test_the_save_response_does_not_name_the_hidden_reference(self):
+		"""frappe.client.set_value returns the saved document without the read-path
+		hook, and validate has just put the reference back on it."""
+		frappe.set_user(HIDDEN_REP)
+		response = frappe.client.set_value("CRM Call Log", self.call.name, "status", "Busy")
+
+		self.assertFalse(response.get("reference_docname"))
+		self.assertEqual(response.get("_has_hidden_reference"), 1)
+		self.assertNamesNothingHidden(response)
+
+		frappe.set_user("Administrator")
+		self.call.reload()
+		self.assertEqual(self.call.status, "Busy")
+		self.assertEqual(self.call.reference_docname, self.lead.name)
+		self.assertTrue(self.call.has_link("CRM Deal", self.deal.name))
+
+	def test_a_list_row_asked_for_the_bare_reference_name_is_redacted(self):
+		"""A custom column set can ask for reference_docname without
+		reference_doctype; the name alone must still be recognised."""
+		from crm.api.doc import get_data
+
+		frappe.set_user(HIDDEN_REP)
+		result = get_data(
+			"CRM Call Log",
+			filters={"name": self.call.name},
+			order_by="creation desc",
+			rows=["name", "reference_docname"],
+		)
+
+		self.assertEqual([row["name"] for row in result["data"]], [self.call.name])
+		self.assertFalse(result["data"][0].get("reference_docname"))
+		self.assertNamesNothingHidden(result["data"])
+
+	def test_the_tasks_and_notes_served_with_the_call_do_not_name_it(self):
+		"""The deal's owner adds a task from the call and assigns it to the rep; the
+		task is the rep's to read, but its reference is not."""
+		task = frappe.get_doc(
+			{
+				"doctype": "CRM Task",
+				"title": "Call back",
+				"assigned_to": HIDDEN_REP,
+				"reference_doctype": "CRM Deal",
+				"reference_docname": self.deal.name,
+			}
+		).insert(ignore_permissions=True)
+		self.call.link_with_reference_doc("CRM Task", task.name)
+		self.call.save(ignore_permissions=True)
+
+		frappe.set_user(HIDDEN_REP)
+		result = get_call_log(self.call.name)
+
+		self.assertEqual([t["name"] for t in result["_tasks"]], [task.name])
+		self.assertFalse(result["_tasks"][0].get("reference_docname"))
+		self.assertNamesNothingHidden(result)
+
+	def test_an_unreferenced_call_is_not_named_by_a_hidden_leads_number(self):
+		"""A call that points at nothing is named by its number, from the records
+		the viewer may read only."""
+		self.lead.db_set("mobile_no", "+919876500098")
+		call = create_test_call_log(
+			type="Outgoing", telephony_medium="Twilio", caller=HIDDEN_REP, to="+919876500098"
+		)
+
+		frappe.set_user(HIDDEN_REP)
+		self.assertEqual(get_call_log(call.name)["_receiver"]["label"], "Unknown")
+
+		frappe.set_user("Administrator")
+		self.assertEqual(get_call_log(call.name)["_receiver"]["label"], "Hidden")
+
+	def test_a_restored_link_keeps_its_place(self):
+		"""The first lead link is the call's lead; a rep's save must not move a
+		hidden one behind their own."""
+		own_lead = frappe.get_doc(
+			{"doctype": "CRM Lead", "first_name": "Own", "lead_owner": HIDDEN_REP}
+		).insert(ignore_permissions=True)
+		call = create_test_call_log(caller=HIDDEN_REP, telephony_medium="Twilio")
+		call.link_with_reference_doc("CRM Lead", self.lead.name)
+		call.link_with_reference_doc("CRM Lead", own_lead.name)
+		call.save(ignore_permissions=True)
+
+		frappe.set_user(HIDDEN_REP)
+		doc = frappe.get_doc("CRM Call Log", call.name)
+		doc.apply_fieldlevel_read_permissions()
+		self.assertEqual([link.link_name for link in doc.links], [own_lead.name])
+		doc.status = "Busy"
+		doc.save()
+
+		frappe.set_user("Administrator")
+		call.reload()
+		self.assertEqual([link.link_name for link in call.links], [self.lead.name, own_lead.name])
+		self.assertEqual([link.idx for link in call.links], [1, 2])
+		self.assertEqual(get_call_log(call.name)["_lead"], self.lead.name)
+
+	def test_create_lead_returns_the_readable_lead_beside_a_hidden_deal(self):
+		own_lead = frappe.get_doc(
+			{"doctype": "CRM Lead", "first_name": "Own", "lead_owner": HIDDEN_REP}
+		).insert(ignore_permissions=True)
+		call = create_test_call_log(
+			caller=HIDDEN_REP,
+			telephony_medium="Twilio",
+			reference_doctype="CRM Lead",
+			reference_docname=own_lead.name,
+		)
+		call.link_with_reference_doc("CRM Deal", self.deal.name)
+		call.save(ignore_permissions=True)
+
+		frappe.set_user(HIDDEN_REP)
+		self.assertEqual(
+			create_lead_from_call_log(call_log=frappe.as_json({"name": call.name})), own_lead.name
+		)
+
+	def test_an_in_tree_manager_still_sees_the_reps_lead_and_deal(self):
+		"""Row scoping, not a role check: a Sales Manager whose subtree holds the
+		owner reads the records, so nothing is redacted for them."""
+		from frappe.utils.nestedset import rebuild_tree
+
+		from crm.permissions.test_org_hierarchy import make_hierarchy_node
+
+		manager = "calllog-manager@crmtest.test"
+		if not frappe.db.exists("User", manager):
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": manager,
+					"first_name": "Calllog Manager",
+					"send_welcome_email": 0,
+				}
+			).insert(ignore_permissions=True).add_roles("Sales Manager")
+		node = make_hierarchy_node(manager, is_group=1)
+		make_hierarchy_node(HIDDEN_OWNER, reports_to=node.name)
+		rebuild_tree("CRM Sales Hierarchy")
+		saved = frappe.db.get_single_value("FCRM Settings", "enable_sales_hierarchy")
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+		self.addCleanup(frappe.db.set_single_value, "FCRM Settings", "enable_sales_hierarchy", saved or 0)
+
+		frappe.set_user(manager)
+		result = get_call_log(self.call.name)
+
+		self.assertEqual(result.get("_lead"), self.lead.name)
+		self.assertEqual(result.get("_deal"), self.deal.name)
+		self.assertNotIn("_has_hidden_reference", result)
+		self.assertEqual(
+			frappe.client.get("CRM Call Log", self.call.name)["reference_docname"], self.lead.name
+		)
+
+	def test_create_lead_is_refused_for_a_call_on_a_deal(self):
+		leads_before = frappe.db.count("CRM Lead")
+		call = create_test_call_log(reference_doctype="CRM Deal", reference_docname=self.deal.name)
+
+		with self.assertRaises(frappe.ValidationError):
+			create_lead_from_call_log(call_log=frappe.as_json({"name": call.name}))
+		self.assertEqual(frappe.db.count("CRM Lead"), leads_before)
+
+
 def create_test_call_log(**kwargs):
 	"""Helper function to create a CRM Call Log for testing"""
 	import uuid

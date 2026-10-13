@@ -165,7 +165,13 @@
         </div>
       </div>
       <div
-        v-if="!callLog?.data?._lead && !callLog?.data?._deal"
+        v-if="callLog?.data?._has_hidden_reference"
+        class="px-4 pb-7 pt-4 text-base text-ink-gray-5 sm:px-6"
+      >
+        {{ __("Linked to a record you don't have access to") }}
+      </div>
+      <div
+        v-else-if="!callLog?.data?._lead && !callLog?.data?._deal"
         class="px-4 pb-7 pt-4 sm:px-6"
       >
         <Button
