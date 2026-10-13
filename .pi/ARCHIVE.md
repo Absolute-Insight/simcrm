@@ -746,3 +746,104 @@ upstream's does, which leaves the `assign_to.add` path open.
 - **Not done:** Playwright and browser QA. Worth a manual look on the built app: the mobile
   quick-filter row, the select placements, the lost-reason fields in bulk edit, and the side
   panel's "Create new".
+
+## Upstream port — frappe/crm v1.87.0
+
+**Completed 2026-10-13.** Branch `fix/upstream-v1.87-port`, 11 commits, one per fix.
+
+### Where upstream is
+
+The merge base is still `7dcd8430d` (2026-08-13); upstream `develop` is now 1,253 commits past
+it. As before, the release notes were used only as a list of PRs to read, and each fix was taken
+from its original merge commit on `upstream/develop` (`<merge>^1..<merge>`), not from the
+mergify backport.
+
+### What was ported
+
+- **Calls:** the referenced lead or deal shown instead of a phone-number match, with the name
+  withheld when the caller cannot read the reference (#2974); a task or note created from the
+  call modal linked to that lead or deal (#2775).
+- **Board:** a lost-reason prompt when a lead or deal card is dragged into a Lost column (#2884).
+  Before, `validate_lost_reason` refused the write and the card snapped back with nothing to fill
+  in, so a record could not be marked Lost from the board at all.
+- **Users:** role changes and invitation acceptance refused for a user whose roles a Role
+  Profile governs, since `User.validate` reverted them silently (#2856).
+- **Onboarding:** the cached first lead or deal validated server-side before navigating (#2861).
+- **Lists:** a kanban column's `page_length` no longer replaces the list's own in the response
+  (#2850).
+- **Telephony:** Exotel statuses mapped onto the Call Log Select, with an empty second-leg
+  status left unset instead of overwriting a real one (#2780). We carry the handler; nothing on
+  prod uses Exotel, so this is hygiene.
+- **Settings and layout:** the email account saving when only "Create Lead from Incoming
+  Emails" changed (#3002); the Data tab header and Save button sticky while scrolling (#2939);
+  the brand favicon on the dashboard, data import and persona pages (#3003); task row dividers
+  aligned (#2949).
+
+### Already present
+
+#2861's `get_list` half: both onboarding endpoints were already permission-aware here.
+
+### What was deliberately not ported
+
+- **#2975 (workflow builder error placement).** Workflow automations were never taken; the fork
+  shipped its own deterministic automation rules (`CRM Automation Rule`) on 2026-08-14, five
+  weeks before upstream merged theirs.
+- **#2979 (Meta lead sync window).** The lead-sync doctype does not exist here.
+- **#2879 (CRM Territory as a NestedSet).** We removed the territory tree on purpose:
+  `crm/patches/v1_0/drop_crm_territory_tree_fields.py` records why. Every territory filter in
+  the app is an equality match.
+- **#2951 (remove the single All tab).** Our notifications panel has two tabs, All and Events.
+- **#3000 (priority bars).** Our `TaskPriorityIcon` is a deliberate redesign with its own
+  contrast rationale, and the comma-expression bug upstream was fixing is already fixed here.
+  Icons in the priority dropdown are a design choice, not a defect.
+- **#2972 (persona option order and Skip).** Upstream's product opinion about its own
+  onboarding questionnaire; ours is already customised.
+- **#2850's frontend default and its e2e spec.** Reviewed as possibly needed, since `getParams`
+  seeds `page_length` from the first response. Checked in the browser instead: a cold load of
+  the leads list went from 20 of 136 to 40 of 136 on one Load More, so the first page's
+  `page_length` is already a number by the time it is added to.
+- **#2884's in-place revert, its `from`/`fromIndex` payload and its toasts.** The board reloads
+  on failure or cancel, which is what the task closing-note flow already does; one convention,
+  not two. The failure toast is `reportActionError`, as everywhere else.
+
+### Load-bearing decisions
+
+- **#2884 reuses `LostReasonModal`** rather than a second dialog: it now accepts no `document`
+  and emits `save`/`cancel`, and `ViewControls` wraps it in a promise the way
+  `collectClosingValues` already works. The Dialog's close also fires `cancel` after a save, so
+  the promise settles once. Upstream's other half, saving where the card was dropped in its new
+  column into the view, is taken too (`persistKanbanColumns`); a same-column reorder already did.
+- **The Exotel webhook test leaves state behind.** `create_call_log` commits, so
+  `test_first_event_without_status_still_creates_call_log` leaves `CRM Exotel Settings` enabled
+  with the token `test-token` on the test site. Same as upstream; the other Exotel tests set
+  `enabled` explicitly, so nothing depends on it being off. Remember it when one does.
+- **#2974's `get_call_contact` checks `has_permission` with `doc=`** (our convention) and
+  falls back to `lookup_contact_by_phone_number`, the unrestricted lookup, exactly where the old
+  code called it. The `_lead`/`_deal` names a caller cannot read are still returned by
+  `get_call_log`; that is the open item recorded in the v1.86 port, not widened here.
+
+### Verification
+
+- **Tests:** vitest 55 files / 663 tests. The ported Python modules pass against the worktree
+  (`crm.__file__` resolved to `.worktrees/upstream-v1.87-port`): call log 40, role profile 5,
+  user roles 4, onboarding 10, page length 2, integrations 42. The full python suite passed
+  with `PYTHONPATH=/workspace/.worktrees/upstream-v1.87-port`: 616 + 1214 + 216 (26 skipped)
+  + 53 = 2,099 tests, all OK.
+- **Lint and build:** eslint, prettier 3.2.5 and ruff 0.8.1 clean; production build succeeds.
+- **Review:** the `permissions-reviewer` found no leak. Its two low findings were taken: a
+  forced delete leaves a call's reference dangling and `has_permission` on a missing name
+  raises, so `get_call_contact` now checks existence first (both branches answer `{}`); and
+  the role-profile guard in `update_user_role` now runs after the System Manager and Sales
+  Manager checks, as it does in `remove_crm_roles_from_user`, so a caller who may not touch
+  the user does not learn how their roles are managed. It also noted that `get_linked_calls`
+  now returns `reference_docname`, which is the same name-only leak class as the open call-log
+  item, not a new one. The `upstream-port-reviewer` found no local change overwritten and no
+  ported test passing for the wrong reason; its findings became the Load More check above, the
+  column-order half of #2884, and a second lead sharing the number in the dangling-reference
+  test, so a fallback to the phone lookup would fail it.
+- **Browser (Playwright script against the dev bench serving the worktree build):** dragging a
+  lead into Unqualified opens the Lost Reason dialog; Cancel reloads the card back into New; an
+  empty Save shows "Lost Reason is required"; choosing a reason and saving writes the status and
+  `lost_reason`. The Data tab's header and Save stay in view when the fields scroll. The Chrome
+  extension was not connected, so this was scripted rather than driven by hand; the CI Playwright
+  job on the PR covers the suite.

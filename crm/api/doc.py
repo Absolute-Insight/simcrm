@@ -471,13 +471,15 @@ def get_data(
 			if kc.get("delete"):
 				column_data = []
 			else:
-				page_length = min(cint(kc.get("page_length")) or 20, MAX_KANBAN_COLUMN_PAGE_LENGTH)
+				# Not `page_length`: that is the list's own, echoed in the response
+				# below, and a column's size must not replace it.
+				column_page_length = min(cint(kc.get("page_length")) or 20, MAX_KANBAN_COLUMN_PAGE_LENGTH)
 				if "page_length" in kc:
-					kc["page_length"] = page_length
+					kc["page_length"] = column_page_length
 
 				if order:
 					column_data = get_records_based_on_order(
-						doctype, rows, column_filters, page_length, order
+						doctype, rows, column_filters, column_page_length, order
 					)
 				else:
 					column_data = frappe.get_list(
@@ -485,7 +487,7 @@ def get_data(
 						fields=rows,
 						filters=column_filters,
 						order_by=order_by,
-						page_length=page_length,
+						page_length=column_page_length,
 					)
 
 				all_count = frappe.get_list(

@@ -176,6 +176,8 @@ const isDirty = computed(() => {
     state.enable_outgoing !== props.accountData.enable_outgoing ||
     state.default_outgoing !== props.accountData.default_outgoing ||
     state.default_incoming !== props.accountData.default_incoming ||
+    state.create_lead_from_incoming_email !==
+      props.accountData.create_lead_from_incoming_email ||
     state.frappe_mail_site !== props.accountData.frappe_mail_site ||
     state.email_server !== props.accountData.email_server ||
     state.use_ssl !== props.accountData.use_ssl ||

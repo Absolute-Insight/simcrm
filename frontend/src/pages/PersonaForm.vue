@@ -20,8 +20,10 @@ import { useTelemetry } from '@framework/ui/telemetry'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { PERSONA_DONE_KEY } from '@/router'
+import { getSettings } from '@/stores/settings'
 
 const router = useRouter()
+const { brand } = getSettings()
 const { capture } = useTelemetry()
 const leaving = ref(false)
 const FADE_MS = 300
@@ -129,5 +131,8 @@ const questions = computed(() => [
   },
 ])
 
-usePageMeta(() => ({ title: __('Welcome to Vectora') }))
+usePageMeta(() => ({
+  title: __('Welcome to Vectora'),
+  icon: brand.favicon,
+}))
 </script>

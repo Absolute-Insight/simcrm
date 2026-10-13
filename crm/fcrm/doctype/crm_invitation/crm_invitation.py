@@ -13,6 +13,14 @@ ELEVATED_ROLES = ("Sales Manager", "System Manager")
 KEY_LENGTH = 32
 
 
+def validate_no_role_profile(user_doc):
+	# Imported here, not at the top: crm.api imports hash_key from this module,
+	# so a module-level import of crm.api.user is a cycle on a fresh install.
+	from crm.api.user import validate_no_role_profile as _validate
+
+	_validate(user_doc)
+
+
 def hash_key(raw_key: str) -> str:
 	"""What the table stores for an invitation key.
 
@@ -45,6 +53,7 @@ class CRMInvitation(Document):
 	def before_insert(self):
 		frappe.utils.validate_email_address(self.email, True)
 		self.validate_inviter_may_grant_role()
+		self.validate_existing_user()
 
 		# The raw key is kept on the instance only long enough to be mailed.
 		self._raw_key = frappe.generate_hash(length=KEY_LENGTH)
@@ -113,6 +122,8 @@ class CRMInvitation(Document):
 			frappe.throw(_("Invalid or expired key"))
 
 		user, is_new_user = self.create_user_if_not_exists()
+		if not is_new_user:
+			validate_no_role_profile(user)
 		user.append_roles(self.role)
 		if self.role == "System Manager":
 			user.append_roles("Sales Manager", "Sales User")
@@ -138,6 +149,11 @@ class CRMInvitation(Document):
 
 		if block_modules:
 			user.set("block_modules", block_modules)
+
+	def validate_existing_user(self):
+		# the invite would be accepted but the role never applied, so fail early
+		if frappe.db.exists("User", self.email):
+			validate_no_role_profile(frappe.get_doc("User", self.email))
 
 	def create_user_if_not_exists(self):
 		if not frappe.db.exists("User", self.email):

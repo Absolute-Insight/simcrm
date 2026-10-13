@@ -325,6 +325,13 @@
       </div>
     </template>
   </Dialog>
+  <LostReasonModal
+    v-if="showKanbanLostReasonModal"
+    v-model="showKanbanLostReasonModal"
+    :doctype="props.doctype"
+    @save="(values) => settleKanbanLostReason(values)"
+    @cancel="() => settleKanbanLostReason(null)"
+  />
 </template>
 <script setup>
 import Icon from '@/components/Icon.vue'
@@ -346,11 +353,13 @@ import GroupBy from '@/components/GroupBy.vue'
 import FadedScrollableDiv from '@/components/FadedScrollableDiv.vue'
 import ColumnSettings from '@/components/ColumnSettings.vue'
 import KanbanSettings from '@/components/Kanban/KanbanSettings.vue'
+import LostReasonModal from '@/components/Modals/LostReasonModal.vue'
 import { getSettings } from '@/stores/settings'
 import { globalStore } from '@/stores/global'
 import { viewsStore } from '@/stores/views'
 import { usersStore } from '@/stores/users'
 import { organizationsStore } from '@/stores/organizations'
+import { statusesStore } from '@/stores/statuses'
 import { getMeta } from '@/stores/meta'
 import { isEmoji } from '@/utils'
 import {
@@ -398,6 +407,7 @@ const { $dialog, $socket } = globalStore()
 const { reload: reloadView, getDefaultView, getView } = viewsStore()
 const { isManager, getUser } = usersStore()
 const { organizations } = organizationsStore()
+const { getLeadStatus, getDealStatus } = statusesStore()
 
 const list = defineModel({ type: Object, default: () => ({}) })
 // All three carry numbers, not flags. `loadMore` and `resizeColumn` are change
@@ -1077,6 +1087,40 @@ function needsTaskClosingNote(data) {
   )
 }
 
+// A lead or deal may not be marked Lost without a reason (validate_lost_reason
+// on both doctypes), so the board asks for one before writing the status.
+// Without this the server refused the drag and the card snapped back with
+// nothing to fill in.
+function needsLostReason(data) {
+  if (view.value.column_field !== 'status') return false
+  if (props.doctype === 'CRM Lead') {
+    return getLeadStatus(data.to)?.type === 'Lost'
+  }
+  if (props.doctype === 'CRM Deal') {
+    return getDealStatus(data.to)?.type === 'Lost'
+  }
+  return false
+}
+
+const showKanbanLostReasonModal = ref(false)
+let resolveKanbanLostReason = null
+
+// Resolves to { lost_reason, lost_notes }, or null when the person cancelled.
+function collectKanbanLostReason() {
+  return new Promise((resolve) => {
+    resolveKanbanLostReason = resolve
+    showKanbanLostReasonModal.value = true
+  })
+}
+
+// The dialog's close also fires `cancel` after a save, so settle once.
+function settleKanbanLostReason(values) {
+  const resolve = resolveKanbanLostReason
+  resolveKanbanLostReason = null
+  showKanbanLostReasonModal.value = false
+  resolve?.(values)
+}
+
 // vuedraggable has already moved the card by the time this runs, so the board
 // is showing a move the server has not accepted yet. Every failure — and a
 // cancelled dialog — has to reload, or the card sits in the wrong column until
@@ -1093,12 +1137,22 @@ async function moveKanbanItem(data) {
     Object.assign(values, closing)
   }
 
+  if (needsLostReason(data)) {
+    const lost = await collectKanbanLostReason()
+    if (!lost) {
+      list.value.reload?.()
+      return
+    }
+    Object.assign(values, lost)
+  }
+
   return call('frappe.client.set_value', {
     doctype: props.doctype,
     name: data.item,
     fieldname: values,
   })
     .then(() => {
+      persistKanbanColumns(data.kanban_columns)
       // The drag already put the card in the right column, but the dialog wrote
       // fields the card renders from, so pull the row back for those.
       if (values.closing_note !== undefined) list.value.reload?.()
@@ -1107,6 +1161,23 @@ async function moveKanbanItem(data) {
       reportActionError(e, __('Could not move the item.'))
       list.value.reload?.()
     })
+}
+
+// Where the card was dropped within its new column is part of the view, as it
+// already is for a same-column reorder; without this a reload put the card
+// back at the top of the column.
+function persistKanbanColumns(kanbanColumns) {
+  if (!kanbanColumns) return
+  viewUpdated.value = true
+  if (!defaultParams.value) {
+    defaultParams.value = getParams()
+  }
+  list.value.params = defaultParams.value
+  list.value.params.kanban_columns = kanbanColumns
+  view.value.kanban_columns = kanbanColumns
+  if (!route.query.view) {
+    createOrUpdateStandardView()
+  }
 }
 
 function updateKanbanSettings(data) {

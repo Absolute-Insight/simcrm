@@ -27,16 +27,21 @@ import { lostReasonError } from '@/utils/lostReason'
 import { Dialog } from 'frappe-ui'
 import { ref } from 'vue'
 
+// With a `document` the modal writes the reason onto it and saves; without
+// one (the Kanban board, which only has a row name) it hands the values back
+// through `save` and the caller writes them.
 const props = defineProps({
   doctype: { type: String, default: 'CRM Lead' },
-  document: { type: Object, required: true },
+  document: { type: Object, default: null },
 })
+
+const emit = defineEmits(['save', 'cancel'])
 
 const show = defineModel({ type: Boolean })
 
-const doc = props.document.doc
-const lostReason = ref(doc.lost_reason || '')
-const lostNotes = ref(doc.lost_notes || '')
+const doc = props.document?.doc
+const lostReason = ref(doc?.lost_reason || '')
+const lostNotes = ref(doc?.lost_notes || '')
 const error = ref('')
 
 function cancel() {
@@ -44,7 +49,10 @@ function cancel() {
   error.value = ''
   lostReason.value = ''
   lostNotes.value = ''
-  doc.status = props.document.originalDoc.status
+  if (doc) {
+    doc.status = props.document.originalDoc.status
+  }
+  emit('cancel')
 }
 
 function save() {
@@ -53,8 +61,11 @@ function save() {
 
   show.value = false
 
-  doc.lost_reason = lostReason.value
-  doc.lost_notes = lostNotes.value
-  props.document.save.submit()
+  if (doc) {
+    doc.lost_reason = lostReason.value
+    doc.lost_notes = lostNotes.value
+    props.document.save.submit()
+  }
+  emit('save', { lost_reason: lostReason.value, lost_notes: lostNotes.value })
 }
 </script>

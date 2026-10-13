@@ -603,7 +603,7 @@ import { ref, reactive, computed, provide } from 'vue'
 import { useRouter } from 'vue-router'
 
 const { users, getUser, isManager, isAdmin } = usersStore()
-const { settings } = getSettings()
+const { settings, brand } = getSettings()
 const router = useRouter()
 
 const baseCurrency = computed(
@@ -1147,6 +1147,6 @@ function resetToDefault() {
 }
 
 usePageMeta(() => {
-  return { title: __('Dashboard') }
+  return { title: __('Dashboard'), icon: brand.favicon }
 })
 </script>
