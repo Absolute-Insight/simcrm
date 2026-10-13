@@ -490,6 +490,8 @@ def get_data(
 						page_length=column_page_length,
 					)
 
+				column_data = parse_list_data(column_data, doctype)
+
 				all_count = frappe.get_list(
 					doctype,
 					filters=column_filters,

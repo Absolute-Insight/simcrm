@@ -7,7 +7,7 @@ from frappe.desk.form.load import get_docinfo
 from frappe.query_builder import JoinType
 from frappe.translate import get_translated_doctypes
 
-from crm.fcrm.doctype.crm_call_log.crm_call_log import parse_call_log
+from crm.fcrm.doctype.crm_call_log.crm_call_log import parse_call_log, redact_hidden_references
 
 
 @frappe.whitelist()
@@ -484,6 +484,9 @@ def get_linked_calls(name: str):
 				tasks.append(call.link_name)
 
 		_calls = [call for call in _calls if call.get("link_doctype") not in ["FCRM Note", "CRM Task"]]
+		# A call on this record may also reference or link another lead or deal the
+		# viewer can't read; its row comes back without that record's name.
+		redact_hidden_references(_calls)
 		if _calls:
 			calls = calls + _calls
 

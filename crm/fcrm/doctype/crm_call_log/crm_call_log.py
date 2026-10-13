@@ -5,8 +5,13 @@ import frappe
 from frappe import _, generate_hash
 from frappe.model.document import Document
 
-from crm.integrations.api import lookup_contact_by_phone_number
+from crm.integrations.api import get_contact_by_phone_number
 from crm.utils import seconds_to_duration
+
+#: Referenced doctypes with row scoping of their own. A call log is readable by its
+#: caller and receiver even when the lead or deal it hangs off is not
+#: (crm.permissions.linked_records), so it must never name one the viewer can't read.
+SCOPED_REFERENCES = ("CRM Lead", "CRM Deal")
 
 
 class CRMCallLog(Document):
@@ -46,6 +51,54 @@ class CRMCallLog(Document):
 		to: DF.Data
 		type: DF.Literal["Incoming", "Outgoing"]
 	# end: auto-generated types
+
+	def validate(self):
+		self.keep_hidden_references()
+
+	def keep_hidden_references(self):
+		"""A viewer gets this call with its hidden lead or deal blanked out (see
+		redact_hidden_references), so a save of what they were served must not
+		write that blank back and detach the call from the record."""
+		before = self.get_doc_before_save()
+		if not before:
+			return
+		hidden = hidden_references(call_references(before))
+		if not hidden:
+			return
+		if (
+			(before.reference_doctype, before.reference_docname) in hidden
+			and not self.reference_docname
+			and self.reference_doctype == before.reference_doctype
+		):
+			self.reference_docname = before.reference_docname
+		for link in before.get("links") or []:
+			key = (link.link_doctype, link.link_name)
+			if key in hidden and not self.has_link(*key):
+				# Back where it was: the first lead link is the call's lead to
+				# get_linked_lead and get_call_log, so appending would let a
+				# rep's save change which lead readable users see.
+				row = self.append("links", {"link_doctype": link.link_doctype, "link_name": link.link_name})
+				self.links.remove(row)
+				self.links.insert(min(link.idx - 1, len(self.links)), row)
+		for idx, row in enumerate(self.links, start=1):
+			row.idx = idx
+
+	def on_change(self):
+		"""frappe.client.save / set_value and the v1 resource PUT return the saved
+		document without apply_fieldlevel_read_permissions, so the reference put
+		back by validate must come out again before the response. on_change is
+		the last post-save hook, after the version has been written from the
+		restored document."""
+		if self.flags.ignore_permissions or frappe.session.user == "Guest":
+			return
+		redact_hidden_references([self])
+
+	def apply_fieldlevel_read_permissions(self):
+		"""Every single-document read path frappe serves calls this before it hands
+		the document over: /api/resource and /api/v2/document GET,
+		frappe.client.get and frappe.desk.form.load.getdoc."""
+		super().apply_fieldlevel_read_permissions()
+		redact_hidden_references([self])
 
 	def before_insert(self):
 		if not self.id:
@@ -140,7 +193,10 @@ class CRMCallLog(Document):
 		return {"columns": columns, "rows": rows}
 
 	def parse_list_data(calls):
-		return [parse_call_log(call) for call in calls] if calls else []
+		if not calls:
+			return []
+		redact_hidden_references(calls)
+		return [parse_call_log(call) for call in calls]
 
 	def has_link(self, doctype, name):
 		for link in self.links:
@@ -155,6 +211,8 @@ class CRMCallLog(Document):
 
 	def as_dict(self, *args, **kwargs):
 		d = super().as_dict(*args, **kwargs)
+		if self.flags.has_hidden_reference:
+			d["_has_hidden_reference"] = 1
 		recording_url = d.get("recording_url")
 		if not recording_url:
 			return d
@@ -170,6 +228,104 @@ class CRMCallLog(Document):
 				f"/api/method/crm.integrations.api.get_recording_url?call_log_name={d.get('name')}"
 			)
 		return d
+
+
+def _candidates(doctype, name) -> list[tuple[str, str]]:
+	"""The (doctype, name) pairs a name may stand for. A list row asked for
+	``reference_docname`` without ``reference_doctype`` still carries the name, so a
+	bare name is tried under every scoped doctype; one that exists nowhere hides
+	nothing."""
+	if not name:
+		return []
+	if doctype:
+		return [(doctype, name)]
+	return [(scoped, name) for scoped in SCOPED_REFERENCES]
+
+
+def _is_hidden(hidden, doctype, name) -> bool:
+	return any(pair in hidden for pair in _candidates(doctype, name))
+
+
+def call_references(call) -> list[tuple[str, str]]:
+	"""The (doctype, name) pairs a call log or call-log row points at, by reference
+	and by link row. Works on a Document, on a dict, and on a timeline row, where
+	the record's call query joins one link row flat into ``link_doctype`` /
+	``link_name`` instead of nesting a ``links`` table."""
+	pairs = _candidates(call.get("reference_doctype"), call.get("reference_docname"))
+	for link in call.get("links") or []:
+		pairs += _candidates(link.get("link_doctype"), link.get("link_name"))
+	pairs += _candidates(call.get("link_doctype"), call.get("link_name"))
+	return pairs
+
+
+def hidden_references(pairs) -> set[tuple[str, str]]:
+	"""Of these (doctype, name) pairs, the leads and deals the session user can't read.
+
+	Read through frappe.get_list, so it is the same row scoping the Leads and Deals
+	lists apply. A name that no longer exists hides nothing and is left alone."""
+	by_doctype: dict[str, set] = {}
+	for doctype, name in pairs:
+		if doctype in SCOPED_REFERENCES and name:
+			by_doctype.setdefault(doctype, set()).add(name)
+
+	hidden = set()
+	for doctype, names in by_doctype.items():
+		existing = set(frappe.get_all(doctype, filters={"name": ("in", list(names))}, pluck="name"))
+		if not existing:
+			continue
+		readable = set()
+		if frappe.has_permission(doctype, "read"):
+			readable = set(
+				frappe.get_list(
+					doctype,
+					filters={"name": ("in", list(existing))},
+					pluck="name",
+					limit=len(existing),
+				)
+			)
+		hidden.update((doctype, name) for name in existing - readable)
+	return hidden
+
+
+def redact_hidden_references(calls) -> None:
+	"""Blank the reference and drop the link rows that name a lead or deal the session
+	user can't read, in place, and mark each call that had one so the UI can say so
+	rather than offer to create a lead over it. Takes Documents or dicts."""
+	hidden = hidden_references(pair for call in calls for pair in call_references(call))
+	if not hidden:
+		return
+
+	for call in calls:
+		is_doc = isinstance(call, Document)
+		redacted = False
+		if _is_hidden(hidden, call.get("reference_doctype"), call.get("reference_docname")):
+			_set(call, "reference_docname", None)
+			redacted = True
+		links = call.get("links")
+		if links:
+			kept = [
+				link
+				for link in links
+				if not _is_hidden(hidden, link.get("link_doctype"), link.get("link_name"))
+			]
+			if len(kept) != len(links):
+				_set(call, "links", kept)
+				redacted = True
+		if _is_hidden(hidden, call.get("link_doctype"), call.get("link_name")):
+			_set(call, "link_name", None)
+			redacted = True
+		if redacted:
+			if is_doc:
+				call.flags.has_hidden_reference = True
+			else:
+				call["_has_hidden_reference"] = 1
+
+
+def _set(call, key, value):
+	if isinstance(call, Document):
+		setattr(call, key, value)
+	else:
+		call[key] = value
 
 
 def is_site_file_path(url: str) -> bool:
@@ -225,7 +381,13 @@ def get_call_contact(call, phone_number):
 	record the number is never used to guess who it was."""
 	doctype, name = call.get("reference_doctype"), call.get("reference_docname")
 	if doctype not in ("CRM Lead", "CRM Deal") or not name:
-		return lookup_contact_by_phone_number(phone_number)
+		# redact_hidden_references has already blanked a record the viewer can't
+		# read; matching the number now would hand them its name after all.
+		if call.get("_has_hidden_reference"):
+			return {}
+		# A call that points at nothing is named by its number, but only from the
+		# records the viewer may read: the unrestricted lookup is for webhooks.
+		return get_contact_by_phone_number(phone_number)
 
 	# A forced delete leaves the reference dangling, and has_permission on a
 	# missing name raises rather than returning False. Both branches answer
@@ -259,6 +421,8 @@ def get_call_log(name: str):
 	call_doc = frappe.get_cached_doc("CRM Call Log", name)
 	call_doc.check_permission("read")
 	call = call_doc.as_dict()
+	# Only what the viewer may read is left to resolve into _lead/_deal below.
+	redact_hidden_references([call])
 
 	call = parse_call_log(call)
 
@@ -296,6 +460,9 @@ def get_call_log(name: str):
 			elif link.get("link_doctype") == "CRM Deal":
 				call.setdefault("_deal", link.get("link_name"))
 
+	# A note or task made from this call by someone who could see the record
+	# points at it too; blank that the same way, without hiding the note or task.
+	redact_hidden_references(notes + tasks)
 	call["_tasks"] = tasks
 	call["_notes"] = notes
 	return call
@@ -325,9 +492,24 @@ def create_lead_from_call_log(call_log: str | dict, lead_details: str | dict | N
 	if not call_doc.has_permission("write"):
 		frappe.throw(_("You are not permitted to update this call log."), frappe.PermissionError)
 
+	# A readable lead the call already has is the answer, whatever else it links.
+	references = call_references(call_doc)
+	hidden = hidden_references(references)
 	existing_lead = get_linked_lead(call_doc)
-	if existing_lead:
+	if existing_lead and ("CRM Lead", existing_lead) not in hidden:
 		return existing_lead
+
+	# A call filed under a lead or deal the caller can't read is already some record's:
+	# creating a lead would duplicate it, and returning it would name it. The message
+	# deliberately does not say which record.
+	if hidden:
+		frappe.throw(
+			_("This call is already linked to a record you don't have access to."),
+			frappe.PermissionError,
+		)
+
+	if any(doctype == "CRM Deal" for doctype, _name in references):
+		frappe.throw(_("This call is already linked to a deal."), frappe.ValidationError)
 
 	if not frappe.has_permission("CRM Lead", "create"):
 		frappe.throw(_("You are not permitted to create leads."), frappe.PermissionError)
