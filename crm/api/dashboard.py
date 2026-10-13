@@ -217,7 +217,9 @@ def reset_to_default():
 	create_default_manager_dashboard(force=True)
 
 
-@frappe.whitelist()
+# POST only: the default dashboard is created and committed on first open, and a
+# GET's end-of-request rollback would undo that (whitelisted-side-effect-on-get).
+@frappe.whitelist(methods=["POST"])
 @sales_user_only
 @rate_limit(limit=DASHBOARD_VIEWS_PER_MINUTE, seconds=60)
 def get_dashboard(

@@ -11,7 +11,7 @@ from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError
 from crm.integrations.acumatica.importer import BACKFILL_TIMEOUT, SYNC_JOB_ID
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def start_backfill() -> dict:
 	frappe.only_for(["System Manager", "Sales Manager"], True)
 	settings = frappe.get_cached_doc("CRM Acumatica Settings")

@@ -994,7 +994,7 @@ def delete_bulk_docs_job(doctype: str, items: list, delete_linked: bool = False)
 	delete_bulk(doctype, items)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def delete_bulk_docs(doctype: str, items: str | list, delete_linked: bool = False):
 	from frappe.desk.reportview import delete_bulk
 
