@@ -698,13 +698,12 @@ upstream's does, which leaves the `assign_to.add` path open.
   on purpose. The derivation moved to `utils/fileUploaderDefaults.js` and is unit-tested there
   instead.
 - **Vite 8 (#2601).** We were already ahead.
-- **A fix of our own for `get_call_log` naming a lead or deal the caller cannot read.** Built,
-  reviewed and dropped. Hiding `_lead`/`_deal` turned on the modal's "Create Lead" button. That
-  either redirected to the hidden lead, or, for a hidden deal, created a duplicate lead. And the
-  name was still in `reference_docname` and `links[]`, which are permlevel 0 and readable via
-  `/api/resource`. Only the name leaks, never the record. A real fix is a decision about what
-  a call log may reveal of its links, made in the modal and in `create_lead_from_call_log`
-  together.
+- **A fix of our own for `get_call_log` naming a lead or deal the caller cannot read.** The
+  first attempt was built, reviewed and dropped. Hiding `_lead`/`_deal` turned on the modal's
+  "Create Lead" button. That either redirected to the hidden lead, or, for a hidden deal,
+  created a duplicate lead. And the name was still in `reference_docname` and `links[]`, which
+  are permlevel 0 and readable via `/api/resource`. Fixed later, as a decision about what a
+  call log may reveal of its links: see "Call logs never name a hidden lead or deal" below.
 
 ### Load-bearing decisions
 
@@ -819,8 +818,9 @@ mergify backport.
   `enabled` explicitly, so nothing depends on it being off. Remember it when one does.
 - **#2974's `get_call_contact` checks `has_permission` with `doc=`** (our convention) and
   falls back to `lookup_contact_by_phone_number`, the unrestricted lookup, exactly where the old
-  code called it. The `_lead`/`_deal` names a caller cannot read are still returned by
-  `get_call_log`; that is the open item recorded in the v1.86 port, not widened here.
+  code called it. The `_lead`/`_deal` names a caller cannot read were still returned by
+  `get_call_log` at this point; that was the open item from the v1.86 port, fixed in the
+  "Call logs never name a hidden lead or deal" section below.
 
 ### Verification
 
@@ -836,8 +836,8 @@ mergify backport.
   the role-profile guard in `update_user_role` now runs after the System Manager and Sales
   Manager checks, as it does in `remove_crm_roles_from_user`, so a caller who may not touch
   the user does not learn how their roles are managed. It also noted that `get_linked_calls`
-  now returns `reference_docname`, which is the same name-only leak class as the open call-log
-  item, not a new one. The `upstream-port-reviewer` found no local change overwritten and no
+  now returns `reference_docname`, which is the same name-only leak class as the then-open
+  call-log item, not a new one (both closed in the next section). The `upstream-port-reviewer` found no local change overwritten and no
   ported test passing for the wrong reason; its findings became the Load More check above, the
   column-order half of #2884, and a second lead sharing the number in the dangling-reference
   test, so a fallback to the phone lookup would fail it.
@@ -847,3 +847,127 @@ mergify backport.
   `lost_reason`. The Data tab's header and Save stay in view when the fields scroll. The Chrome
   extension was not connected, so this was scripted rather than driven by hand; the CI Playwright
   job on the PR covers the suite.
+
+---
+
+## Call logs never name a hidden lead or deal
+
+**2026-10-13.** The open item carried through the v1.86 and v1.87 ports. The design was built
+on 2026-10-09 in a parked worktree (`open/a-calllog`, never pushed) right after the v1.86
+merge, and landed here rebased onto the v1.87 port, which had changed the two places it
+interacts with.
+
+### The problem
+
+A call log is visible to its owner, caller and receiver even when the lead or deal it hangs
+off is not (`crm.permissions.linked_records`): a rep's own call on a reassigned lead stays
+theirs. The call then named that record on every read path: `get_call_log` resolved it into
+`_lead`/`_deal`, the modal drew a link to it, and `reference_docname` and `links[].link_name`
+are permlevel 0, so `/api/resource`, `frappe.client.get` and the desk form load returned it
+raw. The names are naming-series IDs, so the record never leaked, only that it exists and
+which calls touched it; the first attempt in the v1.86 port showed that hiding `_lead`/`_deal`
+alone made things worse (Create Lead appeared over an already-linked call).
+
+### The decision
+
+**A call log may say that it is attached to a record the viewer cannot read, but never which
+one, and the app never acts on that record for them.** Concretely:
+
+- `redact_hidden_references(calls)` in `crm_call_log.py` blanks `reference_docname` and drops
+  the `links` rows that name a `CRM Lead` or `CRM Deal` the session user cannot read, and
+  marks the call `_has_hidden_reference`. Readability is `frappe.get_list` under the session
+  user, the same row scoping the Leads and Deals lists apply, batched per doctype. A name that
+  no longer exists hides nothing.
+- It runs on every path that serves a call: an `apply_fieldlevel_read_permissions` override
+  on the Document (frappe calls it from `/api/resource`, `/api/v2/document`,
+  `frappe.client.get` and `frappe.desk.form.load.getdoc`), `get_call_log`, the CRM list via
+  `parse_list_data`, and the timeline rows of `get_linked_calls`, where the join lays one link
+  row flat as `link_doctype`/`link_name` next to the call's own reference.
+- **Redaction must not hand the name back another way.** `get_call_contact` falls back to the
+  phone-number match only for a call that points at nothing; once `_has_hidden_reference` is
+  set it answers Unknown. Without that, blanking the reference re-named the hidden lead
+  whenever it was the record on that number, which is the common case. The test for it puts
+  the hidden lead's number on the call.
+- **A bare name counts.** A list asked for `reference_docname` without `reference_doctype`
+  (a custom column set, or `link_name` on a timeline row) still carries the name, so a name
+  without its doctype is tried under every scoped doctype; one that exists nowhere hides
+  nothing. Kanban columns of `get_data` go through `parse_list_data` like the list does.
+- `validate` puts a hidden reference or link row back, at its stored position, if a save of
+  the redacted document would drop it, so a rep who edits the call (status, note) from what
+  they were served cannot detach it from a record they cannot see, nor move a hidden lead link
+  behind their own (the first lead link is the call's lead to readable users).
+- **The save response is redacted too.** `frappe.client.save` / `set_value` and the v1
+  resource PUT return the saved document without the read-path hook, and `validate` has just
+  put the reference back on it. `on_change`, the last post-save hook and after the Version
+  row is written from the restored document, redacts the in-memory document again. It stands
+  down for `ignore_permissions` saves and Guest, which is how the Twilio and Exotel webhooks
+  write.
+- The notes and tasks served with a call (`_notes`, `_tasks`) carry their own
+  `reference_docname`; those are blanked the same way, without hiding the note or task.
+- **The phone-number fallback reads only what the viewer may read.** `get_call_contact` now
+  uses `get_contact_by_phone_number`, the restricted lookup, for a call that points at
+  nothing; the unrestricted `lookup_contact_by_phone_number` is for the webhooks. Before, a
+  manual call from a hidden lead's number named that lead by its display name, the one real
+  display-name disclosure the review found; everything else was the naming-series ID.
+- `create_lead_from_call_log` returns a readable lead the call already has, whatever else it
+  links; otherwise it refuses, with a `PermissionError` that does not name the record, a call
+  that references or links a hidden lead or deal, and refuses with a `ValidationError` a call
+  already on a deal.
+- The modal shows "Linked to a record you don't have access to" where Create Lead was, and the
+  reference row (with its link arrow) is simply absent, as it is for an unlinked call. A note
+  or task created from such a call is not pointed at the hidden record.
+
+### Not covered, on purpose
+
+Generic queries that ask for `reference_docname` by name (`frappe.client.get_list`,
+`frappe.client.get_value`, `/api/resource/CRM Call Log?fields=[...]`, reportview and export,
+child-table reads of `Dynamic Link` with `parent_doctype`), and filtering on
+`reference_docname = <guess>` as a yes/no oracle. Frappe has no row-scoped column redaction;
+only permlevel, which is role-based and would hide the field from every Sales User, including
+on calls whose lead they own. Those paths return the opaque ID, which is the same disclosure
+every `reference_docname` on a note, task or event makes across the framework. Closing it
+would mean a `get_list` override or moving the reference out of a readable field.
+
+Over-redaction is accepted in two edges: a lead shared with the rep through DocShare is
+readable by `has_permission` but absent from `get_list`, and User Permissions narrow
+`get_list` but not the call-log scoping. Both hide a name the rep could open, never the
+reverse.
+
+### Verification
+
+- `crm.fcrm.doctype.crm_call_log.test_crm_call_log`: 62 tests OK, 22 of them in
+  `TestCallLogHidesUnreadableReferences`, covering `get_call_log`, `frappe.client.get`, the v1
+  and v2 resource APIs, `getdoc`, the CRM list (with and without `reference_doctype` in the
+  rows), the timeline (hidden deal by link and by reference), the phone-number fallback for a
+  flagged call and for an unreferenced one, the task payload, the `set_value` response, the
+  refused Create Lead with no name in the message or the message log, the readable lead
+  beside a hidden deal, the save round-trip and link order, and that the owner, an in-tree
+  Sales Manager and Administrator still see everything. Neighbouring modules
+  (`test_linked_record_permissions`, `test_activities_permissions`,
+  `test_activities_timeline`, `test_integrations`, `test_exotel_realtime`,
+  `test_list_page_length`, `permissions.test_org_hierarchy`, `test_rep_planning`,
+  `agent.tests.test_signals`) OK.
+- **Review:** the `permissions-reviewer` read the first cut as incomplete, not unsound, and
+  every finding was taken: the save response (HIGH), bare-name list rows and the kanban
+  branch, the note and task payloads, the unrestricted phone fallback, link order on restore,
+  and a readable lead beside a hidden deal. Its two over-redaction edges and the generic list
+  APIs are recorded above as accepted. It found no under-redaction, no cache poisoning (the
+  `getdoc` pickle happens before the redaction and `get_call_log` redacts an `as_dict` copy),
+  no attach or duplicate abuse through the restore, and no regression for the webhooks.
+- Full python suite with `PYTHONPATH=/workspace/.worktrees/call-log-hidden-reference`:
+  616 + 1236 + 216 (26 skipped) + 53 = 2,121 tests, all OK (2,114 on the first cut, before the
+  review).
+- vitest 55 files / 663 tests; eslint and prettier 3.2.5 clean on the modal; ruff 0.8.1 clean.
+- **Browser (Playwright script against the dev bench serving the worktree build):** a throwaway
+  Sales User who was the caller on a call referencing a lead owned by Administrator. As the
+  rep: the lead GET is 403, the raw call GET has no `reference_docname`, no lead link row and
+  `_has_hidden_reference: 1`; `get_call_log` names no `_lead` and shows the receiver as
+  Unknown; the list row says Unknown; the modal shows "Linked to a record you don't have
+  access to" with no Create Lead and no Lead row; the lead's ID appears nowhere in the page.
+  As Administrator the same call shows the lead's name, the Lead row with its link, and no
+  message. No console or page errors. The QA user, lead, call and the view filter the probe
+  accidentally saved were deleted afterwards.
+- A caveat met on the way: in the call-log list every labelled cell applies a quick filter on
+  click and the fork persists it to the user's standard view, so a scripted click on the
+  receiver cell left the rep's list filtered to `receiver = Unknown`. Click the duration cell.
+
