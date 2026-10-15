@@ -981,7 +981,7 @@ bench shell. This deployment's IONOS account had to be created server-side.
 **The `local-model` profile pinned an image tag that does not exist.**
 `ollama/ollama:0.12.12` has never been published; the series is 0.3x. Anyone
 following step 7 hit `failed to resolve reference` immediately. Now pinned to
-`0.32.15`. Check a pin resolves before shipping it.
+`0.32.15`, and to `0.40.4` on 2026-10-15. Check a pin resolves before shipping it.
 
 **`VECTORA_AGENT_ENABLED` does nothing on an existing site.**
 `apply_endpoint_defaults()` runs from `after_install` only — deliberately, so an
