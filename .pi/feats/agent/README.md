@@ -594,6 +594,38 @@ code. **No model-written SQL, by construction** — `run_plan` accepts only
 catalogue keys and ISO dates. The layering map pins `analyst` pure and lets
 `analyst_data` reach `analyst`, `config`, `predict` and `signals`.
 
+**The model never does the arithmetic, and its sentences are checked**
+(`analyst_facts.py`, pure). Browser QA on prod (2026-10-15, LFM2.5-2.6B) found
+correct tables under a narrative that called a quarter it had been handed
+missing, named the wrong peak month, put one rep's figures under another's
+name and reported a site with no history before December 2025 as having sold
+nothing in 2024. Three things now stand between the tables and the admin:
+
+- **Computed lines.** `table_facts` works out what a question needs: the
+  period's total, whole quarters plus the current one to date, the best and
+  worst whole month since revenue began (never the current, partial month),
+  rankings with their total, and the pipeline's weighted share. They reach the
+  prompt under *Computed by Vectora*, the prompt says to quote them rather than
+  add rows up, and they **are** the highlights on screen; the model's own
+  highlights are no longer asked for.
+- **Coverage.** `data_start()` is the earliest deal created or closed on the
+  site. Monthly history tables drop the months before it with a note, and the
+  figures head says where the history starts, so missing history is never
+  read as zero sales.
+- **Grounding.** `ground_reply` drops a sentence (answer or caveat) that quotes
+  a number found in no table, puts a number under a name that does not own it
+  when another row does, calls a covered period missing, names a best or worst
+  month the facts do not, measures a change against the current partial month,
+  or leaks the prompt's vocabulary (`figures block`, field names, `null`).
+  Numbers from earlier *answers* in the conversation count as known, so a
+  follow-up can compare with what it said last turn. Nothing left falls back to
+  `FALLBACK_ANSWER`; the response carries `dropped` for diagnosis. It drops, it
+  never rewrites: the screen still shows every table.
+
+What it cannot catch: a claim with no number and no month ("sales are going
+down"), and the plan choosing the wrong table — a win-rate question still gets
+won revenue, because no catalogue entry counts quotes won against lost.
+
 None of the three joins the injection table above: no email or third-party
 text reaches their prompts. The Analyst's `deals_at_risk` and
 `accounts_going_quiet` tables carry deal and organization *names*, which a
