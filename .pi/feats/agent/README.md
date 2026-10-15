@@ -363,7 +363,7 @@ call dies:
 error loading model: unknown model architecture: 'spark2_5'
 ```
 
-That was ollama 0.33.1; this stack pins `ollama/ollama:0.32.15`, older still. Upstream
+That was ollama 0.33.1; this stack then pinned `ollama/ollama:0.32.15`, older still (0.40.4 since 2026-10-15). Upstream
 llama.cpp merged the architecture on 2026-09-06 (`ggml-org/llama.cpp#27868`, tag b10829)
 and ollama's own bump is `ollama/ollama#18279` — open and unreviewed as of this run, so
 no released ollama serves this model at all.
