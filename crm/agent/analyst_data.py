@@ -25,7 +25,7 @@ from datetime import date, timedelta
 import frappe
 import requests
 
-from crm.agent import analyst
+from crm.agent import analyst, analyst_facts
 from crm.agent.config import get_signal_config
 from crm.agent.predict import AT_RISK_BELOW, COOLING_RATIO
 from crm.agent.signals import (
@@ -68,7 +68,9 @@ ERP_LABELS = {"acumatica": "Acumatica", "erpnext": "ERPNext"}
 # --- running a plan --------------------------------------------------------------
 
 
-def run_plan(plan: dict, erp: str | None, deadline: float | None = None) -> list[dict]:
+def run_plan(
+	plan: dict, erp: str | None, deadline: float | None = None, today: date | None = None
+) -> list[dict]:
 	"""Compute one table per metric in ``plan["metrics"]``, in order.
 
 	Unknown keys are skipped (the pure half already dropped them; this is the
@@ -85,8 +87,39 @@ def run_plan(plan: dict, erp: str | None, deadline: float | None = None) -> list
 	Past the deadline a table is reported as unavailable rather than computed,
 	and an ERP read that is already running stops paging; either way the answer
 	is a partial one that says so, which is a better answer than a timeout.
+
+	Each table carries ``facts``: its totals, quarters, extremes and ranking,
+	worked out here so the model quotes them instead of adding rows up
+	(:func:`analyst_facts.table_facts`). ``today`` is the caller's: pass the one
+	the grounding check will use.
 	"""
+	tables = _run_tables(plan, erp, deadline)
+	# the caller's today, read once: the grounding check decides which month is
+	# partial from the same value, and a second read can land after midnight
+	today = today or frappe.utils.getdate()
+	for table in tables:
+		table["facts"] = analyst_facts.table_facts(table, today)
+	return tables
+
+
+def data_start() -> str | None:
+	"""``YYYY-MM`` of the earliest deal the site holds, by creation or close; ``None`` with no deals.
+
+	Site-wide on purpose: it describes what the CRM knows, not what this admin may
+	see, and the Analyst is System Manager only.
+	"""
+	created, closed = frappe.db.sql("select min(creation), min(closed_date) from `tabCRM Deal`")[0]
+	dates = [frappe.utils.getdate(value) for value in (created, closed) if value]
+	return analyst.month_key(min(dates)) if dates else None
+
+
+# Monthly CRM history tables: months before the site's data are dropped, not shown as 0.
+_HISTORY_TABLES = ("won_revenue_by_month", "growth_rates")
+
+
+def _run_tables(plan: dict, erp: str | None, deadline: float | None) -> list[dict]:
 	from_date, to_date = plan["from_date"], plan["to_date"]
+	starts = data_start()
 	tables = []
 	for key in plan.get("metrics", []):
 		metric = analyst.CATALOGUE.get(key)
@@ -106,6 +139,9 @@ def run_plan(plan: dict, erp: str | None, deadline: float | None = None) -> list
 			tables.append(_erp_table(key, metric, erp, from_date, to_date, deadline))
 			continue
 		rows, note = runner(from_date, to_date)
+		if key in _HISTORY_TABLES:
+			rows, coverage = analyst_facts.trim_to_coverage(rows, starts)
+			note = f"{note} {coverage}".strip()
 		table = _table(key, metric, "CRM", rows, from_date, to_date, note)
 		if key in _ROW_LISTS:
 			# the model gets the counting done for it and the head of the list; the

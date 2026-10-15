@@ -19,7 +19,7 @@ import frappe
 from frappe.rate_limiter import rate_limit
 from frappe.utils import strip_html_tags
 
-from crm.agent import actions, analyst, analyst_data, client, context, knowledge, tools
+from crm.agent import actions, analyst, analyst_data, analyst_facts, client, context, knowledge, tools
 from crm.agent.config import get_config, get_signal_config
 from crm.agent.context import build_thread_messages
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
@@ -593,8 +593,10 @@ def ask_analyst(question: str, history: str | list | None = None) -> dict:
 		# between them had no clock: an ERP read pages 100 rows at a time up to
 		# 5,000, thirty seconds a page, while the proxy gave up at two timeouts
 		# and the admin was told the model could not be reached.
-		tables = analyst_data.run_plan(plan, erp, deadline=deadline)
+		tables = analyst_data.run_plan(plan, erp, deadline=deadline, today=today)
 		period = {"from_date": plan["from_date"], "to_date": plan["to_date"]}
+		if data_from := analyst_data.data_start():
+			period["data_from"] = data_from
 
 		reply, failed = _model_call(
 			cfg,
@@ -620,11 +622,15 @@ def ask_analyst(question: str, history: str | list | None = None) -> dict:
 	for table in tables:
 		if table["source"] not in sources:
 			sources.append(table["source"])
+	# The words are the model's; a sentence the tables do not bear out is dropped
+	# before an admin reads it, and the bullets are the computed lines themselves.
+	grounded = analyst_facts.ground_reply(reply.answer, reply.caveats, tables, today, turns)
 	return {
 		"status": "ok",
-		"answer": reply.answer,
-		"highlights": reply.highlights,
-		"caveats": reply.caveats,
+		"answer": grounded["answer"],
+		"highlights": analyst_facts.highlights(tables),
+		"caveats": grounded["caveats"],
+		"dropped": grounded["dropped"],
 		"tables": tables,
 		"period": period,
 		"sources": sources,
