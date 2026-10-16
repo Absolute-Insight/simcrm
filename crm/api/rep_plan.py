@@ -306,6 +306,7 @@ def save_plan(week_start: str, items: list | str, modified: str | None = None):
 
 	for attempt in range(2):
 		plan = _plan_for(user, week_start)
+		_refuse_the_past(plan, items)
 		released = _stage_items(plan, items)
 		frappe.db.savepoint("save_plan")
 		try:
@@ -327,6 +328,48 @@ def save_plan(week_start: str, items: list | str, modified: str | None = None):
 	_set_suggestion_status(released, user, "Accepted", "Open")
 
 	return get_plan(week_start)
+
+
+def past_days_locked() -> bool:
+	"""FCRM Settings -> "Plan only for today or later": a plan is a future event."""
+	return bool(frappe.db.get_single_value("FCRM Settings", "lock_past_plans"))
+
+
+def _refuse_the_past(plan, items: list[dict]) -> None:
+	"""With past days locked, nothing is planned, moved or removed before today.
+
+	MBP's managers asked for it: a plan written after the day is not a plan.
+	What a past item became is still the rep's to say -- complete_item and
+	cancel_item are not checked here -- and a row the client sends back
+	unchanged keeps its old date, so saving the rest of the week still works.
+	Removing a past row is refused as well: deleting a missed visit is the same
+	backdating the other way round, and cancelling it says why.
+	"""
+	if not past_days_locked():
+		return
+	today = frappe.utils.getdate()
+	existing = {str(row.name): frappe.utils.getdate(row.planned_date) for row in plan.get("items", [])}
+	for row in items:
+		day = row.get("planned_date")
+		if not day:
+			continue
+		day = frappe.utils.getdate(day)
+		if day < today and existing.get(str(row.get("name") or "")) != day:
+			frappe.throw(
+				_("{0} has passed. Activities are planned for today or later.").format(
+					frappe.utils.formatdate(day)
+				),
+				frappe.ValidationError,
+			)
+	kept = {str(row.get("name")) for row in items if row.get("name")}
+	for name, day in existing.items():
+		if day < today and name not in kept:
+			frappe.throw(
+				_("An activity on {0} has passed and cannot be removed. Cancel it instead.").format(
+					frappe.utils.formatdate(day)
+				),
+				frappe.ValidationError,
+			)
 
 
 def _plan_for(user: str, week_start: str):
@@ -837,6 +880,13 @@ def log_unplanned_visit(
 		# was written straight in as Done and inflated adherence until its date
 		# came round
 		frappe.throw(_("A visit cannot be logged before it happens."), frappe.ValidationError)
+	if past_days_locked() and when_dt.date() < frappe.utils.getdate():
+		frappe.throw(
+			_("Activities are logged on the day they happen. {0} has passed.").format(
+				frappe.utils.formatdate(when_dt.date())
+			),
+			frappe.ValidationError,
+		)
 	monday, _sunday = week_of(when_dt.date())
 	horizon = frappe.utils.getdate() - timedelta(weeks=MATCH_HORIZON_WEEKS)
 	if monday < horizon:
