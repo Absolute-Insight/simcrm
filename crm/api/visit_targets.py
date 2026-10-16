@@ -22,7 +22,7 @@ import frappe
 from frappe import _
 from frappe.utils import cstr, getdate
 
-from crm.api.quota import _is_manager, _not_the_caller, _only_own_team, _sales_users
+from crm.api.quota import _is_manager, _not_the_caller, _only_own_team
 from crm.utils import sales_user_only
 
 DOCTYPE = "CRM Visit Target"
@@ -117,7 +117,10 @@ def set_visit_target(user: str, visits_per_week: int | str | None = None):
 	_only_managers()
 	_only_own_team(user)
 	_not_the_caller(user)
-	if user not in _sales_users():
+	from crm.api.rep_plan import planning_reps
+
+	# the people the grid lists, so a rep locked out before go-live still gets one
+	if user not in planning_reps():
 		frappe.throw(_("{0} is not a sales user.").format(user))
 
 	raw = cstr(visits_per_week).strip()

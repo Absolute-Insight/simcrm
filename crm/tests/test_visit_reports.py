@@ -206,6 +206,48 @@ class VisitTargetPermissionTest(VisitFixture, IntegrationTestCase):
 		self.assertEqual([(r["user"], r["visits_per_week"], r["editable"]) for r in rows], [(REP, 9, False)])
 
 
+class LockedRepTest(VisitFixture, IntegrationTestCase):
+	"""A rep disabled before go-live is still a rep to plan and set targets for.
+
+	MBP's reps were disabled so they could not log in yet while their imported
+	history filled the planner; the enabled-only rep list emptied the managers'
+	team week and Settings -> Visit Targets on production.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		frappe.db.set_value("User", REP, "enabled", 0)
+		make_plan(REP, self.monday, [{"activity_type": "Visit", "planned_date": self.day(1)}])
+
+	def test_the_team_week_and_the_picker_keep_a_disabled_rep_with_recent_plans(self):
+		from crm.api.rep_plan import get_team_week, get_visible_reps
+
+		self.assertIn(REP, get_visible_reps())
+		rows = {rep["user"]: rep for rep in get_team_week(self.start)["reps"]}
+		self.assertEqual(len(rows[REP]["items"]), 1)
+		self.assertEqual(rows[REP]["full_name"], "Visits Rep")
+
+	def test_a_manager_sets_a_target_for_a_disabled_rep(self):
+		self.assertIn(REP, {row["user"] for row in targets_api.get_visit_targets()})
+		self.assertEqual(targets_api.set_visit_target(REP, 10)["visits_per_week"], 10)
+
+	def test_a_rep_who_left_drops_out_once_their_plans_are_old(self):
+		from crm.api.rep_plan import get_team_week, get_visible_reps, planning_reps
+		from crm.rep_planning import MATCH_HORIZON_WEEKS
+
+		old_monday = add_days(self.monday, -7 * (MATCH_HORIZON_WEEKS + 2))
+		frappe.db.set_value("User", OUTSIDER, "enabled", 0)
+		make_plan(OUTSIDER, old_monday, [{"activity_type": "Call", "planned_date": old_monday}])
+
+		self.assertNotIn(OUTSIDER, planning_reps())
+		self.assertNotIn(OUTSIDER, get_visible_reps())
+		with self.assertRaises(frappe.ValidationError):
+			targets_api.set_visit_target(OUTSIDER, 5)
+		# the week they planned still shows them
+		old_rows = {rep["user"] for rep in get_team_week(str(old_monday))["reps"]}
+		self.assertIn(OUTSIDER, old_rows)
+
+
 class VisitsByRepTest(VisitFixture, IntegrationTestCase):
 	def setUp(self):
 		super().setUp()

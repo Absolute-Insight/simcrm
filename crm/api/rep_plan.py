@@ -103,16 +103,39 @@ def get_visible_reps() -> list[str]:
 	"""
 	users = visible_users()
 	if users is None:
-		users = frappe.get_all(
-			"User",
-			filters=[
-				["User", "enabled", "=", 1],
-				["Has Role", "role", "in", ("Sales User", "Sales Manager")],
-			],
-			pluck="name",
-			distinct=True,
-		)
+		users = planning_reps()
 	return sorted({*users, frappe.session.user})
+
+
+def planning_reps() -> list[str]:
+	"""The sales users there is planning to show: every enabled one, and a
+	disabled one whose plans are still recent.
+
+	Disabled is not always gone. MBP's reps were disabled so they could not log
+	in before go-live while their imported history filled the planner, and an
+	enabled-only list emptied the managers' team week and left the reps out of
+	Settings -> Visit Targets. A rep who has left drops out once their last plan
+	is older than the match horizon, the window in which a plan still changes.
+	"""
+	users = frappe.get_all(
+		"User",
+		filters=[["Has Role", "role", "in", ("Sales User", "Sales Manager")]],
+		fields=["name", "enabled"],
+		distinct=True,
+	)
+	enabled = {u.name for u in users if u.enabled}
+	disabled = [u.name for u in users if not u.enabled]
+	if disabled:
+		horizon = frappe.utils.getdate() - timedelta(weeks=MATCH_HORIZON_WEEKS)
+		enabled.update(
+			frappe.get_all(
+				"CRM Rep Plan",
+				filters={"user": ("in", disabled), "week_start": (">=", horizon)},
+				pluck="user",
+				distinct=True,
+			)
+		)
+	return sorted(enabled)
 
 
 @frappe.whitelist()
@@ -685,12 +708,14 @@ def get_team_week(week_start: str):
 	team rather than one ``get_plan`` per rep.
 	"""
 	week_start = _monday_or_throw(week_start)
-	users = get_visible_reps()
-	plans = frappe.get_all(
-		"CRM Rep Plan",
-		filters={"week_start": week_start, "user": ("in", users)},
-		fields=["name", "user"],
-	)
+	scope = visible_users()
+	filters = {"week_start": week_start}
+	if scope is not None:
+		filters["user"] = ("in", scope)
+	plans = frappe.get_all("CRM Rep Plan", filters=filters, fields=["name", "user"])
+	# whoever planned this week has a row, so an old week keeps the rep who has
+	# since left; get_visible_reps adds the people with nothing planned yet
+	users = sorted({*get_visible_reps(), *(plan.user for plan in plans)})
 	# CRM Rep Plan autonames by number, and a child row's parent is a string
 	by_plan = {str(plan.name): plan.user for plan in plans}
 	rows = (
