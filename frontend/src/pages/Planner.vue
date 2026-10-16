@@ -509,8 +509,10 @@ const today = ref(todayInTimeZone(getConfig('systemTimezone')))
 
 /* Settings -> Visit Targets -> "Plan only for today or later". The server
    refuses the same things; this keeps the planner from offering them. */
-const { settings: crmSettings } = getSettings()
-const pastLocked = computed(() => !!crmSettings.value?.lock_past_plans)
+// the document resource, not the `settings` copy: setValue updates only the
+// former, so a manager's switch reaches an open planner without a reload
+const { _settings: crmSettings } = getSettings()
+const pastLocked = computed(() => !!crmSettings.doc?.lock_past_plans)
 function isLockedDay(date) {
   return pastLocked.value && !!date && date < today.value
 }
