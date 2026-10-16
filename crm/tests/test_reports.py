@@ -54,6 +54,8 @@ class ReportsTest(IntegrationTestCase):
 		allowed_extra = {
 			"plan_adherence_by_rep": {"user"},
 			"quota_attainment_by_rep": {"user"},
+			"visits_by_rep": {"user"},
+			"activities_by_type": {"user"},
 		}
 		for name in REPORTS:
 			out = get_report(name, today, today)

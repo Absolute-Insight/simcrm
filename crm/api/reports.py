@@ -194,6 +194,38 @@ def _client_reliability(from_date, to_date, user, territory=None):
 	return client_reliability(from_date, to_date, user)
 
 
+def _visits_by_rep(from_date, to_date, user, territory=None):
+	from crm.api.dashboard import visits_by_rep
+
+	return _rep_display(visits_by_rep(from_date, to_date, user))
+
+
+def _activities_by_type(from_date, to_date, user, territory=None):
+	from crm.api.dashboard import activities_by_type
+
+	return _rep_display(activities_by_type(from_date, to_date, user))
+
+
+def _customer_interaction(from_date, to_date, user, territory=None):
+	from crm.api.dashboard import customer_interaction
+
+	return customer_interaction(from_date, to_date, user)
+
+
+def _customers_without_interaction(from_date, to_date, user, territory=None):
+	"""The same rows as customer interaction, kept to the customers with none.
+
+	Only the columns that can differ between them are shown: every count on
+	these rows is zero by definition."""
+	from crm.api.dashboard import customer_interaction
+
+	keep = ("organization", "last_interaction", "last_rep", "days_since")
+	return [
+		{key: row[key] for key in keep}
+		for row in customer_interaction(from_date, to_date, user, only_without=True)
+	]
+
+
 REPORTS = {
 	"pipeline_by_stage": {
 		"title": "Pipeline by stage",
@@ -289,6 +321,80 @@ REPORTS = {
 		],
 		"get_rows": _client_reliability,
 	},
+	"visits_by_rep": {
+		"title": "Visits against target",
+		"description": "Customer visits per rep in the period: scheduled, completed, cancelled and missed, against each rep's weekly visit target",
+		"columns": [
+			{"key": "rep", "label": "Rep", "type": "text"},
+			{
+				"key": "target",
+				"label": "Target",
+				"type": "number",
+				"description": "Weekly visit target pro-rated to the working days in the period",
+			},
+			{
+				"key": "target_to_date",
+				"label": "Target to date",
+				"type": "number",
+				"description": "The part of the target already due, up to yesterday",
+			},
+			{"key": "scheduled", "label": "Scheduled", "type": "number"},
+			{"key": "completed", "label": "Completed", "type": "number"},
+			{"key": "cancelled", "label": "Cancelled", "type": "number"},
+			{"key": "missed", "label": "Missed", "type": "number"},
+			{"key": "open", "label": "Still planned", "type": "number"},
+			{"key": "attainment", "label": "% of target", "type": "percent"},
+			{"key": "on_track", "label": "Status", "type": "text"},
+		],
+		"get_rows": _visits_by_rep,
+	},
+	"activities_by_type": {
+		"title": "Activities by type",
+		"description": "Planned and logged activities per rep and type — visits, deliveries, calls, admin — and what became of them",
+		"columns": [
+			{"key": "rep", "label": "Rep", "type": "text"},
+			{"key": "activity_type", "label": "Type", "type": "text"},
+			{"key": "scheduled", "label": "Scheduled", "type": "number"},
+			{"key": "done", "label": "Done", "type": "number"},
+			{"key": "cancelled", "label": "Cancelled", "type": "number"},
+			{"key": "missed", "label": "Missed", "type": "number"},
+			{"key": "open", "label": "Still planned", "type": "number"},
+		],
+		"get_rows": _activities_by_type,
+	},
+	"customer_interaction": {
+		"title": "Customer interaction",
+		"description": "Every customer with the visits, deliveries, calls and emails done for them in the period, least contact first",
+		"columns": [
+			{"key": "organization", "label": "Customer", "type": "text"},
+			{"key": "visits", "label": "Visits", "type": "number"},
+			{"key": "deliveries", "label": "Deliveries", "type": "number"},
+			{"key": "calls", "label": "Calls", "type": "number"},
+			{"key": "emails", "label": "Emails", "type": "number"},
+			{"key": "other", "label": "Other", "type": "number"},
+			{"key": "total", "label": "Total", "type": "number"},
+			{
+				"key": "last_interaction",
+				"label": "Last interaction",
+				"type": "text",
+				"description": "The latest interaction on or before the end of the period, at any time",
+			},
+			{"key": "last_rep", "label": "Last rep", "type": "text"},
+			{"key": "days_since", "label": "Days since", "type": "number"},
+		],
+		"get_rows": _customer_interaction,
+	},
+	"customers_without_interaction": {
+		"title": "Customers with no interaction",
+		"description": "Customers nobody visited, delivered to, called or emailed in the period, longest neglected first",
+		"columns": [
+			{"key": "organization", "label": "Customer", "type": "text"},
+			{"key": "last_interaction", "label": "Last interaction", "type": "text"},
+			{"key": "last_rep", "label": "Last rep", "type": "text"},
+			{"key": "days_since", "label": "Days since", "type": "number"},
+		],
+		"get_rows": _customers_without_interaction,
+	},
 }
 
 
@@ -297,8 +403,20 @@ REPORTS = {
 # filtering only the closed-won side would divide one region's revenue by the
 # global target. ``client_reliability`` joins ``CRM Deal`` already (for the
 # organization) but the query never accepts or applies ``territory`` -- worth
-# doing, not done yet. Reported rather than silently ignored.
-TERRITORY_BLIND = frozenset({"plan_adherence_by_rep", "quota_attainment_by_rep", "client_reliability"})
+# doing, not done yet. Reported rather than silently ignored. The visit and
+# activity reports read rep plans, which have no territory; customer
+# interaction could narrow by the organization's territory, and does not yet.
+TERRITORY_BLIND = frozenset(
+	{
+		"plan_adherence_by_rep",
+		"quota_attainment_by_rep",
+		"client_reliability",
+		"visits_by_rep",
+		"activities_by_type",
+		"customer_interaction",
+		"customers_without_interaction",
+	}
+)
 
 
 def _translated_columns(report: dict) -> list[dict]:

@@ -79,6 +79,7 @@ import {
 } from '@phosphor-icons/vue'
 import { PhNetwork as LucideNetwork } from '@phosphor-icons/vue'
 import { PhTarget as LucideTarget } from '@phosphor-icons/vue'
+import { PhMapPin as LucideMapPin } from '@phosphor-icons/vue'
 import { PhFlowArrow as LucideWorkflow } from '@phosphor-icons/vue'
 import { PhSparkle as LucideSparkles } from '@phosphor-icons/vue'
 import { PhBookOpenText as LucideBookOpenText } from '@phosphor-icons/vue'
@@ -104,6 +105,7 @@ import SettingsIcon2 from '@/components/Icons/SettingsIcon2.vue'
 import Users from '@/components/Settings/Users.vue'
 import Hierarchy from '@/components/Settings/Hierarchy/Hierarchy.vue'
 import Quotas from '@/components/Settings/Quotas.vue'
+import VisitTargets from '@/components/Settings/VisitTargets.vue'
 import AccessControl from '@/components/Settings/AccessControl.vue'
 import AutomationRules from '@/components/Settings/AutomationRules.vue'
 import AssistantSettings from '@/components/Settings/AssistantSettings.vue'
@@ -241,6 +243,13 @@ const tabs = computed(() => {
           key: 'settings.sales_targets',
           icon: LucideTarget,
           component: markRaw(Quotas),
+          condition: () => isManager(),
+        },
+        {
+          label: __('Visit Targets'),
+          key: 'settings.visit_targets',
+          icon: LucideMapPin,
+          component: markRaw(VisitTargets),
           condition: () => isManager(),
         },
         {

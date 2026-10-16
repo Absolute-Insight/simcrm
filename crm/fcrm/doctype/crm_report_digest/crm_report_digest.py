@@ -36,6 +36,11 @@ class CRMReportDigest(Document):
 			"forecast_vs_actual",
 			"quota_attainment_by_rep",
 			"pipeline_by_segment",
+			"client_reliability",
+			"visits_by_rep",
+			"activities_by_type",
+			"customer_interaction",
+			"customers_without_interaction",
 		]
 	# end: auto-generated types
 

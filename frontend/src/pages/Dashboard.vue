@@ -802,6 +802,7 @@ function reportResource(name: string) {
 
 const teamAdherence = reportResource('plan_adherence_by_rep')
 const teamQuota = reportResource('quota_attainment_by_rep')
+const teamVisits = reportResource('visits_by_rep')
 const teamPipeline = reportResource('pipeline_by_stage')
 
 /* The rep chart strip. Same endpoint as the manager grid's charts; the server
@@ -912,6 +913,31 @@ const PANEL_CATALOGUE = computed(() => {
       cell: (row) => (row.adherence == null ? EMPTY_CELL : `${row.adherence}%`),
       tone: (row) =>
         row.adherence != null && row.adherence < 60 ? 'text-ink-orange-9' : '',
+    },
+    {
+      id: 'visits',
+      title: __('Visits against target'),
+      subtitle: __(
+        "Completed customer visits in the period, against each rep's weekly target",
+      ),
+      loading: computed(() => teamVisits.loading),
+      error: computed(() => teamVisits.error),
+      retry: () => teamVisits.reload(),
+      empty: computed(
+        () => !teamVisits.loading && !(teamVisits.data?.rows || []).length,
+      ),
+      emptyTitle: __('No visits or targets in this period'),
+      emptyDescription: __(
+        'Set weekly visit targets in Settings → Visit Targets.',
+      ),
+      rows: computed(() => teamVisits.data?.rows || []),
+      // No target is not behind on one, the same rule as the quota panel.
+      cell: (row) =>
+        row.target == null
+          ? `${row.completed} · ${__('No target')}`
+          : `${row.completed} / ${row.target}`,
+      // the status is judged against the target due so far, not the period's
+      tone: (row) => (row.on_track === 'Behind' ? 'text-ink-orange-9' : ''),
     },
     {
       id: 'pipeline',
@@ -1034,6 +1060,7 @@ function reloadAll() {
   if (isTeamView.value) {
     quiet(teamAdherence.reload())
     quiet(teamQuota.reload())
+    quiet(teamVisits.reload())
     quiet(teamPipeline.reload())
   } else {
     quiet(myPlan.reload())

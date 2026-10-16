@@ -40,10 +40,15 @@ pattern.
   would mark this morning's completed call as missed.
 - **A settled month with nothing closed reports 0, not blank.** Only genuinely
   future months are null, so "zero pipeline" and "no data" stay distinguishable.
-- **Cancellations are counted from the records, not the plan.** A cancelled
-  task or event fulfils nothing, so the matcher never sees it; `activity_cancellations`
-  counts them directly and `plan_adherence` carries the number alongside
-  planned/done/missed without changing any of those.
+- **Cancellations are counted from the records and the plan, once.** A
+  cancelled task or event fulfils nothing, so the matcher never sees it;
+  `activity_cancellations` counts them directly. A plan item a rep marks
+  **Cancelled** is not due: `plan_adherence` leaves it out of
+  planned/done/missed (and so out of the adherence percentage) and adds it to
+  `cancelled` instead, over the whole period. The planner also writes a
+  Cancelled Visit event as such an item's `fulfilled_by`; that event is the same
+  cancellation seen from the calendar, so `plan_adherence` asks
+  `activity_cancellations(..., skip_plan_cancellations=True)` and counts it once.
 - **Client reliability reaches an organization through the deal an activity
   references, or — for a calendar event — through an `Event Participants` row
   naming the organization,** which is how the visits a rep logs from the planner
@@ -77,11 +82,62 @@ attainment.
 Managers set targets in **Settings → Sales Targets** (a rep × month grid with a
 "fill year" shortcut); reps see their own row read-only.
 
+## Visit targets
+
+`CRM Visit Target` is one row per rep: customer visits per **working week**
+(planned or unplanned). Not monthly like quota, because MBP's managers talk in
+visits a week. `crm.api.visit_targets.target_for(users, from, to)` pro-rates
+it by the Monday-to-Friday days in the range (`visits_per_week x days / 5`), so
+a month and a fortnight read against the same number. A rep with no row (or a
+row of 0) has **no target**, which is reported as "No target", never as 0% or
+as behind.
+
+Managers set them in **Settings → Visit Targets** (`get_visit_targets` /
+`set_visit_target`), with quota's guards reused from `crm.api.quota`: managers
+only, their own subtree only, never their own row unless System Manager. 0 or
+blank deletes the row. A rep sees their own row read-only.
+
+**Visits against target** (`visits_by_rep`) counts plan items of a
+`VISIT_KINDS` type (Visit, Unplanned Meeting) dated in the period: scheduled
+(all of them), completed (Done), cancelled, missed, still planned. `target` is
+the whole period's share; `target_to_date` the share already due, up to
+**yesterday** (today is not settled, the same rule as adherence). "On track"
+means completed ≥ target to date, so the 10th of the month does not read as
+everyone behind. One row per rep in scope with a target or any visit.
+
+**Activities by type** (`activities_by_type`) is the same status split per rep
+and activity type, in the planner's type order.
+
+## Customer interaction
+
+`customer_interaction` returns **every CRM Organization**, the untouched ones
+included. An interaction in the period is either a **Done plan item naming the
+customer** (bucketed visits / deliveries / calls / emails / other by its type) or
+a **completed calendar visit**: an Event in the Visit category, not Cancelled,
+already started, with the organization as an Event Participant.
+
+Completing a planned visit writes a Visit event as the item's `fulfilled_by`
+(and the importer did the same for history), so the two overlap. An event that
+records a Done item **which names its customer** is counted through the item
+only. An event recording an item *without* a customer — history imported before
+items had one — still counts, because it is the only place the customer is
+named. Scope is by who did it: the plan's rep, the event's owner.
+
+`last_interaction` is the latest such interaction on or before the period's end
+**over all time**, with `last_rep` and `days_since` (to the period's end). Rows
+sort fewest interactions first, then longest since the last (never first).
+**Customers with no interaction** is the same function with `only_without=True`,
+showing only the columns that can differ.
+
 ## Reports
 
-Seven built-ins, all registry entries over the metrics layer:
+Eleven built-ins, all registry entries over the metrics layer:
 pipeline by stage, funnel conversion, plan adherence by rep, forecast vs actual,
-pipeline by segment, quota attainment by rep, client reliability.
+pipeline by segment, quota attainment by rep, client reliability, visits against
+target, activities by type, customer interaction, customers with no
+interaction. The last four are territory-blind (rep plans have no territory;
+customer interaction could narrow by the organization's territory and does not
+yet), and all are schedulable as digests.
 
 Registry strings are untranslated literals with `_()` applied **per request** —
 a module is imported once per worker, so translating at import time would freeze
@@ -132,6 +188,8 @@ their rows, a manager the team's. All interpolated values are HTML-escaped.
 | `crm/api/dashboard.py` | Every aggregate; the `CHARTS` registry the dispatcher resolves against |
 | `crm/api/reports.py` | Report registry — consumption only |
 | `crm/api/quota.py` | The rep × month admin grid |
+| `crm/api/visit_targets.py` | Weekly visit targets: pro-ration and the Settings grid |
+| `crm/fcrm/doctype/crm_visit_target/` | Visits per working week per rep |
 | `crm/fcrm/doctype/crm_quota/` | Monthly target per rep |
 | `crm/fcrm/doctype/crm_forecast_snapshot/` | Weekly forecast history, per rep and site-wide |
 | `crm/fcrm/doctype/crm_report_digest/` | Scheduled email digests |
