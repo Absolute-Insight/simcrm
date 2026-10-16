@@ -43,6 +43,7 @@ ALLOWED_SIBLING_IMPORTS = {
 		"actions",
 		"analyst",
 		"analyst_data",
+		"analyst_facts",
 		"client",
 		"config",
 		"context",
@@ -68,7 +69,10 @@ ALLOWED_SIBLING_IMPORTS = {
 	# projection maths) and may not know a site exists; analyst_data runs the
 	# catalogue against the metrics layer and the ERP clients.
 	"analyst": {"prompting"},
-	"analyst_data": {"analyst", "config", "predict", "signals"},
+	# analyst_facts is pure too: the arithmetic a question needs, and the check
+	# that the narrative's numbers are the tables' (see its docstring).
+	"analyst_facts": {"analyst"},
+	"analyst_data": {"analyst", "analyst_facts", "config", "predict", "signals"},
 }
 
 
@@ -104,7 +108,7 @@ class LayeringTest(UnitTestCase):
 	def test_the_pure_layers_import_no_frappe(self):
 		"""``context`` and ``errors`` stay importable with no site at all -- that is what
 		makes the prompt builder and the exception types usable from any tier later."""
-		for module in ("errors", "context", "knowledge", "prompting"):
+		for module in ("errors", "context", "knowledge", "prompting", "analyst", "analyst_facts"):
 			with self.subTest(module=module):
 				source = Path(frappe.get_app_path("crm", "agent", f"{module}.py")).read_text()
 				imported = set()

@@ -33,6 +33,7 @@ TABLE = {
 	"period": {"from": "2026-01-01", "to": "2026-09-01"},
 	"note": "",
 	"error": None,
+	"facts": ["Won total, August 2026 to August 2026: 10"],
 }
 ANSWER = AnalystAnswer(answer="Revenue was 10.0 in August.", highlights=["10.0 in 2026-08"], caveats=[])
 
@@ -78,6 +79,28 @@ class GateTest(IntegrationTestCase):
 
 
 class FlowTest(IntegrationTestCase):
+	def test_a_sentence_the_tables_do_not_bear_out_never_reaches_the_admin(self):
+		plan = AnalystPlan(metrics=["won_revenue_by_month"], from_date="", to_date="", reasoning="")
+		invented = AnalystAnswer(
+			answer="Revenue was 10.0 in August. Deal values range from 2,750.23 upward.",
+			highlights=[],
+			caveats=["August 2026 data is not available."],
+		)
+		patches = stubs(GRANTED, [plan, invented])
+		with patches[0], patches[1], patches[2], patches[3], patches[4]:
+			result = api_mod.ask_analyst("how did revenue go?")
+		self.assertEqual(result["answer"], "Revenue was 10.0 in August.")
+		self.assertEqual(result["caveats"], [])
+		self.assertEqual(result["dropped"], 2)
+
+	def test_the_period_says_where_the_sites_history_starts(self):
+		plan = AnalystPlan(metrics=["won_revenue_by_month"], from_date="", to_date="", reasoning="")
+		patches = stubs(GRANTED, [plan, ANSWER])
+		with patches[0], patches[1], patches[2], patches[3], patches[4]:
+			with mock.patch.object(api_mod.analyst_data, "data_start", return_value="2025-12"):
+				result = api_mod.ask_analyst("how did we do in 2024?")
+		self.assertEqual(result["period"]["data_from"], "2025-12")
+
 	def test_happy_path_returns_the_computed_tables_verbatim(self):
 		plan = AnalystPlan(
 			metrics=["won_revenue_by_month"], from_date="2026-01-01", to_date="2026-09-01", reasoning=""
@@ -88,10 +111,14 @@ class FlowTest(IntegrationTestCase):
 
 		self.assertEqual(result["status"], "ok")
 		self.assertEqual(result["answer"], ANSWER.answer)
-		self.assertEqual(result["highlights"], ANSWER.highlights)
+		# the bullets are Vectora's computed lines, not the model's restatement of them
+		self.assertEqual(result["highlights"], TABLE["facts"])
+		self.assertEqual(result["dropped"], 0)
 		self.assertEqual(result["tables"], [TABLE])
 		self.assertEqual(result["sources"], ["CRM"])
-		self.assertEqual(result["period"], {"from_date": "2026-01-01", "to_date": "2026-09-01"})
+		self.assertEqual(
+			(result["period"]["from_date"], result["period"]["to_date"]), ("2026-01-01", "2026-09-01")
+		)
 		self.assertEqual(run_plan.call_args[0][0]["metrics"], ["won_revenue_by_month"])
 		self.assertIs(complete.call_args_list[0][0][1], AnalystPlan)
 		self.assertIs(complete.call_args_list[1][0][1], AnalystAnswer)

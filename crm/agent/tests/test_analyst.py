@@ -286,10 +286,24 @@ class PromptTest(UnitTestCase):
 			"how did we do?", tables, {"from_date": "2026-01-01", "to_date": "2026-09-01"}
 		)
 		system = messages[0]["content"]
-		self.assertIn("Every number in your answer must appear in the FIGURES block", system)
+		self.assertIn("Every number in your answer must appear in the figures", system)
+		self.assertIn("never add up, average or compare rows yourself", system)
 		self.assertIn("1234.5", system)
 		self.assertIn("[Acumatica]", system)
 		self.assertIn("UNAVAILABLE", system)
+
+	def test_computed_lines_reach_the_figures_under_their_heading(self):
+		tables = [
+			{
+				"key": "won_revenue_by_month",
+				"title": "Revenue from won deals by month",
+				"source": "CRM",
+				"rows": [{"month": "2026-08", "value": 1234.5}],
+				"facts": ["Won total, August 2026 to August 2026: 1,235"],
+			}
+		]
+		system = analyst.build_answer_messages("q", tables, {"from_date": "", "to_date": ""})[0]["content"]
+		self.assertIn(f"{analyst.FACTS_HEADING}\n- Won total, August 2026 to August 2026: 1,235", system)
 
 	def test_answer_prompt_caps_long_tables(self):
 		rows = [{"month": f"m{i}", "value": i} for i in range(analyst.FIGURES_ROW_CAP + 5)]

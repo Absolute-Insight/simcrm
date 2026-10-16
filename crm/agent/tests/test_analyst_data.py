@@ -44,10 +44,15 @@ class RunPlanTest(IntegrationTestCase):
 
 	def test_won_revenue_is_zero_filled_per_month_and_comes_from_the_metrics_layer(self):
 		make_won_deal(self.org, 1500, "2026-05-15")
-		tables = analyst_data.run_plan(
-			{"metrics": ["won_revenue_by_month", "nope"], "from_date": "2026-04-01", "to_date": "2026-06-30"},
-			None,
-		)
+		with mock.patch.object(analyst_data, "data_start", return_value="2026-01"):
+			tables = analyst_data.run_plan(
+				{
+					"metrics": ["won_revenue_by_month", "nope"],
+					"from_date": "2026-04-01",
+					"to_date": "2026-06-30",
+				},
+				None,
+			)
 		self.assertEqual([t["key"] for t in tables], ["won_revenue_by_month"])
 		table = tables[0]
 		self.assertEqual(table["source"], "CRM")
@@ -55,6 +60,31 @@ class RunPlanTest(IntegrationTestCase):
 		self.assertGreaterEqual(table["rows"][1]["value"], 1500)
 		self.assertEqual(table["rows"][0]["value"], 0.0)
 		self.assertIsNone(table["error"])
+
+	def test_months_before_the_sites_history_are_dropped_not_shown_as_zero(self):
+		"""An admin asked about 2024 on a site whose history starts in December 2025
+		and was told the business sold nothing that year."""
+		make_won_deal(self.org, 1500, "2026-05-15")
+		with mock.patch.object(analyst_data, "data_start", return_value="2026-05"):
+			table = analyst_data.run_plan(
+				{"metrics": ["won_revenue_by_month"], "from_date": "2026-03-01", "to_date": "2026-06-30"},
+				None,
+			)[0]
+		self.assertEqual([row["month"] for row in table["rows"]], ["2026-05", "2026-06"])
+		self.assertIn("Vectora holds deal history from May 2026 only.", table["note"])
+
+	def test_every_table_carries_its_computed_lines(self):
+		make_won_deal(self.org, 1500, "2026-05-15")
+		with mock.patch.object(analyst_data, "data_start", return_value="2026-01"):
+			table = analyst_data.run_plan(
+				{"metrics": ["won_revenue_by_month"], "from_date": "2026-04-01", "to_date": "2026-06-30"},
+				None,
+			)[0]
+		self.assertTrue(table["facts"][0].startswith("Q2 2026 (April to June 2026): "), table["facts"])
+
+	def test_the_history_starts_at_the_earliest_deal_created_or_closed(self):
+		make_won_deal(self.org, 10, "2019-03-10")
+		self.assertLessEqual(analyst_data.data_start(), "2019-03")
 
 	def test_a_window_that_reaches_today_says_the_current_month_is_partial(self):
 		"""Eighteen days of a month next to whole ones reads as a collapse unless
