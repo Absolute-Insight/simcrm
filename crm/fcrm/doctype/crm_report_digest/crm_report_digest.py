@@ -38,6 +38,7 @@ class CRMReportDigest(Document):
 			"pipeline_by_segment",
 			"client_reliability",
 			"visits_by_rep",
+			"rep_summary",
 			"activities_by_type",
 			"customer_interaction",
 			"customers_without_interaction",

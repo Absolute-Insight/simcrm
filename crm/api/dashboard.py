@@ -2259,6 +2259,79 @@ def activities_by_type(from_date: str, to_date: str, user: str | None = None) ->
 	return rows
 
 
+# rep_summary's activity columns: what the rep did, by the planner's type
+SUMMARY_ACTIVITIES = {
+	"Visit": "visits",
+	"Unplanned Meeting": "unplanned",
+	"Delivery": "deliveries",
+	"Call": "calls",
+	"Email": "emails",
+}
+
+
+def rep_summary(from_date: str, to_date: str, user: str | None = None) -> list[dict]:
+	"""Per rep: the work done in the period beside the quotes and orders it led to.
+
+	MBP's managers read a rep as visits, then quotes, then orders, then
+	invoices. Activities are Done plan items dated in the period, by type.
+	A quote is a deal (every Acumatica sales quote is one) created in the
+	period; an order is a deal closed Won in the period -- a quote copied into
+	a sales order, as the Acumatica sync records it. Both are counted for the
+	deal's owner, the salesperson on the quote, and only among the deals the
+	caller may read; values are in the base currency.
+
+	Invoices are not here: Vectora holds no invoice per rep or per date, only
+	a customer's revenue total from the first import. One row per rep in scope
+	with anything in the period.
+	"""
+	scope = _scope_users(user)
+	rows: dict[str, dict] = {}
+
+	def row(rep):
+		return rows.setdefault(
+			rep,
+			{
+				"user": rep,
+				**dict.fromkeys(SUMMARY_ACTIVITIES.values(), 0),
+				"quotes": 0,
+				"quote_value": 0.0,
+				"orders": 0,
+				"order_value": 0.0,
+			},
+		)
+
+	query, PlanItem, Plan = _plan_items_in(from_date, to_date, user)
+	for rep, kind, count in (
+		query.where(PlanItem.status == "Done")
+		.where(PlanItem.activity_type.isin(list(SUMMARY_ACTIVITIES)))
+		.select(Plan.user, PlanItem.activity_type, Count(PlanItem.name))
+		.groupby(Plan.user, PlanItem.activity_type)
+		.run()
+	):
+		row(rep)[SUMMARY_ACTIVITIES[kind]] = int(count)
+
+	Deal = DocType("CRM Deal")
+	value = Sum(Coalesce(Deal.deal_value, 0) * IfNull(Deal.exchange_rate, 1))
+
+	def per_owner(query):
+		query = query.where(Deal.deal_owner.isnotnull())
+		if scope is not None:
+			query = query.where(Deal.deal_owner.isin(scope))
+		return scope_deals(
+			query.select(Deal.deal_owner, Count(Deal.name), value).groupby(Deal.deal_owner)
+		).run()
+
+	created = frappe.qb.from_(Deal).where(
+		(Deal.creation >= from_date) & (Deal.creation < add_days(to_date, 1))
+	)
+	for rep, count, total in per_owner(created):
+		row(rep).update(quotes=int(count), quote_value=flt(total))
+	for rep, count, total in per_owner(_won_deals_query(from_date, to_date)):
+		row(rep).update(orders=int(count), order_value=flt(total))
+
+	return [frappe._dict(rows[rep]) for rep in sorted(rows)]
+
+
 INTERACTION_BUCKETS = ("visits", "deliveries", "calls", "emails", "other")
 
 

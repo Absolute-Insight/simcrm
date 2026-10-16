@@ -484,6 +484,72 @@ class CustomerInteractionTest(VisitFixture, IntegrationTestCase):
 		self.assertEqual(self.rows()[self.orgs["visited"]]["total"], 0)
 
 
+class RepSummaryTest(VisitFixture, IntegrationTestCase):
+	"""Visits beside quotes and orders, per rep -- the managers' dashboard line."""
+
+	def setUp(self):
+		super().setUp()
+		make_plan(
+			REP,
+			self.monday,
+			[
+				{"activity_type": "Visit", "planned_date": self.day(0), "status": "Done"},
+				{"activity_type": "Visit", "planned_date": self.day(1), "status": "Done"},
+				{"activity_type": "Visit", "planned_date": self.day(2), "status": "Missed"},
+				{"activity_type": "Unplanned Meeting", "planned_date": self.day(2), "status": "Done"},
+				{"activity_type": "Call", "planned_date": self.day(3), "status": "Done"},
+				{"activity_type": "Email", "planned_date": self.day(3), "status": "Done"},
+				# planned, not done: not work done
+				{"activity_type": "Call", "planned_date": self.day(4), "status": "Planned"},
+			],
+		)
+		won = frappe.get_all("CRM Deal Status", filters={"type": "Won"}, pluck="name")
+		if not won:
+			self.skipTest("site has no Won deal status")
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Summary Smelter"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+
+		def deal(value, created, closed=None):
+			doc = frappe.get_doc(
+				{
+					"doctype": "CRM Deal",
+					"organization": org,
+					"deal_owner": REP,
+					"deal_value": value,
+					"exchange_rate": 1,
+				}
+			).insert(ignore_permissions=True)
+			values = {"creation": datetime.combine(getdate(created), time(9, 0))}
+			if closed:
+				values |= {"status": won[0], "closed_date": closed}
+			frappe.db.set_value("CRM Deal", doc.name, values, update_modified=False)
+
+		deal(1000, self.day(1))
+		deal(2500, self.day(2), closed=self.day(4))
+		# quoted before the period, ordered in it: an order, not a quote
+		deal(4000, add_days(self.monday, -20), closed=self.day(3))
+		# quoted after the period: neither
+		deal(9000, add_days(self.monday, 8))
+
+	def test_work_done_beside_quotes_and_orders(self):
+		row = next(
+			r for r in get_report("rep_summary", self.start, self.end, REP)["rows"] if r["user"] == REP
+		)
+		self.assertEqual(
+			(row["visits"], row["unplanned"], row["calls"], row["emails"], row["deliveries"]),
+			(2, 1, 1, 1, 0),
+		)
+		self.assertEqual((row["quotes"], row["quote_value"]), (2, 3500))
+		self.assertEqual((row["orders"], row["order_value"]), (2, 6500))
+		self.assertEqual(row["rep"], "Visits Rep")
+
+	def test_says_why_there_is_no_invoice_column(self):
+		self.assertIn("Invoices", get_report("rep_summary", self.start, self.end, REP)["notice"])
+
+
 class AdherenceCancellationTest(VisitFixture, IntegrationTestCase):
 	def test_a_cancelled_item_is_not_due_and_is_counted_once_as_cancelled(self):
 		org = (

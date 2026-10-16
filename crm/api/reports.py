@@ -194,6 +194,18 @@ def _client_reliability(from_date, to_date, user, territory=None):
 	return client_reliability(from_date, to_date, user)
 
 
+def _rep_summary(from_date, to_date, user, territory=None):
+	from crm.api.dashboard import rep_summary
+
+	return _rep_display(rep_summary(from_date, to_date, user))
+
+
+def _rep_summary_notice(from_date, to_date, user, territory=None):
+	return _(
+		"Invoices are not in Vectora yet: the Acumatica connection does not read invoices, so there is no invoice figure per rep. Quotes and orders are the ones Vectora holds from Acumatica."
+	)
+
+
 def _visits_by_rep(from_date, to_date, user, territory=None):
 	from crm.api.dashboard import visits_by_rep
 
@@ -354,6 +366,34 @@ REPORTS = {
 		],
 		"get_rows": _visits_by_rep,
 	},
+	"rep_summary": {
+		"title": "Rep summary",
+		"description": "Per rep: visits, unplanned meetings, deliveries, calls and emails done in the period, beside the quotes and orders",
+		"columns": [
+			{"key": "rep", "label": "Rep", "type": "text"},
+			{"key": "visits", "label": "Visits", "type": "number"},
+			{"key": "unplanned", "label": "Unplanned meetings", "type": "number"},
+			{"key": "deliveries", "label": "Deliveries", "type": "number"},
+			{"key": "calls", "label": "Calls", "type": "number"},
+			{"key": "emails", "label": "Emails", "type": "number"},
+			{
+				"key": "quotes",
+				"label": "Quotes",
+				"type": "number",
+				"description": "Sales quotes created in the period",
+			},
+			{"key": "quote_value", "label": "Quote value", "type": "currency"},
+			{
+				"key": "orders",
+				"label": "Orders",
+				"type": "number",
+				"description": "Quotes turned into a sales order in the period",
+			},
+			{"key": "order_value", "label": "Order value", "type": "currency"},
+		],
+		"get_rows": _rep_summary,
+		"get_notice": _rep_summary_notice,
+	},
 	"activities_by_type": {
 		"title": "Activities by type",
 		"description": "Planned and logged activities per rep and type — visits, deliveries, calls, admin — and what became of them",
@@ -418,6 +458,7 @@ TERRITORY_BLIND = frozenset(
 		"quota_attainment_by_rep",
 		"client_reliability",
 		"visits_by_rep",
+		"rep_summary",
 		"activities_by_type",
 		"customer_interaction",
 		"customers_without_interaction",
