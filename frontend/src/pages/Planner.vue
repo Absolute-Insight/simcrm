@@ -338,7 +338,7 @@
                     />
                   </Dropdown>
                   <Button
-                    v-if="canEdit"
+                    v-if="canEdit && !isLockedDay(item.planned_date)"
                     class="v-card-action !size-5"
                     variant="ghost"
                     icon="lucide-x"
@@ -390,7 +390,7 @@
             </div>
 
             <Button
-              v-if="canEdit"
+              v-if="canEdit && !isLockedDay(day.date)"
               class="w-full opacity-60 hover:opacity-100 focus-visible:opacity-100"
               variant="ghost"
               icon="lucide-plus"
@@ -475,6 +475,7 @@ import {
 } from '@/utils/planner'
 import { sessionStore } from '@/stores/session'
 import { usersStore } from '@/stores/users'
+import { getSettings } from '@/stores/settings'
 import {
   Dropdown,
   Select,
@@ -505,6 +506,14 @@ const { getUser } = usersStore()
    backend exposes no current_week endpoint, so the site zone from boot
    (App.vue seeds it from window.timezone.system) is the closest source. */
 const today = ref(todayInTimeZone(getConfig('systemTimezone')))
+
+/* Settings -> Visit Targets -> "Plan only for today or later". The server
+   refuses the same things; this keeps the planner from offering them. */
+const { settings: crmSettings } = getSettings()
+const pastLocked = computed(() => !!crmSettings.value?.lock_past_plans)
+function isLockedDay(date) {
+  return pastLocked.value && !!date && date < today.value
+}
 
 const weekStart = ref(mondayOf(today.value))
 const planUser = ref(session.user)
@@ -935,7 +944,7 @@ function onDragEnd() {
 }
 
 function onDragOver(event, date) {
-  if (!dragging.value) return
+  if (!dragging.value || isLockedDay(date)) return
   event.preventDefault()
   event.dataTransfer.dropEffect = 'move'
   dragOverDate.value = date
@@ -966,7 +975,7 @@ function onCardKeydown(event, item) {
 }
 
 async function moveTo(item, date) {
-  if (!weekDates.value.includes(date)) return
+  if (!weekDates.value.includes(date) || isLockedDay(date)) return
   const next = moveItemToDate(localItems.list, item, date)
   if (next === localItems.list) return
   localItems.list = next
