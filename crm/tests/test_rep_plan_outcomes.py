@@ -271,3 +271,16 @@ class MatchOnCustomerTest(OutcomeTestCase):
 		self.assertEqual(
 			frappe.db.get_value("CRM Rep Plan Item", item, ["status", "fulfilled_by"]), ("Done", event.name)
 		)
+
+
+class BackfillCustomerPatchTest(OutcomeTestCase):
+	def test_an_item_gets_the_customer_of_the_event_that_fulfils_it(self):
+		from crm.patches.v1_0.backfill_plan_item_customer import execute
+
+		# planned first: saving a week replaces its items, logging appends
+		untouched = self.plan_one("Call", organization="")
+		row = log_unplanned_visit(self.org.name, "Breakdown call-out")["items"][-1]
+		frappe.db.set_value("CRM Rep Plan Item", row["name"], "organization", None)
+		execute()
+		self.assertEqual(frappe.db.get_value("CRM Rep Plan Item", row["name"], "organization"), self.org.name)
+		self.assertFalse(frappe.db.get_value("CRM Rep Plan Item", untouched, "organization"))
