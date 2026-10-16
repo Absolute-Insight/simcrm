@@ -91,6 +91,38 @@ ACTUAL_SOURCES = {
 	},
 }
 
+# Every activity a plan item can be, in the order the planner offers them.
+# MBP's reps log more kinds of work than the matcher can find records for: a
+# delivery, an admin morning, writing up visit reports. Those kinds have no
+# entry in ACTUAL_SOURCES, so nothing fulfils them automatically -- the rep
+# completes or cancels them by hand, with an outcome, the way the old rep app
+# worked. "Unplanned Meeting" is the old app's word for a visit nobody planned;
+# it is logged, never planned, but it is still a customer visit.
+ACTIVITY_TYPES = (
+	"Visit",
+	"Unplanned Meeting",
+	"Delivery",
+	"Call",
+	"Email",
+	"Meeting",
+	"Task",
+	"Admin",
+	"Reports",
+)
+
+# the kinds that count as a customer visit (visit targets, the visit report)
+VISIT_KINDS = ("Visit", "Unplanned Meeting")
+
+# the kinds whose completion or cancellation is put on the calendar as a Visit
+# event against the customer, so the calendar, client reliability and the
+# customer-interaction report all see it
+EVENT_KINDS = ("Visit", "Unplanned Meeting", "Delivery")
+
+# A plan item's statuses. Cancelled is the rep's call, never the matcher's:
+# an item is only ever Cancelled by hand (manual_override), and it is neither
+# done nor missed -- adherence leaves it out of what was due.
+FINAL_STATUSES = ("Done", "Missed", "Cancelled")
+
 # the reverse map, for callers handed a doctype (mark_fulfilled's claim check)
 KIND_BY_DOCTYPE = {source["doctype"]: kind for kind, source in ACTUAL_SOURCES.items()}
 
@@ -131,6 +163,8 @@ def match_items(items: list[dict], actuals: list[dict]) -> dict[str, dict]:
 				or item.get("reference_docname") != actual.get("reference_docname")
 			):
 				continue
+			if not _same_customer(item, actual):
+				continue
 			start, end = week_of(item["planned_date"])
 			if when < start or when > end:
 				continue
@@ -142,18 +176,42 @@ def match_items(items: list[dict], actuals: list[dict]) -> dict[str, dict]:
 	return assigned
 
 
-def _rank(item: dict, actual: dict, when: date) -> tuple[int, int, str]:
+def _same_customer(item: dict, actual: dict) -> bool:
+	"""Does an item that names a customer accept this actual?
+
+	A visit planned for Impala Springs is not fulfilled by a visit to Canyon
+	Coal the same week. Only calendar events carry the customer (as an event
+	participant), so ``organizations`` is set on Event actuals and absent on
+	calls, emails and tasks -- for those the customer cannot be checked and does
+	not block the match.
+	"""
+	customer = item.get("organization")
+	if not customer or actual.get("organizations") is None:
+		return True
+	return customer in actual["organizations"]
+
+
+def _rank(item: dict, actual: dict, when: date) -> tuple[int, int, int, str]:
 	"""Sort key for the items an actual could fulfil, best first.
 
-	Reference beats date: an item that named this deal is what the rep meant,
-	even when a vaguer item sits a day closer. The name is the final term only
-	so that two equally good candidates resolve the same way on every run.
+	Reference beats customer beats date: an item that named this deal, or this
+	customer, is what the rep meant, even when a vaguer item sits a day closer.
+	The name is the final term only so that two equally good candidates resolve
+	the same way on every run.
 	"""
 	on_reference = bool(actual.get("reference_docname")) and (
 		item.get("reference_doctype") == actual.get("reference_doctype")
 		and item.get("reference_docname") == actual.get("reference_docname")
 	)
-	return (0 if on_reference else 1, abs((item["planned_date"] - when).days), str(item["name"]))
+	on_customer = bool(item.get("organization")) and item.get("organization") in (
+		actual.get("organizations") or ()
+	)
+	return (
+		0 if on_reference else 1,
+		0 if on_customer else 1,
+		abs((item["planned_date"] - when).days),
+		str(item["name"]),
+	)
 
 
 # --- frappe-facing layer -------------------------------------------------
@@ -230,6 +288,8 @@ def _query_source(
 			named = [row[f"_user_{fallback}"]]
 		return sorted({user for user in named if user in wanted})
 
+	rows = query.run(as_dict=True)
+	customers = _event_customers([row.name for row in rows]) if doctype == "Event" else None
 	return [
 		{
 			"doctype": doctype,
@@ -239,9 +299,30 @@ def _query_source(
 			"reference_doctype": row.reference_doctype,
 			"reference_docname": row.reference_docname,
 			"users": users_of(row),
+			**({"organizations": customers.get(row.name, [])} if customers is not None else {}),
 		}
-		for row in query.run(as_dict=True)
+		for row in rows
 	]
+
+
+def _event_customers(names: list[str]) -> dict[str, list[str]]:
+	"""Event name -> the organizations it names as participants, in one query."""
+	if not names:
+		return {}
+	participant = frappe.qb.DocType("Event Participants")
+	out: dict[str, list[str]] = {}
+	for chunk_start in range(0, len(names), 1000):
+		rows = (
+			frappe.qb.from_(participant)
+			.select(participant.parent, participant.reference_docname)
+			.where(participant.parenttype == "Event")
+			.where(participant.reference_doctype == "CRM Organization")
+			.where(participant.parent.isin(names[chunk_start : chunk_start + 1000]))
+			.run(as_dict=True)
+		)
+		for row in rows:
+			out.setdefault(row.parent, []).append(row.reference_docname)
+	return out
 
 
 def _actuals_by_user(users: list[str], start: date, end: date) -> dict[str, list[dict]]:
@@ -345,6 +426,7 @@ def _match_plan(plan: dict, today: date, claimed: dict[tuple[str, str], str]) ->
 			"planned_date",
 			"reference_doctype",
 			"reference_docname",
+			"organization",
 			"status",
 			"fulfilled_by_doctype",
 			"fulfilled_by",

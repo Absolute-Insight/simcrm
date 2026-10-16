@@ -128,6 +128,13 @@ export const SURFACES = [
     floor: MANAGER_ROLE,
   },
   {
+    key: 'settings.visit_targets',
+    group: 'settings',
+    section: 'User Management',
+    label: 'Visit Targets',
+    floor: MANAGER_ROLE,
+  },
+  {
     key: 'settings.access_control',
     group: 'settings',
     section: 'User Management',

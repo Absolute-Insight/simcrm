@@ -66,6 +66,7 @@ gotcha, not a location, and it stays in `AGENTS.md`.
 | `frontend/src/pages/Reports.vue` | Report viewer, CSV export, print view |
 | `frontend/src/pages/Dashboard.vue` | Role-aware dashboard (rep home / manager view) |
 | `frontend/src/components/Settings/Quotas.vue` | Sales targets: rep × month grid |
+| `frontend/src/components/Settings/VisitTargets.vue` | Visit targets: visits per working week per rep |
 | `frontend/src/components/Settings/AutomationRules.vue` | Automation rule admin |
 | `frontend/src/components/Modals/HelpCenterModal.vue` | In-app help center (articles from `crm/help/`) with the Mentor box (`crm.agent.api.ask_mentor`) |
 | `frontend/src/components/Assistant.vue` | Sidebar assistant panel over the admin-curated knowledge base (`crm.agent.api.ask_assistant`) |

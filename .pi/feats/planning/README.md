@@ -15,6 +15,28 @@
   applied to planning.
 - **Managers** see the reps they are allowed to see (sales hierarchy, not just
   role) and can read a plan, never rewrite someone else's week.
+- **Whole team** (first row of the rep picker, managers only): every visible
+  rep's week side by side, one row per rep, filterable by activity type
+  (`components/Planner/TeamWeek.vue`, `get_team_week`). It exists because a
+  visit logged from the planner is a *Private* Event, which frappe's Event
+  permission shows to its owner only -- the Calendar page shows a manager an
+  empty week for every rep, so the team week reads plan items instead.
+- **Every item names its customer** (`organization`) and its activity type:
+  Visit, Delivery, Phone Call, E-mail, Meeting, Task, Admin, Reports
+  (`ACTIVITY_TYPES`). Unplanned Meeting is the old rep app's word for a visit
+  nobody planned: it is logged, never planned, and counts as a visit.
+- **Closing an item by hand**: "Log the outcome…" (`complete_item`) and
+  "Cancel it…" (`cancel_item`) each require a note -- the old app's habit, kept
+  at MBP's request -- stored in `outcome`. Visit, Delivery and Unplanned
+  Meeting also put a Completed or Cancelled *Visit* event on the calendar at
+  the customer (`EVENT_KINDS`), held in `fulfilled_by`. **Cancelled** is a
+  status of its own, only ever set by hand: neither done nor missed, it drops
+  out of adherence's "due". Changing your mind (mark missed, hand back,
+  complete after all) deletes the Cancelled event so it stops counting.
+- **"Log activity"** (`log_unplanned_visit`, `activity_type` defaulting to
+  Unplanned Meeting in the UI): unplanned work of any kind, recorded as Done.
+  A visit kind needs a customer; the whole account is the outcome, the
+  one-line note its first 140 characters.
 
 ## Model
 
@@ -57,6 +79,15 @@ Where each activity's actuals come from is a table (`ACTUAL_SOURCES`), not an
 | Meeting | `Event` | start time | not `Cancelled`; **keeps its reference** |
 | Visit | `Event` | `starts_on` | `event_category = "Visit"`, not `Cancelled` |
 
+Delivery, Admin, Reports and Unplanned Meeting have no source: nothing
+fulfils them automatically, so they are closed by hand or swept to Missed with
+their week.
+
+**Customer.** An item that names a customer is only fulfilled by an event
+that has that customer as a participant (`_same_customer`), and is preferred
+over a vaguer item for one (`_rank`: reference, then customer, then date).
+Calls, emails and tasks carry no customer, so for them it is not checked.
+
 A visit and a meeting are both calendar events; the category tells them apart.
 "Visit" is added to `Event.event_category` by a Property Setter
 (`ensure_visit_event_category`), and Meeting excludes it, so one event is
@@ -80,7 +111,9 @@ run reached rather than a state the item is stuck in. Items older than
 | `propose_week(week_start)` | Drafts from open suggestions, spread over the *remaining* weekdays. Writes nothing |
 | `mark_fulfilled(item, ...)` / `mark_missed(item)` / `clear_override(item)` | Manual override; the matcher then leaves the row alone. A named fulfilment record is verified — it must exist, satisfy its kind's status filters, and belong to the caller |
 | `get_visible_reps()` | Exactly the reps whose plans the caller may open |
-| `log_unplanned_visit(organization, note, when?, reference?)` | The Event and the fulfilled, overridden item, in one step. A note is required — closing anything without saying why is the habit the old rep app enforced and the one reps notice first |
+| `log_unplanned_visit(organization?, note, when?, reference?, activity_type="Visit")` | Unplanned work of any loggable kind as a Done, overridden item; the visit kinds also get their Event. A note is required — closing anything without saying why is the habit the old rep app enforced and the one reps notice first |
+| `complete_item(item, outcome, when?)` / `cancel_item(item, reason)` | Close one of the caller's own items with what happened / why; visit kinds get a Completed / Cancelled Visit event at the customer |
+| `get_team_week(week_start)` | Every rep from `get_visible_reps` with their week's items and rollup, two queries for the whole team |
 
 ## Scheduling
 
@@ -116,11 +149,11 @@ type, date, note, status, rep code) is the history the rep-app spec left as
 
 | Export | Becomes |
 |---|---|
-| `Visit`, `Unplanned Meeting` | plan item `Visit`; **Completed / Canceled** also get an `Event` (category Visit, status Completed / Cancelled, the organization and matched contact as participants, the rep as owner, the full note as description) — the record the matcher, `client_reliability` and `activity_cancellations` count |
+| `Visit`, `Unplanned Meeting` | plan item `Visit` / `Unplanned Meeting`; **Completed / Canceled** also get an `Event` (category Visit, status Completed / Cancelled, the organization and matched contact as participants, the rep as owner, the full note as description) — the record the matcher, `client_reliability` and `activity_cancellations` count |
 | `Phone Call`, `WhatsApp` | plan item `Call`, done on the rep's word (no number to hang a Call Log on) |
 | `E-Mail` | plan item `Email`, likewise |
 | `Completed` | item `Done`, `manual_override` |
-| `Canceled` | item `Missed`, `manual_override`, no fulfilment |
+| `Canceled` | item `Cancelled`, `manual_override`, holding its Cancelled event in `fulfilled_by` (as `cancel_item` does) |
 | `Scheduled`, `Rescheduled` | item `Planned`, **not** overridden — a live item the matcher and the horizon sweep treat like anything planned from now on |
 
 The item's one-line note is the old app's `--- Conclusion ---` when there is
@@ -148,11 +181,18 @@ bench --site <site> execute crm.integrations.repapp.history.import_history \
   --kwargs '{"reports_dir": "'$P'", "owners": "'$P'/owners.json"}'
 ```
 
+Every item carries its customer, and a finished one its whole note as the
+outcome.
+
 A dry run does all the work and rolls back, so its counts, rejects and
 unmapped-company list are real. The real run writes `history-manifest.json`
 beside the CSVs (Firestore id → plan item and event) and skips those ids next
 time, so a re-run with a corrected map or a later export appends only what is
-new. Events are inserted as the rep (`frappe.set_user`) because frappe stamps
+new -- **except** a row imported while still scheduled that the later export
+says was completed or cancelled: that item is brought up to date (`updated`;
+`not_updated` lists the ones the old app moved to another day). Without it the
+matcher, finding no Vectora record, marks them Missed: on 2026-10-15 that was
+46 rows, fixed on prod by hand. Events are inserted as the rep (`frappe.set_user`) because frappe stamps
 `owner` from the session and every report credits an event to its owner;
 `send_reminder` is off so the daily event digest never mails a rep about a
 visit that happened in March.
@@ -166,4 +206,6 @@ visit that happened in March.
 | `crm/api/rep_plan.py` | Endpoints, concurrency token, manual override |
 | `crm/fcrm/doctype/crm_rep_plan/crm_rep_plan.py` | Hierarchy visibility, unique index |
 | `frontend/src/pages/Planner.vue` | The week grid |
+| `frontend/src/components/Planner/TeamWeek.vue` | The managers' whole-team week |
+| `frontend/src/utils/plannerDisplay.js` | Type icons, status colours and words, shared by both |
 | `frontend/src/utils/planner.js` | Pure week/rollup helpers (unit-tested) |

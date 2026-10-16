@@ -6,7 +6,7 @@
     <template #right-header>
       <Button
         v-if="isOwnPlan"
-        :label="__('Log a visit')"
+        :label="__('Log activity')"
         :disabled="logging"
         :loading="logging"
         @click="logVisit"
@@ -68,7 +68,7 @@
            the header must agree with the dashboard's adherence figures, and an
            unsaved draft is not something the rest of the CRM can see yet. -->
       <div
-        v-if="server.loaded"
+        v-if="server.loaded && !isTeam"
         class="flex items-center gap-2 text-sm text-ink-gray-6"
       >
         <span class="v-glass rounded-full px-2.5 py-0.5 tabular-nums">
@@ -84,6 +84,12 @@
           class="v-glass rounded-full px-2.5 py-0.5 tabular-nums text-ink-red-9"
         >
           {{ totals.missed }} {{ __('missed') }}
+        </span>
+        <span
+          v-if="totals.cancelled"
+          class="v-glass rounded-full px-2.5 py-0.5 tabular-nums text-ink-orange-9"
+        >
+          {{ totals.cancelled }} {{ __('cancelled') }}
         </span>
         <span
           v-if="unsaved.total"
@@ -103,269 +109,306 @@
     </div>
   </div>
 
-  <div
-    v-if="!canEdit && isOwnPlan && server.loaded"
-    class="border-b bg-surface-gray-1 px-5 py-2 text-sm text-ink-gray-6"
-  >
-    {{
-      __(
-        'This week is older than the {0}-week matching window, so it can no longer be edited.',
-        [MATCH_HORIZON_WEEKS],
-      )
-    }}
-  </div>
+  <TeamWeek
+    v-if="isTeam"
+    :weekStart="weekStart"
+    :today="today"
+    @open-rep="requestUser"
+  />
 
-  <!-- The plan moved under us. Reloading would take the unsaved buffer with
-       it, so the choice is the user's rather than ours. -->
-  <div
-    v-if="stale"
-    class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-surface-amber-1 px-5 py-2 text-sm text-ink-orange-9"
-    role="alert"
-  >
-    <span class="flex-1">
+  <template v-else>
+    <div
+      v-if="!canEdit && isOwnPlan && server.loaded"
+      class="border-b bg-surface-gray-1 px-5 py-2 text-sm text-ink-gray-6"
+    >
       {{
         __(
-          'This week changed somewhere else since you opened it. Your edits are still here, but saving would overwrite the newer version.',
+          'This week is older than the {0}-week matching window, so it can no longer be edited.',
+          [MATCH_HORIZON_WEEKS],
         )
       }}
-    </span>
-    <Button
-      size="sm"
-      :label="__('Reload the week')"
-      @click="reloadAfterConflict"
-    />
-    <Button
-      size="sm"
-      variant="ghost"
-      :label="__('Keep editing')"
-      @click="stale = false"
-    />
-  </div>
+    </div>
 
-  <div v-if="outside.length" class="border-b px-5 py-2 text-sm text-ink-gray-6">
-    {{
-      __('{0} planned item(s) now fall outside this week. Save to move them.', [
-        outside.length,
-      ])
-    }}
-    <button
-      v-for="item in outside"
-      :key="item._uid"
-      class="ml-2 underline underline-offset-2 hover:text-ink-gray-8"
-      @click="goToWeekOf(item)"
+    <!-- The plan moved under us. Reloading would take the unsaved buffer with
+       it, so the choice is the user's rather than ours. -->
+    <div
+      v-if="stale"
+      class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-surface-amber-1 px-5 py-2 text-sm text-ink-orange-9"
+      role="alert"
     >
-      {{ item.note || __(item.activity_type) }} · {{ item.planned_date }}
-    </button>
-  </div>
+      <span class="flex-1">
+        {{
+          __(
+            'This week changed somewhere else since you opened it. Your edits are still here, but saving would overwrite the newer version.',
+          )
+        }}
+      </span>
+      <Button
+        size="sm"
+        :label="__('Reload the week')"
+        @click="reloadAfterConflict"
+      />
+      <Button
+        size="sm"
+        variant="ghost"
+        :label="__('Keep editing')"
+        @click="stale = false"
+      />
+    </div>
 
-  <ErrorState
-    v-if="plan.error"
-    class="flex-1"
-    :error="plan.error"
-    :retry="() => plan.reload()"
-  />
+    <div
+      v-if="outside.length"
+      class="border-b px-5 py-2 text-sm text-ink-gray-6"
+    >
+      {{
+        __(
+          '{0} planned item(s) now fall outside this week. Save to move them.',
+          [outside.length],
+        )
+      }}
+      <button
+        v-for="item in outside"
+        :key="item._uid"
+        class="ml-2 underline underline-offset-2 hover:text-ink-gray-8"
+        @click="goToWeekOf(item)"
+      >
+        {{ item.note || __(item.activity_type) }} · {{ item.planned_date }}
+      </button>
+    </div>
 
-  <EmptyState
-    v-else-if="showReadOnlyEmpty"
-    class="flex-1"
-    icon="lucide-calendar"
-    :title="__('Nothing planned for this week')"
-    :description="
-      __('No activities are planned for the week of {0}.', [weekLabel])
-    "
-  />
+    <ErrorState
+      v-if="plan.error"
+      class="flex-1"
+      :error="plan.error"
+      :retry="() => plan.reload()"
+    />
 
-  <!-- An editable week keeps its columns even when it is empty — they are the
+    <EmptyState
+      v-else-if="showReadOnlyEmpty"
+      class="flex-1"
+      icon="lucide-calendar"
+      :title="__('Nothing planned for this week')"
+      :description="
+        __('No activities are planned for the week of {0}.', [weekLabel])
+      "
+    />
+
+    <!-- An editable week keeps its columns even when it is empty — they are the
        only way to add anything — so the empty state is a band above them
        rather than a replacement for them. -->
-  <div
-    v-else-if="showEditableEmpty"
-    class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-5 py-2"
-  >
-    <LucideCalendarClock class="size-4 text-ink-gray-5" aria-hidden="true" />
-    <span class="text-p-base text-ink-gray-7">
-      {{ __('Nothing planned for this week yet.') }}
-    </span>
-    <span class="text-p-base text-ink-gray-5">
-      {{
-        __(
-          'Add activities day by day, or let the planner draft a week from your open suggestions.',
-        )
-      }}
-    </span>
-  </div>
+    <div
+      v-else-if="showEditableEmpty"
+      class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-5 py-2"
+    >
+      <LucideCalendarClock class="size-4 text-ink-gray-5" aria-hidden="true" />
+      <span class="text-p-base text-ink-gray-7">
+        {{ __('Nothing planned for this week yet.') }}
+      </span>
+      <span class="text-p-base text-ink-gray-5">
+        {{
+          __(
+            'Add activities day by day, or let the planner draft a week from your open suggestions.',
+          )
+        }}
+      </span>
+    </div>
 
-  <!-- The columns flex to fill, and the min-width is only what decides when the
+    <!-- The columns flex to fill, and the min-width is only what decides when the
        week starts scrolling sideways instead. 9rem x 7 = 1008px, so a 1280px
        laptop still shows a whole week; 11rem needed 1232px against the 1200px a
        1440px screen actually offers, and put a horizontal scrollbar under every
        desktop. -->
-  <div
-    v-if="!plan.error && !showReadOnlyEmpty"
-    class="v-lux-stage flex flex-1 flex-col overflow-y-auto sm:flex-row sm:overflow-x-auto"
-  >
     <div
-      v-for="day in weekDays"
-      :key="day.date"
-      class="flex flex-col border-b last:border-b-0 sm:min-w-36 sm:flex-1 sm:border-b-0 sm:border-r sm:last:border-r-0"
-      :class="[
-        day.isWeekend ? 'bg-surface-gray-1' : '',
-        dragOverDate === day.date ? 'v-drop-target' : '',
-      ]"
-      @dragover="onDragOver($event, day.date)"
-      @dragleave="onDragLeave(day.date)"
-      @drop="onDrop($event, day.date)"
+      v-if="!plan.error && !showReadOnlyEmpty"
+      class="v-lux-stage flex flex-1 flex-col overflow-y-auto sm:flex-row sm:overflow-x-auto"
     >
-      <!-- Today wears the position rail's gradient as an underline: the one
-           signature the rest of the app already reads as "you are here". -->
       <div
-        class="relative flex items-baseline justify-between border-b px-3 py-2"
-        :class="day.isToday ? 'text-ink-gray-9' : 'text-ink-gray-5'"
+        v-for="day in weekDays"
+        :key="day.date"
+        class="flex flex-col border-b last:border-b-0 sm:min-w-36 sm:flex-1 sm:border-b-0 sm:border-r sm:last:border-r-0"
+        :class="[
+          day.isWeekend ? 'bg-surface-gray-1' : '',
+          dragOverDate === day.date ? 'v-drop-target' : '',
+        ]"
+        @dragover="onDragOver($event, day.date)"
+        @dragleave="onDragLeave(day.date)"
+        @drop="onDrop($event, day.date)"
       >
-        <span class="v-kpi-label">{{ dayName(day.date) }}</span>
-        <span
-          class="font-display text-lg font-semibold leading-none tabular-nums tracking-tight"
-          :class="day.isToday && 'text-brand'"
+        <!-- Today wears the position rail's gradient as an underline: the one
+           signature the rest of the app already reads as "you are here". -->
+        <div
+          class="relative flex items-baseline justify-between border-b px-3 py-2"
+          :class="day.isToday ? 'text-ink-gray-9' : 'text-ink-gray-5'"
         >
-          {{ dayOfMonth(day.date) }}
-        </span>
-        <span
-          v-if="day.isToday"
-          class="absolute inset-x-3 -bottom-px h-0.5 rounded-full"
-          :style="{ background: 'var(--brand-gradient)' }"
-          aria-hidden="true"
-        />
-      </div>
-
-      <div class="flex flex-1 flex-col gap-1.5 p-1.5">
-        <template v-if="plan.loading">
-          <Skeleton
-            v-for="n in 2"
-            :key="n"
-            shape="block"
-            height="3.25rem"
-            rounded="6px"
-            :label="day.index === 0 && n === 1 ? __('Loading this week') : ''"
-          />
-        </template>
-
-        <template v-else>
-          <div
-            v-for="item in byDay[day.date]"
-            :key="item._uid"
-            class="v-plan-card v-glass group rounded-5 px-2.5 py-2"
-            :class="[
-              dragging === item ? 'opacity-50' : '',
-              canEdit ? 'v-glass-hover' : '',
-            ]"
-            :data-plan-uid="item._uid"
-            :draggable="canEdit"
-            @dragstart="onDragStart($event, item)"
-            @dragend="onDragEnd"
-            @keydown="onCardKeydown($event, item)"
+          <span class="v-kpi-label">{{ dayName(day.date) }}</span>
+          <span
+            class="font-display text-lg font-semibold leading-none tabular-nums tracking-tight"
+            :class="day.isToday && 'text-brand'"
           >
-            <div class="flex items-center justify-between gap-1">
-              <div class="flex min-w-0 items-center gap-1.5">
-                <component
-                  :is="typeIcon(item.activity_type)"
-                  class="size-3.5 shrink-0"
-                  :class="statusColor(item.status)"
-                  aria-hidden="true"
-                />
-                <!-- The card title is the edit affordance: a real button, so it
+            {{ dayOfMonth(day.date) }}
+          </span>
+          <span
+            v-if="day.isToday"
+            class="absolute inset-x-3 -bottom-px h-0.5 rounded-full"
+            :style="{ background: 'var(--brand-gradient)' }"
+            aria-hidden="true"
+          />
+        </div>
+
+        <div class="flex flex-1 flex-col gap-1.5 p-1.5">
+          <template v-if="plan.loading">
+            <Skeleton
+              v-for="n in 2"
+              :key="n"
+              shape="block"
+              height="3.25rem"
+              rounded="6px"
+              :label="day.index === 0 && n === 1 ? __('Loading this week') : ''"
+            />
+          </template>
+
+          <template v-else>
+            <div
+              v-for="item in byDay[day.date]"
+              :key="item._uid"
+              class="v-plan-card v-glass group rounded-5 px-2.5 py-2"
+              :class="[
+                dragging === item ? 'opacity-50' : '',
+                canEdit ? 'v-glass-hover' : '',
+              ]"
+              :data-plan-uid="item._uid"
+              :draggable="canEdit"
+              @dragstart="onDragStart($event, item)"
+              @dragend="onDragEnd"
+              @keydown="onCardKeydown($event, item)"
+            >
+              <div class="flex items-center justify-between gap-1">
+                <div class="flex min-w-0 items-center gap-1.5">
+                  <component
+                    :is="typeIcon(item.activity_type)"
+                    class="size-3.5 shrink-0"
+                    :class="statusColor(item.status)"
+                    aria-hidden="true"
+                  />
+                  <!-- The card title is the edit affordance: a real button, so it
                      is reachable by keyboard and carries the item's own name.
                      Two lines, not one: a day column is ~140px wide, and a
                      single truncated line renders most notes as "Set the ne…". -->
-                <button
-                  data-plan-focus
-                  class="line-clamp-2 rounded-4 text-left text-sm text-ink-gray-8 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-                  :class="canEdit ? 'hover:text-ink-gray-9' : 'cursor-default'"
-                  :disabled="!canEdit"
-                  @click="editItem(item)"
-                >
-                  {{ item.note || __(item.activity_type) }}
-                </button>
-              </div>
-              <div class="flex shrink-0 items-center gap-0.5">
-                <Tooltip
-                  v-if="item.manual_override"
-                  :text="
-                    __(
-                      'Marked by hand — the daily matcher leaves this item alone.',
-                    )
-                  "
-                >
-                  <LucideUserCheck
-                    class="size-3.5 text-ink-gray-5"
-                    :aria-label="__('Manually overridden')"
-                    role="img"
-                  />
-                </Tooltip>
-                <Dropdown
-                  v-if="canEdit"
-                  :options="itemActions(item)"
-                  align="end"
-                >
+                  <button
+                    data-plan-focus
+                    class="line-clamp-2 rounded-4 text-left text-sm text-ink-gray-8 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                    :class="
+                      canEdit ? 'hover:text-ink-gray-9' : 'cursor-default'
+                    "
+                    :disabled="!canEdit"
+                    @click="editItem(item)"
+                  >
+                    {{
+                      item.note ||
+                      item.organization ||
+                      __(activityLabel(item.activity_type))
+                    }}
+                  </button>
+                </div>
+                <div class="flex shrink-0 items-center gap-0.5">
+                  <Tooltip
+                    v-if="item.manual_override"
+                    :text="
+                      __(
+                        'Marked by hand — the daily matcher leaves this item alone.',
+                      )
+                    "
+                  >
+                    <LucideUserCheck
+                      class="size-3.5 text-ink-gray-5"
+                      :aria-label="__('Manually overridden')"
+                      role="img"
+                    />
+                  </Tooltip>
+                  <Dropdown
+                    v-if="canEdit"
+                    :options="itemActions(item)"
+                    align="end"
+                  >
+                    <Button
+                      class="v-card-action !size-5"
+                      variant="ghost"
+                      icon="lucide-more-horizontal"
+                      :label="__('Actions for this planned activity')"
+                    />
+                  </Dropdown>
                   <Button
+                    v-if="canEdit"
                     class="v-card-action !size-5"
                     variant="ghost"
-                    icon="lucide-more-horizontal"
-                    :label="__('Actions for this planned activity')"
+                    icon="lucide-x"
+                    :label="__('Remove planned activity')"
+                    @click="removeItem(item)"
                   />
-                </Dropdown>
-                <Button
-                  v-if="canEdit"
-                  class="v-card-action !size-5"
-                  variant="ghost"
-                  icon="lucide-x"
-                  :label="__('Remove planned activity')"
-                  @click="removeItem(item)"
-                />
+                </div>
               </div>
+
+              <router-link
+                v-if="item.organization"
+                :to="{
+                  name: 'Organization',
+                  params: { organizationId: item.organization },
+                }"
+                class="mt-1 block truncate rounded-4 text-xs text-ink-gray-6 underline-offset-2 hover:text-ink-gray-8 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                :title="item.organization"
+              >
+                {{ item.organization }}
+              </router-link>
+
+              <router-link
+                v-if="referenceRoute(item)"
+                :to="referenceRoute(item)"
+                class="mt-1 block truncate rounded-4 text-xs text-ink-gray-5 underline-offset-2 hover:text-ink-gray-7 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+              >
+                {{ referenceKind(item) }} · {{ referenceTitle(item) }}
+              </router-link>
+              <div
+                v-else-if="item.reference_docname"
+                class="mt-1 truncate text-xs text-ink-gray-5"
+              >
+                {{ referenceKind(item) }} · {{ referenceTitle(item) }}
+              </div>
+
+              <div class="mt-1 text-xs" :class="statusColor(item.status)">
+                {{ __(activityLabel(item.activity_type)) }}
+                <template v-if="item.status !== 'Planned'">
+                  · {{ statusLabel(item.status) }}
+                </template>
+              </div>
+              <p
+                v-if="item.outcome && item.status !== 'Planned'"
+                class="mt-0.5 line-clamp-2 text-xs text-ink-gray-6"
+                :title="item.outcome"
+              >
+                {{ item.outcome }}
+              </p>
             </div>
 
-            <router-link
-              v-if="referenceRoute(item)"
-              :to="referenceRoute(item)"
-              class="mt-1 block truncate rounded-4 text-xs text-ink-gray-5 underline-offset-2 hover:text-ink-gray-7 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-            >
-              {{ referenceKind(item) }} · {{ referenceTitle(item) }}
-            </router-link>
-            <div
-              v-else-if="item.reference_docname"
-              class="mt-1 truncate text-xs text-ink-gray-5"
-            >
-              {{ referenceKind(item) }} · {{ referenceTitle(item) }}
-            </div>
+            <Button
+              v-if="canEdit"
+              class="w-full opacity-60 hover:opacity-100 focus-visible:opacity-100"
+              variant="ghost"
+              icon="lucide-plus"
+              :label="__('Add an activity')"
+              @click="addItem(day.date)"
+            />
 
-            <div
-              v-if="item.status !== 'Planned'"
-              class="mt-1 text-xs"
-              :class="statusColor(item.status)"
+            <p
+              v-else-if="!byDay[day.date]?.length"
+              class="px-1 py-2 text-xs text-ink-gray-4"
             >
-              {{ statusLabel(item.status) }}
-            </div>
-          </div>
-
-          <Button
-            v-if="canEdit"
-            class="w-full opacity-60 hover:opacity-100 focus-visible:opacity-100"
-            variant="ghost"
-            icon="lucide-plus"
-            :label="__('Add an activity')"
-            @click="addItem(day.date)"
-          />
-
-          <p
-            v-else-if="!byDay[day.date]?.length"
-            class="px-1 py-2 text-xs text-ink-gray-4"
-          >
-            {{ __('Nothing planned') }}
-          </p>
-        </template>
+              {{ __('Nothing planned') }}
+            </p>
+          </template>
+        </div>
       </div>
     </div>
-  </div>
+  </template>
 
   <!-- No count in the message: "1 unsaved changes" is the kind of thing __()
        cannot pluralise, and the header badge behind the dialog already has the
@@ -394,9 +437,6 @@
 // meaning intact.
 import LucideCalendarClock from '~icons/lucide/calendar-clock'
 import LucideMapPin from '~icons/lucide/map-pin'
-import { PhCheckCircle as LucideCircleCheck } from '@phosphor-icons/vue'
-import { PhEnvelope as LucideMail } from '@phosphor-icons/vue'
-import { PhPhone as LucidePhone } from '@phosphor-icons/vue'
 import { PhSparkle as LucideSparkles } from '@phosphor-icons/vue'
 import { PhUserCheck as LucideUserCheck } from '@phosphor-icons/vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
@@ -405,13 +445,20 @@ import ErrorState from '@/components/ui/ErrorState.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import ViewBreadcrumbs from '@/components/ViewBreadcrumbs.vue'
+import TeamWeek from '@/components/Planner/TeamWeek.vue'
+import { statusColor, statusLabel, typeIcon } from '@/utils/plannerDisplay'
 import { useConfirmGate } from '@/composables/confirmGate'
 import { describeError } from '@/utils/describeError'
 import { quiet } from '@/utils/quiet'
 import { renderFieldLayoutDialog } from '@/utils/renderFieldLayoutDialog'
 import {
+  ACTIVITY_TYPES,
   EDITABLE_ITEM_FIELDS,
+  EVENT_KINDS,
+  LOGGABLE_TYPES,
   MATCH_HORIZON_WEEKS,
+  PLANNABLE_TYPES,
+  activityLabel,
   addDays,
   dedupeProposals,
   groupItemsByDay,
@@ -485,9 +532,17 @@ const titles = reactive({})
 
 let uidSeq = 0
 
+/* The rep picker's extra row: the whole team's week, read-only. Not a user
+   name, so it can never collide with one. */
+const TEAM = '__team__'
+const isTeam = computed(() => planUser.value === TEAM)
+
 const plan = createResource({
   url: 'crm.api.rep_plan.get_plan',
-  makeParams: () => ({ week_start: weekStart.value, user: planUser.value }),
+  makeParams: () => ({
+    week_start: weekStart.value,
+    user: isTeam.value ? session.user : planUser.value,
+  }),
   auto: true,
   /* Cleared before the request, not after it: leaving week N's rows on screen
      under week N+1's heading — or one rep's plan under another rep's name —
@@ -544,6 +599,7 @@ function mergeServerPlan(data) {
     return {
       ...item,
       status: fresh.status,
+      outcome: fresh.outcome,
       manual_override: fresh.manual_override,
       fulfilled_by_doctype: fresh.fulfilled_by_doctype,
       fulfilled_by: fresh.fulfilled_by,
@@ -601,7 +657,13 @@ function repLabel(name) {
 
 const repOptions = computed(() => {
   const names = new Set([session.user, ...(visibleReps.data || [])])
-  return [...names].map((name) => ({ label: repLabel(name), value: name }))
+  const reps = [...names].map((name) => ({
+    label: repLabel(name),
+    value: name,
+  }))
+  // a team of one has no team week to show
+  if (reps.length < 2) return reps
+  return [{ label: __('Whole team'), value: TEAM }, ...reps]
 })
 
 function errorText(error) {
@@ -629,19 +691,19 @@ async function confirmDiscard() {
 async function shiftWeek(days) {
   if (!(await confirmDiscard())) return
   weekStart.value = addDays(weekStart.value, days)
-  quiet(plan.reload())
+  reloadWeek()
 }
 
 async function goToCurrentWeek() {
   if (!(await confirmDiscard())) return
   weekStart.value = mondayOf(today.value)
-  quiet(plan.reload())
+  reloadWeek()
 }
 
 async function goToWeekOf(item) {
   if (!(await confirmDiscard())) return
   weekStart.value = mondayOf(item.planned_date)
-  quiet(plan.reload())
+  reloadWeek()
 }
 
 async function requestUser(name) {
@@ -652,7 +714,14 @@ async function requestUser(name) {
      the real component -- a native <select> would need the value restored. */
   if (!(await confirmDiscard())) return
   planUser.value = name
-  quiet(plan.reload())
+  reloadWeek()
+}
+
+/* The team week fetches for itself when the week changes (TeamWeek watches
+   its prop); only a single rep's week goes through `plan`. */
+function reloadWeek() {
+  if (isTeam.value) resetBuffers()
+  else quiet(plan.reload())
 }
 
 function warnOnUnload(event) {
@@ -687,30 +756,6 @@ function dayName(date) {
 
 function dayOfMonth(date) {
   return dayjs(date).format('D')
-}
-
-function typeIcon(type) {
-  return (
-    {
-      Call: LucidePhone,
-      Meeting: LucideCalendarClock,
-      Task: LucideCircleCheck,
-      Email: LucideMail,
-      Visit: LucideMapPin,
-    }[type] || LucideCircleCheck
-  )
-}
-
-function statusColor(status) {
-  if (status === 'Done') return 'text-ink-green-9'
-  if (status === 'Missed') return 'text-ink-red-9'
-  return 'text-ink-gray-5'
-}
-
-function statusLabel(status) {
-  if (status === 'Done') return __('Done')
-  if (status === 'Missed') return __('Missed')
-  return __('Planned')
 }
 
 function referenceKind(item) {
@@ -766,13 +811,29 @@ function loadReferenceTitles(items) {
 
 // -- editing ----------------------------------------------------------------
 
-function itemDialogFields() {
+function typeOptions(types) {
+  return types.map((t) => ({ label: __(t.label), value: t.value }))
+}
+
+/* `current` keeps a logged kind (Unplanned Meeting) selectable when such an
+   item is edited, without offering it for anything new. */
+function itemDialogFields(current = null) {
+  const types =
+    current && !PLANNABLE_TYPES.some((t) => t.value === current)
+      ? ACTIVITY_TYPES
+      : PLANNABLE_TYPES
   return [
     {
       fieldname: 'activity_type',
       fieldtype: 'Select',
       label: __('Activity'),
-      options: 'Call\nMeeting\nTask\nEmail\nVisit',
+      options: typeOptions(types),
+    },
+    {
+      fieldname: 'organization',
+      fieldtype: 'Link',
+      label: __('Customer'),
+      options: 'CRM Organization',
     },
     { fieldname: 'planned_date', fieldtype: 'Date', label: __('Day') },
     { fieldname: 'note', fieldtype: 'Data', label: __('Note') },
@@ -803,6 +864,7 @@ function normaliseDialogData(data) {
     activity_type: data.activity_type,
     planned_date: data.planned_date,
     note: data.note || null,
+    organization: data.organization || null,
     reference_doctype,
     // clearing the doctype has to clear the name with it, or the row keeps a
     // dangling reference the server will happily store
@@ -818,7 +880,7 @@ async function addItem(date) {
     size: 'md',
     fields: itemDialogFields(),
     required: ['activity_type', 'planned_date'],
-    defaults: { activity_type: 'Task', planned_date: date },
+    defaults: { activity_type: 'Visit', planned_date: date },
     submitLabel: __('Add to plan'),
     cancelLabel: __('Cancel'),
   })
@@ -836,7 +898,7 @@ async function editItem(item) {
   const data = await renderFieldLayoutDialog({
     title: __('Edit planned activity'),
     size: 'md',
-    fields: itemDialogFields(),
+    fields: itemDialogFields(item.activity_type),
     required: ['activity_type', 'planned_date'],
     defaults,
     submitLabel: __('Save changes'),
@@ -942,9 +1004,18 @@ function itemActions(item) {
   if (item.name) {
     if (item.status !== 'Done') {
       actions.push({
-        label: __('Mark as done'),
+        label: __('Log the outcome…'),
         icon: 'lucide-check-circle',
-        onClick: () => overrideItem('mark_fulfilled', item),
+        onClick: () => completeItem(item),
+      })
+    }
+    // a done item holds its visit record; cancelling over it would count the
+    // visit both ways, so it is handed back to the matcher first
+    if (item.status !== 'Cancelled' && item.status !== 'Done') {
+      actions.push({
+        label: __('Cancel it…'),
+        icon: 'lucide-ban',
+        onClick: () => cancelItem(item),
       })
     }
     if (item.status !== 'Missed') {
@@ -987,18 +1058,91 @@ async function overrideItem(method, item) {
   }
 }
 
-/* An unplanned visit -- "called to site for a breakdown" in MBP's words --
-   is recorded as already done. The server creates the calendar event and the
-   fulfilled item; we only collect the facts. */
-async function logVisit() {
+/* Nothing is ticked off without saying what happened -- the old rep app's
+   rule, and the one MBP's managers asked to keep. A visit-type item also goes
+   on the calendar against its customer, at the time given here (the planned
+   day when left empty). */
+async function completeItem(item) {
+  const fields = [
+    {
+      fieldname: 'outcome',
+      fieldtype: 'Small Text',
+      label: __('What happened'),
+    },
+  ]
+  if (EVENT_KINDS.includes(item.activity_type)) {
+    fields.push({ fieldname: 'when', fieldtype: 'Datetime', label: __('When') })
+  }
   const data = await renderFieldLayoutDialog({
-    title: __('Log an unplanned visit'),
+    title: __('Log the outcome'),
+    size: 'md',
+    fields,
+    required: ['outcome'],
+    submitLabel: __('Mark as done'),
+    cancelLabel: __('Cancel'),
+  })
+  if (!data) return
+  try {
+    const plan = await call('crm.api.rep_plan.complete_item', {
+      item: item.name,
+      outcome: data.outcome,
+      when: data.when || undefined,
+    })
+    mergeServerPlan(plan)
+    toast.success(__('Marked as done.'))
+  } catch (error) {
+    toast.error(errorText(error))
+  }
+}
+
+async function cancelItem(item) {
+  const data = await renderFieldLayoutDialog({
+    title: __('Cancel this activity'),
     size: 'md',
     fields: [
       {
+        fieldname: 'reason',
+        fieldtype: 'Small Text',
+        label: __('Why was it cancelled?'),
+      },
+    ],
+    required: ['reason'],
+    submitLabel: __('Cancel activity'),
+    cancelLabel: __('Keep it'),
+  })
+  if (!data) return
+  try {
+    const plan = await call('crm.api.rep_plan.cancel_item', {
+      item: item.name,
+      reason: data.reason,
+    })
+    mergeServerPlan(plan)
+    toast.success(__('Cancelled.'))
+  } catch (error) {
+    toast.error(errorText(error))
+  }
+}
+
+/* Unplanned work -- "called to site for a breakdown" in MBP's words, a
+   delivery dropped off, a call taken -- is recorded as already done. The
+   server creates the calendar event (for the visit kinds) and the fulfilled
+   item; we only collect the facts. The dialog reopens with what was typed when
+   a visit kind is missing its customer, rather than losing the account. */
+function logDialog(defaults) {
+  return renderFieldLayoutDialog({
+    title: __('Log an activity'),
+    size: 'md',
+    fields: [
+      {
+        fieldname: 'activity_type',
+        fieldtype: 'Select',
+        label: __('Activity'),
+        options: typeOptions(LOGGABLE_TYPES),
+      },
+      {
         fieldname: 'organization',
         fieldtype: 'Link',
-        label: __('Organization'),
+        label: __('Customer'),
         options: 'CRM Organization',
       },
       { fieldname: 'when', fieldtype: 'Datetime', label: __('When') },
@@ -1024,15 +1168,33 @@ async function logVisit() {
         options: 'reference_doctype',
       },
     ],
-    required: ['organization', 'note'],
-    submitLabel: __('Log visit'),
+    required: ['activity_type', 'note'],
+    defaults,
+    submitLabel: __('Log activity'),
     cancelLabel: __('Cancel'),
   })
+}
+
+async function logVisit() {
+  let data = await logDialog({ activity_type: 'Unplanned Meeting' })
+  while (
+    data &&
+    EVENT_KINDS.includes(data.activity_type) &&
+    !data.organization
+  ) {
+    toast.error(
+      __('Choose the customer for this {0}.', [
+        __(activityLabel(data.activity_type)),
+      ]),
+    )
+    data = await logDialog(data)
+  }
   if (!data) return
   logging.value = true
   try {
     const plan = await call('crm.api.rep_plan.log_unplanned_visit', {
-      organization: data.organization,
+      activity_type: data.activity_type,
+      organization: data.organization || undefined,
       note: data.note,
       when: data.when || undefined,
       reference_doctype: data.reference_doctype || undefined,
@@ -1056,7 +1218,12 @@ async function logVisit() {
       }
       loadReferenceTitles(plan.items)
     }
-    toast.success(__('Visit logged for the week of {0}', [plan.week_start]))
+    toast.success(
+      __('{0} logged for the week of {1}', [
+        __(activityLabel(data.activity_type)),
+        plan.week_start,
+      ]),
+    )
   } catch (error) {
     toast.error(errorText(error))
   } finally {

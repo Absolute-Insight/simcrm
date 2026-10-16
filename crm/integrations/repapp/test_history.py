@@ -74,8 +74,8 @@ class TransformTest(UnitTestCase):
 			("Done", "Completed", 1),
 		)
 		unplanned = h.shape_row(row(activityType="Unplanned Meeting", status="Canceled"), OWNERS)
-		self.assertEqual(unplanned["kind"], "Visit")
-		self.assertEqual((unplanned["item_status"], unplanned["event_status"]), ("Missed", "Cancelled"))
+		self.assertEqual(unplanned["kind"], "Unplanned Meeting")
+		self.assertEqual((unplanned["item_status"], unplanned["event_status"]), ("Cancelled", "Cancelled"))
 		self.assertEqual(h.shape_row(row(activityType="WhatsApp"), OWNERS)["kind"], "Call")
 		self.assertEqual(h.shape_row(row(activityType="E-Mail"), OWNERS)["kind"], "Email")
 		scheduled = h.shape_row(row(status="Rescheduled"), OWNERS)
@@ -237,13 +237,65 @@ class ImportTest(IntegrationTestCase):
 		self.assertIn("No new enquiries.", event.description)
 		self.assertEqual(frappe.db.get_value("CRM Rep Plan", {"user": REP}, "week_start"), date(2026, 3, 16))
 
-	def test_a_cancelled_visit_is_missed_with_a_cancelled_event_and_no_fulfilment(self):
+	def test_a_cancelled_visit_is_cancelled_and_holds_its_cancelled_event(self):
 		self.write([row(status="Canceled", notes="Office locked")])
 		self.run_import()
 		item = self.items_of(REP)[0]
-		self.assertEqual((item.status, item.manual_override, item.fulfilled_by), ("Missed", 1, None))
-		event = frappe.get_all("Event", filters={"owner": REP}, fields=["status", "event_category"])
+		self.assertEqual((item.status, item.manual_override), ("Cancelled", 1))
+		event = frappe.get_all("Event", filters={"owner": REP}, fields=["name", "status", "event_category"])
 		self.assertEqual([(e.status, e.event_category) for e in event], [("Cancelled", "Visit")])
+		self.assertEqual(item.fulfilled_by, event[0].name)
+
+	def test_every_row_carries_its_customer_and_a_finished_one_its_whole_note(self):
+		self.write([row(id="v"), row(id="c", activityType="Phone Call", notes="Rang about the quote")])
+		self.run_import()
+		rows = {
+			i.activity_type: i
+			for i in frappe.get_all(
+				"CRM Rep Plan Item",
+				filters={"parent": ("in", frappe.get_all("CRM Rep Plan", {"user": REP}, pluck="name"))},
+				fields=["activity_type", "organization", "outcome"],
+			)
+		}
+		self.assertEqual(rows["Visit"].organization, ORG)
+		self.assertEqual(rows["Call"].organization, ORG)
+		self.assertIn("--- Conclusion ---", rows["Visit"].outcome)
+
+	def test_an_unplanned_meeting_stays_one_and_gets_its_event(self):
+		self.write([row(activityType="Unplanned Meeting")])
+		summary = self.run_import()
+		item = self.items_of(REP)[0]
+		self.assertEqual((item.activity_type, item.status), ("Unplanned Meeting", "Done"))
+		self.assertEqual(summary["events"], 1)
+		self.assertEqual(frappe.db.get_value("Event", item.fulfilled_by, "event_category"), "Visit")
+
+	def test_a_later_export_completes_what_was_imported_as_scheduled(self):
+		"""The September import left 46 such rows live; the matcher then marked
+		every one Missed because the reps' logins were locked."""
+		self.write([row(id="s", status="Scheduled", completedAt="")])
+		self.run_import()
+		live = self.items_of(REP)[0]
+		frappe.db.set_value("CRM Rep Plan Item", live.name, "status", "Missed")  # the matcher's verdict
+		self.write([row(id="s", status="Completed", notes="Went, all good")])
+		summary = self.run_import()
+		self.assertEqual((summary["updated"], summary["imported"], summary["skipped"]), (1, 0, 0))
+		item = self.items_of(REP)[0]
+		self.assertEqual((item.name, item.status, item.manual_override), (live.name, "Done", 1))
+		self.assertEqual(frappe.db.get_value("Event", item.fulfilled_by, "status"), "Completed")
+		manifest = json.loads((self.dir / h.MANIFEST_NAME).read_text())["rows"]
+		self.assertEqual(manifest["s"]["event"], item.fulfilled_by)
+		# and once caught up it is left alone
+		again = self.run_import()
+		self.assertEqual((again["updated"], again["skipped"]), (0, 1))
+
+	def test_a_row_the_old_app_moved_to_another_day_is_reported_not_rewritten(self):
+		self.write([row(id="m", status="Scheduled", completedAt="", date="17/03/2026 09:00")])
+		self.run_import()
+		self.write([row(id="m", status="Completed", date="24/03/2026 09:00")])
+		summary = self.run_import()
+		self.assertEqual(summary["updated"], 0)
+		self.assertEqual([r["id"] for r in summary["not_updated"]], ["m"])
+		self.assertEqual(self.items_of(REP)[0].status, "Planned")
 
 	def test_a_scheduled_row_is_a_live_planned_item_the_matcher_owns(self):
 		self.write([row(status="Scheduled", completedAt="", date="22/09/2026 09:00")])

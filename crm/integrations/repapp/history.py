@@ -30,7 +30,14 @@ nothing Bianca sent is dropped.
 
 Re-running is safe: a manifest beside the CSVs records which Firestore ids have
 landed, and a dry run does all the work inside the transaction and rolls it
-back, so its report is real.
+back, so its report is real. A later export is news about rows already
+landed, too: one imported while still scheduled and since completed or
+cancelled in the old app is brought up to date (``updated`` in the summary)
+rather than skipped -- skipping it left the daily matcher to mark it Missed.
+
+A cancelled row is ``Cancelled``, not Missed, with its Cancelled event held in
+``fulfilled_by`` exactly as the planner's ``cancel_item`` does; every row
+carries its customer and, once finished, the whole note as its outcome.
 """
 
 from __future__ import annotations
@@ -47,7 +54,7 @@ from zoneinfo import ZoneInfo
 
 import frappe
 
-from crm.rep_planning import week_of
+from crm.rep_planning import EVENT_KINDS, week_of
 
 # plans written between commits; a rep's whole year is ~40 plans, so this is a
 # few reps per transaction
@@ -63,7 +70,9 @@ VISIT_LENGTH = timedelta(hours=1)
 # the old app's activity type -> the planner's
 PLAN_KIND = {
 	"Visit": "Visit",
-	"Unplanned Meeting": "Visit",
+	# kept as its own kind: it is still a customer visit (VISIT_KINDS), and the
+	# managers asked to see which visits were planned and which were not
+	"Unplanned Meeting": "Unplanned Meeting",
 	"Phone Call": "Call",
 	"WhatsApp": "Call",
 	"E-Mail": "Email",
@@ -72,7 +81,7 @@ PLAN_KIND = {
 # the old app's status -> (plan item status, Event status or None, manual_override)
 STATUS = {
 	"Completed": ("Done", "Completed", 1),
-	"Canceled": ("Missed", "Cancelled", 1),
+	"Canceled": ("Cancelled", "Cancelled", 1),
 	"Scheduled": ("Planned", None, 0),
 	"Rescheduled": ("Planned", None, 0),
 }
@@ -275,6 +284,7 @@ def _insert_event(shaped: dict, organization: str | None, contact: str | None) -
 	"""The Event as the rep: frappe stamps ``owner`` from the session on insert,
 	and every report and the calendar credit an event to its owner."""
 	label = organization or shaped["company"] or shaped["source_type"]
+	title = "Visit" if shaped["kind"] == "Visit" else shaped["kind"]
 	participants = []
 	if organization:
 		participants.append({"reference_doctype": "CRM Organization", "reference_docname": organization})
@@ -288,7 +298,7 @@ def _insert_event(shaped: dict, organization: str | None, contact: str | None) -
 		event = frappe.get_doc(
 			{
 				"doctype": "Event",
-				"subject": f"Visit: {label}",
+				"subject": f"{title}: {label}",
 				"starts_on": shaped["when"],
 				"ends_on": shaped["when"] + VISIT_LENGTH,
 				"event_type": "Private",
@@ -302,6 +312,48 @@ def _insert_event(shaped: dict, organization: str | None, contact: str | None) -
 	finally:
 		frappe.set_user(previous)  # nosemgrep: frappe-setuser
 	return event.name
+
+
+def _still_live(item: str) -> bool:
+	"""An item the import left to the matcher (it was still scheduled), not one a
+	rep or a previous import already closed."""
+	row = frappe.db.get_value("CRM Rep Plan Item", item, ["manual_override", "status"], as_dict=True)
+	# Done without an override means the matcher already found the Vectora record
+	# behind it; a second event for the same visit would count it twice
+	return bool(row) and not row.manual_override and row.status != "Done"
+
+
+def _catch_up(shaped: dict, landed: dict, organization, contacts) -> bool | str:
+	"""Bring an item imported while still scheduled up to the export's verdict.
+
+	Returns True when updated, or the reason it was left alone. The item keeps
+	its day: a row the old app moved to another week is a different plan, and
+	the matcher already judges the day it was on.
+	"""
+	item = frappe.db.get_value(
+		"CRM Rep Plan Item", landed["item"], ["name", "planned_date", "parent"], as_dict=True
+	)
+	if frappe.utils.getdate(item.planned_date) != shaped["when"].date():
+		return "the old app moved it to another day; left as the matcher judged it"
+	contact = contacts.find(shaped["contact"], organization)
+	event = None
+	if shaped["kind"] in EVENT_KINDS and shaped["event_status"]:
+		event = _insert_event(shaped, organization, contact)
+	frappe.db.set_value(
+		"CRM Rep Plan Item",
+		item.name,
+		{
+			"status": shaped["item_status"],
+			"manual_override": 1,
+			"note": short_note(shaped["note"]),
+			"outcome": shaped["note"],
+			"organization": organization,
+			"fulfilled_by_doctype": "Event" if event else None,
+			"fulfilled_by": event,
+		},
+	)
+	landed["event"] = event
+	return True
 
 
 def _plan_for(user: str, week_start):
@@ -350,6 +402,9 @@ def import_history(
 
 	# group first so each (rep, week) plan is saved once
 	weeks: dict[tuple[str, object], list[dict]] = defaultdict(list)
+	catch_up: list[tuple[dict, dict]] = []
+	summary["updated"] = 0
+	summary["not_updated"] = []
 	for row in read_reports(reports_dir):
 		summary["rows"] += 1
 		try:
@@ -362,7 +417,14 @@ def import_history(
 			continue
 		landed = manifest.get(shaped["id"])
 		if landed and frappe.db.exists("CRM Rep Plan Item", landed["item"]):
-			summary["skipped"] += 1
+			# A row first exported as Scheduled lands as a live Planned item. If a
+			# later export says it was completed or cancelled in the old app, that
+			# is news the item has to hear -- otherwise the daily matcher, finding
+			# no Vectora record behind it, marks it Missed for good.
+			if shaped["manual_override"] and _still_live(landed["item"]):
+				catch_up.append((shaped, landed))
+			else:
+				summary["skipped"] += 1
 			continue
 		weeks[(shaped["user"], shaped["week_start"])].append(shaped)
 
@@ -383,7 +445,7 @@ def import_history(
 				if contact:
 					summary["contacts_matched"] += 1
 				event = None
-				if shaped["kind"] == "Visit" and shaped["event_status"]:
+				if shaped["kind"] in EVENT_KINDS and shaped["event_status"]:
 					event = _insert_event(shaped, organization, contact)
 					summary["events"] += 1
 				note = short_note(shaped["note"])
@@ -395,12 +457,15 @@ def import_history(
 						"activity_type": shaped["kind"],
 						"planned_date": shaped["when"].date(),
 						"note": note,
+						"organization": organization,
+						# the whole note for a finished row; a plan's note is the plan
+						"outcome": shaped["note"] if shaped["manual_override"] else None,
 						"status": shaped["item_status"],
 						"manual_override": shaped["manual_override"],
-						"fulfilled_by_doctype": "Event"
-						if event and shaped["item_status"] == "Done"
-						else None,
-						"fulfilled_by": event if shaped["item_status"] == "Done" else None,
+						# a completed visit is fulfilled by its event; a cancelled one
+						# holds its Cancelled event the same way cancel_item does
+						"fulfilled_by_doctype": "Event" if event else None,
+						"fulfilled_by": event,
 					},
 				)
 				pending.append((shaped, event))
@@ -414,6 +479,14 @@ def import_history(
 			summary["plans"] += 1
 			done += 1
 			_commit_every(done)
+		for shaped, landed in catch_up:
+			organization = companies.get(shaped["company"]) if shaped["company"] else None
+			outcome = _catch_up(shaped, landed, organization, contacts)
+			if outcome is True:
+				summary["updated"] += 1
+				by_rep[shaped["user"]][shaped["kind"]][shaped["item_status"]] += 1
+			else:
+				summary["not_updated"].append({"id": shaped["id"], "reason": outcome})
 		if dry_run:
 			frappe.db.rollback()
 		elif not frappe.flags.in_test:
