@@ -1807,13 +1807,19 @@ def activity_cancellations(
 	to_date: str | None = None,
 	user: str | None = None,
 	group_by_user: bool = False,
+	skip_plan_cancellations: bool = False,
 ):
 	"""Tasks cancelled and calendar events cancelled in the period, per rep.
 
 	The old rep app's admin view charted cancellations per user next to
 	completions; the matcher never counts them because a cancellation fulfils
 	nothing. Tasks are dated by ``modified`` for the same reason the matcher is
-	(no completion timestamp exists); events by when they were to happen."""
+	(no completion timestamp exists); events by when they were to happen.
+
+	``skip_plan_cancellations`` leaves out an event that records a Cancelled
+	plan item (the planner writes a Cancelled Visit event as the item's
+	``fulfilled_by``): ``plan_adherence`` counts the item itself, and the event
+	is the same cancellation seen from the calendar."""
 	Task = DocType("CRM Task")
 	Event = DocType("Event")
 	end = add_days(to_date, 1)
@@ -1836,6 +1842,8 @@ def activity_cancellations(
 		.select(Event.owner.as_("user"), Count(Event.name).as_("cancelled"))
 		.groupby(Event.owner)
 	)
+	if skip_plan_cancellations:
+		events = events.where(Event.name.notin(_events_recording_plan_items(("Cancelled",))))
 	if user:
 		tasks = tasks.where(Task.assigned_to == user)
 		events = events.where(Event.owner == user)
@@ -1967,6 +1975,11 @@ def plan_adherence(
 	daily ``crm.rep_planning.match_actuals`` job, so today's items have not been
 	matched yet and counting them would dock every rep a day's work.
 
+	A Cancelled item (the rep called it off) is not due, so it is left out of
+	planned/done/missed and counted under ``cancelled`` instead, together with
+	cancelled tasks and events -- less the event that records a cancelled item,
+	which is the same cancellation twice.
+
 	Returns one row per rep when ``group_by_user``, otherwise a single total row.
 	"""
 	cutoff = min(getdate(to_date), getdate(add_days(nowdate(), -1)))
@@ -1981,20 +1994,36 @@ def plan_adherence(
 		.join(Plan)
 		.on(PlanItem.parent == Plan.name)
 		.where((PlanItem.planned_date >= from_date) & (PlanItem.planned_date <= cutoff))
+		# a cancelled item was called off, not due: holding it against the rep
+		# would make cancelling a visit the customer moved cost as much as missing one
+		.where(PlanItem.status != "Cancelled")
 		.select(
 			Count(PlanItem.name).as_("planned"),
 			Count(done).as_("done"),
 			Count(missed).as_("missed"),
 		)
 	)
+	# cancelled items are counted over the whole period, like the task and event
+	# cancellations beside them: a cancellation is settled the moment it is made
+	cancelled_items = (
+		frappe.qb.from_(PlanItem)
+		.join(Plan)
+		.on(PlanItem.parent == Plan.name)
+		.where((PlanItem.planned_date >= from_date) & (PlanItem.planned_date <= to_date))
+		.where(PlanItem.status == "Cancelled")
+		.select(Plan.user.as_("user"), Count(PlanItem.name).as_("cancelled"))
+		.groupby(Plan.user)
+	)
 	if group_by_user:
 		query = query.select(Plan.user.as_("user")).groupby(Plan.user).orderby(Plan.user)
 	if user:
 		query = query.where(Plan.user == user)
+		cancelled_items = cancelled_items.where(Plan.user == user)
 	else:
 		reps = visible_reps()
 		if reps is not None:
 			query = query.where(Plan.user.isin(reps))
+			cancelled_items = cancelled_items.where(Plan.user.isin(reps))
 
 	rows = query.run(as_dict=True)
 	if not group_by_user and not rows:
@@ -2005,14 +2034,19 @@ def plan_adherence(
 		row["missed"] = row["missed"] or 0
 		row["adherence"] = round(row["done"] / row["planned"] * 100) if row["planned"] else 0
 
-	cancellations = activity_cancellations(from_date, to_date, user, group_by_user)
+	# the plan's own cancellations plus the records', minus the calendar event
+	# that records a plan cancellation -- one cancelled visit is one cancellation
+	by_user: dict[str, int] = {}
+	for row in cancelled_items.run(as_dict=True) + activity_cancellations(
+		from_date, to_date, user, group_by_user=True, skip_plan_cancellations=True
+	):
+		by_user[row["user"]] = by_user.get(row["user"], 0) + (row["cancelled"] or 0)
 	if group_by_user:
-		by_user = {row["user"]: row["cancelled"] for row in cancellations}
 		seen = {row["user"] for row in rows}
 		for row in rows:
 			row["cancelled"] = by_user.get(row["user"], 0)
 		# a rep with cancellations and no plan items still has a row to show them on
-		for u, n in by_user.items():
+		for u, n in sorted(by_user.items()):
 			if u not in seen:
 				rows.append(
 					frappe._dict(
@@ -2020,9 +2054,24 @@ def plan_adherence(
 					)
 				)
 	else:
-		rows[0]["cancelled"] = cancellations[0]["cancelled"]
+		rows[0]["cancelled"] = sum(by_user.values())
 
 	return rows
+
+
+def _events_recording_plan_items(statuses: tuple[str, ...]):
+	"""Subquery: the Events that are the ``fulfilled_by`` of a plan item in ``statuses``.
+
+	A plan item and the calendar event that records it are one activity seen
+	from two sides; aggregates that read both use this to count it once."""
+	PlanItem = DocType("CRM Rep Plan Item")
+	return (
+		frappe.qb.from_(PlanItem)
+		.where(PlanItem.fulfilled_by_doctype == "Event")
+		.where(PlanItem.fulfilled_by.isnotnull())
+		.where(PlanItem.status.isin(statuses))
+		.select(PlanItem.fulfilled_by)
+	)
 
 
 def get_plan_adherence(
