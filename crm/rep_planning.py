@@ -91,6 +91,38 @@ ACTUAL_SOURCES = {
 	},
 }
 
+# Every activity a plan item can be, in the order the planner offers them.
+# MBP's reps log more kinds of work than the matcher can find records for: a
+# delivery, an admin morning, writing up visit reports. Those kinds have no
+# entry in ACTUAL_SOURCES, so nothing fulfils them automatically -- the rep
+# completes or cancels them by hand, with an outcome, the way the old rep app
+# worked. "Unplanned Meeting" is the old app's word for a visit nobody planned;
+# it is logged, never planned, but it is still a customer visit.
+ACTIVITY_TYPES = (
+	"Visit",
+	"Unplanned Meeting",
+	"Delivery",
+	"Call",
+	"Email",
+	"Meeting",
+	"Task",
+	"Admin",
+	"Reports",
+)
+
+# the kinds that count as a customer visit (visit targets, the visit report)
+VISIT_KINDS = ("Visit", "Unplanned Meeting")
+
+# the kinds whose completion or cancellation is put on the calendar as a Visit
+# event against the customer, so the calendar, client reliability and the
+# customer-interaction report all see it
+EVENT_KINDS = ("Visit", "Unplanned Meeting", "Delivery")
+
+# A plan item's statuses. Cancelled is the rep's call, never the matcher's:
+# an item is only ever Cancelled by hand (manual_override), and it is neither
+# done nor missed -- adherence leaves it out of what was due.
+FINAL_STATUSES = ("Done", "Missed", "Cancelled")
+
 # the reverse map, for callers handed a doctype (mark_fulfilled's claim check)
 KIND_BY_DOCTYPE = {source["doctype"]: kind for kind, source in ACTUAL_SOURCES.items()}
 

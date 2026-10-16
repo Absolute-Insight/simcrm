@@ -19,17 +19,21 @@ class CRMRepPlanItem(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		activity_type: DF.Literal["Call", "Meeting", "Task", "Email"]
+		activity_type: DF.Literal[
+			"Visit", "Unplanned Meeting", "Delivery", "Call", "Email", "Meeting", "Task", "Admin", "Reports"
+		]
 		fulfilled_by: DF.DynamicLink | None
 		fulfilled_by_doctype: DF.Link | None
 		manual_override: DF.Check
 		note: DF.Data | None
+		organization: DF.Link | None
+		outcome: DF.SmallText | None
 		parent: DF.Data
 		parentfield: DF.Data
 		parenttype: DF.Data
 		planned_date: DF.Date
 		reference_docname: DF.DynamicLink | None
 		reference_doctype: DF.Link | None
-		status: DF.Literal["Planned", "Done", "Missed"]
+		status: DF.Literal["Planned", "Done", "Missed", "Cancelled"]
 		suggestion: DF.Link | None
 	# end: auto-generated types
