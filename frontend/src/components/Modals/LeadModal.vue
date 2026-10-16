@@ -158,6 +158,21 @@ const tabs = createResource({
               field.prefix = getLeadStatus(lead.doc.status).color
             }
 
+            // Picked from the customer list (the Acumatica customers) rather
+            // than typed, so a lead for an existing customer names it exactly
+            // as the rest of the CRM does. The field itself stays free text:
+            // a lead is often a company that is not a customer yet, and
+            // "Create New" keeps the typed name for it instead of creating an
+            // organization before the lead is even qualified.
+            if (field.fieldname == 'organization') {
+              field.fieldtype = 'Link'
+              field.options = 'CRM Organization'
+              field.create = (value, close) => {
+                if (value) lead.doc.organization = value
+                close()
+              }
+            }
+
             if (field.fieldtype === 'Table') {
               lead.doc[field.fieldname] = []
             }

@@ -10,6 +10,10 @@ import {
   referenceRoute,
   rollupItems,
   rollupTotals,
+  teamGrid,
+  activityLabel,
+  PLANNABLE_TYPES,
+  LOGGABLE_TYPES,
   toSavePayload,
   todayInTimeZone,
   weekDayCells,
@@ -64,8 +68,8 @@ const GET_PLAN = {
     },
   ],
   rollup: {
-    Call: { planned: 2, done: 1, missed: 1 },
-    Task: { planned: 1, done: 0, missed: 0 },
+    Call: { planned: 2, done: 1, missed: 1, cancelled: 0 },
+    Task: { planned: 1, done: 0, missed: 0, cancelled: 0 },
   },
 }
 
@@ -234,6 +238,7 @@ describe('rollupItems / rollupTotals', () => {
       planned: 3,
       done: 1,
       missed: 1,
+      cancelled: 0,
     })
     expect(rollupTotals(rollupItems(GET_PLAN.items))).toEqual(
       rollupTotals(GET_PLAN.rollup),
@@ -241,8 +246,9 @@ describe('rollupItems / rollupTotals', () => {
   })
 
   it('totals an absent rollup as zeros rather than throwing', () => {
-    expect(rollupTotals(undefined)).toEqual({ planned: 0, done: 0, missed: 0 })
-    expect(rollupTotals({})).toEqual({ planned: 0, done: 0, missed: 0 })
+    const zero = { planned: 0, done: 0, missed: 0, cancelled: 0 }
+    expect(rollupTotals(undefined)).toEqual(zero)
+    expect(rollupTotals({})).toEqual(zero)
     expect(rollupItems(null)).toEqual({})
   })
 })
@@ -483,6 +489,7 @@ describe('toSavePayload', () => {
         note: 'Follow up on pricing',
         reference_doctype: 'CRM Deal',
         reference_docname: '000012',
+        organization: null,
         suggestion: 'SUG-0004',
       },
     ])
@@ -494,5 +501,88 @@ describe('toSavePayload', () => {
     ])
     expect(row).not.toHaveProperty('name')
     expect(row).toMatchObject({ activity_type: 'Email', note: null })
+  })
+})
+
+describe('cancelled items', () => {
+  it('count as planned and as cancelled, never as done or missed', () => {
+    const rollup = rollupItems([
+      { activity_type: 'Visit', status: 'Cancelled' },
+      { activity_type: 'Visit', status: 'Done' },
+    ])
+    expect(rollup.Visit).toEqual({
+      planned: 2,
+      done: 1,
+      missed: 0,
+      cancelled: 1,
+    })
+  })
+})
+
+describe('activity types', () => {
+  it("labels types in the reps' own words and keeps the stored value", () => {
+    expect(activityLabel('Call')).toBe('Phone Call')
+    expect(activityLabel('Email')).toBe('E-mail')
+    expect(activityLabel('Delivery')).toBe('Delivery')
+    expect(activityLabel('Something new')).toBe('Something new')
+  })
+
+  it('never offers an unplanned meeting as something to plan', () => {
+    expect(PLANNABLE_TYPES.map((t) => t.value)).not.toContain(
+      'Unplanned Meeting',
+    )
+    expect(LOGGABLE_TYPES.map((t) => t.value)).toContain('Unplanned Meeting')
+    expect(LOGGABLE_TYPES.map((t) => t.value)).not.toContain('Task')
+  })
+})
+
+describe('teamGrid', () => {
+  const days = ['2026-10-12', '2026-10-13']
+  const reps = [
+    { user: 'zed@x', full_name: 'Zed', items: [] },
+    {
+      user: 'amy@x',
+      full_name: 'Amy',
+      items: [
+        { activity_type: 'Visit', planned_date: '2026-10-12', status: 'Done' },
+        {
+          activity_type: 'Call',
+          planned_date: '2026-10-13',
+          status: 'Planned',
+        },
+      ],
+    },
+    {
+      user: 'bob@x',
+      full_name: 'Bob',
+      items: [
+        {
+          activity_type: 'Visit',
+          planned_date: '2026-10-13',
+          status: 'Missed',
+        },
+      ],
+    },
+  ]
+
+  it('puts reps with work first, then by name, and keeps empty reps', () => {
+    expect(teamGrid(reps, days).map((r) => r.full_name)).toEqual([
+      'Amy',
+      'Bob',
+      'Zed',
+    ])
+  })
+
+  it('buckets each rep by day and totals them', () => {
+    const amy = teamGrid(reps, days)[0]
+    expect(amy.byDay['2026-10-12']).toHaveLength(1)
+    expect(amy.byDay['2026-10-13']).toHaveLength(1)
+    expect(amy.totals).toEqual({ planned: 2, done: 1, missed: 0, cancelled: 0 })
+  })
+
+  it('narrows to one activity type', () => {
+    const visits = teamGrid(reps, days, 'Visit')
+    expect(visits.find((r) => r.user === 'amy@x').count).toBe(1)
+    expect(visits.find((r) => r.user === 'bob@x').count).toBe(1)
   })
 })
