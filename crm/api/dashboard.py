@@ -2154,10 +2154,12 @@ def _tidy(value: float) -> float | int:
 def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list[dict]:
 	"""Customer visits per rep in the period, against their weekly visit target.
 
-	A visit is a plan item of a VISIT_KINDS type -- planned or logged after the
-	fact (an unplanned meeting is still a customer visit). ``scheduled`` is every
-	such item dated in the period; ``completed``/``cancelled``/``missed``/``open``
-	split it by status.
+	A visit is a plan item of a TARGET_KINDS type: a planned Visit. Calls,
+	emails, deliveries and admin never count, and neither does an unplanned
+	meeting -- MBP's managers measure the target on planned visits, so those are
+	reported beside it as ``unplanned`` (done ones). ``scheduled`` is every
+	planned visit dated in the period; ``completed``/``cancelled``/``missed``/
+	``open`` split it by status.
 
 	``target`` is the whole period's share of the weekly target (pro-rated by
 	working days, ``crm.api.visit_targets.target_for``); ``target_to_date`` is
@@ -2169,18 +2171,26 @@ def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list
 	One row per rep in scope who has a target or any visit in the period.
 	"""
 	from crm.api.visit_targets import target_for
-	from crm.rep_planning import VISIT_KINDS
+	from crm.rep_planning import TARGET_KINDS
 
 	query, PlanItem, Plan = _plan_items_in(from_date, to_date, user)
 	counts = {
 		row.user: row
-		for row in query.where(PlanItem.activity_type.isin(VISIT_KINDS))
+		for row in query.where(PlanItem.activity_type.isin(TARGET_KINDS))
 		.select(Plan.user.as_("user"), *_status_counts(PlanItem))
 		.groupby(Plan.user)
 		.run(as_dict=True)
 	}
+	query, PlanItem, Plan = _plan_items_in(from_date, to_date, user)
+	unplanned = dict(
+		query.where(PlanItem.activity_type == "Unplanned Meeting")
+		.where(PlanItem.status == "Done")
+		.select(Plan.user, Count(PlanItem.name))
+		.groupby(Plan.user)
+		.run()
+	)
 
-	reps = set(counts)
+	reps = set(counts) | set(unplanned)
 	scope = _scope_users(user)
 	filters = {"visits_per_week": (">", 0)}
 	if scope is not None:
@@ -2214,6 +2224,7 @@ def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list
 					"cancelled": int(row.get("cancelled") or 0),
 					"missed": int(row.get("missed") or 0),
 					"open": int(row.get("open") or 0),
+					"unplanned": int(unplanned.get(rep) or 0),
 					# no target is not 0% of one -- the quota report's rule
 					"attainment": round(completed / target * 100) if target else None,
 					"on_track": on_track,

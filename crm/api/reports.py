@@ -323,7 +323,7 @@ REPORTS = {
 	},
 	"visits_by_rep": {
 		"title": "Visits against target",
-		"description": "Customer visits per rep in the period: scheduled, completed, cancelled and missed, against each rep's weekly visit target",
+		"description": "Planned customer visits per rep in the period: scheduled, completed, cancelled and missed, against each rep's weekly visit target. Calls, emails and other activities are not counted; unplanned meetings are shown beside the target",
 		"columns": [
 			{"key": "rep", "label": "Rep", "type": "text"},
 			{
@@ -344,6 +344,12 @@ REPORTS = {
 			{"key": "missed", "label": "Missed", "type": "number"},
 			{"key": "open", "label": "Still planned", "type": "number"},
 			{"key": "attainment", "label": "% of target", "type": "percent"},
+			{
+				"key": "unplanned",
+				"label": "Unplanned meetings",
+				"type": "number",
+				"description": "Unplanned meetings logged in the period; not counted against the target",
+			},
 			{"key": "on_track", "label": "Status", "type": "text"},
 		],
 		"get_rows": _visits_by_rep,

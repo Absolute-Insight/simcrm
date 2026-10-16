@@ -110,8 +110,13 @@ ACTIVITY_TYPES = (
 	"Reports",
 )
 
-# the kinds that count as a customer visit (visit targets, the visit report)
+# the kinds that count as a customer visit (customer interaction)
 VISIT_KINDS = ("Visit", "Unplanned Meeting")
+
+# what a visit target measures: planned visits only. MBP's managers set the
+# target for the visits a rep plans; an unplanned meeting is reported beside it
+# (visits_by_rep's "unplanned") but does not make up a missed plan.
+TARGET_KINDS = ("Visit",)
 
 # the kinds whose completion or cancellation is put on the calendar as a Visit
 # event against the customer, so the calendar, client reliability and the

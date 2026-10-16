@@ -272,7 +272,7 @@ class VisitsByRepTest(VisitFixture, IntegrationTestCase):
 				{"activity_type": "Visit", "planned_date": self.day(0), "status": "Done"},
 				{"activity_type": "Visit", "planned_date": self.day(1), "status": "Done"},
 				{"activity_type": "Visit", "planned_date": self.day(2), "status": "Done"},
-				# logged after the fact, still a customer visit
+				# logged after the fact: reported beside the target, not counted in it
 				{"activity_type": "Unplanned Meeting", "planned_date": self.day(3), "status": "Done"},
 				{
 					"activity_type": "Visit",
@@ -292,21 +292,27 @@ class VisitsByRepTest(VisitFixture, IntegrationTestCase):
 		self.assertEqual([r["user"] for r in rows], [REP])
 		return rows[0]
 
-	def test_counts_split_by_status_and_only_visits_count(self):
+	def test_counts_split_by_status_and_only_planned_visits_count(self):
 		make_target(REP, 5)
 		row = self.row()
 		self.assertEqual(
 			(row["scheduled"], row["completed"], row["cancelled"], row["missed"], row["open"]),
-			(6, 4, 1, 1, 0),
+			(5, 3, 1, 1, 0),
 		)
+		self.assertEqual(row["unplanned"], 1)
 		self.assertEqual((row["target"], row["target_to_date"]), (5, 5))
-		self.assertEqual(row["attainment"], 80)
+		self.assertEqual(row["attainment"], 60)
 		self.assertEqual(row["on_track"], "Behind")
 
 	def test_meeting_the_target_due_so_far_is_on_track(self):
-		make_target(REP, 4)
+		make_target(REP, 3)
 		row = self.row()
 		self.assertEqual((row["attainment"], row["on_track"]), (100, "On track"))
+
+	def test_an_unplanned_meeting_does_not_make_up_a_missed_visit(self):
+		make_target(REP, 4)
+		row = self.row()
+		self.assertEqual((row["completed"], row["unplanned"], row["on_track"]), (3, 1, "Behind"))
 
 	def test_no_target_is_not_behind_or_zero_percent(self):
 		row = self.row()
