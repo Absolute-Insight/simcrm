@@ -230,6 +230,20 @@ class LockedRepTest(VisitFixture, IntegrationTestCase):
 	def test_a_manager_sets_a_target_for_a_disabled_rep(self):
 		self.assertIn(REP, {row["user"] for row in targets_api.get_visit_targets()})
 		self.assertEqual(targets_api.set_visit_target(REP, 10)["visits_per_week"], 10)
+		self.make_hierarchy()
+		frappe.set_user(MANAGER)
+		self.assertIn(REP, {row["user"] for row in targets_api.get_visit_targets()})
+		self.assertEqual(targets_api.set_visit_target(REP, 12)["visits_per_week"], 12)
+
+	def test_a_scoped_manager_gets_no_row_for_a_disabled_rep_outside_their_tree(self):
+		from crm.api.rep_plan import get_team_week
+
+		frappe.db.set_value("User", OUTSIDER, "enabled", 0)
+		make_plan(OUTSIDER, self.monday, [{"activity_type": "Call", "planned_date": self.day(2)}])
+		self.make_hierarchy()
+		frappe.set_user(MANAGER)
+		rows = {rep["user"] for rep in get_team_week(self.start)["reps"]}
+		self.assertEqual(rows, {MANAGER, REP})
 
 	def test_a_rep_who_left_drops_out_once_their_plans_are_old(self):
 		from crm.api.rep_plan import get_team_week, get_visible_reps, planning_reps
