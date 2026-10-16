@@ -692,3 +692,34 @@ class EventKindsTest(IntegrationTestCase):
 
 	def test_the_reverse_map_still_names_meeting_for_an_event(self):
 		self.assertEqual(rep_planning.KIND_BY_DOCTYPE["Event"], "Meeting")
+
+
+class MatchOnCustomerUnitTest(UnitTestCase):
+	"""An item that names a customer only takes an event at that customer."""
+
+	def visit(self, **overrides):
+		return item(activity_type="Visit", reference_doctype=None, reference_docname=None, **overrides)
+
+	def event(self, **overrides):
+		row = actual(doctype="Event", kind="Visit", reference_doctype=None, reference_docname=None)
+		row.update(overrides)
+		return row
+
+	def test_an_event_at_another_customer_does_not_match(self):
+		out = match_items([self.visit(organization="Impala")], [self.event(organizations=["Canyon Coal"])])
+		self.assertEqual(out, {})
+
+	def test_an_event_at_the_customer_matches(self):
+		out = match_items([self.visit(organization="Impala")], [self.event(organizations=["Impala"])])
+		self.assertIn("item-1", out)
+
+	def test_an_actual_that_cannot_name_a_customer_is_not_blocked(self):
+		call = actual(kind="Call", doctype="CRM Call Log", reference_doctype=None, reference_docname=None)
+		out = match_items([item(activity_type="Call", reference_docname=None, organization="Impala")], [call])
+		self.assertIn("item-1", out)
+
+	def test_the_item_for_this_customer_wins_over_a_closer_vaguer_one(self):
+		vague = self.visit(name="vague", planned_date=date(2026, 8, 12))
+		specific = self.visit(name="specific", planned_date=date(2026, 8, 14), organization="Impala")
+		out = match_items([vague, specific], [self.event(organizations=["Impala"])])
+		self.assertEqual(list(out), ["specific"])

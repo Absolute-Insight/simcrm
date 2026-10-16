@@ -113,7 +113,7 @@ class RepPlanApiTest(IntegrationTestCase):
 			[{"activity_type": "Call", "planned_date": self.monday, "note": "Call Acme"}],
 		)
 		self.assertEqual(len(out["items"]), 1)
-		self.assertEqual(out["rollup"]["Call"], {"planned": 1, "done": 0, "missed": 0})
+		self.assertEqual(out["rollup"]["Call"], {"planned": 1, "done": 0, "missed": 0, "cancelled": 0})
 
 	def test_save_is_an_upsert_that_replaces_items(self):
 		frappe.set_user(REP)
