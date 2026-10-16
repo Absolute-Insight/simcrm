@@ -147,7 +147,6 @@
              the two analytics surfaces are filtered the same way. -->
         <template v-if="showPeriodFilter">
           <Dropdown
-            v-if="!showDatePicker"
             :options="presetOptions"
             class="form-control"
             :button="{
@@ -160,13 +159,12 @@
             }"
           />
           <DateRangePicker
-            v-else
             ref="datePickerRef"
-            class="!w-48"
-            :value="parseDateRange(dateRange)"
+            class="!w-64"
+            :modelValue="parseDateRange(dateRange)"
             variant="outline"
             :placeholder="__('Period')"
-            :formatter="formatRange"
+            format="D MMM YYYY"
             @change="onDateRangeChange"
           >
             <template #prefix>
@@ -175,39 +173,14 @@
           </DateRangePicker>
         </template>
 
-        <Link
+        <Select
           v-if="isManager() || isAdmin()"
-          class="form-control w-48"
-          variant="outline"
-          :value="scopeUser && getUser(scopeUser).full_name"
-          doctype="User"
-          :filters="{
-            name: ['in', (crmUsers || []).map((u) => u.name)],
-            ignore_user_type: 1,
-          }"
-          :placeholder="__('All reps')"
-          :hideMe="true"
-          @change="(v) => (scopeUser = v || '')"
-        >
-          <template #prefix>
-            <UserAvatar
-              v-if="scopeUser"
-              class="mr-2"
-              :user="scopeUser"
-              size="sm"
-            />
-          </template>
-          <template #item-prefix="{ option }">
-            <UserAvatar class="mr-2" :user="option.value" size="sm" />
-          </template>
-          <template #item-label="{ option }">
-            <Tooltip :text="option.value">
-              <div class="cursor-pointer text-ink-gray-9">
-                {{ getUser(option.value).full_name }}
-              </div>
-            </Tooltip>
-          </template>
-        </Link>
+          class="w-48"
+          :modelValue="scopeUser || ALL_REPS"
+          :options="repFilterOptions"
+          :aria-label="__('Rep')"
+          @update:modelValue="(v) => (scopeUser = v === ALL_REPS ? '' : v)"
+        />
 
         <Link
           v-if="isManager() || isAdmin()"
@@ -389,12 +362,12 @@ import { PhPrinter as LucidePrinter } from '@phosphor-icons/vue'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import Link from '@/components/Controls/Link.vue'
-import UserAvatar from '@/components/UserAvatar.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import { getSettings } from '@/stores/settings'
 import { usersStore } from '@/stores/users'
+import { ALL_REPS, useVisibleReps } from '@/composables/visibleReps'
 import { formatRange, getLastXDays, parseDateRange } from '@/utils/dashboard'
 import { csvFileName, formatCell, toCsv } from '@/utils/reportExport'
 import { quiet } from '@/utils/quiet'
@@ -412,7 +385,8 @@ import { useRoute, useRouter } from 'vue-router'
 const route = useRoute()
 const router = useRouter()
 
-const { crmUsers, getUser, isManager, isAdmin } = usersStore()
+const { isManager, isAdmin } = usersStore()
+const { filterOptions: repFilterOptions } = useVisibleReps()
 const { settings } = getSettings()
 
 const PRESET_DAYS = [7, 30, 60, 90]
@@ -431,7 +405,6 @@ function presetDaysFor(range) {
   return PRESET_DAYS.find((days) => getLastXDays(days) === range) ?? null
 }
 
-const showDatePicker = ref(presetDaysFor(dateRange.value) === null)
 const datePickerRef = ref(null)
 
 const presetLabel = computed(() => {
@@ -448,7 +421,6 @@ const presetOptions = computed(() => [
     options: PRESET_DAYS.map((days) => ({
       label: __('Last {0} Days', [String(days)]),
       onClick: () => {
-        showDatePicker.value = false
         dateRange.value = getLastXDays(days)
       },
     })),
@@ -456,7 +428,6 @@ const presetOptions = computed(() => [
   {
     label: __('Custom Range'),
     onClick: () => {
-      showDatePicker.value = true
       nextTick(() => datePickerRef.value?.open())
     },
   },
@@ -465,7 +436,6 @@ const presetOptions = computed(() => [
 function onDateRangeChange(value) {
   const next = Array.isArray(value) ? value.join(',') : value
   if (!next) {
-    showDatePicker.value = false
     dateRange.value = getLastXDays(DEFAULT_PRESET_DAYS)
     return
   }

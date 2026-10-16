@@ -50,7 +50,6 @@
 
     <div class="p-5 pb-2 flex flex-wrap items-center gap-4">
       <Dropdown
-        v-if="!showDatePicker"
         v-model="preset"
         :options="options"
         class="form-control"
@@ -65,17 +64,15 @@
         }"
       />
       <DateRangePicker
-        v-else
         ref="datePickerRef"
-        class="!w-48"
-        :value="parseDateRange(filters.period)"
+        class="!w-64"
+        :modelValue="parseDateRange(filters.period)"
         variant="outline"
         :placeholder="__('Period')"
-        :formatter="formatRange"
+        format="D MMM YYYY"
         @change="
           (v) =>
             updateFilter('period', v, () => {
-              showDatePicker = false
               if (!v) {
                 filters.period = getLastXDays()
                 preset = 'Last 30 Days'
@@ -89,39 +86,16 @@
           <LucideCalendar class="size-4 text-ink-gray-5 mr-2" />
         </template>
       </DateRangePicker>
-      <Link
+      <Select
         v-if="isAdmin() || isManager()"
-        class="form-control w-48"
-        variant="outline"
-        :value="filters.user && getUser(filters.user).full_name"
-        doctype="User"
-        :filters="{
-          name: ['in', users.data.crmUsers?.map((u) => u.name)],
-          ignore_user_type: 1,
-        }"
-        :placeholder="__('All reps')"
-        :hideMe="true"
-        @change="(v) => updateFilter('user', v)"
-      >
-        <template #prefix>
-          <UserAvatar
-            v-if="filters.user"
-            class="mr-2"
-            :user="filters.user"
-            size="sm"
-          />
-        </template>
-        <template #item-prefix="{ option }">
-          <UserAvatar class="mr-2" :user="option.value" size="sm" />
-        </template>
-        <template #item-label="{ option }">
-          <Tooltip :text="option.value">
-            <div class="cursor-pointer text-ink-gray-9">
-              {{ getUser(option.value).full_name }}
-            </div>
-          </Tooltip>
-        </template>
-      </Link>
+        class="w-48"
+        :modelValue="filters.user || ALL_REPS"
+        :options="repFilterOptions"
+        :aria-label="__('Rep')"
+        @update:modelValue="
+          (v) => updateFilter('user', v === ALL_REPS ? '' : v)
+        "
+      />
       <!-- Three charts cannot slice by territory (quotas and rep plans are per
            rep, forecast snapshots store a total). They stay on screen and say so
            rather than disappearing or, worse, showing global numbers under a
@@ -242,6 +216,7 @@
         <PanelCard
           v-for="(panel, panelIndex) in visiblePanels"
           :key="panel.id"
+          :class="panel.wide ? 'xl:col-span-2' : ''"
           :title="panel.title"
           :subtitle="panel.subtitle"
           :loading="panel.loading.value"
@@ -392,6 +367,54 @@
                 />
               </div>
             </div>
+          </div>
+
+          <!-- A panel with several figures per rep: the report's own columns,
+               a header row, and the rep's name first. -->
+          <div v-else-if="panel.columns" class="overflow-x-auto">
+            <p
+              v-if="panel.note?.value"
+              class="mb-3 flex items-start gap-2 rounded-4 bg-surface-gray-2 px-3 py-2 text-sm text-ink-gray-7"
+            >
+              <LucideInfo class="mt-0.5 size-4 shrink-0" />
+              <span>{{ panel.note.value }}</span>
+            </p>
+            <table class="w-full text-base">
+              <thead>
+                <tr class="border-b border-outline-gray-1">
+                  <th
+                    class="py-1.5 pr-2 text-left text-xs font-medium uppercase tracking-wider text-ink-gray-5"
+                  >
+                    {{ __('Rep') }}
+                  </th>
+                  <th
+                    v-for="column in panel.columns"
+                    :key="column.key"
+                    class="whitespace-nowrap py-1.5 pl-3 text-right text-xs font-medium uppercase tracking-wider text-ink-gray-5"
+                  >
+                    {{ column.label }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="(row, i) in panel.rows.value"
+                  :key="i"
+                  class="border-b border-outline-gray-1 last:border-b-0"
+                >
+                  <td class="py-1.5 pr-2 text-ink-gray-7">
+                    {{ row.rep || repName(row.user) }}
+                  </td>
+                  <td
+                    v-for="column in panel.columns"
+                    :key="column.key"
+                    class="whitespace-nowrap py-1.5 pl-3 text-right tabular-nums text-ink-gray-8"
+                  >
+                    {{ formatCell(row[column.key], column.type, baseCurrency) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
           <!-- Manager panels are report rows, rendered as a compact table so
@@ -560,11 +583,11 @@ import StatTile from '@/components/Dashboard/StatTile.vue'
 import { useDrilldown } from '@/components/Dashboard/drilldown'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import SkeletonTable from '@/components/ui/SkeletonTable.vue'
-import UserAvatar from '@/components/UserAvatar.vue'
 import ViewBreadcrumbs from '@/components/ViewBreadcrumbs.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import Link from '@/components/Controls/Link.vue'
 import { usersStore } from '@/stores/users'
+import { ALL_REPS, useVisibleReps } from '@/composables/visibleReps'
 import { getSettings } from '@/stores/settings'
 import { isNarrowGrid } from '@/composables/settings'
 import { EMPTY_CELL, formatCell } from '@/utils/reportExport'
@@ -584,25 +607,21 @@ import {
 } from '@/utils/dashboardHome'
 import * as suggestionsModule from '@/stores/suggestions'
 import { displayReferenceLabel, urgencyBand } from '@/utils/suggestions'
-import {
-  getLastXDays,
-  formatter,
-  formatRange,
-  parseDateRange,
-} from '@/utils/dashboard'
+import { getLastXDays, formatter, parseDateRange } from '@/utils/dashboard'
 import {
   usePageMeta,
   createResource,
   Badge,
   DateRangePicker,
   Dropdown,
-  Tooltip,
+  Select,
   toast,
 } from 'frappe-ui'
 import { ref, reactive, computed, provide } from 'vue'
 import { useRouter } from 'vue-router'
 
-const { users, getUser, isManager, isAdmin } = usersStore()
+const { getUser, isManager, isAdmin } = usersStore()
+const { filterOptions: repFilterOptions } = useVisibleReps()
 const { settings, brand } = getSettings()
 const router = useRouter()
 
@@ -612,7 +631,6 @@ const baseCurrency = computed(
 const { drillInto, canDrillInto } = useDrilldown()
 
 const editing = ref(false)
-const showDatePicker = ref(false)
 const datePickerRef = ref(null)
 const preset = ref('Last 30 Days')
 const showAddChartModal = ref(false)
@@ -803,6 +821,7 @@ function reportResource(name: string) {
 const teamAdherence = reportResource('plan_adherence_by_rep')
 const teamQuota = reportResource('quota_attainment_by_rep')
 const teamVisits = reportResource('visits_by_rep')
+const teamSummary = reportResource('rep_summary')
 const teamPipeline = reportResource('pipeline_by_stage')
 
 /* The rep chart strip. Same endpoint as the manager grid's charts; the server
@@ -897,6 +916,37 @@ const PANEL_CATALOGUE = computed(() => {
 
   panels.push(
     {
+      id: 'summary',
+      wide: true,
+      title: __('Rep summary'),
+      subtitle: __(
+        'Visits, calls and emails done in the period, beside the quotes and orders, per rep',
+      ),
+      loading: computed(() => teamSummary.loading),
+      error: computed(() => teamSummary.error),
+      retry: () => teamSummary.reload(),
+      empty: computed(
+        () => !teamSummary.loading && !(teamSummary.data?.rows || []).length,
+      ),
+      emptyTitle: __('Nothing done in this period'),
+      emptyDescription: __(
+        'Visits, quotes and orders appear here as the reps log them.',
+      ),
+      rows: computed(() => teamSummary.data?.rows || []),
+      note: computed(() => teamSummary.data?.notice || ''),
+      columns: [
+        { key: 'visits', label: __('Visits'), type: 'number' },
+        { key: 'unplanned', label: __('Unplanned'), type: 'number' },
+        { key: 'calls', label: __('Calls'), type: 'number' },
+        { key: 'emails', label: __('Emails'), type: 'number' },
+        { key: 'quotes', label: __('Quotes'), type: 'number' },
+        { key: 'quote_value', label: __('Quote value'), type: 'currency' },
+        { key: 'orders', label: __('Orders'), type: 'number' },
+        { key: 'order_value', label: __('Order value'), type: 'currency' },
+      ],
+      cell: () => '',
+    },
+    {
       id: 'adherence',
       title: __('Plan adherence by rep'),
       subtitle: __('Planned activities due in the period, and how many landed'),
@@ -918,7 +968,7 @@ const PANEL_CATALOGUE = computed(() => {
       id: 'visits',
       title: __('Visits against target'),
       subtitle: __(
-        "Completed customer visits in the period, against each rep's weekly target",
+        "Completed planned visits in the period, against each rep's weekly target",
       ),
       loading: computed(() => teamVisits.loading),
       error: computed(() => teamVisits.error),
@@ -1084,7 +1134,6 @@ const options = computed(() => [
   {
     label: __('Custom Range'),
     onClick: () => {
-      showDatePicker.value = true
       setTimeout(() => datePickerRef.value?.open(), 0)
       preset.value = 'Custom Range'
       filters.period = null // Reset period to allow custom date selection
