@@ -6,7 +6,7 @@ from frappe import _
 from frappe.query_builder import Case, DocType
 from frappe.query_builder.functions import Avg, Coalesce, Count, Date, DateFormat, IfNull, Sum
 from frappe.rate_limiter import rate_limit
-from frappe.utils import add_days, date_diff, flt, get_first_day, get_last_day, getdate, nowdate
+from frappe.utils import add_days, date_diff, flt, get_first_day, get_last_day, getdate, now_datetime, nowdate
 from pypika.functions import Function
 
 from crm.fcrm.doctype.crm_dashboard.crm_dashboard import create_default_manager_dashboard
@@ -2102,6 +2102,327 @@ def get_plan_adherence(
 		"delta": current["adherence"] - previous["adherence"],
 		"deltaSuffix": "%",
 	}
+
+
+def _scope_users(user: str | None) -> list[str] | None:
+	"""The reps a user-keyed aggregate covers: the named one, or the caller's subtree.
+
+	``None`` is everyone. The callers have already passed ``user`` through
+	:func:`pin_user` (the report endpoint does), so naming a rep never widens
+	what the caller may read."""
+	return [user] if user else visible_reps()
+
+
+def _plan_items_in(from_date, to_date, user: str | None):
+	"""Plan items dated in ``[from_date, to_date]`` that belong to the scope, plus
+	the two tables, for the aggregates that slice them further."""
+	PlanItem = DocType("CRM Rep Plan Item")
+	Plan = DocType("CRM Rep Plan")
+	query = (
+		frappe.qb.from_(PlanItem)
+		.join(Plan)
+		.on(PlanItem.parent == Plan.name)
+		.where((PlanItem.planned_date >= from_date) & (PlanItem.planned_date <= to_date))
+	)
+	reps = _scope_users(user)
+	if reps is not None:
+		query = query.where(Plan.user.isin(reps))
+	return query, PlanItem, Plan
+
+
+def _status_counts(PlanItem) -> list:
+	"""scheduled (every item), then one count per status, as the report names them."""
+
+	def count(status):
+		return Count(Case().when(PlanItem.status == status, PlanItem.name).else_(None))
+
+	return [
+		Count(PlanItem.name).as_("scheduled"),
+		count("Done").as_("done"),
+		count("Cancelled").as_("cancelled"),
+		count("Missed").as_("missed"),
+		count("Planned").as_("open"),
+	]
+
+
+def _tidy(value: float) -> float | int:
+	"""A pro-rated target as a person reads it: 15 rather than 15.0, 4.2 rather than 4.2000001."""
+	rounded = round(value, 1)
+	return int(rounded) if rounded == int(rounded) else rounded
+
+
+def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list[dict]:
+	"""Customer visits per rep in the period, against their weekly visit target.
+
+	A visit is a plan item of a VISIT_KINDS type -- planned or logged after the
+	fact (an unplanned meeting is still a customer visit). ``scheduled`` is every
+	such item dated in the period; ``completed``/``cancelled``/``missed``/``open``
+	split it by status.
+
+	``target`` is the whole period's share of the weekly target (pro-rated by
+	working days, ``crm.api.visit_targets.target_for``); ``target_to_date`` is
+	the share that is already due -- up to yesterday, because today is not
+	settled (the same rule as ``plan_adherence``). A rep is "On track" when they
+	have completed at least that many, so a manager reading the month on the
+	10th is not told everyone is behind on visits that are not due yet.
+
+	One row per rep in scope who has a target or any visit in the period.
+	"""
+	from crm.api.visit_targets import target_for
+	from crm.rep_planning import VISIT_KINDS
+
+	query, PlanItem, Plan = _plan_items_in(from_date, to_date, user)
+	counts = {
+		row.user: row
+		for row in query.where(PlanItem.activity_type.isin(VISIT_KINDS))
+		.select(Plan.user.as_("user"), *_status_counts(PlanItem))
+		.groupby(Plan.user)
+		.run(as_dict=True)
+	}
+
+	reps = set(counts)
+	scope = _scope_users(user)
+	filters = {"visits_per_week": (">", 0)}
+	if scope is not None:
+		filters["user"] = ("in", scope)
+	reps.update(frappe.get_all("CRM Visit Target", filters=filters, pluck="user"))
+
+	cutoff = min(getdate(to_date), getdate(add_days(nowdate(), -1)))
+	targets = target_for(reps, from_date, to_date)
+	due = target_for(reps, from_date, cutoff)
+
+	rows = []
+	for rep in sorted(reps):
+		row = counts.get(rep) or {}
+		completed = int(row.get("done") or 0)
+		target = targets.get(rep)
+		target_to_date = _tidy(due.get(rep) or 0.0) if target else None
+		if not target:
+			on_track = "No target"
+		elif completed >= target_to_date:
+			on_track = "On track"
+		else:
+			on_track = "Behind"
+		rows.append(
+			frappe._dict(
+				{
+					"user": rep,
+					"target": _tidy(target) if target else None,
+					"target_to_date": target_to_date,
+					"scheduled": int(row.get("scheduled") or 0),
+					"completed": completed,
+					"cancelled": int(row.get("cancelled") or 0),
+					"missed": int(row.get("missed") or 0),
+					"open": int(row.get("open") or 0),
+					# no target is not 0% of one -- the quota report's rule
+					"attainment": round(completed / target * 100) if target else None,
+					"on_track": on_track,
+				}
+			)
+		)
+	return rows
+
+
+def activities_by_type(from_date: str, to_date: str, user: str | None = None) -> list[dict]:
+	"""Plan items dated in the period per rep and activity type, split by status.
+
+	The manager's "what are they spending the week on": visits beside
+	deliveries beside admin. Rows run in the planner's order of types."""
+	from crm.rep_planning import ACTIVITY_TYPES
+
+	query, PlanItem, Plan = _plan_items_in(from_date, to_date, user)
+	rows = (
+		query.select(
+			Plan.user.as_("user"),
+			PlanItem.activity_type.as_("activity_type"),
+			*_status_counts(PlanItem),
+		)
+		.groupby(Plan.user, PlanItem.activity_type)
+		.run(as_dict=True)
+	)
+	order = {kind: i for i, kind in enumerate(ACTIVITY_TYPES)}
+	for row in rows:
+		for key in ("scheduled", "done", "cancelled", "missed", "open"):
+			row[key] = int(row.get(key) or 0)
+	rows.sort(key=lambda r: (r.user, order.get(r.activity_type, len(order)), r.activity_type or ""))
+	return rows
+
+
+INTERACTION_BUCKETS = ("visits", "deliveries", "calls", "emails", "other")
+
+
+def _interaction_bucket(activity_type: str | None) -> str:
+	from crm.rep_planning import VISIT_KINDS
+
+	if activity_type in VISIT_KINDS:
+		return "visits"
+	return {"Delivery": "deliveries", "Call": "calls", "Email": "emails"}.get(activity_type, "other")
+
+
+def customer_interaction(
+	from_date: str, to_date: str, user: str | None = None, only_without: bool = False
+) -> list[dict]:
+	"""Every customer, with how much the team dealt with them in the period.
+
+	An interaction is either
+
+	- a **Done plan item naming the customer** (``organization``), bucketed by
+	  its type: visits (VISIT_KINDS), deliveries, calls, emails, other; or
+	- a **completed visit on the calendar** -- an Event in the Visit category,
+	  not Cancelled, already started, with the customer as an Event Participant
+	  -- counted as a visit.
+
+	The two overlap: completing a planned visit writes a Visit event as the
+	item's ``fulfilled_by``, and the importer did the same for history. An event
+	that records a Done item which names its customer is that item, so it is
+	counted there and not again. An event recording an item *without* a
+	customer (history imported before items had one) is the only place the
+	customer appears, so it still counts.
+
+	Scoped to the rep, or to the caller's subtree, by who did it (the plan's
+	rep, the event's owner). ``last_interaction`` is the latest such
+	interaction on or before ``to_date`` over all time -- "when did anyone last
+	see them" does not stop at the period -- with who it was and the days
+	between it and ``to_date``.
+
+	One row per CRM Organization, the ones nobody touched included, sorted the
+	way a manager hunts for neglect: fewest interactions first, then longest
+	since the last one (never first). ``only_without`` keeps just the zeros.
+	"""
+	from frappe.query_builder.functions import Max
+
+	PlanItem = DocType("CRM Rep Plan Item")
+	Plan = DocType("CRM Rep Plan")
+	Event = DocType("Event")
+	Participant = DocType("Event Participants")
+	reps = _scope_users(user)
+	end = add_days(to_date, 1)
+
+	def done_items():
+		query = (
+			frappe.qb.from_(PlanItem)
+			.join(Plan)
+			.on(PlanItem.parent == Plan.name)
+			.where(PlanItem.status == "Done")
+			.where(PlanItem.organization.isnotnull() & (PlanItem.organization != ""))
+		)
+		return query.where(Plan.user.isin(reps)) if reps is not None else query
+
+	def visit_events():
+		query = (
+			frappe.qb.from_(Event)
+			.join(Participant)
+			.on(
+				(Participant.parent == Event.name)
+				& (Participant.parenttype == "Event")
+				& (Participant.reference_doctype == "CRM Organization")
+			)
+			.where(Event.event_category == "Visit")
+			.where(Event.status != "Cancelled")
+			# a visit booked for this afternoon has not happened yet
+			.where(Event.starts_on <= now_datetime())
+		)
+		return query.where(Event.owner.isin(reps)) if reps is not None else query
+
+	recorded = (
+		frappe.qb.from_(PlanItem)
+		.where(PlanItem.fulfilled_by_doctype == "Event")
+		.where(PlanItem.fulfilled_by.isnotnull())
+		.where(PlanItem.status == "Done")
+		.where(PlanItem.organization.isnotnull() & (PlanItem.organization != ""))
+		.select(PlanItem.fulfilled_by)
+	)
+
+	counts: dict[str, dict[str, int]] = {}
+	for row in (
+		done_items()
+		.where((PlanItem.planned_date >= from_date) & (PlanItem.planned_date <= to_date))
+		.select(
+			PlanItem.organization.as_("organization"),
+			PlanItem.activity_type.as_("activity_type"),
+			Count(PlanItem.name).as_("n"),
+		)
+		.groupby(PlanItem.organization, PlanItem.activity_type)
+		.run(as_dict=True)
+	):
+		bucket = counts.setdefault(row.organization, dict.fromkeys(INTERACTION_BUCKETS, 0))
+		bucket[_interaction_bucket(row.activity_type)] += int(row.n or 0)
+	for row in (
+		visit_events()
+		.where((Event.starts_on >= from_date) & (Event.starts_on < end))
+		.where(Event.name.notin(recorded))
+		.select(Participant.reference_docname.as_("organization"), Count(Event.name).distinct().as_("n"))
+		.groupby(Participant.reference_docname)
+		.run(as_dict=True)
+	):
+		bucket = counts.setdefault(row.organization, dict.fromkeys(INTERACTION_BUCKETS, 0))
+		bucket["visits"] += int(row.n or 0)
+
+	# latest per (customer, rep) from each source, then the latest per customer:
+	# two grouped reads rather than a query per customer
+	last: dict[str, tuple] = {}
+	latest = (
+		done_items()
+		.where(PlanItem.planned_date <= to_date)
+		.select(
+			PlanItem.organization.as_("organization"),
+			Plan.user.as_("user"),
+			Max(PlanItem.planned_date).as_("at"),
+		)
+		.groupby(PlanItem.organization, Plan.user)
+		.run(as_dict=True)
+	) + (
+		visit_events()
+		.where(Event.starts_on < end)
+		.select(
+			Participant.reference_docname.as_("organization"),
+			Event.owner.as_("user"),
+			Max(Date(Event.starts_on)).as_("at"),
+		)
+		.groupby(Participant.reference_docname, Event.owner)
+		.run(as_dict=True)
+	)
+	for row in latest:
+		if not row.at:
+			continue
+		candidate = (getdate(row.at), row.user or "")
+		if row.organization not in last or candidate > last[row.organization]:
+			last[row.organization] = candidate
+
+	who = {rep for _at, rep in last.values() if rep}
+	names = (
+		dict(
+			frappe.get_all(
+				"User", filters={"name": ("in", list(who))}, fields=["name", "full_name"], as_list=True
+			)
+		)
+		if who
+		else {}
+	)
+
+	period_end = getdate(to_date)
+	rows = []
+	for org in frappe.get_all("CRM Organization", pluck="name"):
+		bucket = counts.get(org) or dict.fromkeys(INTERACTION_BUCKETS, 0)
+		at, rep = last.get(org, (None, None))
+		row = frappe._dict({"organization": org, **bucket})
+		row["total"] = sum(bucket.values())
+		row["last_interaction"] = str(at) if at else None
+		row["last_rep"] = (names.get(rep) or rep) if rep else None
+		row["days_since"] = date_diff(period_end, at) if at else None
+		rows.append(row)
+
+	if only_without:
+		rows = [row for row in rows if not row["total"]]
+	rows.sort(
+		key=lambda r: (
+			r["total"],
+			r["last_interaction"] is not None,
+			r["last_interaction"] or "",
+			(r["organization"] or "").lower(),
+		)
+	)
+	return rows
 
 
 def _at_risk_deals(to_date: str | None = None, user: str | None = None) -> list[dict]:
