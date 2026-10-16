@@ -183,7 +183,7 @@ describe('SURFACES', () => {
 
   it('covers the nav links and the settings panes', () => {
     expect(surfacesByGroup('nav').length).toBe(13)
-    expect(surfacesByGroup('settings').length).toBe(27)
+    expect(surfacesByGroup('settings').length).toBe(28)
   })
 })
 
