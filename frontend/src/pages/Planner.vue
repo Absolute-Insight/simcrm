@@ -277,7 +277,7 @@
                 canEdit ? 'v-glass-hover' : '',
               ]"
               :data-plan-uid="item._uid"
-              :draggable="canEdit"
+              :draggable="canEdit && !isLockedDay(item.planned_date)"
               @dragstart="onDragStart($event, item)"
               @dragend="onDragEnd"
               @keydown="onCardKeydown($event, item)"
@@ -326,7 +326,7 @@
                     />
                   </Tooltip>
                   <Dropdown
-                    v-if="canEdit"
+                    v-if="canEdit && itemActions(item).length"
                     :options="itemActions(item)"
                     align="end"
                   >
@@ -903,7 +903,7 @@ async function addItem(date) {
 }
 
 async function editItem(item) {
-  if (!canEdit.value) return
+  if (!canEdit.value || isLockedDay(item.planned_date)) return
   const defaults = {}
   for (const field of EDITABLE_ITEM_FIELDS) defaults[field] = item[field]
   const data = await renderFieldLayoutDialog({
@@ -927,13 +927,14 @@ async function editItem(item) {
 }
 
 function removeItem(item) {
+  if (isLockedDay(item.planned_date)) return
   localItems.list = localItems.list.filter((i) => i !== item)
 }
 
 // -- rescheduling -----------------------------------------------------------
 
 function onDragStart(event, item) {
-  if (!canEdit.value) return
+  if (!canEdit.value || isLockedDay(item.planned_date)) return
   dragging.value = item
   event.dataTransfer.effectAllowed = 'move'
   // Firefox refuses to start a drag without payload.
@@ -977,7 +978,12 @@ function onCardKeydown(event, item) {
 }
 
 async function moveTo(item, date) {
-  if (!weekDates.value.includes(date) || isLockedDay(date)) return
+  if (
+    !weekDates.value.includes(date) ||
+    isLockedDay(date) ||
+    isLockedDay(item.planned_date)
+  )
+    return
   const next = moveItemToDate(localItems.list, item, date)
   if (next === localItems.list) return
   localItems.list = next
@@ -996,19 +1002,26 @@ async function moveTo(item, date) {
 // -- fulfilment overrides ---------------------------------------------------
 
 function itemActions(item) {
-  const actions = [
-    { label: __('Edit'), icon: 'lucide-edit-2', onClick: () => editItem(item) },
-    {
-      label: __('Move a day earlier'),
-      icon: 'lucide-arrow-left',
-      onClick: () => moveTo(item, addDays(item.planned_date, -1)),
-    },
-    {
-      label: __('Move a day later'),
-      icon: 'lucide-arrow-right',
-      onClick: () => moveTo(item, addDays(item.planned_date, 1)),
-    },
-  ]
+  // a past card under the lock is frozen: its outcome or a cancellation only
+  const actions = isLockedDay(item.planned_date)
+    ? []
+    : [
+        {
+          label: __('Edit'),
+          icon: 'lucide-edit-2',
+          onClick: () => editItem(item),
+        },
+        {
+          label: __('Move a day earlier'),
+          icon: 'lucide-arrow-left',
+          onClick: () => moveTo(item, addDays(item.planned_date, -1)),
+        },
+        {
+          label: __('Move a day later'),
+          icon: 'lucide-arrow-right',
+          onClick: () => moveTo(item, addDays(item.planned_date, 1)),
+        },
+      ]
 
   // The override endpoints address a stored child row, so an item that has
   // never been saved has nothing for them to address.
@@ -1045,11 +1058,13 @@ function itemActions(item) {
     }
   }
 
-  actions.push({
-    label: __('Remove from plan'),
-    icon: 'lucide-trash-2',
-    onClick: () => removeItem(item),
-  })
+  if (!isLockedDay(item.planned_date)) {
+    actions.push({
+      label: __('Remove from plan'),
+      icon: 'lucide-trash-2',
+      onClick: () => removeItem(item),
+    })
+  }
   return actions
 }
 

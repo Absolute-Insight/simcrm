@@ -85,12 +85,17 @@ class PastDaysLockedTest(IntegrationTestCase):
 			save_plan(self.monday, self.rows()[1:])
 
 	def test_resending_the_past_unchanged_still_saves(self):
-		rows = self.rows()
-		rows[1]["note"] = "Follow up on the quote"
-		saved = save_plan(self.monday, rows)
-		self.assertEqual(
-			[row["note"] for row in saved["items"]], ["Ring the plant", "Follow up on the quote"]
-		)
+		saved = save_plan(self.monday, self.rows())
+		self.assertEqual([row["note"] for row in saved["items"]], ["Ring the plant", "Follow up"])
+
+	def test_a_past_activity_is_not_edited_or_moved_forward(self):
+		today = str(frappe.utils.getdate())
+		for field, changed in (("activity_type", "Visit"), ("note", "Went well"), ("planned_date", today)):
+			with self.subTest(field=field):
+				rows = self.rows()
+				rows[0][field] = changed
+				with self.assertRaises(frappe.ValidationError):
+					save_plan(self.monday, rows)
 
 	def test_today_and_later_are_open(self):
 		today = str(frappe.utils.getdate())

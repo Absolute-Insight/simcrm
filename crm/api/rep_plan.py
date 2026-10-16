@@ -336,25 +336,47 @@ def past_days_locked() -> bool:
 
 
 def _refuse_the_past(plan, items: list[dict]) -> None:
-	"""With past days locked, nothing is planned, moved or removed before today.
+	"""With past days locked, nothing is planned, changed or removed before today.
 
-	MBP's managers asked for it: a plan written after the day is not a plan.
-	What a past item became is still the rep's to say -- complete_item and
-	cancel_item are not checked here -- and a row the client sends back
-	unchanged keeps its old date, so saving the rest of the week still works.
-	Removing a past row is refused as well: deleting a missed visit is the same
-	backdating the other way round, and cancelling it says why.
+	MBP's managers asked for it: a plan written after the day is not a plan. A
+	row dated before today is frozen as it stands -- its type, customer, note
+	and day -- because a past Done call edited into a Done visit, or a missed
+	visit moved off its day, is the same backdating by another door. What it
+	became is still the rep's to say: complete_item and cancel_item do not go
+	through here, and cancelling, not deleting, is how a past row is withdrawn.
+	A row the client sends back unchanged passes, so saving the rest of the week
+	still works.
 	"""
 	if not past_days_locked():
 		return
 	today = frappe.utils.getdate()
-	existing = {str(row.name): frappe.utils.getdate(row.planned_date) for row in plan.get("items", [])}
+
+	def value(field, raw):
+		if field == "planned_date":
+			return frappe.utils.getdate(raw) if raw else None
+		return frappe.utils.cstr(raw) or None
+
+	def snapshot(row):
+		return {field: value(field, row.get(field)) for field in EDITABLE_ITEM_FIELDS}
+
+	past = {
+		str(row.name): snapshot(row)
+		for row in plan.get("items", [])
+		if row.planned_date and frappe.utils.getdate(row.planned_date) < today
+	}
 	for row in items:
-		day = row.get("planned_date")
-		if not day:
+		before = past.get(str(row.get("name") or ""))
+		if before is not None:
+			if snapshot(row) != before:
+				frappe.throw(
+					_(
+						"An activity on {0} has passed and cannot be changed. Log its outcome or cancel it."
+					).format(frappe.utils.formatdate(before["planned_date"])),
+					frappe.ValidationError,
+				)
 			continue
-		day = frappe.utils.getdate(day)
-		if day < today and existing.get(str(row.get("name") or "")) != day:
+		day = value("planned_date", row.get("planned_date"))
+		if day and day < today:
 			frappe.throw(
 				_("{0} has passed. Activities are planned for today or later.").format(
 					frappe.utils.formatdate(day)
@@ -362,11 +384,11 @@ def _refuse_the_past(plan, items: list[dict]) -> None:
 				frappe.ValidationError,
 			)
 	kept = {str(row.get("name")) for row in items if row.get("name")}
-	for name, day in existing.items():
-		if day < today and name not in kept:
+	for name, before in past.items():
+		if name not in kept:
 			frappe.throw(
 				_("An activity on {0} has passed and cannot be removed. Cancel it instead.").format(
-					frappe.utils.formatdate(day)
+					frappe.utils.formatdate(before["planned_date"])
 				),
 				frappe.ValidationError,
 			)

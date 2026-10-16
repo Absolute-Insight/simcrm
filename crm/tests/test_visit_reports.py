@@ -506,33 +506,37 @@ class RepSummaryTest(VisitFixture, IntegrationTestCase):
 		won = frappe.get_all("CRM Deal Status", filters={"type": "Won"}, pluck="name")
 		if not won:
 			self.skipTest("site has no Won deal status")
-		org = (
+		self.won = won[0]
+		self.org = (
 			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Summary Smelter"})
 			.insert(ignore_if_duplicate=True)
 			.name
 		)
-
-		def deal(value, created, closed=None):
-			doc = frappe.get_doc(
-				{
-					"doctype": "CRM Deal",
-					"organization": org,
-					"deal_owner": REP,
-					"deal_value": value,
-					"exchange_rate": 1,
-				}
-			).insert(ignore_permissions=True)
-			values = {"creation": datetime.combine(getdate(created), time(9, 0))}
-			if closed:
-				values |= {"status": won[0], "closed_date": closed}
-			frappe.db.set_value("CRM Deal", doc.name, values, update_modified=False)
-
-		deal(1000, self.day(1))
-		deal(2500, self.day(2), closed=self.day(4))
+		self.deal(1000, self.day(1))
+		self.deal(2500, self.day(2), closed=self.day(4))
 		# quoted before the period, ordered in it: an order, not a quote
-		deal(4000, add_days(self.monday, -20), closed=self.day(3))
+		self.deal(4000, add_days(self.monday, -20), closed=self.day(3))
 		# quoted after the period: neither
-		deal(9000, add_days(self.monday, 8))
+		self.deal(9000, add_days(self.monday, 8))
+
+	def deal(self, value, created, closed=None, owner=REP) -> str:
+		doc = frappe.get_doc(
+			{
+				"doctype": "CRM Deal",
+				"organization": self.org,
+				"deal_owner": owner,
+				"deal_value": value,
+				"exchange_rate": 1,
+			}
+		).insert(ignore_permissions=True)
+		values = {"creation": datetime.combine(getdate(created), time(9, 0))}
+		if closed:
+			values |= {"status": self.won, "closed_date": closed}
+		frappe.db.set_value("CRM Deal", doc.name, values, update_modified=False)
+		return doc.name
+
+	def summary(self, user=None) -> dict:
+		return {row["user"]: row for row in get_report("rep_summary", self.start, self.end, user)["rows"]}
 
 	def test_work_done_beside_quotes_and_orders(self):
 		row = next(
@@ -545,6 +549,36 @@ class RepSummaryTest(VisitFixture, IntegrationTestCase):
 		self.assertEqual((row["quotes"], row["quote_value"]), (2, 3500))
 		self.assertEqual((row["orders"], row["order_value"]), (2, 6500))
 		self.assertEqual(row["rep"], "Visits Rep")
+
+	def test_a_deal_counts_for_the_rep_assigned_to_it_as_the_quota_report_does(self):
+		name = self.deal(700, self.day(2), owner=OUTSIDER)
+		frappe.get_doc(
+			{
+				"doctype": "ToDo",
+				"allocated_to": REP,
+				"reference_type": "CRM Deal",
+				"reference_name": name,
+				"description": "Assigned",
+				"status": "Open",
+			}
+		).insert(ignore_permissions=True)
+		row = self.summary(REP)[REP]
+		self.assertEqual((row["quotes"], row["quote_value"]), (3, 4200))
+
+	def test_a_manager_sees_their_tree_and_no_further(self):
+		self.deal(5000, self.day(1), owner=OUTSIDER)
+		self.make_hierarchy()
+		frappe.set_user(MANAGER)
+		rows = self.summary()
+		self.assertNotIn(OUTSIDER, rows)
+		self.assertEqual(rows[REP]["quotes"], 2)
+		with self.assertRaises(frappe.PermissionError):
+			self.summary(OUTSIDER)
+
+	def test_a_rep_is_pinned_to_their_own_row(self):
+		self.deal(5000, self.day(1), owner=OUTSIDER)
+		frappe.set_user(REP)
+		self.assertEqual(set(self.summary(OUTSIDER)), {REP})
 
 	def test_says_why_there_is_no_invoice_column(self):
 		self.assertIn("Invoices", get_report("rep_summary", self.start, self.end, REP)["notice"])

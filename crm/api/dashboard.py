@@ -2276,9 +2276,10 @@ def rep_summary(from_date: str, to_date: str, user: str | None = None) -> list[d
 	invoices. Activities are Done plan items dated in the period, by type.
 	A quote is a deal (every Acumatica sales quote is one) created in the
 	period; an order is a deal closed Won in the period -- a quote copied into
-	a sales order, as the Acumatica sync records it. Both are counted for the
-	deal's owner, the salesperson on the quote, and only among the deals the
-	caller may read; values are in the base currency.
+	a sales order, as the Acumatica sync records it. A deal counts for its
+	owner and for anyone assigned to it, the quota report's rule, so the order
+	value here and the won value there agree; only deals the caller may read
+	count, and values are in the base currency.
 
 	Invoices are not here: Vectora holds no invoice per rep or per date, only
 	a customer's revenue total from the first import. One row per rep in scope
@@ -2311,23 +2312,48 @@ def rep_summary(from_date: str, to_date: str, user: str | None = None) -> list[d
 		row(rep)[SUMMARY_ACTIVITIES[kind]] = int(count)
 
 	Deal = DocType("CRM Deal")
-	value = Sum(Coalesce(Deal.deal_value, 0) * IfNull(Deal.exchange_rate, 1))
+	Todo = DocType("ToDo")
 
-	def per_owner(query):
-		query = query.where(Deal.deal_owner.isnotnull())
+	def attribute(query, count_key: str, value_key: str) -> None:
+		# who a deal belongs to is the quota report's rule (won_value_by_user):
+		# its owner and anyone with an open assignment on it, once each
+		query = query.select(
+			Deal.name,
+			Deal.deal_owner,
+			(Coalesce(Deal.deal_value, 0) * IfNull(Deal.exchange_rate, 1)).as_("value"),
+		)
 		if scope is not None:
-			query = query.where(Deal.deal_owner.isin(scope))
-		return scope_deals(
-			query.select(Deal.deal_owner, Count(Deal.name), value).groupby(Deal.deal_owner)
-		).run()
+			query = query.where(belongs_to_any(Deal, scope, "CRM Deal"))
+		deals = scope_deals(query).run(as_dict=True)
+		value_of = {deal.name: flt(deal.value) for deal in deals}
+		belongs: dict[str, set] = {}
+		for deal in deals:
+			if deal.deal_owner and (scope is None or deal.deal_owner in scope):
+				belongs.setdefault(deal.deal_owner, set()).add(deal.name)
+		for batch in _chunks(list(value_of), 1000):
+			assigned = (
+				frappe.qb.from_(Todo)
+				.select(Todo.reference_name, Todo.allocated_to)
+				.where(
+					(Todo.reference_type == "CRM Deal")
+					& (Todo.status != "Cancelled")
+					& Todo.reference_name.isin(batch)
+				)
+			)
+			if scope is not None:
+				assigned = assigned.where(Todo.allocated_to.isin(scope))
+			for todo in assigned.run(as_dict=True):
+				if todo.allocated_to:
+					belongs.setdefault(todo.allocated_to, set()).add(todo.reference_name)
+		for rep, names in belongs.items():
+			row(rep).update({count_key: len(names), value_key: float(sum(value_of[n] for n in names))})
 
-	created = frappe.qb.from_(Deal).where(
-		(Deal.creation >= from_date) & (Deal.creation < add_days(to_date, 1))
+	attribute(
+		frappe.qb.from_(Deal).where((Deal.creation >= from_date) & (Deal.creation < add_days(to_date, 1))),
+		"quotes",
+		"quote_value",
 	)
-	for rep, count, total in per_owner(created):
-		row(rep).update(quotes=int(count), quote_value=flt(total))
-	for rep, count, total in per_owner(_won_deals_query(from_date, to_date)):
-		row(rep).update(orders=int(count), order_value=flt(total))
+	attribute(_won_deals_query(from_date, to_date), "orders", "order_value")
 
 	return [frappe._dict(rows[rep]) for rep in sorted(rows)]
 
