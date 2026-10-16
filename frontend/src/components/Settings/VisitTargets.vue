@@ -7,10 +7,34 @@
       <p class="text-p-sm text-ink-gray-5">
         {{
           __(
-            'Customer visits each rep should complete in a working week, planned or unplanned. A month or a fortnight is measured against the same number, pro-rated by its working days.',
+            'Planned customer visits each rep should complete in a working week. Calls, emails and unplanned meetings are not counted. A month or a fortnight is measured against the same number, pro-rated by its working days.',
           )
         }}
       </p>
+    </div>
+
+    <div
+      v-if="canChangeLock"
+      class="flex items-center justify-between gap-6 rounded-5 border border-outline-gray-1 px-3 py-2.5"
+    >
+      <div class="flex flex-col">
+        <div class="text-p-base-medium text-ink-gray-7">
+          {{ __('Plan only for today or later') }}
+        </div>
+        <div class="text-p-sm text-ink-gray-5">
+          {{
+            __(
+              'Reps cannot plan, move or remove an activity on a day that has passed, and log unplanned work on the day itself. Outcomes can still be logged afterwards.',
+            )
+          }}
+        </div>
+      </div>
+      <CheckSwitch
+        :modelValue="!!settings.doc?.lock_past_plans"
+        size="sm"
+        :disabled="settings.setValue.loading"
+        @update:modelValue="setLock"
+      />
     </div>
 
     <SkeletonTable
@@ -108,12 +132,33 @@
 <script setup>
 import { PhMapPin as LucideMapPin } from '@phosphor-icons/vue'
 import { call, createResource, toast } from 'frappe-ui'
+import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import { sessionStore } from '@/stores/session'
+import { getSettings } from '@/stores/settings'
+import { usersStore } from '@/stores/users'
 import { computed } from 'vue'
 
 const { user: currentUser } = sessionStore()
+const { _settings: settings } = getSettings()
+const { isManager, isAdmin } = usersStore()
+
+// FCRM Settings is writable by Sales Managers and System Managers
+const canChangeLock = computed(() => isManager() || isAdmin())
+
+async function setLock(value) {
+  try {
+    await settings.setValue.submit({ lock_past_plans: value ? 1 : 0 })
+    toast.success(
+      value
+        ? __('Reps now plan for today or later')
+        : __('Reps can plan on past days again'),
+    )
+  } catch (error) {
+    toast.error(error.messages?.[0] || __('Could not change the setting'))
+  }
+}
 
 const targets = createResource({
   url: 'crm.api.visit_targets.get_visit_targets',

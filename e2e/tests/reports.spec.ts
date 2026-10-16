@@ -54,6 +54,9 @@ test.describe('Reports', () => {
 
 		await page.getByRole('tab', { name: 'Funnel conversion' }).click()
 		await expect(page.getByRole('button', { name: /last .* days/i })).toBeVisible()
+		// beside the presets, the dates themselves -- MBP's managers could not
+		// find the custom range when it hid behind the preset menu
+		await expect(page.getByPlaceholder('Period')).toHaveValue(/ to /)
 	})
 
 	test('exports the report on screen as CSV', async ({ page }) => {

@@ -2154,10 +2154,12 @@ def _tidy(value: float) -> float | int:
 def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list[dict]:
 	"""Customer visits per rep in the period, against their weekly visit target.
 
-	A visit is a plan item of a VISIT_KINDS type -- planned or logged after the
-	fact (an unplanned meeting is still a customer visit). ``scheduled`` is every
-	such item dated in the period; ``completed``/``cancelled``/``missed``/``open``
-	split it by status.
+	A visit is a plan item of a TARGET_KINDS type: a planned Visit. Calls,
+	emails, deliveries and admin never count, and neither does an unplanned
+	meeting -- MBP's managers measure the target on planned visits, so those are
+	reported beside it as ``unplanned`` (done ones). ``scheduled`` is every
+	planned visit dated in the period; ``completed``/``cancelled``/``missed``/
+	``open`` split it by status.
 
 	``target`` is the whole period's share of the weekly target (pro-rated by
 	working days, ``crm.api.visit_targets.target_for``); ``target_to_date`` is
@@ -2169,18 +2171,26 @@ def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list
 	One row per rep in scope who has a target or any visit in the period.
 	"""
 	from crm.api.visit_targets import target_for
-	from crm.rep_planning import VISIT_KINDS
+	from crm.rep_planning import TARGET_KINDS
 
 	query, PlanItem, Plan = _plan_items_in(from_date, to_date, user)
 	counts = {
 		row.user: row
-		for row in query.where(PlanItem.activity_type.isin(VISIT_KINDS))
+		for row in query.where(PlanItem.activity_type.isin(TARGET_KINDS))
 		.select(Plan.user.as_("user"), *_status_counts(PlanItem))
 		.groupby(Plan.user)
 		.run(as_dict=True)
 	}
+	query, PlanItem, Plan = _plan_items_in(from_date, to_date, user)
+	unplanned = dict(
+		query.where(PlanItem.activity_type == "Unplanned Meeting")
+		.where(PlanItem.status == "Done")
+		.select(Plan.user, Count(PlanItem.name))
+		.groupby(Plan.user)
+		.run()
+	)
 
-	reps = set(counts)
+	reps = set(counts) | set(unplanned)
 	scope = _scope_users(user)
 	filters = {"visits_per_week": (">", 0)}
 	if scope is not None:
@@ -2214,6 +2224,7 @@ def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list
 					"cancelled": int(row.get("cancelled") or 0),
 					"missed": int(row.get("missed") or 0),
 					"open": int(row.get("open") or 0),
+					"unplanned": int(unplanned.get(rep) or 0),
 					# no target is not 0% of one -- the quota report's rule
 					"attainment": round(completed / target * 100) if target else None,
 					"on_track": on_track,
@@ -2246,6 +2257,105 @@ def activities_by_type(from_date: str, to_date: str, user: str | None = None) ->
 			row[key] = int(row.get(key) or 0)
 	rows.sort(key=lambda r: (r.user, order.get(r.activity_type, len(order)), r.activity_type or ""))
 	return rows
+
+
+# rep_summary's activity columns: what the rep did, by the planner's type
+SUMMARY_ACTIVITIES = {
+	"Visit": "visits",
+	"Unplanned Meeting": "unplanned",
+	"Delivery": "deliveries",
+	"Call": "calls",
+	"Email": "emails",
+}
+
+
+def rep_summary(from_date: str, to_date: str, user: str | None = None) -> list[dict]:
+	"""Per rep: the work done in the period beside the quotes and orders it led to.
+
+	MBP's managers read a rep as visits, then quotes, then orders, then
+	invoices. Activities are Done plan items dated in the period, by type.
+	A quote is a deal (every Acumatica sales quote is one) created in the
+	period; an order is a deal closed Won in the period -- a quote copied into
+	a sales order, as the Acumatica sync records it. A deal counts for its
+	owner and for anyone assigned to it, the quota report's rule, so the order
+	value here and the won value there agree; only deals the caller may read
+	count, and values are in the base currency.
+
+	Invoices are not here: Vectora holds no invoice per rep or per date, only
+	a customer's revenue total from the first import. One row per rep in scope
+	with anything in the period.
+	"""
+	scope = _scope_users(user)
+	rows: dict[str, dict] = {}
+
+	def row(rep):
+		return rows.setdefault(
+			rep,
+			{
+				"user": rep,
+				**dict.fromkeys(SUMMARY_ACTIVITIES.values(), 0),
+				"quotes": 0,
+				"quote_value": 0.0,
+				"orders": 0,
+				"order_value": 0.0,
+			},
+		)
+
+	query, PlanItem, Plan = _plan_items_in(from_date, to_date, user)
+	for rep, kind, count in (
+		query.where(PlanItem.status == "Done")
+		.where(PlanItem.activity_type.isin(list(SUMMARY_ACTIVITIES)))
+		.select(Plan.user, PlanItem.activity_type, Count(PlanItem.name))
+		.groupby(Plan.user, PlanItem.activity_type)
+		.run()
+	):
+		row(rep)[SUMMARY_ACTIVITIES[kind]] = int(count)
+
+	Deal = DocType("CRM Deal")
+	Todo = DocType("ToDo")
+
+	def attribute(query, count_key: str, value_key: str) -> None:
+		# who a deal belongs to is the quota report's rule (won_value_by_user):
+		# its owner and anyone with an open assignment on it, once each
+		query = query.select(
+			Deal.name,
+			Deal.deal_owner,
+			(Coalesce(Deal.deal_value, 0) * IfNull(Deal.exchange_rate, 1)).as_("value"),
+		)
+		if scope is not None:
+			query = query.where(belongs_to_any(Deal, scope, "CRM Deal"))
+		deals = scope_deals(query).run(as_dict=True)
+		value_of = {deal.name: flt(deal.value) for deal in deals}
+		belongs: dict[str, set] = {}
+		for deal in deals:
+			if deal.deal_owner and (scope is None or deal.deal_owner in scope):
+				belongs.setdefault(deal.deal_owner, set()).add(deal.name)
+		for batch in _chunks(list(value_of), 1000):
+			assigned = (
+				frappe.qb.from_(Todo)
+				.select(Todo.reference_name, Todo.allocated_to)
+				.where(
+					(Todo.reference_type == "CRM Deal")
+					& (Todo.status != "Cancelled")
+					& Todo.reference_name.isin(batch)
+				)
+			)
+			if scope is not None:
+				assigned = assigned.where(Todo.allocated_to.isin(scope))
+			for todo in assigned.run(as_dict=True):
+				if todo.allocated_to:
+					belongs.setdefault(todo.allocated_to, set()).add(todo.reference_name)
+		for rep, names in belongs.items():
+			row(rep).update({count_key: len(names), value_key: float(sum(value_of[n] for n in names))})
+
+	attribute(
+		frappe.qb.from_(Deal).where((Deal.creation >= from_date) & (Deal.creation < add_days(to_date, 1))),
+		"quotes",
+		"quote_value",
+	)
+	attribute(_won_deals_query(from_date, to_date), "orders", "order_value")
+
+	return [frappe._dict(rows[rep]) for rep in sorted(rows)]
 
 
 INTERACTION_BUCKETS = ("visits", "deliveries", "calls", "emails", "other")
