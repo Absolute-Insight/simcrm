@@ -24,8 +24,9 @@ test.describe('Manager dashboard', () => {
 		await page.goto('/crm/dashboard')
 
 		// the rep filter exists only for managers and admins; it reads "All reps"
-		// when nothing is chosen (77b4eb51f)
-		await expect(page.getByPlaceholder('All reps')).toBeVisible()
+		// when nothing is chosen (77b4eb51f), and lists the planner's reps rather
+		// than a User link, so a rep whose login is disabled is still on it
+		await expect(page.getByRole('combobox', { name: 'Rep' })).toContainText('All reps')
 		await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible()
 		await page.waitForLoadState('networkidle')
 
