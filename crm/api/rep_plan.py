@@ -191,7 +191,10 @@ def _stage_items(plan, items: list[dict]) -> set[str]:
 		# would fail the whole save on a link-validation error the rep can do
 		# nothing about, losing the rest of their week's edits.
 		if clean.get("reference_doctype") and clean.get("reference_docname"):
-			if not frappe.db.exists(clean["reference_doctype"], clean["reference_docname"]):
+			# ...and a record the rep may not read is not theirs to plan against: the
+			# item's reference reaches the visit event closing it, and through that
+			# event client_reliability would show the deal's organization
+			if not _can_reference(clean["reference_doctype"], clean["reference_docname"]):
 				clean["reference_doctype"] = None
 				clean["reference_docname"] = None
 		# same reasoning for the customer: a merged or deleted organization must
@@ -213,6 +216,12 @@ def _stage_items(plan, items: list[dict]) -> set[str]:
 		plan.append("items", clean)
 
 	return dropped - {row.get("suggestion") for row in items if row.get("suggestion")}
+
+
+def _can_reference(doctype: str, name: str) -> bool:
+	return bool(frappe.db.exists(doctype, name)) and bool(
+		frappe.has_permission(doctype, "read", doc=name, user=frappe.session.user)
+	)
 
 
 def _items_or_throw(items) -> list[dict]:
@@ -406,6 +415,7 @@ def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled
 		_refuse_a_second_claim(item, fulfilled_by_doctype, fulfilled_by)
 		_refuse_a_record_from_another_week(kind, rows[0], plan, fulfilled_by_doctype, fulfilled_by)
 
+	_drop_cancellation(item)
 	frappe.db.set_value(
 		"CRM Rep Plan Item",
 		item,
@@ -625,6 +635,12 @@ def cancel_item(item: str, reason: str):
 	row = _item_row(item)
 	if row.status == "Cancelled":
 		frappe.throw(_("This activity is already cancelled."), frappe.ValidationError)
+	if row.status == "Done":
+		# its Completed visit is a record of work done; cancelling over it would
+		# count the one visit both ways
+		frappe.throw(
+			_("This activity is already done. Hand it back to the matcher first."), frappe.ValidationError
+		)
 	_refuse_outside_horizon(plan.week_start)
 
 	event = None
@@ -787,6 +803,8 @@ def log_unplanned_visit(
 		frappe.throw(_("{0} cannot be the subject of a visit.").format(reference_doctype))
 	if not reference_doctype:
 		reference_docname = None
+	if reference_docname and not _can_reference(reference_doctype, reference_docname):
+		frappe.throw(_("You cannot log a visit against that record."), frappe.PermissionError)
 
 	when_dt = frappe.utils.get_datetime(when) if when else frappe.utils.now_datetime()
 	if when_dt > frappe.utils.now_datetime():

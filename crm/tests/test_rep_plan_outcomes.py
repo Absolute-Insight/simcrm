@@ -11,7 +11,7 @@ the whole team's week at once.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -246,7 +246,9 @@ class MatchOnCustomerTest(OutcomeTestCase):
 			{
 				"doctype": "Event",
 				"subject": "Visit",
-				"starts_on": frappe.utils.now_datetime() - timedelta(minutes=5),
+				# the start of today: always in this week and never after now, where
+				# "five minutes ago" was last week for five minutes every Monday
+				"starts_on": datetime.combine(frappe.utils.getdate(), time.min),
 				"event_type": "Private",
 				"event_category": "Visit",
 				"status": "Completed",
@@ -284,3 +286,62 @@ class BackfillCustomerPatchTest(OutcomeTestCase):
 		execute()
 		self.assertEqual(frappe.db.get_value("CRM Rep Plan Item", row["name"], "organization"), self.org.name)
 		self.assertFalse(frappe.db.get_value("CRM Rep Plan Item", untouched, "organization"))
+
+
+class ReferenceScopeTest(OutcomeTestCase):
+	"""A rep plans and logs only against deals they may read: the reference
+	reaches the visit event, and through it client_reliability would show the
+	other rep's deal's organization."""
+
+	def deal_of(self, owner):
+		frappe.set_user("Administrator")
+		deal = frappe.get_doc(
+			{"doctype": "CRM Deal", "organization": self.org.name, "deal_owner": owner}
+		).insert(ignore_permissions=True)
+		frappe.set_user(REP)
+		return deal.name
+
+	def test_a_deal_the_rep_cannot_read_is_dropped_from_the_plan(self):
+		theirs, mine = self.deal_of(OTHER), self.deal_of(REP)
+		plan = save_plan(
+			this_monday(),
+			[
+				{
+					"activity_type": "Visit",
+					"planned_date": today(),
+					"note": "theirs",
+					"reference_doctype": "CRM Deal",
+					"reference_docname": theirs,
+				},
+				{
+					"activity_type": "Visit",
+					"planned_date": today(),
+					"note": "mine",
+					"reference_doctype": "CRM Deal",
+					"reference_docname": mine,
+				},
+			],
+		)
+		refs = {i["note"]: i["reference_docname"] for i in plan["items"]}
+		self.assertEqual(refs, {"theirs": None, "mine": mine})
+
+	def test_a_visit_cannot_be_logged_against_a_deal_the_rep_cannot_read(self):
+		theirs = self.deal_of(OTHER)
+		with self.assertRaises(frappe.PermissionError):
+			log_unplanned_visit(self.org.name, "x", reference_doctype="CRM Deal", reference_docname=theirs)
+
+
+class DoneAndCancelledDoNotOverlapTest(OutcomeTestCase):
+	def test_a_done_item_cannot_be_cancelled_over_its_visit(self):
+		item = self.plan_one()
+		complete_item(item, "Went")
+		with self.assertRaises(frappe.ValidationError):
+			cancel_item(item, "Changed my mind")
+
+	def test_marking_a_cancelled_item_done_takes_the_cancelled_event_with_it(self):
+		from crm.api.rep_plan import mark_fulfilled
+
+		item = self.plan_one()
+		event = cancel_item(item, "Moved")["items"][0]["fulfilled_by"]
+		mark_fulfilled(item)
+		self.assertFalse(frappe.db.exists("Event", {"name": event, "status": "Cancelled"}))

@@ -413,6 +413,31 @@ class QuotaScopeTest(IntegrationTestCase):
 		self.assertIn(OTHER, [r["user"] for r in quota_api.get_quota_grid(2026)["rows"]])
 		self.assertEqual(quota_api.set_quota(OTHER, "2026-04-01", 5_000), {"amount": 5_000})
 
+	def test_a_see_all_manager_cannot_write_their_own_target_through_the_document_api(self):
+		"""visible_users() is None for an out-of-tree manager on "All records", and
+		has_permission returned True on that before reaching the own-row rule."""
+		saved_scope = frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy")
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		self.addCleanup(
+			frappe.db.set_single_value,
+			"CRM Access Settings",
+			"manager_outside_hierarchy",
+			saved_scope or "All records",
+		)
+		frappe.db.delete("CRM Sales Hierarchy", {"user": self.MANAGER})
+		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
+		frappe.set_user(self.MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.get_doc(
+				{"doctype": "CRM Quota", "user": self.MANAGER, "period_start": "2026-05-01", "amount": 1}
+			).insert()
+		with self.assertRaises(frappe.PermissionError):
+			frappe.get_doc(
+				{"doctype": "CRM Visit Target", "user": self.MANAGER, "visits_per_week": 99}
+			).insert()
+		# and still sets a rep's
+		frappe.get_doc({"doctype": "CRM Visit Target", "user": OTHER, "visits_per_week": 12}).insert()
+
 	# --- nobody sets their own target ------------------------------------
 
 	def test_a_manager_cannot_set_their_own_target(self):

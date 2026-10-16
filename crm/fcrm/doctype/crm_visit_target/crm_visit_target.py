@@ -52,6 +52,12 @@ def has_permission(doc, ptype="read", user=None):
 	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
 
 	user = user or frappe.session.user
+	# Nobody writes their own target -- checked before the see-everyone shortcut,
+	# because visible_users() is None for an out-of-tree Sales Manager on the
+	# see-all setting too, not only for a System Manager, and that let such a
+	# manager set their own target through the document API.
+	if doc.user == user and ptype != "read" and not _sets_any_target(user):
+		return False
 	users = visible_users(user)
 	if users is None:
 		return True
@@ -61,3 +67,8 @@ def has_permission(doc, ptype="read", user=None):
 	if doc.user == user:
 		return ptype == "read"
 	return True
+
+
+def _sets_any_target(user: str) -> bool:
+	"""System Manager sets everyone's target, a manager's own included."""
+	return user == "Administrator" or "System Manager" in frappe.get_roles(user)

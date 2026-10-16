@@ -1009,7 +1009,9 @@ function itemActions(item) {
         onClick: () => completeItem(item),
       })
     }
-    if (item.status !== 'Cancelled') {
+    // a done item holds its visit record; cancelling over it would count the
+    // visit both ways, so it is handed back to the matcher first
+    if (item.status !== 'Cancelled' && item.status !== 'Done') {
       actions.push({
         label: __('Cancel it…'),
         icon: 'lucide-ban',

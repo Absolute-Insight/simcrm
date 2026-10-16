@@ -140,11 +140,12 @@ import {
   rollupItems,
   rollupTotals,
   teamGrid,
+  todayInTimeZone,
   weekDayCells,
 } from '@/utils/planner'
 import { statusColor, statusLabel, typeIcon } from '@/utils/plannerDisplay'
 import { quiet } from '@/utils/quiet'
-import { Select, createResource, dayjs } from 'frappe-ui'
+import { Select, createResource, dayjs, getConfig } from 'frappe-ui'
 import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
@@ -160,10 +161,17 @@ const typeOptions = computed(() => [
   ...ACTIVITY_TYPES.map((t) => ({ label: __(t.label), value: t.value })),
 ])
 
+/* Re-read on every load, like the rep's week does: a manager who leaves the
+   team week open past midnight should not see yesterday marked as today. */
+const today = ref(props.today)
+
 const team = createResource({
   url: 'crm.api.rep_plan.get_team_week',
   makeParams: () => ({ week_start: props.weekStart }),
   auto: true,
+  onSuccess() {
+    today.value = todayInTimeZone(getConfig('systemTimezone'))
+  },
 })
 
 watch(
@@ -171,7 +179,7 @@ watch(
   () => quiet(team.reload()),
 )
 
-const days = computed(() => weekDayCells(props.weekStart, props.today))
+const days = computed(() => weekDayCells(props.weekStart, today.value))
 
 const rows = computed(() =>
   teamGrid(
