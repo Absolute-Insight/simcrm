@@ -1,2 +1,2 @@
-__version__ = "3.19.1"
+__version__ = "3.20.0"
 __title__ = "Vectora"
