@@ -206,6 +206,62 @@ class VisitTargetPermissionTest(VisitFixture, IntegrationTestCase):
 		self.assertEqual([(r["user"], r["visits_per_week"], r["editable"]) for r in rows], [(REP, 9, False)])
 
 
+class LockedRepTest(VisitFixture, IntegrationTestCase):
+	"""A rep disabled before go-live is still a rep to plan and set targets for.
+
+	MBP's reps were disabled so they could not log in yet while their imported
+	history filled the planner; the enabled-only rep list emptied the managers'
+	team week and Settings -> Visit Targets on production.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		frappe.db.set_value("User", REP, "enabled", 0)
+		make_plan(REP, self.monday, [{"activity_type": "Visit", "planned_date": self.day(1)}])
+
+	def test_the_team_week_and_the_picker_keep_a_disabled_rep_with_recent_plans(self):
+		from crm.api.rep_plan import get_team_week, get_visible_reps
+
+		self.assertIn(REP, get_visible_reps())
+		rows = {rep["user"]: rep for rep in get_team_week(self.start)["reps"]}
+		self.assertEqual(len(rows[REP]["items"]), 1)
+		self.assertEqual(rows[REP]["full_name"], "Visits Rep")
+
+	def test_a_manager_sets_a_target_for_a_disabled_rep(self):
+		self.assertIn(REP, {row["user"] for row in targets_api.get_visit_targets()})
+		self.assertEqual(targets_api.set_visit_target(REP, 10)["visits_per_week"], 10)
+		self.make_hierarchy()
+		frappe.set_user(MANAGER)
+		self.assertIn(REP, {row["user"] for row in targets_api.get_visit_targets()})
+		self.assertEqual(targets_api.set_visit_target(REP, 12)["visits_per_week"], 12)
+
+	def test_a_scoped_manager_gets_no_row_for_a_disabled_rep_outside_their_tree(self):
+		from crm.api.rep_plan import get_team_week
+
+		frappe.db.set_value("User", OUTSIDER, "enabled", 0)
+		make_plan(OUTSIDER, self.monday, [{"activity_type": "Call", "planned_date": self.day(2)}])
+		self.make_hierarchy()
+		frappe.set_user(MANAGER)
+		rows = {rep["user"] for rep in get_team_week(self.start)["reps"]}
+		self.assertEqual(rows, {MANAGER, REP})
+
+	def test_a_rep_who_left_drops_out_once_their_plans_are_old(self):
+		from crm.api.rep_plan import get_team_week, get_visible_reps, planning_reps
+		from crm.rep_planning import MATCH_HORIZON_WEEKS
+
+		old_monday = add_days(self.monday, -7 * (MATCH_HORIZON_WEEKS + 2))
+		frappe.db.set_value("User", OUTSIDER, "enabled", 0)
+		make_plan(OUTSIDER, old_monday, [{"activity_type": "Call", "planned_date": old_monday}])
+
+		self.assertNotIn(OUTSIDER, planning_reps())
+		self.assertNotIn(OUTSIDER, get_visible_reps())
+		with self.assertRaises(frappe.ValidationError):
+			targets_api.set_visit_target(OUTSIDER, 5)
+		# the week they planned still shows them
+		old_rows = {rep["user"] for rep in get_team_week(str(old_monday))["reps"]}
+		self.assertIn(OUTSIDER, old_rows)
+
+
 class VisitsByRepTest(VisitFixture, IntegrationTestCase):
 	def setUp(self):
 		super().setUp()
@@ -216,7 +272,7 @@ class VisitsByRepTest(VisitFixture, IntegrationTestCase):
 				{"activity_type": "Visit", "planned_date": self.day(0), "status": "Done"},
 				{"activity_type": "Visit", "planned_date": self.day(1), "status": "Done"},
 				{"activity_type": "Visit", "planned_date": self.day(2), "status": "Done"},
-				# logged after the fact, still a customer visit
+				# logged after the fact: reported beside the target, not counted in it
 				{"activity_type": "Unplanned Meeting", "planned_date": self.day(3), "status": "Done"},
 				{
 					"activity_type": "Visit",
@@ -236,21 +292,27 @@ class VisitsByRepTest(VisitFixture, IntegrationTestCase):
 		self.assertEqual([r["user"] for r in rows], [REP])
 		return rows[0]
 
-	def test_counts_split_by_status_and_only_visits_count(self):
+	def test_counts_split_by_status_and_only_planned_visits_count(self):
 		make_target(REP, 5)
 		row = self.row()
 		self.assertEqual(
 			(row["scheduled"], row["completed"], row["cancelled"], row["missed"], row["open"]),
-			(6, 4, 1, 1, 0),
+			(5, 3, 1, 1, 0),
 		)
+		self.assertEqual(row["unplanned"], 1)
 		self.assertEqual((row["target"], row["target_to_date"]), (5, 5))
-		self.assertEqual(row["attainment"], 80)
+		self.assertEqual(row["attainment"], 60)
 		self.assertEqual(row["on_track"], "Behind")
 
 	def test_meeting_the_target_due_so_far_is_on_track(self):
-		make_target(REP, 4)
+		make_target(REP, 3)
 		row = self.row()
 		self.assertEqual((row["attainment"], row["on_track"]), (100, "On track"))
+
+	def test_an_unplanned_meeting_does_not_make_up_a_missed_visit(self):
+		make_target(REP, 4)
+		row = self.row()
+		self.assertEqual((row["completed"], row["unplanned"], row["on_track"]), (3, 1, "Behind"))
 
 	def test_no_target_is_not_behind_or_zero_percent(self):
 		row = self.row()
@@ -420,6 +482,106 @@ class CustomerInteractionTest(VisitFixture, IntegrationTestCase):
 	def test_another_reps_visit_is_not_this_reps_interaction(self):
 		make_event(OUTSIDER, self.day(1), self.orgs["visited"])
 		self.assertEqual(self.rows()[self.orgs["visited"]]["total"], 0)
+
+
+class RepSummaryTest(VisitFixture, IntegrationTestCase):
+	"""Visits beside quotes and orders, per rep -- the managers' dashboard line."""
+
+	def setUp(self):
+		super().setUp()
+		make_plan(
+			REP,
+			self.monday,
+			[
+				{"activity_type": "Visit", "planned_date": self.day(0), "status": "Done"},
+				{"activity_type": "Visit", "planned_date": self.day(1), "status": "Done"},
+				{"activity_type": "Visit", "planned_date": self.day(2), "status": "Missed"},
+				{"activity_type": "Unplanned Meeting", "planned_date": self.day(2), "status": "Done"},
+				{"activity_type": "Call", "planned_date": self.day(3), "status": "Done"},
+				{"activity_type": "Email", "planned_date": self.day(3), "status": "Done"},
+				# planned, not done: not work done
+				{"activity_type": "Call", "planned_date": self.day(4), "status": "Planned"},
+			],
+		)
+		won = frappe.get_all("CRM Deal Status", filters={"type": "Won"}, pluck="name")
+		if not won:
+			self.skipTest("site has no Won deal status")
+		self.won = won[0]
+		self.org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Summary Smelter"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		self.deal(1000, self.day(1))
+		self.deal(2500, self.day(2), closed=self.day(4))
+		# quoted before the period, ordered in it: an order, not a quote
+		self.deal(4000, add_days(self.monday, -20), closed=self.day(3))
+		# quoted after the period: neither
+		self.deal(9000, add_days(self.monday, 8))
+
+	def deal(self, value, created, closed=None, owner=REP) -> str:
+		doc = frappe.get_doc(
+			{
+				"doctype": "CRM Deal",
+				"organization": self.org,
+				"deal_owner": owner,
+				"deal_value": value,
+				"exchange_rate": 1,
+			}
+		).insert(ignore_permissions=True)
+		values = {"creation": datetime.combine(getdate(created), time(9, 0))}
+		if closed:
+			values |= {"status": self.won, "closed_date": closed}
+		frappe.db.set_value("CRM Deal", doc.name, values, update_modified=False)
+		return doc.name
+
+	def summary(self, user=None) -> dict:
+		return {row["user"]: row for row in get_report("rep_summary", self.start, self.end, user)["rows"]}
+
+	def test_work_done_beside_quotes_and_orders(self):
+		row = next(
+			r for r in get_report("rep_summary", self.start, self.end, REP)["rows"] if r["user"] == REP
+		)
+		self.assertEqual(
+			(row["visits"], row["unplanned"], row["calls"], row["emails"], row["deliveries"]),
+			(2, 1, 1, 1, 0),
+		)
+		self.assertEqual((row["quotes"], row["quote_value"]), (2, 3500))
+		self.assertEqual((row["orders"], row["order_value"]), (2, 6500))
+		self.assertEqual(row["rep"], "Visits Rep")
+
+	def test_a_deal_counts_for_the_rep_assigned_to_it_as_the_quota_report_does(self):
+		name = self.deal(700, self.day(2), owner=OUTSIDER)
+		frappe.get_doc(
+			{
+				"doctype": "ToDo",
+				"allocated_to": REP,
+				"reference_type": "CRM Deal",
+				"reference_name": name,
+				"description": "Assigned",
+				"status": "Open",
+			}
+		).insert(ignore_permissions=True)
+		row = self.summary(REP)[REP]
+		self.assertEqual((row["quotes"], row["quote_value"]), (3, 4200))
+
+	def test_a_manager_sees_their_tree_and_no_further(self):
+		self.deal(5000, self.day(1), owner=OUTSIDER)
+		self.make_hierarchy()
+		frappe.set_user(MANAGER)
+		rows = self.summary()
+		self.assertNotIn(OUTSIDER, rows)
+		self.assertEqual(rows[REP]["quotes"], 2)
+		with self.assertRaises(frappe.PermissionError):
+			self.summary(OUTSIDER)
+
+	def test_a_rep_is_pinned_to_their_own_row(self):
+		self.deal(5000, self.day(1), owner=OUTSIDER)
+		frappe.set_user(REP)
+		self.assertEqual(set(self.summary(OUTSIDER)), {REP})
+
+	def test_says_why_there_is_no_invoice_column(self):
+		self.assertIn("Invoices", get_report("rep_summary", self.start, self.end, REP)["notice"])
 
 
 class AdherenceCancellationTest(VisitFixture, IntegrationTestCase):

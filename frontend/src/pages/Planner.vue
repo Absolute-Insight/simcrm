@@ -277,7 +277,7 @@
                 canEdit ? 'v-glass-hover' : '',
               ]"
               :data-plan-uid="item._uid"
-              :draggable="canEdit"
+              :draggable="canEdit && !isLockedDay(item.planned_date)"
               @dragstart="onDragStart($event, item)"
               @dragend="onDragEnd"
               @keydown="onCardKeydown($event, item)"
@@ -326,7 +326,7 @@
                     />
                   </Tooltip>
                   <Dropdown
-                    v-if="canEdit"
+                    v-if="canEdit && itemActions(item).length"
                     :options="itemActions(item)"
                     align="end"
                   >
@@ -338,7 +338,7 @@
                     />
                   </Dropdown>
                   <Button
-                    v-if="canEdit"
+                    v-if="canEdit && !isLockedDay(item.planned_date)"
                     class="v-card-action !size-5"
                     variant="ghost"
                     icon="lucide-x"
@@ -390,7 +390,7 @@
             </div>
 
             <Button
-              v-if="canEdit"
+              v-if="canEdit && !isLockedDay(day.date)"
               class="w-full opacity-60 hover:opacity-100 focus-visible:opacity-100"
               variant="ghost"
               icon="lucide-plus"
@@ -475,6 +475,7 @@ import {
 } from '@/utils/planner'
 import { sessionStore } from '@/stores/session'
 import { usersStore } from '@/stores/users'
+import { getSettings } from '@/stores/settings'
 import {
   Dropdown,
   Select,
@@ -505,6 +506,16 @@ const { getUser } = usersStore()
    backend exposes no current_week endpoint, so the site zone from boot
    (App.vue seeds it from window.timezone.system) is the closest source. */
 const today = ref(todayInTimeZone(getConfig('systemTimezone')))
+
+/* Settings -> Visit Targets -> "Plan only for today or later". The server
+   refuses the same things; this keeps the planner from offering them. */
+// the document resource, not the `settings` copy: setValue updates only the
+// former, so a manager's switch reaches an open planner without a reload
+const { _settings: crmSettings } = getSettings()
+const pastLocked = computed(() => !!crmSettings.doc?.lock_past_plans)
+function isLockedDay(date) {
+  return pastLocked.value && !!date && date < today.value
+}
 
 const weekStart = ref(mondayOf(today.value))
 const planUser = ref(session.user)
@@ -892,7 +903,7 @@ async function addItem(date) {
 }
 
 async function editItem(item) {
-  if (!canEdit.value) return
+  if (!canEdit.value || isLockedDay(item.planned_date)) return
   const defaults = {}
   for (const field of EDITABLE_ITEM_FIELDS) defaults[field] = item[field]
   const data = await renderFieldLayoutDialog({
@@ -916,13 +927,14 @@ async function editItem(item) {
 }
 
 function removeItem(item) {
+  if (isLockedDay(item.planned_date)) return
   localItems.list = localItems.list.filter((i) => i !== item)
 }
 
 // -- rescheduling -----------------------------------------------------------
 
 function onDragStart(event, item) {
-  if (!canEdit.value) return
+  if (!canEdit.value || isLockedDay(item.planned_date)) return
   dragging.value = item
   event.dataTransfer.effectAllowed = 'move'
   // Firefox refuses to start a drag without payload.
@@ -935,7 +947,7 @@ function onDragEnd() {
 }
 
 function onDragOver(event, date) {
-  if (!dragging.value) return
+  if (!dragging.value || isLockedDay(date)) return
   event.preventDefault()
   event.dataTransfer.dropEffect = 'move'
   dragOverDate.value = date
@@ -966,7 +978,12 @@ function onCardKeydown(event, item) {
 }
 
 async function moveTo(item, date) {
-  if (!weekDates.value.includes(date)) return
+  if (
+    !weekDates.value.includes(date) ||
+    isLockedDay(date) ||
+    isLockedDay(item.planned_date)
+  )
+    return
   const next = moveItemToDate(localItems.list, item, date)
   if (next === localItems.list) return
   localItems.list = next
@@ -985,19 +1002,26 @@ async function moveTo(item, date) {
 // -- fulfilment overrides ---------------------------------------------------
 
 function itemActions(item) {
-  const actions = [
-    { label: __('Edit'), icon: 'lucide-edit-2', onClick: () => editItem(item) },
-    {
-      label: __('Move a day earlier'),
-      icon: 'lucide-arrow-left',
-      onClick: () => moveTo(item, addDays(item.planned_date, -1)),
-    },
-    {
-      label: __('Move a day later'),
-      icon: 'lucide-arrow-right',
-      onClick: () => moveTo(item, addDays(item.planned_date, 1)),
-    },
-  ]
+  // a past card under the lock is frozen: its outcome or a cancellation only
+  const actions = isLockedDay(item.planned_date)
+    ? []
+    : [
+        {
+          label: __('Edit'),
+          icon: 'lucide-edit-2',
+          onClick: () => editItem(item),
+        },
+        {
+          label: __('Move a day earlier'),
+          icon: 'lucide-arrow-left',
+          onClick: () => moveTo(item, addDays(item.planned_date, -1)),
+        },
+        {
+          label: __('Move a day later'),
+          icon: 'lucide-arrow-right',
+          onClick: () => moveTo(item, addDays(item.planned_date, 1)),
+        },
+      ]
 
   // The override endpoints address a stored child row, so an item that has
   // never been saved has nothing for them to address.
@@ -1034,11 +1058,13 @@ function itemActions(item) {
     }
   }
 
-  actions.push({
-    label: __('Remove from plan'),
-    icon: 'lucide-trash-2',
-    onClick: () => removeItem(item),
-  })
+  if (!isLockedDay(item.planned_date)) {
+    actions.push({
+      label: __('Remove from plan'),
+      icon: 'lucide-trash-2',
+      onClick: () => removeItem(item),
+    })
+  }
   return actions
 }
 

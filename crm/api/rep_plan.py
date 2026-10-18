@@ -103,16 +103,39 @@ def get_visible_reps() -> list[str]:
 	"""
 	users = visible_users()
 	if users is None:
-		users = frappe.get_all(
-			"User",
-			filters=[
-				["User", "enabled", "=", 1],
-				["Has Role", "role", "in", ("Sales User", "Sales Manager")],
-			],
-			pluck="name",
-			distinct=True,
-		)
+		users = planning_reps()
 	return sorted({*users, frappe.session.user})
+
+
+def planning_reps() -> list[str]:
+	"""The sales users there is planning to show: every enabled one, and a
+	disabled one whose plans are still recent.
+
+	Disabled is not always gone. MBP's reps were disabled so they could not log
+	in before go-live while their imported history filled the planner, and an
+	enabled-only list emptied the managers' team week and left the reps out of
+	Settings -> Visit Targets. A rep who has left drops out once their last plan
+	is older than the match horizon, the window in which a plan still changes.
+	"""
+	users = frappe.get_all(
+		"User",
+		filters=[["Has Role", "role", "in", ("Sales User", "Sales Manager")]],
+		fields=["name", "enabled"],
+		distinct=True,
+	)
+	enabled = {u.name for u in users if u.enabled}
+	disabled = [u.name for u in users if not u.enabled]
+	if disabled:
+		horizon = frappe.utils.getdate() - timedelta(weeks=MATCH_HORIZON_WEEKS)
+		enabled.update(
+			frappe.get_all(
+				"CRM Rep Plan",
+				filters={"user": ("in", disabled), "week_start": (">=", horizon)},
+				pluck="user",
+				distinct=True,
+			)
+		)
+	return sorted(enabled)
 
 
 @frappe.whitelist()
@@ -283,6 +306,7 @@ def save_plan(week_start: str, items: list | str, modified: str | None = None):
 
 	for attempt in range(2):
 		plan = _plan_for(user, week_start)
+		_refuse_the_past(plan, items)
 		released = _stage_items(plan, items)
 		frappe.db.savepoint("save_plan")
 		try:
@@ -304,6 +328,70 @@ def save_plan(week_start: str, items: list | str, modified: str | None = None):
 	_set_suggestion_status(released, user, "Accepted", "Open")
 
 	return get_plan(week_start)
+
+
+def past_days_locked() -> bool:
+	"""FCRM Settings -> "Plan only for today or later": a plan is a future event."""
+	return bool(frappe.db.get_single_value("FCRM Settings", "lock_past_plans"))
+
+
+def _refuse_the_past(plan, items: list[dict]) -> None:
+	"""With past days locked, nothing is planned, changed or removed before today.
+
+	MBP's managers asked for it: a plan written after the day is not a plan. A
+	row dated before today is frozen as it stands -- its type, customer, note
+	and day -- because a past Done call edited into a Done visit, or a missed
+	visit moved off its day, is the same backdating by another door. What it
+	became is still the rep's to say: complete_item and cancel_item do not go
+	through here, and cancelling, not deleting, is how a past row is withdrawn.
+	A row the client sends back unchanged passes, so saving the rest of the week
+	still works.
+	"""
+	if not past_days_locked():
+		return
+	today = frappe.utils.getdate()
+
+	def value(field, raw):
+		if field == "planned_date":
+			return frappe.utils.getdate(raw) if raw else None
+		return frappe.utils.cstr(raw) or None
+
+	def snapshot(row):
+		return {field: value(field, row.get(field)) for field in EDITABLE_ITEM_FIELDS}
+
+	past = {
+		str(row.name): snapshot(row)
+		for row in plan.get("items", [])
+		if row.planned_date and frappe.utils.getdate(row.planned_date) < today
+	}
+	for row in items:
+		before = past.get(str(row.get("name") or ""))
+		if before is not None:
+			if snapshot(row) != before:
+				frappe.throw(
+					_(
+						"An activity on {0} has passed and cannot be changed. Log its outcome or cancel it."
+					).format(frappe.utils.formatdate(before["planned_date"])),
+					frappe.ValidationError,
+				)
+			continue
+		day = value("planned_date", row.get("planned_date"))
+		if day and day < today:
+			frappe.throw(
+				_("{0} has passed. Activities are planned for today or later.").format(
+					frappe.utils.formatdate(day)
+				),
+				frappe.ValidationError,
+			)
+	kept = {str(row.get("name")) for row in items if row.get("name")}
+	for name, before in past.items():
+		if name not in kept:
+			frappe.throw(
+				_("An activity on {0} has passed and cannot be removed. Cancel it instead.").format(
+					frappe.utils.formatdate(before["planned_date"])
+				),
+				frappe.ValidationError,
+			)
 
 
 def _plan_for(user: str, week_start: str):
@@ -685,12 +773,14 @@ def get_team_week(week_start: str):
 	team rather than one ``get_plan`` per rep.
 	"""
 	week_start = _monday_or_throw(week_start)
-	users = get_visible_reps()
-	plans = frappe.get_all(
-		"CRM Rep Plan",
-		filters={"week_start": week_start, "user": ("in", users)},
-		fields=["name", "user"],
-	)
+	scope = visible_users()
+	filters = {"week_start": week_start}
+	if scope is not None:
+		filters["user"] = ("in", scope)
+	plans = frappe.get_all("CRM Rep Plan", filters=filters, fields=["name", "user"])
+	# whoever planned this week has a row, so an old week keeps the rep who has
+	# since left; get_visible_reps adds the people with nothing planned yet
+	users = sorted({*get_visible_reps(), *(plan.user for plan in plans)})
 	# CRM Rep Plan autonames by number, and a child row's parent is a string
 	by_plan = {str(plan.name): plan.user for plan in plans}
 	rows = (
@@ -812,6 +902,13 @@ def log_unplanned_visit(
 		# was written straight in as Done and inflated adherence until its date
 		# came round
 		frappe.throw(_("A visit cannot be logged before it happens."), frappe.ValidationError)
+	if past_days_locked() and when_dt.date() < frappe.utils.getdate():
+		frappe.throw(
+			_("Activities are logged on the day they happen. {0} has passed.").format(
+				frappe.utils.formatdate(when_dt.date())
+			),
+			frappe.ValidationError,
+		)
 	monday, _sunday = week_of(when_dt.date())
 	horizon = frappe.utils.getdate() - timedelta(weeks=MATCH_HORIZON_WEEKS)
 	if monday < horizon:

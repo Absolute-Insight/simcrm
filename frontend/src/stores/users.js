@@ -124,11 +124,12 @@ export const usersStore = defineStore('crm-users', () => {
         user_image: null,
         role: null,
       }
-      // Try to upgrade the stub via a batched fetch unless the full list
-      // has already arrived.
-      if (!usersFull.data) {
-        queueResolve(email)
-      }
+      // Upgrade the stub via a batched fetch, even once the full list has
+      // arrived: that list is enabled users only, so a disabled rep (locked
+      // out before go-live, still owning plans and deals) is never in it and
+      // read as their address's local part everywhere. One fetch per name,
+      // since the stub stays in usersByName.
+      queueResolve(email)
     }
     return usersByName[email]
   }
