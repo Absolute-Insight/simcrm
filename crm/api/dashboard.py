@@ -2238,22 +2238,32 @@ def activities_by_type(from_date: str, to_date: str, user: str | None = None) ->
 	"""Plan items dated in the period per rep and activity type, split by status.
 
 	The manager's "what are they spending the week on": visits beside
-	deliveries beside admin. Rows run in the planner's order of types."""
+	deliveries beside admin. Rows run in the planner's order of types.
+
+	``overdue`` is the part of ``open`` whose day has passed (the site's day):
+	still planned, never closed. MBP's old rep app put it beside completed on
+	its dashboard, and it is what a manager chases."""
 	from crm.rep_planning import ACTIVITY_TYPES
 
 	query, PlanItem, Plan = _plan_items_in(from_date, to_date, user)
+	overdue = Count(
+		Case()
+		.when((PlanItem.status == "Planned") & (PlanItem.planned_date < nowdate()), PlanItem.name)
+		.else_(None)
+	)
 	rows = (
 		query.select(
 			Plan.user.as_("user"),
 			PlanItem.activity_type.as_("activity_type"),
 			*_status_counts(PlanItem),
+			overdue.as_("overdue"),
 		)
 		.groupby(Plan.user, PlanItem.activity_type)
 		.run(as_dict=True)
 	)
 	order = {kind: i for i, kind in enumerate(ACTIVITY_TYPES)}
 	for row in rows:
-		for key in ("scheduled", "done", "cancelled", "missed", "open"):
+		for key in ("scheduled", "done", "cancelled", "missed", "open", "overdue"):
 			row[key] = int(row.get(key) or 0)
 	rows.sort(key=lambda r: (r.user, order.get(r.activity_type, len(order)), r.activity_type or ""))
 	return rows
