@@ -307,9 +307,13 @@
           top="20%"
         />
 
+        <!-- w-fit + min-w-full: the sheet fills the stage, and when even
+             wrapped headers will not fit it grows past it so the stage scrolls
+             sideways. A fixed-width sheet with overflow-hidden clipped the last
+             columns, with nothing to scroll to. -->
         <div
           v-else
-          class="v-glass overflow-hidden rounded-6 print:rounded-none print:border-0 print:shadow-none"
+          class="v-glass w-fit min-w-full overflow-hidden rounded-6 print:w-full print:rounded-none print:border-0 print:shadow-none"
         >
           <table class="w-full border-collapse text-base">
             <thead>
@@ -317,8 +321,8 @@
                 <th
                   v-for="col in showing.columns"
                   :key="col.key"
-                  class="v-kpi-label sticky top-0 border-b border-outline-gray-2 bg-surface-elevation-2 px-3 py-2.5 text-left text-ink-gray-5 print:static"
-                  :class="col.type !== 'text' && 'text-right'"
+                  class="v-kpi-label sticky top-0 border-b border-outline-gray-2 bg-surface-elevation-2 py-2.5 text-left text-ink-gray-5 print:static"
+                  :class="[cellPadding, col.type !== 'text' && 'text-right']"
                   :abbr="col.description || undefined"
                 >
                   <Tooltip v-if="col.description" :text="col.description">
@@ -340,8 +344,8 @@
                 <td
                   v-for="col in showing.columns"
                   :key="col.key"
-                  class="border-b border-outline-gray-1 px-3 py-2 tabular-nums"
-                  :class="col.type !== 'text' && 'text-right'"
+                  class="border-b border-outline-gray-1 py-2 tabular-nums"
+                  :class="[cellPadding, col.type !== 'text' && 'text-right']"
                 >
                   {{ formatCell(row[col.key], col.type, baseCurrency) }}
                 </td>
@@ -641,6 +645,12 @@ const showing = computed(() =>
 )
 
 const hasRows = computed(() => Boolean(showing.value?.rows?.length))
+
+/* Visits against target has eleven columns; at the usual padding its last one
+   ran past a 1440px screen. Wide reports trade a little air for fitting. */
+const cellPadding = computed(() =>
+  (showing.value?.columns?.length || 0) > 8 ? 'px-2' : 'px-3',
+)
 
 /* The server says whether the territory filter actually reached this report.
    Two of them cannot honour one, and a table of global numbers sitting under a
