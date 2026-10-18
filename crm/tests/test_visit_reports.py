@@ -468,6 +468,13 @@ class CustomerInteractionTest(VisitFixture, IntegrationTestCase):
 		report = get_report("customers_without_interaction", self.start, self.end, REP)
 		self.assertIn(self.orgs["untouched"], [r["organization"] for r in report["rows"]])
 
+	def test_the_interaction_report_lists_only_customers_someone_dealt_with(self):
+		make_event(REP, self.day(1), self.orgs["visited"])
+		report = get_report("customer_interaction", self.start, self.end, REP)
+		listed = [r["organization"] for r in report["rows"]]
+		self.assertIn(self.orgs["visited"], listed)
+		self.assertNotIn(self.orgs["untouched"], listed)
+
 	def test_last_interaction_reaches_back_before_the_period(self):
 		earlier = add_days(self.monday, -14)
 		make_event(REP, earlier, self.orgs["visited"])

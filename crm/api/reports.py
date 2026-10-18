@@ -219,9 +219,14 @@ def _activities_by_type(from_date, to_date, user, territory=None):
 
 
 def _customer_interaction(from_date, to_date, user, territory=None):
+	"""The customers someone dealt with in the period.
+
+	The zeros have their own report. Listed here as well, ~1,100 untouched
+	customers sorted least-contact-first sat above every rep's actual visits,
+	so choosing a rep looked like it filtered nothing."""
 	from crm.api.dashboard import customer_interaction
 
-	return customer_interaction(from_date, to_date, user)
+	return [row for row in customer_interaction(from_date, to_date, user) if row["total"]]
 
 
 def _customers_without_interaction(from_date, to_date, user, territory=None):
@@ -410,7 +415,7 @@ REPORTS = {
 	},
 	"customer_interaction": {
 		"title": "Customer interaction",
-		"description": "Every customer with the visits, deliveries, calls and emails done for them in the period, least contact first",
+		"description": "Customers visited, delivered to, called or emailed in the period, least contact first. The ones nobody contacted are in Customers with no interaction",
 		"columns": [
 			{"key": "organization", "label": "Customer", "type": "text"},
 			{"key": "visits", "label": "Visits", "type": "number"},
