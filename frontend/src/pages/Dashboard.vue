@@ -369,8 +369,9 @@
             </div>
           </div>
 
-          <!-- A panel with several figures per rep: the report's own columns,
-               a header row, and the rep's name first. -->
+          <!-- A panel with several figures per row: the report's own columns,
+               a header row, and the rep's name first (or the panel's own
+               rowLabel). `stats` puts the period's totals above the table. -->
           <div v-else-if="panel.columns" class="overflow-x-auto">
             <p
               v-if="panel.note?.value"
@@ -379,13 +380,31 @@
               <LucideInfo class="mt-0.5 size-4 shrink-0" />
               <span>{{ panel.note.value }}</span>
             </p>
+            <dl
+              v-if="panel.stats"
+              class="mb-4 grid grid-cols-3 gap-x-4 gap-y-3 sm:grid-cols-6"
+            >
+              <div
+                v-for="stat in panel.stats.value"
+                :key="stat.key"
+                class="flex flex-col gap-0.5"
+              >
+                <dt class="v-kpi-label text-ink-gray-5">{{ stat.label }}</dt>
+                <dd
+                  class="font-display text-2xl font-semibold tabular-nums text-ink-gray-9"
+                  :class="stat.tone"
+                >
+                  {{ stat.value }}
+                </dd>
+              </div>
+            </dl>
             <table class="w-full text-base">
               <thead>
                 <tr class="border-b border-outline-gray-1">
                   <th
                     class="py-1.5 pr-2 text-left text-xs font-medium uppercase tracking-wider text-ink-gray-5"
                   >
-                    {{ __('Rep') }}
+                    {{ panel.rowHeader || __('Rep') }}
                   </th>
                   <th
                     v-for="column in panel.columns"
@@ -403,7 +422,11 @@
                   class="border-b border-outline-gray-1 last:border-b-0"
                 >
                   <td class="py-1.5 pr-2 text-ink-gray-7">
-                    {{ row.rep || repName(row.user) }}
+                    {{
+                      panel.rowLabel
+                        ? panel.rowLabel(row)
+                        : row.rep || repName(row.user)
+                    }}
                   </td>
                   <td
                     v-for="column in panel.columns"
@@ -595,6 +618,7 @@ import { copy } from '@/utils'
 import { describeError } from '@/utils/describeError'
 import { quiet } from '@/utils/quiet'
 import {
+  activitySummary,
   adherencePercent,
   applyPanelPreference,
   axisChartEmpty,
@@ -605,6 +629,7 @@ import {
   riskReason,
   toISODate,
 } from '@/utils/dashboardHome'
+import { ACTIVITY_TYPES, activityLabel } from '@/utils/planner'
 import * as suggestionsModule from '@/stores/suggestions'
 import { displayReferenceLabel, urgencyBand } from '@/utils/suggestions'
 import { getLastXDays, formatter, parseDateRange } from '@/utils/dashboard'
@@ -822,6 +847,7 @@ const teamAdherence = reportResource('plan_adherence_by_rep')
 const teamQuota = reportResource('quota_attainment_by_rep')
 const teamVisits = reportResource('visits_by_rep')
 const teamSummary = reportResource('rep_summary')
+const teamActivity = reportResource('activities_by_type')
 const teamPipeline = reportResource('pipeline_by_stage')
 
 /* The rep chart strip. Same endpoint as the manager grid's charts; the server
@@ -880,6 +906,13 @@ function pipelineShare(rows, row) {
   return Math.max(2, Math.round(((row.deals || 0) / max) * 100))
 }
 
+const activity = computed(() =>
+  activitySummary(
+    teamActivity.data?.rows || [],
+    ACTIVITY_TYPES.map((t) => t.value),
+  ),
+)
+
 const PANEL_CATALOGUE = computed(() => {
   const panels = [
     {
@@ -937,12 +970,76 @@ const PANEL_CATALOGUE = computed(() => {
       columns: [
         { key: 'visits', label: __('Visits'), type: 'number' },
         { key: 'unplanned', label: __('Unplanned'), type: 'number' },
+        { key: 'deliveries', label: __('Deliveries'), type: 'number' },
         { key: 'calls', label: __('Calls'), type: 'number' },
         { key: 'emails', label: __('Emails'), type: 'number' },
         { key: 'quotes', label: __('Quotes'), type: 'number' },
         { key: 'quote_value', label: __('Quote value'), type: 'currency' },
         { key: 'orders', label: __('Orders'), type: 'number' },
         { key: 'order_value', label: __('Order value'), type: 'currency' },
+      ],
+      cell: () => '',
+    },
+    {
+      id: 'activity',
+      wide: true,
+      title: __('Activity summary'),
+      subtitle: __(
+        'Every planned and logged activity in the period, by type and what became of it',
+      ),
+      loading: computed(() => teamActivity.loading),
+      error: computed(() => teamActivity.error),
+      retry: () => teamActivity.reload(),
+      empty: computed(
+        () => !teamActivity.loading && !activity.value.types.length,
+      ),
+      emptyTitle: __('No activities in this period'),
+      emptyDescription: __(
+        'Planned visits, calls and the rest appear here as reps plan and log them.',
+      ),
+      stats: computed(() => [
+        {
+          key: 'scheduled',
+          label: __('Total'),
+          value: activity.value.totals.scheduled,
+        },
+        {
+          key: 'done',
+          label: __('Completed'),
+          value: activity.value.totals.done,
+        },
+        {
+          key: 'overdue',
+          label: __('Overdue'),
+          value: activity.value.totals.overdue,
+          tone: activity.value.totals.overdue ? 'text-ink-orange-9' : '',
+        },
+        {
+          key: 'missed',
+          label: __('Missed'),
+          value: activity.value.totals.missed,
+        },
+        {
+          key: 'cancelled',
+          label: __('Cancelled'),
+          value: activity.value.totals.cancelled,
+        },
+        {
+          key: 'open',
+          label: __('Still planned'),
+          value: activity.value.totals.open,
+        },
+      ]),
+      rowHeader: __('Type'),
+      rowLabel: (row) => __(activityLabel(row.activity_type)),
+      rows: computed(() => activity.value.types),
+      columns: [
+        { key: 'scheduled', label: __('Total'), type: 'number' },
+        { key: 'done', label: __('Completed'), type: 'number' },
+        { key: 'overdue', label: __('Overdue'), type: 'number' },
+        { key: 'missed', label: __('Missed'), type: 'number' },
+        { key: 'cancelled', label: __('Cancelled'), type: 'number' },
+        { key: 'open', label: __('Still planned'), type: 'number' },
       ],
       cell: () => '',
     },

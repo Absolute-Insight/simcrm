@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  activitySummary,
   adherencePercent,
   axisChartEmpty,
   applyPanelPreference,
@@ -504,5 +505,79 @@ describe('axisChartEmpty', () => {
     expect(axisChartEmpty({ emptyState: 'Forecasting is off', data: [] })).toBe(
       false,
     )
+  })
+})
+
+describe('activitySummary', () => {
+  const order = ['Visit', 'Unplanned Meeting', 'Call']
+  const rows = [
+    {
+      user: 'a',
+      activity_type: 'Call',
+      scheduled: 2,
+      done: 1,
+      open: 1,
+      overdue: 1,
+    },
+    {
+      user: 'a',
+      activity_type: 'Visit',
+      scheduled: 4,
+      done: 2,
+      cancelled: 1,
+      missed: 1,
+    },
+    {
+      user: 'b',
+      activity_type: 'Visit',
+      scheduled: 3,
+      done: 1,
+      open: 2,
+      overdue: 0,
+    },
+    { user: 'b', activity_type: 'Unplanned Meeting', scheduled: 1, done: 1 },
+  ]
+
+  it('adds the reps up per type, in the planner order', () => {
+    const { types } = activitySummary(rows, order)
+    expect(types.map((t) => t.activity_type)).toEqual(order)
+    expect(types[0]).toMatchObject({
+      scheduled: 7,
+      done: 3,
+      cancelled: 1,
+      missed: 1,
+      open: 2,
+      overdue: 0,
+    })
+  })
+
+  it('totals the period across every type', () => {
+    expect(activitySummary(rows, order).totals).toEqual({
+      scheduled: 10,
+      done: 5,
+      cancelled: 1,
+      missed: 1,
+      open: 3,
+      overdue: 1,
+    })
+  })
+
+  it('puts a type it does not know last, and survives no rows', () => {
+    const { types } = activitySummary(
+      [{ activity_type: 'Site survey', scheduled: 1 }, ...rows],
+      order,
+    )
+    expect(types.at(-1).activity_type).toBe('Site survey')
+    expect(activitySummary(undefined, order)).toEqual({
+      totals: {
+        scheduled: 0,
+        done: 0,
+        cancelled: 0,
+        missed: 0,
+        open: 0,
+        overdue: 0,
+      },
+      types: [],
+    })
   })
 })

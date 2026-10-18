@@ -367,3 +367,49 @@ export function axisChartEmpty(chartData) {
     ),
   )
 }
+
+/* The counts Activities by type reports per rep and type, in its column order.
+   `open` is everything still planned; `overdue` is the part of it whose day
+   has passed. */
+export const ACTIVITY_COUNTS = [
+  'scheduled',
+  'done',
+  'cancelled',
+  'missed',
+  'open',
+  'overdue',
+]
+
+/**
+ * The Activity summary panel: Activities by type's per-rep rows folded into
+ * one row per activity type, plus the period's totals.
+ *
+ * MBP's old rep app opened on exactly this — total activities for the week,
+ * the month and the year, split into scheduled, completed, unplanned and
+ * overdue — so the panel adds up the same report the Reports page shows
+ * rather than asking the server a second, slightly different question.
+ * Types run in `order` (the planner's), anything unknown after them.
+ */
+export function activitySummary(rows, order = []) {
+  const zero = () => Object.fromEntries(ACTIVITY_COUNTS.map((key) => [key, 0]))
+  const rank = new Map(order.map((type, index) => [type, index]))
+  const byType = new Map()
+  const totals = zero()
+  for (const row of rows || []) {
+    const type = row.activity_type || ''
+    if (!byType.has(type)) byType.set(type, { activity_type: type, ...zero() })
+    const entry = byType.get(type)
+    for (const key of ACTIVITY_COUNTS) {
+      const n = Number(row[key]) || 0
+      entry[key] += n
+      totals[key] += n
+    }
+  }
+  const place = (type) => (rank.has(type) ? rank.get(type) : order.length)
+  const types = [...byType.values()].sort(
+    (a, b) =>
+      place(a.activity_type) - place(b.activity_type) ||
+      a.activity_type.localeCompare(b.activity_type),
+  )
+  return { totals, types }
+}
