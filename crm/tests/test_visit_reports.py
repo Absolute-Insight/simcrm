@@ -361,6 +361,17 @@ class VisitsByRepTest(VisitFixture, IntegrationTestCase):
 		self.assertEqual(rows["Visit"]["missed"], 1)
 		self.assertEqual((rows["Call"]["scheduled"], rows["Call"]["done"]), (1, 1))
 
+	def test_an_activity_still_planned_after_its_day_is_overdue_and_today_is_not(self):
+		today = getdate(nowdate())
+		make_plan(OUTSIDER, self.monday, [{"activity_type": "Call", "planned_date": self.day(2)}])
+		make_plan(
+			OUTSIDER,
+			add_days(today, -today.weekday()),
+			[{"activity_type": "Call", "planned_date": today}],
+		)
+		row = activities_by_type(self.start, str(today), OUTSIDER)[0]
+		self.assertEqual((row["open"], row["overdue"]), (2, 1))
+
 
 class CustomerInteractionTest(VisitFixture, IntegrationTestCase):
 	def setUp(self):

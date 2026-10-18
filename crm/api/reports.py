@@ -410,6 +410,12 @@ REPORTS = {
 			{"key": "cancelled", "label": "Cancelled", "type": "number"},
 			{"key": "missed", "label": "Missed", "type": "number"},
 			{"key": "open", "label": "Still planned", "type": "number"},
+			{
+				"key": "overdue",
+				"label": "Overdue",
+				"type": "number",
+				"description": "Still planned, and the day has passed",
+			},
 		],
 		"get_rows": _activities_by_type,
 	},
