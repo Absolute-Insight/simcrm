@@ -108,6 +108,18 @@ def on_update(doc, method):
 	notify_agent(doc)
 
 
+def get_record_title(doctype: str, name: str) -> str:
+	"""The name people know a lead or deal by, as mention notifications show it."""
+	if doctype == "CRM Lead":
+		title = frappe.db.get_value(doctype, name, "lead_name")
+	elif doctype == "CRM Deal":
+		deal = frappe.db.get_value(doctype, name, ["organization", "lead_name"], as_dict=True)
+		title = deal and (deal.organization or deal.lead_name)
+	else:
+		title = None
+	return title or name
+
+
 def notify_agent(doc):
 	if doc.type == "Incoming":
 		if not doc.reference_doctype or not doc.reference_name:
@@ -115,12 +127,14 @@ def notify_agent(doc):
 		doctype = doc.reference_doctype
 		if doctype and doctype.startswith("CRM "):
 			doctype = doctype[4:].lower()
-		safe_reference_name = frappe.utils.escape_html(doc.reference_name)
+		safe_reference_title = frappe.utils.escape_html(
+			get_record_title(doc.reference_doctype, doc.reference_name)
+		)
 		notification_text = f"""
             <div class="mb-2 leading-5 text-ink-gray-5">
                 <span class="font-medium text-ink-gray-9">{_("You")}</span>
                 <span>{_("received a whatsapp message in {0}").format(doctype)}</span>
-                <span class="font-medium text-ink-gray-9">{safe_reference_name}</span>
+                <span class="font-medium text-ink-gray-9">{safe_reference_title}</span>
             </div>
         """
 		notify_these = assigned_users(doc.reference_doctype, doc.reference_name)
