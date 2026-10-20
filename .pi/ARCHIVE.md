@@ -1052,26 +1052,55 @@ release carried yet are listed at the end for the next port.
   enrichment backend and the EnrichFromWebsite modals, not upstream's Settings → Enrichment UI;
   the hunk keys off an `enriching` document flag we do not have.
 - **#3070 (EmailMultiSelect from develop).** A release-line copy of what develop, and we,
-  already have. Its other half, #3071 (dead `surface-modal` tokens), is a **follow-up, not a
-  rejection**: our `Grid.vue:77` still has `bg-surface-modals`, which nothing defines, so grid
-  rows paint nothing of their own. Upstream's replacement, `bg-surface-elevation-2`, may stripe
-  against our row cells, which paint `bg-surface-base`; it needs a look in both themes first.
+  already have. Its other half, #3071 (dead `surface-modal` tokens), was taken in the
+  follow-ups below, differently from upstream.
 - **#2989's resizable email/comment editor.** A feature, not a fix.
 - **#3031 (settings page copy).** Wording and full stops.
 - **Features:** #3018 (empty-state actions), #3036 (deal from a contact or organization page),
   #3020 (notes refresh), #3059 (upstream's enrichment UI), #3052 (frappe-ui rc.2; we are on our
-  own v1 line). Product decisions, not maintenance. Two fixes ride inside #3020 and apply here
-  on their own, so they are the next port's to take: `DoctypeModal.update()` leaves the dialog
-  open when nothing changed (`587a03fd4`, net of `75394a3d5`), and `.prose-f` breaks words with
-  `break-all` instead of `break-words` (`cd1418ee5`). #3036's TDZ fix (`c6cb129d6`) does not
-  apply: our `DealModal` watcher is not `immediate`.
+  own v1 line). Product decisions, not maintenance. Two fixes ride inside #3020 and were taken
+  in the follow-ups below. #3036's TDZ fix (`c6cb129d6`) does not apply: our `DealModal`
+  watcher is not `immediate`.
 
-### For the next port (develop-only, outside v1.88.0, not reviewed here)
+### Follow-ups (branch `fix/upstream-v1.88-followups`, stacked on the port)
 
-#2858 (skip stale fieldnames when resolving fields layouts), #3034 (lead or deal name in
-WhatsApp notifications), #2642 (unique deals per funnel stage), #3046 (Exotel test clears Error
-Logs through the document API; we have the same `frappe.db.delete` at
-`crm/tests/test_integrations.py`). And #2995 above.
+Taken the same day from the port's open list. Apart from #3071, which shipped in v1.88.0
+inside #3070, they are develop-only or ride inside a feature PR, so no v1.x release carries
+them yet.
+
+- **#2858:** a layout that still names a deleted custom field no longer hands the form a bare
+  string. `get_fields_layout` and `get_sidepanel_sections` build each column from resolved
+  fields only (a dict lookup instead of a linear search), and `Column.vue` skips anything
+  without a fieldname. Our `has_permission` guards and Select label translation survive.
+- **#3034:** WhatsApp notifications name the lead (`lead_name`) or deal (organization, then
+  lead name), as mentions and assignments already did, still escaped. Adapted to our
+  `reference_name`.
+- **#3046:** the Exotel unknown-status test clears Error Logs through `delete_doc`.
+- **#3020 riders:** `DoctypeModal.update()` says "Nothing to update" and closes on an unchanged
+  doc (frappe-ui's `saveIfChanged` called neither callback, so Update did nothing); `.prose-f`
+  uses `break-words` instead of `break-all`, also in our `emailContent.css` copy, which upstream
+  no longer has. A residual gap upstream shares: `isDirty` compares the whole doc's JSON while
+  `getChangedFields` compares only present keys, so removing a key brings the silent no-op back.
+- **#3071, taken differently:** Grid rows carried `bg-surface-modals`, which nothing defines,
+  so rows were transparent. Upstream replaced it with `bg-surface-elevation-2`. Measured in the
+  Settings modal on the dark theme, that is the modal's own colour (#212332), and it leaves a
+  lighter strip beside the edit button against the row's cells (`bg-surface-base`, #131521).
+  We use `bg-surface-base`, which also matches the page where Grid renders in a Data tab. A
+  future diff will show upstream's class as "missing"; the comment on the row says why.
+  #3071's `WorkflowFlow.vue` hunk does not apply (workflow automations were never taken).
+- **#2642, already present:** `get_deal_status_change_counts` has counted distinct deals per
+  stage since `a508d5e81`, covered by `test_metrics.py`. Ours also deliberately keeps deals now
+  Lost in the funnel, which upstream drops.
+
+Follow-up verification: vitest 56 files / 696 tests. The full python suite with
+`PYTHONPATH=/workspace/.worktrees/upstream-followups`: 660 + 1334 + 219 (26 skipped) + 53, all
+OK, including the Acumatica module that failed once in the port's second run. The new Python
+tests (#2858 two, #3034 two) were run red first. Browser (Playwright against the dev bench
+serving the build): Update on an unchanged note shows "Nothing to update", closes and sends no
+save request; `.prose-f` computes `overflow-wrap: break-word`, and a sentence wraps at no
+mid-word point while a long URL still breaks; plus the Grid measurement above.
+`upstream-port-reviewer` found no local change overwritten. Its notes became the Grid comment,
+a stronger escape assertion, and this section.
 
 ### Verification
 
