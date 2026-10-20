@@ -73,8 +73,10 @@
           @end="reorder"
         >
           <template #item="{ element: row, index }">
+            <!-- surface-base, not upstream's elevation-2: it matches the row's
+                 own cells, where elevation-2 left a lighter strip in modals -->
             <div
-              class="grid-row flex cursor-pointer items-center border-b border-outline-elevation-2 bg-surface-modals last:rounded-b-4 last:border-b-0"
+              class="grid-row flex cursor-pointer items-center border-b border-outline-elevation-2 bg-surface-base last:rounded-b-4 last:border-b-0"
               @click.stop="
                 () => {
                   if (!gridSettings.editable_grid) {
