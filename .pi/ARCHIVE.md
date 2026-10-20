@@ -1114,9 +1114,14 @@ a stronger escape assertion, and this section.
   block 216 with two failures in `crm.integrations.acumatica.test_outbound`
   (`test_autonumbering_never_asks_acumatica_for_a_derived_id`,
   `test_connection_error_lands_in_sync_issues_not_the_users_save`). That module passes alone
-  on both this branch and unmodified `develop` (28/28), and passed in the first full run, so it
-  is order- or site-state-dependent (the test site had ~2,500 leftover sync-issue rows), not
-  this port. Worth its own look.
+  on both this branch and unmodified `develop` (28/28), and passed in the first and third full
+  runs. Cause, very likely: **two test runs on one `test_site` at once.** That run overlapped
+  review agents running deal-inserting suites on the same site (one hit MariaDB deadlocks).
+  `push_customer_for_deal` reads settings via `get_cached_doc`, which is shared Redis; the
+  test's `_enable()` sets `enabled=1` in an uncommitted transaction, and any other process's
+  deal insert (the `queue_customer_push` hook calls `get_settings()`) re-caches the committed
+  `enabled=0` -- so the push returns silently, exactly the failure seen. Not a code defect;
+  never run two `bench run-tests` against one site concurrently.
 - **Lint and build:** eslint, prettier 3.2.5 and ruff 0.8.1 clean; production build succeeds.
 - **Review:** `upstream-port-reviewer` found no local change overwritten. It found two omission
   reasons wrong: #3062 and #3064 had been left out as "no enrichment module here", but we carry
