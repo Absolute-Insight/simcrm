@@ -96,6 +96,44 @@ class TestWhatsAppHooks(FrappeTestCase):
 
 		mock_users.assert_not_called()
 
+	def notification_text_for(self, doctype, name):
+		doc = MagicMock()
+		doc.type = "Incoming"
+		doc.reference_doctype = doctype
+		doc.reference_name = name
+		with (
+			patch("crm.api.whatsapp.assigned_users", return_value=["rep@example.com"]),
+			patch("crm.api.whatsapp.notify_user") as mock_notify,
+		):
+			notify_agent(doc)
+		return mock_notify.call_args[0][0]["notification_text"]
+
+	def test_the_notification_names_a_lead_by_its_lead_name(self):
+		"""It showed the record id (CRM-LEAD-2026-00042), which nobody knows a lead by
+		(upstream frappe/crm #3034); mentions and assignments already used the name."""
+		lead = frappe.get_doc({"doctype": "CRM Lead", "first_name": "Wanda", "last_name": "Whatsapp"}).insert(
+			ignore_permissions=True
+		)
+		text = self.notification_text_for("CRM Lead", lead.name)
+		self.assertIn("Wanda Whatsapp", text)
+		self.assertNotIn(lead.name, text)
+
+	def test_the_notification_names_a_deal_by_its_organization(self):
+		deal = frappe.get_doc({"doctype": "CRM Deal", "organization": "Whatsapp Org Ltd"})
+		deal.flags.ignore_mandatory = True
+		deal.flags.ignore_links = True
+		deal.insert(ignore_permissions=True)
+		text = self.notification_text_for("CRM Deal", deal.name)
+		self.assertIn("Whatsapp Org Ltd", text)
+
+	def test_the_name_in_the_notification_is_escaped(self):
+		lead = frappe.get_doc({"doctype": "CRM Lead", "first_name": "<b>Bold</b>"}).insert(
+			ignore_permissions=True
+		)
+		text = self.notification_text_for("CRM Lead", lead.name)
+		self.assertNotIn("<b>Bold</b>", text)
+		self.assertIn("&lt;b&gt;Bold&lt;/b&gt;", text)
+
 
 class TestWhatsAppDestination(FrappeTestCase):
 	"""The destination of an outgoing message belongs to the record, not the caller.

@@ -189,6 +189,12 @@ async function create() {
 }
 
 function update() {
+  // frappe-ui skips saving an unchanged doc without calling back, so handle it here
+  if (!document.isDirty) {
+    toast.info(__('Nothing to update'))
+    show.value = false
+    return
+  }
   document.save.submit(null, {
     onSuccess: (d) => {
       emit('afterUpdate', d)

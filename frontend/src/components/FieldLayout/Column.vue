@@ -6,15 +6,21 @@
     >
       {{ column.label }}
     </div>
-    <template v-for="field in column.fields" :key="field.fieldname">
+    <template v-for="field in fields" :key="field.fieldname">
       <Field :field="field" :data-name="field.fieldname" />
     </template>
   </div>
 </template>
 <script setup>
 import Field from '@/components/FieldLayout/Field.vue'
+import { computed } from 'vue'
 
-defineProps({
+const props = defineProps({
   column: { type: Object, required: true },
 })
+
+// a layout saved before a field was deleted can still name it
+const fields = computed(() =>
+  (props.column.fields || []).filter((field) => field?.fieldname),
+)
 </script>

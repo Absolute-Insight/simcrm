@@ -175,6 +175,75 @@ class TestGetFieldsLayout(IntegrationTestCase):
 			doc.save(ignore_permissions=True)
 
 
+class TestStaleFieldnames(IntegrationTestCase):
+	"""A layout names fields by fieldname, and a deleted custom field stays in it.
+	The resolver replaced each name it found with the field dict in place and left
+	the rest as bare strings, so the form tried to render a string as a field
+	(upstream frappe/crm #2858)."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def save_layout(self, doctype, type, layout):
+		if frappe.db.exists("CRM Fields Layout", {"dt": doctype, "type": type}):
+			doc = frappe.get_doc("CRM Fields Layout", {"dt": doctype, "type": type})
+		else:
+			doc = frappe.new_doc("CRM Fields Layout")
+			doc.dt = doctype
+			doc.type = type
+		doc.layout = json.dumps(layout)
+		doc.save(ignore_permissions=True)
+
+	def test_the_side_panel_drops_a_fieldname_that_no_longer_exists(self):
+		self.save_layout(
+			"CRM Lead",
+			"Side Panel",
+			[
+				{
+					"label": "Details",
+					"name": "details_section",
+					"columns": [{"name": "column_1", "fields": ["first_name", "custom_deleted_field"]}],
+				}
+			],
+		)
+
+		fields = L.get_sidepanel_sections("CRM Lead")[0]["columns"][0]["fields"]
+
+		self.assertEqual([f["fieldname"] for f in fields], ["first_name"])
+		self.assertTrue(all(isinstance(f, dict) for f in fields))
+
+	def test_a_fields_layout_drops_a_fieldname_that_no_longer_exists(self):
+		self.save_layout(
+			"CRM Lead",
+			"Quick Entry",
+			[
+				{
+					"name": "first_tab",
+					"sections": [
+						{
+							"name": "section_1",
+							"columns": [
+								{
+									"name": "column_1",
+									"fields": ["first_name", "custom_deleted_field", "email"],
+								}
+							],
+						}
+					],
+				}
+			],
+		)
+
+		fields = L.get_fields_layout("CRM Lead", "Quick Entry")[0]["sections"][0]["columns"][0]["fields"]
+
+		self.assertEqual([f["fieldname"] for f in fields], ["first_name", "email"])
+		self.assertTrue(all(isinstance(f, dict) for f in fields))
+
+
 class TestSelectOptionLabels(IntegrationTestCase):
 	"""get_field_obj translates a Select option's label but not its value.
 
