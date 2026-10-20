@@ -1103,6 +1103,7 @@ Logs through the document API; we have the same `frappe.db.delete` at
   regression for notes, tasks or calls; its lows were taken: the `retry` read check, the
   `SCOPED_REFERENCES` comment, and tests for a manager outside the hierarchy at both settings.
 - **Browser:** the email colour logic was measured in Chromium with a standalone harness over
-  the shipped util. The app itself was not driven in a browser this time: the dropdown "Default"
-  label, the Tasks empty state and the multiselect suggestions are covered by review and unit
-  tests only, and the CI Playwright job on the PR covers the suite.
+  the shipped util. The rest was driven afterwards with a Playwright script against the dev
+  bench serving this worktree's build (no Chrome extension): the views menu shows "Default"
+  beside List; the Tasks empty state shows the tasks icon (list response emptied in flight, no
+  data touched); Add Existing User now offers a user, where the old code offered none at all.
