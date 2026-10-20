@@ -14,6 +14,7 @@
 
 <script setup>
 import { onBeforeUnmount, ref, watch } from 'vue'
+import { applyDarkModeColors, collectDarkModeColors } from '@/utils/emailColors'
 import emailContentStyles from './emailContent.css?inline'
 
 const props = defineProps({
@@ -142,12 +143,17 @@ const htmlContent = `
    prose (near-black) sat on the dark app surface at 1.10:1 until a reload.
    Mirroring on every change is what keeps the two documents in step. */
 let themeObserver = null
+/* The sender's own inline colours (`color:black`, `bgcolor`) outrank the
+   frame's themed prose, so they are swapped for dark stand-ins alongside the
+   theme rather than left to the stylesheet. */
+let darkModeColors = []
 
 function mirrorTheme(frameHtml) {
   if (!frameHtml) return
   const theme = document.documentElement.getAttribute('data-theme')
   if (theme) frameHtml.setAttribute('data-theme', theme)
   else frameHtml.removeAttribute('data-theme')
+  applyDarkModeColors(darkModeColors, theme === 'dark')
 }
 
 watch(iframeRef, (iframe) => {
@@ -159,6 +165,9 @@ watch(iframeRef, (iframe) => {
         iframe.contentWindow.document.querySelector('.email-content')
       let parent = emailContent.closest('html')
 
+      /* Collect before the first mirror: the frame starts light, so the
+         computed colours read here are the email's own. */
+      darkModeColors = collectDarkModeColors(emailContent)
       mirrorTheme(parent)
 
       const resize = () => {

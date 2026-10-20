@@ -4,7 +4,12 @@
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from crm.fcrm.doctype.crm_view_settings.crm_view_settings import create, public, set_as_default
+from crm.fcrm.doctype.crm_view_settings.crm_view_settings import (
+	create,
+	create_or_update_standard_view,
+	public,
+	set_as_default,
+)
 
 REP = "viewsettings-rep@crmtest.test"
 MANAGER = "viewsettings-manager@crmtest.test"
@@ -87,3 +92,21 @@ class TestCRMViewSettings(IntegrationTestCase):
 		set_as_default(name=leads.name)
 
 		self.assertEqual(frappe.db.get_value("CRM View Settings", deals.name, "is_default"), 1)
+
+	def test_saving_standard_view_keeps_it_default(self):
+		"""Every routine save of a standard view (columns, filters, sort) wrote
+		``is_default = 0``, so the rep's chosen default fell back to List."""
+		frappe.db.delete("CRM View Settings", {"user": "Administrator"})
+		set_as_default(type="kanban", doctype="CRM Lead")
+		kanban = create_or_update_standard_view({"type": "kanban", "doctype": "CRM Lead"})
+
+		self.assertEqual(frappe.db.get_value("CRM View Settings", kanban.name, "is_default"), 1)
+
+	def test_saving_another_standard_view_keeps_chosen_default(self):
+		frappe.db.delete("CRM View Settings", {"user": "Administrator"})
+		set_as_default(type="kanban", doctype="CRM Lead")
+		kanban = create_or_update_standard_view({"type": "kanban", "doctype": "CRM Lead"})
+		list_view = create_or_update_standard_view({"type": "list", "doctype": "CRM Lead"})
+
+		self.assertEqual(frappe.db.get_value("CRM View Settings", kanban.name, "is_default"), 1)
+		self.assertEqual(frappe.db.get_value("CRM View Settings", list_view.name, "is_default"), 0)

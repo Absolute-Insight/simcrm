@@ -21,6 +21,11 @@ Two link shapes count, because both are in use: ``reference_doctype`` /
 record, and the ``links`` child table, which the Twilio and Exotel handlers
 write when they match an incoming number to a lead or deal.
 
+CRM Enrichment Run hangs off a record the same way but belongs to no user: it
+is what a crawl found for that lead or deal -- emails, phones, the raw
+extraction -- so it follows the record alone, and a run on a doctype with no row
+scoping of its own (an organization) stays as visible as that doctype.
+
 The document check reads the *stored* row, not the in-memory document: frappe
 checks write on the mutated document, so a check against ``doc.reference_docname``
 would let a rep re-point a hidden note at their own deal and read it.
@@ -38,7 +43,17 @@ OWN_FIELDS = {
 	"FCRM Note": ("owner",),
 	"CRM Task": ("owner", "assigned_to"),
 	"CRM Call Log": ("owner", "caller", "receiver"),
+	"CRM Enrichment Run": (),
 }
+
+#: Per doctype, the Dynamic Link field naming the referenced record.
+REFERENCE_FIELD = {"CRM Enrichment Run": "reference_name"}
+
+#: Doctypes whose rows on an unscoped (or no) reference are visible to anyone
+#: holding the role permission, rather than only to the row's own users.
+#: "Unscoped" means not in SCOPED_REFERENCES: if Organization or Contact ever
+#: gains row scoping in org_hierarchy, add it there too, or its runs stay open.
+OPEN_WHEN_UNSCOPED = ("CRM Enrichment Run",)
 
 #: The referenced doctypes that carry row scoping of their own.
 SCOPED_REFERENCES = ("CRM Lead", "CRM Deal")
@@ -55,10 +70,14 @@ def _visible(user: str, reference: str):
 def _conditions(user: str, doctype: str):
 	DT = frappe.qb.DocType(doctype)
 	clauses = [DT[field] == user for field in OWN_FIELDS[doctype]]
+	reference_name = DT[REFERENCE_FIELD.get(doctype, "reference_docname")]
+
+	if doctype in OPEN_WHEN_UNSCOPED:
+		clauses.append(DT.reference_doctype.isnull() | DT.reference_doctype.notin(SCOPED_REFERENCES))
 
 	for reference in SCOPED_REFERENCES:
 		visible = _visible(user, reference)
-		clauses.append((DT.reference_doctype == reference) & DT.reference_docname.isin(visible))
+		clauses.append((DT.reference_doctype == reference) & reference_name.isin(visible))
 
 		if doctype == "CRM Call Log":
 			Link = frappe.qb.DocType("Dynamic Link").as_("_call_link")
@@ -124,3 +143,11 @@ def has_task_permission(doc, ptype, user):
 
 def has_call_log_permission(doc, ptype, user):
 	return has_permission(doc, ptype, user, "CRM Call Log")
+
+
+def get_enrichment_run_permission_query_conditions(user=None):
+	return get_permission_query_conditions("CRM Enrichment Run", user)
+
+
+def has_enrichment_run_permission(doc, ptype, user):
+	return has_permission(doc, ptype, user, "CRM Enrichment Run")

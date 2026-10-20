@@ -108,6 +108,9 @@ def retry(run: str) -> dict:
 	"""
 	_check_user_rate_limit()
 	run_doc = frappe.get_doc("CRM Enrichment Run", run)
+	# before anything reads the run: its errors would otherwise confirm that a run
+	# on a hidden lead or deal exists, and which doctype it points at
+	run_doc.check_permission("read")
 	if not run_doc.reference_doctype or not run_doc.reference_name:
 		frappe.throw(_("This run has no linked record to re-enrich."), frappe.ValidationError)
 

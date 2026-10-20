@@ -971,3 +971,139 @@ reverse.
   click and the fork persists it to the user's standard view, so a scripted click on the
   receiver cell left the rep's list filtered to `receiver = Unknown`. Click the duration cell.
 
+
+---
+
+## Upstream port — frappe/crm v1.88.0
+
+**Completed 2026-10-20.** Branch `fix/upstream-v1.88-port`, 6 fix commits, one per fix.
+
+### Where upstream is
+
+The merge base is still `7dcd8430d` (2026-08-13); upstream `develop` is now 1,550 commits past
+it. As before, the v1.88.0 release notes were used only as a list of PRs to read, and each fix
+was taken from its original merge commit on `upstream/develop` (`<merge>^1..<merge>`), not from
+the mergify backport. **v1.88.0 is the scope, not a position:** neither v1.87.0 nor v1.88.0 is
+an ancestor of `upstream/develop` or of ours. Develop-only fixes from the same window that no
+release carried yet are listed at the end for the next port.
+
+### What was ported
+
+- **Email multiselect** shows users again (#3072). `const { allUsers } = usersStore()`
+  unwrapped a Pinia computed to an array and then read `.value` on it, so users mode offered
+  nothing: Settings → Users → Add existing user had no suggestions. `storeToRefs` fixes it.
+- **Default view** survives an edit to a standard view (#3035). `create_or_update_standard_view`
+  wrote `is_default = view.is_default or False` on every save; only `set_as_default` sets it
+  now. The views dropdown marks the default and Set As Default closes the menu. The dashboard
+  drill-down's `standardViewPayload` already echoed `is_default` back to dodge this; that is
+  now redundant and was left alone.
+- **Tasks empty state** uses the tasks icon (#3029).
+- **Inline email colours on the dark theme** (#2989, the colour half), adapted; see below.
+- **Enrichment runs are row-scoped** (#3062), adapted; see below. A real leak: Sales User
+  could list every `CRM Enrichment Run` on the site, including emails, phones and `raw_json`,
+  for leads and deals the hierarchy hid.
+- **Enrichment edge cases** (#3064, backend only): an About page that redirects off-site is no
+  longer accepted as the company's; the `HTML` scope matches markup rather than visible text;
+  the `URL` scope is filled in; `Headers` (never captured) is dropped, and
+  `drop_enrichment_headers_scope` moves any Headers rule to Full Text.
+
+### Load-bearing decisions
+
+- **#2989 is our code now.** Upstream deleted `emailColors.js`, its test, `EmailContent.vue` and
+  `emailContent.css` a day after merging it (#2995, 2026-10-08), moving email rendering to
+  `EmailItem` in frappe's unpublished `@framework/ui`. We keep our `EmailContent.vue` (sandbox,
+  CSP, theme observer from `fe10d6346`), so a later port will see upstream "delete" these files
+  and must not follow it. Adapted on the way in: the surface is our `--email-canvas`
+  (`#1c1e2c`, pinned to the CSS by a unit test) rather than frappe-ui's gray; the text floor is
+  AA 4.5:1 rather than 3:1, and borders keep the 3:1 non-text floor; the DOM walk lives in
+  `utils/emailColors.js` so it is unit-tested; it hangs off the existing MutationObserver
+  rather than `useColorScheme`. Colours are collected once, before the first theme mirror,
+  while the frame is still light. Measured in Chromium against the dark canvas: inline
+  `color:black` 1.27 → 16.52, `<font color=#1F497D>` 1.81 → 7.02, prose in a `bgcolor=#fff`
+  cell 1.24 → 10.49; the light theme is identical after a round trip. happy-dom returns `""`
+  for `<font color>`, `[bgcolor]` and inherited colour, so those three cases are covered only
+  by that Chromium harness, not by the unit suite.
+- **#3062 extends `crm/permissions/linked_records.py`** instead of upstream's separate condition
+  in the run controller, so runs follow the same rule as notes, tasks and call logs: visible
+  when the referenced lead or deal is. A run has no "own" clause (it belongs to the record, not
+  whoever triggered it), uses `reference_name` rather than `reference_docname`, and a run whose
+  reference is not a lead or deal (an organization) or is empty stays as visible as the
+  doctype. Upstream also admits runs on records shared via DocShare; `linked_records` does not
+  do that for notes, tasks or calls, so neither does this. `retry` now checks read on the run
+  before it reads it: its errors otherwise confirmed that a run on a hidden record existed and
+  which doctype it pointed at. If Organization or Contact ever gains row scoping, it must join
+  `SCOPED_REFERENCES`, or its runs stay open; the code says so where it matters.
+- **#3064 changes what HTML-scoped industry rules match.** Only industry rules read
+  `match_scope`. The seeded ones are all Headline; the six seeded HTML rules are social, whose
+  scope is never read. A rule an admin wrote with HTML scope now matches raw markup (more hits
+  from class names, scripts and repeated nav; fewer where tags or entities split a phrase), and
+  a Headers rule moved to Full Text starts matching where it never did. No patch converts HTML,
+  since that would undo the fix. **Before upgrading a site with enrichment in use, check**
+  `SELECT rule_type, match_scope, enabled, COUNT(*) FROM `tabCRM Enrichment Rule` GROUP BY 1,2,3`
+  — if no Industry row is HTML or Headers, nothing changes. The patch is in `[post_model_sync]`
+  at the end of `patches.txt`; upstream placed it mid-list next to patches we do not carry.
+
+### What was deliberately not ported
+
+- **#3012 (skip the desk setup wizard on Frappe Cloud).** We do not run on Frappe Cloud.
+- **#3063 (lead notes in deal activity groups).** Fixes upstream's note grouping from #3020;
+  our `crm/api/activities.py` has no `group_note_activities`.
+- **#3051 (enrichment settings layout)** and **#3064's `DataFields.vue` hunk.** We carry the
+  enrichment backend and the EnrichFromWebsite modals, not upstream's Settings → Enrichment UI;
+  the hunk keys off an `enriching` document flag we do not have.
+- **#3070 (EmailMultiSelect from develop).** A release-line copy of what develop, and we,
+  already have. Its other half, #3071 (dead `surface-modal` tokens), is a **follow-up, not a
+  rejection**: our `Grid.vue:77` still has `bg-surface-modals`, which nothing defines, so grid
+  rows paint nothing of their own. Upstream's replacement, `bg-surface-elevation-2`, may stripe
+  against our row cells, which paint `bg-surface-base`; it needs a look in both themes first.
+- **#2989's resizable email/comment editor.** A feature, not a fix.
+- **#3031 (settings page copy).** Wording and full stops.
+- **Features:** #3018 (empty-state actions), #3036 (deal from a contact or organization page),
+  #3020 (notes refresh), #3059 (upstream's enrichment UI), #3052 (frappe-ui rc.2; we are on our
+  own v1 line). Product decisions, not maintenance. Two fixes ride inside #3020 and apply here
+  on their own, so they are the next port's to take: `DoctypeModal.update()` leaves the dialog
+  open when nothing changed (`587a03fd4`, net of `75394a3d5`), and `.prose-f` breaks words with
+  `break-all` instead of `break-words` (`cd1418ee5`). #3036's TDZ fix (`c6cb129d6`) does not
+  apply: our `DealModal` watcher is not `immediate`.
+
+### For the next port (develop-only, outside v1.88.0, not reviewed here)
+
+#2858 (skip stale fieldnames when resolving fields layouts), #3034 (lead or deal name in
+WhatsApp notifications), #2642 (unique deals per funnel stage), #3046 (Exotel test clears Error
+Logs through the document API; we have the same `frappe.db.delete` at
+`crm/tests/test_integrations.py`). And #2995 above.
+
+### Verification
+
+- **Tests:** vitest 56 files / 696 tests. Every new Python test was run red first against the
+  worktree (tracebacks named `.worktrees/upstream-v1.88`): view settings 2, enrichment-run
+  scoping 2 plus the `retry` check (the first version of that test passed on the old code,
+  because `_enqueue_run`'s later write check raised the same error, so it now asserts the
+  refusal comes before the target is loaded), crawler 1, extractors 2. The full python suite with
+  `PYTHONPATH=/workspace/.worktrees/upstream-v1.88`, before the enrichment commits:
+  656 + 1325 + 216 (26 skipped) + 53, all OK. After them: 660 + 1329 + 53 OK, and the third
+  block 216 with two failures in `crm.integrations.acumatica.test_outbound`
+  (`test_autonumbering_never_asks_acumatica_for_a_derived_id`,
+  `test_connection_error_lands_in_sync_issues_not_the_users_save`). That module passes alone
+  on both this branch and unmodified `develop` (28/28), and passed in the first full run, so it
+  is order- or site-state-dependent (the test site had ~2,500 leftover sync-issue rows), not
+  this port. Worth its own look.
+- **Lint and build:** eslint, prettier 3.2.5 and ruff 0.8.1 clean; production build succeeds.
+- **Review:** `upstream-port-reviewer` found no local change overwritten. It found two omission
+  reasons wrong: #3062 and #3064 had been left out as "no enrichment module here", but we carry
+  the whole backend. Both were then taken. It also flagged the undocumented #2995 deletion, the
+  #3071 and #3020 riders, and a wrong claim in the #3035 commit message about the drill-down;
+  all are addressed above. `theme-contrast-reviewer`: the "Default" label's `text-ink-gray-5`
+  measures 5.2–7.6:1 on every dropdown surface in both themes; `DARK_SURFACE` matches the CSS.
+  It noted that a sender's `<style>` block or class-based colours are not handled, the same
+  scope as upstream. `doctype-migration-reviewer`: the Select change and the patch are safe on a
+  site with rule rows; the behaviour notes are under #3064 above. `permissions-reviewer`
+  found no path that reads a run on a hidden lead or deal (list, count, report, export,
+  `frappe.client.get`/`get_value`, desk form load, link search, print, sharing) and no
+  regression for notes, tasks or calls; its lows were taken: the `retry` read check, the
+  `SCOPED_REFERENCES` comment, and tests for a manager outside the hierarchy at both settings.
+- **Browser:** the email colour logic was measured in Chromium with a standalone harness over
+  the shipped util. The rest was driven afterwards with a Playwright script against the dev
+  bench serving this worktree's build (no Chrome extension): the views menu shows "Default"
+  beside List; the Tasks empty state shows the tasks icon (list response emptied in flight, no
+  data touched); Add Existing User now offers a user, where the old code offered none at all.
