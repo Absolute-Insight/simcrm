@@ -246,15 +246,15 @@ def _revenue_projection(from_date, to_date):
 	projection = analyst.project_revenue(fit, after=current if to_date_row else None)
 	points = projection["points"]
 	if to_date_row:
-		# the current month is shown for what it is, and fitted through nothing
+		# the current month is shown for what it is, and averaged into nothing
 		points = (
 			[p for p in points if p["kind"] == "actual"]
 			+ [to_date_row]
 			+ [p for p in points if p["kind"] == "projected"]
 		)
 	note = (
-		f"Projected months use a {projection['method']} of complete months; the current month is "
-		"shown to date and not fitted. A trend, not booked deals."
+		f"Projected months are the {projection['method']}; the current month is shown to date "
+		"and not included. A run rate, not booked deals."
 	)
 	return points, note
 

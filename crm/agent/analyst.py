@@ -67,8 +67,8 @@ CATALOGUE: dict[str, dict] = {
 	},
 	"revenue_projection": {
 		"title": "Revenue projection",
-		"description": "A straight-line projection of won revenue for the next three months, "
-		"fitted to the months in the period. A trend, not a forecast of specific deals.",
+		"description": "A projection of won revenue for the next three months: the average of "
+		"the complete months in the period. A run rate, not a forecast of specific deals.",
 		"source": CRM,
 		"columns": [
 			_col("month", "Month", "month"),
@@ -325,10 +325,10 @@ def months_between(from_date: str, to_date: str) -> list[str]:
 	return months
 
 
-# A least-squares line through fewer months than this is a line through noise.
+# Fewer months than this say nothing about how revenue changes.
 MIN_HISTORY_MONTHS = 3
-# Enough complete months to fit a trend through. Three said how revenue changed;
-# a line through three points -- one of them eighteen days of a month -- said R0.
+# Enough complete months to project from. Three said how revenue changed; a
+# projection through three points -- one of them eighteen days of a month -- said R0.
 PROJECTION_MIN_MONTHS = 6
 
 
@@ -472,46 +472,36 @@ def trend_series(series: list[tuple[str, float]], today: date) -> list[tuple[str
 def project_revenue(
 	series: list[tuple[str, float]], horizon: int = PROJECTION_HORIZON, after: str | None = None
 ) -> dict:
-	"""Least-squares line over a monthly series, continued ``horizon`` months.
+	"""The average of a monthly series, continued ``horizon`` months.
 
-	Returns the actual points followed by the projected ones, the fitted slope
-	per month, and a one-line description of the method for the caveats. With
-	fewer than two points there is no line, so nothing is projected. Values are
-	clamped at zero: revenue does not go negative, and a falling line that
-	crosses the axis is telling you the trend is down, not that you will pay
-	customers.
+	Returns the actual points followed by the projected ones, the average per
+	month, and a one-line description of the method for the caveats. With fewer
+	than two points there is nothing to average, so nothing is projected.
+
+	An average, not a fitted line: on deal revenue a month's total swings far
+	more than any trend moves it, and a line carries the last few months' swing
+	forward -- backtested on MBP's history it missed a month by ~50% and ran 38%
+	high on average, the worst of the seven methods tried (see ProjectionTest).
 
 	``after`` is the last month to skip: the projected months start after it
-	rather than after the series, with the line continued through the gap. It
-	is the current, incomplete month -- fitted through nothing, projected over.
+	rather than after the series. It is the current, incomplete month --
+	averaged over nothing, projected over.
 	"""
 	points = [{"month": month, "value": float(value), "kind": "actual"} for month, value in series]
 	n = len(series)
 	if n < 2:
-		return {"points": points, "slope_per_month": 0.0, "method": "not enough months to fit a trend"}
+		return {"points": points, "average_per_month": 0.0, "method": "not enough months to project"}
 
-	xs = list(range(n))
-	ys = [float(value) for _month, value in series]
-	mean_x = sum(xs) / n
-	mean_y = sum(ys) / n
-	denominator = sum((x - mean_x) ** 2 for x in xs)
-	slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True)) / denominator
-	intercept = mean_y - slope * mean_x
-
+	average = round(sum(float(value) for _month, value in series) / n, 2)
 	last = date.fromisoformat(f"{series[-1][0]}-01")
-	skipped = 0
 	if after and after > series[-1][0]:
-		skipped = len(months_between(series[-1][0] + "-01", after + "-01")) - 1
 		last = date.fromisoformat(f"{after}-01")
 	for step in range(1, horizon + 1):
-		projected = max(0.0, intercept + slope * (n - 1 + skipped + step))
-		points.append(
-			{"month": month_key(add_months(last, step)), "value": round(projected, 2), "kind": "projected"}
-		)
+		points.append({"month": month_key(add_months(last, step)), "value": average, "kind": "projected"})
 	return {
 		"points": points,
-		"slope_per_month": round(slope, 2),
-		"method": f"least squares over {n} months",
+		"average_per_month": average,
+		"method": f"average of {n} complete months",
 	}
 
 

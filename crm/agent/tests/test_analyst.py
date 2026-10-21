@@ -172,9 +172,7 @@ class TrendSeriesTest(UnitTestCase):
 		self.assertEqual(
 			[p["month"] for p in out["points"] if p["kind"] == "projected"], ["2026-10", "2026-11", "2026-12"]
 		)
-		self.assertAlmostEqual(
-			out["points"][-3]["value"], 500.0
-		)  # the line continues through the skipped month
+		self.assertAlmostEqual(out["points"][-3]["value"], 200.0)
 
 	def test_the_history_window_can_ask_for_more_months(self):
 		# three months is enough to say how revenue changed, not enough to fit a trend
@@ -214,19 +212,26 @@ class HistoryWindowTest(UnitTestCase):
 
 
 class ProjectionTest(UnitTestCase):
-	def test_a_rising_series_projects_upward_and_labels_points(self):
+	"""Projected months are the average of the complete months. A least-squares line
+	was the worst of seven methods backtested on MBP's won revenue and sales orders
+	(2026-10): it carried the last few months' swing forward and missed a month's
+	total by ~50%, over-forecasting by 38% on average. The plain average missed by
+	~30%."""
+
+	def test_projected_months_are_the_average_and_points_are_labelled(self):
 		out = analyst.project_revenue([("2026-06", 100.0), ("2026-07", 200.0), ("2026-08", 300.0)], horizon=2)
 		self.assertEqual(
 			[p["month"] for p in out["points"]], ["2026-06", "2026-07", "2026-08", "2026-09", "2026-10"]
 		)
-		self.assertAlmostEqual(out["points"][3]["value"], 400.0)
-		self.assertAlmostEqual(out["points"][4]["value"], 500.0)
+		self.assertEqual([p["value"] for p in out["points"][3:]], [200.0, 200.0])
 		self.assertEqual([p["kind"] for p in out["points"]], ["actual"] * 3 + ["projected"] * 2)
-		self.assertAlmostEqual(out["slope_per_month"], 100.0)
+		self.assertAlmostEqual(out["average_per_month"], 200.0)
+		self.assertEqual(out["method"], "average of 3 complete months")
 
-	def test_a_falling_series_never_projects_below_zero(self):
+	def test_a_swing_is_not_carried_forward(self):
+		# a line through a falling pair projected R0 for every month after it
 		out = analyst.project_revenue([("2026-06", 300.0), ("2026-07", 100.0)], horizon=3)
-		self.assertEqual([p["value"] for p in out["points"][2:]], [0.0, 0.0, 0.0])
+		self.assertEqual([p["value"] for p in out["points"][2:]], [200.0, 200.0, 200.0])
 
 	def test_fewer_than_two_points_yields_no_projection(self):
 		out = analyst.project_revenue([("2026-08", 500.0)])
