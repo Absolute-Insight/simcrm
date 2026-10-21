@@ -65,32 +65,15 @@ yarn test:run      # single run
 yarn test          # watch mode
 ```
 
-- **29 files · 480 tests · well under a second** — all must pass before committing.
-  Counts drift; re-read them from `yarn test:run` rather than trusting this line.
-- Location: `frontend/tests/unit/`
-- Only pure utility functions are unit-tested (no Vue component tests yet)
+- All must pass before committing.
 - Add tests in `tests/unit/` when adding pure logic to `src/utils/`
 
 ### Python
 
-```bash
-cd /home/frappe/frappe-bench    # the bench is a docker volume, not a repo directory
-bench --site test_site run-tests --app crm                          # all of it
-bench --site test_site run-tests --module crm.agent.tests.test_signals
-bench --site test_site reinstall --yes                              # reset, as CI does per run
-```
-
-**Use a dedicated `test_site`, never the site you browse.** `bench run-tests` runs
-against whatever site you name, so a development site full of demo records puts that
-data in with the suite's own fixtures — and any test whose subject reads site-wide state
-then measures the demo instead of the code. The per-rep suggestion ceiling counts every
-open row on the site, which is exactly this shape.
-
-The site needs `allow_tests` on, and mail keys (`auto_email_id`, `mail_server`,
-`mail_login`, `mail_password` — see `.github/helper/site_config.json`); without a default
-outgoing account the report-digest tests find no queued email and fail on the site rather
-than on the code. A full run leaves ~70 records behind from fixtures created outside a
-rolled-back transaction, so reinstall periodically.
+Runs in the devcontainer bench against **`test_site` — never the site you browse**
+(demo rows skew any test that reads site-wide state). Commands, the reinstall recipe
+and the site config it needs: [.claude/skills/test/SKILL.md](./.claude/skills/test/SKILL.md) (`/test`).
+`bench --site … reinstall` is in the `settings.json` deny list — ask the user to run it.
 
 ---
 
@@ -105,6 +88,7 @@ docs: short description
 ```
 
 Multiple logical commits per PR — one commit per coherent change, not one giant commit.
+Never commit on `develop` — pre-commit's `no-commit-to-branch` rejects it; branch first.
 Pre-commit hooks run prettier + eslint + oxlint automatically. If they modify a file,
 `git add` the file again and re-commit.
 
@@ -136,18 +120,12 @@ which ports are which. Machine facts go there; repo rules go here.)
 `permissions-reviewer` (row scoping and the access boundary),
 `theme-contrast-reviewer` (the `--ink-*` ladder — see **Design system
 gotchas**), `upstream-port-reviewer`, `clock-and-timezone-reviewer` and
-`doctype-migration-reviewer`. The last two exist because CI's test site has no
-`time_zone` and so runs Asia/Kolkata against UTC runners — mixed-clock code
-fails nightly from 18:30 UTC — and because a schema change that passes against
-a freshly built test site can still strand data on a site that already has rows.
+`doctype-migration-reviewer`.
 
 ### Hooks — enforced, not advisory
 
 - **`guard-paths.sh`** (PreToolUse) refuses writes to generated files, build
-  output, `.env`, lockfiles and `crm/__init__.py`. Its one carve-out, a
-  VECTORA_TAG-only Edit, is dead code for `.env`/`deploy/.env` — the
-  `Read` deny in `settings.json` bars an Edit before the hook runs. The comment
-  in the file explains why that stays and what to do instead.
+  output, `.env`, lockfiles and `crm/__init__.py`.
 - **`guard-compose.sh`** resolves what `docker compose pull/up/create` will
   *actually* run. It reports a **change**, not a difference — a guard that
   fires on the normal condition is one you learn to click through.
@@ -178,15 +156,6 @@ the e2e suite drives it through `npx playwright test` anyway.
 ---
 
 ## Docs structure
-
-```
-PLAN.md          — future only (phases 3B, 4, 5, 6)
-SPEC.md          — stable contracts
-ARCHIVE.md       — completed phases + decision rationale
-KEY-FILES.md     — file→role nav index (moved out of AGENTS.md; keep current)
-feats/           — user-facing feature docs
-archives/        — old docs preserved verbatim
-```
 
 When a phase completes: move its spec from PLAN.md to ARCHIVE.md, update SPEC.md if
 the API surface changed.
