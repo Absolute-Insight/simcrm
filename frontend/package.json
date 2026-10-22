@@ -61,7 +61,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tailwindcss/postcss": "^4.3.3",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "eslint": "^10.12.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-vue": "^10.11.1",
@@ -70,7 +70,7 @@
     "postcss": "^8.5.30",
     "tailwindcss": "^4.3.3",
     "typescript-eslint": "^8.71.2",
-    "vitest": "^4.1.11",
+    "vitest": "^4.1.12",
     "vue-eslint-parser": "^10.4.1"
   }
 }
