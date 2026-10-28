@@ -571,8 +571,11 @@ year the data does not cover), checked for the right answer and for sentences
 
 Nothing in the client could switch thinking off — ollama rejects `PARAMETER think false`
 in a Modelfile — so CRM Agent Settings has **`reasoning_off`**: off by default, and on
-it adds `reasoning_effort: "none"` to every request. A model that always thinks
-(`LFM2.5-2.6B`) ignores it. The runner takes it as an override:
+it adds `reasoning_effort: "none"` to every request. On ollama a model that always
+thinks (`LFM2.5-2.6B`) ignores it; a stricter OpenAI-compatible server may answer 400
+instead, which Test connection shows. The runner takes it as an override, refuses one
+it cannot read as on or off, and prints `max_tokens` and the reasoning state in the
+report header so two runs of one model cannot be confused:
 
 ```bash
 bench --site <site> execute crm.agent.evals.runner.run_and_print --kwargs \

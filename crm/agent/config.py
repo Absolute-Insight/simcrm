@@ -79,6 +79,26 @@ SIGNAL_DEFAULTS = {
 }
 
 
+_SWITCH_WORDS = {"1": 1, "true": 1, "yes": 1, "on": 1, "0": 0, "false": 0, "no": 0, "off": 0}
+
+
+def _switch_override(value):
+	"""An on/off override as 0 or 1, or a ``ValueError``.
+
+	Stricter than a stored setting on purpose. A Check field only ever holds 0 or
+	1, but an override is typed by an operator on a ``bench execute`` line, and
+	``'true'`` degrading to the default would measure the model with reasoning on
+	and write the result down as reasoning off."""
+	if value is None:
+		return None
+	if isinstance(value, bool):
+		return int(value)
+	key = str(value).strip().lower()
+	if key not in _SWITCH_WORDS:
+		raise ValueError(f"expected on/off (1/0, true/false), got {value!r}")
+	return _SWITCH_WORDS[key]
+
+
 def _warn_discarded(field: str, value) -> None:
 	"""Say so when a value is thrown away.
 
@@ -193,7 +213,7 @@ class AgentConfig:
 				("timeout", timeout),
 				("max_tokens", max_tokens),
 				("context_tokens", context_tokens),
-				("reasoning_off", reasoning_off),
+				("reasoning_off", _switch_override(reasoning_off)),
 			)
 			if value is not None
 		}

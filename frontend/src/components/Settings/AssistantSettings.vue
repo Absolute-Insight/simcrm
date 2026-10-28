@@ -87,7 +87,7 @@
           :label="__('Turn off model reasoning')"
           :description="
             __(
-              'For a model whose thinking can be switched off. It answers sooner and cannot spend Max tokens thinking. Models that always think ignore it.',
+              'For a model whose thinking can be switched off. It answers sooner and cannot spend Max tokens thinking. Save, then Test connection: an endpoint that does not accept it will fail the test.',
             )
           "
           @update:model-value="draft.reasoning_off = $event ? 1 : 0"

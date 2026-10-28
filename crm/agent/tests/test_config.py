@@ -91,6 +91,14 @@ class AgentConfigTest(UnitTestCase):
 		self.assertTrue(cfg.reasoning_off)
 		# and an override does not flip it back on a config that already has it off
 		self.assertTrue(cfg.with_overrides(max_tokens=2048).reasoning_off)
+		self.assertTrue(AgentConfig.from_settings({}).with_overrides(reasoning_off="true").reasoning_off)
+		self.assertFalse(cfg.with_overrides(reasoning_off=False).reasoning_off)
+
+	def test_an_unreadable_reasoning_override_is_refused_not_defaulted(self):
+		"""A stored setting degrades; an override must not. Defaulting 'maybe' to
+		off would run the sweep with reasoning on and record it as off."""
+		with self.assertRaises(ValueError):
+			AgentConfig.from_settings({}).with_overrides(reasoning_off="maybe")
 
 	def test_a_none_override_is_not_an_override(self):
 		"""Every override is an optional keyword, so absent arrives as None and must

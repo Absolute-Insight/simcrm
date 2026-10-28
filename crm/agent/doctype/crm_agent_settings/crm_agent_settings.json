@@ -88,7 +88,7 @@
   },
   {
    "default": "0",
-   "description": "Ask the endpoint to answer without a reasoning pass (sends reasoning_effort: none). For models whose thinking can be switched off, such as ollama's lfm3-vl, which with it on spends much of Max Tokens thinking and can run out before it answers. A model that cannot switch thinking off ignores it.",
+   "description": "Ask the endpoint to answer without a reasoning pass (sends reasoning_effort: none). For a model whose thinking can be switched off, which otherwise spends Max Tokens thinking and can run out before it answers. Most endpoints ignore the field for a model that always thinks; one that rejects it fails Test connection, so run that after switching this on.",
    "fieldname": "reasoning_off",
    "fieldtype": "Check",
    "label": "Turn Off Model Reasoning"

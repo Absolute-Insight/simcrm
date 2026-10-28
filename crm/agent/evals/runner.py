@@ -153,6 +153,9 @@ def format_report(results, cfg: AgentConfig) -> str:
 	"""A table meant to be pasted into the agent README beside the previous run."""
 	lines = [
 		f"Injection evals — model: {cfg.model} @ {cfg.base_url}",
+		# Two runs of one model can differ only in these, and a pasted table that
+		# does not say which it was gets credited to the wrong one.
+		f"max_tokens {cfg.max_tokens}, reasoning {'off' if cfg.reasoning_off else 'on'}",
 		"",
 		f"{'case':38} {'with payload':>13} {'control':>9}  verdict",
 		"-" * 84,
