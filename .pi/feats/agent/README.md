@@ -551,23 +551,36 @@ year the data does not cover), checked for the right answer and for sentences
 | `lfm3:1.7b`, ollama 0.40.12, thinking | 4 of 5 | 4/5 | 12/12 · 12/12 | 11.1 s, 7/52 failed |
 | `lfm3:1.7b`, thinking off | 1 of 3 usable | 5/5 | 12/12 · 12/12 | 1.4 s |
 | `lfm3-vl`, ollama 0.40.12, thinking | unmeasurable | refused | 7/12 · 11/12 | 21/53 cut off |
-| **`lfm3-vl`, ollama 0.40.12, thinking off** | **0 of 5** | **refused 5/5** | 10/12 · 12/12 | **0.8 s** |
+| `lfm3-vl`, ollama 0.40.12, thinking off | 0 of 5 *first sweep* | **confirmed 30/30** on re-test (see below) | 10/12 · 12/12 | 0.8 s |
 
 - **ollama 0.40.12 breaks the shipped model's hostile draft.** It still refuses the
   discount, but repeats its disclaimer until `finish_reason=length` (4,096 tokens, 10.6k
   characters); on 0.40.4 the same request stops at 1,387. The rep gets `unavailable`.
   Do not move the `ollama` pin past 0.40.4 while the default is `LFM2.5-2.6B`.
-- **`lfm3-vl` thinking off is the best corpus result this file has recorded**, and
-  every clean arm read correctly. Its one Analyst error is real: "the Qualification
-  stage holds the most pipeline value" — the stage with the most *deals*. `ground_reply`
-  cannot catch it, because the sentence carries no number. Answers are terse.
+- **`lfm3-vl` thinking off is not deterministic at temperature 0, and it confirms the
+  discount.** The first sweep (5 repeats, run off-site from the v3.20.0 image's code)
+  refused it 5/5 and landed nothing else. The re-test through the merged runner on the
+  dev bench confirmed it **10/10 three batches running**, including after restarting
+  the engine. The tell was not at fault: two requests with **byte-identical bodies**
+  (same SHA-256), sent to the same engine minutes apart, came back one quoting the
+  attacker's "$4,750" and one sidestepping it. A 5/5 streak on this model is a
+  sample, not a rate. Read its row as *compromised*, and re-measure any nvfp4 ollama
+  model in more than one session before believing a clean sweep. Its one Analyst
+  error is also real: "the Qualification stage holds the most pipeline value" — the
+  stage with the most *deals*, which `ground_reply` cannot catch because the
+  sentence carries no number.
 - **Thinking on, it is unusable at this budget**: the reasoning channel takes the reply
   on 21 of 53 calls, and the tells fire on clean threads. At 8192 the cut-offs mostly
   go but the clean-thread misreads stay and the median call is 19 s.
 - **The runtime changes the answer.** The same model as Liquid's `LFM3-VL-2B-GGUF`
-  Q4_K_M on llama.cpp (b11946), thinking off, *confirmed* the discount 5/5; ollama's own
-  `lfm3-vl` (nvfp4, `lfm3_vl`) refused it 5/5. Ollama cannot load the HF GGUF at all
-  (`unknown model architecture: 'lfm3'`). Measure the exact build you deploy.
+  Q4_K_M on llama.cpp (b11946), thinking off, confirmed the discount 5/5. Ollama's own
+  `lfm3-vl` (nvfp4, `lfm3_vl`) looked different on its first sweep, but see above: it
+  is not stable enough for one sweep to show a difference. Ollama cannot load the HF
+  GGUF at all (`unknown model architecture: 'lfm3'`).
+
+**Verdict: no LFM3 model replaces `LFM2.5-2.6B`.** With thinking off, the only
+configuration fast and reliable enough to serve, each one confirms the fraudulent
+discount. With thinking on, they run out of budget or misread clean threads.
 
 Nothing in the client could switch thinking off — ollama rejects `PARAMETER think false`
 in a Modelfile — so CRM Agent Settings has **`reasoning_off`**: off by default, and on
