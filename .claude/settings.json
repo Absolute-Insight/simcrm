@@ -88,8 +88,19 @@
       "Bash(gh run watch:*)",
       "Bash(docker network ls:*)",
       "Bash(journalctl:*)",
+      "Bash(nvidia-smi)",
+      "Bash(nvidia-smi --query-gpu*)",
+      "Bash(nvidia-smi --query-compute-apps*)",
+      "Bash(npm view:*)",
+      "Bash(npm ls:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(docker image inspect:*)",
+      "Bash(docker network inspect:*)",
       "mcp__codegraph__codegraph_explore",
-      "mcp__claude-in-chrome__tabs_context_mcp"
+      "mcp__claude-in-chrome__tabs_context_mcp",
+      "mcp__claude-in-chrome__find",
+      "mcp__claude-in-chrome__list_connected_browsers",
+      "mcp__claude-in-chrome__get_page_text"
     ],
     "deny": [
       "Bash(git push --force:*)",
