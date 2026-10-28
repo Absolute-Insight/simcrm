@@ -55,7 +55,8 @@ DEFAULT_SETTINGS = {
 	# the request. On, every call carries ``reasoning_effort: "none"``. For a model
 	# that honours it (ollama's lfm3-vl) that was the difference between running
 	# out of budget on 21 of 53 corpus calls and answering every one in about a
-	# second, landing none of the injections -- see .pi/feats/agent/README.md.
+	# second. It did not make that model safe: it still confirms the fraudulent
+	# discount -- see .pi/feats/agent/README.md, the 2026-10-28 run.
 	"reasoning_off": 0,
 	"daily_call_budget": 500,
 	# What the chat surfaces may read beyond their own source. Both off by
