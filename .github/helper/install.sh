@@ -31,6 +31,11 @@ mkdir ~/frappe-bench/sites/test_site
 
 cp -r "${GITHUB_WORKSPACE}/.github/helper/site_config.json" ~/frappe-bench/sites/test_site/site_config.json
 
+# The runner's mariadb client now requires TLS by default and the CI service
+# container offers none (ERROR 2026). An option file, not a flag, because frappe
+# shells out to the same client during new-site and restore. Localhost only.
+printf '[client]\nskip-ssl\n' > ~/.my.cnf
+
 mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL character_set_server = 'utf8mb4'"
 mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL collation_server = 'utf8mb4_unicode_ci'"
 
