@@ -122,8 +122,8 @@ jobs:
           source "${GITHUB_WORKSPACE}/scripts/frappe-pin.env"
           bash "${GITHUB_WORKSPACE}/scripts/fetch-frappe.sh" ~/frappe
           bench init --skip-redis-config-generation --skip-assets --frappe-path ~/frappe --frappe-branch "$FRAPPE_PIN_BRANCH" --python "$(which python)" ~/frappe-bench
-          mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL character_set_server = 'utf8mb4'"
-          mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL collation_server = 'utf8mb4_unicode_ci'"
+          mariadb --skip-ssl --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL character_set_server = 'utf8mb4'"
+          mariadb --skip-ssl --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL collation_server = 'utf8mb4_unicode_ci'"
 
       - name: Install CRM
         working-directory: /home/runner/frappe-bench
