@@ -78,6 +78,20 @@ class AgentConfigTest(UnitTestCase):
 		cfg = AgentConfig.from_settings({"base_url": "http://site.local/v1", "model": "shipped"})
 		self.assertEqual(cfg.with_overrides(), cfg)
 
+	def test_reasoning_stays_on_unless_switched_off(self):
+		"""Off is opt-in: the shipped model cannot switch its thinking off, and a
+		site that upgrades must send the request it always has."""
+		self.assertFalse(AgentConfig.from_settings({}).reasoning_off)
+		self.assertTrue(AgentConfig.from_settings({"reasoning_off": "1"}).reasoning_off)
+		self.assertFalse(AgentConfig.from_settings({"reasoning_off": 0}).reasoning_off)
+		self.assertFalse(AgentConfig.from_settings({"reasoning_off": "yes"}).reasoning_off)
+
+	def test_a_candidate_can_be_measured_with_reasoning_off(self):
+		cfg = AgentConfig.from_settings({}).with_overrides(reasoning_off="1")
+		self.assertTrue(cfg.reasoning_off)
+		# and an override does not flip it back on a config that already has it off
+		self.assertTrue(cfg.with_overrides(max_tokens=2048).reasoning_off)
+
 	def test_a_none_override_is_not_an_override(self):
 		"""Every override is an optional keyword, so absent arrives as None and must
 		not blank the configured value."""

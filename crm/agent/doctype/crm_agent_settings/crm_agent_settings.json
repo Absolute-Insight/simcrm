@@ -14,6 +14,7 @@
   "timeout",
   "max_tokens",
   "context_tokens",
+  "reasoning_off",
   "daily_call_budget",
   "surfaces_section",
   "assistant_reads_products",
@@ -84,6 +85,13 @@
    "fieldname": "context_tokens",
    "fieldtype": "Int",
    "label": "Context Window (tokens)"
+  },
+  {
+   "default": "0",
+   "description": "Ask the endpoint to answer without a reasoning pass (sends reasoning_effort: none). For models whose thinking can be switched off, such as ollama's lfm3-vl, which with it on spends much of Max Tokens thinking and can run out before it answers. A model that cannot switch thinking off ignores it.",
+   "fieldname": "reasoning_off",
+   "fieldtype": "Check",
+   "label": "Turn Off Model Reasoning"
   },
   {
    "default": "500",
@@ -172,7 +180,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-17 23:30:00.000000",
+ "modified": "2026-10-28 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Agent",
  "name": "CRM Agent Settings",

@@ -133,7 +133,7 @@ def _time_allowed(cfg: AgentConfig, deadline: float | None) -> float:
 
 
 def _request_body(cfg: AgentConfig, schema: dict, messages: list[dict]) -> dict:
-	return {
+	body = {
 		"model": cfg.model,
 		"messages": messages,
 		"max_tokens": cfg.max_tokens,
@@ -143,6 +143,11 @@ def _request_body(cfg: AgentConfig, schema: dict, messages: list[dict]) -> dict:
 			"json_schema": {"name": "output", "schema": schema, "strict": True},
 		},
 	}
+	if cfg.reasoning_off:
+		# Sent only when asked for, so a site that never ticks the box sends the
+		# request it always has -- not every endpoint knows the field.
+		body["reasoning_effort"] = "none"
+	return body
 
 
 class EndpointRejectedKey(AgentUnavailable):

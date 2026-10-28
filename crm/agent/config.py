@@ -51,6 +51,12 @@ DEFAULT_SETTINGS = {
 	# direction. See deploy/README.md: the ollama service sets
 	# OLLAMA_CONTEXT_LENGTH to match.
 	"context_tokens": 8192,
+	# Off, because the shipped model cannot switch its thinking off and ignores
+	# the request. On, every call carries ``reasoning_effort: "none"``. For a model
+	# that honours it (ollama's lfm3-vl) that was the difference between running
+	# out of budget on 21 of 53 corpus calls and answering every one in about a
+	# second, landing none of the injections -- see .pi/feats/agent/README.md.
+	"reasoning_off": 0,
 	"daily_call_budget": 500,
 	# What the chat surfaces may read beyond their own source. Both off by
 	# default: the product catalogue is a second thing the Assistant can say,
@@ -102,6 +108,7 @@ class AgentConfig:
 	assistant_reads_products: bool = False
 	analyst_enabled: bool = False
 	api_key: str = ""
+	reasoning_off: bool = False
 
 	@classmethod
 	def from_settings(cls, settings: dict) -> AgentConfig:
@@ -146,6 +153,7 @@ class AgentConfig:
 			assistant_reads_products=bool(to_int("assistant_reads_products", 0)),
 			analyst_enabled=bool(to_int("analyst_enabled", 0)),
 			api_key=str(merged.get("api_key") or ""),
+			reasoning_off=bool(to_int("reasoning_off", DEFAULT_SETTINGS["reasoning_off"])),
 		)
 
 	def with_overrides(
@@ -156,6 +164,7 @@ class AgentConfig:
 		timeout: int | str | None = None,
 		max_tokens: int | str | None = None,
 		context_tokens: int | str | None = None,
+		reasoning_off: bool | int | str | None = None,
 	) -> AgentConfig:
 		"""This config with the named fields replaced, normalised as settings are.
 
@@ -184,6 +193,7 @@ class AgentConfig:
 				("timeout", timeout),
 				("max_tokens", max_tokens),
 				("context_tokens", context_tokens),
+				("reasoning_off", reasoning_off),
 			)
 			if value is not None
 		}

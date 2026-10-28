@@ -81,6 +81,17 @@
             "
           />
         </div>
+        <Switch
+          :model-value="!!draft.reasoning_off"
+          size="sm"
+          :label="__('Turn off model reasoning')"
+          :description="
+            __(
+              'For a model whose thinking can be switched off. It answers sooner and cannot spend Max tokens thinking. Models that always think ignore it.',
+            )
+          "
+          @update:model-value="draft.reasoning_off = $event ? 1 : 0"
+        />
 
         <!-- Tests the *saved* settings: base_url is the target of a server-side
              POST carrying the API key, so the endpoint reads it from the
@@ -325,6 +336,7 @@ const FIELDS = [
   'model',
   'timeout',
   'max_tokens',
+  'reasoning_off',
   'daily_call_budget',
   'assistant_reads_products',
   'analyst_enabled',

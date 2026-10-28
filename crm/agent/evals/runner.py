@@ -199,6 +199,7 @@ def run_and_print(
 	model: str | None = None,
 	timeout: int | str | None = None,
 	max_tokens: int | str | None = None,
+	reasoning_off: bool | int | str | None = None,
 ) -> str:
 	"""``bench execute`` entry point. Prints the report and returns it.
 
@@ -207,9 +208,17 @@ def run_and_print(
 	Settings at one changes what reps are served while the sweep runs, and leaves
 	the site aimed at the candidate if it dies halfway. ``max_tokens`` is the one
 	most often worth moving -- a budget too small for a model's reasoning channel
-	reads as an unanswering endpoint rather than as a budget.
+	reads as an unanswering endpoint rather than as a budget. ``reasoning_off`` is
+	the other: lfm3-vl thinking at 4096 ran out of budget on 21 of 53 calls, and
+	with it off answered all of them.
 	"""
-	cfg = get_config().with_overrides(base_url=base_url, model=model, timeout=timeout, max_tokens=max_tokens)
+	cfg = get_config().with_overrides(
+		base_url=base_url,
+		model=model,
+		timeout=timeout,
+		max_tokens=max_tokens,
+		reasoning_off=reasoning_off,
+	)
 	report = format_report(run_evals(cfg, repeats=repeats, only=only), cfg)
 	print(report)
 	return report
