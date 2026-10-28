@@ -133,7 +133,7 @@ def _time_allowed(cfg: AgentConfig, deadline: float | None) -> float:
 
 
 def _request_body(cfg: AgentConfig, schema: dict, messages: list[dict]) -> dict:
-	return {
+	body = {
 		"model": cfg.model,
 		"messages": messages,
 		"max_tokens": cfg.max_tokens,
@@ -143,6 +143,11 @@ def _request_body(cfg: AgentConfig, schema: dict, messages: list[dict]) -> dict:
 			"json_schema": {"name": "output", "schema": schema, "strict": True},
 		},
 	}
+	if cfg.reasoning_off:
+		# Sent only when asked for, so a site that never ticks the box sends the
+		# request it always has -- not every endpoint knows the field.
+		body["reasoning_effort"] = "none"
+	return body
 
 
 class EndpointRejectedKey(AgentUnavailable):
@@ -168,8 +173,9 @@ class ReplyCutOff(AgentUnavailable):
 	When the thinking takes all of it the endpoint answers 200 with empty content
 	and ``finish_reason: "length"``. Like ``ContextTooLong`` this is not weather --
 	the endpoint is up and the same question fails the same way -- so it is named:
-	the fix is a larger ``max_tokens`` (and a ``timeout`` that allows for it), or a
-	smaller prompt for the model to reason over.
+	the fix is a larger ``max_tokens`` (and a ``timeout`` that allows for it), a
+	smaller prompt for the model to reason over, or -- for a model whose thinking
+	can be switched off -- ``reasoning_off``.
 	"""
 
 
@@ -290,6 +296,7 @@ def _content(raw: bytes) -> str:
 	if choice.get("finish_reason") == "length" and not str(content or "").strip():
 		raise ReplyCutOff(
 			"the reply budget (max_tokens) ran out before the model wrote an answer; a "
-			"reasoning model spends part of it thinking"
+			"reasoning model spends part of it thinking -- raise max_tokens, or turn "
+			"model reasoning off if this model supports it"
 		)
 	return content

@@ -51,6 +51,12 @@ DEFAULT_SETTINGS = {
 	# direction. See deploy/README.md: the ollama service sets
 	# OLLAMA_CONTEXT_LENGTH to match.
 	"context_tokens": 8192,
+	# Off, because the shipped model cannot switch its thinking off and ignores
+	# the request. On, every call carries ``reasoning_effort: "none"``. For a model
+	# that honours it (ollama's lfm3-vl) that was the difference between running
+	# out of budget on 21 of 53 corpus calls and answering every one in about a
+	# second, landing none of the injections -- see .pi/feats/agent/README.md.
+	"reasoning_off": 0,
 	"daily_call_budget": 500,
 	# What the chat surfaces may read beyond their own source. Both off by
 	# default: the product catalogue is a second thing the Assistant can say,
@@ -71,6 +77,26 @@ SIGNAL_DEFAULTS = {
 	"close_horizon_days": 14,
 	"max_open_per_user": 30,
 }
+
+
+_SWITCH_WORDS = {"1": 1, "true": 1, "yes": 1, "on": 1, "0": 0, "false": 0, "no": 0, "off": 0}
+
+
+def _switch_override(value):
+	"""An on/off override as 0 or 1, or a ``ValueError``.
+
+	Stricter than a stored setting on purpose. A Check field only ever holds 0 or
+	1, but an override is typed by an operator on a ``bench execute`` line, and
+	``'true'`` degrading to the default would measure the model with reasoning on
+	and write the result down as reasoning off."""
+	if value is None:
+		return None
+	if isinstance(value, bool):
+		return int(value)
+	key = str(value).strip().lower()
+	if key not in _SWITCH_WORDS:
+		raise ValueError(f"expected on/off (1/0, true/false), got {value!r}")
+	return _SWITCH_WORDS[key]
 
 
 def _warn_discarded(field: str, value) -> None:
@@ -102,6 +128,7 @@ class AgentConfig:
 	assistant_reads_products: bool = False
 	analyst_enabled: bool = False
 	api_key: str = ""
+	reasoning_off: bool = False
 
 	@classmethod
 	def from_settings(cls, settings: dict) -> AgentConfig:
@@ -146,6 +173,7 @@ class AgentConfig:
 			assistant_reads_products=bool(to_int("assistant_reads_products", 0)),
 			analyst_enabled=bool(to_int("analyst_enabled", 0)),
 			api_key=str(merged.get("api_key") or ""),
+			reasoning_off=bool(to_int("reasoning_off", DEFAULT_SETTINGS["reasoning_off"])),
 		)
 
 	def with_overrides(
@@ -156,6 +184,7 @@ class AgentConfig:
 		timeout: int | str | None = None,
 		max_tokens: int | str | None = None,
 		context_tokens: int | str | None = None,
+		reasoning_off: bool | int | str | None = None,
 	) -> AgentConfig:
 		"""This config with the named fields replaced, normalised as settings are.
 
@@ -184,6 +213,7 @@ class AgentConfig:
 				("timeout", timeout),
 				("max_tokens", max_tokens),
 				("context_tokens", context_tokens),
+				("reasoning_off", _switch_override(reasoning_off)),
 			)
 			if value is not None
 		}

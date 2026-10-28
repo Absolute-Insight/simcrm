@@ -59,6 +59,15 @@ class ClientRequestShapeTest(UnitTestCase):
 		self.assertEqual(body["max_tokens"], 256)
 		self.assertEqual(body["response_format"]["type"], "json_schema")
 		self.assertIn("summary", body["response_format"]["json_schema"]["schema"]["properties"])
+		# not every endpoint knows the field, so it is not sent unless asked for
+		self.assertNotIn("reasoning_effort", body)
+
+	def test_reasoning_off_asks_the_endpoint_for_no_reasoning(self):
+		cfg = CFG.with_overrides(reasoning_off=1)
+		with mock.patch.object(client_mod.requests, "post", return_value=_reply(GOOD)) as post:
+			client_mod.complete(cfg, ThreadSummary, MESSAGES)
+
+		self.assertEqual(post.call_args[1]["json"]["reasoning_effort"], "none")
 
 
 class ClientRetryTest(UnitTestCase):

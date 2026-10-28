@@ -761,6 +761,7 @@ def get_settings() -> dict:
 		"timeout": cfg.timeout,
 		"max_tokens": cfg.max_tokens,
 		"context_tokens": cfg.context_tokens,
+		"reasoning_off": int(cfg.reasoning_off),
 		"daily_call_budget": cfg.daily_call_budget,
 		"assistant_reads_products": int(cfg.assistant_reads_products),
 		"analyst_enabled": int(cfg.analyst_enabled),
