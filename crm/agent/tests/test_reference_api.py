@@ -226,6 +226,7 @@ class ReferenceApiTest(IntegrationTestCase):
 		cell = result["references"][0]["cells"][3]
 		self.assertEqual((cell["status"], cell["value"]), ("questioned", ""))
 		self.assertNotIn("36.0", json.dumps(result))
+		self.assertEqual(cell["note"], "")
 
 	def test_a_figure_not_on_the_rows_is_replaced_by_the_rows(self):
 		self.load()
@@ -282,3 +283,5 @@ class ReferenceApiTest(IntegrationTestCase):
 		self.assertEqual(len(reference_api.list_sheets()["sheets"]), 1)
 		with self.assertRaises(frappe.PermissionError):
 			reference_api.set_available("flange-drilling", 0)
+		# the stored cells hold unconfirmed values: no REST read for a rep
+		self.assertFalse(frappe.has_permission("CRM Reference Entry", "read"))

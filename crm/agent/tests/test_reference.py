@@ -111,10 +111,35 @@ class NormaliseTest(UnitTestCase):
 		self.assertIn("pn16", reference.tokens("PN 16"))
 		self.assertIn("class150", reference.tokens("150 lb"))
 		self.assertIn("1000kpa", reference.tokens("1,000 kPa"))
+		self.assertIn("6in", reference.tokens("a 6-inch flange"))
+		self.assertIn("150mm", reference.tokens("150NB"))
+		self.assertIn("150mm", reference.tokens("150 NB pipe"))
 
 	def test_a_tagged_number_also_counts_bare(self):
 		# "SABS 1600" must find the row the sheet labels "1600 kPa"
 		self.assertTrue({"1600kpa", "1600"} <= reference.tokens("1600 kPa"))
+
+
+class NumbersTest(UnitTestCase):
+	def test_a_sign_is_kept_unless_it_is_a_hyphen(self):
+		self.assertEqual(reference.numbers("-20ºF to 800ºF"), [{"-20"}, {"800"}])
+		self.assertEqual(reference.numbers("15-20 bar"), [{"15"}, {"20"}])
+		self.assertEqual(reference.numbers("A182-F1"), [{"182"}, {"1"}])
+
+	def test_a_fraction_is_one_figure(self):
+		self.assertEqual(reference.numbers('1 3/8" bolts'), [{"1 3/8"}])
+		self.assertEqual(reference.numbers("1-1/2 and 3/8"), [{"1 1/2"}, {"3/8"}])
+		self.assertEqual(reference.numbers("1½”"), [{"1 1/2"}])
+
+	def test_commas_are_thousands_or_a_decimal_never_both(self):
+		self.assertEqual(reference.numbers("1,000 kPa"), [{"1000"}])
+		self.assertEqual(reference.numbers("51,33 Bar"), [{"51.33"}])
+		self.assertEqual(reference.numbers("285.0 mm"), [{"285"}])
+
+	def test_mixed_and_signed_figures_do_not_support_their_parts(self):
+		sheet = [{**ROWS[2], "cells": [{"label": "Bolt size", "value": '1 3/8"', "status": "ok"}]}]
+		used, _ = reference.verify('Use 3/8" bolts.', sheet, sheet)
+		self.assertIsNone(used)
 
 
 class SelectEntriesTest(UnitTestCase):
@@ -122,6 +147,13 @@ class SelectEntriesTest(UnitTestCase):
 		picked = reference.select_entries("Which bolts for a 6 inch SABS 1600 flange?", ROWS)
 		self.assertIn(picked[0]["name"], {"b-150-SABS 1123 1600 kPa", "d-150-1600/3"})
 		self.assertTrue(all("150 mm" in row["label"] for row in picked))
+
+	def test_a_hyphenated_or_nb_size_still_gates(self):
+		for question in ("bolts for a 6-inch PN16 flange", "bolts for 150NB PN16", "PCD 100 NB class 150"):
+			with self.subTest(question=question):
+				picked = reference.select_entries(question, ROWS)
+				size = "100 mm" if "100" in question else "150 mm"
+				self.assertTrue(picked and all(size in row["label"] for row in picked), labels(picked))
 
 	def test_a_size_in_a_cell_is_not_the_rows_size(self):
 		# the 36" class 300 flange takes 2" bolts; a 2" question is not about it
@@ -131,6 +163,10 @@ class SelectEntriesTest(UnitTestCase):
 	def test_a_short_row_wins_a_conversion_question(self):
 		picked = reference.select_entries("what is 2 1/2 inch in mm", ROWS)
 		self.assertEqual(labels(picked)[:1], ['2 1/2" = 65 mm'])
+
+	def test_one_rare_word_is_enough(self):
+		picked = reference.select_entries("what is Millimetres for that?", ROWS)
+		self.assertEqual(labels(picked), ['2 1/2" = 65 mm'])
 
 	def test_an_unrelated_question_selects_nothing(self):
 		self.assertEqual(reference.select_entries("What are our delivery lead times?", ROWS), [])
@@ -186,9 +222,34 @@ class VerifyTest(UnitTestCase):
 		self.assertIsNone(used)
 		self.assertEqual(missing, ["36"])
 
-	def test_figures_from_the_question_need_no_row(self):
-		used, _ = reference.verify("A 6 inch flange: see the sheet.", ROWS, [], ["6 inch flange?"])
-		self.assertEqual(used, [])
+	def test_the_question_is_not_support(self):
+		# "is the PCD 241 mm?" -- a yes must not pass when the row says 240.0
+		used, missing = reference.verify("Yes, the PCD is 241 mm.", ROWS, [ROWS[0]])
+		self.assertIsNone(used)
+		self.assertEqual(missing, ["241"])
+
+	def test_an_article_may_supply_a_figure_but_never_a_withheld_one(self):
+		article = ["Stock flanges ship in 3 days. Holes are 36.0 mm."]
+		used, _ = reference.verify("The PCD is 240.0 mm and stock ships in 3 days.", ROWS, [ROWS[0]], article)
+		self.assertEqual(used, [ROWS[0]])
+		used, missing = reference.verify("The 450 mm hole is 36.0 mm.", ROWS, [ROWS[4]], article)
+		self.assertIsNone(used)
+
+
+class TrimComparisonsTest(UnitTestCase):
+	def test_a_claim_naming_two_rows_and_no_value_is_dropped(self):
+		answer = (
+			"- 1600 kPa: PCD 240.0 mm\n- 1000 kPa: PCD 240.0 mm\n\n"
+			"The 1600/3 flange and the 1000/3 flange share a PCD."
+		)
+		trimmed = reference.trim_comparisons(answer, ROWS)
+		self.assertEqual(trimmed, "- 1600 kPa: PCD 240.0 mm\n- 1000 kPa: PCD 240.0 mm")
+		self.assertEqual(reference.verify(trimmed, ROWS)[1], [])
+
+	def test_a_claim_with_a_value_is_kept_for_the_check(self):
+		answer = "The 1600/3 flange has M16 bolts like the 1000/3 one."
+		self.assertEqual(reference.trim_comparisons(answer, ROWS), answer)
+		self.assertIsNone(reference.verify(answer, ROWS)[0])
 
 
 class PromptTest(UnitTestCase):
@@ -217,6 +278,7 @@ class OutputTest(UnitTestCase):
 	def test_public_cells_withhold_questioned_values(self):
 		cell = ROWS[4]["cells"][1]
 		self.assertEqual(reference.public_cell(cell)["value"], "")
+		self.assertEqual(reference.public_cell({**cell, "note": "should it be 26.0?"})["note"], "")
 		self.assertEqual(reference.public_cell(ROWS[4]["cells"][0])["value"], "585.0")
 
 	def test_highlight_marks_the_quoted_cells_or_all(self):

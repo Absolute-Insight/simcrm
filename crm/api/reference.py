@@ -75,11 +75,15 @@ def _version() -> str:
 def load_entries() -> tuple[list[dict], list]:
 	"""Every row of every available sheet, with the search index beside them.
 
-	Returns ``([], [])`` to a user who may not read the rows. The rows carry no
-	per-user scoping -- every reader sees every row -- so one load serves every
-	user once the doctype permission has been checked.
+	Returns ``([], [])`` to a user who may not read the sheets. The rows carry
+	no per-user scoping -- every reader sees every row -- so one load serves
+	every user once the sheet permission has been checked.
+
+	Entries themselves are System Manager only: their stored cells hold the
+	unconfirmed values, and a rep reading them over ``/api/resource`` would
+	get what this module strips. Reps reach rows only through here.
 	"""
-	if not frappe.has_permission(ENTRY, "read") or not frappe.has_permission(SHEET, "read"):
+	if not frappe.has_permission(SHEET, "read"):
 		return [], []
 	site = frappe.local.site
 	version = _version()

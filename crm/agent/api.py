@@ -466,7 +466,7 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 		return _sheet_answer(rows) if rows else failed
 
 	if rows:
-		return _reference_answer(question, reply, rows, articles)
+		return _reference_answer(reply, rows, selected)
 
 	titles = {article["name"]: article["title"] for article in articles}
 	cited = [name for name in reply.related_articles if name in titles]
@@ -526,16 +526,20 @@ def _complete_chat(
 		return _model_call(cfg, log_title, lambda: client.complete(cfg, schema, messages))
 
 
-def _reference_answer(question: str, reply: ReferenceAnswer, rows: list[dict], articles: list[dict]) -> dict:
-	"""The model's answer if every figure in it is on a row it can be traced to; else the rows."""
+def _reference_answer(reply: ReferenceAnswer, rows: list[dict], articles: list[dict]) -> dict:
+	"""The model's answer if every figure in it is on a row it can be traced to; else the rows.
+
+	``articles`` are the ones that were in the prompt: an article the model
+	never saw supports nothing, and neither does the question.
+	"""
 	titles = {article["name"]: article for article in articles}
 	cited_articles = [name for name in reply.related_articles if name in titles]
-	answer = reference.strip_row_ids(reply.answer)
+	answer = reference.trim_comparisons(reference.strip_row_ids(reply.answer), rows) or reply.answer
 	used, unsupported = reference.verify(
 		answer,
 		rows,
 		reference.resolve_cited(reply.cited_rows, rows),
-		[question] + [titles[name]["content"] for name in cited_articles],
+		[titles[name]["content"] for name in cited_articles],
 	)
 	if used is None:
 		frappe.logger("crm.agent").info(
