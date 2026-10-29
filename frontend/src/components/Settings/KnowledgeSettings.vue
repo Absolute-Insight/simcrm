@@ -6,7 +6,7 @@
         <p class="text-p-sm text-ink-gray-5">
           {{
             __(
-              'What the Assistant may say about your products, materials, standards and industries. It answers reps only from these articles — nothing here is guessed.',
+              'What the Assistant may say about your products, materials, standards and industries. It answers reps only from these articles and reference sheets — nothing here is guessed.',
             )
           }}
         </p>
@@ -25,6 +25,84 @@
         />
       </div>
     </div>
+
+    <!-- Reference sheets are loaded as packs by an administrator on the
+         server (crm.api.reference.import_pack), not edited here: their
+         figures are the company's own documents. -->
+    <section
+      v-if="sheets.data?.length"
+      class="flex flex-col gap-2"
+      :aria-label="__('Reference sheets')"
+    >
+      <div class="flex items-baseline justify-between gap-2">
+        <h3 class="text-base-medium text-ink-gray-8">
+          {{ __('Reference sheets') }}
+        </h3>
+        <span class="text-xs text-ink-gray-5">
+          {{
+            __(
+              'Answered row by row; every figure is checked against the sheet.',
+            )
+          }}
+        </span>
+      </div>
+      <div
+        class="divide-y divide-outline-gray-1 rounded-6 border border-outline-gray-1"
+      >
+        <div
+          v-for="sheet in sheets.data"
+          :key="sheet.name"
+          class="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2"
+        >
+          <button
+            type="button"
+            class="flex min-w-0 flex-1 flex-col items-start gap-0.5 text-left"
+            @click="browseSheet(sheet)"
+          >
+            <span class="max-w-full truncate text-base text-ink-gray-8">
+              {{ sheet.title }}
+            </span>
+            <span class="text-xs text-ink-gray-5">
+              {{ sheetSize(sheet) }}
+              <template v-if="sheet.questioned_count">
+                ·
+                <span
+                  class="text-ink-orange-9"
+                  :title="
+                    __(
+                      'Cells the company has not confirmed. The Assistant shows them as awaiting confirmation and never quotes them.',
+                    )
+                  "
+                >
+                  {{
+                    __('{0} awaiting confirmation', [sheet.questioned_count])
+                  }}
+                </span>
+              </template>
+            </span>
+            <span
+              v-if="sheet.note"
+              class="line-clamp-1 max-w-full text-xs text-ink-gray-5"
+              :title="sheet.note"
+            >
+              {{ sheet.note }}
+            </span>
+          </button>
+
+          <Switch
+            :model-value="!!sheet.available_to_assistant"
+            size="sm"
+            :label="__('Available')"
+            @update:model-value="toggleSheet(sheet, $event)"
+          />
+          <Button
+            variant="ghost"
+            :label="__('View')"
+            @click="browseSheet(sheet)"
+          />
+        </div>
+      </div>
+    </section>
 
     <TextInput
       v-model="search"
@@ -134,12 +212,14 @@
       :article="editing"
       @saved="articles.reload()"
     />
+    <ReferenceViewerModal v-model="viewerOpen" :reference="viewing" />
   </div>
 </template>
 
 <script setup>
 import { PhMagnifyingGlass as LucideSearch } from '@phosphor-icons/vue'
 import KnowledgeArticleModal from '@/components/Modals/KnowledgeArticleModal.vue'
+import ReferenceViewerModal from '@/components/Modals/ReferenceViewerModal.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import { globalStore } from '@/stores/global'
@@ -161,6 +241,44 @@ const search = ref('')
 const importing = ref(false)
 const editorOpen = ref(false)
 const editing = ref(null)
+
+const viewerOpen = ref(false)
+const viewing = ref(null)
+
+const sheets = createResource({
+  url: 'crm.api.reference.list_sheets',
+  auto: true,
+  transform: (data) => data?.sheets || [],
+})
+
+function sheetSize(sheet) {
+  const pages = sheet.pages.length
+  return [
+    sheet.entry_count === 1 ? __('1 row') : __('{0} rows', [sheet.entry_count]),
+    pages === 1 ? __('1 page') : __('{0} pages', [pages]),
+  ].join(' · ')
+}
+
+function browseSheet(sheet) {
+  viewing.value = {
+    sheet_title: sheet.title,
+    file_url: sheet.source_file,
+    pages: sheet.pages,
+  }
+  viewerOpen.value = true
+}
+
+async function toggleSheet(sheet, on) {
+  try {
+    await call('crm.api.reference.set_available', {
+      name: sheet.name,
+      available: on ? 1 : 0,
+    })
+    sheet.available_to_assistant = on ? 1 : 0
+  } catch (e) {
+    toast.error(describeError(e).message || __('Could not save that change'))
+  }
+}
 
 const articles = createResource({
   url: 'crm.api.knowledge.list_articles',
