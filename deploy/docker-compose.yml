@@ -631,7 +631,108 @@ services:
         echo "A site created with VECTORA_AGENT_ENABLED=1 is already pointed at it;"
         echo "otherwise switch the tier on in Settings -> Assistant."
 
+  # --- GPU model, opt-in ------------------------------------------------------
+  # docker compose --profile gpu-model up -d
+  #
+  # MiniCPM-V-4.7-35B-A3B (Apache-2.0) on llama.cpp, for a host with an NVIDIA
+  # card and the RAM to hold the experts. Use it instead of `local-model`, not
+  # beside it: one model per stack. Measured against LFM2.5-2.6B in
+  # crm/agent/evals (README.md, "Choosing the model").
+  #
+  # Not ollama: no ollama release loads this model's architecture, and ollama
+  # splits a mixture-of-experts by whole layer. `--cpu-moe` keeps only the
+  # expert tensors in system RAM (~21 GB, mmap'd) and everything else --
+  # attention, KV cache -- on the GPU, about 3.5 GB of VRAM.
+  #
+  # `-c` is the window for all slots together: 32768 over `-np 2` is 16384 per
+  # request, which is what `context_tokens` in CRM Agent Settings must say.
+  # Larger there than here and llama.cpp refuses the prompt rather than
+  # truncating it -- the safe direction, but every long question fails.
+  llm:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b11641
+    logging: *logging
+    profiles: ["gpu-model"]
+    restart: unless-stopped
+    depends_on:
+      llm-fetch:
+        condition: service_completed_successfully
+    volumes:
+      - llm-models:/models:ro
+    command:
+      - -m
+      - /models/${VECTORA_LLM_FILE:-MiniCPM-V-4_7-35B-A3B-Q4_K_M.gguf}
+      - --alias
+      - ${VECTORA_LLM_ALIAS:-minicpm-v4.7-35b}
+      - --cpu-moe
+      - -ngl
+      - "99"
+      - -c
+      - "32768"
+      - -np
+      - "2"
+      - -fa
+      - "on"
+      - -ctk
+      - q8_0
+      - -ctv
+      - q8_0
+      # prefill batch: 4096 is ~4.5x faster than the default 512 on a
+      # grounded Assistant prompt, and prefill is most of a short answer's wait
+      - -b
+      - "4096"
+      - -ub
+      - "4096"
+      # the experts run on the CPU, so this is the model's real speed knob;
+      # more threads than physical cores slows it down
+      - -t
+      - ${VECTORA_LLM_THREADS:-8}
+      - --jinja
+      - --no-webui
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8086"
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8086/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      # loading 21 GB of weights from a cold page cache takes a minute or two
+      start_period: 300s
+      retries: 30
+
+  # One-shot: download the weights if the volume lacks them, then check the
+  # file against the pinned digest on every `up -d`. A model is code that
+  # writes to customers; a file that does not match the measured one does not
+  # get served. Hashing 21 GB takes about a minute.
+  llm-fetch:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b11641
+    logging: *logging
+    profiles: ["gpu-model"]
+    restart: "no"
+    volumes:
+      - llm-models:/models
+    environment:
+      FILE: ${VECTORA_LLM_FILE:-MiniCPM-V-4_7-35B-A3B-Q4_K_M.gguf}
+      URL: ${VECTORA_LLM_URL:-https://huggingface.co/openbmb/MiniCPM-V-4.7-35B-A3B-gguf/resolve/cf943fbe32f840b20ca05ccc146e7dc72baf9a9b/MiniCPM-V-4_7-35B-A3B-Q4_K_M.gguf}
+      SHA256: ${VECTORA_LLM_SHA256:-9ecf91e814d7e9adc64325b1b65f8628a9b1bb8da4f61a92869ca7489bfd888e}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ ! -f "/models/$$FILE" ]; then
+          echo "Downloading $$FILE (21 GB)"
+          curl -fL --retry 5 -o "/models/$$FILE.part" "$$URL"
+          mv "/models/$$FILE.part" "/models/$$FILE"
+        fi
+        echo "Checking $$FILE"
+        echo "$$SHA256  /models/$$FILE" | sha256sum -c -
+
 volumes:
+  llm-models:
   ollama-models:
   db-data:
   redis-queue-data:
