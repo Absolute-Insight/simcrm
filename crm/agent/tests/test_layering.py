@@ -34,6 +34,9 @@ ALLOWED_SIBLING_IMPORTS = {
 	# context: it takes articles as plain dicts and builds messages; loading
 	# them (crm.help, itself frappe-free) is the caller's job.
 	"knowledge": set(),
+	# reference answers from reference-sheet rows and checks the figures.
+	# Pure for the same reason: rows in, messages and verdicts out.
+	"reference": set(),
 	"client": {"config", "errors", "prompting", "schemas"},
 	"tools": set(),
 	# actions is the write-tier proposal layer: drafts only. It may reach the
@@ -49,6 +52,7 @@ ALLOWED_SIBLING_IMPORTS = {
 		"context",
 		"errors",
 		"knowledge",
+		"reference",
 		"schemas",
 		"tools",
 	},
@@ -108,7 +112,15 @@ class LayeringTest(UnitTestCase):
 	def test_the_pure_layers_import_no_frappe(self):
 		"""``context`` and ``errors`` stay importable with no site at all -- that is what
 		makes the prompt builder and the exception types usable from any tier later."""
-		for module in ("errors", "context", "knowledge", "prompting", "analyst", "analyst_facts"):
+		for module in (
+			"errors",
+			"context",
+			"knowledge",
+			"prompting",
+			"reference",
+			"analyst",
+			"analyst_facts",
+		):
 			with self.subTest(module=module):
 				source = Path(frappe.get_app_path("crm", "agent", f"{module}.py")).read_text()
 				imported = set()

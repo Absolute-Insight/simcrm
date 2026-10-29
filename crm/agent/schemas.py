@@ -60,6 +60,21 @@ class AssistantAnswer(BaseModel):
 	related_articles: list[str] = Field(default_factory=list, max_length=3)
 
 
+class ReferenceAnswer(BaseModel):
+	"""An Assistant answer when reference-sheet rows were in the prompt.
+
+	``cited_rows`` names the prompt's rows (``R1``, ``R2``...) the answer read.
+	The endpoint resolves them against the rows it actually sent and checks
+	every number in ``answer`` against those rows; it trusts neither.
+	"""
+
+	model_config = ConfigDict(extra="forbid")
+
+	answer: str = Field(min_length=1, max_length=4000)
+	cited_rows: list[str] = Field(default_factory=list, max_length=4)
+	related_articles: list[str] = Field(default_factory=list, max_length=3)
+
+
 class AnalystPlan(BaseModel):
 	"""Which catalogue calculations answer the question, and for what period.
 
