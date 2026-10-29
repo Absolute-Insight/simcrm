@@ -167,12 +167,30 @@ class ReferenceApiTest(IntegrationTestCase):
 		)
 		self.assertEqual(frappe.db.get_value("CRM Reference Sheet", "flange-drilling", "questioned_count"), 0)
 
+	def test_a_failed_reimport_keeps_the_old_files_on_disk(self):
+		self.load()
+		old = frappe.get_all(
+			"File",
+			filters={"attached_to_doctype": "CRM Reference Sheet", "attached_to_name": "flange-drilling"},
+			fields=["name", "file_url"],
+		)
+		frappe.db.savepoint("before_reimport")
+		with mock.patch.object(reference_api.frappe.db, "bulk_insert", side_effect=RuntimeError("boom")):
+			with self.assertRaises(RuntimeError):
+				reference_api.import_pack(write_pack(self.pack))
+		frappe.db.rollback(save_point="before_reimport")
+		for row in old:
+			path = frappe.get_site_path("private", "files", os.path.basename(row.file_url))
+			self.assertTrue(os.path.isfile(path), row.file_url)
+			self.assertTrue(frappe.db.exists("File", row.name))
+
 	def test_a_broken_pack_writes_nothing(self):
 		for change in (
 			{"file": "../outside.pdf"},
 			{"rows": [{**ROWS[0], "cells": [{**ROWS[0]["cells"][0], "status": "maybe"}]}]},
 			{"rows": [{**ROWS[0], "page": 2}]},
 			{"rows": [{**ROWS[0], "bbox": [1, 2, 3]}]},
+			{"file": "a" * 130 + ".pdf"},
 		):
 			with self.subTest(change=list(change)):
 				with self.assertRaises(frappe.ValidationError):

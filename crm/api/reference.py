@@ -216,7 +216,9 @@ def import_pack(path: str) -> dict:
 	imported again. The whole pack is validated before anything is written.
 	"""
 	root = os.path.realpath(path)
-	with open(os.path.join(root, "manifest.json"), encoding="utf-8") as handle:
+	# not whitelisted: the path comes from whoever runs bench execute
+	manifest_path = os.path.join(root, "manifest.json")
+	with open(manifest_path, encoding="utf-8") as handle:  # nosemgrep: frappe-security-file-traversal
 		manifest = json.load(handle)
 	sheets = validate_manifest(manifest)
 	files = {name: _read_file(root, name) for sheet in sheets for name in _files_of(sheet)}
@@ -237,20 +239,47 @@ def _read_file(root: str, name: str) -> bytes:
 		frappe.throw(_("Pack file {0} is outside the pack.").format(name))
 	if os.path.getsize(full) > MAX_FILE_BYTES:
 		frappe.throw(_("Pack file {0} is too large.").format(name))
-	with open(full, "rb") as handle:
+	# contained above: the real path must sit directly in the pack directory
+	with open(full, "rb") as handle:  # nosemgrep: frappe-security-file-traversal
 		return handle.read()
+
+
+def _drop_old_files(key: str) -> None:
+	"""Remove a sheet's old File rows now, and their files on disk only once committed.
+
+	``delete_doc("File")`` unlinks the file from disk at once, while the rows
+	come back on rollback: a re-import that failed half way left a sheet whose
+	rows pointed at images that were gone. Rows go in the transaction; disk
+	files go after the commit, and only those no File row still names (a new
+	upload with the same content reuses the old file's path).
+	"""
+	old = frappe.get_all(
+		"File",
+		filters={"attached_to_doctype": SHEET, "attached_to_name": key},
+		fields=["name", "file_url", "is_private"],
+	)
+	if not old:
+		return
+	frappe.db.delete("File", {"name": ["in", [row.name for row in old]]})
+
+	def unlink():
+		for row in old:
+			if frappe.db.exists("File", {"file_url": row.file_url}):
+				continue
+			path = frappe.get_site_path(
+				"private" if row.is_private else "public", "files", os.path.basename(row.file_url or "")
+			)
+			if os.path.isfile(path):
+				os.remove(path)
+
+	frappe.db.after_commit.add(unlink)
 
 
 def _import_sheet(sheet: dict, files: dict[str, bytes]) -> dict:
 	key = sheet["key"]
 	if frappe.db.exists(SHEET, key):
 		doc = frappe.get_doc(SHEET, key)
-		# the Attach field holds the old PDF; a File still linked there cannot go
-		doc.db_set("source_file", None, update_modified=False)
-		for name in frappe.get_all(
-			"File", filters={"attached_to_doctype": SHEET, "attached_to_name": key}, pluck="name"
-		):
-			frappe.delete_doc("File", name, ignore_permissions=True)
+		_drop_old_files(key)
 		frappe.db.delete(ENTRY, {"sheet": key})
 	else:
 		doc = frappe.get_doc({"doctype": SHEET, "sheet_key": key, "title": sheet["title"]})
@@ -261,7 +290,7 @@ def _import_sheet(sheet: dict, files: dict[str, bytes]) -> dict:
 			frappe.get_doc(
 				{
 					"doctype": "File",
-					"file_name": f"{key}-{name}" if not name.startswith(key) else name,
+					"file_name": stored_file_name(key, name),
 					"attached_to_doctype": SHEET,
 					"attached_to_name": key,
 					# named for the Attach field, or saving the sheet attaches a copy
@@ -312,6 +341,9 @@ def _import_sheet(sheet: dict, files: dict[str, bytes]) -> dict:
 	]
 	frappe.db.bulk_insert(
 		ENTRY,
+		# a row can carry 40 cells of 2,000 characters; keep a statement well
+		# under max_allowed_packet
+		chunk_size=200,
 		fields=[
 			"name",
 			"creation",
@@ -375,6 +407,19 @@ def _file_name(value, where: str, extensions: tuple[str, ...]) -> str:
 	return value
 
 
+def stored_file_name(key: str, name: str) -> str:
+	"""The File name a pack file is stored under: prefixed with its sheet key."""
+	return name if name.startswith(key) else f"{key}-{name}"
+
+
+def _stored_name(key: str, name: str, where: str) -> str:
+	# File.file_name is a 140-character Data field; caught here, not half way
+	# through an import
+	if len(stored_file_name(key, name)) > DATA_FIELD_MAX:
+		_fail(f"{where} file name is too long once prefixed with the sheet key")
+	return name
+
+
 def validate_manifest(manifest) -> list[dict]:
 	"""The pack's sheets, normalised; throws on the first thing that is wrong.
 
@@ -413,7 +458,7 @@ def validate_manifest(manifest) -> list[dict]:
 					"page": p + 1,
 					"width": float(width),
 					"height": float(height),
-					"image": _file_name(page.get("image"), f"{pw} image", IMAGE_TYPES),
+					"image": _stored_name(key, _file_name(page.get("image"), f"{pw} image", IMAGE_TYPES), pw),
 				}
 			)
 		entries_raw = raw.get("entries")
@@ -464,7 +509,7 @@ def validate_manifest(manifest) -> list[dict]:
 				"key": key,
 				"title": _text(raw.get("title"), f"{where} title", DATA_FIELD_MAX, required=True),
 				"note": _text(raw.get("note"), f"{where} note", 500),
-				"file": _file_name(raw.get("file"), f"{where} file", (".pdf",)),
+				"file": _stored_name(key, _file_name(raw.get("file"), f"{where} file", (".pdf",)), where),
 				"pages": pages,
 				"entries": entries,
 			}

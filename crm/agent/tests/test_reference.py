@@ -156,6 +156,11 @@ class VerifyTest(UnitTestCase):
 		used, _ = reference.verify("Class 300 is rated 51.33 bar.", ROWS, [])
 		self.assertEqual(used, [ROWS[7]])
 
+	def test_tens_in_words_are_checked_too(self):
+		used, missing = reference.verify("It takes thirty bolts.", ROWS, [ROWS[0]])
+		self.assertIsNone(used)
+		self.assertEqual(missing, ["30"])
+
 	def test_a_figure_on_no_row_is_refused(self):
 		used, missing = reference.verify("The PCD is 241.3 mm.", ROWS, [ROWS[0]])
 		self.assertIsNone(used)

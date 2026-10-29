@@ -300,12 +300,18 @@ def resolve_cited(cited_rows: list[str], entries: list[dict]) -> list[dict]:
 # --- the number check ----------------------------------------------------------
 
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+_UNITS = (
+	"zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+	"sixteen seventeen eighteen nineteen twenty"
+).split()
+_TENS = {"thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90}
+# A figure in words is still a figure: "thirty bolts" must meet the check like
+# "30 bolts". "twenty four" becomes two numbers, which no row supports as a
+# pair -- the safe direction: the rows are shown instead.
 _NUMBER_WORDS = {
-	word: str(value)
-	for value, word in enumerate(
-		"zero one two three four five six seven eight nine ten eleven twelve thirteen "
-		"fourteen fifteen sixteen seventeen eighteen nineteen twenty".split()
-	)
+	**{word: str(value) for value, word in enumerate(_UNITS)},
+	**{w: str(v) for w, v in _TENS.items()},
+	"dozen": "12",
 }
 _WORD = re.compile(r"[a-z]+")
 

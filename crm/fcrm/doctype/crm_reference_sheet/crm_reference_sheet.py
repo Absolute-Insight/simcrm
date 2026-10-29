@@ -19,6 +19,8 @@ class CRMReferenceSheet(Document):
 		clear_cache_after_commit()
 
 	def on_trash(self):
+		# The rows go with the sheet and are not kept in Deleted Document: a
+		# restored sheet has no rows. Re-importing the pack is the recovery.
 		from crm.api.reference import clear_cache_after_commit
 
 		frappe.db.delete("CRM Reference Entry", {"sheet": self.name})
