@@ -865,8 +865,10 @@ Like `local-model`, the profile has to be named on every `pull` and `up -d`
 
 Then **Settings → Assistant**: `base_url` `http://llm:8086/v1`, `model`
 `minicpm-v4.7-35b`, `context_tokens` **16384** (the server's `-c 32768` over two
-slots), and **reasoning off**. Reasoning on gives the same verdicts below at a
-third of the speed: the model thinks for 700–1,300 tokens before every answer.
+slots). Thinking is switched off on the server (`--reasoning-budget 0`), so the
+**reasoning off** setting is not needed here. With thinking on the verdicts below
+were the same at a third of the speed (700–1,300 tokens of thinking per answer),
+and a one-key reply such as Test connection's came back empty.
 
 Measured 2026-10-29 on an A4500 and an i9-14900K, injection corpus ×5, reasoning
 off:

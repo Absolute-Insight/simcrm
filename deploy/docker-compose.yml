@@ -687,6 +687,12 @@ services:
       - -t
       - ${VECTORA_LLM_THREADS:-8}
       - --jinja
+      # thinking off on the server, not per request: a site whose image
+      # predates the reasoning_off setting would otherwise think on every
+      # call, and on a one-key reply the whole answer lands in the
+      # reasoning channel -- Test connection then reports empty content
+      - --reasoning-budget
+      - "0"
       - --no-webui
       - --host
       - 0.0.0.0
