@@ -1,0 +1,126 @@
+{
+ "actions": [],
+ "autoname": "field:sheet_key",
+ "creation": "2026-10-29 20:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "sheet_key",
+  "column_break_rs",
+  "available_to_assistant",
+  "entry_count",
+  "questioned_count",
+  "section_break_source",
+  "source_file",
+  "note",
+  "pages"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "description": "The pack's stable key. Re-importing a pack replaces the sheet with this key.",
+   "fieldname": "sheet_key",
+   "fieldtype": "Data",
+   "label": "Sheet key",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "column_break_rs",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "Off keeps the sheet but the Assistant never quotes it.",
+   "fieldname": "available_to_assistant",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Available to the Assistant"
+  },
+  {
+   "fieldname": "entry_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Rows",
+   "read_only": 1
+  },
+  {
+   "description": "Cells the company has not confirmed. The Assistant withholds them.",
+   "fieldname": "questioned_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Awaiting confirmation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_source",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "source_file",
+   "fieldtype": "Attach",
+   "label": "Source PDF",
+   "read_only": 1
+  },
+  {
+   "description": "Provenance, e.g. a third-party copyright.",
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note"
+  },
+  {
+   "description": "Each page's number, size in PDF points and rendered image.",
+   "fieldname": "pages",
+   "fieldtype": "JSON",
+   "label": "Pages",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-29 20:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FCRM",
+ "name": "CRM Reference Sheet",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Sales User"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1,
+ "in_create": 1
+}

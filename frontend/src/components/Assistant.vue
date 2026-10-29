@@ -51,6 +51,43 @@
                 :label="source.title"
               />
             </div>
+            <!-- Reference rows: every figure in the answer is on one of
+                 these. Each opens the row on its page so the rep can check. -->
+            <div
+              v-if="message.references?.length"
+              class="flex flex-col gap-1.5"
+            >
+              <button
+                v-for="row in message.references"
+                :key="row.name"
+                type="button"
+                class="flex w-full items-start gap-2 rounded-6 border border-outline-gray-2 px-2.5 py-1.5 text-left hover:bg-surface-gray-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-outline-gray-3"
+                @click="openReference(row)"
+              >
+                <PhFileText
+                  class="mt-0.5 size-4 shrink-0 text-ink-gray-5"
+                  aria-hidden="true"
+                />
+                <span class="flex min-w-0 flex-col">
+                  <span class="text-sm text-ink-gray-8">{{ row.label }}</span>
+                  <span class="text-xs text-ink-gray-5">
+                    {{ row.sheet_title }} ·
+                    {{ __('page {0}', [row.page]) }}
+                  </span>
+                </span>
+              </button>
+              <p class="text-xs text-ink-gray-5">
+                {{
+                  message.fromSheet
+                    ? __(
+                        'Taken straight from the sheet. Tap a row to see it on the page.',
+                      )
+                    : __(
+                        'Every figure above is on these rows. Tap one to see it on the page.',
+                      )
+                }}
+              </p>
+            </div>
           </template>
 
           <template #failure="{ failure }">
@@ -97,10 +134,13 @@
       </div>
     </div>
   </Transition>
+  <ReferenceViewerModal v-model="referenceOpen" :reference="openRow" />
 </template>
 
 <script setup>
 import AgentChat from '@/components/AgentChat.vue'
+import ReferenceViewerModal from '@/components/Modals/ReferenceViewerModal.vue'
+import { PhFileText } from '@phosphor-icons/vue'
 import {
   askAssistant,
   assistantAsking,
@@ -126,6 +166,14 @@ import { ref } from 'vue'
 const { isAdmin } = usersStore()
 
 const target = ref(null)
+
+const referenceOpen = ref(false)
+const openRow = ref(null)
+
+function openReference(row) {
+  openRow.value = row
+  referenceOpen.value = true
+}
 
 const intro = __(
   'Ask about our products, models, materials, standards and which industries use what. Answers come only from the knowledge base your administrator maintains — nothing here reads your deals or email.',

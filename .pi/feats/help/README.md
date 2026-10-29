@@ -70,6 +70,43 @@ Article markdown → `marked` → the house `sanitizeHTML` → `v-html`, all in
 deliberately unsanitized and says so — DOMPurify does not function under
 happy-dom, so sanitization lives at the component like every other HTML path.
 
+## Reference sheets (the Assistant's exact-figure source)
+
+A company's lookup sheets (flange drilling tables, bolt sets, line sizes,
+ratings, material equivalents) are not articles: a paraphrase that swaps one
+digit is a wrong flange. They are rows of labelled cells, each anchored to its
+page and box in the PDF. Design: `docs/superpowers/specs/2026-10-29-reference-sheets-design.md`.
+
+- **Selection is deterministic** (`crm/agent/reference.py::select_entries`):
+  sizes, ratings and standards are normalised one way on both sides (`6"`,
+  `6 inch` → `6in`; `DN150` → `150mm`; `PN 16` → `pn16`; `150 lb` →
+  `class150`), a question naming a size never matches a row of another size,
+  and a row needs a strong token or two rare words in common. The index is
+  built once per worker per version stamp (`crm.api.reference.load_entries`).
+- **The model only phrases.** Every claim (line, list item, sentence) must take
+  all of its figures from one prompt row or the question
+  (`reference.verify`); otherwise the answer is replaced by the rows
+  themselves (`fallback_answer`, `from_sheet: true`). Same when the model is
+  unreachable or the user is throttled -- a lookup does not need a model.
+- **Unconfirmed cells** (`status: "questioned"`) never reach the prompt, are
+  never support for a figure, a figure equal to one is refused outright, and
+  their value is stripped before a row leaves the server.
+- **Citations** are chips under the answer; each opens
+  `ReferenceViewerModal`: the row's cells, and the page image with the row,
+  the quoted cells and any unconfirmed cell marked, plus the PDF at that page.
+
+Sheets are loaded as a **pack** built offline for the layout (manifest +
+PDFs + page PNGs; format in the design doc). There is no upload endpoint:
+
+```bash
+docker cp pack/ <backend>:/tmp/pack
+bench --site <site> execute crm.api.reference.import_pack --kwargs '{"path": "/tmp/pack"}'
+```
+
+Re-importing a sheet key replaces its rows and files. MBP's builder lives with
+the MBP working files (`/home/evo/dev/mbp/reference-pack/build.py`), never in
+this repo: packs are customer documents.
+
 ## Key files
 
 | File | Role |
@@ -84,3 +121,7 @@ happy-dom, so sanitization lives at the component like every other HTML path.
 | `frontend/src/components/Modals/HelpCenterModal.vue` | The help center dialog, with the Mentor block |
 | `frontend/src/components/AgentChat.vue` | The shared transcript/input component the three surfaces render |
 | `frontend/src/utils/helpCenter.js` | Pure search/group/render helpers (unit-tested) |
+| `crm/agent/reference.py` | Pure: row selection, the prompt block, the figure check, the fallback |
+| `crm/api/reference.py` | Row loading/cache, sheet settings endpoints, `import_pack` |
+| `frontend/src/components/Modals/ReferenceViewerModal.vue` | A cited row on its page |
+| `frontend/src/utils/referenceSheet.js` | Pure box/highlight helpers (unit-tested) |

@@ -1,0 +1,117 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-10-29 20:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "sheet",
+  "page",
+  "position",
+  "column_break_re",
+  "label",
+  "section",
+  "section_break_cells",
+  "search",
+  "cells",
+  "bbox"
+ ],
+ "fields": [
+  {
+   "fieldname": "sheet",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Sheet",
+   "options": "CRM Reference Sheet",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "page",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Page",
+   "read_only": 1
+  },
+  {
+   "description": "Order of the row in the pack.",
+   "fieldname": "position",
+   "fieldtype": "Int",
+   "label": "Position",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_re",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section",
+   "fieldtype": "Data",
+   "label": "Section",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_cells",
+   "fieldtype": "Section Break"
+  },
+  {
+   "description": "Extra words a question may use for this row: synonyms, other units.",
+   "fieldname": "search",
+   "fieldtype": "Small Text",
+   "label": "Search words",
+   "read_only": 1
+  },
+  {
+   "description": "Label, value, unit, box and status of each cell.",
+   "fieldname": "cells",
+   "fieldtype": "JSON",
+   "label": "Cells",
+   "read_only": 1
+  },
+  {
+   "description": "The row's box on its page, in PDF points from the top-left.",
+   "fieldname": "bbox",
+   "fieldtype": "JSON",
+   "label": "Box",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-29 20:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FCRM",
+ "name": "CRM Reference Entry",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "label",
+ "track_changes": 0
+}

@@ -15,6 +15,10 @@ const store = createChatStore({
   mapResult: (result) => ({
     content: plainTextAnswer(result.answer),
     sources: result.sources || [],
+    // reference-sheet rows the answer was checked against (see
+    // crm/agent/reference.py); fromSheet when the answer is the rows themselves
+    references: result.references || [],
+    fromSheet: !!result.from_sheet,
   }),
 })
 
@@ -22,7 +26,7 @@ export { HISTORY_TURNS_SENT } from '@/stores/agentChat'
 
 export const assistantVisible = store.visible
 
-/** `{ role: 'user'|'assistant', content: string, sources?: [{name,title}] }` */
+/** `{ role: 'user'|'assistant', content: string, sources?: [{name,title}], references?: [...] }` */
 export const assistantMessages = store.messages
 
 export const assistantAsking = store.asking
