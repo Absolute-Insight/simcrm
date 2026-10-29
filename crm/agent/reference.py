@@ -474,34 +474,35 @@ def verify(
 	supports = [_supported_values([row], []) for row in order]
 	labels = [_values([row.get("label", "")]) for row in order]
 	used: list[dict] = []
-	# The rows a heading ("6\" Class 300:") bound the lines under it to. A line
-	# naming no row of its own ("PCD 241.3 mm") must come from one of them, or
-	# the rep reads it as the heading's flange. Cleared by a blank line.
+	# The rows the previous claim resolved to. Prose carries its subject on:
+	# after "6\" Class 300:" (or "### 6\" Class 300", or "The Class 300
+	# flange has a PCD of 269.9 mm."), "PCD 241.3 mm" or "It takes 8 bolts"
+	# is read as Class 300's. So a claim must resolve within the rows the one
+	# before it did, unless it names another row by a label figure the current
+	# rows do not share (150 against 300; not the 6 both are). A blank line
+	# starts afresh.
 	context: set[int] | None = None
 	pieces = re.split(f"({_CLAIM.pattern})", answer or "")
 	for index in range(0, len(pieces), 2):
 		claim = pieces[index]
 		separator = pieces[index + 1] if index + 1 < len(pieces) else ""
 		figures = numbers(claim)
-		heading = claim.rstrip().endswith(":")
 		if figures:
 			guessed = [v for v in figures if v & withheld_cited]
 			if guessed:
 				return None, [min(v) for v in guessed]
 			holders = [j for j in range(len(order)) if all(v & supports[j] for v in figures)]
-			named = [j for j in holders if any(v & labels[j] for v in figures)]
-			if context is not None and not named:
-				holders = [j for j in holders if j in context]
-			elif named:
-				holders = named
+			if context:
+				shared = set.intersection(*(labels[j] for j in context))
+				named = [j for j in holders if any(v & labels[j] and not v & shared for v in figures)]
+				holders = named or [j for j in holders if j in context]
 			if holders:
 				if order[holders[0]] not in used:
 					used.append(order[holders[0]])
-				if heading:
-					context = set(holders)
+				context = set(holders)
 			elif any(v & allowed for allowed in supports for v in figures):
-				# part of the claim is on a row and part is not: a bolt set no
-				# row holds, or a heading's line read off another row
+				# on a row, but not on one this claim may be read as: a bolt set
+				# no row holds, or a line read under another row's heading
 				return None, [min(v) for v in figures if not any(v & allowed for allowed in supports)] or [
 					min(figures[0])
 				]

@@ -274,6 +274,45 @@ class ReviewBypassTest(UnitTestCase):
 		used, _ = reference.verify('4" flanges:\n- Class 150: PCD 190.5 mm\n- Class 300: PCD 200.0 mm', rows)
 		self.assertEqual(used, [class150, class300])
 
+	def test_a_subject_carries_on_whatever_the_heading_looks_like(self):
+		a = {
+			"name": "a",
+			"sheet_title": "Drilling",
+			"page": 1,
+			"section": "",
+			"label": '6" Class 150',
+			"cells": [
+				{"label": "PCD", "value": "241.3", "unit": "mm", "status": "ok"},
+				{"label": "Bolts", "value": "8", "status": "ok"},
+			],
+		}
+		b = {
+			**a,
+			"name": "b",
+			"label": '6" Class 300',
+			"cells": [
+				{"label": "PCD", "value": "269.9", "unit": "mm", "status": "ok"},
+				{"label": "Bolts", "value": "12", "status": "ok"},
+			],
+		}
+		for answer in (
+			'**6" Class 300:**\n- PCD 241.3 mm',
+			'### 6" Class 300\n- PCD 241.3 mm',
+			'6" Class 300\nPCD 241.3 mm',
+			'6" Class 300:\n- PCD 241.3 mm on the 6" flange',
+			'The 6" Class 300 flange has a PCD of 269.9 mm. It takes 8 bolts.',
+			'6" Class 300: PCD 269.9 mm; 8 bolts',
+		):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [a, b], [b])[0])
+		for answer in (
+			'6" Class 300: PCD 269.9 mm; 12 bolts',
+			'6" flanges:\n- Class 150: PCD 241.3 mm\n- Class 300: PCD 269.9 mm',
+			'6" Class 300: PCD 269.9 mm.\n\nClass 150 takes 8 bolts.',
+		):
+			with self.subTest(answer=answer):
+				self.assertIsNotNone(reference.verify(answer, [a, b], [b])[0])
+
 	def test_one_claim_may_not_mix_a_row_and_an_article(self):
 		article = ["Standard stud lengths: 65, 75 and 90 mm."]
 		used, _ = reference.verify("8 Off M20 x 90", [ROWS[5]], [], article)
