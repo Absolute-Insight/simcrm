@@ -19,11 +19,29 @@ import frappe
 from frappe.rate_limiter import rate_limit
 from frappe.utils import strip_html_tags
 
-from crm.agent import actions, analyst, analyst_data, analyst_facts, client, context, knowledge, tools
+from crm.agent import (
+	actions,
+	analyst,
+	analyst_data,
+	analyst_facts,
+	client,
+	context,
+	knowledge,
+	reference,
+	tools,
+)
 from crm.agent.config import get_config, get_signal_config
 from crm.agent.context import build_thread_messages
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
-from crm.agent.schemas import AnalystAnswer, AnalystPlan, AssistantAnswer, ConnectionProbe, ThreadSummary
+from crm.agent.schemas import (
+	AnalystAnswer,
+	AnalystPlan,
+	AssistantAnswer,
+	ConnectionProbe,
+	ReferenceAnswer,
+	ThreadSummary,
+)
+from crm.api import reference as reference_api
 from crm.api.dashboard import get_base_currency
 from crm.help import load_articles
 from crm.utils import sales_user_only, user_rate_limited
@@ -397,12 +415,19 @@ KNOWLEDGE_ROW_LIMIT = 500
 def ask_assistant(question: str, history: str | list | None = None) -> dict:
 	"""Answer a rep's question about the company's offering from the knowledge base.
 
-	Returns ``{"status": "ok", "answer": str, "sources": [{"name", "title"}]}``,
-	``{"status": "empty"}`` when nothing has been curated yet, or a bare degrade
-	status. The knowledge base is administrator-authored, so it carries the same
-	trust as the help articles; the product catalogue joins it only when the
-	admin says so. Both are read with permission-checked ``get_list`` under the
-	asking user. Nothing here reads deals, leads or email.
+	Returns ``{"status": "ok", "answer": str, "sources": [{"name", "title"}],
+	"references": [...]}``, ``{"status": "empty"}`` when nothing has been
+	curated yet, or a bare degrade status. The knowledge base is
+	administrator-authored, so it carries the same trust as the help articles;
+	the product catalogue joins it only when the admin says so. Both are read
+	with permission-checked ``get_list`` under the asking user. Nothing here
+	reads deals, leads or email.
+
+	When the question matches rows of a reference sheet (see
+	``crm.agent.reference``), the rows join the prompt and the answer is
+	checked: every figure must be on a row, claim by claim, or the rows
+	themselves are returned instead (``"from_sheet": true``). The same happens
+	when the model cannot be asked -- a lookup table does not need one.
 	"""
 	question = _clean_question(question)
 
@@ -411,27 +436,37 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 		return {"status": "disabled"}
 
 	articles = _knowledge_articles(cfg)
-	if not articles:
+	entries, index = reference_api.load_entries()
+	if not articles and not entries:
 		return {"status": "empty"}
 
+	rows = reference.select_entries(question, entries, index=index)
+
 	if reason := _throttled(cfg):
-		return _unavailable(reason)
+		return _sheet_answer(rows) if rows else _unavailable(reason)
 
 	selected = knowledge.select_articles(question, articles)
 	company = frappe.db.get_single_value("FCRM Settings", "brand_name") or "the company"
+	system_prompt = knowledge.ASSISTANT_SYSTEM_PROMPT.format(company=company)
+	if rows:
+		system_prompt += "\n\n" + reference.reference_block(rows, company)
 	messages = knowledge.build_assistant_messages(
 		question,
 		selected,
 		_parse_history(history),
-		system_prompt=knowledge.ASSISTANT_SYSTEM_PROMPT.format(company=company),
-		no_match_note=knowledge.ASSISTANT_NO_MATCH_NOTE,
+		system_prompt=system_prompt,
+		no_match_note=reference.NO_ARTICLE_NOTE if rows else knowledge.ASSISTANT_NO_MATCH_NOTE,
 		heading="Knowledge base",
 		max_chars=client.prompt_char_budget(cfg),
 	)
 
-	reply, failed = _complete_chat(cfg, messages, "CRM assistant answer failed")
+	schema = ReferenceAnswer if rows else AssistantAnswer
+	reply, failed = _complete_chat(cfg, messages, "CRM assistant answer failed", schema)
 	if failed:
-		return failed
+		return _sheet_answer(rows) if rows else failed
+
+	if rows:
+		return _reference_answer(question, reply, rows, articles)
 
 	titles = {article["name"]: article["title"] for article in articles}
 	cited = [name for name in reply.related_articles if name in titles]
@@ -479,14 +514,57 @@ def _clean_question(question: str) -> str:
 	return question[:ASSISTANT_QUESTION_MAX_CHARS]
 
 
-def _complete_chat(cfg, messages: list[dict], log_title: str) -> tuple[AssistantAnswer | None, dict | None]:
+def _complete_chat(
+	cfg, messages: list[dict], log_title: str, schema=AssistantAnswer
+) -> tuple[AssistantAnswer | ReferenceAnswer | None, dict | None]:
 	"""One guarded model call for the chat tiers: ``(reply, None)`` or ``(None, degrade status)``."""
 	with _model_call_slot() as free:
 		if not free:
 			# refused after the budgets were charged: a refused call costs nobody anything
 			_refund_budget(cfg)
 			return None, {"status": "unavailable"}
-		return _model_call(cfg, log_title, lambda: client.complete(cfg, AssistantAnswer, messages))
+		return _model_call(cfg, log_title, lambda: client.complete(cfg, schema, messages))
+
+
+def _reference_answer(question: str, reply: ReferenceAnswer, rows: list[dict], articles: list[dict]) -> dict:
+	"""The model's answer if every figure in it is on a row it can be traced to; else the rows."""
+	titles = {article["name"]: article for article in articles}
+	cited_articles = [name for name in reply.related_articles if name in titles]
+	answer = reference.strip_row_ids(reply.answer)
+	used, unsupported = reference.verify(
+		answer,
+		rows,
+		reference.resolve_cited(reply.cited_rows, rows),
+		[question] + [titles[name]["content"] for name in cited_articles],
+	)
+	if used is None:
+		frappe.logger("crm.agent").info(
+			{"event": "reference_answer_replaced", "unsupported": unsupported[:10], "rows": len(rows)}
+		)
+		return _sheet_answer(rows)
+	if not used and not reference.numbers(answer):
+		# a worded answer with no figures and no citation ("IP65 means...", or
+		# "the sheets do not cover that"): the closest row is still where to look
+		used = rows[:1]
+	return {
+		"status": "ok",
+		"answer": answer,
+		"sources": [{"name": name, "title": titles[name]["title"]} for name in cited_articles],
+		"references": [reference_api.entry_payload(row, answer) for row in used],
+		"from_sheet": False,
+	}
+
+
+def _sheet_answer(rows: list[dict]) -> dict:
+	"""The rows themselves, worded by code: always exactly what the sheet says."""
+	shown = rows[: reference.FALLBACK_ROWS]
+	return {
+		"status": "ok",
+		"answer": reference.fallback_answer(shown),
+		"sources": [],
+		"references": [reference_api.entry_payload(row, show_all=True) for row in shown],
+		"from_sheet": True,
+	}
 
 
 def _model_call(cfg, log_title: str, call, *, refund: bool = True) -> tuple:
