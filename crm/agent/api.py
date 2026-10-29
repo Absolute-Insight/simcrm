@@ -534,12 +534,15 @@ def _reference_answer(reply: ReferenceAnswer, rows: list[dict], articles: list[d
 	"""
 	titles = {article["name"]: article for article in articles}
 	cited_articles = [name for name in reply.related_articles if name in titles]
+	# a model that leaves related_articles empty still read the articles it was
+	# given; they may carry a figure no row has (never one a row withholds)
+	support = cited_articles or list(titles)
 	answer = reference.trim_comparisons(reference.strip_row_ids(reply.answer), rows) or reply.answer
 	used, unsupported = reference.verify(
 		answer,
 		rows,
 		reference.resolve_cited(reply.cited_rows, rows),
-		[titles[name]["content"] for name in cited_articles],
+		[titles[name]["content"] for name in support],
 	)
 	if used is None:
 		frappe.logger("crm.agent").info(

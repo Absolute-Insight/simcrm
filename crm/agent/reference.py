@@ -346,7 +346,8 @@ def _canonical(atom: str) -> str:
 
 def numbers(text: str) -> list[set[str]]:
 	"""Every number in ``text``, each as the set of values it stands for."""
-	text = (text or "").lower()
+	# a PDF's minus is often U+2212 or an en dash
+	text = (text or "").lower().replace("\u2212", "-").replace("\u2013", "-")
 	for glyph, spelled in _FRACTIONS.items():
 		text = text.replace(glyph, spelled)
 	text = _WORD.sub(
@@ -391,10 +392,11 @@ def _withheld_values(rows: list[dict]) -> set[str]:
 def _values(texts: list[str]) -> set[str]:
 	"""Every figure ``texts`` can vouch for.
 
-	A simple fraction also vouches for its parts: on these sheets "1600/3" is
-	SABS class 1600 and "16/3" is PN16, so an answer saying "1600 kPa" is
-	reading that row. A mixed fraction does not: "1 3/8" never vouches for
-	"3/8".
+	An improper fraction also vouches for its parts: on these sheets "1600/3"
+	is SABS class 1600 and "16/3" is PN16, so an answer saying "1600 kPa" is
+	reading that row. A proper one does not -- "5/8" is a bolt size, and its 5
+	and 8 are no bolt count -- and neither does a mixed one: "1 3/8" never
+	vouches for "3/8".
 	"""
 	found: set[str] = set()
 	for text in texts:
@@ -402,7 +404,10 @@ def _values(texts: list[str]) -> set[str]:
 			found |= variants
 			for value in variants:
 				if "/" in value and " " not in value:
-					found.update(part.lstrip("-") for part in value.split("/"))
+					top, bottom = (part.lstrip("-") for part in value.split("/"))
+					# 1600/3 is a class; 5/8 is an inch size whose digits are not figures
+					if int(top or 0) >= int(bottom or 0):
+						found.update((top, bottom))
 	return found
 
 
@@ -467,23 +472,46 @@ def verify(
 	withheld = _withheld_values(rows)
 	order = list(cited or []) + [row for row in rows if row not in (cited or [])]
 	supports = [_supported_values([row], []) for row in order]
+	labels = [_values([row.get("label", "")]) for row in order]
 	used: list[dict] = []
-	for claim in _CLAIM.split(answer or ""):
+	# The rows a heading ("6\" Class 300:") bound the lines under it to. A line
+	# naming no row of its own ("PCD 241.3 mm") must come from one of them, or
+	# the rep reads it as the heading's flange. Cleared by a blank line.
+	context: set[int] | None = None
+	pieces = re.split(f"({_CLAIM.pattern})", answer or "")
+	for index in range(0, len(pieces), 2):
+		claim = pieces[index]
+		separator = pieces[index + 1] if index + 1 < len(pieces) else ""
 		figures = numbers(claim)
-		if not figures:
-			continue
-		guessed = [v for v in figures if v & withheld_cited]
-		if guessed:
-			return None, [min(v) for v in guessed]
-		# the row holding most of the claim's figures; it must hold them all,
-		# except what an article in the prompt supplies
-		best = max(range(len(order)), key=lambda i: sum(1 for v in figures if v & supports[i]), default=None)
-		chosen = supports[best] if best is not None else set()
-		unsupported = [v for v in figures if not v & chosen and (not v & extra or v & withheld)]
-		if unsupported:
-			return None, [min(v) for v in unsupported]
-		if best is not None and any(v & chosen for v in figures) and order[best] not in used:
-			used.append(order[best])
+		heading = claim.rstrip().endswith(":")
+		if figures:
+			guessed = [v for v in figures if v & withheld_cited]
+			if guessed:
+				return None, [min(v) for v in guessed]
+			holders = [j for j in range(len(order)) if all(v & supports[j] for v in figures)]
+			named = [j for j in holders if any(v & labels[j] for v in figures)]
+			if context is not None and not named:
+				holders = [j for j in holders if j in context]
+			elif named:
+				holders = named
+			if holders:
+				if order[holders[0]] not in used:
+					used.append(order[holders[0]])
+				if heading:
+					context = set(holders)
+			elif any(v & allowed for allowed in supports for v in figures):
+				# part of the claim is on a row and part is not: a bolt set no
+				# row holds, or a heading's line read off another row
+				return None, [min(v) for v in figures if not any(v & allowed for allowed in supports)] or [
+					min(figures[0])
+				]
+			else:
+				# a claim no row touches: only an article in the prompt may carry it
+				unsupported = [v for v in figures if not v & extra or v & withheld]
+				if unsupported:
+					return None, [min(v) for v in unsupported]
+		if "\n\n" in separator:
+			context = None
 	return used or list(cited or []), []
 
 

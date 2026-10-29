@@ -236,6 +236,56 @@ class VerifyTest(UnitTestCase):
 		self.assertIsNone(used)
 
 
+INCH_ROW = {
+	"name": "b-150-asme",
+	"sheet_title": "Bolts",
+	"page": 1,
+	"section": "",
+	"label": '150 mm (6") · ASME Class 150',
+	"cells": [
+		{"label": "Bolts", "value": "4", "status": "ok"},
+		{"label": "Bolt size", "value": "5/8", "unit": "in", "status": "ok"},
+	],
+}
+
+
+class ReviewBypassTest(UnitTestCase):
+	"""Answers that read like the sheet and are not on it -- each found in review."""
+
+	def test_a_proper_fraction_does_not_vouch_for_its_digits(self):
+		used, missing = reference.verify('A 6" Class 150 flange takes 8 bolts of 5/8 in.', [INCH_ROW])
+		self.assertIsNone(used)
+		self.assertEqual(missing, ["8"])
+
+	def test_a_heading_binds_the_lines_under_it(self):
+		class150 = {**ROWS[2], "name": "c150", "label": '100 mm (4") · ASME B16.5 Class 150'}
+		class300 = {
+			**ROWS[2],
+			"name": "c300",
+			"label": '100 mm (4") · ASME B16.5 Class 300',
+			"cells": [{"label": "PCD", "value": "200.0", "unit": "mm", "status": "ok"}],
+		}
+		rows = [class150, class300]
+		used, _ = reference.verify('4" Class 300:\nPCD 190.5 mm', rows)
+		self.assertIsNone(used)
+		used, _ = reference.verify('4" Class 300:\nPCD 200.0 mm', rows)
+		self.assertEqual(used, [class300])
+		# a line naming its own row is read as that row
+		used, _ = reference.verify('4" flanges:\n- Class 150: PCD 190.5 mm\n- Class 300: PCD 200.0 mm', rows)
+		self.assertEqual(used, [class150, class300])
+
+	def test_one_claim_may_not_mix_a_row_and_an_article(self):
+		article = ["Standard stud lengths: 65, 75 and 90 mm."]
+		used, _ = reference.verify("8 Off M20 x 90", [ROWS[5]], [], article)
+		self.assertIsNone(used)
+		used, _ = reference.verify("Studs come in 90 mm.", [ROWS[5]], [], article)
+		self.assertEqual(used, [])
+
+	def test_a_unicode_minus_keeps_its_sign(self):
+		self.assertEqual(reference.numbers("\u221229 \u00baC"), [{"-29"}])
+		self.assertEqual(reference.numbers("15\u201320 bar"), [{"15"}, {"20"}])
+
+
 class TrimComparisonsTest(UnitTestCase):
 	def test_a_claim_naming_two_rows_and_no_value_is_dropped(self):
 		answer = (
