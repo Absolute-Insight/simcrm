@@ -302,6 +302,11 @@ class ReviewBypassTest(UnitTestCase):
 			'6" Class 300:\n- PCD 241.3 mm on the 6" flange',
 			'The 6" Class 300 flange has a PCD of 269.9 mm. It takes 8 bolts.',
 			'6" Class 300: PCD 269.9 mm; 8 bolts',
+			# markdown's blank line between a heading and its body
+			'### 6" Class 300\n\n- PCD 241.3 mm\n- 8 bolts',
+			'**6" Class 300:**\n\nPCD 241.3 mm, 8 bolts.',
+			'6" Class 300:\n\n- PCD 241.3 mm',
+			'6" Class 300: PCD 269.9 mm.\n\nIt takes 8 bolts.',
 		):
 			with self.subTest(answer=answer):
 				self.assertIsNone(reference.verify(answer, [a, b], [b])[0])

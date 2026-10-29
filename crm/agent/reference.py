@@ -480,12 +480,10 @@ def verify(
 	# is read as Class 300's. So a claim must resolve within the rows the one
 	# before it did, unless it names another row by a label figure the current
 	# rows do not share (150 against 300; not the 6 both are). A blank line
-	# starts afresh.
+	# does not start afresh: markdown puts one between a heading and its body,
+	# and a new paragraph about another row names that row.
 	context: set[int] | None = None
-	pieces = re.split(f"({_CLAIM.pattern})", answer or "")
-	for index in range(0, len(pieces), 2):
-		claim = pieces[index]
-		separator = pieces[index + 1] if index + 1 < len(pieces) else ""
+	for claim in _CLAIM.split(answer or ""):
 		figures = numbers(claim)
 		if figures:
 			guessed = [v for v in figures if v & withheld_cited]
@@ -511,8 +509,6 @@ def verify(
 				unsupported = [v for v in figures if not v & extra or v & withheld]
 				if unsupported:
 					return None, [min(v) for v in unsupported]
-		if "\n\n" in separator:
-			context = None
 	return used or list(cited or []), []
 
 
