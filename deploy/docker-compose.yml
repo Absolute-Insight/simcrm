@@ -704,8 +704,8 @@ services:
       start_period: 300s
       retries: 30
 
-  # One-shot: download the weights if the volume lacks them, then check the
-  # file against the pinned digest on every `up -d`. A model is code that
+  # One-shot: check the weights against the pinned digest on every `up -d`,
+  # and fetch the pinned file when they are missing or differ. A model is code that
   # writes to customers; a file that does not match the measured one does not
   # get served. Hashing 21 GB takes about a minute.
   llm-fetch:
@@ -723,13 +723,24 @@ services:
     command:
       - |
         set -e
-        if [ ! -f "/models/$$FILE" ]; then
-          echo "Downloading $$FILE (21 GB)"
-          curl -fL --retry 5 -o "/models/$$FILE.part" "$$URL"
-          mv "/models/$$FILE.part" "/models/$$FILE"
+        cd /models
+        if [ -f "$$FILE" ]; then
+          echo "Checking $$FILE"
+          if echo "$$SHA256  $$FILE" | sha256sum -c -; then exit 0; fi
+          # a file of the right name and the wrong digest is a different
+          # model (an older upload, a changed pin), not one to keep refusing
+          echo "$$FILE does not match the pinned digest; fetching the pinned file"
+          rm -f "$$FILE"
         fi
-        echo "Checking $$FILE"
-        echo "$$SHA256  /models/$$FILE" | sha256sum -c -
+        echo "Downloading $$FILE (21 GB; resumes an interrupted download)"
+        curl -fL --retry 5 -C - -o "$$FILE.part" "$$URL"
+        echo "Checking the download"
+        if ! echo "$$SHA256  $$FILE.part" | sha256sum -c -; then
+          rm -f "$$FILE.part"
+          echo "Downloaded file does not match VECTORA_LLM_SHA256; nothing served"
+          exit 1
+        fi
+        mv "$$FILE.part" "$$FILE"
 
 volumes:
   llm-models:

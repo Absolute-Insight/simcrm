@@ -856,8 +856,12 @@ instead of LFM2.5 on ollama. Run one profile or the other, not both.
 
 ```bash
 docker compose --profile gpu-model up -d
-docker compose logs -f llm-fetch     # first run downloads 21 GB, every run checks the digest
+docker compose logs -f llm-fetch     # first run downloads 21 GB; every `up -d` checks the digest
 ```
+
+Like `local-model`, the profile has to be named on every `pull` and `up -d`
+(or set `COMPOSE_PROFILES=gpu-model` in `.env`). A plain upgrade never recreates
+`llm`.
 
 Then **Settings → Assistant**: `base_url` `http://llm:8086/v1`, `model`
 `minicpm-v4.7-35b`, `context_tokens` **16384** (the server's `-c 32768` over two
@@ -882,7 +886,8 @@ where your hostile text can come from. Assistant answers on the sample knowledge
 pack were grounded and cited, and it said so when the pack had nothing.
 
 **The weights are pinned.** `llm-fetch` refuses to start the server unless the
-file matches `VECTORA_LLM_SHA256`. The default is upstream's Q4_K_M at commit
+file matches `VECTORA_LLM_SHA256`; a file that differs is replaced with the
+pinned one. The default is upstream's Q4_K_M at commit
 `cf943fbe`; the file measured above is an earlier upload of the same name
 (sha256 `bf3d1c67…`), which is what MBP's host runs. Re-run the evals before
 moving a host from one to the other: a re-quantised file is a different model.
