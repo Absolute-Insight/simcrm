@@ -265,6 +265,8 @@ class PromptTest(UnitTestCase):
 
 	def test_row_ids_are_stripped_from_the_answer_but_uns_numbers_are_not(self):
 		self.assertEqual(reference.strip_row_ids("PCD is 190.5 mm (see R3)."), "PCD is 190.5 mm.")
+		self.assertEqual(reference.strip_row_ids("PCD is 190.5 mm (from R3)."), "PCD is 190.5 mm.")
+		self.assertEqual(reference.strip_row_ids("PCD is 190.5 mm, per R3."), "PCD is 190.5 mm.")
 		self.assertEqual(reference.strip_row_ids("Stellite is UNS R30006."), "Stellite is UNS R30006.")
 
 

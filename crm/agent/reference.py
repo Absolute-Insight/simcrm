@@ -506,7 +506,7 @@ def highlight(answer: str, entry: dict) -> list[int]:
 # "(see R3)", "(Row R1: ...)", "per R2". Ids are one or two digits; a UNS
 # number such as R30006 is not one.
 _ROW_REF = re.compile(
-	r"\s*\((?:see\s+)?(?:rows?\s+)?R\d{1,2}\b[^)]*\)|\b(?:see\s+|per\s+)?(?:rows?\s+)?R\d{1,2}\b(?!\w)", re.I
+	r"\s*\([^()]*\bR\d{1,2}\b[^()]*\)|\b(?:see\s+|per\s+|from\s+)?(?:rows?\s+)?R\d{1,2}\b(?!\w)", re.I
 )
 
 
@@ -514,6 +514,7 @@ def strip_row_ids(answer: str) -> str:
 	"""``answer`` without the prompt's row ids, which mean nothing to a rep."""
 	text = _ROW_REF.sub("", answer or "")
 	text = re.sub(r"[ \t]+([.,;:])", r"\1", text)
+	text = re.sub(r"[,;:]+(?=[.!?]|\s*$)", "", text)
 	return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
