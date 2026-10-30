@@ -55,7 +55,7 @@ def get_notifications():
 				"notification_type_doc": notification.notification_type_doc,
 				"reference_doctype": ("deal" if notification.reference_doctype == "CRM Deal" else "lead"),
 				"reference_name": notification.reference_name,
-				"route_name": ("Deal" if notification.reference_doctype == "CRM Deal" else "Lead"),
+				"route_name": get_route_name(notification),
 			}
 		)
 
@@ -91,6 +91,15 @@ def mark_as_read(doc: str | None = None):
 		.where(condition)
 	).run()
 	frappe.publish_realtime("crm_notification", user=user, after_commit=True)
+
+
+def get_route_name(notification):
+	# A task can be assigned with no lead or deal behind it. Naming the Lead
+	# route for it sent the client to /leads/None, which vue-router refuses to
+	# build, so the row never rendered.
+	if not notification.reference_name:
+		return None
+	return "Deal" if notification.reference_doctype == "CRM Deal" else "Lead"
 
 
 def get_hash(notification):

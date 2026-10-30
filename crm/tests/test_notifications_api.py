@@ -9,6 +9,9 @@ query per row for the sender's name, and the deal import leaves a rep with one
 notification per imported deal. "Mark all as read" was a ``get_doc`` and a
 ``save`` per unread row, and each save published ``crm_notification``, which
 every open tab answered by reloading that inbox.
+
+A task assigned with no lead or deal behind it was labelled with the Lead route,
+so the client asked vue-router for ``/leads/None`` and the row never rendered.
 """
 
 from __future__ import annotations
@@ -160,6 +163,21 @@ class NotificationInboxTest(IntegrationTestCase):
 			api.mark_as_read()
 
 		self.assertEqual(realtime_events(publish), [])
+
+	def test_a_task_with_no_record_names_no_route(self):
+		make_notification(
+			REP,
+			notification_type_doctype="CRM Task",
+			notification_type_doc="TASK-STANDALONE",
+		)
+		make_notification(REP, reference_doctype="CRM Deal", reference_name="CRM-DEAL-NOTIFAPI")
+
+		frappe.set_user(REP)
+		rows = {row["notification_type_doc"] or row["reference_name"]: row for row in api.get_notifications()}
+
+		self.assertIsNone(rows["TASK-STANDALONE"]["route_name"])
+		self.assertEqual(rows["TASK-STANDALONE"]["hash"], "#tasks")
+		self.assertEqual(rows["CRM-DEAL-NOTIFAPI"]["route_name"], "Deal")
 
 	def test_a_new_notification_is_announced_after_commit(self):
 		with patch.object(frappe, "publish_realtime") as publish:
