@@ -354,14 +354,17 @@ const saving = ref(false)
 const saveNotice = ref('')
 const testing = ref(false)
 const testResult = ref(null)
-let saved = {}
+// A ref, not a plain object: `dirty` reads it, and reassigning a plain `let`
+// after a save left the form reported unsaved -- Save still enabled, and Test
+// connection disabled with "Save your changes first" -- until a reload.
+const saved = ref({})
 
 const settings = createResource({
   url: 'crm.agent.api.get_settings',
   auto: true,
   onSuccess: (data) => {
-    saved = { ...(data || {}) }
-    Object.assign(draft, saved)
+    saved.value = { ...(data || {}) }
+    Object.assign(draft, saved.value)
   },
 })
 
@@ -377,7 +380,8 @@ const dirty = computed(
   () =>
     Boolean(apiKey.value) ||
     FIELDS.some(
-      (field) => String(draft[field] ?? '') !== String(saved[field] ?? ''),
+      (field) =>
+        String(draft[field] ?? '') !== String(saved.value[field] ?? ''),
     ),
 )
 
@@ -437,8 +441,9 @@ async function save() {
       name: 'CRM Agent Settings',
       fieldname: payload,
     })
-    saved = { ...payload }
-    delete saved.api_key
+    const stored = { ...payload }
+    delete stored.api_key
+    saved.value = stored
     apiKey.value = ''
     saveNotice.value = __('Saved.')
   } catch (error) {
