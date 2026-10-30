@@ -758,6 +758,9 @@ def assigned_users(doctype: str, name: str | int, default_assigned_to: str | Non
 			"reference_type": doctype,
 			"reference_name": name,
 			"status": ("not in", ("Closed", "Cancelled")),
+			# A ToDo allocated to no one is not an assignee; frappe's own _assign
+			# bookkeeping skips it too. The SPA renders a blank name as the viewer.
+			"allocated_to": ("is", "set"),
 		},
 		pluck="allocated_to",
 	)
