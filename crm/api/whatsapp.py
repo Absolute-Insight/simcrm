@@ -394,7 +394,9 @@ def react_on_whatsapp_message(emoji: str, reply_to_name: str):
 	if not reply_to_doc.has_permission("read"):
 		frappe.throw(_("Not permitted to access the referenced WhatsApp message."), frappe.PermissionError)
 
-	validate_access(reply_to_doc.reference_doctype, reply_to_doc.reference_name)
+	# a reaction is a message sent to the customer, so it is a write to the
+	# record's thread like any other send, not a read of it
+	validate_access(reply_to_doc.reference_doctype, reply_to_doc.reference_name, permtype="write")
 
 	to = (reply_to_doc.type == "Incoming" and reply_to_doc.get("from")) or reply_to_doc.to
 	doc = frappe.new_doc("WhatsApp Message")

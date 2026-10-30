@@ -9,6 +9,7 @@ from frappe.tests.utils import FrappeTestCase
 from crm.api.whatsapp import (
 	create_whatsapp_message,
 	notify_agent,
+	react_on_whatsapp_message,
 	resolve_destination,
 	send_whatsapp_template,
 	validate,
@@ -223,3 +224,34 @@ class TestWhatsAppSendPermission(FrappeTestCase):
 			create_whatsapp_message("CRM Deal Status", self.status, "hello", to="+27825550101")
 		with self.assertRaises(frappe.PermissionError):
 			send_whatsapp_template("CRM Deal Status", self.status, "some_template", to="+27825550101")
+
+	def test_a_reference_the_rep_can_only_read_cannot_be_reacted_on(self):
+		"""A reaction is delivered to the customer like any other message, so it
+		takes write on the record too -- it was the one send left on read."""
+		incoming = MagicMock(
+			type="Incoming",
+			reference_doctype="CRM Deal Status",
+			reference_name=self.status,
+			message_id="wamid.incoming.1",
+		)
+		incoming.get.return_value = "+27825550101"
+		incoming.has_permission.return_value = True
+		real_exists, real_get_doc = frappe.db.exists, frappe.get_doc
+		sent = MagicMock()
+
+		def exists(doctype, *args, **kwargs):
+			return doctype == "WhatsApp Message" or real_exists(doctype, *args, **kwargs)
+
+		def get_doc(doctype, *args, **kwargs):
+			return incoming if doctype == "WhatsApp Message" else real_get_doc(doctype, *args, **kwargs)
+
+		frappe.set_user(self.REP)
+		self.assertTrue(frappe.has_permission("CRM Deal Status", doc=self.status, ptype="read"))
+		with (
+			patch.object(frappe.db, "exists", side_effect=exists),
+			patch("frappe.get_doc", side_effect=get_doc),
+			patch("frappe.new_doc", return_value=sent),
+			self.assertRaises(frappe.PermissionError),
+		):
+			react_on_whatsapp_message("\U0001f44d", "WA-INCOMING-1")
+		sent.insert.assert_not_called()
