@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { defineComponent, h } from 'vue'
-import { fakeBackend } from './fakeBackend.js'
-import { flushPromises } from './flush.js'
+import { fakeBackend, frappeError } from './fakeBackend.js'
+import { collectRejections, flushPromises } from './flush.js'
 import { mount } from './mount.js'
 
 const { toast, upload } = vi.hoisted(() => ({
@@ -101,5 +101,22 @@ describe('ProfileSettings name editor (FE-129)', () => {
     press(input, 'Enter')
     await flushPromises()
     expect(saved).toEqual([{ last_name: 'Mokoena' }])
+  })
+})
+
+describe('ProfileSettings save error (FE-132)', () => {
+  it("toasts the server's reason, not the endpoint and exception class", async () => {
+    const refusal = frappeError(
+      'First Name is required',
+      'crm.api.user.update_profile',
+    )
+    backend.handlers['crm.api.user.update_profile'] = () => {
+      throw refusal
+    }
+    const { input } = await openNameEditor()
+    await type(input, 'Thabo Mokoena')
+    const rejections = await collectRejections(() => press(input, 'Enter'))
+    expect(toast.error).toHaveBeenCalledWith('First Name is required')
+    expect(rejections.filter((r) => r !== refusal)).toEqual([])
   })
 })

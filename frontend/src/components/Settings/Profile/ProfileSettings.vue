@@ -146,6 +146,7 @@ import {
   Tooltip,
 } from 'frappe-ui'
 import { useOwnProfile } from '@/composables/useOwnProfile'
+import { describeError } from '@/utils/describeError'
 import { ref, computed, useTemplateRef, nextTick } from 'vue'
 
 const emit = defineEmits(['updateStep'])
@@ -206,7 +207,7 @@ function save() {
       toast.success(__('Profile updated successfully'))
     },
     onError: (err) => {
-      toast.error(err.message + ': ' + err.messages[0])
+      toast.error(describeError(err).message || __('Failed to update profile'))
     },
   })
 }
