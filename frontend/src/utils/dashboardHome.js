@@ -202,6 +202,17 @@ export function standardViewPayload(
 }
 
 /**
+ * Whether deals in a CRM Deal Status of this `type` are what the open-deal
+ * tiles count: neither Won nor Lost (`Status.type.notin(["Won", "Lost"])` in
+ * crm/api/dashboard.py), which takes in On Hold. Listing only Open and Ongoing
+ * left on-hold deals out of the list the tile drills into. A status with no
+ * type is NULL there, and NULL is in no list.
+ */
+export function isOpenStatusType(type) {
+  return Boolean(type) && !['Won', 'Lost'].includes(type)
+}
+
+/**
  * Where a dashboard tile drills through to, keyed by its widget name.
  *
  * `openStatuses`/`wonStatuses` come from the CRM Deal Status list, so the
@@ -213,6 +224,7 @@ export function standardViewPayload(
 export function drilldownFor(name, context = {}) {
   const {
     user = null,
+    territory = null,
     openStatuses = [],
     wonStatuses = [],
     fromDate = '',
@@ -221,42 +233,53 @@ export function drilldownFor(name, context = {}) {
 
   const dealOwner = user ? { deal_owner: user } : {}
   const leadOwner = user ? { lead_owner: user } : {}
+  // the tiles narrow to a chosen territory, so their lists have to as well
+  const inTerritory = territory ? { territory } : {}
   const created =
     fromDate && toDate ? { creation: ['between', [fromDate, toDate]] } : {}
+  const closed =
+    fromDate && toDate ? { closed_date: ['between', [fromDate, toDate]] } : {}
+  const won = (filters) =>
+    wonStatuses.length
+      ? {
+          doctype: 'CRM Deal',
+          routeName: 'Deals',
+          filters: { status: ['in', wonStatuses], ...filters },
+        }
+      : null
 
   switch (name) {
     case 'total_leads':
       return {
         doctype: 'CRM Lead',
         routeName: 'Leads',
-        filters: { converted: 0, ...leadOwner, ...created },
+        filters: { converted: 0, ...leadOwner, ...inTerritory, ...created },
       }
     case 'ongoing_deals':
     case 'average_ongoing_deal_value':
     case 'average_time_to_close_a_deal':
+      // the open-deal tiles count deals *created* in the period, so the list
+      // is bounded by it too, or it showed every open deal ever made
       return openStatuses.length
         ? {
             doctype: 'CRM Deal',
             routeName: 'Deals',
-            filters: { status: ['in', openStatuses], ...dealOwner },
+            filters: {
+              status: ['in', openStatuses],
+              ...dealOwner,
+              ...inTerritory,
+              ...created,
+            },
           }
         : null
     case 'won_deals':
     case 'average_won_deal_value':
+      return won({ ...dealOwner, ...inTerritory, ...closed })
     case 'quota_attainment':
-      return wonStatuses.length
-        ? {
-            doctype: 'CRM Deal',
-            routeName: 'Deals',
-            filters: {
-              status: ['in', wonStatuses],
-              ...dealOwner,
-              ...(fromDate && toDate
-                ? { closed_date: ['between', [fromDate, toDate]] }
-                : {}),
-            },
-          }
-        : null
+      // quotas are per rep and the tile ignores a territory (TERRITORY_BLIND
+      // in crm/api/dashboard.py, and it says so); narrowing its list would
+      // show fewer deals than the attainment it explains
+      return won({ ...dealOwner, ...closed })
     case 'plan_adherence':
       return { routeName: 'Planner', query: user ? { user } : {} }
     default:

@@ -759,6 +759,7 @@ const gaugeTiles = computed(() =>
 
 const drilldownContext = computed(() => ({
   user: scopeUser.value,
+  territory: scopeTerritory.value,
   fromDate: fromDate.value,
   toDate: toDate.value,
 }))
