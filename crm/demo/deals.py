@@ -6,6 +6,7 @@ from frappe.query_builder import DocType
 from crm.demo.utils import (
 	backdate,
 	build_full_names,
+	delete_unless_linked,
 	fix_auto_records,
 	insert_comment,
 	insert_communication,
@@ -384,4 +385,5 @@ def delete_demo_deals(deal_data, lead_names):
 				Contact = DocType("Contact")
 				frappe.qb.from_(Contact).delete().where(Contact.name == contact).run()
 		if org and frappe.db.exists("CRM Organization", org):
-			frappe.delete_doc("CRM Organization", org, ignore_permissions=True, force=True)
+			# kept when a real deal or contact has come to use it
+			delete_unless_linked("CRM Organization", org)

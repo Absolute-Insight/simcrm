@@ -39,7 +39,13 @@ from datetime import date, datetime, timedelta
 import frappe
 from frappe.utils import get_first_day, getdate
 
-from crm.demo.utils import backdate, build_full_names, insert_comment, resolve_owners
+from crm.demo.utils import (
+	backdate,
+	build_full_names,
+	delete_unless_linked,
+	insert_comment,
+	resolve_owners,
+)
 
 SEED = 20260902
 MONTHS_BACK = 24
@@ -662,15 +668,13 @@ def delete_demo_history(created: dict) -> None:
 	for name in created.get("leads", []):
 		if frappe.db.exists("CRM Lead", name):
 			frappe.delete_doc("CRM Lead", name, ignore_permissions=True, force=True)
-	for name in created.get("organizations", []):
-		if frappe.db.exists("CRM Organization", name):
-			frappe.delete_doc("CRM Organization", name, ignore_permissions=True, force=True)
-	for doctype, key in (("CRM Territory", "territories"), ("CRM Industry", "industries")):
+	# A real record that adopted one of these meanwhile keeps it: it is theirs now.
+	for doctype, key in (
+		("CRM Organization", "organizations"),
+		("CRM Territory", "territories"),
+		("CRM Industry", "industries"),
+	):
 		for name in created.get(key, []):
 			if frappe.db.exists(doctype, name):
-				try:
-					frappe.delete_doc(doctype, name, ignore_permissions=True, force=True)
-				except frappe.LinkExistsError:
-					# a real record adopted the value meanwhile; it is theirs now
-					pass
+				delete_unless_linked(doctype, name)
 	frappe.db.commit()

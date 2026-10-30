@@ -22,6 +22,29 @@ def build_full_names(session_user):
 	return names
 
 
+def delete_unless_linked(doctype, name):
+	"""Delete a demo row unless a real record has come to link to it. True if deleted.
+
+	A trial site's real records pick demo values up: an organization filed under
+	the demo's "Mining", a lead handed to a demo rep. ``delete_doc(force=True)``
+	skips frappe's link check, so clearing the demo deleted those rows from under
+	the records, which then refused every save ("Could not find Industry"). Without
+	force the check runs -- but after ``on_trash`` has done its clean-up, so the
+	attempt runs in a savepoint and is undone when refused.
+	"""
+	messages = len(frappe.local.message_log)
+	frappe.db.savepoint("demo_delete")
+	try:
+		frappe.delete_doc(doctype, name, ignore_permissions=True)
+	except frappe.LinkExistsError:
+		frappe.db.rollback(save_point="demo_delete")
+		# the refusal is for us, not a message for whoever cleared the demo
+		del frappe.local.message_log[messages:]
+		return False
+	frappe.db.release_savepoint("demo_delete")
+	return True
+
+
 def backdate(doctype, name, owner, ts, *, set_creation=True):
 	"""Set owner, modified_by, modified (and optionally creation) without triggering hooks."""
 	fields = {"owner": owner, "modified_by": owner, "modified": ts}

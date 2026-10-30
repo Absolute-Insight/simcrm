@@ -6,9 +6,12 @@ gone without a trace when cleared."""
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from crm.demo.deals import delete_demo_deals
 from crm.demo.history import MONTHS_BACK, create_demo_history, delete_demo_history
 from crm.demo.users import DEMO_USER_EMAILS, create_demo_users, delete_demo_users
 
@@ -83,3 +86,99 @@ class DemoHistoryTest(IntegrationTestCase):
 			names = created.get(key, [])
 			if names:
 				self.assertEqual(frappe.db.count(doctype, {"name": ["in", names]}), 0, doctype)
+
+
+class DemoSeedingGuardsTest(IntegrationTestCase):
+	"""The seeder's edges, one function at a time, without seeding two years."""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def test_clearing_keeps_demo_rows_that_real_records_adopted(self):
+		"""delete_doc(force=True) skips frappe's link check, so the LinkExistsError
+		guard never fired: a demo industry, territory or organization a real record
+		had picked up was deleted under it, and that record could no longer be saved."""
+		for doctype, field, value in (
+			("CRM Industry", "industry", "Demo Adopted Industry"),
+			("CRM Industry", "industry", "Demo Unused Industry"),
+			("CRM Territory", "territory_name", "Demo Adopted Territory"),
+		):
+			frappe.get_doc({"doctype": doctype, field: value}).insert(ignore_permissions=True)
+		demo_org = frappe.get_doc(
+			{"doctype": "CRM Organization", "organization_name": "Demo Adopted Smelter"}
+		).insert(ignore_permissions=True)
+		unused_org = frappe.get_doc(
+			{"doctype": "CRM Organization", "organization_name": "Demo Unused Smelter"}
+		).insert(ignore_permissions=True)
+		real_org = frappe.get_doc(
+			{
+				"doctype": "CRM Organization",
+				"organization_name": "Real Adopting Customer",
+				"industry": "Demo Adopted Industry",
+				"territory": "Demo Adopted Territory",
+			}
+		).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{"doctype": "CRM Deal", "status": "Qualification", "organization": demo_org.name}
+		).insert(ignore_permissions=True)
+
+		with patch.object(frappe.db, "commit"):
+			delete_demo_history(
+				{
+					"industries": ["Demo Adopted Industry", "Demo Unused Industry"],
+					"territories": ["Demo Adopted Territory"],
+					"organizations": [demo_org.name, unused_org.name],
+				}
+			)
+
+		self.assertTrue(frappe.db.exists("CRM Industry", "Demo Adopted Industry"))
+		self.assertTrue(frappe.db.exists("CRM Territory", "Demo Adopted Territory"))
+		self.assertTrue(frappe.db.exists("CRM Organization", demo_org.name))
+		self.assertFalse(frappe.db.exists("CRM Industry", "Demo Unused Industry"))
+		self.assertFalse(frappe.db.exists("CRM Organization", unused_org.name))
+		real_org.reload()
+		real_org.annual_revenue = 1_000_000
+		real_org.save(ignore_permissions=True)  # was "Could not find Industry"
+
+	def test_clearing_base_demo_deals_keeps_an_organization_a_real_deal_uses(self):
+		org = frappe.get_doc(
+			{"doctype": "CRM Organization", "organization_name": "Demo Shared Refinery"}
+		).insert(ignore_permissions=True)
+		demo_deal = frappe.get_doc(
+			{"doctype": "CRM Deal", "status": "Qualification", "organization": org.name}
+		).insert(ignore_permissions=True)
+		real_deal = frappe.get_doc(
+			{"doctype": "CRM Deal", "status": "Qualification", "organization": org.name}
+		).insert(ignore_permissions=True)
+
+		delete_demo_deals({"deals": [demo_deal.name]}, [])
+
+		self.assertFalse(frappe.db.exists("CRM Deal", demo_deal.name))
+		self.assertTrue(frappe.db.exists("CRM Organization", org.name))
+		frappe.get_doc("CRM Deal", real_deal.name).save(ignore_permissions=True)
+
+	def test_clearing_disables_a_demo_user_a_real_record_adopted(self):
+		"""Deleting the user under a real lead it owns would leave that lead
+		unsaveable; the fake user is disabled instead, so it still cannot sign in."""
+		email = "demo.adopted@crmtest.test"
+		frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": "Demo Adopted",
+				"send_welcome_email": 0,
+				"roles": [{"role": "Sales User"}],
+			}
+		).insert(ignore_permissions=True)
+		lead = frappe.get_doc({"doctype": "CRM Lead", "first_name": "Real Lead", "lead_owner": email}).insert(
+			ignore_permissions=True
+		)
+		messages = list(frappe.local.message_log)
+
+		delete_demo_users([email])
+
+		self.assertTrue(frappe.db.exists("User", email))
+		self.assertEqual(frappe.db.get_value("User", email, "enabled"), 0)
+		self.assertEqual(frappe.db.get_value("CRM Lead", lead.name, "lead_owner"), email)
+		# the refused delete is not reported to whoever cleared the demo
+		self.assertEqual(frappe.local.message_log, messages)
