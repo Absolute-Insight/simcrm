@@ -1051,16 +1051,29 @@ def clear_suggestions_for(doctype: str, docname: str) -> None:
 	frappe.db.delete("CRM Suggestion", {"reference_doctype": doctype, "reference_docname": docname})
 
 
+# Signals addressed to someone other than the record's owner: a stale plan item
+# belongs to the rep whose plan it is (``find_stale_plan_items``), whoever owns the
+# deal it was about.
+NOT_THE_OWNERS = ("stale_plan",)
+
+
 def resync_owner(doctype: str, docname: str, user: str | None) -> None:
 	"""Move a record's open suggestions to whoever owns it now.
 
 	A reassigned deal used to keep nagging the previous rep for the rest of the
 	TTL while being invisible to the one who inherited it -- the opposite of
-	proactive for both of them.
+	proactive for both of them. Only the owner's suggestions move: handed to the
+	new owner, a planner's "You planned this call ..." went to someone who had
+	planned nothing, and the planner's own came back the next hour.
 	"""
 	frappe.db.set_value(
 		"CRM Suggestion",
-		{"reference_doctype": doctype, "reference_docname": docname, "status": "Open"},
+		{
+			"reference_doctype": doctype,
+			"reference_docname": docname,
+			"status": "Open",
+			"signal": ("not in", list(NOT_THE_OWNERS)),
+		},
 		"user",
 		user,
 		update_modified=False,
