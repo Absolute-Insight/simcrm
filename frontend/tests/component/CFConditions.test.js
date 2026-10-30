@@ -153,6 +153,33 @@ describe('CFConditions rows follow the data', () => {
     ])
     w.unmount()
   })
+
+  it('Ungroup shows each condition of the group as its own row', async () => {
+    const conditions = reactive([
+      [['first_name', '==', 'Alice'], 'and', ['email', '==', 'bob@x.co']],
+      'and',
+      ['last_name', '==', 'Carol'],
+    ])
+    const w = open(conditions)
+    await w.nextTick()
+    expect(shownFields(w.el)).toEqual(['first_name', 'email', 'last_name'])
+
+    const rowMenu = live.dropdown.find((d) =>
+      d.props.options.some((o) => o.label === 'Ungroup Conditions'),
+    )
+    pick(rowMenu, 'Ungroup Conditions')
+    await w.nextTick()
+    expect(plain(conditions)).toEqual([
+      ['first_name', '==', 'Alice'],
+      'and',
+      ['email', '==', 'bob@x.co'],
+      'and',
+      ['last_name', '==', 'Carol'],
+    ])
+    expect(shownFields(w.el)).toEqual(['first_name', 'email', 'last_name'])
+    expect(w.errors).toEqual([])
+    w.unmount()
+  })
 })
 
 describe('CFCondition between on a date field', () => {
