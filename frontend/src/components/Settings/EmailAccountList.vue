@@ -43,6 +43,17 @@
           class="h-px border-t mx-2 border-outline-elevation-2"
         />
       </div>
+      <!-- The list is paged; without this an eleventh account could not be
+           opened from the CRM at all. -->
+      <div v-if="emailAccounts.hasNextPage" class="flex justify-center">
+        <Button
+          class="mt-3.5 p-2"
+          :loading="emailAccounts.list.loading"
+          :label="__('Load More')"
+          icon-left="lucide-refresh-cw"
+          @click="() => emailAccounts.next()"
+        />
+      </div>
     </div>
     <!-- The bare v-else answered a failed fetch with "no email accounts yet",
          which in Settings reads as "your mail is not configured" -- an alarming
