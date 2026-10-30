@@ -7,7 +7,7 @@ from frappe.desk.form.assign_to import set_status
 from frappe.model import no_value_fields
 from frappe.model.delete_doc import get_dynamic_linked_docs, get_linked_docs
 from frappe.model.document import get_controller
-from frappe.utils import cint, make_filter_tuple, strip_html
+from frappe.utils import cint, cstr, make_filter_tuple, strip_html
 from pypika import Criterion
 
 from crm.api.views import get_views
@@ -18,6 +18,9 @@ from crm.utils import is_frappe_version
 # "load more" steps below these, and a crafted page_length no longer does.
 MAX_PAGE_LENGTH = 1000
 MAX_KANBAN_COLUMN_PAGE_LENGTH = 500
+# Every column a board draws is a page query of its own, and past this many a
+# board is no longer something anyone reads.
+MAX_KANBAN_COLUMNS = 50
 
 COUNT_NAME = (
 	{"COUNT": "name", "as": "total_count"}
@@ -263,7 +266,12 @@ def update_in_standard_filter(fieldname, doctype, value):
 		)
 
 
-def kanban_link_columns(target: str) -> list[dict]:
+def kanban_link_columns(
+	target: str,
+	doctype: str | None = None,
+	column_field: str | None = None,
+	filters: dict | None = None,
+) -> list[dict]:
 	"""The rows of a kanban's Link column field, read with the caller's own rights.
 
 	``frappe.get_all`` here ignored permissions altogether, so a rep asking for
@@ -274,23 +282,65 @@ def kanban_link_columns(target: str) -> list[dict]:
 	exception -- frappe gives every desk user ``select`` on it and it carries no
 	conditions -- so that one is narrowed to the CRM's own users, which is the
 	only population an owner field can hold anyway.
+
+	Given the board it is for, a target with more rows than a board can draw
+	(organizations, contacts, leads) yields the values the board's own records
+	use instead, busiest first. Every row of the table used to become a column
+	with a page query and a count of its own: a deal board grouped by
+	organization ran two queries per organization on the site.
 	"""
+	limit = MAX_KANBAN_COLUMNS + 1 if doctype and column_field else None
 	if target == "User":
 		from crm.api.session import crm_user_names
 
-		return frappe.get_all(
+		readable = list(crm_user_names())
+		columns = frappe.get_all(
 			"User",
-			filters={"name": ["in", list(crm_user_names())]},
+			filters={"name": ["in", readable]},
 			fields=["name"],
 			order_by="full_name asc",
+			limit=limit,
 		)
+	else:
+		try:
+			columns = frappe.get_list(target, fields=["name"], order_by="modified asc", limit=limit)
+		except frappe.PermissionError:
+			# Grouped by a doctype the caller may not read at all: no columns, rather
+			# than a 403 that takes the whole list request down with it.
+			return []
 
-	try:
-		return frappe.get_list(target, fields=["name"], order_by="modified asc")
-	except frappe.PermissionError:
-		# Grouped by a doctype the caller may not read at all: no columns, rather
-		# than a 403 that takes the whole list request down with it.
+	if not limit or len(columns) < limit:
+		return columns
+
+	used = [
+		row
+		for row in frappe.get_list(
+			doctype, filters=filters, fields=[column_field, COUNT_NAME], group_by=column_field
+		)
+		if row.get(column_field)
+	]
+	used.sort(key=lambda row: row.total_count, reverse=True)
+	names = [row.get(column_field) for row in used[:MAX_KANBAN_COLUMNS]]
+	if not names:
 		return []
+	if target != "User":
+		readable = frappe.get_list(target, filters={"name": ("in", names)}, pluck="name", limit=len(names))
+	readable = set(readable)
+	return [{"name": name} for name in names if name in readable]
+
+
+def kanban_column_counts(doctype: str, column_field: str, filters: dict) -> dict[str, int]:
+	"""How many records each column holds: one grouped query, not a COUNT per column.
+
+	A blank value, stored as NULL or as "", is the blank column's.
+	"""
+	counts: dict[str, int] = {}
+	for row in frappe.get_list(
+		doctype, filters=filters, fields=[column_field, COUNT_NAME], group_by=column_field
+	):
+		key = cstr(row.get(column_field))
+		counts[key] = counts.get(key, 0) + row.total_count
+	return counts
 
 
 def apply_comments_filter(doctype, filters):
@@ -474,7 +524,7 @@ def get_data(
 		if not kanban_columns and column_field:
 			field_meta = frappe.get_meta(doctype).get_field(column_field)
 			if field_meta.fieldtype == "Link":
-				kanban_columns = kanban_link_columns(field_meta.options)
+				kanban_columns = kanban_link_columns(field_meta.options, doctype, column_field, filters)
 			elif field_meta.fieldtype == "Select":
 				kanban_columns = [{"name": option} for option in field_meta.options.split("\n")]
 
@@ -494,6 +544,19 @@ def get_data(
 		for field in kanban_fields:
 			if field not in rows:
 				rows.append(field)
+
+		# A saved view or a request can carry more columns than a board draws; past
+		# the cap the rest are left off. Hidden ones are kept: they cost nothing.
+		drawn = 0
+		capped_columns = []
+		for kc in kanban_columns:
+			if not kc.get("delete"):
+				drawn += 1
+				if drawn > MAX_KANBAN_COLUMNS:
+					continue
+			capped_columns.append(kc)
+		kanban_columns = capped_columns
+		all_counts = kanban_column_counts(doctype, column_field, filters) if column_field else None
 
 		for kc in kanban_columns:
 			# Start with base filters
@@ -537,11 +600,14 @@ def get_data(
 
 				column_data = parse_list_data(column_data, doctype)
 
-				all_count = frappe.get_list(
-					doctype,
-					filters=column_filters,
-					fields=[COUNT_NAME],
-				)[0].total_count
+				if all_counts is not None:
+					all_count = all_counts.get(cstr(kc.get("name")), 0)
+				else:
+					all_count = frappe.get_list(
+						doctype,
+						filters=column_filters,
+						fields=[COUNT_NAME],
+					)[0].total_count
 
 				kc["all_count"] = all_count
 				kc["count"] = len(column_data)
