@@ -678,7 +678,6 @@ const presetLabel = computed(() => {
   const value = preset.value || ''
   const lastNDays = /^Last (\d+) Days$/.exec(value)
   if (lastNDays) return __('Last {0} Days', [lastNDays[1]])
-  if (value === 'Custom Range') return __('Custom Range')
   return value
 })
 
@@ -1283,10 +1282,14 @@ const options = computed(() => [
   },
   {
     label: __('Custom Range'),
+    /* Only opens the picker; the period and its label change once a range is
+       picked (onPeriodChange), the way Reports.vue does it. Nulling the period
+       here left it null when the picker was dismissed unpicked -- frappe-ui
+       emits nothing then -- so every later reload sent null dates, which the
+       server answers with the current calendar month. A click in a full range
+       starts a new one, so there is nothing to clear for the pick either. */
     onClick: () => {
       setTimeout(() => datePickerRef.value?.open(), 0)
-      preset.value = 'Custom Range'
-      filters.period = null // Reset period to allow custom date selection
     },
   },
 ])

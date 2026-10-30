@@ -13,6 +13,7 @@ const fp = vi.hoisted(() => ({
   children: {},
   requests: [],
   drills: [],
+  opened: 0,
   respond: null,
 }))
 
@@ -39,10 +40,18 @@ const recorder = vi.hoisted(() => (name, tag = 'div') => async () => {
 vi.mock('frappe-ui', async (importOriginal) => {
   const actual = await importOriginal()
   const stub = async (name) => ({ [name]: await recorder(name)() })
+  const picker = await recorder('DateRangePicker')()
   return {
     ...actual,
     ...(await stub('Badge')),
-    ...(await stub('DateRangePicker')),
+    // Custom Range opens the picker through its ref
+    DateRangePicker: {
+      ...picker,
+      setup(props, context) {
+        context.expose({ open: () => fp.opened++ })
+        return picker.setup(props, context)
+      },
+    },
     ...(await stub('Dropdown')),
     ...(await stub('Select')),
     usePageMeta: () => {},
@@ -169,6 +178,7 @@ beforeEach(() => {
     children: {},
     requests: [],
     drills: [],
+    opened: 0,
     respond: null,
   })
   setConfig('systemTimezone', 'Africa/Johannesburg')
@@ -255,6 +265,32 @@ describe('Dashboard, as a manager', () => {
     latest('DateRangePicker').onChange(['2026-10-01', ''])
     await settle()
     expect(latest('Dropdown').button.label).toBe('Last 30 Days')
+  })
+
+  /* frappe-ui's DateRangePicker emits nothing when it closes without a full
+     range, so a Custom Range dismissed unpicked never reached onPeriodChange:
+     the period it had nulled stayed null, and every later reload sent null
+     dates, which the server answers with the current calendar month. */
+  it('keeps the period when Custom Range is dismissed without one', async () => {
+    const { el } = mountDashboard()
+    await settle()
+    choosePreset(7)
+    await settle()
+    const seven = sent('crm.api.dashboard.get_chart').at(-1).params
+
+    latest('Dropdown').options.at(-1).onClick() // Custom Range
+    await settle()
+    expect(fp.opened).toBe(1)
+
+    // dismissed: no change event, then a reload for some other reason
+    const mark = fp.requests.length
+    click(el, 'Refresh')
+    await settle()
+
+    const tile = sent('crm.api.dashboard.get_chart', mark)[0]
+    expect(tile.params.from_date).toBe(seven.from_date)
+    expect(tile.params.to_date).toBe(seven.to_date)
+    expect(latest('Dropdown').button.label).toBe('Last 7 Days')
   })
 
   it('drills into a tile with the chosen territory', async () => {
