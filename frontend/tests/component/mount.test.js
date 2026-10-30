@@ -6,8 +6,8 @@ import { Badge } from 'frappe-ui'
 describe('component test harness', () => {
   it('mounts an SFC from the app and records its emits', async () => {
     const Probe = defineComponent({
-      emits: ['picked'],
       props: { label: { type: String, default: '' } },
+      emits: ['picked'],
       setup(props, { emit }) {
         return () =>
           h('button', { onClick: () => emit('picked', props.label) }, [
