@@ -2032,7 +2032,9 @@ def plan_adherence(
 		row["planned"] = row["planned"] or 0
 		row["done"] = row["done"] or 0
 		row["missed"] = row["missed"] or 0
-		row["adherence"] = round(row["done"] / row["planned"] * 100) if row["planned"] else 0
+		# nothing due is no adherence at all, not 0% of it -- the by-rep rows below
+		# already say so with None, and the tile read 0% for a rep with no plan
+		row["adherence"] = round(row["done"] / row["planned"] * 100) if row["planned"] else None
 
 	# the plan's own cancellations plus the records', minus the calendar event
 	# that records a plan cancellation -- one cancelled visit is one cancellation
@@ -2094,12 +2096,18 @@ def get_plan_adherence(
 	days = date_diff(to_date, from_date) + 1
 	previous = plan_adherence(add_days(from_date, -days), add_days(from_date, -1), user)[0]
 
+	# A period with nothing due has no adherence, the way a rep with no quota has
+	# no attainment: ``None`` draws an empty ring, and there is no movement to
+	# report against a side that has no value.
+	value, before = current["adherence"], previous["adherence"]
 	return {
 		"title": _("Plan adherence"),
-		"tooltip": _("Planned activities completed, out of those already due"),
-		"value": current["adherence"],
+		"tooltip": _("Planned activities completed, out of those already due")
+		if value is not None
+		else _("Nothing planned was due in this period"),
+		"value": value,
 		"suffix": "%",
-		"delta": current["adherence"] - previous["adherence"],
+		"delta": value - before if value is not None and before is not None else 0,
 		"deltaSuffix": "%",
 	}
 

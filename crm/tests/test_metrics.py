@@ -110,9 +110,43 @@ class MetricsTest(IntegrationTestCase):
 		).insert(ignore_permissions=True)
 
 		out = get_plan_adherence(str(today), str(today), USER)
-		self.assertEqual(out["value"], 0)
+		self.assertIsNone(out["value"])
 
 	def test_plan_adherence_reports_movement_against_the_previous_period(self):
+		today = frappe.utils.getdate()
+		monday = frappe.utils.add_days(today, -today.weekday())
+		last_monday = frappe.utils.add_days(monday, -7)
+		monday_before = frappe.utils.add_days(monday, -14)
+		for week_start, items in (
+			(monday_before, [{"activity_type": "Task", "planned_date": monday_before, "status": "Missed"}]),
+			(
+				last_monday,
+				[
+					{"activity_type": "Task", "planned_date": last_monday, "status": "Done"},
+					{"activity_type": "Call", "planned_date": last_monday, "status": "Missed"},
+				],
+			),
+		):
+			frappe.get_doc(
+				{"doctype": "CRM Rep Plan", "user": USER, "week_start": week_start, "items": items}
+			).insert(ignore_permissions=True)
+
+		# the week before last landed nothing it planned, so last week's 50% is
+		# the whole movement -- an empty week before it would be no movement at all
+		out = get_plan_adherence(str(last_monday), str(frappe.utils.add_days(last_monday, 6)), USER)
+		self.assertEqual(out["value"], 50)
+		self.assertEqual(out["delta"], 50)
+
+	def test_plan_adherence_with_no_plan_has_no_value_not_zero(self):
+		"""Nothing due is not 0% of it: 0% ranked a rep with no plan as the worst
+		on the page, the mistake the quota tile already stopped making."""
+		today = str(frappe.utils.getdate())
+		out = get_plan_adherence(today, today, USER)
+		self.assertIsNone(out["value"])
+		self.assertEqual(out["delta"], 0)
+
+	def test_a_period_with_nothing_due_reports_no_movement(self):
+		"""Last week at 50% and nothing due this week is not a 50-point fall."""
 		today = frappe.utils.getdate()
 		monday = frappe.utils.add_days(today, -today.weekday())
 		last_monday = frappe.utils.add_days(monday, -7)
@@ -128,15 +162,9 @@ class MetricsTest(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 
-		# the week before last is empty, so last week's 50% is the whole movement
-		out = get_plan_adherence(str(last_monday), str(frappe.utils.add_days(last_monday, 6)), USER)
-		self.assertEqual(out["value"], 50)
-		self.assertEqual(out["delta"], 50)
-
-	def test_plan_adherence_with_no_plan_is_zero_not_an_error(self):
-		today = str(frappe.utils.getdate())
-		out = get_plan_adherence(today, today, USER)
-		self.assertEqual(out["value"], 0)
+		out = get_plan_adherence(str(monday), str(frappe.utils.add_days(monday, 6)), USER)
+		self.assertIsNone(out["value"])
+		self.assertEqual(out["delta"], 0)
 
 	# --- deals at risk --------------------------------------------------
 
