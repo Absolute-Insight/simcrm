@@ -525,6 +525,13 @@ const tabIndex = defineModel('tabIndex', {
   type: [String, Number],
   default: 'Activity',
 })
+// Raised by the page's "Send an Email" when it also switches tabs. Every tab
+// panel mounts an Activities of its own, so the composer to open is the one
+// the incoming panel brings: opened on mount, never by the outgoing one.
+const openEmailBox = defineModel('openEmailBox', {
+  type: Boolean,
+  default: false,
+})
 
 const { document: _document } = useDocument(props.doctype, props.docname)
 
@@ -614,6 +621,11 @@ onMounted(() => {
       scroll(hash)
     }
   })
+
+  if (openEmailBox.value && emailBox.value) {
+    emailBox.value.show = true
+    openEmailBox.value = false
+  }
 })
 
 function handleDocinfoUpdate({ doc, key }) {

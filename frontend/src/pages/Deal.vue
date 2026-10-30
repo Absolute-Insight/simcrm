@@ -23,7 +23,7 @@
         @done="onEnriched"
       />
       <AssignTo v-model="assignees.data" doctype="CRM Deal" :docname="dealId" />
-      <Dropdown v-if="doc && document.statuses" :options="statuses" align="end">
+      <Dropdown v-if="doc.name" :options="statuses" align="end">
         <template #default="{ open }">
           <Button
             v-if="doc.status"
@@ -49,6 +49,7 @@
           ref="activities"
           v-model:reload="reload"
           v-model:tabIndex="tabIndex"
+          v-model:openEmailBox="openEmailBoxOnMount"
           doctype="CRM Deal"
           :docname="dealId"
           :tabs="tabs"
@@ -481,16 +482,14 @@ watch(
 
 const organizationDocument = ref(null)
 
+// Follows the deal's organization: loading it only while none was held kept
+// the first organization's logo and name in the header after a change.
 watch(
   () => doc.value.organization,
   (org) => {
-    if (org && !organizationDocument.value?.doc) {
-      let { document: _organizationDocument } = useDocument(
-        'CRM Organization',
-        org,
-      )
-      organizationDocument.value = _organizationDocument
-    }
+    organizationDocument.value = org
+      ? useDocument('CRM Organization', org).document
+      : null
   },
   { immediate: true },
 )
@@ -628,7 +627,7 @@ const tabs = computed(() => {
   }))
 })
 
-const { tabIndex } = useActiveTabManager(tabs, 'lastDealTab')
+const { tabIndex, changeTabTo } = useActiveTabManager(tabs, 'lastDealTab')
 
 const sections = createResource({
   url: 'crm.fcrm.doctype.crm_fields_layout.crm_fields_layout.get_sidepanel_sections',
@@ -722,10 +721,14 @@ async function setPrimaryContact(contact) {
   }
 }
 
+// `auto` is what makes a cached resource refetch when the page is opened
+// again: without it a revisit reused the first visit's contacts, so a number
+// edited on the contact in between was still the one Make a Call dialled.
 const dealContacts = createResource({
   url: 'crm.fcrm.doctype.crm_deal.api.get_deal_contacts',
   params: { name: props.dealId },
   cache: ['deal_contacts', props.dealId],
+  auto: true,
   transform: (data) => {
     // get_deal_contacts orders primary first, so expanding the first contact
     // surfaces the most relevant email and phone without a click.
@@ -735,8 +738,6 @@ const dealContacts = createResource({
     return data
   },
 })
-
-if (!dealContacts.data) dealContacts.fetch()
 
 function triggerCall() {
   let primaryContact = dealContacts.data?.find((c) => c.is_primary)
@@ -792,14 +793,19 @@ function deleteDeal() {
 }
 
 const activities = ref(null)
+const openEmailBoxOnMount = ref(false)
 
 function openEmailBox() {
   let currentTab =
     tabs.value.find((tab) => tab.value === tabIndex.value) || tabs.value[0]
-  if (!['Emails', 'Comments', 'Activities'].includes(currentTab.name)) {
-    activities.value.changeTabTo('emails')
+  if (['Emails', 'Comments', 'Activity'].includes(currentTab.name)) {
+    activities.value.emailBox.show = true
+    return
   }
-  nextTick(() => (activities.value.emailBox.show = true))
+  // Each tab mounts its own Activities, so the composer to open is the one
+  // the Emails panel brings when it mounts, not the one on screen now.
+  openEmailBoxOnMount.value = true
+  changeTabTo('emails')
 }
 
 function statusLabel(status) {

@@ -23,7 +23,7 @@
         @done="onEnriched"
       />
       <AssignTo v-model="assignees.data" doctype="CRM Lead" :docname="leadId" />
-      <Dropdown v-if="doc && document.statuses" :options="statuses" align="end">
+      <Dropdown v-if="doc.name" :options="statuses" align="end">
         <template #default="{ open }">
           <Button
             v-if="doc.status"
@@ -62,6 +62,7 @@
           ref="activities"
           v-model:reload="reload"
           v-model:tabIndex="tabIndex"
+          v-model:openEmailBox="openEmailBoxOnMount"
           doctype="CRM Lead"
           :docname="leadId"
           :tabs="tabs"
@@ -302,7 +303,7 @@ import {
   usePageMeta,
   toast,
 } from 'frappe-ui'
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useActiveTabManager } from '@/composables/useActiveTabManager'
 import { useUnsavedChangesWarning } from '@/composables/useUnsavedChangesWarning'
@@ -535,13 +536,19 @@ function deleteLead() {
   showDeleteLinkedDocModal.value = true
 }
 
+const openEmailBoxOnMount = ref(false)
+
 function openEmailBox() {
   let currentTab =
     tabs.value.find((tab) => tab.value === tabIndex.value) || tabs.value[0]
-  if (!['Emails', 'Comments', 'Activities'].includes(currentTab.name)) {
-    activities.value.changeTabTo('emails')
+  if (['Emails', 'Comments', 'Activity'].includes(currentTab.name)) {
+    activities.value.emailBox.show = true
+    return
   }
-  nextTick(() => (activities.value.emailBox.show = true))
+  // Each tab mounts its own Activities, so the composer to open is the one
+  // the Emails panel brings when it mounts, not the one on screen now.
+  openEmailBoxOnMount.value = true
+  changeTabTo('emails')
 }
 
 function statusLabel(status) {
