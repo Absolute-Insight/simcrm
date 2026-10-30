@@ -175,6 +175,21 @@ class ReenrichStaleRecordsTest(IntegrationTestCase):
 		self.add_run(name, days_ago=200)
 		self.assertNotDue(name)
 
+	def test_records_it_cannot_enrich_do_not_starve_the_ones_it_can(self):
+		"""A record whose website was cleared, or that was deleted under its runs, is
+		skipped without a run being written -- so nothing ages it out, and picked
+		oldest first those records took the whole batch every night."""
+		cleared = self.make_org("starver-cleared", website=None)
+		deleted = self.make_org("starver-deleted")
+		waiting = self.make_org("starved")
+		self.add_run(cleared, days_ago=9000)
+		self.add_run(deleted, days_ago=8999)
+		self.add_run(waiting, days_ago=8998)
+		frappe.db.delete("CRM Organization", {"name": deleted})
+		self.configure(reenrich_batch_size=2)
+
+		self.assertIn(waiting, self.sweep())
+
 	def test_it_is_off_unless_switched_on(self):
 		name = self.make_org("stale-but-disabled")
 		self.add_run(name, days_ago=200)

@@ -199,8 +199,9 @@ def auto_enrich_on_create(doc, method=None):
 		frappe.log_error(title="Domain Enrichment: auto_enrich_on_create failed")
 
 
-def stale_records(doctype: str, cutoff, limit: int) -> list[str]:
-	"""Records of ``doctype`` whose most recent run started before ``cutoff``.
+def stale_records(doctype: str, cutoff, limit: int) -> list[tuple[str, str]]:
+	"""``(name, website)`` of the records of ``doctype`` whose most recent run started
+	before ``cutoff``.
 
 	Oldest first, so a backlog is worked through in order instead of the sweep
 	re-picking the same records every night.
@@ -211,23 +212,32 @@ def stale_records(doctype: str, cutoff, limit: int) -> list[str]:
 	CRM that night. Never-enriched records are what the Enrich button and
 	``auto_enrich`` are for.
 
+	Only records that still exist and still have a website are returned. The sweep
+	cannot enrich anything else, and skipping one writes no run that would age it
+	out -- so, picked oldest first, a few deleted or website-less records took the
+	whole batch every night and nothing behind them was ever reached.
+
 	The latest run counts whatever its status -- a site that fails to crawl is
 	retried on the same cadence as everything else, not every single night.
 	"""
 	from frappe.query_builder.functions import Max
 
 	Run = frappe.qb.DocType("CRM Enrichment Run")
+	Record = frappe.qb.DocType(doctype)
 	last_started = Max(Run.started_on)
 	rows = (
 		frappe.qb.from_(Run)
-		.select(Run.reference_name)
+		.join(Record)
+		.on(Record.name == Run.reference_name)
+		.select(Run.reference_name, Record.website)
 		.where(Run.reference_doctype == doctype)
-		.groupby(Run.reference_name)
+		.where(Record.website.isnotnull() & (Record.website != ""))
+		.groupby(Run.reference_name, Record.website)
 		.having(last_started < cutoff)
 		.orderby(last_started)
 		.limit(limit)
 	).run()
-	return [row[0] for row in rows]
+	return [(name, website) for name, website in rows]
 
 
 def reenrich_stale_records() -> int:
@@ -254,13 +264,9 @@ def reenrich_stale_records() -> int:
 		if queued >= batch or not enrichment_enabled_for(doctype):
 			continue
 
-		for name in stale_records(doctype, cutoff, batch - queued):
-			website = (frappe.db.get_value(doctype, name, "website") or "").strip()
-			if not website:
-				# deleted, or its website has been cleared since the last run
-				continue
+		for name, website in stale_records(doctype, cutoff, batch - queued):
 			try:
-				enqueue_enrichment(doctype, name, website, user="Administrator", trigger="scheduled")
+				enqueue_enrichment(doctype, name, website.strip(), user="Administrator", trigger="scheduled")
 				queued += 1
 			except Exception:
 				# one unqueueable record must not cost the rest of the sweep
