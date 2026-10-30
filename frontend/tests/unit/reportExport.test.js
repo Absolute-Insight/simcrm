@@ -38,9 +38,19 @@ describe('formatCell', () => {
     expect(rendered).toMatch(/1.500/)
   })
 
-  it('groups plain numbers and drops the fraction', () => {
+  it('groups plain numbers and prints a whole count bare', () => {
     expect(formatCell(1234567, 'number')).toMatch(/1.234.567/)
-    expect(formatCell(12.6, 'number')).toBe('13')
+    expect(formatCell(12, 'number')).toBe('12')
+    expect(formatCell(12.0, 'number')).toBe('12')
+  })
+
+  /* Visits against target pro-rates a weekly target to one decimal and judges
+     its Status column against that: 12 a week on a Tuesday is 2.4 due, and
+     rounding it printed "Target to date 2, Completed 2, Behind". */
+  it('keeps the one decimal a pro-rated target carries', () => {
+    expect(formatCell(2.4, 'number')).toBe('2.4')
+    expect(formatCell(0.4, 'number')).toBe('0.4')
+    expect(formatCell(12.65, 'number')).toBe('12.7')
   })
 
   it('suffixes percentages and keeps one decimal', () => {
