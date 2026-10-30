@@ -309,6 +309,9 @@ onMounted(() => {
     Object.assign(syncSource.value, props.sourceData)
     isLocal.value = false // edit form
     docResource.value = getSourceDocResource(props.sourceData.name)
+  } else if (props.sourceData) {
+    // a duplicate: the copyable fields of another source, as a new one
+    Object.assign(syncSource.value, props.sourceData)
   }
 
   if (syncSource.value.facebook_lead_form) {

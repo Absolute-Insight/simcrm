@@ -187,7 +187,13 @@ function getDropdownOptions(source) {
     {
       label: __('Duplicate'),
       icon: 'lucide-copy',
-      onClick: () => emit('updateStep', 'new-source', { ...source }),
+      // Only what a copy can carry: the row's name would open the original
+      // for editing, and its Lead Form is unique to one source.
+      onClick: () =>
+        emit('updateStep', 'new-source', {
+          type: source.type,
+          enabled: source.enabled,
+        }),
     },
     ...ConfirmDelete({
       onConfirmDelete: () => deleteLeadSource(source),
