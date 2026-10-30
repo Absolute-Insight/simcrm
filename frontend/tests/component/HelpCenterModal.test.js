@@ -92,6 +92,37 @@ describe('Help Center opened from the app shell', () => {
     expect(w.nav().className).not.toContain('hidden')
   })
 
+  // The modal stays mounted between opens, so each open must pick its pane
+  // from what it asks for, not from the article the last session ended on.
+  it('on a phone, a repeat open of the same help link lands on the article again', async () => {
+    const w = shell()
+    openHelpCenter('integrations')
+    await nextTick()
+    helpCenterVisible.value = false
+    await nextTick()
+
+    openHelpCenter('integrations')
+    await nextTick()
+    expect(w.nav().className).toContain('hidden md:flex')
+  })
+
+  it('on a phone, a plain open after reading an article lands on the list', async () => {
+    const w = shell()
+    openHelpCenter()
+    await nextTick()
+    ;[...w.nav().querySelectorAll('button')]
+      .find((b) => b.textContent.includes('Integrations'))
+      .click()
+    await nextTick()
+    expect(w.nav().className).toContain('hidden md:flex')
+    helpCenterVisible.value = false
+    await nextTick()
+
+    openHelpCenter()
+    await nextTick()
+    expect(w.nav().className).not.toContain('hidden')
+  })
+
   it('a fresh open drops the search left from the last one', async () => {
     const w = shell()
     openHelpCenter()
