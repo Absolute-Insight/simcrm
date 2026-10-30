@@ -39,19 +39,36 @@ export function useActiveTabManager(tabs, storageKey) {
   function setActiveTabInUrl(tabName) {
     let hash = '#' + String(tabName).toLowerCase()
     if (route.hash === hash) return
+    // Opening the feed for an anchor (see feedTab) keeps the anchor.
+    if (isAnchor(route.hash) && valueOf(feedTab()) === tabName) return
     router.push({ ...route, hash })
+  }
+
+  function isAnchor(hash) {
+    return Boolean(hash) && !findTab(hash.replace('#', ''))
   }
 
   function getActiveTabFromUrl() {
     return route.hash.replace('#', '')
   }
 
+  /* A hash that names no tab is an anchor inside the feed: a mention
+     notification links to `#<Comment name>`. It used to fall through to the
+     stored tab, so a rep last on Emails landed where the comment is not
+     rendered and Activities had nothing to scroll to. Open the feed and leave
+     the hash alone; an anchor is not a tab worth remembering either. */
+  function feedTab() {
+    return findTab('activity') ?? findTab('comments') ?? tabs.value?.[0]
+  }
+
   function getActiveTab() {
-    const fromUrl = findTab(getActiveTabFromUrl())
+    const hash = getActiveTabFromUrl()
+    const fromUrl = findTab(hash)
     if (fromUrl) {
       preserveLastVisitedTab(valueOf(fromUrl))
       return valueOf(fromUrl)
     }
+    if (hash) return valueOf(feedTab())
     const fromStorage = findTab(activeTab.value)
     if (fromStorage) return valueOf(fromStorage)
     return valueOf(tabs.value?.[0])
@@ -69,8 +86,12 @@ export function useActiveTabManager(tabs, storageKey) {
     () => route.hash,
     (hashValue) => {
       if (!hashValue) return
-      const tab = findTab(hashValue.replace('#', '')) ?? tabs.value?.[0]
-      if (!tab) return
+      const tab = findTab(hashValue.replace('#', ''))
+      if (!tab) {
+        const feed = feedTab()
+        if (feed) tabIndex.value = valueOf(feed)
+        return
+      }
       preserveLastVisitedTab(valueOf(tab))
       tabIndex.value = valueOf(tab)
     },
