@@ -1,10 +1,16 @@
 # Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and Contributors
 # See license.txt
 
+import json
+import os
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
 from crm.api import form as F
+
+with open(os.path.join(os.path.dirname(__file__), "public_form_conditions.json")) as f:
+	CONDITIONS = json.load(f)
 
 
 def make_form(route, document_type="CRM Lead", **kw):
@@ -378,6 +384,31 @@ class TestFormAPI(IntegrationTestCase):
 		for url in ("https://example.com/thanks?a=1&b=2", "HTTP://example.com", "/thank-you", ""):
 			save(url)
 			self.assertEqual(F.get_form_config(name)["redirect_url"], url)
+
+	def test_save_form_stores_only_conditions_the_public_page_can_parse(self):
+		"""frappe's own page at /<route> and the builder preview run an `eval:` condition
+		with `new Function`; only the branded page parses it. Storing one outside that
+		parser's grammar would be script a Sales Manager could plant for an admin."""
+		name = make_form("condition-guard")
+
+		def save(**row):
+			F.save_form(
+				name=name,
+				form={"title": "C", "route": "condition-guard", "document_type": "CRM Lead", "fields": [row]},
+			)
+			return frappe.get_doc("Web Form", name).web_form_fields[0]
+
+		for expression in CONDITIONS["rejected"]:
+			for key in ("depends_on", "mandatory_depends_on", "read_only_depends_on"):
+				with self.assertRaises(frappe.ValidationError, msg=f"{key}: {expression!r}"):
+					save(fieldname="first_name", fieldtype="Data", **{key: expression})
+		# frappe's page evaluates a section's depends_on too
+		with self.assertRaises(frappe.ValidationError):
+			save(fieldname="section_break_x", fieldtype="Section Break", depends_on="eval:alert(1)")
+
+		for expression in [*CONDITIONS["accepted"], "", "organization", "fn:on_change"]:
+			stored = save(fieldname="first_name", fieldtype="Data", depends_on=expression)
+			self.assertEqual(stored.depends_on or "", expression)
 
 	# ---- draft dry-run ----
 

@@ -423,6 +423,130 @@ def _validated_redirect_url(url: str | None) -> str:
 	return (url or "").strip()
 
 
+CONDITION_KEYS = ("depends_on", "mandatory_depends_on", "read_only_depends_on")
+
+# JavaScript's \s, which is also what its trim() drops: what crm_form.html skips
+# between tokens.
+_JS_SPACE = (
+	"\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+	"\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
+_NUMBER_RE = re.compile(r"-?[0-9]+(?:\.[0-9]+)?")
+_IDENT_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
+_COMPARISONS = ("===", "!==", "==", "!=", "<=", ">=", "<", ">")
+
+
+class _UnsupportedCondition(Exception):
+	pass
+
+
+def _is_safe_condition(expression: str | None) -> bool:
+	"""Whether a condition is safe to store for every page that evaluates it.
+
+	frappe's own page at /<route> and the builder's preview hand an `eval:` body to
+	`new Function`; only the branded page parses it. So the store admits only what
+	that parser, safeEval in crm_form.html, accepts: `doc`/`parent` member access,
+	literals, comparisons, && || ! and parentheses -- no call, assignment or global.
+	This is a port of it that recognises without evaluating, and must accept no
+	more than it does (public_form_conditions.json is run against both). A plain
+	fieldname is only ever looked up, never run."""
+	src = str(expression or "").strip(_JS_SPACE)
+	if not src.startswith("eval:"):
+		return True
+	src = src[5:]
+	n = len(src)
+	i = 0
+
+	def ws():
+		nonlocal i
+		while i < n and src[i] in _JS_SPACE:
+			i += 1
+
+	def starts(token):
+		ws()
+		return src.startswith(token, i)
+
+	def primary():
+		nonlocal i
+		ws()
+		if starts("("):
+			i += 1
+			or_expr()
+			if not starts(")"):
+				raise _UnsupportedCondition
+			i += 1
+			return
+		if starts("!"):
+			i += 1
+			primary()
+			return
+		if i < n and src[i] in "\"'":
+			quote = src[i]
+			i += 1
+			while i < n and src[i] != quote:
+				i += 2 if src[i] == "\\" else 1
+			i += 1
+			return
+		number = _NUMBER_RE.match(src, i)
+		if number:
+			i = number.end()
+			return
+		word = _IDENT_RE.match(src, i)
+		if not word:
+			raise _UnsupportedCondition
+		i = word.end()
+		if word.group() in ("true", "false", "null"):
+			return
+		if word.group() not in ("doc", "parent"):
+			raise _UnsupportedCondition
+		while True:
+			ws()
+			if src.startswith(".", i):
+				member = _IDENT_RE.match(src, i + 1)
+				if not member:
+					raise _UnsupportedCondition
+				i = member.end()
+			elif src.startswith("[", i):
+				i += 1
+				or_expr()
+				if not starts("]"):
+					raise _UnsupportedCondition
+				i += 1
+			else:
+				return
+
+	def comparison():
+		nonlocal i
+		primary()
+		ws()
+		for op in _COMPARISONS:
+			if src.startswith(op, i):
+				i += len(op)
+				primary()
+				return
+
+	def and_expr():
+		nonlocal i
+		comparison()
+		while starts("&&"):
+			i += 2
+			comparison()
+
+	def or_expr():
+		nonlocal i
+		and_expr()
+		while starts("||"):
+			i += 2
+			and_expr()
+
+	try:
+		or_expr()
+		ws()
+	except (_UnsupportedCondition, RecursionError):
+		return False
+	return i >= n
+
+
 def _validated_visible_fields(document_type: str, fields: list[dict]) -> list[dict]:
 	"""Re-apply the catalog the picker filters by: `accept()` lets a public visitor
 	write anything listed in `web_form_fields`."""
@@ -431,6 +555,13 @@ def _validated_visible_fields(document_type: str, fields: list[dict]) -> list[di
 	rows = []
 	for f in fields:
 		fieldname = f.get("fieldname")
+		for key in CONDITION_KEYS:
+			if not _is_safe_condition(f.get(key)):
+				frappe.throw(
+					_(
+						"The condition on {0} isn't supported. Compare fields as doc.fieldname, joined with &&, || or !"
+					).format(f.get("label") or fieldname or _("Unnamed field"))
+				)
 		if f.get("fieldtype") in LAYOUT_BREAKS:
 			# a break carries no data, but `accept()` still writes any row naming a field
 			if meta.has_field(fieldname):
