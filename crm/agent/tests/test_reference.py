@@ -402,6 +402,96 @@ class PromptTest(UnitTestCase):
 		self.assertEqual(reference.strip_row_ids("Stellite is UNS R30006."), "Stellite is UNS R30006.")
 
 
+# Rows whose label spells out a value the sheet questions: the MBP pack writes
+# the line size into its label, and names a questioned standard in a flange's.
+LINE_QUESTIONED = {
+	"name": "line-1/4",
+	"sheet_title": "Line Sizes",
+	"page": 1,
+	"section": "Line sizes",
+	"label": '1/4" = 6 mm',
+	"search": '1/4" 6 mm line size nominal bore inch to mm',
+	"cells": [
+		{"label": "Inches", "value": '1/4"', "status": "ok"},
+		{"label": "Millimetres", "value": "6", "unit": "mm", "status": reference.QUESTIONED},
+	],
+}
+LINE_5 = {
+	"name": "line-5",
+	"sheet_title": "Line Sizes",
+	"page": 1,
+	"section": "Line sizes",
+	"label": '5" = 125 mm',
+	"search": '5" 125 mm line size inch to mm',
+	"cells": [
+		{"label": "Inches", "value": '5"', "status": "ok"},
+		{"label": "Millimetres", "value": "125", "unit": "mm", "status": "ok"},
+	],
+}
+STANDARD_QUESTIONED = {
+	**drilling(700, 28, "ASME B16.5", "Class 150", "ASME ANSI class 150", pcd="863.6"),
+	"cells": [
+		{"label": "Standard", "value": "ASME B16.5", "status": reference.QUESTIONED},
+		{"label": "PCD (bolt circle diameter)", "value": "863.6", "unit": "mm", "status": "ok"},
+	],
+}
+# every bolt figure questioned: the 12 of the label is the flange size, and
+# the same 12 is the bolt count engineering has not confirmed
+BOLTS_QUESTIONED = {
+	**bolt_set(300, 12, "BS 10 Table F", "12 Off M20 x 100", "BS 10 BS10 Table F"),
+	"cells": [
+		{"label": "Bolt set", "value": "12 Off M20 x 100", "status": reference.QUESTIONED},
+		{"label": "Number of bolts", "value": "12", "status": reference.QUESTIONED},
+		{"label": "Bolt size", "value": "M20", "status": reference.QUESTIONED},
+	],
+}
+
+
+class QuestionedLabelTest(UnitTestCase):
+	"""Audit M-20: a questioned value written into the row's label still reached
+	the prompt, the fallback answer and the number check."""
+
+	def test_the_prompt_and_the_fallback_do_not_carry_it(self):
+		block = reference.reference_block([LINE_QUESTIONED])
+		self.assertNotIn("6 mm", block)
+		self.assertIn(f'1/4" = ({reference.AWAITING})', block)
+		self.assertNotIn("6 mm", reference.fallback_answer([LINE_QUESTIONED]))
+		self.assertEqual(reference.public_label(LINE_QUESTIONED), f'1/4" = ({reference.AWAITING})')
+
+		block = reference.reference_block([STANDARD_QUESTIONED])
+		self.assertNotIn("B16.5", block)
+		self.assertIn('700 mm (28")', block)
+		self.assertIn("PCD (bolt circle diameter): 863.6 mm", block)
+
+	def test_a_label_figure_that_is_not_questioned_is_left(self):
+		self.assertEqual(reference.public_label(ROWS[4]), ROWS[4]["label"])
+		# the label's 12 is the size: a bare number is not cut from a label
+		self.assertEqual(reference.public_label(BOLTS_QUESTIONED), BOLTS_QUESTIONED["label"])
+		self.assertEqual(
+			reference.describe(ROWS[0]),
+			f"Flange Drilling Tables, page 2 — Flange drilling: {ROWS[0]['label']}",
+		)
+
+	def test_a_label_never_supports_a_questioned_figure(self):
+		for answer, rows, cited in (
+			('A 1/4" line is 6 mm.', [LINE_QUESTIONED, LINE_5], []),
+			('A 1/4" line is 6 mm.', [LINE_QUESTIONED, LINE_5], [LINE_5]),
+			('The 28" flange is to ASME B16.5.', [STANDARD_QUESTIONED], []),
+			('The 12" BS 10 Table F flange takes 12 bolts.', [BOLTS_QUESTIONED], []),
+		):
+			with self.subTest(answer=answer, cited=bool(cited)):
+				used, missing = reference.verify(answer, rows, cited)
+				self.assertIsNone(used, missing)
+
+	def test_the_confirmed_figures_of_such_a_row_still_pass(self):
+		used, missing = reference.verify(
+			'The 28" Class 150 flange has a PCD of 863.6 mm.', [STANDARD_QUESTIONED], []
+		)
+		self.assertEqual((used, missing), ([STANDARD_QUESTIONED], []))
+		used, missing = reference.verify('A 5" line is 125 mm.', [LINE_QUESTIONED, LINE_5], [])
+		self.assertEqual((used, missing), ([LINE_5], []))
+
+
 class OutputTest(UnitTestCase):
 	def test_the_fallback_is_the_row_with_questioned_values_withheld(self):
 		text = reference.fallback_answer([ROWS[4]])
