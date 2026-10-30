@@ -116,7 +116,7 @@
         class="flex flex-1 flex-col justify-between overflow-hidden"
       >
         <SidePanelLayout
-          :sections="sections.data"
+          :sections="parsedSections"
           doctype="CRM Organization"
           :docname="organization.doc.name"
           @reload="sections.reload"
@@ -360,36 +360,37 @@ function openWebsite() {
   openExternalWebsite(organization.doc.website)
 }
 
+// The layout is cached per doctype for the session, and a cached resource
+// runs the transform of whichever page created it -- so an address handler
+// built there saved every new address onto the first organization opened.
+// Handlers that close over this page's record are attached here instead.
 const sections = createResource({
   url: 'crm.fcrm.doctype.crm_fields_layout.crm_fields_layout.get_sidepanel_sections',
   cache: ['sidePanelSections', 'CRM Organization'],
   params: { doctype: 'CRM Organization' },
   auto: true,
-  transform: (data) => getParsedSections(data),
 })
 
-function getParsedSections(_sections) {
-  return _sections.map((section) => {
-    section.columns = section.columns.map((column) => {
-      column.fields = column.fields.map((field) => {
-        if (field.fieldname === 'address') {
-          return {
-            ...field,
-            create: (value, close) => {
-              showAddressModal()
-              close()
-            },
-            edit: (address) => showAddressModal(address),
-          }
-        } else {
-          return field
+const parsedSections = computed(() => {
+  if (!sections.data) return []
+  return sections.data.map((section) => ({
+    ...section,
+    columns: section.columns.map((column) => ({
+      ...column,
+      fields: column.fields.map((field) => {
+        if (field.fieldname !== 'address') return field
+        return {
+          ...field,
+          create: (value, close) => {
+            showAddressModal()
+            close()
+          },
+          edit: (address) => showAddressModal(address),
         }
-      })
-      return column
-    })
-    return section
-  })
-}
+      }),
+    })),
+  }))
+})
 
 const tabIndex = ref('Deals')
 const tabs = [
