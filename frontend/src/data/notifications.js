@@ -1,6 +1,7 @@
 import { sessionStore } from '@/stores/session'
 import { useEvent } from '@/composables/event'
-import { dayjs } from 'frappe-ui'
+import { quiet } from '@/utils/quiet'
+import { dayjs, getConfig } from 'frappe-ui'
 import isBetween from 'dayjs/plugin/isBetween'
 import { useStorage } from '@vueuse/core'
 import { getUserSettings, useUserSettings } from '@/data/userSettings'
@@ -8,17 +9,31 @@ import { ref, computed, onUnmounted, onMounted } from 'vue'
 
 dayjs.extend(isBetween)
 
+/* Event datetimes are stored naive, in the site's timezone. "Now" as
+   toISOString() is UTC with a Z the comparison ignores, so on a site ahead of
+   UTC it let in events that had ended hours ago. */
+function siteNow() {
+  const timezone = getConfig('systemTimezone')
+  const now = dayjs()
+  return (timezone ? now.tz(timezone) : now).format('YYYY-MM-DD HH:mm:ss')
+}
+
 export const useEventNotifications = () => {
   const { user } = sessionStore()
+  const filters = {
+    status: 'Open',
+    owner: user,
+    ends_on: ['>=', siteNow()],
+  }
 
-  return useEvent({
-    filters: {
-      status: 'Open',
-      owner: user,
-      ends_on: ['>=', dayjs().toISOString()],
-    },
-    notifications: false,
-  })
+  /* The list is cached for the session, and frappe-ui hands a cached resource
+     back with the filters it was created with -- and reloads it with them. So
+     "now" was the first open's, and every later open listed the events that
+     had ended since. Fetched here instead, on every open, with this one's. */
+  const event = useEvent({ filters, notifications: false, auto: false })
+  event.eventsResource.update({ filters })
+  quiet(event.eventsResource.reload())
+  return event
 }
 
 const eventNotificationAlerts = useStorage('eventNotificationAlerts', [])

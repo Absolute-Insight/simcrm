@@ -13,6 +13,7 @@ export function useEvent({
   filters = null,
   participants = true,
   notifications = true,
+  auto = true,
 }) {
   const { getUser } = usersStore()
 
@@ -48,7 +49,7 @@ export function useEvent({
       'creation',
     ],
     filters: filters,
-    auto: true,
+    auto,
     limit: 50,
     orderBy: 'creation desc',
   })
