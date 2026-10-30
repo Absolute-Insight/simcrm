@@ -31,7 +31,8 @@ but is not yet a deal.
 
 When a lead is qualified, use **Convert to Deal**. Conversion creates the deal
 and carries over the contact and organization; the timeline moves with it, so
-nothing said before qualification is lost.
+nothing said before qualification is lost. The deal keeps the lead's owner, and
+anyone else assigned to the lead stays assigned on the deal.
 
 ## Tips
 

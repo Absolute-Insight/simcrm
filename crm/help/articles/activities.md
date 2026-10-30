@@ -18,7 +18,9 @@ logging it is not busywork — it is what makes the proactive features accurate.
 
 - **Notes** are longer-form records attached to a lead or deal.
 - **Comments** are quick timeline entries, with @-mentions to pull a teammate
-  in. Mentioned users are notified.
+  in. Mentioned users are notified. You can edit or delete your own comments
+  from the menu beside them, but not a colleague's. Deleting a comment also
+  removes the notification its mentions sent.
 
 ## Calls
 
