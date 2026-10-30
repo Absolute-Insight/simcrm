@@ -73,7 +73,7 @@
         </Draggable>
         <Combobox
           :model-value="null"
-          :options="fields"
+          :options="addableFields"
           @update:selected-option="(e) => addField(e)"
         >
           <template #trigger="{ open, setOpen }">
@@ -161,29 +161,20 @@ const { getFields } = getMeta(props.doctype)
 
 const fields = computed(() => {
   const _fields = getFields({ withStandardFields: true }) || []
-  if (!_fields.length) return []
-
-  let existingFields = []
-
-  allFields.value?.forEach((fieldname) => {
-    let field = _fields.find((f) => f.fieldname === fieldname)
-    if (field) existingFields.push(field)
+  return _fields.map((field) => {
+    return {
+      label: field.label,
+      value: field.fieldname,
+      fieldname: field.fieldname,
+      fieldtype: field.fieldtype,
+    }
   })
-
-  return _fields
-    .filter(
-      (field) => !existingFields?.find((f) => f.fieldname === field.fieldname),
-    )
-    .map((field) => {
-      return {
-        label: field.label,
-        value: field.fieldname,
-        fieldname: field.fieldname,
-        fieldtype: field.fieldtype,
-      }
-    })
 })
 
+// The card fields are looked up in the doctype's own field list. Reading them
+// out of `fields` while `fields` also read them was a computed cycle: Vue
+// handed the inner read a stale `undefined`, so Fields Order opened empty and
+// Add Field replaced every card field instead of adding one.
 const allFields = computed({
   get: () => {
     let rows = list.value?.data?.kanban_fields
@@ -193,17 +184,20 @@ const allFields = computed({
       rows = JSON.parse(rows)
     }
 
-    if (rows && fields.value) {
-      rows = rows.map((row) => {
-        return fields.value.find((field) => field.fieldname === row) || {}
-      })
-    }
-    return rows.filter((row) => row.label)
+    return rows
+      .map((row) => fields.value.find((field) => field.fieldname === row))
+      .filter(Boolean)
   },
   set: (val) => {
     list.value.data.kanban_fields = val
   },
 })
+
+const addableFields = computed(() =>
+  fields.value.filter(
+    (field) => !allFields.value.some((f) => f.fieldname === field.fieldname),
+  ),
+)
 
 function reorder() {
   allFields.value = allFields.value.map((row) => row.fieldname)
