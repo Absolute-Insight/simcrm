@@ -589,14 +589,16 @@ def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled
 		"fulfilled_by": fulfilled_by,
 	}
 	row = _item_row(item)
-	held = (row.fulfilled_by_doctype, str(row.fulfilled_by))
-	if not fulfilled_by or held != (fulfilled_by_doctype, str(fulfilled_by)):
+	held = (row.fulfilled_by_doctype, str(row.fulfilled_by)) if row.fulfilled_by else (None, None)
+	named = (fulfilled_by_doctype, str(fulfilled_by)) if fulfilled_by else (None, None)
+	if held != named:
 		_drop_own_event(item, plan.user)
-		# The account the item carried was of what it held -- a cancellation, or
-		# a visit just taken off the calendar -- and describes nothing now. Kept,
-		# it would also mark the record named here as the planner's own event,
-		# for the next correction to delete.
-		values["outcome"] = None
+		if fulfilled_by:
+			# The account the item carried was of what it held -- a cancellation,
+			# or a visit just taken off the calendar. Kept beside a record named
+			# here, it would mark that record as the planner's own event, for
+			# the next correction to delete.
+			values["outcome"] = None
 	frappe.db.set_value("CRM Rep Plan Item", item, values)
 	return get_plan(str(plan.week_start), plan.user)
 
