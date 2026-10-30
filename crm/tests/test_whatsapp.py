@@ -8,6 +8,7 @@ from frappe.tests.utils import FrappeTestCase
 
 from crm.api.whatsapp import (
 	create_whatsapp_message,
+	get_whatsapp_messages,
 	notify_agent,
 	react_on_whatsapp_message,
 	resolve_destination,
@@ -167,6 +168,85 @@ class TestWhatsAppHooks(FrappeTestCase):
 		text = self.notification_text_for("CRM Lead", lead.name)
 		self.assertNotIn("<b>Bold</b>", text)
 		self.assertIn("&lt;b&gt;Bold&lt;/b&gt;", text)
+
+
+class TestWhatsAppThread(FrappeTestCase):
+	"""Opening a thread loads its record and each template once, not per message.
+
+	It used to get_doc the referenced deal for every message and every reply, and
+	the template for every message that used it: about 230 document loads for a
+	220-message thread, on every status ping.
+	"""
+
+	def message(self, name, **values):
+		row = {
+			"name": name,
+			"type": "Incoming",
+			"to": "+27110000000",
+			"from": "+27825550101",
+			"content_type": "text",
+			"message_type": "Manual",
+			"attach": None,
+			"template": None,
+			"use_template": 0,
+			"message_id": f"wamid.{name}",
+			"is_reply": 0,
+			"reply_to_message_id": None,
+			"creation": "2026-10-30 09:00:00",
+			"message": f"text of {name}",
+			"status": "delivered",
+			"reference_doctype": "CRM Deal",
+			"reference_name": "CRM-DEAL-THREAD",
+			"template_parameters": None,
+			"template_header_parameters": None,
+		}
+		row.update(values)
+		return frappe._dict(row)
+
+	def test_the_record_and_each_template_are_loaded_once_per_thread(self):
+		messages = [
+			self.message(f"in-{i}", is_reply=int(i > 0), reply_to_message_id="wamid.in-0") for i in range(5)
+		] + [
+			self.message(
+				f"tpl-{who}",
+				type="Outgoing",
+				**{"from": None},
+				message_type="Template",
+				template="welcome",
+				template_parameters=f'["{who}"]',
+				template_header_parameters=f'["{who}"]',
+			)
+			for who in ("Ann", "Bob")
+		]
+		deal = frappe._dict(
+			contacts=[frappe._dict(is_primary=1, full_name="Ann Contact", mobile_no="+27825550101")]
+		)
+		template = frappe._dict(
+			template_name="welcome", template="Hi {{1}}", header="For {{1}}", footer="Bye"
+		)
+		loaded = []
+
+		def get_doc(doctype, name=None, *args, **kwargs):
+			loaded.append((doctype, name))
+			return {"CRM Deal": deal, "WhatsApp Templates": template}[doctype]
+
+		reference = MagicMock()
+		reference.get.return_value = None
+		with (
+			patch("crm.api.whatsapp.validate_access", return_value=reference),
+			patch("frappe.get_installed_apps", return_value=["frappe", "crm"]),
+			patch.object(frappe.db, "exists", return_value=True),
+			patch("frappe.get_all", return_value=messages),
+			patch("frappe.get_doc", side_effect=get_doc),
+		):
+			thread = {row["name"]: row for row in get_whatsapp_messages("CRM Deal", "CRM-DEAL-THREAD")}
+
+		self.assertEqual(sorted(loaded), [("CRM Deal", "CRM-DEAL-THREAD"), ("WhatsApp Templates", "welcome")])
+		self.assertEqual(thread["in-3"]["from_name"], "Ann Contact")
+		self.assertEqual(thread["in-3"]["reply_to_from"], "Ann Contact")
+		# each message fills its own copy of the shared template
+		self.assertEqual((thread["tpl-Ann"]["template"], thread["tpl-Ann"]["header"]), ("Hi Ann", "For Ann"))
+		self.assertEqual((thread["tpl-Bob"]["template"], thread["tpl-Bob"]["header"]), ("Hi Bob", "For Bob"))
 
 
 class TestWhatsAppDestination(FrappeTestCase):

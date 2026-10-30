@@ -258,24 +258,31 @@ def get_whatsapp_messages(reference_doctype: str, reference_name: str):
 	# Filter messages to get only Template messages
 	template_messages = [message for message in messages if message["message_type"] == "Template"]
 
+	# Each template once per thread, not once per message that uses it. The
+	# parameters are filled into copies of its text, never into the shared doc,
+	# or the second message on a template would read the first one's values.
+	templates = {}
+	for name in {message["template"] for message in template_messages}:
+		if frappe.db.exists("WhatsApp Templates", name):
+			templates[name] = frappe.get_doc("WhatsApp Templates", name)
+
 	# Iterate through template messages
 	for template_message in template_messages:
 		# Find the template that this message is using
-		if not frappe.db.exists("WhatsApp Templates", template_message["template"]):
-			continue
-		template = frappe.get_doc("WhatsApp Templates", template_message["template"])
+		template = templates.get(template_message["template"])
 
 		if template:
+			body, header = template.template, template.header
 			template_message["template_name"] = template.template_name
 			if template_message["template_parameters"]:
 				parameters = json.loads(template_message["template_parameters"])
-				template.template = parse_template_parameters(template.template, parameters)
+				body = parse_template_parameters(body, parameters)
 
-			template_message["template"] = template.template
+			template_message["template"] = body
 			if template_message["template_header_parameters"]:
 				header_parameters = json.loads(template_message["template_header_parameters"])
-				template.header = parse_template_parameters(template.header, header_parameters)
-			template_message["header"] = template.header
+				header = parse_template_parameters(header, header_parameters)
+			template_message["header"] = header
 			template_message["footer"] = template.footer
 
 	# Filter messages to get only reaction messages
@@ -294,8 +301,18 @@ def get_whatsapp_messages(reference_doctype: str, reference_name: str):
 		if reacted_message:
 			reacted_message["reaction"] = reaction_message["message"]
 
+	# A thread is about one record (two, with a deal's lead): load each once,
+	# rather than the whole document again for every message and every reply.
+	names_by_record = {}
+
+	def from_name_of(message):
+		record = (message["reference_doctype"], message["reference_name"])
+		if record not in names_by_record:
+			names_by_record[record] = get_from_name(message)
+		return names_by_record[record]
+
 	for message in messages:
-		from_name = get_from_name(message) if message["from"] else _("You")
+		from_name = from_name_of(message) if message["from"] else _("You")
 		message["from_name"] = from_name
 	# Filter messages to get only replies
 	reply_messages = [message for message in messages if message["is_reply"]]
@@ -310,7 +327,7 @@ def get_whatsapp_messages(reference_doctype: str, reference_name: str):
 
 		# If the replied message is found, add the reply details to the reply message
 		if replied_message:
-			from_name = get_from_name(reply_message) if replied_message["from"] else _("You")
+			from_name = from_name_of(reply_message) if replied_message["from"] else _("You")
 			message = replied_message["message"]
 			if replied_message["message_type"] == "Template":
 				message = replied_message["template"]
