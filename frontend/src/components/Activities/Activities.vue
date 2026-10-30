@@ -11,15 +11,30 @@
     :modalRef="modalRef"
   />
   <FadedScrollableDiv class="flex flex-col h-full overflow-y-auto">
+    <!-- Data and Events do not read the timeline, so they never wait for it,
+         and a timeline reload no longer tears down a half-edited Data form.
+         The spinner is for a first load only: a reload keeps showing what is
+         already there. -->
+    <div v-if="title == 'Events'" class="h-full activity">
+      <EventArea :doctype="doctype" :docname="docname" />
+    </div>
     <div
-      v-if="all_activities?.loading"
+      v-else-if="title == 'Data'"
+      class="flex h-full min-h-0 flex-col overflow-hidden px-3 sm:px-10"
+    >
+      <DataFields
+        :doctype="doctype"
+        :docname="docname"
+        @beforeSave="(data) => emit('beforeSave', data)"
+        @afterSave="(data) => emit('afterSave', data)"
+      />
+    </div>
+    <div
+      v-else-if="all_activities?.loading && !all_activities.data"
       class="flex flex-1 flex-col items-center justify-center gap-3 text-2xl-medium text-ink-gray-4"
     >
       <LoadingIndicator class="h-6 w-6" />
       <span>{{ __('Loading...') }}</span>
-    </div>
-    <div v-else-if="title == 'Events'" class="h-full activity">
-      <EventArea :doctype="doctype" :docname="docname" />
     </div>
     <div
       v-else-if="
@@ -382,17 +397,6 @@
         </div>
       </template>
     </div>
-    <div
-      v-else-if="title == 'Data'"
-      class="flex h-full min-h-0 flex-col overflow-hidden px-3 sm:px-10"
-    >
-      <DataFields
-        :doctype="doctype"
-        :docname="docname"
-        @beforeSave="(data) => emit('beforeSave', data)"
-        @afterSave="(data) => emit('afterSave', data)"
-      />
-    </div>
     <EmptyState
       v-else
       :title="emptyText"
@@ -548,11 +552,16 @@ const changeTabTo = (tabName) => {
   tabIndex.value = tab.value ?? tab.name
 }
 
+// frappe-ui's Tabs mounts a fresh Activities for each tab it shows. The Data
+// and Events tabs never read the timeline, so only the others (re)load it;
+// `auto` would have fetched it on every tab click, those two included.
+const showsTimeline = !['Data', 'Events'].includes(title.value)
+
 const all_activities = createResource({
   url: 'crm.api.activities.get_activities',
   params: { name: props.docname },
   cache: ['activity', props.docname],
-  auto: true,
+  auto: false,
   transform: ([versions, calls, notes, tasks, attachments]) => {
     return { versions, calls, notes, tasks, attachments }
   },
@@ -561,6 +570,7 @@ const all_activities = createResource({
     toast.error(error.messages?.[0] || __('Failed to load activities'))
   },
 })
+if (showsTimeline) all_activities.reload()
 
 const showWhatsappTemplates = ref(false)
 
@@ -625,7 +635,27 @@ function handleDocinfoUpdate({ doc, key }) {
   if (doc.reference_name !== props.docname) return
 
   all_activities.reload()
-  _document.reload()
+  refreshDocument()
+}
+
+// A comment or an email changes fields the server keeps itself
+// (communication_status, modified), so the record is refetched -- without
+// discarding what the rep has typed on the Data tab and not saved. The old doc
+// object still holds every edit made until the fresh copy replaces it.
+async function refreshDocument() {
+  const edited = _document.doc
+  const original = _document.originalDoc
+  try {
+    await _document.reload()
+  } catch {
+    return
+  }
+  if (!edited || !original || !_document.doc) return
+  for (const key of Object.keys(edited)) {
+    if (JSON.stringify(edited[key]) !== JSON.stringify(original[key])) {
+      _document.doc[key] = edited[key]
+    }
+  }
 }
 
 function sendTemplate(template) {
@@ -863,7 +893,7 @@ const whatsappBox = ref(null)
 watch([reload, reload_email], ([reload_value, reload_email_value]) => {
   if (reload_value || reload_email_value) {
     all_activities.reload()
-    _document.reload()
+    refreshDocument()
     reload.value = false
     reload_email.value = false
   }
