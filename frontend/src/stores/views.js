@@ -47,7 +47,9 @@ export const viewsStore = defineStore('crm-views', (doctype) => {
   })
 
   // The Home redirect asks with no route; pick by a fixed priority so the
-  // landing page does not depend on the order the server returned views in.
+  // landing page does not depend on the order the server returned views in,
+  // and only among routes it can open (`isRoutable`): a default filed under a
+  // route the app lacks ("FCRM Notes") failed every Home visit with "No match".
   const homeRoutePriority = [
     'Leads',
     'Deals',
@@ -58,13 +60,13 @@ export const viewsStore = defineStore('crm-views', (doctype) => {
     'Call Logs',
   ]
 
-  function getDefaultView(routeName = null) {
+  function getDefaultView(routeName = null, isRoutable = () => true) {
     if (routeName) return defaultViews[routeName] || null
     const candidates = [
       ...homeRoutePriority,
       ...Object.keys(defaultViews).sort(),
     ]
-    const route = candidates.find((r) => defaultViews[r])
+    const route = candidates.find((r) => defaultViews[r] && isRoutable(r))
     return route ? defaultViews[route] : null
   }
 
