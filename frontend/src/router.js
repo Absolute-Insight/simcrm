@@ -199,6 +199,32 @@ let router = createRouter({
   routes,
 })
 
+/* Where a rep lands, in order: their week, then the lists a rep works from.
+   The first one Access Control left visible wins (see the Home branch). */
+const REP_HOME_ROUTES = [
+  ['Planner', 'nav.planner'],
+  ['Leads', 'nav.leads'],
+  ['Deals', 'nav.deals'],
+  ['Organizations', 'nav.organizations'],
+  ['Contacts', 'nav.contacts'],
+  ['Tasks', 'nav.tasks'],
+  ['Notes', 'nav.notes'],
+  ['Dashboard', 'nav.dashboard'],
+]
+
+/* The views every list route and a manager's Home are resolved from. A failed
+   fetch leaves its rejected promise behind, as for `users` above, and the
+   store never refetches on its own: re-awaiting it refused every later list
+   navigation until a hard reload. Retry instead, and on failure fall through
+   to the default list view rather than refusing the navigation. */
+async function viewsLoaded(views) {
+  try {
+    await (views.error ? views.reload() : views.promise)
+  } catch (error) {
+    console.error('Error loading views', error)
+  }
+}
+
 router.beforeEach(async (to, from, next) => {
   router.previousRoute = from
 
@@ -286,16 +312,21 @@ router.beforeEach(async (to, from, next) => {
     //
     // Unless an admin has hidden the planner in Settings → Access Control, in
     // which case landing every rep on it each login put them on a page with no
-    // nav entry to get back to. `canSee` narrows only, so it can decide between
-    // two surfaces the rep may already reach; the access resource was awaited
-    // above and fails open, so an outage still lands on the Planner.
+    // nav entry to get back to. The same goes for whatever stands in for it,
+    // so the rep lands on the first of REP_HOME_ROUTES left visible. `canSee`
+    // narrows only, so it can decide between surfaces the rep may already
+    // reach; the access resource was awaited above and fails open, so an
+    // outage still lands on the Planner.
     const { isManager } = usersStore()
     if (!isManager()) {
-      next({ name: canSee('nav.planner') ? 'Planner' : 'Leads' })
+      const [home] =
+        REP_HOME_ROUTES.find(([, navKey]) => canSee(navKey)) ??
+        REP_HOME_ROUTES[0]
+      next({ name: home })
       return
     }
     const { views, getDefaultView } = viewsStore()
-    await views.promise
+    await viewsLoaded(views)
 
     let defaultView = getDefaultView()
     if (!defaultView) {
@@ -346,7 +377,7 @@ router.beforeEach(async (to, from, next) => {
     !to.query?.view
   ) {
     const { views, standardViews, getDefaultView } = viewsStore()
-    await views.promise
+    await viewsLoaded(views)
 
     const viewType = to.params?.viewType ?? ''
     const standardViewTypes = ['list', 'kanban', 'group_by']

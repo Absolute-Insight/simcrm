@@ -51,12 +51,14 @@ describe('the Home redirect', () => {
     expect(branch.length).toBeGreaterThan(100)
   })
 
-  it('sends a rep to the Planner only when Access Control left it visible', () => {
+  it('sends a rep only to a surface Access Control left visible', () => {
     // It used to send every non-manager to the Planner unconditionally, so a
     // site that hid the planner for Sales User opened every rep, every login,
-    // on a page with no nav entry to get back from.
-    expect(branch).toMatch(/canSee\('nav\.planner'\)/)
-    expect(branch).toMatch(/canSee\('nav\.planner'\) \? 'Planner' : 'Leads'/)
+    // on a page with no nav entry to get back from. routerGuard.test.js runs
+    // the redirect itself; this keeps the unconditional form from returning.
+    expect(branch).toMatch(
+      /REP_HOME_ROUTES\.find\(\(\[, navKey\]\) => canSee\(navKey\)\)/,
+    )
     expect(branch).not.toMatch(/next\(\{ name: 'Planner' \}\)/)
   })
 
