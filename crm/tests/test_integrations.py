@@ -645,6 +645,49 @@ class TestRecordingProxyCredentials(IntegrationTestCase):
 				get_recording_url(log.name)
 		safe_get.assert_not_called()
 
+	def _served(self, content_type, medium="Manual"):
+		"""The response the proxy hands the browser for an upstream of this type."""
+		resp = MagicMock()
+		resp.is_redirect = False
+		resp.status_code = 200
+		resp.headers = {"Content-Type": content_type} if content_type else {}
+		resp.iter_content.return_value = iter([b"<script>alert(document.domain)</script>"])
+		log = create_test_call_log(recording_url="https://rep-host.example/rec", telephony_medium=medium)
+		with (
+			patch.object(integrations_api, "_safe_get", return_value=(resp, MagicMock())),
+			patch.object(integrations_api, "user_rate_limited", return_value=False),
+			patch.object(frappe, "get_request_header", return_value=None),
+		):
+			response = get_recording_url(log.name)
+			b"".join(response.response)
+		return response
+
+	def test_a_host_answering_html_is_not_served_as_html_from_the_crm_origin(self):
+		"""``recording_url`` is any call-log writer's to choose, and the proxy answers
+		from the CRM's own origin. A host that answers text/html with a script must
+		not get that script run in the session of whoever opens the link."""
+		for upstream in ("text/html; charset=utf-8", "image/svg+xml", "application/xhtml+xml", "text/xml"):
+			with self.subTest(upstream=upstream):
+				response = self._served(upstream)
+				self.assertEqual(response.mimetype, "application/octet-stream")
+				self.assertEqual(response.headers["Content-Security-Policy"], "sandbox")
+				self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+
+	def test_audio_keeps_its_type_so_the_player_still_works(self):
+		for upstream, served in (
+			("audio/mpeg", "audio/mpeg"),
+			("audio/x-wav", "audio/x-wav"),
+			("Audio/MPEG; charset=binary", "audio/mpeg"),
+			# the proxy's default before this, kept for a host that sends no type
+			(None, "audio/mpeg"),
+		):
+			with self.subTest(upstream=upstream):
+				response = self._served(upstream)
+				self.assertEqual(response.mimetype, served)
+				# sandboxed either way: nothing an audio player needs is lost to it
+				self.assertEqual(response.headers["Content-Security-Policy"], "sandbox")
+				self.assertTrue(response.headers["Content-Disposition"].startswith("inline"))
+
 
 def create_test_call_log(**kwargs):
 	"""Helper function to create a CRM Call Log for testing"""

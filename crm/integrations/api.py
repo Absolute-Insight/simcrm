@@ -422,13 +422,32 @@ def get_recording_url(call_log_name: str):
 	response = Response(
 		_stream(),
 		status=upstream.status_code,
-		mimetype=upstream.headers.get("Content-Type") or "audio/mpeg",
+		mimetype=_recording_mimetype(upstream.headers.get("Content-Type")),
 	)
+	# This is served from the CRM's own origin for a URL any call-log writer
+	# chose, so nothing in it may run as a page there: whatever got through as
+	# audio is still sandboxed, never sniffed into something else, and named
+	# as a file rather than a document.
+	response.headers["Content-Security-Policy"] = "sandbox"
+	response.headers["X-Content-Type-Options"] = "nosniff"
+	response.headers["Content-Disposition"] = 'inline; filename="recording"'
 	response.headers["Accept-Ranges"] = "bytes"
 	for header in ("Content-Length", "Content-Range"):
 		if upstream.headers.get(header):
 			response.headers[header] = upstream.headers[header]
 	return response
+
+
+def _recording_mimetype(content_type: str | None) -> str:
+	"""The type the proxy serves a recording as: the upstream's own when it is
+	audio, ``application/octet-stream`` for anything else. A host answering
+	text/html or image/svg+xml must not have that rendered on the CRM origin;
+	frappe's own private-file handler forces those to download for the same
+	reason. No type at all keeps the proxy's long-standing audio/mpeg."""
+	if not content_type:
+		return "audio/mpeg"
+	mimetype = content_type.split(";", 1)[0].strip().lower()
+	return mimetype if mimetype.startswith("audio/") else "application/octet-stream"
 
 
 def get_contact(phone_number: str, country: str = "IN", exact_match: bool = False):
