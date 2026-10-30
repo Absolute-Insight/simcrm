@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { defineComponent, h, reactive } from 'vue'
 import { fakeBackend } from './fakeBackend.js'
-import { flushPromises } from './flush.js'
+import { collectRejections, flushPromises } from './flush.js'
 import { mount } from './mount.js'
 import { buttonByText } from './stubs.js'
 
@@ -118,5 +118,35 @@ describe('Lead sync sources', () => {
     expect(w.el.querySelector('[data-label="Source Type"]').value).toBe(
       'Facebook',
     )
+  })
+
+  it('Update on a source with no Lead Form reports success (FE-131)', async () => {
+    const w = await mountPage()
+    w.el.querySelector('li').click() // open the source for editing
+    await flushPromises()
+    expect(buttons(w)).toContain('Update')
+
+    const rejections = await collectRejections(() =>
+      buttonByText(w.el, 'Update').click(),
+    )
+    expect(backend.log.map((r) => r.url)).toContain('frappe.client.set_value')
+    expect(toast.success).toHaveBeenCalledWith(
+      'Lead sync source updated successfully',
+    )
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(rejections).toEqual([])
+  })
+
+  it('reverts a toggle that failed without server messages', async () => {
+    const offline = new TypeError('Failed to fetch')
+    backend.handlers['frappe.client.set_value'] = () => {
+      throw offline
+    }
+    const w = await mountPage()
+    const toggle = w.el.querySelector('li [role="switch"]')
+    const rejections = await collectRejections(() => toggle.click())
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    expect(toast.error).toHaveBeenCalledWith('Failed to update source')
+    expect(rejections.filter((r) => r !== offline)).toEqual([])
   })
 })
