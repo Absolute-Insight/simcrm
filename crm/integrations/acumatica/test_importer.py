@@ -621,9 +621,13 @@ class TestBackfill(ImporterTestCase):
 		importer.run_backfill()
 
 		client.iter_all.side_effect = lambda entity, **kw: iter([])
-		client.get_by_id.side_effect = RuntimeError("Acumatica GET Customer -> 503")
+		# a failure of this record's own, not of Acumatica as a whole (that one ends the
+		# run instead -- see the outage test below)
+		from crm.integrations.acumatica.client import AcumaticaError
+
+		client.get_by_id.side_effect = AcumaticaError("Acumatica GET Customer -> 500", status_code=500)
 		for _ in range(importer.MAX_RETRY_ATTEMPTS - 1):
-			importer.run_backfill()  # must not let a dead endpoint abort the sweep
+			importer.run_backfill()  # must not let one record's failure abort the sweep
 
 		self.assertEqual(self._pending(), {})
 		issues = [
@@ -706,6 +710,53 @@ class TestBackfill(ImporterTestCase):
 				importer.run_backfill()
 
 		self.assertIn("boom", frappe.db.get_single_value("CRM Acumatica Settings", "last_sync_error"))
+
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_an_outage_ends_the_run_without_spending_the_queues_attempts(self, ClientCls):
+		"""Rotated credentials or a tenant that is down fail every queued record the same
+		way. Charged to each record, five sweeps of that emptied the queue into Gave Up
+		rows -- after a failed login per record per sweep."""
+		import requests
+
+		from crm.integrations.acumatica.client import AcumaticaAuthError, AcumaticaError
+
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.settings.request_pause = 0
+		suffix = frappe.generate_hash(length=6)
+		bad = _customer(suffix, self._contested_org(suffix))
+		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
+		client.get_by_id.return_value = bad
+
+		importer.run_backfill()
+		self.assertEqual(self._pending()["Customer"][f"retry-{suffix}"], 1)
+
+		outages = (
+			AcumaticaAuthError("Acumatica token request failed", status_code=400, body="invalid_grant"),
+			requests.ConnectionError("tenant unreachable"),
+			requests.ReadTimeout("read timed out"),
+			AcumaticaError("Acumatica GET Customer -> 503", status_code=503),
+			AcumaticaError("Acumatica GET Customer -> 429", status_code=429),
+		)
+		for outage in outages:
+			client.get_by_id.side_effect = outage
+			for _ in range(importer.MAX_RETRY_ATTEMPTS):
+				with self.assertRaises(type(outage)):
+					importer.run_backfill()
+
+		self.assertEqual(self._pending()["Customer"][f"retry-{suffix}"], 1)
+		kinds = [
+			row.kind
+			for row in frappe.get_doc("CRM Acumatica Settings").sync_issues
+			if row.remote_id in (f"RETRY{suffix}", f"retry-{suffix}")
+		]
+		self.assertEqual(kinds, ["Import Failed"])
+
+		# the record's own failure still counts: some versions answer a deleted id with a 500
+		client.get_by_id.side_effect = AcumaticaError("Acumatica GET Customer -> 500", status_code=500)
+		client.iter_all.side_effect = lambda entity, **kw: iter([])
+		importer.run_backfill()
+		self.assertEqual(self._pending()["Customer"][f"retry-{suffix}"], 2)
 
 	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
 	def test_a_clean_run_clears_the_last_error(self, ClientCls):

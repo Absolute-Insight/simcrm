@@ -50,6 +50,10 @@ class AcumaticaError(Exception):
 		return ("; ".join(found) or str(body))[:limit]
 
 
+class AcumaticaAuthError(AcumaticaError):
+	"""The login itself was refused: a fact about the credentials, not about any record."""
+
+
 def v(rec, field, default=None):
 	"""Unwrap Acumatica's {"value": x} field encoding."""
 	wrapped = (rec or {}).get(field)
@@ -114,7 +118,7 @@ class AcumaticaClient:
 			timeout=TIMEOUT,
 		)
 		if resp.status_code != 200:
-			raise AcumaticaError(
+			raise AcumaticaAuthError(
 				"Acumatica token request failed", status_code=resp.status_code, body=resp.text
 			)
 		body = resp.json()

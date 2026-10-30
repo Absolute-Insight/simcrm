@@ -2,6 +2,7 @@ import time
 from datetime import datetime, timezone
 
 import frappe
+import requests
 from frappe.utils.synchronization import LockTimeoutError, filelock
 
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
@@ -11,7 +12,7 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 	set_pending_retries,
 )
 from crm.integrations.acumatica import outcomes
-from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError, v
+from crm.integrations.acumatica.client import AcumaticaAuthError, AcumaticaClient, AcumaticaError, v
 from crm.integrations.acumatica.names import normalise_account_name
 
 try:
@@ -43,6 +44,18 @@ BACKFILL_TIMEOUT = 4 * 3600
 # failing after five sweeps is failing on something no amount of waiting fixes, and
 # an admin is better told about it than left with a queue that never drains.
 MAX_RETRY_ATTEMPTS = 5
+
+# Answers that say Acumatica, or the way to it, is unavailable to us right now. A 500 is
+# not among them: some versions answer a record deleted since it failed with one.
+_RUN_LEVEL_STATUSES = frozenset({401, 403, 429, 502, 503, 504})
+
+
+def _is_run_level(e: BaseException) -> bool:
+	"""A failure every record would hit alike -- rotated credentials, a tenant that is
+	down, a rate limit -- rather than one this record earned."""
+	if isinstance(e, AcumaticaAuthError | requests.ConnectionError | requests.Timeout):
+		return True
+	return isinstance(e, AcumaticaError) and e.status_code in _RUN_LEVEL_STATUSES
 
 
 def _find_by_noteid(doctype, noteid):
@@ -294,6 +307,12 @@ def _retry_pending(client, pending: dict, counts: dict) -> None:
 				raise
 			except Exception as e:
 				frappe.db.rollback(save_point="acumatica_retry")
+				if _is_run_level(e):
+					# Charged to the record, an outage spent every queued record's whole
+					# budget in five sweeps -- and a login per record per sweep against an
+					# account whose credentials just stopped working. End the run instead,
+					# as the paging pass would; the queue keeps its counts for the next one.
+					raise
 				attempts += 1
 				if attempts < MAX_RETRY_ATTEMPTS:
 					queued[noteid] = attempts
