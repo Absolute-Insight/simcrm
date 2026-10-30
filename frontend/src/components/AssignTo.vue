@@ -27,7 +27,7 @@
 import MultipleAvatar from '@/components/MultipleAvatar.vue'
 import AssignToBody from '@/components/AssignToBody.vue'
 import { useDocument } from '@/data/document'
-import { toast, Popover } from 'frappe-ui'
+import { call, toast, Popover } from 'frappe-ui'
 import { computed } from 'vue'
 
 const props = defineProps({
@@ -58,24 +58,49 @@ async function saveAssignees(
   if (removedAssignees.length) await removeAssignees.submit(removedAssignees)
   if (addedAssignees.length) await addAssignees.submit(addedAssignees)
 
-  const nextAssignee = assignees.value.find(
-    (a) => a.name !== document.doc[ownerField.value],
-  )
+  const field = ownerField.value
+  const previousOwner = document.doc[field]
+  const owner = field.replace('_', ' ')
 
-  let owner = ownerField.value.replace('_', ' ')
+  // The server moves the owner itself: every new assignee becomes the owner,
+  // and removing the owner's assignment clears it. It writes the field
+  // without a modified bump or a realtime event, so read it back rather than
+  // guess -- the guess named the wrong person, or none, and was left on the
+  // document as an unsaved edit.
+  let serverOwner
+  try {
+    const values = await call('frappe.client.get_value', {
+      doctype: props.doctype,
+      filters: props.docname,
+      fieldname: field,
+    })
+    serverOwner = values?.[field] || ''
+  } catch (err) {
+    // The assignment itself went through; only the owner shown may be stale.
+    console.error(err)
+    return
+  }
+  document.doc[field] = serverOwner
+  if (document.originalDoc) document.originalDoc[field] = serverOwner
+
+  const label = (name) => {
+    const assignee = assignees.value.find((a) => a.name === name)
+    return assignee?.label || name
+  }
 
   if (
-    document.doc[ownerField.value] &&
-    removedAssignees.includes(document.doc[ownerField.value])
+    !serverOwner &&
+    previousOwner &&
+    removedAssignees.includes(previousOwner)
   ) {
-    document.doc[ownerField.value] = nextAssignee ? nextAssignee.name : ''
-    document.save.submit()
-
+    const nextAssignee = assignees.value[0]
     if (nextAssignee) {
+      document.doc[field] = nextAssignee.name
+      document.save.submit()
       toast.info(
         __(
           'Since you removed {0} from the assignee, the {0} has been changed to the next available assignee {1}.',
-          [owner, nextAssignee.label || nextAssignee.name],
+          [owner, label(nextAssignee.name)],
         ),
       )
     } else {
@@ -86,12 +111,11 @@ async function saveAssignees(
         ),
       )
     }
-  } else if (!document.doc[ownerField.value] && nextAssignee) {
-    document.doc[ownerField.value] = nextAssignee ? nextAssignee.name : ''
+  } else if (serverOwner && serverOwner !== previousOwner) {
     toast.info(
       __('Since you added a new assignee, the {0} has been set to {1}.', [
         owner,
-        nextAssignee.label || nextAssignee.name,
+        label(serverOwner),
       ]),
     )
   }
