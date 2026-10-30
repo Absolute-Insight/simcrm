@@ -7,7 +7,7 @@ from stubbed adapters, and an ERP failure marks its table rather than raising.""
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import ClassVar
 from unittest import mock
 
@@ -430,6 +430,55 @@ class QuietAccountsTest(IntegrationTestCase):
 		entry = next(row for row in rows if row["organization"] == self.org)
 		self.assertEqual(entry["deals"], 1)
 		self.assertIn("close date near", entry["reason"])
+
+	def test_an_account_is_all_of_its_open_deals_not_only_the_flagged_one(self):
+		"""Counted over its cooling deal alone, an account touched yesterday on its
+		other deal read as one deal and five weeks quiet -- and the row carried the
+		reasons set itself into the prompt."""
+		now = frappe.utils.now_datetime()
+
+		def ago(days):
+			return now - timedelta(days=days)
+
+		deals = [
+			{
+				"name": name,
+				"organization": "Northwind",
+				"status": "Proposal",
+				"stage_probability": 60,
+				"expected_closure_date": None,
+				"creation": ago(200),
+			}
+			for name in ("QUIET-COOLING", "QUIET-BUSY")
+		]
+		history = {
+			"QUIET-COOLING": [ago(58), ago(50), ago(42), ago(34)],  # every 8 days, now 34 quiet
+			"QUIET-BUSY": [ago(10), ago(5), ago(1)],
+		}
+		with (
+			mock.patch.object(analyst_data, "_working_deal_rows", return_value=deals),
+			mock.patch.object(
+				analyst_data, "_latest_activity", return_value={n: max(t) for n, t in history.items()}
+			),
+			mock.patch.object(analyst_data, "_activity_history", return_value=history),
+			mock.patch(
+				"crm.api.dashboard._at_risk_deals",
+				return_value=[{"name": "QUIET-COOLING", "score": 55}, {"name": "QUIET-BUSY", "score": 80}],
+			),
+		):
+			rows, _note = analyst_data._accounts_going_quiet("2025-10-30", "2026-10-30")
+		self.assertEqual(
+			rows,
+			[
+				{
+					"organization": "Northwind",
+					"deals": 2,
+					"days_since_contact": 1,
+					"lowest_health": 55,
+					"reason": "contact cadence slowing",
+				}
+			],
+		)
 
 
 class DeadlineTest(IntegrationTestCase):

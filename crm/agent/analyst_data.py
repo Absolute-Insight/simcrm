@@ -387,8 +387,15 @@ def _accounts_going_quiet(from_date, to_date):
 	# which is what the per-deal get_deal_health PermissionError used to do.
 	health_by_deal = {row["name"]: row["score"] for row in _at_risk_deals()}
 
+	# An account is every open deal it has, not only the flagged ones: counted over
+	# its flagged deals alone, an organization touched yesterday on one deal read as
+	# one deal and five weeks quiet. A flag on any deal lists the account; its last
+	# contact is its most recent one, across all of them.
 	by_org: dict[str, dict] = {}
 	for deal in deals:
+		health = health_by_deal.get(deal["name"])
+		if health is None:
+			continue
 		reasons = []
 		measured = cadence_ratio(history.get(deal["name"]) or [], now)
 		if measured and measured[0] >= COOLING_RATIO:
@@ -396,32 +403,30 @@ def _accounts_going_quiet(from_date, to_date):
 		closes = deal.get("expected_closure_date")
 		if closes and (closes - now.date()).days <= horizon and (deal.get("stage_probability") or 0) < 50:
 			reasons.append("close date near, stage still early")
-		if not reasons:
-			continue
-		health = health_by_deal.get(deal["name"])
-		if health is None:
-			continue
-		last = latest.get(deal["name"]) or deal["creation"]
+		days = max(0, (now - (latest.get(deal["name"]) or deal["creation"])).days)
 		org = deal.get("organization") or "(no organization)"
 		entry = by_org.setdefault(
 			org,
 			{
 				"organization": org,
 				"deals": 0,
-				"days_since_contact": 0,
+				"days_since_contact": days,
 				"lowest_health": 100,
 				"reasons": set(),
 			},
 		)
 		entry["deals"] += 1
-		entry["days_since_contact"] = max(entry["days_since_contact"], max(0, (now - last).days))
+		entry["days_since_contact"] = min(entry["days_since_contact"], days)
 		entry["lowest_health"] = min(entry["lowest_health"], int(health))
 		entry["reasons"].update(reasons)
 
-	rows = [
-		{**entry, "reason": ", ".join(sorted(entry.pop("reasons")))}
-		for entry in sorted(by_org.values(), key=lambda e: (e["lowest_health"], -e["days_since_contact"]))
-	]
+	rows = []
+	for entry in sorted(by_org.values(), key=lambda e: (e["lowest_health"], -e["days_since_contact"])):
+		# popped before the row is built: spread first, the set itself went into
+		# every row and its repr into the prompt
+		reasons = entry.pop("reasons")
+		if reasons:
+			rows.append({**entry, "reason": ", ".join(sorted(reasons))})
 	return rows, (
 		f"From the cadence and slip-risk signals on all {len(deals)} open deals, scored now; "
 		"not equipment maintenance."
