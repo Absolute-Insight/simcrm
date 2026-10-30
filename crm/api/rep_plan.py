@@ -508,7 +508,9 @@ def _refuse_a_second_claim(item: str, fulfilled_by_doctype: str, fulfilled_by: s
 	counted one call twice towards adherence.
 	"""
 	horizon = frappe.utils.getdate() - timedelta(weeks=MATCH_HORIZON_WEEKS)
-	holder = _claimed_actuals(horizon).get((fulfilled_by_doctype, str(fulfilled_by)))
+	record = (fulfilled_by_doctype, str(fulfilled_by))
+	# "ever": a task claimed by a week past the horizon still counts
+	holder = _claimed_actuals(horizon, [record]).get(record)
 	if holder and holder != item:
 		frappe.throw(
 			_("{0} {1} is already what fulfils another planned item.").format(

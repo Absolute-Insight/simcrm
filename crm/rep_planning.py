@@ -407,21 +407,35 @@ def _day_of(when) -> date:
 	return when.date() if hasattr(when, "date") else when
 
 
-def _claimed_actuals(horizon: date) -> dict[tuple[str, str], str]:
+def _claimed_actuals(horizon: date, records=()) -> dict[tuple[str, str], str]:
 	"""(doctype, name) -> the plan item already holding that record.
 
 	One record fulfils one item, ever. Without this a task completed in one week
 	and edited in the next would be counted twice — once where it was planned,
 	once where it was touched.
+
+	Claims are read from the weeks inside the horizon, and for ``records`` --
+	(doctype, name) pairs -- from any week at all. A task is dated by its
+	``modified``, so one done and claimed months ago is back in today's window
+	the moment somebody edits it; its claim, outside the horizon, went unseen
+	and the task fulfilled a second item. The caller names the records it is
+	about to hand out, which keeps the read bounded by the window, not by
+	every plan ever written.
 	"""
 	item = frappe.qb.DocType("CRM Rep Plan Item")
 	plan = frappe.qb.DocType("CRM Rep Plan")
+	in_scope = plan.week_start >= horizon
+	by_doctype: dict[str, set[str]] = {}
+	for doctype, name in records:
+		by_doctype.setdefault(doctype, set()).add(str(name))
+	for doctype, names in by_doctype.items():
+		in_scope = in_scope | ((item.fulfilled_by_doctype == doctype) & item.fulfilled_by.isin(list(names)))
 	rows = (
 		frappe.qb.from_(item)
 		.join(plan)
 		.on(item.parent == plan.name)
 		.select(item.name, item.fulfilled_by_doctype, item.fulfilled_by)
-		.where(plan.week_start >= horizon)
+		.where(in_scope)
 		.where(item.fulfilled_by.isnotnull())
 		.where(item.fulfilled_by != "")
 		.run(as_dict=True)
@@ -557,7 +571,15 @@ def match_actuals() -> int:
 			sorted({plan.user for plan in plans}), horizon, max(today, last_week_end)
 		)
 
-	claimed = _claimed_actuals(horizon)
+	# a record dated by an edit marker can turn up long after the week that
+	# claimed it, so its claim is looked for beyond the horizon too
+	drifting = {
+		(actual["doctype"], str(actual["name"]))
+		for actuals in actuals_by_user.values()
+		for actual in actuals
+		if not ACTUAL_SOURCES[actual["kind"]]["when_is_activity_time"]
+	}
+	claimed = _claimed_actuals(horizon, drifting)
 	fulfilled = 0
 	for plan in plans:
 		plan.actuals = actuals_by_user.get(plan.user, [])

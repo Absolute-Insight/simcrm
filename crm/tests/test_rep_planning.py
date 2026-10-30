@@ -632,6 +632,46 @@ class MatchActualsJobTest(IntegrationTestCase):
 		self.assertEqual(plan.items[0].status, "Done")
 		self.assertNotIn(("CRM Task", "stray"), rep_planning._claimed_actuals(self.monday))
 
+	def test_a_task_claimed_before_the_horizon_is_not_claimed_again(self):
+		"""A task is dated by ``modified``: one that fulfilled an item months ago
+		is back in this week's window as soon as it is edited, and the claim on
+		it sat in a week the claim map no longer read, so it fulfilled a second
+		item and adherence counted it twice."""
+		long_ago = frappe.utils.add_days(self.monday, -7 * (MATCH_HORIZON_WEEKS + 3))
+		task = frappe.get_doc(
+			{"doctype": "CRM Task", "title": "Done long ago", "status": "Done", "assigned_to": self.USER}
+		).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "CRM Rep Plan",
+				"user": self.USER,
+				"week_start": long_ago,
+				"items": [
+					{
+						"activity_type": "Task",
+						"planned_date": long_ago,
+						"status": "Done",
+						"fulfilled_by_doctype": "CRM Task",
+						"fulfilled_by": str(task.name),
+					}
+				],
+			}
+		).insert(ignore_permissions=True)
+		# a generic task this week; the old task was just touched, so it is in range
+		plan = self.make_plan({"activity_type": "Task"})
+
+		match_actuals()
+		plan.reload()
+		self.assertEqual(plan.items[0].status, "Planned")
+
+		# and naming it by hand is refused for the same reason
+		from crm.api.rep_plan import mark_fulfilled
+
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(self.USER)
+		with self.assertRaises(frappe.ValidationError):
+			mark_fulfilled(plan.items[0].name, fulfilled_by_doctype="CRM Task", fulfilled_by=str(task.name))
+
 	def test_a_week_old_plan_settles_within_the_horizon(self):
 		"""The horizon sweep must not touch weeks the matcher still visits."""
 		last_monday = frappe.utils.add_days(self.monday, -7)
