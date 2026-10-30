@@ -24,7 +24,7 @@
           icon-left="lucide-search"
           debounce="300"
           inputClass="p-4 pr-12"
-          @input="slaSearchQuery = $event"
+          @update:model-value="slaSearchQuery = $event"
         />
         <Button
           v-if="slaSearchQuery"
@@ -279,13 +279,15 @@ const onToggle = (sla) => {
   )
 }
 
+// TextInput emits the text as update:model-value; a bare @input reaches the
+// native <input> and hands over the InputEvent instead.
 watch(slaSearchQuery, (newValue) => {
   slaPolicyListResource.filters = {
     name: ['like', `%${newValue}%`],
   }
   if (!newValue) {
+    // back to the first page; the page length stays what SlaConfig set
     slaPolicyListResource.start = 0
-    slaPolicyListResource.pageLength = 10
   }
   slaPolicyListResource.reload()
 })
