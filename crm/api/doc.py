@@ -504,9 +504,13 @@ def get_data(
 				base_filters = convert_filter_to_tuple(doctype, filters)
 				column_filters.extend(base_filters)
 
-			# Add the column-specific filter
+			# Add the column-specific filter. A Select field's blank first option is
+			# a column too, the records with no value; giving it no filter at all
+			# listed every record on the board in it.
 			if column_field and kc.get("name"):
 				column_filters.append([doctype, column_field, "=", kc.get("name")])
+			elif column_field:
+				column_filters.append([doctype, column_field, "is", "not set"])
 
 			order = kc.get("order")
 			if kc.get("delete"):
