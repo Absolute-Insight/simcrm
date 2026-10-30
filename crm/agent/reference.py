@@ -374,9 +374,10 @@ def _canonical(atom: str) -> str:
 		fraction = f"{top.lstrip('0') or '0'}/{bottom.lstrip('0') or '0'}"
 		return f"{whole.lstrip('0') or '0'} {fraction}" if whole else fraction
 	if "," in atom:
-		# "1,000" and "12,500.5" are thousands; "51,33" is a decimal comma
+		# "1,000" and "12,500.5" are thousands; "51,33" is a decimal comma. The
+		# last group is three digits before any decimal point of its own.
 		groups = atom.split(",")
-		if "." not in groups[-1] and all(len(group) == 3 for group in groups[1:]):
+		if all(len(group) == 3 for group in [*groups[1:-1], groups[-1].split(".")[0]]):
 			atom = "".join(groups)
 		elif len(groups) == 2:
 			atom = ".".join(groups)

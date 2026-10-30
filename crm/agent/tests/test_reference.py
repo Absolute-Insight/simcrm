@@ -156,6 +156,15 @@ class NumbersTest(UnitTestCase):
 		self.assertEqual(reference.numbers("51,33 Bar"), [{"51.33"}])
 		self.assertEqual(reference.numbers("285.0 mm"), [{"285"}])
 
+	def test_a_thousands_comma_before_a_decimal_is_still_thousands(self):
+		"""Audit L-39: "1,270.0" read as 1.270 refused a correct answer."""
+		self.assertEqual(reference.numbers("1,270.0 mm"), [{"1270"}])
+		self.assertEqual(reference.numbers("12,500.5"), [{"12500.5"}])
+		self.assertEqual(reference.numbers("1,234,567.25"), [{"1234567.25"}])
+		self.assertEqual(reference.numbers("51,33 Bar"), [{"51.33"}])
+		used, missing = reference.verify("The OD is 1,270.0 mm.", ROWS, [ROWS[3]])
+		self.assertEqual((used, missing), ([ROWS[3]], []))
+
 	def test_mixed_and_signed_figures_do_not_support_their_parts(self):
 		sheet = [{**ROWS[2], "cells": [{"label": "Bolt size", "value": '1 3/8"', "status": "ok"}]}]
 		used, _ = reference.verify('Use 3/8" bolts.', sheet, sheet)
