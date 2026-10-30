@@ -264,10 +264,19 @@ const { $dialog } = globalStore()
 
 const show = defineModel({ type: Boolean })
 
+// Only the list resource: the Events tab's own useEvent loads the child rows
+// the event arrives with.
 const { eventsResource } = useEvent({
   doctype: props.doctype,
   docname: props.docname,
+  participants: false,
+  notifications: false,
 })
+
+// Which child tables the event arrived with. One that has not loaded is left
+// out of the save rather than sent as the empty list shown in its place:
+// set_value replaces a table with what it is given.
+const loadedTables = ref({ event_participants: true, notifications: true })
 
 const title = ref(null)
 const error = ref(null)
@@ -318,6 +327,13 @@ onMounted(() => {
     if (!props.event.name) {
       start = dayjs()
       end = dayjs().add(1, 'hour')
+    }
+
+    if (props.event.name) {
+      loadedTables.value = {
+        event_participants: Array.isArray(props.event.event_participants),
+        notifications: Array.isArray(props.event.notifications),
+      }
     }
 
     _event.value = {
@@ -442,8 +458,12 @@ function updateEvent() {
       color: _event.value.color,
       reference_doctype: props.doctype,
       reference_docname: props.docname,
-      event_participants: _event.value.event_participants,
-      notifications: _event.value.notifications,
+      ...(loadedTables.value.event_participants && {
+        event_participants: _event.value.event_participants,
+      }),
+      ...(loadedTables.value.notifications && {
+        notifications: _event.value.notifications,
+      }),
     },
     {
       onSuccess: async () => {
