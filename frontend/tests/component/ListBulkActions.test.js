@@ -166,4 +166,14 @@ describe('bulk Assign To, twice in one list visit', () => {
     expect(addMultiple()).toEqual([['["LEAD-9"]', ['rep.a@example.com']]])
     w.unmount()
   })
+
+  it('"Clear" in the user dropdown assigns nobody', async () => {
+    const page = await listPage()
+    await page.assignTo(['LEAD-1'])
+    await page.pick('') // Link's Clear footer emits change('')
+    expect(page.chips()).toEqual([])
+    await page.update()
+    expect(addMultiple()).toEqual([])
+    page.unmount()
+  })
 })

@@ -122,6 +122,9 @@ const removeValue = (value) => {
 }
 
 const addValue = (value) => {
+  // Link's Clear footer emits change(''): that picks nobody, and a blank
+  // assignee sent to add_multiple stores a ToDo for no one on every record.
+  if (!value) return
   error.value = ''
   let obj = {
     name: value,
