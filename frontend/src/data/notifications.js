@@ -38,20 +38,34 @@ export const useEventNotifications = () => {
 
 const eventNotificationAlerts = useStorage('eventNotificationAlerts', [])
 
+/* The reminders the user has dismissed live here beside the alerts, not in
+   each caller. The popup records a dismissal and Notifications.vue's socket
+   handler decides whether to show the next send -- and the server re-sends a
+   reminder on every scheduler tick inside its window. With a list per caller
+   the handler never heard of the dismissal, so the reminder came back. */
+const completedEvents = ref([])
+let settingsLoad = null
+let cleanupInterval = null
+let mountedCallers = 0
+
 export const useEventNotificationAlert = () => {
   const { save: saveUserSettings } = useUserSettings()
-  const completedEvents = ref([])
 
-  // Load user settings on initialization
-  const loadNotificationSettings = async () => {
-    try {
-      const settings = await getUserSettings('Event', 'notifications')
-      if (settings) {
-        completedEvents.value = settings.completedEvents || []
-      }
-    } catch (error) {
-      console.error('Error loading notification settings:', error)
-    }
+  // Loaded once a session, and merged, so a dismissal made before it returns
+  // is kept. A failed load is tried again by the next caller to mount.
+  const loadNotificationSettings = () => {
+    settingsLoad ||= getUserSettings('Event', 'notifications')
+      .then((settings) => {
+        const saved = settings?.completedEvents || []
+        completedEvents.value = [
+          ...new Set([...saved, ...completedEvents.value]),
+        ]
+      })
+      .catch((error) => {
+        settingsLoad = null
+        console.error('Error loading notification settings:', error)
+      })
+    return settingsLoad
   }
 
   // Save completed events to user settings
@@ -121,6 +135,8 @@ export const useEventNotificationAlert = () => {
     // Add to completed events in user settings
     if (!completedEvents.value.includes(id)) {
       completedEvents.value.push(id)
+      // the save writes the whole list, so it waits for the stored one
+      await loadNotificationSettings()
       await saveNotificationSettings()
     }
   }
@@ -161,14 +177,17 @@ export const useEventNotificationAlert = () => {
     }
   }
 
-  const cleanupInterval = setInterval(cleanupExpiredEventAlerts, 5 * 60 * 1000)
-
   onMounted(() => {
     loadNotificationSettings()
     cleanupExpiredEventAlerts()
+    if (mountedCallers++ === 0) {
+      cleanupInterval = setInterval(cleanupExpiredEventAlerts, 5 * 60 * 1000)
+    }
   })
 
-  onUnmounted(() => clearInterval(cleanupInterval))
+  onUnmounted(() => {
+    if (--mountedCallers === 0) clearInterval(cleanupInterval)
+  })
 
   return {
     eventNotificationAlerts,

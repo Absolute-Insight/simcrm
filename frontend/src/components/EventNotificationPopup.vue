@@ -63,12 +63,17 @@ const { getUser } = usersStore()
 
 const {
   eventNotificationAlerts,
+  isEventCompleted,
   completeEventNotificationAlert,
   removeCompletedEventNotificationAlerts,
 } = useEventNotificationAlert()
 
+// isEventCompleted covers a re-send that arrives before the dismissed list has
+// loaded after a page reload.
 const visibleAlerts = computed(() => {
-  return eventNotificationAlerts.value.filter((alert) => !alert.completed)
+  return eventNotificationAlerts.value.filter(
+    (alert) => !alert.completed && !isEventCompleted(alert.id),
+  )
 })
 
 function openEvent(e) {
