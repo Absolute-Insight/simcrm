@@ -321,7 +321,15 @@ import { useTelemetry } from '@framework/ui/telemetry'
 import router from '@/router'
 import { useStorage } from '@vueuse/core'
 import { useDemoData } from '@/composables/demoData'
-import { ref, reactive, computed, markRaw, onMounted, watch } from 'vue'
+import {
+  ref,
+  reactive,
+  computed,
+  markRaw,
+  onBeforeUnmount,
+  onMounted,
+  watch,
+} from 'vue'
 import { useRoute } from 'vue-router'
 
 const props = defineProps({
@@ -465,9 +473,12 @@ watch(
 // unsaved-changes prompt, answered with "Keep editing" -- leaves route.name
 // untouched, so the watcher never fires and the sidebar goes on pointing at a
 // page the user is not on. afterEach's third argument is that failure.
-router.afterEach((to, from, failure) => {
+// The hook is global to the router, so it goes when the sidebar does: the
+// mobile drawer mounts a fresh sidebar on every open.
+const removeFailureHook = router.afterEach((to, from, failure) => {
   if (failure) activeItem.value = currentRouteKey()
 })
+onBeforeUnmount(removeFailureHook)
 
 // The two panel toggles sit in the brand row now, as plain buttons rather than
 // SidebarItems. Everything SidebarItem used to supply for them -- the active
