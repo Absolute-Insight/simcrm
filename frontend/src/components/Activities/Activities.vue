@@ -607,14 +607,26 @@ onMounted(() => {
   $socket.on('docinfo_update', handleDocinfoUpdate)
   $socket.on('whatsapp_message', handleWhatsappMessage)
 
-  nextTick(() => {
-    const hash = route.hash.slice(1) || null
-    let tabNames = props.tabs?.map((tab) => tab.name)
-    if (!tabNames?.includes(hash)) {
-      scroll(hash)
-    }
-  })
+  nextTick(() => scrollToHash(route.hash))
 })
+
+// A hash change no longer remounts the page (App.vue keys the router-view
+// without it), so a link to an activity on the record already open -- a
+// mention notification -- scrolls here instead of on mount.
+watch(
+  () => route.hash,
+  (hash) => hash && scrollToHash(hash),
+)
+
+function scrollToHash(hash) {
+  const id = hash.slice(1) || null
+  const tabNames = props.tabs?.map((tab) =>
+    String(tab.value ?? tab.name).toLowerCase(),
+  )
+  if (!tabNames?.includes(id?.toLowerCase())) {
+    scroll(id)
+  }
+}
 
 function handleDocinfoUpdate({ doc, key }) {
   // 'comments' covers comment activity; 'communications' is what frappe's
