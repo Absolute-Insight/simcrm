@@ -167,5 +167,25 @@ class OwnProfileEmailTest(IntegrationTestCase):
 			}
 		)
 		self.assertEqual(
-			profile["user_emails"], [{"email_account": account.name, "email_id": account.email_id}]
+			profile["user_emails"],
+			[{"email_account": account.name, "email_id": account.email_id, "enable_outgoing": 1}],
 		)
+
+	def test_the_composer_learns_which_linked_accounts_can_send(self):
+		"""EmailEditor filters its From list on this field, so a profile without it
+		offers no accounts at all, and a stale one offers an account that cannot send.
+		frappe keeps the row's own copy current only for an account that is a user's
+		address, which a shared mailbox is not."""
+		account = self.shared_mailbox()
+		self.addCleanup(frappe.db.set_value, "Email Account", account.name, "enable_outgoing", 1)
+		frappe.set_user(REP)
+		update_profile({"user_emails": [{"email_account": account.name, "email_id": account.email_id}]})
+		self.assertEqual(get_profile()["user_emails"][0]["enable_outgoing"], 1)
+
+		frappe.set_user("Administrator")
+		account.reload()
+		account.enable_outgoing = 0
+		account.save(ignore_permissions=True)
+
+		frappe.set_user(REP)
+		self.assertEqual(get_profile()["user_emails"][0]["enable_outgoing"], 0)

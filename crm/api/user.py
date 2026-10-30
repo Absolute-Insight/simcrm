@@ -25,8 +25,7 @@ PROFILE_FIELDS = (
 PROFILE_EDITABLE_FIELDS = frozenset(
 	{"first_name", "last_name", "user_image", "language", "time_zone", "email_signature", "user_emails"}
 )
-# The child rows the email composer and the signature pane read: which outgoing
-# accounts this person may send from.
+# The child rows a person may set: which outgoing accounts they may send from.
 USER_EMAIL_FIELDS = ("email_account", "email_id")
 
 
@@ -42,13 +41,28 @@ def get_profile() -> dict:
 	"""The session user's own profile, readable regardless of User doctype grants."""
 	user = _own_user()
 	profile = frappe.db.get_value("User", user, list(PROFILE_FIELDS), as_dict=True)
-	profile["user_emails"] = frappe.get_all(
-		"User Email",
-		filters={"parent": user, "parenttype": "User"},
-		fields=list(USER_EMAIL_FIELDS),
-		order_by="idx asc",
-	)
+	profile["user_emails"] = _user_emails(user)
 	return profile
+
+
+def _user_emails(user: str) -> list[dict]:
+	"""The child rows the email composer and the signature pane read.
+
+	``enable_outgoing`` comes from the account, not from the row's copy of it: frappe
+	only refreshes that copy for an account whose address is a user's, so a shared
+	mailbox would go on being offered as a sender after its outgoing was turned off.
+	"""
+	row = frappe.qb.DocType("User Email")
+	account = frappe.qb.DocType("Email Account")
+	return (
+		frappe.qb.from_(row)
+		.left_join(account)
+		.on(row.email_account == account.name)
+		.select(row.email_account, row.email_id, account.enable_outgoing)
+		.where((row.parent == user) & (row.parenttype == "User"))
+		.orderby(row.idx)
+		.run(as_dict=True)
+	)
 
 
 @frappe.whitelist(methods=["POST"])
