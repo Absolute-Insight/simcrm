@@ -265,11 +265,17 @@ class RunWriterTest(IntegrationTestCase):
 
 	def test_an_overlong_scraped_name_does_not_fail_the_run(self):
 		"""The summary is history; cut to its column, the full value stays in raw_json."""
+		org = frappe.get_doc(
+			{
+				"doctype": "CRM Organization",
+				"organization_name": "Long Name Org " + frappe.generate_hash(length=4),
+			}
+		).insert(ignore_permissions=True)
 		result = canned_result()
 		result.company_name = Field("M" * 150, result.website, "JSON-LD")
 
 		run_name = tasks.write_run(
-			"CRM Organization", "O1", "https://acme.example", "Completed", result=result
+			"CRM Organization", org.name, "https://acme.example", "Completed", result=result
 		)
 
 		self.assertEqual(frappe.db.get_value("CRM Enrichment Run", run_name, "company_name"), "M" * 140)
@@ -313,20 +319,18 @@ class JobTimeoutTest(IntegrationTestCase):
 				tasks._publish("CRM Organization", "O1", "running", user="Administrator")
 
 	def test_a_run_that_times_out_ends_failed_with_a_terminal_event(self):
-		org = frappe.new_doc("CRM Organization")
-		org.organization_name = "Timed Out Org " + frappe.generate_hash(length=4)
-		org.website = "https://slow.example"
-		org.insert()
+		"""What letting the deadline through buys: run_enrichment's own handler records
+		the Failed run and tells the button. (write_run is stubbed: the handler's
+		rollback would also roll back a record inserted by this test.)"""
 		published = []
-
 		with (
 			mock.patch.object(tasks, "run_pipeline", side_effect=JobTimeoutException("late")),
 			mock.patch.object(tasks, "_publish", side_effect=lambda *a, **k: published.append(k)),
+			mock.patch.object(tasks, "write_run") as write_run,
 		):
-			tasks.run_enrichment("CRM Organization", org.name, org.website, user="Administrator")
+			tasks.run_enrichment("CRM Organization", "O1", "https://slow.example", user="Administrator")
 
-		status = frappe.db.get_value("CRM Enrichment Run", {"reference_name": org.name}, "status")
-		self.assertEqual(status, "Failed")
+		self.assertEqual(write_run.call_args.kwargs["status"], "Failed")
 		self.assertEqual(published[-1]["status"], "error")
 
 
