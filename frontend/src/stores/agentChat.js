@@ -56,8 +56,16 @@ export function createChatStore({
     visible.value = !visible.value
   }
 
+  /* Bumped by clear(). Clear is live while an answer is pending, and a local
+     model takes seconds: without this the late answer landed alone in the
+     emptied panel and then travelled as history with the next question. An
+     ask whose session has moved on drops whatever comes back. */
+  let session = 0
+
   function clear() {
+    session++
     messages.value = []
+    asking.value = false
     failure.value = ''
     failureReason.value = ''
   }
@@ -86,9 +94,11 @@ export function createChatStore({
     asking.value = true
     failure.value = ''
     failureReason.value = ''
+    const askedIn = session
 
     try {
       const result = await call(method, { question: trimmed, history })
+      if (askedIn !== session) return
       if (result?.status === 'ok') {
         messages.value.push({ role: 'assistant', ...mapResult(result) })
       } else {
@@ -101,9 +111,9 @@ export function createChatStore({
     } catch {
       // A thrown call (network, rate limit) is the same story as a degraded
       // status for the person reading the panel: no answer, try again.
-      failure.value = 'unavailable'
+      if (askedIn === session) failure.value = 'unavailable'
     } finally {
-      asking.value = false
+      if (askedIn === session) asking.value = false
     }
   }
 
