@@ -670,20 +670,18 @@ def get_data(
 				has_empty_values = any([not d.get(group_by_field) for d in data])
 				options = list(set([d.get(group_by_field) for d in data]))
 				options = [u for u in options if u]
-				if has_empty_values:
-					options.append("")
 
-				if order_by and group_by_field in order_by:
-					order_by_fields = order_by.split(",")
-					order_by_fields = [
-						(field.split(" ")[0], field.split(" ")[1]) for field in order_by_fields
-					]
-					if (group_by_field, "asc") in order_by_fields:
-						options.sort()
-					elif (group_by_field, "desc") in order_by_fields:
-						options.sort(reverse=True)
-				else:
-					options.sort()
+				# The groups follow the grouped field's own direction in the sort, and
+				# run ascending otherwise. SortBy joins its terms with ", ", and
+				# splitting on the comma alone parsed " first_name asc" as
+				# ("", "first_name"): a grouped field sorted second never matched, so
+				# the groups came back in set order -- a different one per worker.
+				descending = (group_by_field, "desc") in _sort_terms(order_by)
+				options.sort(reverse=descending)
+				# the blank group sorts first ascending and last descending, as ""
+				# did when it was sorted in with the rest
+				if has_empty_values:
+					options.insert(len(options) if descending else 0, "")
 				return options
 
 		for field in fields:
@@ -720,6 +718,16 @@ def get_data(
 # Only these boards draw the counts. A task board would pay four queries for
 # numbers nothing shows.
 KANBAN_COUNTED_DOCTYPES = ("CRM Lead", "CRM Deal")
+
+
+def _sort_terms(order_by: str | None) -> list[tuple[str, str]]:
+	"""``"modified desc, first_name"`` as ``[("modified", "desc"), ("first_name", "asc")]``."""
+	terms = []
+	for term in (order_by or "").split(","):
+		parts = term.split()
+		if parts:
+			terms.append((parts[0].strip("`"), parts[1].lower() if len(parts) > 1 else "asc"))
+	return terms
 
 
 def parse_list_data(data, doctype):

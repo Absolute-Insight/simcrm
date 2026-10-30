@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-"""What a kanban column holds, and what building the board costs."""
+"""What a kanban column and a group-by group hold, and what building them costs."""
 
 from __future__ import annotations
 
@@ -118,3 +118,35 @@ class LinkColumnFanOutTest(IntegrationTestCase):
 
 		statuses = frappe.get_all("CRM Lead Status", pluck="name")
 		self.assertEqual(sorted(columns), sorted(statuses))
+
+
+class GroupByOrderTest(IntegrationTestCase):
+	"""SortBy joins its terms with ", ", and splitting on the comma alone parsed
+	" first_name asc" as ("", "first_name"). A grouped field sorted second never
+	matched, so its groups came back in Python's set order -- a different one in
+	every worker, so they reshuffled on each reload."""
+
+	FIRST_NAMES = ("Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf")
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		self.names = [make_lead(name) for name in self.FIRST_NAMES]
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def groups(self, order_by: str) -> list[str]:
+		result = get_data(
+			doctype="CRM Lead",
+			filters={"name": ["in", self.names]},
+			order_by=order_by,
+			view={"view_type": "group_by", "group_by_field": "first_name"},
+		)
+		return result["group_by_field"]["options"]
+
+	def test_a_grouped_field_sorted_second_keeps_its_direction(self):
+		self.assertEqual(self.groups("modified desc, first_name asc"), list(self.FIRST_NAMES))
+		self.assertEqual(self.groups("modified desc, first_name desc"), list(self.FIRST_NAMES[::-1]))
+
+	def test_a_grouped_field_outside_the_sort_runs_ascending(self):
+		self.assertEqual(self.groups("modified desc"), list(self.FIRST_NAMES))
