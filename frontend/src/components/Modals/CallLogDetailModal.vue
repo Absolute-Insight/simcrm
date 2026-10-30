@@ -51,6 +51,7 @@
               :tooltip="__('Edit Call Log')"
               :icon="EditIcon"
               class="w-7"
+              :disabled="!callLog?.data"
               @click="openCallLogModal"
             />
             <Button
