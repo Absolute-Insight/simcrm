@@ -432,7 +432,10 @@ def crawl(start_url, cfg, session=None, progress=None):
 
 			results.append((page, soup))
 
-			if soup is None or depth >= max_depth:
+			# An error page (a bot wall's 429, a 503 that outlasted the retries) is kept
+			# for diagnosis, but its links are not the site's, and following them only
+			# asks a host that just refused us for more pages.
+			if soup is None or depth >= max_depth or page.status_code >= 400:
 				continue
 
 			# Resolve links against the page's resolved URL, not the requested one.

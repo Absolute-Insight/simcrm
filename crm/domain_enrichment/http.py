@@ -216,12 +216,36 @@ def build_session(cfg=None):
 	return session
 
 
+class _BudgetedRetry(Retry):
+	"""urllib3's Retry, never sleeping past the running fetch's deadline.
+
+	Retries sleep inside ``adapter.send``, below every check ``fetch`` makes, and with
+	no socket open for ``_Deadline`` to shut -- so the backoff is cut to whatever the
+	budget has left. (``Retry.new`` rebuilds with ``type(self)``, so this survives
+	every retry.)"""
+
+	def get_backoff_time(self) -> float:
+		backoff = super().get_backoff_time()
+		deadline = _active_deadline()
+		if deadline is None:
+			return backoff
+		return max(0.0, min(backoff, deadline.remaining()))
+
+
 def _retry_policy(retries: int) -> Retry:
-	return Retry(
+	return _BudgetedRetry(
 		total=retries,
 		backoff_factor=0.3,
 		status_forcelist=RETRY_STATUS_FORCELIST,
 		allowed_methods=frozenset(["GET", "HEAD"]),
+		# A Retry-After is the server's schedule, not our budget: honoured, one site in
+		# maintenance mode (503, Retry-After: 600) held a preview's web worker for
+		# twenty minutes, and urllib3 only caps the wait at six hours.
+		respect_retry_after_header=False,
+		# Once the retries run out, hand back the last answer instead of raising: a
+		# persistent 429 is a bot wall, and only its status says so (raised, it came
+		# back as status 0 -- "couldn't reach this website").
+		raise_on_status=False,
 	)
 
 

@@ -23,7 +23,8 @@ from unittest import mock
 
 from frappe.tests import UnitTestCase
 
-from crm.domain_enrichment import http
+from crm.domain_enrichment import extractors, http
+from crm.domain_enrichment.result import CrawledPage
 from crm.domain_enrichment.tests.fixtures import make_config
 
 
@@ -267,3 +268,83 @@ class RealSocketBudgetTest(UnitTestCase):
 
 		self.assertEqual((status, error), (200, ""))
 		self.assertIn("<title>Acme</title>", html)
+
+
+def _serve_every(status: int, connections: int, extra_headers: str = ""):
+	"""A server on 127.0.0.1 that answers each of ``connections`` requests with the same
+	small HTML ``status`` page, one connection each. Returns ``(port, hits)``."""
+	body = b"<html><title>Busy</title><body>Come back later.</body></html>"
+	reply = (
+		f"HTTP/1.1 {status} Busy\r\nContent-Type: text/html\r\n{extra_headers}"
+		f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+	).encode() + body
+	server = socket.socket()
+	server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+	server.bind(("127.0.0.1", 0))
+	server.listen(connections)
+	hits = []
+
+	def handle():
+		try:
+			for _ in range(connections):
+				conn, _addr = server.accept()
+				try:
+					conn.recv(65536)
+					hits.append(time.monotonic())
+					conn.sendall(reply)
+				except OSError:
+					pass
+				finally:
+					conn.close()
+		except OSError:
+			pass
+		finally:
+			server.close()
+
+	threading.Thread(target=handle, daemon=True).start()
+	return server.getsockname()[1], hits
+
+
+class RetryPolicyTest(UnitTestCase):
+	"""Retries happen inside ``adapter.send``, below every check ``fetch`` makes, and no
+	socket is open while urllib3 sleeps between them -- so no deadline on a socket can
+	cut a sleep short. The policy itself has to keep its sleeps inside the budget."""
+
+	def _fetch(self, port, retries=2, budget=1.0):
+		cfg = make_config({"request_timeout": 2, "retry_count": retries, "max_fetch_seconds": budget})
+		with mock.patch.object(http, "_validated_ips", return_value=["127.0.0.1"]):
+			started = time.monotonic()
+			result = http.fetch(f"http://busy.example:{port}/", cfg)
+		return time.monotonic() - started, result
+
+	def test_a_retry_after_header_does_not_hold_the_fetch(self):
+		"""WordPress maintenance mode answers 503 with ``Retry-After: 600``. Honoured, two
+		retries held the preview's web worker for twenty minutes (urllib3 caps the wait
+		at six hours, not at anything of ours)."""
+		port, _hits = _serve_every(503, 3, "Retry-After: 3\r\n")
+
+		elapsed, (status, _html, _error, _final) = self._fetch(port)
+
+		self.assertLess(elapsed, 2.0, f"Retry-After held a 1s fetch for {elapsed:.2f}s")
+		self.assertEqual(status, 503)
+
+	def test_backoff_never_sleeps_past_the_budget(self):
+		"""Exponential backoff with a generous retry_count adds up to minutes."""
+		port, _hits = _serve_every(500, 12)
+
+		elapsed, (_status, _html, _error, _final) = self._fetch(port, retries=10)
+
+		self.assertLess(elapsed, 2.0, f"backoff held a 1s fetch for {elapsed:.2f}s")
+
+	def test_a_persistent_429_comes_back_as_a_429(self):
+		"""A site that answers 429 to everything is a bot wall, and its status is the only
+		thing that says so. Raised as a RetryError once the retries ran out, it came
+		back as status 0 and was diagnosed "Couldn't reach this website"."""
+		port, hits = _serve_every(429, 3)
+
+		_elapsed, (status, html, error, final) = self._fetch(port, budget=5)
+
+		self.assertEqual(len(hits), 3, "a 429 is still retried")
+		self.assertEqual((status, error), (429, ""))
+		page = CrawledPage(url=final, status_code=status, html=html, error=error)
+		self.assertEqual(extractors.diagnose_readability([page]), "blocked")
