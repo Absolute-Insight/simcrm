@@ -1615,7 +1615,7 @@ function saveView() {
   showViewModal.value = true
 }
 
-function applyFilter({ event, idx, column, item, firstColumn }) {
+function applyFilter({ event, idx, column, item, firstColumn, row }) {
   let restrictedFieldtypes = ['Datetime', 'Time']
   if (restrictedFieldtypes.includes(column.type) || idx === 0) return
   if (idx === 1 && firstColumn.key == '_liked_by') return
@@ -1625,7 +1625,15 @@ function applyFilter({ event, idx, column, item, firstColumn }) {
 
   let filters = { ...list.value.params.filters }
 
-  let value = item.name ?? item.label ?? item
+  // A cell shows a display value -- "Declined" for Busy, a rep's full name
+  // for a User link, a website without its scheme, a formatted amount -- and
+  // an equality filter on that matched nothing. Filter on the value stored on
+  // the row's own record; the cell is the fallback for a column it lacks.
+  const doc =
+    row?.name != null &&
+    list.value.data?.data?.find?.((d) => d?.name === row.name)
+  let value =
+    doc && column.key in doc ? doc[column.key] : item.name ?? item.label ?? item
 
   if (value !== null && value !== undefined && value !== '') {
     filters[column.key] = value

@@ -591,3 +591,75 @@ describe('the view dialog is handed a copy', () => {
     expect(m.button('Save Changes')).not.toBeNull()
   })
 })
+
+describe('clicking a cell filters on the stored value', () => {
+  async function clickCell(doctype, doc, column, item) {
+    setRoute({ name: doctype })
+    vc.getData = (params) => later(payload(params, [doc]))
+    const m = await mountVC({ doctype })
+    m.vc().applyFilter({
+      event: click(),
+      idx: 1,
+      column,
+      item,
+      row: { name: doc.name }, // the display row the list view rendered
+      firstColumn: { key: 'name' },
+    })
+    await settle()
+    return vc.fetches.at(-1).filters[column.key]
+  }
+
+  it('a call status shown as its label', async () => {
+    const log = { name: 'CL-1', status: 'Busy', type: 'Outgoing' }
+    const status = { key: 'status', type: 'Select' }
+    expect(
+      await clickCell('CRM Call Log', log, status, {
+        label: 'Declined',
+        color: 'orange',
+      }),
+    ).toBe('Busy')
+  })
+
+  it('a User link shown as a full name', async () => {
+    const log = { name: 'CL-2', receiver: 'rep@example.com' }
+    const receiver = { key: 'receiver', type: 'Link' }
+    expect(
+      await clickCell('CRM Call Log (receiver)', log, receiver, {
+        label: 'Rep One',
+      }),
+    ).toBe('rep@example.com')
+  })
+
+  it('a website shown without its scheme', async () => {
+    const org = { name: 'Acme', website: 'https://www.acme-pumps.co.za' }
+    const website = { key: 'website', type: 'Data' }
+    expect(
+      await clickCell(
+        'CRM Organization (website)',
+        org,
+        website,
+        'acme-pumps.co.za',
+      ),
+    ).toBe('https://www.acme-pumps.co.za')
+  })
+
+  it('an amount shown formatted', async () => {
+    const deal = { name: 'CRM-DEAL-1', annual_revenue: 1500000 }
+    const revenue = { key: 'annual_revenue', type: 'Currency' }
+    expect(
+      await clickCell('CRM Deal (revenue)', deal, revenue, 'R 1,500,000.00'),
+    ).toBe(1500000)
+  })
+
+  it('a column the record does not carry still filters on what it shows', async () => {
+    const lead = { name: 'CRM-LEAD-1', status: 'Open' }
+    expect(
+      await clickCell(
+        'CRM Lead (no row)',
+        lead,
+        { key: 'territory', type: 'Link' },
+        'Gauteng',
+      ),
+    ).toBe('Gauteng')
+  })
+})

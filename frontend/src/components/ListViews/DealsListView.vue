@@ -64,6 +64,7 @@
                     idx,
                     column,
                     item,
+                    row,
                     firstColumn: columns[0],
                   })
               "
@@ -113,6 +114,7 @@
                   idx,
                   column,
                   item,
+                  row,
                   firstColumn: columns[0],
                 })
             "
@@ -138,6 +140,7 @@
                     idx,
                     column,
                     item,
+                    row,
                     firstColumn: columns[0],
                   })
               "
@@ -177,6 +180,7 @@
                   idx,
                   column,
                   item,
+                  row,
                   firstColumn: columns[0],
                 })
             "
@@ -191,6 +195,7 @@
                   idx,
                   column,
                   item,
+                  row,
                   firstColumn: columns[0],
                 })
             "
