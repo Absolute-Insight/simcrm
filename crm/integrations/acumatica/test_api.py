@@ -199,10 +199,22 @@ class TestSyncIssueEndpoints(FrappeTestCase):
 		self.assertEqual(len(mine), 1)
 		self.assertEqual(mine[0]["kind"], "Import Failed")
 
-		# the client hands the child-row name back as a string
-		self.assertTrue(dismiss_sync_issue(str(mine[0]["name"])))
+		# exactly what the panel posts back: the int the listing gave it. Frappe checks
+		# whitelisted arguments against their annotations in tests too, so a str() here
+		# would pass while every real Dismiss click answered 417.
+		self.assertIsInstance(mine[0]["name"], int)
+		self.assertTrue(dismiss_sync_issue(mine[0]["name"]))
 
 		self.assertFalse([row for row in get_open_sync_issues() if row["remote_id"] == remote_id])
+
+	def test_a_name_that_was_stringified_on_the_way_still_matches(self):
+		from crm.integrations.acumatica.api import dismiss_sync_issue, get_open_sync_issues
+
+		remote_id = f"ISSUE-{frappe.generate_hash(length=6)}"
+		self._record(remote_id)
+		mine = [row for row in get_open_sync_issues() if row["remote_id"] == remote_id]
+
+		self.assertTrue(dismiss_sync_issue(str(mine[0]["name"])))
 
 	def test_dismiss_unknown_issue_returns_false(self):
 		from crm.integrations.acumatica.api import dismiss_sync_issue

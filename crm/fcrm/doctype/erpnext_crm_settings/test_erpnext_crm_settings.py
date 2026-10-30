@@ -145,12 +145,14 @@ class SyncIssueDismissalTest(IntegrationTestCase):
 		return frappe.get_single("ERPNext CRM Settings").sync_issues[-1]
 
 	def test_an_issue_is_dismissable_by_the_name_the_client_sends(self):
-		"""Child rows autoincrement, so ``issue.name`` is an int here and arrives from
-		the browser as a string: the comparison never matched and no product sync
-		issue could ever be cleared."""
+		"""Child rows autoincrement, so ``issue.name`` is an int, and the Logs tab posts
+		it back as a JSON number. Frappe checks whitelisted arguments against their
+		annotations in tests too: a ``str`` annotation answered every real click with
+		a 417, while a test that str()-ed the name first passed."""
 		issue = self._append_issue()
+		self.assertIsInstance(issue.name, int)
 
-		self.assertTrue(erp.dismiss_sync_issue(str(issue.name)))
+		self.assertTrue(erp.dismiss_sync_issue(issue.name))
 
 		dismissed = {
 			str(row.name): row.dismissed for row in frappe.get_single("ERPNext CRM Settings").sync_issues

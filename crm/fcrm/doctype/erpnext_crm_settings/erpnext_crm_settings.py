@@ -262,13 +262,13 @@ def get_open_sync_issues():
 
 
 @frappe.whitelist()
-def dismiss_sync_issue(issue_name: str):
+def dismiss_sync_issue(issue_name: str | int):
 	frappe.only_for(["System Manager", "Sales Manager"], True)
 	settings = frappe.get_single("ERPNext CRM Settings")
 	for issue in settings.sync_issues:
-		# Child rows autoincrement, so the name is an int here and arrives from the
-		# client as a string: the comparison never matched and nothing was ever
-		# dismissable. str() both sides, as the Acumatica endpoint does.
+		# Child rows autoincrement, so the name is an int here, and the Logs tab posts
+		# it back as a JSON number -- which a bare ``str`` annotation answered with a
+		# 417. str() both sides, as the Acumatica endpoint does.
 		if str(issue.name) == str(issue_name):
 			issue.dismissed = 1
 			# Clearing a log row must not re-run the config validations: validate()

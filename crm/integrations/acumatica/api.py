@@ -91,11 +91,14 @@ def get_open_sync_issues() -> list[dict]:
 
 
 @frappe.whitelist()
-def dismiss_sync_issue(issue_name: str) -> bool:
+def dismiss_sync_issue(issue_name: str | int) -> bool:
+	"""Child rows autoincrement, so ``get_open_sync_issues`` hands the panel an int and
+	the panel posts it back as a JSON number. A bare ``str`` annotation made Frappe's
+	argument validation answer 417 to every real Dismiss click."""
 	frappe.only_for(["System Manager", "Sales Manager"], True)
 	settings = frappe.get_doc("CRM Acumatica Settings")
 	for issue in settings.sync_issues:
-		# child rows autoincrement, so the name arrives from the client as a string
+		# an int from the panel, a string from anything that stringified it first
 		if str(issue.name) == str(issue_name):
 			issue.dismissed = 1
 			# clearing a log row must not be blocked by the config validations
