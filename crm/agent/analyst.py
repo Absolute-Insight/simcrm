@@ -766,19 +766,25 @@ def _figures_block(tables: list[dict], period: dict, budget: int | None = None, 
 			if not rows:
 				entry.append("(no rows in the period)")
 		wanted = min(len(rows), FIGURES_ROW_CAP, int(table.get("model_rows") or FIGURES_ROW_CAP))
-		shown = rows[:wanted]
+		# A row list runs worst first, so its head is the part worth keeping. A month
+		# series runs oldest first: keeping its head answered "how is this year?" from
+		# 2021 and left out every month of this one.
+		newest_last = _is_month_series(table)
+		shown = _keep(rows, wanted, newest_last)
 		if remaining is not None:
 			fixed = sum(len(line) + 1 for line in entry)
 			# A table that does not fit whole keeps the rows that do. Dropping it whole
 			# left its heading over nothing, and the model answered from nothing.
-			while shown and fixed + _rows_cost(shown, len(rows)) > remaining:
-				shown = shown[: len(shown) * 3 // 4]
-			if fixed + (_rows_cost(shown, len(rows)) if shown else 0) > remaining or (rows and not shown):
+			while shown and fixed + _rows_cost(shown, len(rows), newest_last) > remaining:
+				shown = _keep(shown, len(shown) * 3 // 4, newest_last)
+			if fixed + (_rows_cost(shown, len(rows), newest_last) if shown else 0) > remaining or (
+				rows and not shown
+			):
 				truncated = True
 				break
 			# a table capped on purpose is not one that was cut to fit
 			truncated = truncated or len(shown) < wanted
-		entry.extend(_row_lines(shown, len(rows)))
+		entry.extend(_row_lines(shown, len(rows), newest_last))
 		if remaining is not None:
 			remaining -= sum(len(line) + 1 for line in entry)
 		lines.extend(entry)
@@ -788,17 +794,26 @@ def _figures_block(tables: list[dict], period: dict, budget: int | None = None, 
 	return "\n".join(lines)
 
 
-def _row_lines(shown: list[dict], total: int) -> list[str]:
+def _is_month_series(table: dict) -> bool:
+	return any(column.get("type") == "month" for column in table.get("columns") or [])
+
+
+def _keep(rows: list[dict], count: int, newest_last: bool) -> list[dict]:
+	"""The ``count`` rows worth keeping: the last ones of a month series, else the first."""
+	return rows[len(rows) - count :] if newest_last else rows[:count]
+
+
+def _row_lines(shown: list[dict], total: int, newest_last: bool = False) -> list[str]:
 	if not shown:
 		return []
 	lines = [_fenced(json.dumps(shown, default=str, ensure_ascii=False))]
 	if total > len(shown):
-		lines.append(f"({total - len(shown)} more rows not shown)")
+		lines.append(f"({total - len(shown)} {'earlier' if newest_last else 'more'} rows not shown)")
 	return lines
 
 
-def _rows_cost(shown: list[dict], total: int) -> int:
-	return sum(len(line) + 1 for line in _row_lines(shown, total))
+def _rows_cost(shown: list[dict], total: int, newest_last: bool = False) -> int:
+	return sum(len(line) + 1 for line in _row_lines(shown, total, newest_last))
 
 
 def _fenced(value) -> str:

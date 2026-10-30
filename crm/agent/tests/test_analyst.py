@@ -492,6 +492,24 @@ class AnswerBudgetTest(UnitTestCase):
 		self.assertIn("35 more rows not shown", system)
 		self.assertEqual(len(table["rows"]), 40)  # the caller's table is not cut
 
+	def test_a_long_month_series_keeps_its_newest_months(self):
+		"""A row list runs worst first, so its head is what to keep; a month series runs
+		oldest first, and keeping its head answered "how is this year?" from 2021."""
+		months = analyst.months_between("2021-01-01", "2026-09-30")
+		table = {
+			"key": "erp_cashflow_by_month",
+			"title": "Cashflow by month",
+			"source": "Acumatica",
+			"columns": analyst.CATALOGUE["erp_cashflow_by_month"]["columns"],
+			"rows": [{"month": m, "invoiced": 1.0, "received": 1.0, "net": 0.0} for m in months],
+		}
+		for budget in (None, 14336, 3000):
+			with self.subTest(budget=budget):
+				system = analyst.build_answer_messages("q", [table], {}, max_chars=budget)[0]["content"]
+				self.assertIn('"2026-09"', system)
+				self.assertNotIn('"2021-01"', system)
+				self.assertIn("earlier rows not shown", system)
+
 	def test_history_loses_its_oldest_turns_before_the_figures_do(self):
 		history = [{"role": "user", "content": f"turn{i} " + "y" * 1500} for i in range(6)]
 		messages = analyst.build_answer_messages("q", self.tables(rows=1), {}, history, max_chars=8000)
