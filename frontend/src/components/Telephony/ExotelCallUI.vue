@@ -416,7 +416,13 @@ function makeOutgoingCall(number) {
 
 function onExotelCall(data) {
   const { user } = sessionStore()
-  const isNewCall = !showCallPopup.value && !showSmallCallPopup.value
+  // A popup left open on the last call is no sign of the same call: a customer
+  // can ring in before the rep closes it.
+  const isNewCall =
+    (!showCallPopup.value && !showSmallCallPopup.value) ||
+    (data.CallSid &&
+      callData.value?.CallSid &&
+      data.CallSid !== callData.value.CallSid)
   if (isNewCall) resetCallState()
 
   callData.value = data
@@ -427,6 +433,7 @@ function onExotelCall(data) {
       // Incoming call
       phoneNumber.value = data.CallFrom || data.From
       showCallPopup.value = true
+      showSmallCallPopup.value = false
     } else {
       // Outgoing call
       phoneNumber.value = data.To

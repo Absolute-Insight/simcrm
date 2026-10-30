@@ -75,6 +75,15 @@ const callEnded = (sid) => ({
   Status: 'completed',
   DialCallDuration: '42',
 })
+const ringingIn = (sid, from) => ({
+  CallSid: sid,
+  EventType: 'Dial',
+  Direction: 'incoming',
+  Status: 'busy',
+  CallFrom: from,
+  From: from,
+  AgentEmail: 'rep@example.com',
+})
 
 let requests, sids, noteNames, taskNames
 
@@ -165,6 +174,62 @@ describe('ExotelCallUI: a note or task belongs to its own call', () => {
     const saved = lastRequest('add_task_to_call_log').params
     expect(saved.call_sid).toBe('SID2')
     expect(saved.task).toMatchObject({ name: '', title: 'Book site visit' })
+  })
+
+  it('a call that rings in while the last one is still open starts with its own note and task', async () => {
+    const w = mountCallUI()
+    w.vm.setup()
+    await dial(w, '+27115550001')
+    button(w.el, 'tooltip', 'Add a Task').click()
+    await flush()
+    formControls.at(-1).type('Send quote')
+    await flush()
+    button(w.el, 'label', 'Save').click()
+    await flush()
+    button(w.el, 'tooltip', 'Add a Note').click()
+    await flush()
+    editors.at(-1).type('<p>Call 1: wants a quote for 40 valves</p>')
+    await flush()
+    saveOrUpdate(w.el).click()
+    await flush()
+    deliver(callEnded('SID1'))
+    await flush()
+
+    // a customer calls in, the popup still open on "Call ended"
+    deliver(ringingIn('SID2', '+27115550003'))
+    await flush()
+    expect(w.el.textContent).toContain('Incoming call')
+    button(w.el, 'tooltip', 'Add a Note').click()
+    await flush()
+    expect(editors.at(-1).props.content).toBe('')
+    editors.at(-1).type('<p>Call 2: not interested</p>')
+    await flush()
+    saveOrUpdate(w.el).click()
+    await flush()
+
+    const saved = lastRequest('add_note_to_call_log').params
+    expect(saved.call_sid).toBe('SID2')
+    expect(saved.note.name).toBe('')
+    // and call 1's task is not rewritten and moved onto call 2
+    expect(lastRequest('add_task_to_call_log').params.call_sid).toBe('SID1')
+  })
+
+  it('a call that rings in while the last one is minimised opens the popup', async () => {
+    const w = mountCallUI()
+    w.vm.setup()
+    await dial(w, '+27115550001')
+    deliver(callEnded('SID1'))
+    await flush()
+    button(w.el, 'tooltip', 'Minimize').click()
+    await flush()
+
+    deliver(ringingIn('SID2', '+27115550003'))
+    await flush()
+
+    const [small, popup] = w.el.firstElementChild.children
+    expect(popup.style.display).toBe('')
+    expect(small.style.display).toBe('none')
+    expect(popup.textContent).toContain('Incoming call')
   })
 })
 
