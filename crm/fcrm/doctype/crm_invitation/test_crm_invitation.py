@@ -202,6 +202,17 @@ class TestCRMInvitation(FrappeTestCase):
 		self.assertEqual(frappe.local.response["type"], "page")
 		self.assertEqual(frappe.local.response["http_status_code"], 410)
 
+	def link_request(self, method: str):
+		"""The emailed link's request, as a browser -- or a mail scanner -- makes it.
+
+		With a request present the endpoint's rate limits apply, and they key on
+		the caller's address.
+		"""
+		set_request(method=method, path="/api/method/crm.api.accept_invitation")
+		frappe.local.request_ip = "203.0.113.7"
+		self.addCleanup(setattr, frappe.local, "request", None)
+		self.addCleanup(setattr, frappe.local, "request_ip", None)
+
 	def test_fetching_the_link_does_not_use_the_invitation(self):
 		"""Mail scanners fetch every link in a message before anyone reads it.
 
@@ -211,8 +222,7 @@ class TestCRMInvitation(FrappeTestCase):
 		from crm.api import accept_invitation
 
 		invitation = self.make_invitation(email="prefetched@example.com")
-		set_request(method="GET", path="/api/method/crm.api.accept_invitation")
-		self.addCleanup(setattr, frappe.local, "request", None)
+		self.link_request("GET")
 
 		accept_invitation(key=invitation._raw_key)
 
@@ -227,8 +237,7 @@ class TestCRMInvitation(FrappeTestCase):
 		from crm.api import accept_invitation
 
 		invitation = self.make_invitation(email="confirmed@example.com")
-		set_request(method="POST", path="/api/method/crm.api.accept_invitation")
-		self.addCleanup(setattr, frappe.local, "request", None)
+		self.link_request("POST")
 
 		accept_invitation(key=invitation._raw_key)
 
@@ -238,8 +247,7 @@ class TestCRMInvitation(FrappeTestCase):
 	def test_a_dead_key_gets_the_plain_page_before_any_confirm_step(self):
 		from crm.api import accept_invitation
 
-		set_request(method="GET", path="/api/method/crm.api.accept_invitation")
-		self.addCleanup(setattr, frappe.local, "request", None)
+		self.link_request("GET")
 
 		accept_invitation(key="no-such-key")
 
