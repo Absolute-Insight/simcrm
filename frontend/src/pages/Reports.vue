@@ -602,7 +602,10 @@ const loadedKey = ref('')
    the key current when it arrived passed a slow earlier answer -- another
    report, or the all-reps rows -- off as the newly chosen selection's. Each
    resource answers only its latest request (latestOnly), so the key captured
-   at its latest fetch is the one its answer belongs to. */
+   at its latest fetch is the one its answer belongs to. The two resources
+   share loadedKey, so an answer stamps it only while its selection is still
+   the one chosen: a late answer from the resource no longer on screen
+   otherwise unstamped the rows that are, and left a skeleton up for good. */
 let reportKey = ''
 let builtKey = ''
 
@@ -621,7 +624,7 @@ const report = createResource({
     reportKey = requestKey.value
   },
   onSuccess() {
-    loadedKey.value = reportKey
+    if (reportKey === requestKey.value) loadedKey.value = reportKey
   },
 })
 
@@ -646,7 +649,7 @@ const builtReport = createResource({
     builtKey = requestKey.value
   },
   onSuccess() {
-    loadedKey.value = builtKey
+    if (builtKey === requestKey.value) loadedKey.value = builtKey
   },
 })
 

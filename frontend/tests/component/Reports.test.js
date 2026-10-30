@@ -230,4 +230,50 @@ describe('Reports', () => {
     await flush()
     expect(heading(el)).toBe('Deals by industry')
   })
+
+  /* A late answer from the resource no longer on screen stamped its own
+     selection as loaded, which no longer matched the one chosen, and left the
+     rows that did match behind a skeleton until a filter changed. */
+  it('keeps the builder on screen when a built-in report lands after it', async () => {
+    const el = await openReports()
+    const builtIn = pending('crm.api.reports.get_report')[0]
+    el.querySelector('#report-tab-__builder__').click()
+    await flush()
+    answer(
+      pending('crm.api.report_builder.run')[0],
+      payload('Deals by stage', [{ rep: 'Open', visits: 3 }]),
+    )
+    await flush()
+    expect(heading(el)).toBe('Deals by stage')
+
+    answer(builtIn, payload('Visits by rep', [{ rep: 'All', visits: 999 }]))
+    await flush()
+    expect(heading(el)).toBe('Deals by stage')
+    expect(cells(el)).toEqual(['Open', '3'])
+  })
+
+  it('keeps a built-in report on screen when the builder lands after it', async () => {
+    const el = await openReports()
+    answer(
+      pending('crm.api.reports.get_report')[0],
+      payload('Visits by rep', [{ rep: 'All', visits: 999 }]),
+    )
+    await flush()
+    el.querySelector('#report-tab-__builder__').click()
+    await flush()
+    const built = pending('crm.api.report_builder.run')[0]
+    el.querySelector('#report-tab-rep_summary').click()
+    await flush()
+    answer(
+      pending('crm.api.reports.get_report', (p) => p.name === 'rep_summary')[0],
+      payload('Rep summary', [{ rep: 'Alice', visits: 4 }]),
+    )
+    await flush()
+    expect(heading(el)).toBe('Rep summary')
+
+    answer(built, payload('Deals by stage', [{ rep: 'Open', visits: 3 }]))
+    await flush()
+    expect(heading(el)).toBe('Rep summary')
+    expect(cells(el)).toEqual(['Alice', '4'])
+  })
 })
