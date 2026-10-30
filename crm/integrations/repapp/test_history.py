@@ -354,6 +354,29 @@ class ImportTest(IntegrationTestCase):
 		self.assertEqual(len(self.items_of(REP)), 2)
 		self.assertEqual(frappe.db.count("Event", {"owner": REP}), 2)
 
+	def test_one_id_in_two_exports_of_one_run_lands_once(self):
+		"""A rep's exports are cumulative: two side by side in the folder carried the
+		same visit twice, and with only earlier runs to check against, each copy landed
+		-- two plan items and two events for one visit."""
+		self.write([row(id="a")], name="report_Test_Rep_2026-09-22.csv")
+		self.write([row(id="a"), row(id="b", date="18/03/2026 09:00")], name="report_Test_Rep_2026-10-15.csv")
+		summary = self.run_import()
+		self.assertEqual(len(self.items_of(REP)), 2)
+		self.assertEqual(frappe.db.count("Event", {"owner": REP}), 2)
+		self.assertEqual((summary["rows"], summary["imported"], summary.get("duplicates")), (3, 2, 1))
+
+	def test_a_row_two_later_exports_complete_is_caught_up_once(self):
+		"""Both copies found the item still live before either updated it, so the
+		catch-up ran twice: two Completed events, one of them orphaned."""
+		self.write([row(id="s", status="Scheduled", completedAt="")])
+		self.run_import()
+		self.write([row(id="s", status="Completed")], name="report_Test_Rep_2026-10-01.csv")
+		self.write([row(id="s", status="Completed")], name="report_Test_Rep_2026-10-15.csv")
+		summary = self.run_import()
+		self.assertEqual(summary["updated"], 1)
+		item = self.items_of(REP)[0]
+		self.assertEqual(frappe.get_all("Event", {"owner": REP}, pluck="name"), [item.fulfilled_by])
+
 	def test_a_new_row_for_an_existing_week_is_appended_not_duplicated(self):
 		self.write([row(id="a")])
 		self.run_import()
