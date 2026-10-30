@@ -1141,3 +1141,124 @@ a stronger escape assertion, and this section.
   bench serving this worktree's build (no Chrome extension): the views menu shows "Default"
   beside List; the Tasks empty state shows the tasks icon (list response emptied in flight, no
   data touched); Add Existing User now offers a user, where the old code offered none at all.
+---
+
+## Upstream features — frappe/crm develop to 14b5efa59
+
+**Completed 2026-10-30.** Branch `feat/global-search`.
+
+### Where upstream is
+
+The merge base is still `7dcd8430d` (2026-08-13). Taken from `upstream/develop` as of `14b5efa59`
+(#3220, 2026-10-29); its tip has since moved to `55c61880e`, all Frappe Cloud billing so far.
+v1.90.0's notes were the prompt, not the scope: no `v1.x` tag is an ancestor of `upstream/develop`
+or of ours, the notes list only the last 1.89.2 hop, and each feature was read from its merge on
+`upstream/develop`. The next port starts from `14b5efa59`.
+
+Chosen for how MBP works: 1,113 customers and 4,163 deals with no global search, reps who think
+in quote numbers and customer IDs, and whose day is built around a plan.
+
+### What was added
+
+- **Command palette** (the September palette commits on `upstream/develop`, plus #3205). Ctrl/Cmd+K,
+  a Search row in the sidebar, and a button in the phone's top bar. Finds leads, deals, contacts
+  and organizations, jumps to a page, creates a lead, deal, task or note, and with nothing typed
+  shows what is due and what was opened recently.
+- **Unsubscribed-recipient warning** (#3045). frappe's mail queue drops them without an error
+  while the Communication still lands on the timeline, so the email looks sent. The composer
+  checks To, Cc and Bcc, says who will not receive it, and holds Send until they are removed.
+- **Kanban activity counts** (#2986, merge `ff16742ec`). Nothing called `getCounts` any more, so
+  every card showed four icons and no numbers. Each count now opens that tab on the record, in
+  one grouped query per activity type instead of up to five a card.
+
+### Load-bearing decisions
+
+- **`useNavLinks` is the one list of places.** The palette reads the sidebar's links and
+  conditions rather than upstream's hardcoded `navigationItems`, so a surface Access Control
+  hides disappears from both, and a new sidebar entry is searchable with no second edit. Record
+  rows, Create rows and due items follow the same visibility through `isRecordVisible` and
+  `isDueItemVisible`. A task row needs both the Tasks surface and the surface it opens.
+- **`set_activity_counts` reads its names back through `get_list`.** `get_data` passes `rows` from
+  the request into the query, so a row's `name` key is whatever the request selected, not proof of
+  a record the caller may read. **Anything that trusts a row's `name` from `get_data` has the same
+  problem.** Counts run for leads and deals only.
+- **`get_unsubscribed_emails` is gated harder than upstream's.** `Email Unsubscribe` is System
+  Manager only and this reads it directly, while a global unsubscribe has nothing to do with the
+  record checked. It needs a CRM role, a named lead or deal the caller can read, and stays under
+  60 checks a minute per user. A rep can still test addresses they type, because the warning
+  needs that; the rate limit is the only bound on it.
+- **Vectora's own identifiers are searchable:** `acumatica_sales_quote` and `acumatica_customer`
+  on deals, `acumatica_id` on organizations and contacts. They are custom fields, so they go
+  through `_existing_fields`. `detail` puts the quote number on the row, because a customer's
+  deals otherwise all show the customer's name.
+- **Upcoming is planned activity then tasks,** not upstream's tasks plus SLA deadlines. All
+  planned activity types, not only visits, each labelled with its type. The two are deliberately
+  not merged by date: a backlog of overdue tasks would push today's plan off a shared list. The
+  `assigned_to` filter is what keeps the list personal, for reps as well as managers, because
+  `linked_records` lets anyone read a task on a record visible to them.
+- **A task only links to a record the user can open.** A rep can hold a task on a deal only
+  their manager owns, and a forced delete leaves a reference to nothing. Either falls back to
+  the Tasks page instead of an error page.
+- **The create modals mount in `GlobalModals`, not through a broadcast to the list page.**
+  `useBroadcast` leaves an event in localStorage after a live listener handled it and replays it
+  on the next mount, so the modal would reopen on the next visit to Leads. It also means a rep
+  creates from where they are. Any new use of `send`/`on` has this trap.
+- **Kanban cards stayed a `router-link`.** Upstream rebuilt the card around an overlay link with
+  `pointer-events-none` content, which leaves tooltip triggers above the link, so a click on a
+  deal's title would land on the trigger and open nothing. Our cards already hold a stopped
+  control (the actions dropdown), so the count buttons do the same and `KanbanView` is untouched.
+  A later port will see upstream's version as missing; this is why.
+- **No drill-down Settings list.** Upstream hardcodes the pages, which would drift from
+  `Settings.vue`. One Settings row, which also removed the palette's riskiest focus handling.
+- **Phones get a top-bar button rather than a drawer row.** One tap instead of two, and clear of
+  the drawer's focus trap, which took upstream four follow-up fixes.
+- **Small differences.** `Navigate` is `Go to` and ranks above Create. Telemetry is dropped;
+  nothing here reads it. Upstream's radius override went with it, since the Dialog's own radius
+  matches the rest of the app. Task and Note rows confirm with a toast, because `DoctypeModal`
+  closes silently. A task created while on the Tasks page shows after a reload, as upstream.
+
+### What was deliberately not ported
+
+- **#3193 activity search:** adds a sqlite index to build and run on prod, and prod could not be
+  sized from here. The strongest candidate for next, since it would also reach visit notes if
+  `CRM Rep Plan Item` is added to the index.
+- **Contextual palette commands** (assign, comment, list filters): touch the record pages and
+  `ViewControls` for less value than search. The provider can take them later.
+- **Create Contact and Create Organization rows:** MBP's customers and contacts come from
+  Acumatica, and a rep has no reason to start one from here.
+- **#3016 territory descendants:** our `CRM Territory` is not a tree.
+- **#3005 call any deal contact:** only appears with telephony connected.
+- **#3092 availability:** there is no sign MBP uses assignment rules; its deals arrive owned.
+- **#2922 guided setup, #3049 form tabs:** no pilot need.
+- **#3009 data import:** needs frappe#44221, and our pin `e2e1006be` is behind it. Bumping past
+  that removes the `DataImport` component `pages/DataImport.vue` imports, so #3009 has to land
+  with that bump.
+
+### Fixes from the same window, still to take
+
+Triaged 2026-10-30, not ported here. Each applies to our code:
+
+- **#3220:** Sales Users and Managers cannot edit their own comment; `frappe.client.set_value`
+  needs Comment write. Reproduced. `frappe.client.delete` fails the same way and upstream did not
+  fix that; frappe has no owner-delete endpoint, so it needs a small one of ours.
+- **#3090:** converting a lead with a co-assignee gives the deal to the co-assignee, because
+  `crm/api/todo.py` makes the newest assignee the owner. Reproduced. Does not repair past deals.
+- **#3213:** Settings → Sales Hierarchy loads 20 nodes. frappe-ui's `options.pageLength || 20`
+  makes `pageLength: 0` mean 20.
+- **#3186:** Create Lead and Create Deal may not scroll on iPad. Same dialog code; not tested on
+  iOS.
+- **#3077:** the From list offers accounts that cannot send. Upstream's filter empties the list
+  here, because `get_profile` omits `enable_outgoing`, and `USER_EMAIL_FIELDS` also shapes what
+  `update_profile` writes, so add a separate read list.
+- **#3194** (logo line only), **#3137** lead unique fields, **#3033** comments filter, and the
+  `create_deal` half of **#2992**, which only matters for custom roles.
+
+Left alone on purpose: #3103 and the rest of #2992 are here already and stricter; #3218 fixes a
+patch prod has already run.
+
+### Verification
+
+See the PR. Notes for the next port: mutation runs caught a test that passed for the wrong reason
+(`assigned_to` looked pinned by row scoping), so remove a guard and watch a test fail before
+trusting it; the kanban helper's `title_field` comment explains why one test needs `lead_name`;
+and `bench serve` needs `--host 0.0.0.0` to be reachable from the host.

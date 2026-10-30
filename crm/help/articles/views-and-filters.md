@@ -30,6 +30,9 @@ a tile lands you in a list you can immediately refine and save.
 The kanban view groups by status (or another select field) with drag-and-drop
 between columns — moving a card updates the record.
 
+Each card counts its emails, notes, tasks and comments. Click a count to open the
+record on that tab.
+
 ## Quick filters
 
 The filter row above a list offers the most-used fields for that module so

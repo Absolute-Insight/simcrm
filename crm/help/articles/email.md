@@ -14,6 +14,12 @@ is on that record's timeline, not in a separate inbox.
   pick one from the compose window.
 - Attachments added to a message are also kept on the record.
 
+## When someone has unsubscribed
+
+If a recipient has unsubscribed, Vectora says so in the composer and holds
+**Send** until you remove them. They would not have received the email anyway, so
+this tells you before it looks sent.
+
 ## Receiving
 
 - Mail to a connected account (**Settings → Email → Accounts**) is matched to
