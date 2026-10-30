@@ -429,7 +429,7 @@ Each registry entry in `frontend/src/utils/surfaces.js`'s `SURFACES` array:
 | Field | Type | Meaning |
 |---|---|---|
 | `key` | `string` | `nav.*` or `settings.*`, matching the shape above |
-| `group` | `'nav' \| 'settings'` | which list this came from — `AppSidebar.vue` (13 entries) or `Settings.vue` (27 entries) |
+| `group` | `'nav' \| 'settings'` | which list this came from — `useNavLinks.js` (13 entries) or `Settings.vue` (27 entries) |
 | `label` | `string` | display label |
 | `section` | `string?` | settings only — the settings group the surface lives under. The pane renders `section · label`, because several labels are meaningless alone ("Accounts", "Templates") and "Dashboard" / "Calendar" / "Assistant" each name both a nav link and a settings pane |
 | `floor` | `string?` | the role gate the surface's own code already enforces (e.g. `nav.analyst` → `ADMIN_ROLE`). The matrix renders that cell as a fixed dash, not a toggle — see `isAtFloor(surface, role)` |
@@ -441,7 +441,7 @@ Two steps, in order:
 1. **Register it** — add an entry to `SURFACES` in `frontend/src/utils/surfaces.js`: a key
    matching the shape above, `group`, `label`, and `section` / `floor` if applicable.
 2. **Wire `canSee` at the surface's existing gate.** The mechanism differs by group:
-   - **`nav.*`** (`AppSidebar.vue`): compose it directly into the link's own `condition`:
+   - **`nav.*`** (`useNavLinks.js`): compose it directly into the link's own `condition`:
      `condition: () => canSee('nav.foo') && <existing gate>`.
    - **`settings.*`** (`Settings.vue`): give the item a `key: 'settings.foo'` matching the
      registry and leave its own `condition` untouched. The shared `tabs` computed already

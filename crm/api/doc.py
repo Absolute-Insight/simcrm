@@ -501,6 +501,9 @@ def get_data(
 				kc["all_count"] = all_count
 				kc["count"] = len(column_data)
 
+				if doctype in KANBAN_COUNTED_DOCTYPES:
+					set_activity_counts(column_data, doctype)
+
 			if order:
 				column_data = sorted(
 					column_data,
@@ -601,6 +604,11 @@ def get_data(
 		"list_script": get_form_script(doctype, "List"),
 		"view_type": view_type,
 	}
+
+
+# Only these boards draw the counts. A task board would pay four queries for
+# numbers nothing shows.
+KANBAN_COUNTED_DOCTYPES = ("CRM Lead", "CRM Deal")
 
 
 def parse_list_data(data, doctype):
@@ -738,37 +746,49 @@ def get_fields(doctype: str, allow_all_fieldtypes: bool = False):
 	return _fields
 
 
-def getCounts(d, doctype):
-	d["_email_count"] = (
-		frappe.db.count(
-			"Communication",
-			filters={
-				"reference_doctype": doctype,
-				"reference_name": d.get("name"),
-				"communication_type": "Communication",
-			},
+def set_activity_counts(rows: list, doctype: str) -> list:
+	"""Put the email, comment, task and note counts on kanban cards.
+
+	One grouped query per activity type, not one per card: a board shows a page
+	of cards in every column.
+
+	The names are read back through ``get_list`` before anything is counted.
+	``rows`` holds what the request asked to select, and ``job_title as name`` is a
+	valid field, so a row's ``name`` is no proof of a record the user may read.
+	"""
+	names = [row.get("name") for row in rows]
+	if not names:
+		return rows
+
+	readable = frappe.get_list(doctype, filters={"name": ("in", names)}, pluck="name", limit=len(names))
+
+	def count_by(activity_doctype, link_field, filters=None):
+		if not readable:
+			return {}
+		result = frappe.get_all(
+			activity_doctype,
+			filters={"reference_doctype": doctype, link_field: ["in", readable], **(filters or {})},
+			fields=[link_field, COUNT_NAME],
+			group_by=link_field,
 		)
-		or 0
-	)
-	d["_email_count"] = d["_email_count"] + frappe.db.count(
+		return {row.get(link_field): row.total_count for row in result}
+
+	emails = count_by(
 		"Communication",
-		filters={
-			"reference_doctype": doctype,
-			"reference_name": d.get("name"),
-			"communication_type": "Automated Message",
-		},
+		"reference_name",
+		{"communication_type": ["in", ["Communication", "Automated Message"]]},
 	)
-	d["_comment_count"] = frappe.db.count(
-		"Comment",
-		filters={"reference_doctype": doctype, "reference_name": d.get("name"), "comment_type": "Comment"},
-	)
-	d["_task_count"] = frappe.db.count(
-		"CRM Task", filters={"reference_doctype": doctype, "reference_docname": d.get("name")}
-	)
-	d["_note_count"] = frappe.db.count(
-		"FCRM Note", filters={"reference_doctype": doctype, "reference_docname": d.get("name")}
-	)
-	return d
+	comments = count_by("Comment", "reference_name", {"comment_type": "Comment"})
+	tasks = count_by("CRM Task", "reference_docname")
+	notes = count_by("FCRM Note", "reference_docname")
+
+	for row in rows:
+		name = row.get("name")
+		row["_email_count"] = emails.get(name, 0)
+		row["_comment_count"] = comments.get(name, 0)
+		row["_task_count"] = tasks.get(name, 0)
+		row["_note_count"] = notes.get(name, 0)
+	return rows
 
 
 # Linked-doc titles are read per reference doctype in one permission-aware

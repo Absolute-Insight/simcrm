@@ -65,6 +65,8 @@ gotcha, not a location, and it stays in `AGENTS.md`.
 | `frontend/src/pages/Planner.vue` | Weekly planner grid, propose-my-week, plan vs actual |
 | `frontend/src/pages/Reports.vue` | Report viewer, CSV export, print view |
 | `frontend/src/pages/Dashboard.vue` | Role-aware dashboard (rep home / manager view) |
+| `frontend/src/components/CommandPalette/` | Ctrl/Cmd+K: `useCRMCommands.js` builds the rows, `crm/api/command_palette.py` searches; `utils/commandPalette.js` ranks |
+| `frontend/src/composables/useNavLinks.js` | The app's places and their conditions, read by the sidebar and the palette |
 | `frontend/src/components/Settings/Quotas.vue` | Sales targets: rep × month grid |
 | `frontend/src/components/Settings/VisitTargets.vue` | Visit targets: visits per working week per rep |
 | `frontend/src/components/Settings/AutomationRules.vue` | Automation rule admin |

@@ -18,8 +18,13 @@
   <AboutModal v-model="showAboutModal" />
   <HelpCenterModal v-if="helpCenterVisible" />
   <FieldLayoutDialogContainer />
+  <LeadModal v-if="showCreateLeadModal" v-model="showCreateLeadModal" />
+  <DealModal v-if="showCreateDealModal" v-model="showCreateDealModal" />
+  <CommandPalette />
 </template>
 <script setup>
+import { defineAsyncComponent } from 'vue'
+import CommandPalette from '@/components/CommandPalette/CommandPalette.vue'
 import FieldLayoutDialogContainer from '@/components/Modals/FieldLayoutDialogContainer.vue'
 import ChangePasswordModal from '@/components/Modals/ChangePasswordModal.vue'
 import CreateDocumentModal from '@/components/Modals/CreateDocumentModal.vue'
@@ -38,5 +43,14 @@ import {
   quickEntryProps,
   showAboutModal,
   showChangePasswordModal,
+  showCreateLeadModal,
+  showCreateDealModal,
 } from '@/composables/modals'
+
+const LeadModal = defineAsyncComponent(
+  () => import('@/components/Modals/LeadModal.vue'),
+)
+const DealModal = defineAsyncComponent(
+  () => import('@/components/Modals/DealModal.vue'),
+)
 </script>

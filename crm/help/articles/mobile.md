@@ -22,6 +22,11 @@ live on a 375px screen:
 
 The reports rail becomes a picker above the table.
 
+## Search
+
+Tap the magnifying glass in the top bar to find any record, by name, phone
+number, quote number or customer ID. See *Finding anything with Search*.
+
 ## Notifications
 
 Realtime updates — a new suggestion, an assignment — arrive while the app is

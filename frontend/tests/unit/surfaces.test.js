@@ -30,11 +30,8 @@ const settingsSrc = readFileSync(
   ),
   'utf8',
 )
-const sidebarSrc = readFileSync(
-  path.resolve(
-    import.meta.dirname,
-    '../../src/components/Layouts/AppSidebar.vue',
-  ),
+const navLinksSrc = readFileSync(
+  path.resolve(import.meta.dirname, '../../src/composables/useNavLinks.js'),
   'utf8',
 )
 
@@ -58,7 +55,7 @@ function keySet(src, prefix) {
  *
  * Slices from one `key:` occurrence to the next (or to the end of `src` for
  * the last one). The two shells don't share a field list -- Settings.vue's
- * items carry `icon`/`component`, AppSidebar.vue's carry `icon`/`to`/`action`/
+ * items carry `icon`/`component`, useNavLinks.js's carry `icon`/`to`/`action`/
  * `tint` -- but both always write `condition:`, when an item has one, as the
  * last field before its closing brace. So an item's own condition is always
  * inside its own slice and never inside its neighbour's, even though the
@@ -103,11 +100,11 @@ function settingsGates(src) {
   return gates
 }
 
-/** Every `nav.*` key's own condition. AppSidebar has no group nesting --
- * every link's gate, canSee included, lives on the link itself. */
+/** Every `nav.*` key's own condition. The nav has no group nesting -- every
+ * link's gate, canSee included, lives on the link itself. */
 function navGates(src) {
-  const links = src.match(/const links = \[([\s\S]*?)\n\]/)?.[1]
-  if (!links) throw new Error("could not find AppSidebar.vue's `links` array")
+  const links = src.match(/return \[([\s\S]*?)\n {2}\]/)?.[1]
+  if (!links) throw new Error("could not find useNavLinks.js's links array")
   return itemGates(links, 'nav')
 }
 
@@ -290,9 +287,9 @@ describe('the registry against the shells it describes', () => {
     expect(shellKeys).toEqual(registryKeys)
   })
 
-  it('lists exactly the nav.* keys AppSidebar.vue renders', () => {
+  it('lists exactly the nav.* keys useNavLinks.js defines', () => {
     const registryKeys = [...surfacesByGroup('nav').map((s) => s.key)].sort()
-    const shellKeys = [...keySet(sidebarSrc, 'nav')].sort()
+    const shellKeys = [...keySet(navLinksSrc, 'nav')].sort()
     expect(shellKeys).toEqual(registryKeys)
   })
 
@@ -300,7 +297,7 @@ describe('the registry against the shells it describes', () => {
   // not just a role check that happens to look similar.
   it('gates every nav key with its own canSee() call', () => {
     for (const surface of surfacesByGroup('nav')) {
-      expect(sidebarSrc, surface.key).toContain(`canSee('${surface.key}')`)
+      expect(navLinksSrc, surface.key).toContain(`canSee('${surface.key}')`)
     }
   })
 
@@ -318,7 +315,7 @@ describe('the registry against the shells it describes', () => {
   it('backs every floor with the matching role gate, on the item or its group', () => {
     const gates = new Map([
       ...settingsGates(settingsSrc),
-      ...navGates(sidebarSrc),
+      ...navGates(navLinksSrc),
     ])
     const requiredCall = {
       [MANAGER_ROLE]: 'isManager()',
