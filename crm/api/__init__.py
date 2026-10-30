@@ -194,23 +194,33 @@ def invite_by_email(emails: str, role: str):
 		return
 
 	email_string = validate_email_address(emails, throw=False)
-	email_list = split_emails(email_string)
+	# One address whatever its capitals: User.autoname stores it lower-cased and
+	# the lookups below match it ignoring case, so the set difference has to
+	# compare it the same way. It didn't, and "Sarah@MBP.co.za" was mailed an
+	# invitation to an account she already had.
+	email_list = list(dict.fromkeys(email.strip().lower() for email in split_emails(email_string)))
 	if not email_list:
 		return
-	existing_members = frappe.db.get_all("User", filters={"email": ["in", email_list]}, pluck="email")
+	existing_members = [
+		email.lower()
+		for email in frappe.db.get_all("User", filters={"email": ["in", email_list]}, pluck="email")
+	]
 	# Only a live invitation stands in the way of a new one. Without the status
 	# filter an expired row counted too, so once someone had let three days pass
 	# every later invite for that address sent nothing at all -- while the manager
 	# was told "Invitations sent successfully".
-	existing_invites = frappe.db.get_all(
-		"CRM Invitation",
-		filters={
-			"email": ["in", email_list],
-			"role": ["in", ["System Manager", "Sales Manager", "Sales User"]],
-			"status": "Pending",
-		},
-		pluck="email",
-	)
+	existing_invites = [
+		email.lower()
+		for email in frappe.db.get_all(
+			"CRM Invitation",
+			filters={
+				"email": ["in", email_list],
+				"role": ["in", ["System Manager", "Sales Manager", "Sales User"]],
+				"status": "Pending",
+			},
+			pluck="email",
+		)
+	]
 
 	to_invite = list(set(email_list) - set(existing_members) - set(existing_invites))
 

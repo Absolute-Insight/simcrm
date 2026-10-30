@@ -51,6 +51,9 @@ class CRMInvitation(Document):
 	# end: auto-generated types
 
 	def before_insert(self):
+		# Stored as the account will be named (User.autoname lower-cases it), so
+		# a pending invitation and the user it becomes are one address.
+		self.email = (self.email or "").strip().lower()
 		frappe.utils.validate_email_address(self.email, True)
 		self.validate_inviter_may_grant_role()
 		self.validate_existing_user()

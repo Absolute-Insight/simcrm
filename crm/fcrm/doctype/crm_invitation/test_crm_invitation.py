@@ -390,3 +390,71 @@ class ReInviteTest(FrappeTestCase):
 		sendmail.assert_not_called()
 		self.assertEqual(result["existing_members"], [self.EMAIL])
 		self.assertEqual(result["to_invite"], [])
+
+
+class InviteCaseTest(FrappeTestCase):
+	"""An address is one address whatever its capitals.
+
+	User.autoname stores it lower-cased and the database matches it ignoring
+	case, so the lookups found the member -- and then a case-sensitive set
+	difference invited "Sarah@MBP.co.za" anyway, mailed them, and accepting as
+	Sales User rewrote the existing account's blocked modules.
+	"""
+
+	MEMBER = "case-member@example.com"
+	INVITEE = "case-invitee@example.com"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		for email in (self.MEMBER, self.INVITEE):
+			frappe.db.delete("CRM Invitation", {"email": email})
+			self.addCleanup(frappe.db.delete, "CRM Invitation", {"email": email})
+		self.drop_member()
+		self.addCleanup(self.drop_member)
+
+	def drop_member(self):
+		if frappe.db.exists("User", self.MEMBER):
+			frappe.delete_doc("User", self.MEMBER, force=True, ignore_permissions=True)
+			# creating a User commits, as ReInviteTest explains
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit
+
+	def invite(self, emails):
+		from crm.api import invite_by_email
+
+		with patch.object(frappe, "sendmail") as sendmail:
+			result = invite_by_email(emails, "Sales User")
+		return result, sendmail
+
+	def test_a_member_typed_in_capitals_is_reported_not_invited(self):
+		frappe.get_doc(
+			doctype="User",
+			user_type="System User",
+			email=self.MEMBER,
+			send_welcome_email=0,
+			first_name="Case Member",
+		).insert(ignore_permissions=True)
+
+		result, sendmail = self.invite("Case-Member@Example.COM")
+
+		sendmail.assert_not_called()
+		self.assertEqual(result["existing_members"], [self.MEMBER])
+		self.assertEqual(result["to_invite"], [])
+		self.assertFalse(frappe.db.exists("CRM Invitation", {"email": self.MEMBER}))
+
+	def test_a_live_invitation_typed_differently_is_not_sent_again(self):
+		self.invite(self.INVITEE)
+
+		result, sendmail = self.invite(" Case-Invitee@Example.com")
+
+		sendmail.assert_not_called()
+		self.assertEqual(result["existing_invites"], [self.INVITEE])
+		self.assertEqual(result["to_invite"], [])
+
+	def test_an_invitation_is_stored_under_the_address_the_account_will_have(self):
+		result, _sendmail = self.invite("Case-Invitee@Example.com")
+
+		self.assertEqual(result["to_invite"], [self.INVITEE])
+		self.assertEqual(
+			frappe.get_all("CRM Invitation", filters={"email": self.INVITEE}, pluck="email"), [self.INVITEE]
+		)
