@@ -6,13 +6,21 @@ gone without a trace when cleared."""
 
 from __future__ import annotations
 
+import random
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
 
 from crm.demo.deals import delete_demo_deals
-from crm.demo.history import MONTHS_BACK, create_demo_history, delete_demo_history
+from crm.demo.history import (
+	MONTHS_BACK,
+	SEED,
+	_create_snapshots,
+	create_demo_history,
+	delete_demo_history,
+)
 from crm.demo.users import DEMO_USER_EMAILS, create_demo_users, delete_demo_users
 from crm.fcrm.doctype.erpnext_crm_settings import erpnext_crm_settings
 from crm.integrations.acumatica import outbound
@@ -237,3 +245,25 @@ class DemoSeedingGuardsTest(IntegrationTestCase):
 			outbound.queue_customer_push(deal, "on_update")
 			erpnext_crm_settings.create_customer_in_erpnext(deal, "on_update")
 			self.assertEqual([c.args[0] for c in enqueue.call_args_list], list(ERP_PUSHES))
+
+	def test_snapshots_leave_a_key_the_weekly_job_already_wrote(self):
+		"""The demo's snapshot for a month is dated a week before it; when the month
+		starts on a Sunday that is the weekly job's own day, and the blind insert
+		died on the unique key after 25 months of history had been committed."""
+		real = {"snapshot_date": "2026-01-25", "month": "2026-02", "scope": "Site", "user": ""}
+		real_name = frappe.db.exists("CRM Forecast Snapshot", real) or (
+			frappe.get_doc(
+				{"doctype": "CRM Forecast Snapshot", **real, "forecasted": 1_250_000, "actual_at_snapshot": 0}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
+		forecasted = frappe.db.get_value("CRM Forecast Snapshot", real_name, "forecasted")
+		created = {"snapshots": []}
+
+		_create_snapshots(random.Random(SEED), ["Administrator"], date(2026, 10, 30), {}, created)
+
+		self.assertEqual(frappe.db.count("CRM Forecast Snapshot", real), 1)
+		self.assertEqual(frappe.db.get_value("CRM Forecast Snapshot", real_name, "forecasted"), forecasted)
+		self.assertNotIn(real_name, created["snapshots"])
+		self.assertTrue(created["snapshots"])

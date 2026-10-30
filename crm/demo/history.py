@@ -567,30 +567,26 @@ def _create_snapshots(rng, reps, today, won_by_rep_month, created) -> None:
 			actual = won_by_rep_month.get((rep, month.strftime("%Y-%m")), 0.0)
 			forecast = round(max(actual, 50_000) * rng.uniform(0.7, 1.35), -2)
 			site_total += forecast
-			doc = frappe.get_doc(
-				{
-					"doctype": "CRM Forecast Snapshot",
-					"snapshot_date": snapshot_date,
-					"month": month.strftime("%Y-%m"),
-					"scope": "Rep",
-					"user": rep,
-					"forecasted": forecast,
-					"actual_at_snapshot": 0,
-				}
-			).insert(ignore_permissions=True)
-			created["snapshots"].append(doc.name)
-		doc = frappe.get_doc(
-			{
-				"doctype": "CRM Forecast Snapshot",
-				"snapshot_date": snapshot_date,
-				"month": month.strftime("%Y-%m"),
-				"scope": "Site",
-				"user": "",
-				"forecasted": round(site_total, -2),
-				"actual_at_snapshot": 0,
-			}
-		).insert(ignore_permissions=True)
-		created["snapshots"].append(doc.name)
+			_insert_snapshot(snapshot_date, month, "Rep", rep, forecast, created)
+		_insert_snapshot(snapshot_date, month, "Site", "", round(site_total, -2), created)
+
+
+def _insert_snapshot(snapshot_date, month, scope, user, forecasted, created) -> None:
+	"""Insert one demo snapshot unless its key is taken.
+
+	A month's snapshot is dated a week before it, which is the weekly forecast
+	job's own Sunday whenever the month starts on one. On a site that was live
+	then, the blind insert hit the unique key after two years of history had been
+	committed. The row the job wrote is a real record of what was believed, so it
+	stays and the demo's goes without.
+	"""
+	key = {"snapshot_date": snapshot_date, "month": month.strftime("%Y-%m"), "scope": scope, "user": user}
+	if frappe.db.exists("CRM Forecast Snapshot", key):
+		return
+	doc = frappe.get_doc(
+		{"doctype": "CRM Forecast Snapshot", **key, "forecasted": forecasted, "actual_at_snapshot": 0}
+	).insert(ignore_permissions=True)
+	created["snapshots"].append(doc.name)
 
 
 def _create_plans(rng, reps, today, open_deals, created) -> None:
