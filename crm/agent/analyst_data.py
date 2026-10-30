@@ -244,7 +244,10 @@ def _revenue_projection(from_date, to_date):
 	to_date_row = next(
 		({"month": m, "value": v, "kind": "month to date"} for m, v in series if m == current), None
 	)
-	projection = analyst.project_revenue(fit, after=current if to_date_row else None)
+	# "the next three months" are the next three from today, whatever month the
+	# window ends in: continued from a window that ended in June, the projection
+	# landed on July to September -- months that have happened and have actuals
+	projection = analyst.project_revenue(fit, after=current)
 	points = projection["points"]
 	if to_date_row:
 		# the current month is shown for what it is, and averaged into nothing
@@ -253,11 +256,13 @@ def _revenue_projection(from_date, to_date):
 			+ [to_date_row]
 			+ [p for p in points if p["kind"] == "projected"]
 		)
-	note = (
-		f"Projected months are the {projection['method']}; the current month is shown to date "
-		"and not included. A run rate, not booked deals."
+	note = f"Projected months are the {projection['method']}, for the months after {analyst.month_label(current)}; "
+	note += (
+		"the current month is shown to date and not included."
+		if to_date_row
+		else "the months between the period and today are not shown."
 	)
-	return points, note
+	return points, note + " A run rate, not booked deals."
 
 
 def _pipeline_by_stage(from_date, to_date):

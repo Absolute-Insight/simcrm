@@ -14,7 +14,7 @@ from unittest import mock
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from crm.agent import analyst_data
+from crm.agent import analyst, analyst_data
 from crm.integrations.acumatica.client import AcumaticaError
 
 
@@ -259,7 +259,6 @@ class RunPlanTest(IntegrationTestCase):
 		self.assertIn("before March 2026", table["note"])
 
 	def test_a_plan_running_to_the_year_9999_is_answered_not_a_500(self):
-		from crm.agent import analyst
 		from crm.agent.schemas import AnalystPlan
 
 		today = frappe.utils.getdate("2026-10-30")
@@ -639,6 +638,31 @@ class TileTest(IntegrationTestCase):
 		):
 			rows, _note = analyst_data._CRM_RUNNERS["time_to_close"]("2026-07-01", "2026-09-30")
 		self.assertEqual(rows, [{"metric": "Average days to close", "days": 13}])
+
+
+class ProjectionTest(IntegrationTestCase):
+	def test_a_window_ending_in_the_past_projects_the_months_after_today(self):
+		"""Continued from the window's last month, "the next three months" of a plan
+		for January to June were July to September -- months that had happened."""
+
+		def won(from_date, to_date):
+			return {month: 100000.0 for month in analyst.months_between(str(from_date), str(to_date))}
+
+		with (
+			mock.patch("frappe.utils.nowdate", return_value="2026-10-30"),
+			mock.patch("crm.api.dashboard.actual_by_month", side_effect=won),
+		):
+			points, note = analyst_data._revenue_projection("2026-01-01", "2026-06-30")
+		self.assertEqual(
+			[point["month"] for point in points if point["kind"] == "projected"],
+			["2026-11", "2026-12", "2027-01"],
+		)
+		self.assertEqual(
+			[point["month"] for point in points if point["kind"] == "actual"],
+			["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"],
+		)
+		self.assertIn("after October 2026", note)
+		self.assertNotIn("shown to date", note)
 
 
 class OwnerlessDealTest(IntegrationTestCase):
