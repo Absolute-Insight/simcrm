@@ -1094,24 +1094,37 @@ function updateColumns(obj) {
     list.value.params = defaultParams.value
     reloadList()
   }
-  viewUpdated.value = true
 
   if (!route.query.view) {
+    viewUpdated.value = true
     createOrUpdateStandardView()
   } else if (!view.value.public) {
+    // Saved straight away, so it is not an unsaved change; whatever else is
+    // unsaved stays that way, with Save Changes and Cancel still offered.
     persistCustomView()
+  } else {
+    viewUpdated.value = true
   }
 }
 
+// Saves the column layout of a private saved view, and only that. view.value
+// holds the filter, sort and group-by as they are on screen, unsaved changes
+// included, and sending it made a column resize quietly save those too.
 function persistCustomView() {
-  view.value.doctype = props.doctype
+  const saved = getView(route.query.view, route.params.viewType, props.doctype)
+  if (!saved) return
   call('crm.fcrm.doctype.crm_view_settings.crm_view_settings.update', {
-    view: view.value,
+    view: {
+      ...saved,
+      doctype: props.doctype,
+      columns: view.value.columns,
+      rows: view.value.rows,
+      load_default_columns: view.value.load_default_columns,
+    },
   })
-    .then(() => {
-      reloadView()
-      viewUpdated.value = false
-    })
+    // Our own save: the columns are already on screen, and letting the getView
+    // watcher reload from the saved view would drop the unsaved filter.
+    .then(() => reloadViewAfterSave())
     .catch((error) => reportActionError(error, __('Could not save the view.')))
 }
 

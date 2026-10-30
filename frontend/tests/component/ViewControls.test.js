@@ -441,3 +441,51 @@ describe('overlapping reloads', () => {
     expect(m.list().data.data).toEqual([{ name: 'row-for-Lost' }])
   })
 })
+
+describe('resizing a column on a private saved view', () => {
+  const updates = () =>
+    vc.calls.filter(([method]) =>
+      method.endsWith('crm_view_settings.update'),
+    )
+
+  it('saves the column layout, not an unsaved filter or sort', async () => {
+    savedView(21, { filters: '{"status": "Open"}' })
+    setRoute({ view: 21 })
+    const m = await mountVC()
+    m.vc().applyFilter({
+      event: click(),
+      idx: 1,
+      column: { key: 'lead_owner', type: 'Link' },
+      item: 'other.rep@example.com',
+      firstColumn: { key: 'lead_name' },
+    })
+    vc.children.SortBy.onUpdate('creation desc')
+    await settle()
+
+    m.resize() // a column edge dragged
+    await settle()
+
+    expect(updates()).toHaveLength(1)
+    const saved = updates()[0][1].view
+    expect(saved.name).toBe(21)
+    expect(JSON.parse(saved.filters)).toEqual({ status: 'Open' })
+    expect(saved.order_by).toBe('modified desc')
+    expect(saved.columns).toEqual([{ key: 'name', label: 'Name', type: 'Data' }])
+    // the filter and sort are still unsaved, and still on screen
+    expect(m.button('Cancel')).not.toBeNull()
+    expect(vc.fetches.at(-1).filters).toEqual({
+      status: 'Open',
+      lead_owner: 'other.rep@example.com',
+    })
+  })
+
+  it('with nothing else unsaved, leaves nothing to save', async () => {
+    savedView(22)
+    setRoute({ view: 22 })
+    const m = await mountVC()
+    m.resize()
+    await settle()
+    expect(updates()).toHaveLength(1)
+    expect(m.button('Save Changes')).toBeNull()
+  })
+})
