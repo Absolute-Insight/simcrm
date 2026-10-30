@@ -3,29 +3,71 @@ import json
 import frappe
 from bs4 import BeautifulSoup
 from frappe import _
-from frappe.desk.form.load import get_docinfo
+from frappe.desk.form.load import add_comments, get_communication_data
+from frappe.model.utils.mask import mask_version_data
 from frappe.query_builder import JoinType
 from frappe.translate import get_translated_doctypes
+from frappe.utils import cint
 
 from crm.fcrm.doctype.crm_call_log.crm_call_log import parse_call_log, redact_hidden_references
 
+# Saves and emails per record on one page of the timeline; "load older" asks for
+# the next page by asking for a longer one.
+TIMELINE_PAGE_LENGTH = 100
+MAX_TIMELINE_PAGE_LENGTH = 1000
+
 
 @frappe.whitelist()
-def get_activities(name: str):
+def get_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
+	"""The record's timeline: ``[activities, calls, notes, tasks, attachments, has_more]``.
+
+	``has_more`` says the record has saves or emails older than this page.
+	"""
+	page_length = min(max(cint(page_length), 1), MAX_TIMELINE_PAGE_LENGTH)
 	if frappe.db.exists("CRM Deal", name):
-		return get_deal_activities(name)
+		return get_deal_activities(name, page_length)
 	elif frappe.db.exists("CRM Lead", name):
-		return get_lead_activities(name)
+		return get_lead_activities(name, page_length)
 	else:
 		frappe.throw(_("Document not found"), frappe.DoesNotExistError)
 
 
-def get_deal_activities(name: str):
+def get_timeline_docinfo(doctype: str, name: str, page_length: int) -> frappe._dict:
+	"""The comments, saves and emails the timeline draws, newest first.
+
+	This used to be frappe's ``get_docinfo``, which is a desk form's first screen:
+	the latest 10 versions and 21 emails. On a deal saved twelve times the
+	Activity tab showed ten, with "created this deal" still at the bottom, and
+	nothing said the rest were missing. It also left the whole docinfo in
+	``frappe.response``, so every email body went over the wire twice.
+	"""
+	docinfo = frappe._dict()
+	add_comments(frappe._dict(doctype=doctype, name=name), docinfo)
+
+	# One past the page says whether there is another.
+	versions = frappe.get_all(
+		"Version",
+		filters={"ref_doctype": doctype, "docname": str(name)},
+		fields=["name", "owner", "creation", "data"],
+		order_by="creation desc",
+		limit=page_length + 1,
+	)
+	communications = get_communication_data(doctype, name, limit=page_length + 1)
+	docinfo.has_more = len(versions) > page_length or len(communications) > page_length
+
+	docinfo.versions = mask_version_data(versions[:page_length], doctype)
+	communications = communications[:page_length]
+	docinfo.communications = [c for c in communications if c.communication_type != "Automated Message"]
+	docinfo.automated_messages = [c for c in communications if c.communication_type == "Automated Message"]
+	return docinfo
+
+
+def get_deal_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 	if not frappe.has_permission("CRM Deal", "read", name):
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 
-	get_docinfo("", "CRM Deal", name)
-	docinfo = frappe.response["docinfo"]
+	docinfo = get_timeline_docinfo("CRM Deal", name, page_length)
+	has_more = docinfo.has_more
 	deal_meta = frappe.get_meta("CRM Deal")
 	deal_fields = {
 		field.fieldname: {"label": field.label, "options": field.options} for field in deal_meta.fields
@@ -59,7 +101,10 @@ def get_deal_activities(name: str):
 		# comments, tasks and notes down with it. The deal was permission-checked
 		# above; the lead is a bonus, not a gate.
 		if frappe.has_permission("CRM Lead", "read", lead):
-			activities, calls, notes, tasks, attachments = get_lead_activities(lead)
+			activities, calls, notes, tasks, attachments, lead_has_more = get_lead_activities(
+				lead, page_length
+			)
+			has_more = has_more or lead_has_more
 
 	activities.append(
 		{
@@ -72,6 +117,8 @@ def get_deal_activities(name: str):
 	)
 
 	docinfo.versions.reverse()
+	# once per call: uncached, it is two queries, and it ran for every change
+	translated_doctypes = set(get_translated_doctypes()) if docinfo.versions else set()
 
 	for version in docinfo.versions:
 		version_data = json.loads(version.data)
@@ -112,7 +159,7 @@ def get_deal_activities(name: str):
 					"value": change[1],
 				}
 
-			if data.get("value") and field_option and is_translatable(field_option):
+			if data.get("value") and field_option and field_option in translated_doctypes:
 				data["value"] = _(data["value"])
 
 				if data.get("old_value"):
@@ -185,15 +232,14 @@ def get_deal_activities(name: str):
 	activities.sort(key=lambda x: x["creation"], reverse=True)
 	activities = handle_multiple_versions(activities)
 
-	return activities, calls, notes, tasks, attachments
+	return activities, calls, notes, tasks, attachments, has_more
 
 
-def get_lead_activities(name: str):
+def get_lead_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 	if not frappe.has_permission("CRM Lead", "read", name):
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 
-	get_docinfo("", "CRM Lead", name)
-	docinfo = frappe.response["docinfo"]
+	docinfo = get_timeline_docinfo("CRM Lead", name, page_length)
 	lead_meta = frappe.get_meta("CRM Lead")
 	lead_fields = {
 		field.fieldname: {"label": field.label, "options": field.options} for field in lead_meta.fields
@@ -219,6 +265,8 @@ def get_lead_activities(name: str):
 	]
 
 	docinfo.versions.reverse()
+	# once per call: uncached, it is two queries, and it ran for every change
+	translated_doctypes = set(get_translated_doctypes()) if docinfo.versions else set()
 
 	for version in docinfo.versions:
 		version_data = json.loads(version.data)
@@ -259,7 +307,7 @@ def get_lead_activities(name: str):
 					"value": change[1],
 				}
 
-			if data.get("value") and field_option and is_translatable(field_option):
+			if data.get("value") and field_option and field_option in translated_doctypes:
 				data["value"] = _(data["value"])
 
 				if data.get("old_value"):
@@ -332,7 +380,7 @@ def get_lead_activities(name: str):
 	activities.sort(key=lambda x: x["creation"], reverse=True)
 	activities = handle_multiple_versions(activities)
 
-	return activities, calls, notes, tasks, attachments
+	return activities, calls, notes, tasks, attachments, docinfo.has_more
 
 
 ATTACHMENT_FIELDS = [
@@ -568,7 +616,3 @@ def parse_attachment_log(html: str, type: str):
 		"file_url": a_tag["href"],
 		"is_private": is_private,
 	}
-
-
-def is_translatable(doctype: str) -> bool:
-	return doctype in get_translated_doctypes()
