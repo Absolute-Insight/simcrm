@@ -125,6 +125,7 @@
 </template>
 <script setup>
 import CheckSwitch from '@/components/ui/CheckSwitch.vue'
+import { describeError } from '@/utils/describeError'
 import { FormControl, toast, createResource } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
 import { TextEditor } from 'frappe-ui/experimental'
@@ -206,7 +207,7 @@ const updateTemplate = async () => {
         },
         onError: (error) => {
           errorMessage.value =
-            error.messages[0] || __('Failed to update template')
+            describeError(error).message || __('Failed to update template')
         },
       },
     )
@@ -240,7 +241,8 @@ const renameDoc = createResource({
     toast.success(__('Template renamed successfully'))
   },
   onError: (error) => {
-    errorMessage.value = error.messages[0] || __('Failed to rename template')
+    errorMessage.value =
+      describeError(error).message || __('Failed to rename template')
   },
 })
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fakeBackend } from './fakeBackend.js'
-import { flushPromises } from './flush.js'
+import { collectRejections, flushPromises } from './flush.js'
 import { mount } from './mount.js'
 import { memoryStorage, setValue } from './stubs.js'
 
@@ -97,5 +97,19 @@ describe('EmailTemplates', () => {
     setValue(w.el.querySelector('[data-label="Search Template"]'), '')
     await flushPromises()
     expect(rows(w)).toHaveLength(20)
+  })
+
+  it('reverts a toggle that failed without server messages (FE-127)', async () => {
+    const offline = new TypeError('Failed to fetch')
+    backend.handlers['frappe.client.set_value'] = () => {
+      throw offline
+    }
+    const { w, templates } = await mountList()
+    const rejections = await collectRejections(() =>
+      w.el.querySelector('li [role="switch"]').click(),
+    )
+    expect(templates.data[0].enabled).toBeTruthy()
+    expect(toast.error).toHaveBeenCalledWith('Failed to update template')
+    expect(rejections.filter((r) => r !== offline)).toEqual([])
   })
 })

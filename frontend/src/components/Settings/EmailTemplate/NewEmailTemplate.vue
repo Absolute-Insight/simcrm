@@ -126,6 +126,7 @@
 </template>
 <script setup>
 import { useBroadcast } from '@/composables/useBroadcast'
+import { describeError } from '@/utils/describeError'
 import { FormControl, Switch, toast } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
 import { TextEditor } from 'frappe-ui/experimental'
@@ -183,7 +184,8 @@ const createTemplate = () => {
       send('refresh-email-templates')
     },
     onError: (error) => {
-      errorMessage.value = error.messages[0] || __('Failed to create template')
+      errorMessage.value =
+        describeError(error).message || __('Failed to create template')
     },
   })
 }

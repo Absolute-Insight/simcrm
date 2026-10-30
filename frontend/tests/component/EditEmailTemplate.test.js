@@ -96,4 +96,29 @@ describe('EditEmailTemplate', () => {
     expect(w.el.textContent).not.toContain('not found')
     expect(w.emitted.updateStep).toEqual([['template-list']])
   })
+
+  it('shows a fallback when a call fails without server messages (FE-127)', async () => {
+    const offline = new TypeError('Failed to fetch')
+    backend.handlers['frappe.client.rename_doc'] = () => {
+      throw offline
+    }
+    backend.handlers['frappe.client.set_value'] = () => {
+      throw offline
+    }
+    const w = mountEdit()
+    await flushPromises()
+
+    setValue(byLabel(w.el, 'Name'), 'Payment Reminder v2')
+    await flushPromises()
+    let rejections = await save(w)
+    expect(w.el.textContent).toContain('Failed to rename template')
+    expect(rejections.filter((r) => r !== offline)).toEqual([])
+
+    setValue(byLabel(w.el, 'Name'), TEMPLATE.name)
+    setValue(byLabel(w.el, 'Subject'), 'Reminder')
+    await flushPromises()
+    rejections = await save(w)
+    expect(w.el.textContent).toContain('Failed to update template')
+    expect(rejections.filter((r) => r !== offline)).toEqual([])
+  })
 })

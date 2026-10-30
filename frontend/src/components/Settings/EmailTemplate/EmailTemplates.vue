@@ -159,6 +159,7 @@ import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import EmailTemplateIcon from '@/components/Icons/EmailTemplateIcon.vue'
 import EmptyState from '../../ListViews/EmptyState.vue'
 import { useBroadcast } from '@/composables/useBroadcast'
+import { describeError } from '@/utils/describeError'
 import { TextInput, Select, Dropdown, toast } from 'frappe-ui'
 import { ref, computed, inject, watch } from 'vue'
 import { ConfirmDelete } from '../../../utils'
@@ -234,7 +235,9 @@ function toggleEmailTemplate(template, enabledVal) {
         send('refresh-email-templates')
       },
       onError: (error) => {
-        toast.error(error.messages[0] || __('Failed to update template'))
+        toast.error(
+          describeError(error).message || __('Failed to update template'),
+        )
         // Revert the change if there was an error
         template.enabled = !enabledVal
       },
@@ -249,7 +252,9 @@ function deleteTemplate(template) {
       toast.success(__('Template deleted successfully'))
     },
     onError: (error) => {
-      toast.error(error.messages[0] || __('Failed to delete template'))
+      toast.error(
+        describeError(error).message || __('Failed to delete template'),
+      )
     },
   })
 }

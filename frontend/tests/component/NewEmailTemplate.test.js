@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fakeBackend } from './fakeBackend.js'
-import { flushPromises } from './flush.js'
+import { collectRejections, flushPromises } from './flush.js'
 import { mount } from './mount.js'
 import { byLabel, buttonByText, memoryStorage, setValue } from './stubs.js'
 
@@ -100,5 +100,22 @@ describe('NewEmailTemplate', () => {
       response_html: '<p>Hi</p>',
       use_html: 1,
     })
+  })
+
+  it('shows a fallback when the insert fails without server messages (FE-127)', async () => {
+    const w = mountNew()
+    await flushPromises()
+    setValue(byLabel(w.el, 'Name'), 'Welcome')
+    setValue(byLabel(w.el, 'Subject'), 'Welcome')
+    setValue(byLabel(w.el, 'editor'), '<p>Hi</p>')
+    const failure = new TypeError('Failed to fetch')
+    backend.handlers['frappe.client.insert'] = () => {
+      throw failure
+    }
+    const rejections = await collectRejections(() =>
+      buttonByText(w.el, 'Save').click(),
+    )
+    expect(w.el.textContent).toContain('Failed to create template')
+    expect(rejections.filter((r) => r !== failure)).toEqual([])
   })
 })
