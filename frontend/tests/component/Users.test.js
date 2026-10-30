@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { reactive } from 'vue'
 import { flushPromises } from './flush.js'
 import { mount } from './mount.js'
+import { setValue } from './stubs.js'
 
 vi.mock('frappe-ui', async (importOriginal) => {
   const { Select, TextInput } = await import('./stubs.js')
@@ -44,6 +45,18 @@ import Users from '@/components/Settings/Users.vue'
 const rows = (w) => [...w.el.querySelectorAll('li')].map((li) => li.textContent)
 
 describe('Settings › Users', () => {
+  it('searches names and addresses regardless of case (FE-147)', async () => {
+    const w = mount(Users, { stubs: { Button } })
+    await flushPromises()
+    const search = w.el.querySelector('[data-label="Search User"]')
+    for (const query of ['Thandi', 'thandi', 'NKOSI', 'TNKOSI@MBP']) {
+      setValue(search, query)
+      await flushPromises()
+      expect(rows(w), query).toHaveLength(1)
+      expect(rows(w)[0]).toContain('Thandi Nkosi')
+    }
+  })
+
   it('gives every role button its icon (FE-148)', async () => {
     // not a manager session: every row's role, Admin included, is a dropdown
     session.manager = false

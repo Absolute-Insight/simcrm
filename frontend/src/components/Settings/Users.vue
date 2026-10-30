@@ -198,11 +198,12 @@ const usersList = computed(() => {
   let filteredUsers =
     users.data?.crmUsers?.filter((user) => user.name !== 'Administrator') || []
 
+  const query = search.value.toLowerCase()
   return filteredUsers
     .filter(
       (user) =>
-        user.name?.includes(search.value) ||
-        user.full_name?.includes(search.value),
+        user.name?.toLowerCase().includes(query) ||
+        user.full_name?.toLowerCase().includes(query),
     )
     .filter((user) => {
       if (currentRole.value === 'All') return true
