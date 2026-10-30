@@ -120,11 +120,9 @@ async function saveEdit() {
   }
   saving.value = true
   try {
-    await call('frappe.client.set_value', {
-      doctype: 'Comment',
+    await call('frappe.desk.form.utils.update_comment', {
       name: props.activity.name,
-      fieldname: 'content',
-      value: editContent.value,
+      content: editContent.value,
     })
     editing.value = false
     emit('reload')
@@ -137,8 +135,7 @@ async function saveEdit() {
 
 async function deleteComment() {
   try {
-    await call('frappe.client.delete', {
-      doctype: 'Comment',
+    await call('crm.api.comment.delete_comment', {
       name: props.activity.name,
     })
     emit('reload')

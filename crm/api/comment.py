@@ -6,6 +6,7 @@ from frappe import _
 from frappe.desk.form.utils import add_comment as frappe_add_comment
 from frappe.utils import get_fullname
 
+from crm.api.access import _require_crm_user
 from crm.fcrm.doctype.crm_notification.crm_notification import notify_user
 
 
@@ -89,6 +90,33 @@ def add_comment(reference_doctype: str, reference_name: str, content: str, attac
 		add_attachments(comment.name, attachments)
 
 	return comment
+
+
+@frappe.whitelist(methods=["POST"])
+def delete_comment(name: str) -> None:
+	"""Delete a comment the session user wrote.
+
+	frappe's ``update_comment`` lets the author edit a comment, but nothing lets
+	them delete it: Comment grants delete to System Manager and Website Manager, so
+	``frappe.client.delete`` refused every rep. The conditions are ``update_comment``'s,
+	plus a CRM role, because a website visitor's comment is owned by Guest, and only
+	a written comment, because the Info and Assigned rows on the timeline are
+	owned by whoever caused them.
+
+	:param name: Comment name
+	"""
+	_require_crm_user()
+	doc = frappe.get_doc("Comment", name)
+	if doc.comment_type != "Comment" or frappe.session.user not in ("Administrator", doc.owner):
+		frappe.throw(_("Comment can only be deleted by the owner"), frappe.PermissionError)
+	if doc.reference_doctype and doc.reference_name:
+		frappe.get_doc(doc.reference_doctype, doc.reference_name).check_permission("read")
+
+	# A mention's notification links to the comment, which would refuse the delete
+	frappe.db.delete(
+		"CRM Notification", {"notification_type_doctype": "Comment", "notification_type_doc": doc.name}
+	)
+	doc.delete(ignore_permissions=True)
 
 
 def add_attachments(name: str, attachments: Iterable[str | dict]) -> None:
