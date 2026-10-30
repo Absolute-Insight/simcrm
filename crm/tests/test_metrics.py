@@ -597,6 +597,43 @@ class MetricsTest(IntegrationTestCase):
 			with self.subTest(metric=metric.__name__):
 				self.assertEqual(metric("2001-03-15", "2001-03-15", USER)["value"], 3)
 
+	# --- blank buckets --------------------------------------------------
+
+	def test_a_cleared_field_and_an_unset_one_are_one_bucket(self):
+		"""Frappe stores a field set then cleared as '' and one never set as NULL.
+		Grouped on the raw column, the two drew an "Unassigned" bar and a
+		nameless one beside it."""
+		from crm.api.dashboard import (
+			blank_label,
+			get_deals_by_industry,
+			get_deals_by_salesperson,
+			get_deals_by_source,
+		)
+
+		territory = "Metrics Blank Bucket Region"
+		if not frappe.db.exists("CRM Territory", territory):
+			frappe.get_doc({"doctype": "CRM Territory", "territory_name": territory}).insert(
+				ignore_permissions=True
+			)
+		for blank in (None, ""):
+			deal = self.make_deal(territory=territory)
+			frappe.db.set_value(
+				"CRM Deal",
+				deal.name,
+				{"industry": blank, "source": blank, "deal_owner": blank},
+				update_modified=False,
+			)
+
+		today = str(frappe.utils.nowdate())
+		for chart, key, count in (
+			(get_deals_by_industry, "industry", "deals"),
+			(get_deals_by_source, "source", "count"),
+			(get_deals_by_salesperson, "salesperson", "deals"),
+		):
+			with self.subTest(chart=chart.__name__):
+				rows = chart(today, today, territory=territory)["data"]
+				self.assertEqual([(row[key], row[count]) for row in rows], [(blank_label(), 2)])
+
 	# --- the chart registry ---------------------------------------------
 
 	def test_only_registered_charts_are_reachable(self):

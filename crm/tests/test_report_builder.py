@@ -243,6 +243,18 @@ class GroupingTest(BuilderFixture, IntegrationTestCase):
 		labels = [row["label"] for row in self.rows(dimension="industry", measure="deals")]
 		self.assertIn("Unset", labels)
 
+	def test_a_cleared_field_and_an_unset_one_are_one_row(self):
+		"""The fixture's unanswered deal stores ''; a field that was never set is
+		NULL. Grouped on the raw column they came back as two rows, both
+		relabelled Unset -- two "Unset" lines in the table, the CSV and print."""
+		name = self.make_deal(industry="Software", expected_deal_value=1000)
+		self.addCleanup(frappe.delete_doc, "CRM Deal", name, force=True, ignore_missing=True)
+		frappe.db.set_value("CRM Deal", name, "industry", None, update_modified=False)
+
+		rows = self.rows(dimension="industry", measure="deals", territory=TERRITORY)
+		unset = [row["value"] for row in rows if row["label"] == "Unset"]
+		self.assertEqual(unset, [2])
+
 	def test_company_size_comes_back_in_band_order_not_by_size(self):
 		"""Sorting an ordinal dimension by its measure puts '1000+' between
 		'11-50' and '201-500', which reads as noise."""

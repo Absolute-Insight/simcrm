@@ -4,7 +4,7 @@ from datetime import timedelta
 import frappe
 from frappe import _
 from frappe.query_builder import Case, DocType
-from frappe.query_builder.functions import Avg, Coalesce, Count, Date, DateFormat, IfNull, Sum
+from frappe.query_builder.functions import Avg, Coalesce, Count, Date, DateFormat, IfNull, NullIf, Sum
 from frappe.rate_limiter import rate_limit
 from frappe.utils import add_days, date_diff, flt, get_first_day, get_last_day, getdate, now_datetime, nowdate
 from pypika.functions import Function
@@ -95,6 +95,17 @@ def blank_label() -> str:
 	the first request.
 	"""
 	return _("Unassigned")
+
+
+def blank_bucket(column):
+	"""``column`` with NULL and ``''`` folded into the one :func:`blank_label` bucket.
+
+	Group on this, not on the raw column. Frappe stores a field that was set and
+	then cleared as ``''`` and one that was never set as NULL; ``IfNull`` only
+	sees the second, so grouping on the column split one blank bucket into an
+	"Unassigned" bar and a nameless one beside it.
+	"""
+	return Coalesce(NullIf(column, ""), blank_label())
 
 
 def in_territory(table, territory: str | None):
@@ -1393,9 +1404,9 @@ def get_leads_by_source(
 
 	query = (
 		frappe.qb.from_(CRMLead)
-		.select(IfNull(CRMLead.source, blank_label()).as_("source"), Count("*").as_("count"))
+		.select(blank_bucket(CRMLead.source).as_("source"), Count("*").as_("count"))
 		.where(Date(CRMLead.creation).between(from_date, to_date))
-		.groupby(CRMLead.source)
+		.groupby(blank_bucket(CRMLead.source))
 		.orderby(Count("*"), order=frappe.qb.desc)
 	)
 
@@ -1439,9 +1450,9 @@ def get_deals_by_source(
 
 	query = (
 		frappe.qb.from_(CRMDeal)
-		.select(IfNull(CRMDeal.source, blank_label()).as_("source"), Count("*").as_("count"))
+		.select(blank_bucket(CRMDeal.source).as_("source"), Count("*").as_("count"))
 		.where(Date(CRMDeal.creation).between(from_date, to_date))
-		.groupby(CRMDeal.source)
+		.groupby(blank_bucket(CRMDeal.source))
 		.orderby(Count("*"), order=frappe.qb.desc)
 	)
 
@@ -1486,12 +1497,12 @@ def get_deals_by_territory(
 	query = (
 		frappe.qb.from_(CRMDeal)
 		.select(
-			IfNull(CRMDeal.territory, blank_label()).as_("territory"),
+			blank_bucket(CRMDeal.territory).as_("territory"),
 			Count("*").as_("deals"),
 			Sum(Coalesce(CRMDeal.deal_value, 0) * IfNull(CRMDeal.exchange_rate, 1)).as_("value"),
 		)
 		.where(Date(CRMDeal.creation).between(from_date, to_date))
-		.groupby(CRMDeal.territory)
+		.groupby(blank_bucket(CRMDeal.territory))
 		.orderby(Count("*"), order=frappe.qb.desc)
 		.orderby(
 			Sum(Coalesce(CRMDeal.deal_value, 0) * IfNull(CRMDeal.exchange_rate, 1)), order=frappe.qb.desc
@@ -1560,12 +1571,12 @@ def get_deals_by_industry(
 	query = (
 		frappe.qb.from_(CRMDeal)
 		.select(
-			IfNull(CRMDeal.industry, blank_label()).as_("industry"),
+			blank_bucket(CRMDeal.industry).as_("industry"),
 			Count("*").as_("deals"),
 			value.as_("value"),
 		)
 		.where(Date(CRMDeal.creation).between(from_date, to_date))
-		.groupby(CRMDeal.industry)
+		.groupby(blank_bucket(CRMDeal.industry))
 		.orderby(Count("*"), order=frappe.qb.desc)
 		.orderby(value, order=frappe.qb.desc)
 	)
@@ -1613,20 +1624,21 @@ def get_deals_by_company_size(
 	# CASE band -> declared position, so the x axis runs small to large. Unset
 	# lands after every real band rather than at the front.
 	bands = company_size_bands()
+	size = blank_bucket(CRMDeal.no_of_employees)
 	rank = Case()
 	for index, band in enumerate(bands):
-		rank = rank.when(CRMDeal.no_of_employees == band, index)
+		rank = rank.when(size == band, index)
 	rank = rank.else_(len(bands))
 
 	query = (
 		frappe.qb.from_(CRMDeal)
 		.select(
-			IfNull(CRMDeal.no_of_employees, blank_label()).as_("company_size"),
+			size.as_("company_size"),
 			Count("*").as_("deals"),
 			value.as_("value"),
 		)
 		.where(Date(CRMDeal.creation).between(from_date, to_date))
-		.groupby(CRMDeal.no_of_employees)
+		.groupby(size)
 		.orderby(rank)
 	)
 
@@ -1636,14 +1648,8 @@ def get_deals_by_company_size(
 	query = apply_territory(query, CRMDeal, territory)
 	query = scope_deals(query)
 
-	rows = query.run(as_dict=True) or []
-	# An empty string is a stored "no answer" and IfNull cannot see it.
-	for row in rows:
-		if not row.get("company_size"):
-			row["company_size"] = blank_label()
-
 	return {
-		"data": rows,
+		"data": query.run(as_dict=True) or [],
 		"title": _("Deals by company size"),
 		"subtitle": _("Where the pipeline sits between SMB and enterprise"),
 		"xAxis": {"title": _("Employees"), "key": "company_size", "type": "category"},
@@ -1683,12 +1689,13 @@ def get_deals_by_salesperson(
 		.left_join(User)
 		.on(User.name == CRMDeal.deal_owner)
 		.select(
-			IfNull(IfNull(User.full_name, CRMDeal.deal_owner), blank_label()).as_("salesperson"),
+			Coalesce(NullIf(User.full_name, ""), blank_bucket(CRMDeal.deal_owner)).as_("salesperson"),
 			Count("*").as_("deals"),
 			Sum(Coalesce(CRMDeal.deal_value, 0) * IfNull(CRMDeal.exchange_rate, 1)).as_("value"),
 		)
 		.where(Date(CRMDeal.creation).between(from_date, to_date))
-		.groupby(CRMDeal.deal_owner)
+		# NULL and '' are both "nobody", and must be one bar rather than two
+		.groupby(NullIf(CRMDeal.deal_owner, ""))
 		.orderby(Count("*"), order=frappe.qb.desc)
 		.orderby(
 			Sum(Coalesce(CRMDeal.deal_value, 0) * IfNull(CRMDeal.exchange_rate, 1)), order=frappe.qb.desc

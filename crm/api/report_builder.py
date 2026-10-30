@@ -40,7 +40,7 @@ from dataclasses import dataclass
 import frappe
 from frappe import _
 from frappe.query_builder import DocType
-from frappe.query_builder.functions import Avg, Coalesce, Count, IfNull, Sum
+from frappe.query_builder.functions import Avg, Coalesce, Count, IfNull, NullIf, Sum
 from frappe.rate_limiter import rate_limit
 
 from crm.api.dashboard import (
@@ -180,7 +180,9 @@ def build_rows(
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
 
-	column = Deal[dim.column]
+	# NULL and '' are the same unanswered field, so they are one group: grouped
+	# on the raw column they came back as two rows, both relabelled "Unset".
+	column = NullIf(Deal[dim.column], "")
 	query = (
 		frappe.qb.from_(Deal)
 		.join(Status)
