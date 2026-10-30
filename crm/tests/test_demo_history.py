@@ -6,7 +6,7 @@ gone without a trace when cleared."""
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -14,6 +14,14 @@ from frappe.tests import IntegrationTestCase
 from crm.demo.deals import delete_demo_deals
 from crm.demo.history import MONTHS_BACK, create_demo_history, delete_demo_history
 from crm.demo.users import DEMO_USER_EMAILS, create_demo_users, delete_demo_users
+from crm.fcrm.doctype.erpnext_crm_settings import erpnext_crm_settings
+from crm.integrations.acumatica import outbound
+
+ERP_PUSHES = (
+	"crm.integrations.acumatica.outbound.push_customer_for_deal",
+	"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.push_customer_for_deal",
+)
+PUSH_ON_WON = frappe._dict(enabled=1, create_customer_on_status_change=1, deal_status="Won")
 
 
 class DemoHistoryTest(IntegrationTestCase):
@@ -21,7 +29,22 @@ class DemoHistoryTest(IntegrationTestCase):
 	def setUpClass(cls):
 		super().setUpClass()
 		create_demo_users()
-		cls.created = create_demo_history(DEMO_USER_EMAILS)
+		# Seed the way a site with the Acumatica customer push switched on would,
+		# recording the pushes instead of queueing them.
+		cls.queued_pushes = []
+		real_enqueue = frappe.enqueue
+
+		def enqueue(method, *args, **kwargs):
+			if method in ERP_PUSHES:
+				cls.queued_pushes.append(method)
+				return None
+			return real_enqueue(method, *args, **kwargs)
+
+		with (
+			patch.object(outbound, "get_settings", return_value=PUSH_ON_WON),
+			patch.object(frappe, "enqueue", enqueue),
+		):
+			cls.created = create_demo_history(DEMO_USER_EMAILS)
 
 	@classmethod
 	def tearDownClass(cls):
@@ -69,6 +92,14 @@ class DemoHistoryTest(IntegrationTestCase):
 			if deal.status == "Won":
 				self.assertIsNotNone(deal.closed_date, name)
 				self.assertLessEqual(str(deal.creation)[:10], str(deal.closed_date), name)
+
+	def test_seeding_queues_no_erp_customer_push(self):
+		"""The history inserts deals already Won. On a site with the customer push
+		on, each one queued its fake organization for creation as a customer in
+		the client's real ERP, which Clear Demo Data cannot take back."""
+		won = frappe.db.count("CRM Deal", {"name": ["in", self.created["deals"]], "status": "Won"})
+		self.assertGreater(won, 0)
+		self.assertEqual(self.queued_pushes, [])
 
 	def test_zz_delete_removes_everything_it_created(self):
 		"""Runs last (unittest orders by name): tears the fixture down and checks nothing is left."""
@@ -182,3 +213,27 @@ class DemoSeedingGuardsTest(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_value("CRM Lead", lead.name, "lead_owner"), email)
 		# the refused delete is not reported to whoever cleared the demo
 		self.assertEqual(frappe.local.message_log, messages)
+
+	def test_erp_customer_pushes_stand_down_while_demo_data_is_seeded(self):
+		deal = frappe._dict(
+			doctype="CRM Deal", name="DEMO-DEAL", status="Won", organization="Demo Org", erpnext_customer=None
+		)
+		real_get_single = frappe.get_single
+
+		def get_single(doctype):
+			return PUSH_ON_WON if doctype == "ERPNext CRM Settings" else real_get_single(doctype)
+
+		with (
+			patch.object(outbound, "get_settings", return_value=PUSH_ON_WON),
+			patch.object(frappe, "get_single", get_single),
+			patch.object(frappe, "enqueue", MagicMock()) as enqueue,
+		):
+			with patch.dict(frappe.flags, {"in_demo_seed": True}):
+				outbound.queue_customer_push(deal, "on_update")
+				erpnext_crm_settings.create_customer_in_erpnext(deal, "on_update")
+			self.assertEqual(enqueue.call_count, 0)
+
+			# and only while seeding: a real Won deal still pushes
+			outbound.queue_customer_push(deal, "on_update")
+			erpnext_crm_settings.create_customer_in_erpnext(deal, "on_update")
+			self.assertEqual([c.args[0] for c in enqueue.call_args_list], list(ERP_PUSHES))

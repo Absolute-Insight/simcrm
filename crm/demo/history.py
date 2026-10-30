@@ -45,6 +45,7 @@ from crm.demo.utils import (
 	delete_unless_linked,
 	insert_comment,
 	resolve_owners,
+	seeds_demo_data,
 )
 
 SEED = 20260902
@@ -240,6 +241,7 @@ def _ensure_catalogue(doctype: str, field: str, values: list[str], created: list
 		created.append(value)
 
 
+@seeds_demo_data
 def create_demo_history(demo_users: list[str]) -> dict:
 	"""Write the history and return the names of everything it created."""
 	rng = random.Random(SEED)

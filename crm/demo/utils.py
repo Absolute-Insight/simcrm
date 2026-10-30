@@ -1,3 +1,4 @@
+import functools
 import json
 
 import frappe
@@ -20,6 +21,26 @@ def build_full_names(session_user):
 	names = {u["email"]: f"{u['first_name']} {u['last_name']}" for u in DEMO_USERS}
 	names[session_user] = frappe.utils.get_fullname(session_user)
 	return names
+
+
+def seeds_demo_data(fn):
+	"""Run ``fn`` with ``frappe.flags.in_demo_seed`` set, for the ERP hooks to read.
+
+	Seeding inserts deals already Won. On a site with an ERP customer push
+	switched on, each one queued its fake organization for creation as a
+	customer in the client's real ERP, and Clear Demo Data cannot take that back.
+	"""
+
+	@functools.wraps(fn)
+	def wrapper(*args, **kwargs):
+		previous = frappe.flags.in_demo_seed
+		frappe.flags.in_demo_seed = True
+		try:
+			return fn(*args, **kwargs)
+		finally:
+			frappe.flags.in_demo_seed = previous
+
+	return wrapper
 
 
 def delete_unless_linked(doctype, name):
