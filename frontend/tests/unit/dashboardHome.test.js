@@ -15,6 +15,7 @@ import {
   riskReason,
   standardViewPayload,
   toISODate,
+  withFreshFigures,
 } from '@/utils/dashboardHome'
 
 describe('toISODate', () => {
@@ -387,6 +388,46 @@ describe('isOpenStatusType', () => {
       false,
       false,
       false,
+    ])
+  })
+})
+
+describe('withFreshFigures', () => {
+  const chart = (i, x, data) => ({
+    name: i.split('_')[0],
+    type: 'axis_chart',
+    layout: { i, x, y: 0, w: 10, h: 9 },
+    data,
+  })
+
+  it("takes each chart's new figures and keeps the arrangement", () => {
+    const arranged = [chart('trend_1', 10, 'old'), chart('funnel_1', 0, 'old')]
+    const fresh = [chart('funnel_1', 0, 'new f'), chart('trend_1', 0, 'new t')]
+    expect(withFreshFigures(arranged, fresh)).toEqual([
+      chart('trend_1', 10, 'new t'),
+      chart('funnel_1', 0, 'new f'),
+    ])
+  })
+
+  it('matches on the layout id, not the chart name, which can repeat', () => {
+    const arranged = [chart('trend_a', 0, 'a'), chart('trend_b', 10, 'b')]
+    const fresh = [chart('trend_b', 10, 'B'), chart('trend_a', 0, 'A')]
+    expect(withFreshFigures(arranged, fresh).map((c) => c.data)).toEqual([
+      'A',
+      'B',
+    ])
+  })
+
+  it('keeps a chart added since Edit, and drops nothing that was removed', () => {
+    const added = chart('donut_new', 0, 'added')
+    const out = withFreshFigures([added], [chart('trend_1', 0, 'x')])
+    expect(out).toEqual([added])
+  })
+
+  it('copes with nothing loaded yet', () => {
+    expect(withFreshFigures(null, [chart('trend_1', 0, 'x')])).toEqual([])
+    expect(withFreshFigures([chart('t_1', 0, 'x')], null)).toEqual([
+      chart('t_1', 0, 'x'),
     ])
   })
 })

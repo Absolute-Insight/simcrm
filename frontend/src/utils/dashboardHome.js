@@ -288,6 +288,23 @@ export function drilldownFor(name, context = {}) {
 }
 
 /**
+ * `items` with each chart's figures taken from `fresh`, and nothing else.
+ *
+ * For a filter change while the manager grid is being arranged: `fresh` is the
+ * saved layout with the new period's data, `items` is the unsaved arrangement.
+ * Charts are matched on their layout id (`layout.i`), which is unique within a
+ * dashboard where the chart name is not; a chart `fresh` does not carry (one
+ * added since Edit) keeps the figures it has.
+ */
+export function withFreshFigures(items, fresh) {
+  const key = (item) => item?.layout?.i ?? item?.name
+  const figures = new Map((fresh || []).map((item) => [key(item), item.data]))
+  return (items || []).map((item) =>
+    figures.has(key(item)) ? { ...item, data: figures.get(key(item)) } : item,
+  )
+}
+
+/**
  * Which way a period-over-period delta points, as a semantic tone.
  *
  * `negativeIsBetter` exists because "deals at risk" going up is the one tile

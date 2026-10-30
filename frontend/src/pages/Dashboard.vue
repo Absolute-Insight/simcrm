@@ -70,17 +70,7 @@
         variant="outline"
         :placeholder="__('Period')"
         format="D MMM YYYY"
-        @change="
-          (v) =>
-            updateFilter('period', v, () => {
-              if (!v) {
-                filters.period = getLastXDays()
-                preset = 'Last 30 Days'
-              } else {
-                preset = formatter(v)
-              }
-            })
-        "
+        @change="onPeriodChange"
       >
         <template #prefix>
           <LucideCalendar class="size-4 text-ink-gray-5 mr-2" />
@@ -549,7 +539,13 @@
 
       <template v-if="showChartGrid">
         <h2 class="v-title-sm mt-6 text-ink-gray-8">{{ __('Charts') }}</h2>
-        <SkeletonTable v-if="dashboardItems.loading" :rows="4" :columns="2" />
+        <!-- Not while arranging: a filter change refreshes the figures under
+             the grid, and swapping it for a skeleton would drop it mid-edit. -->
+        <SkeletonTable
+          v-if="dashboardItems.loading && !editing"
+          :rows="4"
+          :columns="2"
+        />
         <ErrorState
           v-else-if="dashboardItems.error"
           compact
@@ -616,6 +612,7 @@ import { isNarrowGrid } from '@/composables/settings'
 import { EMPTY_CELL, formatCell } from '@/utils/reportExport'
 import { copy } from '@/utils'
 import { describeError } from '@/utils/describeError'
+import { latestOnly } from '@/utils/latestOnly'
 import { quiet } from '@/utils/quiet'
 import {
   activitySummary,
@@ -623,19 +620,30 @@ import {
   applyPanelPreference,
   axisChartEmpty,
   groupRisksByRecord,
-  mondayOf,
   planBreakdown,
   reorderVisiblePanel,
   riskReason,
   toISODate,
+  withFreshFigures,
 } from '@/utils/dashboardHome'
-import { ACTIVITY_TYPES, activityLabel } from '@/utils/planner'
+import {
+  ACTIVITY_TYPES,
+  activityLabel,
+  mondayOf,
+  todayInTimeZone,
+} from '@/utils/planner'
 import * as suggestionsModule from '@/stores/suggestions'
 import { displayReferenceLabel, urgencyBand } from '@/utils/suggestions'
-import { getLastXDays, formatter, parseDateRange } from '@/utils/dashboard'
+import {
+  getLastXDays,
+  formatter,
+  parseDateRange,
+  type DashboardDateRange,
+} from '@/utils/dashboard'
 import {
   usePageMeta,
   createResource,
+  getConfig,
   Badge,
   DateRangePicker,
   Dropdown,
@@ -703,6 +711,9 @@ function chartResource(name: string, teamOnly = false) {
       user: scopeUser.value,
       territory: scopeTerritory.value,
     }),
+    // every resource on this page refetches on a filter change; only the
+    // answer to the latest one may land (see latestOnly)
+    resourceFetcher: latestOnly(),
     // A team-only tile is never rendered for a rep, so it never fetches for
     // one either — same gate as reportResource below.
     auto: !teamOnly || isTeamView.value,
@@ -804,7 +815,14 @@ function openRecord(row: { doctype: string; docname: string }) {
   router.push({ name, params: { [key]: row.docname } })
 }
 
-const today = computed(() => toISODate(new Date()))
+/* "Today" is a calendar day in the site's timezone, the one the Planner opens
+   on and the server matches plans in; the browser's clock put a rep outside
+   that zone on the wrong day, and in the wrong week, around midnight. A ref
+   re-read on every plan fetch, not a computed over `new Date()`: with no
+   reactive dependency that was evaluated once, so a tab left open overnight
+   fetched the new week on Refresh but kept filtering it on yesterday. */
+const siteToday = () => todayInTimeZone(getConfig('systemTimezone'))
+const today = ref(siteToday())
 
 /* Badge's warning theme is still named `amber` in frappe-ui; the band itself
    decides the cut-off (URGENCY_HIGH in utils/suggestions), not this page. */
@@ -814,7 +832,11 @@ function riskBadgeTheme(band: string) {
 
 const myPlan = createResource({
   url: 'crm.api.rep_plan.get_plan',
-  makeParams: () => ({ week_start: mondayOf(new Date()) }),
+  makeParams: () => {
+    today.value = siteToday()
+    return { week_start: mondayOf(today.value) }
+  },
+  resourceFetcher: latestOnly(),
   // Only the rep home renders today's plan; the team view reloads what it
   // shows through reloadAll, the same way reportResource gates on the role.
   auto: !isTeamView.value,
@@ -840,6 +862,7 @@ function reportResource(name: string) {
       user: scopeUser.value,
       territory: scopeTerritory.value,
     }),
+    resourceFetcher: latestOnly(),
     auto: isTeamView.value,
   })
 }
@@ -850,6 +873,17 @@ const teamVisits = reportResource('visits_by_rep')
 const teamSummary = reportResource('rep_summary')
 const teamActivity = reportResource('activities_by_type')
 const teamPipeline = reportResource('pipeline_by_stage')
+/* One list, so reloadAll cannot miss one: the Rep summary and Activity summary
+   panels were added after reloadAll was written, never joined it, and kept the
+   first load's figures under whatever period or rep was chosen next. */
+const teamReports = [
+  teamAdherence,
+  teamQuota,
+  teamVisits,
+  teamSummary,
+  teamActivity,
+  teamPipeline,
+]
 
 /* The rep chart strip. Same endpoint as the manager grid's charts; the server
    pins a plain Sales User to their own records, so these are personal trends
@@ -865,6 +899,7 @@ function repChartResource(name: string) {
       user: scopeUser.value,
       territory: scopeTerritory.value,
     }),
+    resourceFetcher: latestOnly(),
     auto: !isTeamView.value,
   })
 }
@@ -892,6 +927,7 @@ const heroTrend = createResource({
     user: scopeUser.value,
     territory: scopeTerritory.value,
   }),
+  resourceFetcher: latestOnly(),
   auto: true,
 })
 
@@ -1200,16 +1236,32 @@ function updateFilter(key: string, value: unknown, callback?: () => void) {
   reloadAll()
 }
 
+/* frappe-ui v1's DateRangePicker reports a cleared or half-typed period as
+   `[]`, which is truthy: it used to be stored as the period, so the label read
+   "Invalid Date to Invalid Date" and every panel sent null dates, which the
+   server answers with the current calendar month. A range missing either end
+   falls back to the default instead. */
+function onPeriodChange(value: DashboardDateRange) {
+  const [from, to] = parseDateRange(value)
+  updateFilter('period', value, () => {
+    if (from && to) {
+      preset.value = formatter(value)
+    } else {
+      filters.period = getLastXDays()
+      preset.value = 'Last 30 Days'
+    }
+  })
+}
+
 function reloadAll() {
   quiet(heroTrend.reload())
-  quiet(dashboardItems.reload())
-  Object.values(tileResources).forEach((r) => quiet(r.reload()))
+  // the tiles this role sees: a rep has no Leads tile to refresh
+  tiles.value.forEach((tile) => quiet(tile.resource.reload()))
   quiet(suggestions.reload())
   if (isTeamView.value) {
-    quiet(teamAdherence.reload())
-    quiet(teamQuota.reload())
-    quiet(teamVisits.reload())
-    quiet(teamPipeline.reload())
+    // the manager grid; a rep's page never renders it, so never computes it
+    quiet(dashboardItems.reload())
+    teamReports.forEach((report) => quiet(report.reload()))
   } else {
     quiet(myPlan.reload())
     repCharts.forEach((chart) => quiet(chart.resource.reload()))
@@ -1239,6 +1291,8 @@ const options = computed(() => [
   },
 ])
 
+const oldItems = ref([])
+
 const dashboardItems = createResource({
   url: 'crm.api.dashboard.get_dashboard',
   makeParams() {
@@ -1249,15 +1303,25 @@ const dashboardItems = createResource({
       territory: scopeTerritory.value,
     }
   },
-  auto: true,
+  resourceFetcher: latestOnly(),
+  /* While the grid is being arranged, the arrangement on screen is unsaved
+     work and the server's layout is the one it is replacing: a filter change
+     takes each chart's new figures and leaves where the charts sit alone. The
+     Edit-time copy that Cancel restores takes them too, or cancelling would
+     bring back the previous period's numbers. */
+  transform(fresh) {
+    if (!editing.value) return fresh
+    oldItems.value = withFreshFigures(oldItems.value, fresh)
+    return withFreshFigures(dashboardItems.data, fresh)
+  },
+  // the grid is managers' only: a rep's page never renders it
+  auto: isTeamView.value,
 })
 
 const dirty = computed(() => {
   if (!editing.value) return false
   return JSON.stringify(dashboardItems.data) !== JSON.stringify(oldItems.value)
 })
-
-const oldItems = ref([])
 
 provide('fromDate', fromDate)
 provide('toDate', toDate)
