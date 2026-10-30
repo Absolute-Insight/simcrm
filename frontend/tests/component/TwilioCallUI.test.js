@@ -122,6 +122,105 @@ describe('TwilioCallUI: a note taken during a call', () => {
       name: 'NOTE-1',
     })
   })
+
+  const saveNote = async (name) => {
+    const modal = useDoctypeModal()
+    modal.triggerCallback(modal.name.value ? 'afterUpdate' : 'afterInsert', {
+      doctype: modal.doctype.value,
+      name,
+      content: '<p>Wants a quote</p>',
+    })
+    await flush()
+  }
+
+  it('a second note on the same call edits the note it saved', async () => {
+    const w = await onAcceptedCall()
+    button(w.el, 'tooltip', 'Add a Note').click()
+    await saveNote('NOTE-1')
+
+    button(w.el, 'tooltip', 'Add a Note').click()
+
+    expect(useDoctypeModal().name.value).toBe('NOTE-1')
+  })
+
+  it('after the caller hangs up, the next call starts a note of its own', async () => {
+    const w = mountCallUI()
+    w.vm.setup()
+    await flush()
+    const [first] = await ring({ From: '+27115550001', CallSid: 'CA-IN-1' })
+    button(w.el, 'label', 'Accept').click()
+    await flush()
+    button(w.el, 'tooltip', 'Add a Note').click()
+    await saveNote('NOTE-1')
+    first.emit('disconnect')
+    await flush()
+
+    await ring({ From: '+27115550002', CallSid: 'CA-IN-2' })
+    button(w.el, 'label', 'Accept').click()
+    await flush()
+    button(w.el, 'tooltip', 'Add a Note').click()
+
+    expect(useDoctypeModal().name.value).toBe(null)
+    calls.length = 0
+    await saveNote('NOTE-2')
+    expect(calls[0].args).toMatchObject({
+      call_sid: 'CA-IN-2',
+      note: { name: 'NOTE-2' },
+    })
+  })
+
+  it('a note saved after the call ended is not reopened on the next call', async () => {
+    const w = await onAcceptedCall()
+    button(w.el, 'tooltip', 'Add a Note').click()
+    button(w.el, 'tooltip', 'Hang Up').click()
+    await flush()
+    await saveNote('NOTE-1')
+
+    await ring({ From: '+27115550002', CallSid: 'CA-IN-2' })
+    button(w.el, 'label', 'Accept').click()
+    await flush()
+    button(w.el, 'tooltip', 'Add a Note').click()
+
+    expect(useDoctypeModal().name.value).toBe(null)
+  })
+
+  it('a note saved once the next call is up goes to its own call, and stays there', async () => {
+    const w = await onAcceptedCall()
+    button(w.el, 'tooltip', 'Add a Note').click()
+    button(w.el, 'tooltip', 'Hang Up').click()
+    await flush()
+    // the next call rings in while the rep is still writing up the last one
+    await ring({ From: '+27115550002', CallSid: 'CA-IN-2' })
+    button(w.el, 'label', 'Accept').click()
+    await flush()
+    await saveNote('NOTE-1')
+
+    expect(calls.at(-1).args.call_sid).toBe('CA-IN-1')
+    button(w.el, 'tooltip', 'Add a Note').click()
+    expect(useDoctypeModal().name.value).toBe(null)
+  })
+
+  it('a call the rep places after one that rang in starts a note of its own', async () => {
+    const w = mountCallUI()
+    w.vm.setup()
+    await flush()
+    const [first] = await ring({ From: '+27115550001', CallSid: 'CA-IN-1' })
+    button(w.el, 'label', 'Accept').click()
+    await flush()
+    button(w.el, 'tooltip', 'Add a Note').click()
+    await saveNote('NOTE-1')
+    first.emit('disconnect')
+    await flush()
+
+    await w.vm.makeOutgoingCall('+27115550002')
+    devices[0].lastCall.emit('messageReceived', {
+      content: { CallStatus: 'in-progress' },
+    })
+    await flush()
+    button(w.el, 'tooltip', 'Add a Note').click()
+
+    expect(useDoctypeModal().name.value).toBe(null)
+  })
 })
 
 describe('TwilioCallUI: a call that cannot be placed says why', () => {

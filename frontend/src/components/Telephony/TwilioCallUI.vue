@@ -253,7 +253,9 @@ function openNoteModal() {
 }
 
 async function updateNote(_note, callSid, isInsert = false) {
-  note.value = _note
+  // Remembered only while its own call is up: saved after hang-up, it would be
+  // the note the next call's button opens and overwrites.
+  if (callSid && callSid === _call?.parameters?.CallSid) note.value = _note
   if (isInsert && _note.name) {
     await call('crm.integrations.api.add_note_to_call_log', {
       call_sid: callSid,
@@ -353,6 +355,13 @@ function handleIncomingCall(call) {
 
   showCallPopup.value = true
   _call = call
+  // A call starts with a note of its own: only the rep's own hang-up cleared
+  // the last one, not the caller's.
+  note.value = {
+    name: '',
+    title: '',
+    content: '',
+  }
 
   // add event listener to call object
   call.on('cancel', handleDisconnectedIncomingCall)
@@ -408,6 +417,11 @@ async function makeOutgoingCall(number) {
     log.value = `Attempting to call ${number} ...`
 
     try {
+      note.value = {
+        name: '',
+        title: '',
+        content: '',
+      }
       _call = await device.connect({
         params: { To: number },
       })
