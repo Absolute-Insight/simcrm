@@ -17,6 +17,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 from markupsafe import escape
+from werkzeug.datastructures import Headers
 
 from crm.api import form as F
 
@@ -126,3 +127,35 @@ class PublicFormEscapingTest(IntegrationTestCase):
 		self.assertNotIn('onfocus="', html)
 		self.assertIn(str(escape(hostile_record)), html)
 		self.assertIn(str(escape(hostile_text)), html)
+
+
+class PublicFormFramingTest(IntegrationTestCase):
+	"""nginx sends no framing header for /crm-form/ (deploy/nginx/csp_map.conf), so
+	the page's own header is its whole policy: with none, any site can frame it."""
+
+	def setUp(self):
+		super().setUp()
+		self.addCleanup(setattr, frappe.local, "response_headers", frappe.local.response_headers)
+
+	def headers_for(self, domains):
+		from crm.www import crm_form
+
+		frappe.local.response_headers = Headers()
+		crm_form.set_embedding_headers(frappe._dict(allowed_embedding_domains=domains))
+		return frappe.local.response_headers
+
+	def test_a_form_with_no_usable_domain_can_only_be_framed_by_its_own_site(self):
+		# nothing entered, a pasted URL the builder flags as ignored, an injection try
+		for domains in ("", "https://www.example.co.za/", "x.example;script-src *"):
+			headers = self.headers_for(domains)
+			self.assertEqual(headers.get("Content-Security-Policy"), "frame-ancestors 'self'", domains)
+			self.assertEqual(headers.get("X-Frame-Options"), "SAMEORIGIN", domains)
+
+	def test_listed_domains_may_frame_the_form(self):
+		headers = self.headers_for("https://www.example.co.za\nhttps://bad.example/path *.partner.example")
+		self.assertEqual(
+			headers.get("Content-Security-Policy"),
+			"frame-ancestors 'self' https://www.example.co.za *.partner.example",
+		)
+		# X-Frame-Options has no allow-list; sent alongside, it would block the embed
+		self.assertIsNone(headers.get("X-Frame-Options"))
