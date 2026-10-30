@@ -451,9 +451,11 @@ after_migrate = [
 # frappe.clear_cache() deletes every other key on the site -- and frappe.rename_doc
 # calls it, so the Acumatica sync renaming an organization ran it mid-sync. These are
 # state, not caches: dropping the shared API token leaves its login holding one of
-# the API user's concurrent-login slots until it expires (a logout needs the token).
+# the API user's concurrent-login slots until it expires (a logout needs the token),
+# and dropping an in-flight marker lets the next click send a second order.
 persistent_cache_keys = [
 	"acumatica_token::*",
+	"acumatica_inflight::*",
 ]
 
 standard_dropdown_items = [

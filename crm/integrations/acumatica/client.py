@@ -138,8 +138,9 @@ class AcumaticaClient:
 		else:
 			self._own_token = None
 
-	def _request(self, method, url, **kw):
+	def _request(self, method, url, timeout=None, **kw):
 		"""One call with a single re-auth retry on 401."""
+		timeout = timeout or (TIMEOUT if method == "get" else WRITE_TIMEOUT)
 		for attempt in (0, 1):
 			token = self._token(force=attempt == 1)
 			headers = kw.pop("headers", {}) or {}
@@ -151,7 +152,6 @@ class AcumaticaClient:
 				# the API user's default branch.
 				headers["PX-CbApiBranch"] = branch
 			fn = getattr(requests, method)
-			timeout = TIMEOUT if method == "get" else WRITE_TIMEOUT
 			resp = fn(url, headers=headers, timeout=timeout, **dict(kw))
 			if resp.status_code == 401 and attempt == 0:
 				self._forget_token()
@@ -230,8 +230,9 @@ class AcumaticaClient:
 				time.sleep(pause)
 
 	# --- writes ---------------------------------------------------------
-	def put(self, entity, payload):
-		return self._request("put", self.entity_url(entity), json=wrap(payload)).json()
+	def put(self, entity, payload, timeout=None):
+		"""``timeout`` overrides WRITE_TIMEOUT for a write that has a deadline of its own."""
+		return self._request("put", self.entity_url(entity), json=wrap(payload), timeout=timeout).json()
 
 	# --- diagnostics ------------------------------------------------------
 	def ping(self):
