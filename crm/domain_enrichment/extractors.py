@@ -654,6 +654,10 @@ def classify_industry(pages, company_info, industry_rules):
 	best = max(scores, key=scores.get)
 	if scores[best] < INDUSTRY_MIN_SCORE:
 		return "", 0.0
+	# A tie has no winner. A two-way one clears the confidence floor at 0.5, and
+	# max() would hand it to whichever rule happened to load first.
+	if sum(1 for score in scores.values() if score == scores[best]) > 1:
+		return "", 0.0
 	confidence = scores[best] / total
 	if confidence < INDUSTRY_MIN_CONFIDENCE:
 		return "", 0.0

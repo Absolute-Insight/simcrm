@@ -195,7 +195,8 @@ def _compile_pattern(pattern: str, is_regex: int):
 
 def _build_rules() -> dict:
 	rules_by_type: dict = {}
-	names = frappe.get_all("CRM Enrichment Rule", filters={"enabled": 1}, pluck="name")
+	# a stable order, so nothing that iterates the rules depends on the database's whim
+	names = frappe.get_all("CRM Enrichment Rule", filters={"enabled": 1}, pluck="name", order_by="name asc")
 	for name in names:
 		doc = frappe.get_doc("CRM Enrichment Rule", name)
 		compiled = []

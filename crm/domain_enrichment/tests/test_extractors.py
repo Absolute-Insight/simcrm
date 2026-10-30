@@ -663,6 +663,39 @@ class IndustryTest(UnitTestCase):
 			"Manufacturing",
 		)
 
+	def test_a_tie_is_not_a_winner(self):
+		"""Two industries with the same score passed the 0.34 confidence floor at 0.5,
+		and max() handed the win to whichever rule the database returned first -- so
+		editing an unrelated rule could flip a record's industry."""
+		mfg = fixtures.keyword_rule(
+			"Industry", ["fabrication"], industry="Manufacturing", match_scope="Headline"
+		)
+		con = fixtures.keyword_rule(
+			"Industry", ["construction"], industry="Construction", match_scope="Headline"
+		)
+		page, _ = fixtures.make_page(
+			"https://acme.test",
+			"<html><head><title>Acme - steel fabrication and construction</title></head>"
+			"<body><h1>Steel fabrication</h1><h2>Construction projects</h2></body></html>",
+		)
+		for rules in ([mfg, con], [con, mfg]):
+			with self.subTest(order=[r.industry for r in rules]):
+				self.assertEqual(extractors.classify_industry([page], {}, rules), ("", 0.0))
+
+	def test_a_clear_lead_still_wins(self):
+		mfg = fixtures.keyword_rule(
+			"Industry", ["fabrication"], industry="Manufacturing", match_scope="Headline"
+		)
+		con = fixtures.keyword_rule(
+			"Industry", ["construction"], industry="Construction", match_scope="Headline"
+		)
+		page, _ = fixtures.make_page(
+			"https://acme.test",
+			"<html><head><title>Acme - steel fabrication</title></head>"
+			"<body><h1>Steel fabrication</h1><h2>Construction projects</h2></body></html>",
+		)
+		self.assertEqual(extractors.classify_industry([page], {}, [con, mfg])[0], "Manufacturing")
+
 	def test_about_page_headline_supplements_thin_homepage(self):
 		# A homepage with no meta description and abstract brand-voice headings
 		# carries no classification signal on its own -- a crawled About page's
