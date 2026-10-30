@@ -610,9 +610,12 @@ const fields = computed(() => {
 
   let processed
   if (gridViewSettings.length) {
-    processed = gridViewSettings.map((gs) =>
-      getFieldObj(gridFields.find((f) => f.fieldname === gs.fieldname)),
-    )
+    // A saved column whose field has since been hidden or deleted has no meta
+    // left to render; it would show as a blank column.
+    processed = gridViewSettings
+      .map((gs) => gridFields.find((f) => f.fieldname === gs.fieldname))
+      .filter(Boolean)
+      .map((f) => getFieldObj(f))
   } else {
     processed =
       gridFields?.filter((f) => f.in_list_view).map((f) => getFieldObj(f)) || []

@@ -306,4 +306,19 @@ describe('Grid columns', () => {
     expect(created[0].slice(0, 2)).toEqual(['CRM Product', 'Pump X'])
     unmount()
   })
+
+  it('skips a saved column whose field is now hidden or deleted', async () => {
+    gridView = [
+      { fieldname: 'rate', columns: 2 },
+      { fieldname: 'old_discount', columns: 1 },
+    ]
+    try {
+      const { el, unmount } = await mountGrid([row('r1', 1, 100)])
+      const headers = el.querySelectorAll('.grid-header .grid > div')
+      expect([...headers].map((d) => d.textContent.trim())).toEqual(['Rate'])
+      unmount()
+    } finally {
+      gridView = []
+    }
+  })
 })
