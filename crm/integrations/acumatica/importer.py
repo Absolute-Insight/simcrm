@@ -90,6 +90,17 @@ def _adopt(doctype, name, noteid):
 	return name
 
 
+def _holder_of(organization_name: str) -> str | None:
+	"""The organization a new record or a rename onto ``organization_name`` collides
+	with: one *named* so, or one holding it in the organization_name column. The unique
+	index is on the column, and a record created as "Name (CustomerID)" -- by the
+	spreadsheet import, or renamed past its autoname -- may still hold the plain name
+	there while its docname says otherwise."""
+	return frappe.db.exists("CRM Organization", organization_name) or frappe.db.get_value(
+		"CRM Organization", {"organization_name": organization_name}, "name"
+	)
+
+
 def upsert_organization(rec) -> str:
 	noteid = v(rec, "NoteID")
 	customer_id = v(rec, "CustomerID")
@@ -100,8 +111,10 @@ def upsert_organization(rec) -> str:
 		# a later live sync then finds the imported row here before it can create a rival.
 		name = _adopt("CRM Organization", _find_by_acumatica_id("CRM Organization", customer_id), noteid)
 	if not name and organization_name:
-		# CRM Organization autonames on `field:organization_name`, so the docname IS the name.
-		existing = frappe.db.exists("CRM Organization", organization_name)
+		# CRM Organization autonames on `field:organization_name`, so the docname IS the
+		# name -- but a docname lookup alone missed a holder of the name in the column, and
+		# the insert then died on the unique index every sweep until it was given up on.
+		existing = _holder_of(organization_name)
 		if existing and customer_id:
 			other = frappe.db.get_value("CRM Organization", existing, "acumatica_id")
 			if other and other != customer_id:
@@ -111,7 +124,7 @@ def upsert_organization(rec) -> str:
 				# Organization; refusing it queued a retry that fails the same way every
 				# night. Name the second one by its ID, as the spreadsheet import does.
 				organization_name = f"{organization_name} ({customer_id})"
-				existing = frappe.db.exists("CRM Organization", organization_name)
+				existing = _holder_of(organization_name)
 		name = _adopt("CRM Organization", existing, noteid)
 	elif name and organization_name:
 		# the unique index is on the organization_name COLUMN, and a record created as

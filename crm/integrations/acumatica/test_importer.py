@@ -57,6 +57,38 @@ class TestUpserts(ImporterTestCase):
 			"Acme Limited",
 		)
 
+	def test_a_new_customer_whose_name_another_org_holds_in_its_column_is_suffixed(self):
+		"""The spreadsheet import created shared-name accounts as "Name (CustomerID)"
+		while the unique organization_name column could still hold the plain name. A new
+		Acumatica customer with that plain name looked only for a *record* named so, found
+		none, and died on the unique index -- five sweeps of Import Failed, then Gave Up."""
+		frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Column Holder Ltd"}).insert(
+			ignore_permissions=True
+		)
+		frappe.rename_doc(
+			"CRM Organization",
+			"Column Holder Ltd",
+			"Column Holder Ltd (C-HOLD01)",
+			force=True,
+			show_alert=False,
+		)
+		frappe.db.sql(
+			"update `tabCRM Organization` set organization_name=%s, acumatica_id=%s where name=%s",
+			("Column Holder Ltd", "C-HOLD01", "Column Holder Ltd (C-HOLD01)"),
+		)
+
+		name = importer.upsert_organization(
+			C(NoteID="g-hold-2", CustomerID="C-HOLD02", CustomerName="Column Holder Ltd")
+		)
+
+		self.assertEqual(name, "Column Holder Ltd (C-HOLD02)")
+		self.assertEqual(frappe.db.get_value("CRM Organization", name, "acumatica_noteid"), "g-hold-2")
+		# the holder keeps its own link
+		self.assertEqual(
+			frappe.db.get_value("CRM Organization", "Column Holder Ltd (C-HOLD01)", "acumatica_id"),
+			"C-HOLD01",
+		)
+
 	def test_upsert_contact_links_organization(self):
 		importer.upsert_organization(C(NoteID="g-o2", CustomerID="ORG2", CustomerName="Org Two"))
 		name = importer.upsert_contact(
