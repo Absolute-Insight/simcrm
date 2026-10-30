@@ -961,27 +961,40 @@ def remove_doc_link(doctype, docname):
 		pass
 
 
-def remove_contact_link(doctype, docname):
-	if not doctype or not docname:
+def remove_contact_link(doctype, docname, contact):
+	"""Take one contact off a document that lists it.
+
+	frappe's get_linked_docs reports a CRM Contacts child row as its parent deal,
+	so this is handed the deal and only ``contact`` says which row is going. It
+	used to clear the whole table and the ``contact`` field, so deleting one of a
+	deal's three contacts stripped all three -- and with no primary contact left,
+	the deal's email, mobile and phone too.
+	"""
+	if not doctype or not docname or not contact:
 		return
 
 	try:
 		linked_doc_data = frappe.get_doc(doctype, docname)
-		linked_doc_data.update(
-			{
-				"contact": None,
-				"contacts": [],
-			}
-		)
+		if linked_doc_data.get("contact") == contact:
+			linked_doc_data.contact = None
+		if linked_doc_data.meta.has_field("contacts"):
+			linked_doc_data.contacts = [row for row in linked_doc_data.contacts if row.contact != contact]
 		linked_doc_data.save(ignore_permissions=True)
 	except (frappe.DoesNotExistError, frappe.ValidationError):
 		pass
 
 
 @frappe.whitelist()
-def remove_linked_doc_reference(items: str | list, remove_contact: bool = False, delete: bool = False):
+def remove_linked_doc_reference(
+	items: str | list, remove_contact: bool = False, delete: bool = False, contact: str | None = None
+):
 	if isinstance(items, str):
 		items = frappe.parse_json(items)
+
+	# Unlinking a contact means taking *that* contact off each listed document;
+	# without its name the only thing left to do is clear every contact there.
+	if remove_contact and not contact:
+		frappe.throw(_("The contact being removed is required"))
 
 	# Report what happened rather than "success". Items are skipped for three
 	# ordinary reasons -- malformed entry, no write permission, gone or invalid --
@@ -1001,7 +1014,7 @@ def remove_linked_doc_reference(items: str | list, remove_contact: bool = False,
 
 		try:
 			if remove_contact:
-				remove_contact_link(item["doctype"], item["docname"])
+				remove_contact_link(item["doctype"], item["docname"], contact)
 			else:
 				remove_doc_link(item["doctype"], item["docname"])
 
@@ -1042,6 +1055,7 @@ def _unlink_linked_docs(doctype: str, items: list, delete_linked: bool = False):
 					],
 					remove_contact=doctype == "Contact",
 					delete=delete_linked,
+					contact=doc if doctype == "Contact" else None,
 				)
 		except Exception as e:
 			frappe.log_error(f"Error processing linked docs for {doctype} {doc}: {e!s}", "Bulk Delete Error")
