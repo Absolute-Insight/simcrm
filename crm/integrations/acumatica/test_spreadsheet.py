@@ -569,6 +569,49 @@ class ImportSalesOrdersTest(SpreadsheetImportTestCase):
 		self.assertFalse(frappe.db.exists("CRM Deal", {"acumatica_sales_quote": "QT103012"}))
 		self.assertEqual([r["reason"] for r in rejects.rows], ["no customer"])
 
+	def test_a_rerun_leaves_a_deal_the_live_sync_expired_alone(self):
+		"""The sync closes deals as Administrator -- the user an operator runs the import
+		as -- so modified_by took a deal the sync had expired for one the import last
+		wrote, and a re-run reopened it."""
+		from crm.integrations.acumatica import outcomes
+
+		path = self.rows(order())
+		ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+		deal_name = frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": "QT103012"}, "name")
+		outcomes._close(deal_name, "Lost", lost_reason=outcomes.LOST_EXPIRED)
+
+		counts = ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+
+		self.assertEqual(
+			frappe.db.get_value("CRM Deal", deal_name, ["status", "lost_reason"]),
+			("Lost", outcomes.LOST_EXPIRED),
+		)
+		self.assertEqual((counts["left_alone"], counts["deals"]), (1, 0))
+
+	def test_a_rerun_keeps_the_date_the_live_sync_won_a_deal_on(self):
+		from crm.integrations.acumatica import outcomes
+
+		ss.import_sales_orders(self.rows(order()), ss.Rejects(), owners=OWNERS, rates=RATES)
+		deal_name = frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": "QT103012"}, "name")
+		outcomes._close(deal_name, "Won", closed_on=date(2026, 9, 20))
+
+		# a later export: the quote Completed, still dated the day it was raised
+		path = self.rows(order(**{"Status": "Completed"}))
+		counts = ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+
+		self.assertEqual(str(frappe.db.get_value("CRM Deal", deal_name, "closed_date")), "2026-09-20")
+		self.assertEqual(counts["left_alone"], 1)
+
+	def test_a_rerun_still_rewrites_a_deal_the_import_closed(self):
+		path = self.rows(order(**{"Status": "Completed", "Order Total": 100}))
+		ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+		path = self.rows(order(**{"Status": "Completed", "Order Total": 999}))
+		counts = ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+		self.assertEqual(
+			frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": "QT103012"}, "deal_value"), 999
+		)
+		self.assertEqual((counts["deals"], counts["left_alone"]), (1, 0))
+
 	def test_every_row_reaches_the_commit_cadence(self):
 		path = self.rows(
 			order(),

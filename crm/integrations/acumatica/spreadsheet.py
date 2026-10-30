@@ -21,6 +21,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import frappe
+from frappe.utils import getdate
 from openpyxl import load_workbook
 
 from crm.integrations.acumatica.importer import COMMIT_EVERY, upsert_organization
@@ -321,8 +322,12 @@ def upsert_deal(deal: dict, organization: str) -> str | None:
 	those already present, including any a rep has edited, so a re-run leaves
 	a rep-edited deal alone rather than overwriting their changes."""
 	name = frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": deal["order_nbr"]}, "name")
-	if name and frappe.db.get_value("CRM Deal", name, "modified_by") != frappe.session.user:
-		return None
+	if name:
+		current = frappe.db.get_value(
+			"CRM Deal", name, ["modified_by", "status", "closed_date"], as_dict=True
+		)
+		if current.modified_by != frappe.session.user or _closed_since(current, deal):
+			return None
 	doc = frappe.get_doc("CRM Deal", name) if name else frappe.new_doc("CRM Deal")
 	doc.organization = organization
 	doc.status = deal["status"]
@@ -362,6 +367,17 @@ def upsert_deal(deal: dict, organization: str) -> str | None:
 	if after:
 		doc.db_set(after, update_modified=False)
 	return doc.name
+
+
+def _closed_since(current, deal: dict) -> bool:
+	"""Closed, and not the way this row closes it: the live sync won, lost or expired the
+	deal after the import wrote it. The sync runs as Administrator -- the user an
+	operator runs the import as -- so ``modified_by`` cannot tell the two apart, and a
+	re-run reopened the deal or re-closed it under the workbook's date."""
+	if current.status not in ("Won", "Lost"):
+		return False
+	closed_on = getdate(current.closed_date) if current.closed_date else None
+	return current.status != deal["status"] or closed_on != deal["closed_date"]
 
 
 def import_sales_orders(
