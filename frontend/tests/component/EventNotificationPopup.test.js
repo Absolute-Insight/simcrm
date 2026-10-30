@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { h, nextTick } from 'vue'
 import { dayjs } from 'frappe-ui'
 import { mount } from './mount.js'
@@ -82,6 +82,10 @@ beforeEach(() => {
   storedSettings = Promise.resolve({ completedEvents: [] })
 })
 
+afterEach(() => {
+  vi.useRealTimers()
+})
+
 describe('event reminder popup', () => {
   it('keeps a dismissed reminder dismissed when the next tick re-sends it', async () => {
     const socketSide = await mountPopupAndSocketSide()
@@ -116,5 +120,44 @@ describe('event reminder popup', () => {
     await flush()
 
     expect(popupText()).not.toContain(payload.subject)
+  })
+
+  describe('when the event is', () => {
+    const at = (when) => ({
+      event_name: `EV-${when}`,
+      starts_on: when,
+      ends_on: dayjs(when).add(1, 'hour').format('YYYY-MM-DD HH:mm:ss'),
+    })
+    const timeLine = () =>
+      document.body.querySelector('.text-ink-gray-6')?.textContent.trim()
+
+    it.each([
+      ['later today', at('2026-10-30 15:00:00'), '3:00 pm - 4:00 pm'],
+      ['tomorrow', at('2026-10-31 09:00:00'), 'Tomorrow · 9:00 am - 10:00 am'],
+      [
+        'next week',
+        at('2026-11-06 09:00:00'),
+        'Fri, 6 Nov · 9:00 am - 10:00 am',
+      ],
+      [
+        'next year',
+        at('2027-01-05 09:00:00'),
+        'Tue, 5 Jan 2027 · 9:00 am - 10:00 am',
+      ],
+      [
+        'all day tomorrow',
+        { ...at('2026-10-31 00:00:00'), all_day_event: 1 },
+        'Tomorrow · All Day',
+      ],
+    ])('%s, it says which day', async (_, when, expected) => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 9, 30, 10, 0)) // Fri 30 Oct, 10:00
+      const socketSide = await mountPopupAndSocketSide()
+
+      socketSide.handleEventNotification(reminder(when))
+      await flush()
+
+      expect(timeLine()).toBe(expected)
+    })
   })
 })
