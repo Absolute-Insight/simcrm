@@ -55,8 +55,15 @@ export function getScript(doctype, view = 'Form') {
     },
   })
 
-  if (!doctypeScripts[doctype] && !scripts.loading) {
-    scripts.fetch()
+  /* Once per doctype. This runs for every useDocument call -- each rendered
+     field -- and the guard read `scripts.loading`, which a list resource does
+     not have, while `doctypeScripts` is only written for a doctype that has a
+     script: a doctype with none re-requested the list on every call. A failed
+     fetch leaves `fetched` false, so the next call asks again; onError above
+     has already reported it. reload() is what fetch() runs, and unlike fetch()
+     it returns the promise, so the rejection does not go unhandled. */
+  if (!scripts.list.fetched && !scripts.list.loading) {
+    scripts.reload().catch(() => {})
   }
 
   async function setupScript(document, helpers = {}) {
