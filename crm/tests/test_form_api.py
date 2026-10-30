@@ -289,6 +289,60 @@ class TestFormAPI(IntegrationTestCase):
 		self.assertEqual(stored.fieldtype, "Data")
 		self.assertFalse(stored.options)
 
+	# ---- hidden required fields ----
+
+	def test_a_required_field_taken_off_the_form_is_kept_as_a_hidden_default(self):
+		"""The builder moves a required field the author removes into the hidden section
+		and asks for a default (FormBuilderPanel.removeField). The save must take it, or
+		every later save of the form fails, and a submission must get the default."""
+		name = make_form("hidden-required")
+		seeded = F.get_form_config(name)["hidden_fields"]
+		F.save_form(
+			name=name,
+			form={
+				"title": "H",
+				"route": "hidden-required",
+				"document_type": "CRM Lead",
+				"fields": [{"fieldname": "email", "fieldtype": "Data"}],
+				"hidden_fields": [
+					*seeded,
+					{"fieldname": "first_name", "fieldtype": "Attach", "default": "Web visitor"},
+				],
+			},
+		)
+		hidden = {h["fieldname"]: h for h in F.get_form_config(name)["hidden_fields"]}
+		self.assertEqual(hidden["first_name"]["default"], "Web visitor")
+		self.assertEqual(hidden["first_name"]["fieldtype"], "Data")  # from the doctype
+
+		frappe.flags.in_web_form = True
+		frappe.form_dict["web_form"] = name
+		lead = frappe.get_doc({"doctype": "CRM Lead", "email": "wf-test-hidden@test.invalid"}).insert(
+			ignore_permissions=True
+		)
+		self.assertEqual(lead.first_name, "Web visitor")
+
+	def test_only_a_required_field_off_the_form_may_be_hidden(self):
+		name = make_form("hidden-scope")
+		seeded = F.get_form_config(name)["hidden_fields"]
+		on_form = [{"fieldname": "first_name", "fieldtype": "Data"}]
+		for hidden in (
+			# optional: there is no missing answer for a default to stand in for
+			{"fieldname": "website", "fieldtype": "Data", "default": "https://x.example"},
+			# still on the form: the visitor answers it
+			{"fieldname": "first_name", "fieldtype": "Data", "default": "Web visitor"},
+		):
+			with self.assertRaises(frappe.ValidationError, msg=hidden["fieldname"]):
+				F.save_form(
+					name=name,
+					form={
+						"title": "H",
+						"route": "hidden-scope",
+						"document_type": "CRM Lead",
+						"fields": on_form,
+						"hidden_fields": [*seeded, hidden],
+					},
+				)
+
 	# ---- draft dry-run ----
 
 	def test_test_submit_validates_but_creates_nothing(self):

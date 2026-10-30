@@ -426,10 +426,15 @@ def _validated_visible_fields(document_type: str, fields: list[dict]) -> list[di
 	return rows
 
 
-def _validated_hidden_fields(document_type: str, hidden: list[dict]) -> list[dict]:
+def _validated_hidden_fields(document_type: str, hidden: list[dict], visible: set) -> list[dict]:
 	"""Same gate for the hidden section: `_apply_hidden_defaults` writes these onto
-	every submission."""
+	every submission. Besides the system-set fields it seeds, that is a required field
+	the visitor could have filled but the author took off the form (`visible` is the
+	saved layout): the builder moves it here so its default stands in for the answer."""
 	catalog = {h["fieldname"]: h for h in _seed_hidden_fields(document_type)}
+	for f in _mappable_fields(document_type):
+		if f["reqd"] and f["fieldname"] not in visible:
+			catalog.setdefault(f["fieldname"], f)
 	rows = []
 	for h in hidden:
 		fieldname = h.get("fieldname")
@@ -512,7 +517,8 @@ def save_form(name: str | None, form: dict | str) -> dict:
 		hidden = _seed_hidden_fields(form["document_type"])
 	if isinstance(hidden, str):
 		hidden = json.loads(hidden or "[]")
-	hidden = _validated_hidden_fields(form["document_type"], hidden or [])
+	visible = {row.fieldname for row in doc.web_form_fields}
+	hidden = _validated_hidden_fields(form["document_type"], hidden or [], visible)
 	if doc.crm_published:
 		_assert_hidden_defaults_set(hidden)
 	doc.crm_hidden_defaults = json.dumps(hidden) if hidden else ""
