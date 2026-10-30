@@ -285,9 +285,20 @@ const events = createListResource({
   filters: buildEventFilters(),
   orFilters: buildEventOrFilters(),
   pageLength: 9999,
-  auto: true,
-  transform: (data) =>
-    data
+  // The calendar reports its visible range as it sets up, and
+  // handleRangeChange fetches that. Fetching here as well loaded every event
+  // the user ever had, with no date bound, before the ranged fetch replaced it.
+  auto: false,
+  transform: (data) => {
+    // The participants or-filter joins a child table, so an event comes back
+    // once per matching row.
+    const seen = new Set()
+    return data
+      .filter((ev) => {
+        if (seen.has(ev.name)) return false
+        seen.add(ev.name)
+        return true
+      })
       .map((ev) => ({
         id: ev.name,
         title: ev.subject,
@@ -305,9 +316,7 @@ const events = createListResource({
         referenceDoctype: ev.reference_doctype,
         referenceDocname: ev.reference_docname,
       }))
-      .filter(
-        (ev, index, self) => index === self.findIndex((e) => e.id === ev.id),
-      ),
+  },
 })
 
 provide('events', events)
