@@ -3,7 +3,7 @@ from frappe import _
 from frappe.core.api.file import get_max_file_size
 from frappe.rate_limiter import rate_limit
 from frappe.translate import get_all_translations
-from frappe.utils import sanitize_html, split_emails, validate_email_address
+from frappe.utils import escape_html, sanitize_html, split_emails, validate_email_address
 
 from crm.api.access import _require_crm_user
 from crm.fcrm.doctype.crm_invitation.crm_invitation import hash_key
@@ -128,7 +128,7 @@ def check_app_permission():
 # per client address, the eleventh rep in an office to click their invitation
 # link inside an hour was refused. Per address the limit is now generous; per key
 # it is tight, so a burst against one invitation still stops.
-@frappe.whitelist(allow_guest=True)  # nosemgrep: guest-whitelisted-method
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])  # nosemgrep: guest-whitelisted-method
 @rate_limit(limit=200, seconds=60 * 60)
 @rate_limit(key="key", limit=10, seconds=60 * 60)
 def accept_invitation(key: str | None = None):
@@ -143,11 +143,17 @@ def accept_invitation(key: str | None = None):
 	invitation = frappe.get_doc("CRM Invitation", result[0])
 	if invitation.status != "Pending":
 		return _invitation_unavailable()
+
+	# Opening the link only asks; the button on that page accepts. Mail scanners
+	# fetch every link in a message before anyone reads it, and acceptance used
+	# to happen on that GET: one automated fetch spent the single-use key, and
+	# the invitee then found "no longer valid" waiting for them.
+	request = getattr(frappe.local, "request", None)
+	if request is not None and request.method != "POST":
+		return _confirm_invitation(invitation, key)
+
 	is_new_user = invitation.accept()
 	invitation.reload()
-
-	# this is a GET request, which is rolled back unless a commit is requested
-	frappe.local.flags.commit = True
 
 	if invitation.status == "Accepted":
 		frappe.local.response["type"] = "redirect"
@@ -159,6 +165,32 @@ def accept_invitation(key: str | None = None):
 		else:
 			frappe.local.login_manager.login_as(invitation.email)
 			frappe.local.response["location"] = "/crm"
+
+
+def _confirm_invitation(invitation, key: str):
+	"""The page the emailed link opens: one button that posts the key back."""
+	from frappe.sessions import get_csrf_token
+
+	brand = frappe.db.get_single_value("FCRM Settings", "brand_name") or "Vectora"
+	# A guest has no CSRF token to send; a browser that is signed in already
+	# does, and frappe checks it on the POST.
+	csrf = (
+		f'<input type="hidden" name="csrf_token" value="{escape_html(get_csrf_token())}">'
+		if frappe.session.user != "Guest"
+		else ""
+	)
+	frappe.respond_as_web_page(
+		_("Join {0}").format(escape_html(brand)),
+		escape_html(_("You have been invited to join {0} as {1}.").format(brand, _(invitation.role)))
+		+ '<form method="post" action="/api/method/crm.api.accept_invitation" style="margin-top: 1rem">'
+		+ f'<input type="hidden" name="key" value="{escape_html(key)}">'
+		+ csrf
+		+ '<button type="submit" class="btn btn-primary btn-sm btn-block">'
+		+ escape_html(_("Accept invitation"))
+		+ "</button></form>",
+		indicator_color="blue",
+		primary_action=None,
+	)
 
 
 def _invitation_unavailable():

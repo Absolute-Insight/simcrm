@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
-from frappe.utils import add_days, now
+from frappe.utils import add_days, now, set_request
 
 
 class TestCRMInvitation(FrappeTestCase):
@@ -201,6 +201,50 @@ class TestCRMInvitation(FrappeTestCase):
 
 		self.assertEqual(frappe.local.response["type"], "page")
 		self.assertEqual(frappe.local.response["http_status_code"], 410)
+
+	def test_fetching_the_link_does_not_use_the_invitation(self):
+		"""Mail scanners fetch every link in a message before anyone reads it.
+
+		Acceptance used to happen on that GET and commit, so one automated fetch
+		spent the key and the invitee found "no longer valid" when they clicked.
+		"""
+		from crm.api import accept_invitation
+
+		invitation = self.make_invitation(email="prefetched@example.com")
+		set_request(method="GET", path="/api/method/crm.api.accept_invitation")
+		self.addCleanup(setattr, frappe.local, "request", None)
+
+		accept_invitation(key=invitation._raw_key)
+
+		self.assertEqual(frappe.db.get_value("CRM Invitation", invitation.name, "status"), "Pending")
+		self.assertFalse(frappe.db.exists("User", "prefetched@example.com"))
+		self.assertEqual(frappe.local.response["type"], "page")
+		# the page is a button that posts the same key back
+		self.assertIn('method="post"', frappe.local.message)
+		self.assertIn(f'name="key" value="{invitation._raw_key}"', frappe.local.message)
+
+	def test_the_confirm_button_accepts(self):
+		from crm.api import accept_invitation
+
+		invitation = self.make_invitation(email="confirmed@example.com")
+		set_request(method="POST", path="/api/method/crm.api.accept_invitation")
+		self.addCleanup(setattr, frappe.local, "request", None)
+
+		accept_invitation(key=invitation._raw_key)
+
+		self.assertEqual(frappe.db.get_value("CRM Invitation", invitation.name, "status"), "Accepted")
+		self.assertEqual(frappe.local.response["type"], "redirect")
+
+	def test_a_dead_key_gets_the_plain_page_before_any_confirm_step(self):
+		from crm.api import accept_invitation
+
+		set_request(method="GET", path="/api/method/crm.api.accept_invitation")
+		self.addCleanup(setattr, frappe.local, "request", None)
+
+		accept_invitation(key="no-such-key")
+
+		self.assertEqual(frappe.local.response["http_status_code"], 410)
+		self.assertNotIn("<form", frappe.local.message)
 
 
 MANAGER = "invitation-manager@crmtest.test"
