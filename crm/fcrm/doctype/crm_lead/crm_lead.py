@@ -323,18 +323,45 @@ class CRMLead(Document):
 		return filled
 
 	def update_lead_contact(self, contact):
-		contact = frappe.get_cached_doc("Contact", contact)
-		frappe.db.set_value(
-			"CRM Lead",
-			self.name,
-			{
-				"salutation": contact.salutation,
-				"first_name": contact.first_name,
-				"last_name": contact.last_name,
-				"email": contact.email_id,
-				"mobile_no": contact.mobile_no,
-			},
-		)
+		contact = frappe.get_doc("Contact", contact)
+		self.add_numbers_to_contact(contact)
+		# Mirror the contact onto the lead only where it has a value. Contacts
+		# the Acumatica importer writes carry no mobile, and copying their blanks
+		# wiped the number the rep typed, with no Version row to get it back.
+		values = {
+			"salutation": contact.salutation,
+			"first_name": contact.first_name,
+			"last_name": contact.last_name,
+			"email": contact.email_id,
+			"mobile_no": contact.mobile_no,
+		}
+		values = {field: value for field, value in values.items() if value}
+		if values:
+			frappe.db.set_value("CRM Lead", self.name, values)
+
+	def add_numbers_to_contact(self, contact):
+		"""Give the matched contact the lead's numbers it does not have yet.
+
+		The deal reads its numbers off its contact, so a number left only on the
+		lead does not reach the deal. A number becomes the contact's primary only
+		where the contact has none of that kind.
+		"""
+		if not frappe.has_permission("Contact", "write", contact):
+			return
+		known = {row.phone for row in contact.phone_nos}
+		added = False
+		for number, primary_flag in (
+			(self.mobile_no, "is_primary_mobile_no"),
+			(self.phone, "is_primary_phone"),
+		):
+			if not number or number in known:
+				continue
+			has_primary = any(row.get(primary_flag) for row in contact.phone_nos)
+			contact.append("phone_nos", {"phone": number, primary_flag: 0 if has_primary else 1})
+			known.add(number)
+			added = True
+		if added:
+			contact.save(ignore_permissions=True)
 
 	def contact_exists(self, throw=True):
 		# Match only on email which uniquely identifies a person
