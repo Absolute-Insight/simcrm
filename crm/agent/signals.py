@@ -584,6 +584,9 @@ ACTIVITY_SOURCES = (
 	("CRM Task", "reference_docname", "modified"),
 	("CRM Call Log", "reference_docname", "modified"),
 	("Comment", "reference_name", "creation"),
+	# the deal page's Notes tab: a rep writing up a conversation is working the
+	# deal, and left out it was told to re-engage one it had touched that day
+	("FCRM Note", "reference_docname", "creation"),
 )
 
 

@@ -495,6 +495,7 @@ class LatestActivityTest(PinnedSignalConfig, IntegrationTestCase):
 		frappe.db.delete("Comment", {"reference_doctype": "CRM Deal", "reference_name": self.deal})
 		frappe.db.delete("CRM Task", {"reference_doctype": "CRM Deal", "reference_docname": self.deal})
 		frappe.db.delete("CRM Call Log", {"reference_doctype": "CRM Deal", "reference_docname": self.deal})
+		frappe.db.delete("FCRM Note", {"reference_doctype": "CRM Deal", "reference_docname": self.deal})
 		frappe.delete_doc("CRM Deal", self.deal, force=True, ignore_missing=True)
 
 	def add_communication(self):
@@ -548,6 +549,17 @@ class LatestActivityTest(PinnedSignalConfig, IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 
+	def add_note(self):
+		frappe.get_doc(
+			{
+				"doctype": "FCRM Note",
+				"title": "Spoke to the buyer",
+				"content": "<p>Quote revision agreed, PO next week.</p>",
+				"reference_doctype": "CRM Deal",
+				"reference_docname": self.deal,
+			}
+		).insert(ignore_permissions=True)
+
 	def assert_counts_as_activity(self, add):
 		add()
 		latest = _latest_activity([self.deal])
@@ -570,6 +582,11 @@ class LatestActivityTest(PinnedSignalConfig, IntegrationTestCase):
 
 	def test_a_human_comment_counts_as_activity(self):
 		self.assert_counts_as_activity(self.add_comment)
+
+	def test_a_note_counts_as_activity(self):
+		"""The Notes tab was the one place a rep could log work that the idle,
+		cooling and health signals did not read."""
+		self.assert_counts_as_activity(self.add_note)
 
 	def test_an_assignment_comment_does_not_count(self):
 		self.add_comment(comment_type="Assigned")
