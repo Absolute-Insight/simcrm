@@ -511,6 +511,18 @@ class TestCRMCallLog(IntegrationTestCase):
 		self.assertTrue(lead.first_name.startswith("Lead from call"))
 		self.assertEqual(lead.mobile_no, "+1112223333")
 
+	def test_create_lead_from_an_outgoing_call_takes_the_number_dialled(self):
+		"""On an outgoing call ``from`` is the rep's own line and the customer is ``to``,
+		the same way round parse_call_log reads it."""
+		call = create_test_call_log(type="Outgoing", from_number="+27115550100", to="+27821234567")
+
+		lead = frappe.get_doc(
+			"CRM Lead", create_lead_from_call_log(call_log=frappe.as_json({"name": call.name}))
+		)
+
+		self.assertEqual(lead.mobile_no, "+27821234567")
+		self.assertEqual(lead.first_name, "Lead from call +27821234567")
+
 	def test_create_lead_from_call_log_twice_returns_the_existing_lead(self):
 		"""A second click must return the lead the call already has, not create another."""
 		call = create_test_call_log(type="Incoming", from_number="+1231231234")
