@@ -565,15 +565,18 @@ function getParams() {
   }
 }
 
-list.value = createResource({
+// Held here as well as in the model: until the page re-renders, `list.value`
+// still reads back the page's `ref({})` placeholder, so anything set on it
+// during setup landed on the placeholder instead of the resource.
+const resource = createResource({
   url: 'crm.api.doc.get_data',
   params: getParams(),
   cache: [props.doctype, route.query.view, route.params.viewType],
   auto: true,
   onSuccess(data) {
     let cv = getView(route.query.view, route.params.viewType, props.doctype)
-    let params = list.value.params ? list.value.params : getParams()
-    list.value.params = params
+    let params = resource.params ? resource.params : getParams()
+    resource.params = params
     defaultParams.value = {
       doctype: props.doctype,
       filters: params.filters,
@@ -595,6 +598,7 @@ list.value = createResource({
     }
   },
 })
+list.value = resource
 
 // createResource leaves `params` null until a fetch passes them explicitly.
 // With `cache:` set, frappe-ui hands back the cached instance on re-entry, and
@@ -611,12 +615,18 @@ const dirtySignature = (p) =>
     p.kanban_fields,
   ])
 const initialParams = getParams()
-if (!list.value.params) {
-  list.value.params = initialParams
-} else if (
-  dirtySignature(list.value.params) !== dirtySignature(initialParams)
-) {
-  viewUpdated.value = true
+if (!resource.params) {
+  resource.params = initialParams
+} else {
+  // The cached resource's onSuccess belongs to the instance that created it,
+  // so it never sets this one's defaultParams: seed them from what is on
+  // screen, or the next sort, filter or column change rebuilt the params from
+  // the saved view and dropped the kept change (and Save Changes had nothing
+  // to save).
+  defaultParams.value = resource.params
+  if (dirtySignature(resource.params) !== dirtySignature(initialParams)) {
+    viewUpdated.value = true
+  }
 }
 
 // Refresh the list when a Domain Enrichment enrichment finishes for this

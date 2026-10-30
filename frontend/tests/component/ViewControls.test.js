@@ -313,3 +313,55 @@ describe('export', () => {
     expect(query.get('order_by')).toBe('modified desc')
   })
 })
+
+describe('coming back to a saved view with an unsaved change', () => {
+  async function leaveWithUnsavedFilter(view) {
+    savedView(view)
+    setRoute({ view })
+    const first = await mountVC()
+    first.vc().applyFilter({
+      event: click(),
+      idx: 1,
+      column: { key: 'status', type: 'Select' },
+      item: 'Open',
+      firstColumn: { key: 'lead_name' },
+    })
+    await settle()
+    expect(first.button('Save Changes')).not.toBeNull()
+    first.unmount() // open a lead...
+    return mountVC() // ...and come back
+  }
+
+  it('keeps the change and still offers to save it', async () => {
+    const back = await leaveWithUnsavedFilter(7)
+    expect(vc.fetches.at(-1).filters).toEqual({ status: 'Open' })
+    back.button('Save Changes').click()
+    await settle()
+    expect(vc.children.ViewModal.view.filters).toEqual({ status: 'Open' })
+  })
+
+  it('keeps the change through the next edit', async () => {
+    await leaveWithUnsavedFilter(8)
+    vc.children.SortBy.onUpdate('creation desc')
+    await settle()
+    expect(vc.fetches.at(-1).order_by).toBe('creation desc')
+    expect(vc.fetches.at(-1).filters).toEqual({ status: 'Open' })
+  })
+
+  it('a quick filter typed before the first load lands applies', async () => {
+    vc.quickFilters = [
+      { label: 'Name', fieldname: 'lead_name', fieldtype: 'Data' },
+    ]
+    savedView(9)
+    setRoute({ view: 9 })
+    vc.getData = () => new Promise(() => {}) // the first load is still out
+    const m = await mountVC({ doctype: 'CRM Deal' })
+    const qf = vc.children.QuickFilterField
+    qf.onApplyQuickFilter(qf.filter, 'smith')
+    await settle()
+    expect(m.errors.map(String)).toEqual([])
+    expect(vc.fetches.at(-1).filters).toEqual({
+      lead_name: ['LIKE', '%smith%'],
+    })
+  })
+})
