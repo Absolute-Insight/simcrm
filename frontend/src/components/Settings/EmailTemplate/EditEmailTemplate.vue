@@ -139,6 +139,10 @@ const errorMessage = ref('')
 
 const templates = inject('templates')
 const template = ref({})
+// The template's name on the server. rename_doc and set_value are separate
+// calls, so a rename can land while the field update is refused; the retry
+// must start from the name the rename left, not the one this form opened.
+const savedName = ref(props.templateData.name)
 
 const updateTemplate = async () => {
   errorMessage.value = ''
@@ -172,7 +176,7 @@ const updateTemplate = async () => {
 
   delete newEmailTemplate.content_type
 
-  const nameChanged = old.name !== newEmailTemplate.name
+  const nameChanged = savedName.value !== newEmailTemplate.name
   delete old.name
   delete newEmailTemplate.name
 
@@ -182,17 +186,19 @@ const updateTemplate = async () => {
 
   if (!nameChanged && !otherFieldChanged) return
 
-  let name = props.templateData.name
-
   if (nameChanged) {
-    name = await renameDoc.fetch()
+    try {
+      savedName.value = (await renameDoc.fetch()) || template.value.name
+    } catch {
+      return // renameDoc's onError has said why
+    }
     if (!otherFieldChanged) {
       emit('updateStep', 'template-list')
     }
   }
   if (otherFieldChanged) {
     templates.setValue.submit(
-      { ...values, name },
+      { ...values, name: savedName.value },
       {
         onSuccess: () => {
           emit('updateStep', 'template-list')
@@ -225,7 +231,7 @@ const renameDoc = createResource({
   makeParams() {
     return {
       doctype: 'Email Template',
-      old_name: props.templateData.name,
+      old_name: savedName.value,
       new_name: template.value.name,
     }
   },
