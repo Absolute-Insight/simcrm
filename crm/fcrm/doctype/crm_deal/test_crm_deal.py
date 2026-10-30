@@ -4,6 +4,7 @@
 import frappe
 from frappe.desk.form.assign_to import add as assign_add
 from frappe.desk.form.assign_to import remove as assign_remove
+from frappe.permissions import add_permission, update_permission_property
 from frappe.tests import IntegrationTestCase
 
 from crm.fcrm.doctype.crm_deal.api import get_deal_contacts
@@ -521,6 +522,78 @@ class TestCRMDeal(IntegrationTestCase):
 
 		deal.reload()
 		self.assertEqual(deal.contacts[0].is_primary, 1)
+
+
+class TestCreateDealLinkedRecords(IntegrationTestCase):
+	"""`create_deal` inserts the Contact and Organization with ignore_permissions, so
+	it has to ask first. A role may create deals against records that already exist
+	without being allowed to add new ones."""
+
+	USER = "deal-creator@crmtest.test"
+	ROLE = "Test Deal Creator"
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		if not frappe.db.exists("Role", self.ROLE):
+			frappe.get_doc({"doctype": "Role", "role_name": self.ROLE, "desk_access": 1}).insert(
+				ignore_permissions=True
+			)
+		add_permission("CRM Deal", self.ROLE, 0)
+		update_permission_property("CRM Deal", self.ROLE, 0, "create", 1)
+		update_permission_property("CRM Deal", self.ROLE, 0, "write", 1)
+		if not frappe.db.exists("User", self.USER):
+			frappe.get_doc(
+				{"doctype": "User", "email": self.USER, "first_name": "Deal", "send_welcome_email": 0}
+			).insert(ignore_permissions=True)
+		user = frappe.get_doc("User", self.USER)
+		if self.ROLE not in frappe.get_roles(self.USER):
+			user.add_roles(self.ROLE)
+		frappe.clear_cache(doctype="CRM Deal")
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+		frappe.clear_cache(doctype="CRM Deal")
+
+	def test_an_existing_organization_needs_no_create_permission(self):
+		org = create_test_deal(organization="Reused Org").organization
+		organization_name = frappe.db.get_value("CRM Organization", org, "organization_name")
+
+		frappe.set_user(self.USER)
+		deal_name = create_deal({"organization_name": organization_name})
+
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal_name, "organization"), org)
+
+	def test_a_new_organization_needs_create_permission(self):
+		frappe.set_user(self.USER)
+		with self.assertRaises(frappe.PermissionError):
+			create_deal({"organization_name": "Brand New Org"})
+
+		frappe.set_user("Administrator")
+		self.assertFalse(frappe.db.exists("CRM Organization", {"organization_name": "Brand New Org"}))
+
+	def test_an_existing_contact_needs_no_create_permission(self):
+		contact = create_test_contact(
+			first_name="Reused", email_ids=[{"email_id": "reused.contact@example.com", "is_primary": 1}]
+		)
+
+		frappe.set_user(self.USER)
+		deal_name = create_deal({"email": "reused.contact@example.com"})
+
+		deal = frappe.get_doc("CRM Deal", deal_name)
+		self.assertEqual([row.contact for row in deal.contacts], [contact.name])
+
+	def test_a_new_contact_needs_create_permission(self):
+		# frappe grants Contact create to All, so this only bites on a site that tightened it
+		update_permission_property("Contact", "All", 0, "create", 0)
+		self.addCleanup(frappe.clear_cache, doctype="Contact")
+
+		frappe.set_user(self.USER)
+		with self.assertRaises(frappe.PermissionError):
+			create_deal({"first_name": "Nobody", "email": "brand.new.contact@example.com"})
+
+		frappe.set_user("Administrator")
+		self.assertFalse(frappe.db.exists("Contact Email", {"email_id": "brand.new.contact@example.com"}))
 
 
 def create_test_deal(**kwargs):
