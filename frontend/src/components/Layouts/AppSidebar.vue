@@ -73,6 +73,24 @@
              active row's shadow. Widen the scroll box to the sidebar edges and
              pad the content back in so the shadow has room. -->
         <div class="-mx-2 mt-2 flex flex-1 flex-col gap-1 overflow-y-auto px-2">
+          <!-- On a phone this lives in the top bar instead: reachable without
+               opening the drawer, and clear of the drawer's focus trap. -->
+          <SidebarItem
+            v-if="!mobile"
+            :label="__('Search')"
+            @click="openCommandPalette"
+          >
+            <template #prefix>
+              <LucideSearch class="size-4 text-ink-gray-7" />
+            </template>
+            <span class="flex-1 truncate text-sm">{{ __('Search') }}</span>
+            <KeyboardShortcut
+              v-if="!isCollapsed"
+              class="mr-2"
+              combo="Mod+K"
+              bg
+            />
+          </SidebarItem>
           <CollapsibleSection
             v-for="section in allViews"
             :key="section.name"
@@ -279,7 +297,16 @@ import {
 import { showChangePasswordModal } from '@/composables/modals'
 import { useBroadcast } from '@/composables/useBroadcast.js'
 import { useNavLinks } from '@/composables/useNavLinks'
-import { call, Sidebar, SidebarItem, SidebarLabel, Tooltip } from 'frappe-ui'
+import { openCommandPalette } from '@/composables/useCommandPalette'
+import {
+  call,
+  KeyboardShortcut,
+  Sidebar,
+  SidebarItem,
+  SidebarLabel,
+  Tooltip,
+} from 'frappe-ui'
+import LucideSearch from '~icons/lucide/search'
 import { SignupBanner } from '@framework/ui/components/SignupBanner'
 import { TrialBanner } from '@framework/ui/components/TrialBanner'
 import OnboardingPanel from '@/components/OnboardingPanel.vue'
