@@ -623,14 +623,40 @@ def _acumatica_client():
 	return AcumaticaClient(frappe.get_cached_doc("CRM Acumatica Settings"))
 
 
+# Released documents. On Hold, Balanced and the pending states are drafts the ERP
+# has not posted; Voided and Canceled were posted and taken back. None of them is
+# money invoiced or received -- the spreadsheet import draws the same line.
+_ACUMATICA_RELEASED = ("open", "closed")
+
+
 def _acumatica_window(field: str, from_date: str, to_date: str) -> str:
-	return (
-		f"{field} ge datetimeoffset'{from_date}T00:00:00Z' and {field} le datetimeoffset'{to_date}T23:59:59Z'"
-	)
+	"""The server-side filter for a document-date window, a day wider at each end.
+
+	Acumatica holds a document date as local midnight with the tenant's offset
+	(``2026-01-01T00:00:00+02:00``) and compares a ``Z`` literal as UTC, so exact
+	bounds dropped the window's first local day and took in the day after its last.
+	The readers cut the widened read back to the window on each document's own
+	local date (:func:`_acumatica_dated`), which needs no offset at all.
+	"""
+	start = (date.fromisoformat(from_date) - timedelta(days=1)).isoformat()
+	end = (date.fromisoformat(to_date) + timedelta(days=1)).isoformat()
+	return f"{field} ge datetimeoffset'{start}T00:00:00Z' and {field} le datetimeoffset'{end}T23:59:59Z'"
+
+
+def _acumatica_dated(record, field: str, window: tuple[str, str] | None) -> str | None:
+	"""The document's local date when it is a released one inside ``window``, else None."""
+	from crm.integrations.acumatica.client import v
+
+	if str(v(record, "Status") or "").strip().lower() not in _ACUMATICA_RELEASED:
+		return None
+	day = str(v(record, field) or "")[:10]
+	if window and not window[0] <= day <= window[1]:
+		return None
+	return day
 
 
 def acumatica_invoices(from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
-	return _acumatica_invoices(_acumatica_window("Date", from_date, to_date), deadline)
+	return _acumatica_invoices(_acumatica_window("Date", from_date, to_date), deadline, (from_date, to_date))
 
 
 def acumatica_open_invoices(deadline=None) -> tuple[list[dict], bool]:
@@ -639,13 +665,15 @@ def acumatica_open_invoices(deadline=None) -> tuple[list[dict], bool]:
 	return _acumatica_invoices("Status eq 'Open'", deadline)
 
 
-def _acumatica_invoices(filter_: str, deadline=None) -> tuple[list[dict], bool]:
+def _acumatica_invoices(filter_: str, deadline=None, window=None) -> tuple[list[dict], bool]:
 	from crm.integrations.acumatica.client import v
 
 	client = _acumatica_client()
 	rows = []
 	partial = False
-	for record in client.iter_all("SalesInvoice", filter=filter_, select="Date,Amount,Balance,DueDate,Type"):
+	for record in client.iter_all(
+		"SalesInvoice", filter=filter_, select="Date,Amount,Balance,DueDate,Type,Status"
+	):
 		# Checked per row, which is per *page* in effect: breaking out of the
 		# generator is what stops it fetching the next page, and one page is one
 		# 30-second request. Up to fifty of them fit inside a plan the caller
@@ -653,11 +681,12 @@ def _acumatica_invoices(filter_: str, deadline=None) -> tuple[list[dict], bool]:
 		if not _time_for_a_page(deadline):
 			partial = True
 			break
-		if str(v(record, "Type") or "").lower().startswith("credit"):
+		day = _acumatica_dated(record, "Date", window)
+		if day is None or str(v(record, "Type") or "").lower().startswith("credit"):
 			continue
 		rows.append(
 			{
-				"date": str(v(record, "Date") or "")[:10],
+				"date": day,
 				"amount": v(record, "Amount") or 0,
 				"balance": v(record, "Balance") or 0,
 				"due": str(v(record, "DueDate") or "")[:10] or None,
@@ -677,16 +706,15 @@ def acumatica_payments(from_date: str, to_date: str, deadline=None) -> tuple[lis
 	for record in client.iter_all(
 		"Payment",
 		filter=_acumatica_window("ApplicationDate", from_date, to_date),
-		select="ApplicationDate,PaymentAmount,Type",
+		select="ApplicationDate,PaymentAmount,Type,Status",
 	):
 		if not _time_for_a_page(deadline):
 			partial = True
 			break
-		if str(v(record, "Type") or "").lower() not in ("payment", "prepayment", ""):
+		day = _acumatica_dated(record, "ApplicationDate", (from_date, to_date))
+		if day is None or str(v(record, "Type") or "").lower() not in ("payment", "prepayment", ""):
 			continue
-		rows.append(
-			{"date": str(v(record, "ApplicationDate") or "")[:10], "amount": v(record, "PaymentAmount") or 0}
-		)
+		rows.append({"date": day, "amount": v(record, "PaymentAmount") or 0})
 		if len(rows) >= ERP_ROW_CAP:
 			break
 	return rows, partial

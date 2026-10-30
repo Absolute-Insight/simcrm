@@ -7,6 +7,7 @@ from stubbed adapters, and an ERP failure marks its table rather than raising.""
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from typing import ClassVar
 from unittest import mock
 
@@ -32,9 +33,15 @@ def make_won_deal(organization: str, value: float, closed_on: str) -> str:
 	return deal.name
 
 
+def _instant(value: str) -> datetime:
+	moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+	return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
 class FakeAcumatica:
 	"""An Acumatica client over a fixed ledger, honouring the two filters the readers
-	send: a ``datetimeoffset`` window on the document date and ``Status eq '...'``."""
+	send: a ``datetimeoffset`` window on the document date, compared as instants the
+	way the server compares them, and ``Status eq '...'``."""
 
 	def __init__(self, records: dict[str, list[dict]]):
 		self.records = records
@@ -42,11 +49,11 @@ class FakeAcumatica:
 
 	def iter_all(self, entity, filter=None, select=None, **_kw):
 		self.reads.append((entity, filter or ""))
-		window = re.findall(r"datetimeoffset'(\d{4}-\d{2}-\d{2})", filter or "")
+		window = [_instant(bound) for bound in re.findall(r"datetimeoffset'([^']+)'", filter or "")]
 		status = re.search(r"Status eq '([^']+)'", filter or "")
 		for record in self.records.get(entity, []):
-			when = record.get("Date") or record.get("ApplicationDate") or ""
-			if window and not (window[0] <= when[:10] <= window[1]):
+			when = _instant(record.get("Date") or record.get("ApplicationDate"))
+			if window and not (window[0] <= when <= window[1]):
 				continue
 			if status and record.get("Status") != status.group(1):
 				continue
@@ -291,6 +298,74 @@ class RunPlanTest(IntegrationTestCase):
 			self.assertIsNone(analyst_data.enabled_erp())
 
 
+class AcumaticaDocumentsTest(IntegrationTestCase):
+	"""Which Acumatica documents are money invoiced or received, and on which days."""
+
+	STATUSES = ("Open", "Closed", "On Hold", "Balanced", "Voided", "Canceled")
+
+	def read(self, client, from_date="2026-01-01", to_date="2026-03-31"):
+		with mock.patch.object(analyst_data, "_acumatica_client", return_value=client):
+			invoices, _partial = analyst_data.acumatica_invoices(from_date, to_date)
+			payments, _partial = analyst_data.acumatica_payments(from_date, to_date)
+		return invoices, payments
+
+	def test_only_released_documents_count(self):
+		"""Only the document Type was checked: a cancelled, voided or held invoice
+		counted as invoiced -- twenty cancelled ones, R439,698, in MBP's export."""
+		client = FakeAcumatica(
+			{
+				"SalesInvoice": [
+					{
+						"Date": "2026-02-10",
+						"Amount": 100.0,
+						"Balance": 0.0,
+						"DueDate": "2026-03-12",
+						"Type": "Invoice",
+						"Status": status,
+					}
+					for status in self.STATUSES
+				],
+				"Payment": [
+					{
+						"ApplicationDate": "2026-02-11",
+						"PaymentAmount": 10.0,
+						"Type": "Payment",
+						"Status": status,
+					}
+					for status in self.STATUSES
+				],
+			}
+		)
+		invoices, payments = self.read(client)
+		self.assertEqual((len(invoices), len(payments)), (2, 2))
+
+	def test_the_window_is_the_tenants_own_days(self):
+		"""Acumatica stamps a document date as local midnight with the tenant's offset
+		and compares a "Z" bound in UTC, so the window lost its first local day and
+		took in the day after its last."""
+		days = (
+			"2025-12-31T00:00:00+02:00",
+			"2026-01-01T00:00:00+02:00",
+			"2026-03-31T00:00:00+02:00",
+			"2026-04-01T00:00:00+02:00",
+		)
+		client = FakeAcumatica(
+			{
+				"SalesInvoice": [
+					{"Date": day, "Amount": 1.0, "Balance": 0.0, "Type": "Invoice", "Status": "Closed"}
+					for day in days
+				],
+				"Payment": [
+					{"ApplicationDate": day, "PaymentAmount": 1.0, "Type": "Payment", "Status": "Closed"}
+					for day in days
+				],
+			}
+		)
+		invoices, payments = self.read(client)
+		self.assertEqual([row["date"] for row in invoices], ["2026-01-01", "2026-03-31"])
+		self.assertEqual([row["date"] for row in payments], ["2026-01-01", "2026-03-31"])
+
+
 class QuietAccountsTest(IntegrationTestCase):
 	"""``accounts_going_quiet`` used to look at ``_working_deal_rows()[:200]``.
 	That list comes back in CRM Deal's default order, ``modified desc``, so the
@@ -403,7 +478,12 @@ class DeadlineTest(IntegrationTestCase):
 		"""Checked before the fetch, because the generator has already paid for a
 		page by the time its rows arrive."""
 		pages = [
-			{"Date": {"value": "2026-01-10"}, "Amount": {"value": 10}, "Balance": {"value": 0}}
+			{
+				"Date": {"value": "2026-01-10"},
+				"Amount": {"value": 10},
+				"Balance": {"value": 0},
+				"Status": {"value": "Closed"},
+			}
 			for _ in range(250)
 		]
 		clock = iter([0.0] + [float(index) for index in range(1, 400)])
