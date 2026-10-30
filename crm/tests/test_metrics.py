@@ -575,6 +575,28 @@ class MetricsTest(IntegrationTestCase):
 		self.assertEqual(sum(row["deals"] for row in trend), 0)
 		self.assertEqual(get_won_deals(start, end, USER)["value"], sum(wins.values()))
 
+	def test_time_to_close_counts_whole_calendar_days(self):
+		"""closed_date is a DATE, read as midnight, so TIMESTAMPDIFF floored away
+		the creation day's afternoon: created on the 12th at 15:00 and won on
+		the 15th measured 2 days."""
+		from crm.api.dashboard import get_average_time_to_close_a_deal, get_average_time_to_close_a_lead
+
+		deal = self.make_deal()
+		frappe.db.set_value(
+			"CRM Deal",
+			deal.name,
+			{
+				"status": self.status_of_type("Won"),
+				"closed_date": "2001-03-15",
+				"creation": "2001-03-12 15:00:00",
+			},
+			update_modified=False,
+		)
+
+		for metric in (get_average_time_to_close_a_deal, get_average_time_to_close_a_lead):
+			with self.subTest(metric=metric.__name__):
+				self.assertEqual(metric("2001-03-15", "2001-03-15", USER)["value"], 3)
+
 	# --- the chart registry ---------------------------------------------
 
 	def test_only_registered_charts_are_reachable(self):

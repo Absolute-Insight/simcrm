@@ -50,10 +50,13 @@ def check_user_rate(scope: str, limit: int) -> None:
 		frappe.throw(_("Too many requests; try again in a minute."), frappe.TooManyRequestsError)
 
 
-# Custom function for TIMESTAMPDIFF (MySQL/MariaDB)
-class TimestampDiff(Function):
-	def __init__(self, unit, start, end, **kwargs):
-		super().__init__("TIMESTAMPDIFF", unit, start, end, **kwargs)
+# MariaDB's DATEDIFF(end, start): whole calendar days, the time of day ignored.
+# Not TIMESTAMPDIFF(DAY, ...): closed_date is a DATE, read as midnight, so a deal
+# created at 15:00 and won three days later measured 2 days -- every deal not
+# created at midnight read a day short, and a next-day win read as same-day.
+class DateDiff(Function):
+	def __init__(self, end, start, **kwargs):
+		super().__init__("DATEDIFF", end, start, **kwargs)
 
 
 # Charts that cannot honour a territory, and why. A filter that quietly did not
@@ -692,9 +695,7 @@ def get_average_time_to_close_a_lead(
 	prev_cond = (Deal.closed_date >= prev_from_date) & (Deal.closed_date < prev_to_date)
 
 	# Calculate time difference from lead/deal creation to deal closure
-	time_diff = TimestampDiff(
-		frappe.qb.terms.LiteralValue("DAY"), Coalesce(Lead.creation, Deal.creation), Deal.closed_date
-	)
+	time_diff = DateDiff(Deal.closed_date, Date(Coalesce(Lead.creation, Deal.creation)))
 
 	# Build query
 	query = (
@@ -758,7 +759,7 @@ def get_average_time_to_close_a_deal(
 	prev_cond = (Deal.closed_date >= prev_from_date) & (Deal.closed_date < prev_to_date)
 
 	# Calculate time difference from deal creation to deal closure
-	time_diff = TimestampDiff(frappe.qb.terms.LiteralValue("DAY"), Deal.creation, Deal.closed_date)
+	time_diff = DateDiff(Deal.closed_date, Date(Deal.creation))
 
 	# Build query
 	query = (
