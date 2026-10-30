@@ -191,12 +191,16 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 	# CRM Deal's child table is `products` (CRM Products rows); the row's link to
 	# the CRM Product is `product_code`, the quantity field is `qty`.
 	for row in products:
-		inventory_id = frappe.db.get_value("CRM Product", row.product_code, "acumatica_id")
+		# a line typed in by name has no product_code, and so no inventory item either
+		inventory_id = (
+			frappe.db.get_value("CRM Product", row.product_code, "acumatica_id") if row.product_code else None
+		)
 		if not inventory_id:
 			# A quote missing one of its lines still saves and still shows a success
 			# toast -- the rep has no reason to notice it shipped short. Refuse the
-			# whole thing instead of sending a partial order.
-			unlinked.append(row.product_code)
+			# whole thing instead of sending a partial order. Name a free-text line by
+			# what the rep typed: a None in the list crashed the join below.
+			unlinked.append(row.product_code or row.product_name or _("a line with no product"))
 			continue
 		line = {
 			"InventoryID": inventory_id,

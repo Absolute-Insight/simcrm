@@ -546,6 +546,24 @@ class TestCreateSalesQuote(FrappeTestCase):
 		client.put.assert_not_called()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_free_text_line_is_refused_by_name_not_with_a_type_error(self, ClientCls):
+		"""A line typed in by name has no product_code: its None went into the list of
+		unlinked codes and ", ".join() raised a TypeError -- a generic error toast and
+		an Error Log row instead of the refusal that says what to fix."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		org, deal = _mapped_deal()  # one linked product
+		deal.append("products", {"product_name": "Custom bracket", "qty": 1, "rate": 5})
+		deal.save(ignore_permissions=True)
+
+		with self.assertRaises(frappe.ValidationError) as cm:
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertIn("Custom bracket", str(cm.exception))
+		client.put.assert_not_called()
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_refuses_when_any_product_is_unlinked_and_names_it(self, ClientCls):
 		_enable()
 		client = MagicMock()
