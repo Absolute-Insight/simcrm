@@ -22,6 +22,7 @@ from crm.agent.config import SIGNAL_DEFAULTS, SignalConfig
 from crm.agent.signals import (
 	CLOSE_HORIZON_DAYS,
 	COOLING_MIN_GAP_DAYS,
+	DETECTED_SIGNALS,
 	DISMISS_COOLDOWN_DAYS,
 	EARLY_STAGE_PROBABILITY,
 	EXPIRY_COOLDOWN_DAYS,
@@ -680,6 +681,83 @@ class RunSignalsTest(PinnedSignalConfig, IntegrationTestCase):
 			frappe.utils.getdate(frappe.utils.add_days(frappe.utils.nowdate(), 4)),
 		)
 
+	def status_of(self, signal):
+		return frappe.db.get_value(
+			"CRM Suggestion", {"reference_docname": self.deal.name, "signal": signal}, "status"
+		)
+
+	def test_a_won_deal_has_its_open_suggestions_retracted(self):
+		"""Nothing re-checked an open suggestion against its record, so "Re-engage"
+		and "Set the next step" stayed in the rep's inbox for the whole TTL after the
+		deal was won -- holding capped slots, and Accept made a task on a closed deal."""
+		won = frappe.get_all("CRM Deal Status", filters={"type": "Won"}, pluck="name", limit=1)
+		if not won:
+			self.skipTest("site has no Won deal status")
+		run_signals()
+		self.assertEqual(self.status_of("idle_deal"), "Open")
+		opened = frappe.get_all(
+			"CRM Suggestion", filters={"reference_docname": self.deal.name, "status": "Open"}, pluck="name"
+		)
+		frappe.db.set_value("CRM Deal", self.deal.name, "status", won[0], update_modified=False)
+		run_signals()
+		self.assertEqual(
+			{frappe.db.get_value("CRM Suggestion", name, "status") for name in opened}, {"Expired"}
+		)
+
+	def test_only_the_suggestion_whose_premise_ended_is_retracted(self):
+		run_signals()
+		frappe.get_doc(
+			{
+				"doctype": "Comment",
+				"comment_type": "Comment",
+				"content": "Spoke to them today",
+				"reference_doctype": "CRM Deal",
+				"reference_name": self.deal.name,
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(
+			frappe.db.delete, "Comment", {"reference_doctype": "CRM Deal", "reference_name": self.deal.name}
+		)
+		run_signals()
+		# touched today: no longer idle, still without a next step
+		self.assertEqual(self.status_of("idle_deal"), "Expired")
+		self.assertEqual(self.status_of("no_next_step"), "Open")
+
+	def test_a_retracted_suggestion_does_not_flicker_back_within_the_hour(self):
+		run_signals()
+		frappe.db.set_value("CRM Deal", self.deal.name, "next_step", "Send the quote", update_modified=False)
+		run_signals()
+		self.assertEqual(self.status_of("no_next_step"), "Expired")
+		frappe.db.set_value("CRM Deal", self.deal.name, "next_step", "", update_modified=False)
+		run_signals()
+		self.assertEqual(
+			frappe.get_all(
+				"CRM Suggestion",
+				filters={"reference_docname": self.deal.name, "signal": "no_next_step"},
+				pluck="status",
+			),
+			["Expired"],
+		)
+
+	def test_a_rules_suggestion_is_not_the_runs_to_retract(self):
+		"""A rule fires once, on save; no hourly candidate ever stands behind it."""
+		name = (
+			frappe.get_doc(
+				{
+					"doctype": "CRM Suggestion",
+					"signal": "rule:Signal Test Rule",
+					"title": "Call Signal Test Org",
+					"reference_doctype": "CRM Deal",
+					"reference_docname": self.deal.name,
+					"status": "Open",
+				}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
+		run_signals()
+		self.assertEqual(frappe.db.get_value("CRM Suggestion", name, "status"), "Open")
+
 	def test_the_job_returns_nothing_when_signals_are_switched_off(self):
 		off = SignalConfig(
 			signals_enabled=False,
@@ -720,6 +798,25 @@ class RunSignalsTest(PinnedSignalConfig, IntegrationTestCase):
 		with mock.patch.object(frappe.db, "commit") as commit:
 			run_signals()
 		commit.assert_not_called()
+
+
+class DetectedSignalsTest(UnitTestCase):
+	def test_every_detector_is_one_the_run_can_retract(self):
+		"""``retract_resolved`` only touches the signals it knows the run detects; a
+		detector missing from the list would leave its rows open for the whole TTL."""
+		produced = (
+			find_idle_deals([deal_row()], {}, NOW)
+			+ find_missing_next_step([deal_row()], set())
+			+ find_close_date_at_risk(
+				[deal_row(expected_closure_date=NOW.date() + timedelta(days=3))], set(), NOW
+			)
+			+ find_cooling_deals(
+				[deal_row()], {"CRM-DEAL-1": [NOW - timedelta(days=d) for d in (8, 7, 6, 5, 4)]}, NOW
+			)
+			+ find_sla_breached_leads([lead_row()], NOW)
+			+ find_stale_plan_items([plan_row()], NOW)
+		)
+		self.assertEqual({c["signal"] for c in produced}, set(DETECTED_SIGNALS))
 
 
 class PurgeTest(IntegrationTestCase):
