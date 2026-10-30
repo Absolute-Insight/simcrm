@@ -121,6 +121,7 @@ _HISTORY_TABLES = ("won_revenue_by_month", "growth_rates")
 def _run_tables(plan: dict, erp: str | None, deadline: float | None, today: date) -> list[dict]:
 	from_date, to_date = plan["from_date"], plan["to_date"]
 	starts = data_start()
+	reads = _Reads()
 	tables = []
 	for key in plan.get("metrics", []):
 		metric = analyst.CATALOGUE.get(key)
@@ -137,9 +138,12 @@ def _run_tables(plan: dict, erp: str | None, deadline: float | None, today: date
 			tables.append(_table(key, metric, label, [], from_date, to_date, "", error=SKIPPED_NOTE))
 			continue
 		if is_erp:
-			tables.append(_erp_table(key, metric, erp, from_date, to_date, today, deadline))
+			tables.append(_erp_table(key, metric, erp, from_date, to_date, today, deadline, reads))
 			continue
-		rows, note = runner(from_date, to_date)
+		if key in _SCORED_TABLES:
+			rows, note = runner(from_date, to_date, scores=reads.get(("scores",), _pipeline_scores))
+		else:
+			rows, note = runner(from_date, to_date)
 		if key in _HISTORY_TABLES:
 			rows, coverage = analyst_facts.trim_to_coverage(rows, starts)
 			note = f"{note} {coverage}".strip()
@@ -153,6 +157,32 @@ def _run_tables(plan: dict, erp: str | None, deadline: float | None, today: date
 				table["summary"] = summarise(rows)
 		tables.append(table)
 	return tables
+
+
+class _Reads:
+	"""The inputs two tables of one plan share, each read once for the plan.
+
+	A plan picks tables that read the same thing: cashflow beside invoiced or
+	received by month, deals at risk beside accounts going quiet. Each table used
+	to read its own copy, so one question paged the ERP's invoices twice and scored
+	the whole open pipeline twice, inside the deadline the answer shares with the
+	model. A read that failed is kept as a failure: an ERP that has just timed out
+	is not asked again for the next table.
+	"""
+
+	def __init__(self):
+		self._done: dict[tuple, tuple] = {}
+
+	def get(self, key: tuple, read):
+		if key not in self._done:
+			try:
+				self._done[key] = (read(), None)
+			except Exception as exc:
+				self._done[key] = (None, exc)
+		value, error = self._done[key]
+		if error is not None:
+			raise error
+		return value
 
 
 def _out_of_time(deadline: float | None) -> bool:
@@ -172,6 +202,8 @@ def _time_for_a_page(deadline: float | None) -> bool:
 
 # Tables that are lists of records rather than aggregates, and what counts them.
 _ROW_LISTS = {"deals_at_risk": analyst.summarise_at_risk, "accounts_going_quiet": None}
+# Tables read from the open pipeline's health scores, which a plan computes once.
+_SCORED_TABLES = ("deals_at_risk", "accounts_going_quiet")
 
 
 def _table(key, metric, source, rows, from_date, to_date, note="", error=None) -> dict:
@@ -320,10 +352,23 @@ def _plan_adherence_by_rep(from_date, to_date):
 	return rows, "Only settled items (planned before today) are counted."
 
 
-def _deals_at_risk(from_date, to_date):
+def _pipeline_scores() -> list[dict]:
+	"""Every open deal the caller may read, scored now: the dashboard's one-pass scorer."""
 	from crm.api.dashboard import _at_risk_deals
 
-	scored = [row for row in _at_risk_deals(to_date) if row["score"] < AT_RISK_BELOW]
+	return _at_risk_deals()
+
+
+def _deals_at_risk(from_date, to_date, scores: list[dict] | None = None):
+	scores = _pipeline_scores() if scores is None else scores
+	# the scorer's own to_date bound (deals created by then), applied to the scores
+	# the plan shares rather than by scoring the pipeline a second time
+	cutoff = frappe.utils.get_datetime(f"{to_date} 23:59:59") if to_date else None
+	scored = [
+		row
+		for row in scores
+		if row["score"] < AT_RISK_BELOW and not (cutoff and row.get("creation") and row["creation"] > cutoff)
+	]
 	scored.sort(key=lambda row: row["score"])
 	names = [row["name"] for row in scored]
 	details = (
@@ -363,7 +408,7 @@ def _deals_at_risk(from_date, to_date):
 	return rows, f"Health below {AT_RISK_BELOW} out of 100. Scored now, not as of the period."
 
 
-def _accounts_going_quiet(from_date, to_date):
+def _accounts_going_quiet(from_date, to_date, scores: list[dict] | None = None):
 	"""Organizations whose open deals are cooling or slipping -- the maintenance list.
 
 	Every working deal is scanned. This used to take the first 200 rows of
@@ -374,8 +419,6 @@ def _accounts_going_quiet(from_date, to_date):
 	the dashboard's one-pass scorer, so the full scan costs what ``deals_at_risk``
 	already costs.
 	"""
-	from crm.api.dashboard import _at_risk_deals
-
 	now = frappe.utils.now_datetime()
 	horizon = get_signal_config().close_horizon_days
 	deals = _working_deal_rows()
@@ -385,7 +428,8 @@ def _accounts_going_quiet(from_date, to_date):
 	# Scored under the caller's own permission scope (get_list), like the
 	# dashboard tile: a deal the admin may not read has no score and is skipped,
 	# which is what the per-deal get_deal_health PermissionError used to do.
-	health_by_deal = {row["name"]: row["score"] for row in _at_risk_deals()}
+	scores = _pipeline_scores() if scores is None else scores
+	health_by_deal = {row["name"]: row["score"] for row in scores}
 
 	# An account is every open deal it has, not only the flagged ones: counted over
 	# its flagged deals alone, an organization touched yesterday on one deal read as
@@ -519,8 +563,9 @@ _CRM_RUNNERS = {
 # --- ERP -------------------------------------------------------------------------
 
 
-def _erp_table(key, metric, erp, from_date, to_date, today: date, deadline=None) -> dict:
+def _erp_table(key, metric, erp, from_date, to_date, today: date, deadline=None, reads=None) -> dict:
 	label = ERP_LABELS[erp]
+	reads = reads or _Reads()
 	# documents exist up to today: a month after it is unknown, not one with nothing in it
 	end = min(str(to_date), today.isoformat())
 	months = analyst.months_between(from_date, end) if from_date <= end else []
@@ -529,13 +574,17 @@ def _erp_table(key, metric, erp, from_date, to_date, today: date, deadline=None)
 		invoices = payments = None
 		if key == "erp_receivables":
 			# a balance now, not a flow inside the period: every open invoice, whatever its date
-			invoices, cut = _erp_open_invoices(erp, deadline)
+			invoices, cut = reads.get(("open invoices", erp), lambda: _erp_open_invoices(erp, deadline))
 			partial = partial or cut
 		if months and key in ("erp_invoices_by_month", "erp_cashflow_by_month"):
-			invoices, cut = _erp_invoices(erp, from_date, end, deadline)
+			invoices, cut = reads.get(
+				("invoices", erp, from_date, end), lambda: _erp_invoices(erp, from_date, end, deadline)
+			)
 			partial = partial or cut
 		if months and key in ("erp_payments_by_month", "erp_cashflow_by_month"):
-			payments, cut = _erp_payments(erp, from_date, end, deadline)
+			payments, cut = reads.get(
+				("payments", erp, from_date, end), lambda: _erp_payments(erp, from_date, end, deadline)
+			)
 			partial = partial or cut
 	except Exception as exc:
 		frappe.log_error(title="CRM analyst ERP read failed", message=f"{erp} {key}: {exc}")

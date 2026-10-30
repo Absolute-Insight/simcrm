@@ -644,6 +644,77 @@ class RowCapTest(IntegrationTestCase):
 		self.assertEqual(table["rows"][0]["invoiced"], 100.0 * self.CAP)
 
 
+class SharedReadsTest(IntegrationTestCase):
+	"""Two tables of one plan that need the same input used to read it once each:
+	the ERP's invoices paged twice, the whole open pipeline scored twice, inside the
+	deadline the answer shares with the model."""
+
+	TODAY = frappe.utils.getdate("2026-10-30")
+
+	def test_erp_documents_are_read_once_per_plan(self):
+		invoices = [{"date": "2026-03-10", "amount": 100.0, "balance": 0.0, "due": None}]
+		payments = [{"date": "2026-03-12", "amount": 40.0}]
+		with (
+			mock.patch.object(analyst_data, "acumatica_invoices", return_value=(invoices, False)) as read_in,
+			mock.patch.object(analyst_data, "acumatica_payments", return_value=(payments, False)) as read_out,
+		):
+			tables = analyst_data.run_plan(
+				{
+					"metrics": ["erp_invoices_by_month", "erp_payments_by_month", "erp_cashflow_by_month"],
+					"from_date": "2026-03-01",
+					"to_date": "2026-03-31",
+				},
+				"acumatica",
+				today=self.TODAY,
+			)
+		self.assertEqual((read_in.call_count, read_out.call_count), (1, 1))
+		self.assertEqual(tables[0]["rows"], [{"month": "2026-03", "invoiced": 100.0, "invoices": 1}])
+		self.assertEqual(tables[1]["rows"], [{"month": "2026-03", "received": 40.0, "payments": 1}])
+		self.assertEqual(
+			tables[2]["rows"], [{"month": "2026-03", "invoiced": 100.0, "received": 40.0, "net": -60.0}]
+		)
+
+	def test_an_erp_that_failed_is_not_asked_again_for_the_next_table(self):
+		with mock.patch.object(
+			analyst_data, "acumatica_invoices", side_effect=AcumaticaError("down")
+		) as read:
+			tables = analyst_data.run_plan(
+				{
+					"metrics": ["erp_invoices_by_month", "erp_cashflow_by_month"],
+					"from_date": "2026-03-01",
+					"to_date": "2026-03-31",
+				},
+				"acumatica",
+				today=self.TODAY,
+			)
+		self.assertEqual(read.call_count, 1)
+		self.assertEqual([table["error"] for table in tables], ["unreachable", "unreachable"])
+
+	def test_the_pipeline_is_scored_once_for_both_risk_tables(self):
+		created = frappe.utils.get_datetime("2026-01-05 10:00:00")
+		scores = [
+			{"name": "SHARED-RISK-OLD", "creation": created, "score": 20, "factors": []},
+			# created after the period: the at-risk list is bounded by to_date, as it was
+			# when it scored the pipeline itself with _at_risk_deals(to_date)
+			{"name": "SHARED-RISK-NEW", "creation": frappe.utils.get_datetime("2026-04-02"), "score": 10},
+		]
+		with (
+			mock.patch("crm.api.dashboard._at_risk_deals", return_value=scores) as score,
+			mock.patch.object(analyst_data, "_working_deal_rows", return_value=[]),
+		):
+			tables = analyst_data.run_plan(
+				{
+					"metrics": ["deals_at_risk", "accounts_going_quiet"],
+					"from_date": "2026-01-01",
+					"to_date": "2026-03-31",
+				},
+				None,
+				today=self.TODAY,
+			)
+		score.assert_called_once_with()
+		self.assertEqual([row["deal"] for row in tables[0]["rows"]], ["SHARED-RISK-OLD"])
+
+
 class TileTest(IntegrationTestCase):
 	"""The single-figure tables read a dashboard tile, which used to lose both the
 	comparison the catalogue promises and the fraction of a day."""
