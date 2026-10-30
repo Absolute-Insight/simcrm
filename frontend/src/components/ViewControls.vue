@@ -653,11 +653,19 @@ onBeforeUnmount(() => {
 
 const isLoading = computed(() => list.value?.loading)
 
+// A change of params supersedes the request in flight. Without the abort the
+// last response to land won, so a slower, earlier one showed its rows under
+// the newer filter.
+function reloadList() {
+  list.value.abort?.()
+  list.value.reload()
+}
+
 // Back to the saved view: Cancel, and a change of view.
 function reload() {
   if (isLoading.value) return
   list.value.params = getParams()
-  list.value.reload()
+  reloadList()
 }
 
 // Fetch again what is on screen. Refresh used to call reload(), which put
@@ -1022,7 +1030,7 @@ function updateFilter(filters) {
   list.value.params = defaultParams.value
   list.value.params.filters = filters
   view.value.filters = filters
-  list.value.reload()
+  reloadList()
 
   if (!route.query.view) {
     createOrUpdateStandardView()
@@ -1037,7 +1045,7 @@ function updateSort(order_by) {
   list.value.params = defaultParams.value
   list.value.params.order_by = order_by
   view.value.order_by = order_by
-  list.value.reload()
+  reloadList()
 
   if (!route.query.view) {
     createOrUpdateStandardView()
@@ -1052,7 +1060,7 @@ function updateGroupBy(group_by_field) {
   list.value.params = defaultParams.value
   list.value.params.view.group_by_field = group_by_field
   view.value.group_by_field = group_by_field
-  list.value.reload()
+  reloadList()
 
   if (!route.query.view) {
     createOrUpdateStandardView()
@@ -1084,7 +1092,7 @@ function updateColumns(obj) {
 
   if (obj.reload) {
     list.value.params = defaultParams.value
-    list.value.reload()
+    reloadList()
   }
   viewUpdated.value = true
 
@@ -1247,7 +1255,7 @@ function updateKanbanSettings(data) {
     view.value.title_field = data.title_field
   }
 
-  list.value.reload()
+  reloadList()
 
   if (!route.query.view) {
     createOrUpdateStandardView()
@@ -1270,7 +1278,7 @@ function loadMoreKanban(columnName) {
   }
   list.value.params.kanban_columns = columns
   view.value.kanban_columns = columns
-  list.value.reload()
+  reloadList()
 }
 
 // Saving the standard view re-reads the views store, which trips the deep
@@ -1345,7 +1353,7 @@ function updatePageLength(value, loadMore = false) {
     list.value.params.page_length = value
     list.value.params.page_length_count = value
   }
-  list.value.reload()
+  reloadList()
 }
 
 // View Actions
@@ -1553,7 +1561,7 @@ function fetchAndUpdateKanbanColumns(v) {
     .then((columns) => {
       list.value.params.kanban_columns = columns
       view.value.kanban_columns = columns
-      list.value.reload()
+      reloadList()
     })
     .catch((error) =>
       reportActionError(error, __('Could not refresh the Kanban columns.')),

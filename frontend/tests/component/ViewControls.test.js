@@ -408,3 +408,36 @@ describe('Refresh', () => {
     expect(m.button('Save Changes')).toBeNull()
   })
 })
+
+describe('overlapping reloads', () => {
+  it('show the rows for the latest filter, not the last response', async () => {
+    vc.quickFilters = [
+      { label: 'Status', fieldname: 'status', fieldtype: 'Select' },
+    ]
+    savedView(41)
+    setRoute({ view: 41 })
+    const m = await mountVC({ doctype: 'CRM Task' })
+
+    // The server answers what was sent, when told to. Like fetch(), an
+    // aborted request rejects with an AbortError.
+    const pending = []
+    vc.getData = (params, signal) =>
+      new Promise((resolve, reject) => {
+        const rows = [{ name: `row-for-${params.filters.status}` }]
+        pending.push(() => resolve(payload(params, rows)))
+        signal?.addEventListener('abort', () =>
+          reject(new DOMException('aborted', 'AbortError')),
+        )
+      })
+    const qf = vc.children.QuickFilterField
+    qf.onApplyQuickFilter(qf.filter, 'Qualified') // request A
+    qf.onApplyQuickFilter(qf.filter, 'Lost') // request B, the current choice
+    pending[1]() // B answers first
+    await settle()
+    pending[0]() // the slower A answers last
+    await settle()
+
+    expect(m.list().params.filters).toEqual({ status: 'Lost' })
+    expect(m.list().data.data).toEqual([{ name: 'row-for-Lost' }])
+  })
+})
