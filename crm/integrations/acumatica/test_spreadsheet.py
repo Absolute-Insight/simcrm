@@ -437,6 +437,10 @@ class ShapeSalesOrderTest(UnitTestCase):
 	def test_an_unknown_status_rejects_with_the_values_seen(self):
 		self.assertEqual(shape(**{"Status": "Shipping"})["reject"], "unknown quote status Shipping / None")
 
+	def test_a_row_with_no_customer_rejects(self):
+		# looked up as {"acumatica_id": None} -- IS NULL, any unlinked organization
+		self.assertEqual(shape(**{"Customer": None}), {"reject": "no customer", "key": "QT103012"})
+
 	def test_a_date_only_cell_is_accepted(self):
 		deal = shape(**{"Date": date(2026, 9, 1)})
 		self.assertEqual(deal["quote_date"], date(2026, 9, 1))
@@ -557,6 +561,14 @@ class ImportSalesOrdersTest(SpreadsheetImportTestCase):
 		self.assertEqual(counts["left_alone"], 1)
 		self.assertEqual(counts["deals"], 0)
 
+	def test_a_blank_customer_puts_no_deal_on_an_unlinked_organization(self):
+		frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Hand Made Ltd"}).insert()
+		path = self.rows(order(**{"Customer": None}))
+		rejects = ss.Rejects()
+		ss.import_sales_orders(path, rejects, owners=OWNERS, rates=RATES)
+		self.assertFalse(frappe.db.exists("CRM Deal", {"acumatica_sales_quote": "QT103012"}))
+		self.assertEqual([r["reason"] for r in rejects.rows], ["no customer"])
+
 	def test_every_row_reaches_the_commit_cadence(self):
 		path = self.rows(
 			order(),
@@ -615,6 +627,13 @@ class RevenueTest(UnitTestCase):
 		self.assertEqual(totals["C-SURE01"], Decimal("400") + Decimal("182"))
 		self.assertEqual(rejects, [])
 
+	def test_a_row_with_no_customer_rejects_instead_of_summing_under_none(self):
+		totals, rejects = ss.revenue_by_customer(
+			[invoice(), invoice(**{"Customer": None, "Reference Nbr.": "IN-BLANK"})], RATES, "ZAR"
+		)
+		self.assertEqual(totals, {"C-SURE01": Decimal("430.39")})
+		self.assertEqual(rejects, [("IN-BLANK", "no customer")])
+
 	def test_an_unknown_currency_rejects_that_row_only(self):
 		totals, rejects = ss.revenue_by_customer([invoice(), invoice(**{"Currency": "EUR"})], RATES, "ZAR")
 		self.assertEqual(totals["C-SURE01"], Decimal("430.39"))
@@ -642,6 +661,21 @@ class ImportInvoicesTest(SpreadsheetImportTestCase):
 		self.assertAlmostEqual(
 			frappe.db.get_value("CRM Organization", "Sure Seal SA (Pty) Ltd", "annual_revenue"), 430.39
 		)
+
+	def test_a_blank_customer_books_nothing_to_an_unlinked_organization(self):
+		"""{"acumatica_id": None} is IS NULL: the blank row's revenue landed on whichever
+		organization nobody had linked to Acumatica."""
+		frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Hand Made Ltd"}).insert()
+		path = write_workbook(
+			self.dir / "inv.xlsx",
+			INVOICE_HEADER,
+			[[invoice(**{"Customer": None, "Reference Nbr.": "IN-BLANK"})[h] for h in INVOICE_HEADER]],
+		)
+		rejects = ss.Rejects()
+		counts = ss.import_invoices(path, rejects, rates=RATES)
+		self.assertEqual(counts["organizations"], 0)
+		self.assertFalse(frappe.db.get_value("CRM Organization", "Hand Made Ltd", "annual_revenue"))
+		self.assertEqual(rejects.rows, [{"file": "invoices", "key": "IN-BLANK", "reason": "no customer"}])
 
 	def test_a_customer_with_no_organization_rejects(self):
 		path = write_workbook(self.dir / "inv.xlsx", INVOICE_HEADER, [[invoice()[h] for h in INVOICE_HEADER]])

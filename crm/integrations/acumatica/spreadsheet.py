@@ -266,6 +266,10 @@ def shape_sales_order(
 	if order_type != "QT":
 		# fulfilment records, branch transfers and credit memos are not opportunities
 		return {"skip": f"order type {order_type}"}
+	if not row.get("Customer"):
+		# looked up as {"acumatica_id": None}, which is IS NULL: the deal went to
+		# whichever organization nobody had linked to Acumatica
+		return {"reject": "no customer", "key": nbr}
 
 	status = map_deal_status(row.get("Status"), row.get("Quote Outcome"))
 	if status is None:
@@ -500,6 +504,11 @@ def revenue_by_customer(rows: list[dict], rates: dict[str, Decimal], base_curren
 	rejects: list[tuple] = []
 	for row in rows:
 		if row.get("Status") == "Canceled":
+			continue
+		if not row.get("Customer"):
+			# summed under None and looked up as IS NULL, it booked the revenue to
+			# whichever organization nobody had linked to Acumatica
+			rejects.append((row.get("Reference Nbr."), "no customer"))
 			continue
 		currency = row.get("Currency") or base_currency
 		rate = _rate_for(currency, rates, base_currency)
