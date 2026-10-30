@@ -44,6 +44,7 @@ export async function frappeUi(importOriginal, backend, overrides = {}) {
     ErrorMessage,
     FormControl,
     Switch,
+    Tooltip,
     ...overrides,
   }
 }
@@ -163,4 +164,11 @@ const Switch = defineComponent({
         'aria-checked': String(props.modelValue),
         onClick: () => emit('update:modelValue', !props.modelValue),
       }),
+})
+
+const Tooltip = defineComponent({
+  setup:
+    (_, { slots }) =>
+    () =>
+      slots.default?.(),
 })
