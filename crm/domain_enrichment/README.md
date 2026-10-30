@@ -63,7 +63,7 @@ DESK ADMIN (data)                         ENGINE (code, rule-agnostic)        RE
 | `tasks.py` | `run_enrichment` (enqueued worker) + `write_run` (the **single** run-history writer). Streams realtime progress; never raises. |
 | `api.py` | Whitelisted `enrich` (enqueue) + `enrich_preview` (bounded sync prefill). Type-annotated; permission- and rate-limited. |
 | `cross_record.py` | `copy_enrichment_from_organization` — the one link-time Org→Lead/Deal copy. |
-| `install.py` | Idempotent seeder: translates the original constant tables into Rule + Field Mapping records. |
+| `install.py` | Seeder: translates the original constant tables into Rule + Field Mapping records, once per `SEED_VERSION` (marker in Settings), so a default an admin deleted or renamed stays that way. |
 
 ---
 
@@ -83,7 +83,7 @@ Three doctypes hold all the tunable knowledge. `get_config()` reads them on dema
 | `request_timeout` | Per-request timeout (seconds). |
 | `max_fetch_seconds` | Wall-clock cap on one fetch, redirects and retries included. Empty: 3 × `request_timeout`; never above 30 s. |
 | `max_download_bytes` | Hard cap on bytes read per page (streamed). |
-| `retry_count` | Transient-error retries on the session. |
+| `retry_count` | Transient-error retries on the session (429/5xx; `Retry-After` is not honoured, and the backoff stays inside the fetch budget). |
 | `user_agent` | Crawler User-Agent header. |
 | `preview_timeout` | Per-request timeout for the fast `enrich_preview` (create-modal) path, which reads the homepage alone. |
 | `allowed_domains` / `blocked_domains` (child) | SSRF allow/block lists (subdomain-aware). A blocked host is always rejected; if an allow list exists, only listed hosts pass. |

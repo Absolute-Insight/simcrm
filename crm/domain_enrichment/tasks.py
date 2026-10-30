@@ -164,8 +164,9 @@ def enqueue_enrichment(
 	one spot. ``enqueue_after_commit`` matters for the ``after_insert`` caller, whose
 	transaction has not committed yet; it is harmless for the already-saved paths.
 
-	Reads only the Settings Single for the timeout bound (cheap, framework-cached) --
-	it never assembles the full config.
+	Reads only the Settings Single for the timeout bound (cheap, framework-cached),
+	plus the agent's timeout when the model fallback is on -- it never assembles the
+	full config.
 	"""
 	timeout = job_timeout(get_settings())
 	job_id = f"domain-enrich-{reference_doctype}-{reference_name}"
