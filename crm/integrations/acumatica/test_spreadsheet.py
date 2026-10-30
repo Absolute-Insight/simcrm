@@ -777,6 +777,20 @@ class ImportWorkbooksTest(SpreadsheetImportTestCase):
 		self.assertEqual(json.loads((self.dir / "import-manifest.json").read_text())["deals"], [])
 		self.assertFalse(frappe.flags.spreadsheet_import_dry_run)
 
+	def test_an_interrupted_run_records_no_deal_of_the_batch_it_rolls_back(self):
+		"""Ctrl-C is a KeyboardInterrupt -- a BaseException -- so it skipped the crash
+		branch: nothing rolled back, and the manifest was written as for a clean run,
+		naming deals bench then threw away. Every later run skipped those quotes as
+		"deleted by a rep", for good."""
+		with patch("crm.integrations.acumatica.spreadsheet.import_invoices", side_effect=KeyboardInterrupt):
+			with self.assertRaises(KeyboardInterrupt):
+				ss.import_workbooks(
+					self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2}
+				)
+		self.assertFalse(frappe.db.exists("CRM Deal", {"acumatica_sales_quote": "QT103012"}))
+		self.assertEqual(json.loads((self.dir / "import-manifest.json").read_text())["deals"], [])
+		self.assertFalse(frappe.flags.spreadsheet_import_dry_run)
+
 	def test_a_crashed_run_records_the_deals_that_landed_and_not_the_rolled_back_batch(self):
 		"""`_commit_every` commits a batch every 50 rows, so a run that dies later has
 		already put deals on the site -- and the manifest, written only on a clean

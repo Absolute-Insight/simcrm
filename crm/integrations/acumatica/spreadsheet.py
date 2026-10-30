@@ -664,10 +664,15 @@ def import_workbooks(
 			warnings.append(
 				f"{with_sla} imported deals picked up a Service Level Agreement; response timers are now running on them"
 			)
-	except Exception:
+	except BaseException:
 		# the current batch rolls back; batches already committed by
 		# `_commit_every` stay, and a re-run is idempotent so the operator
-		# resumes rather than restores
+		# resumes rather than restores.
+		#
+		# BaseException, not Exception: Ctrl-C (KeyboardInterrupt) and a SIGTERM's
+		# SystemExit skipped this branch, so the manifest below was written as a clean
+		# finish -- naming the batch that bench is about to roll back, which every
+		# later run then skipped for good as "deleted by a rep".
 		crashed = True
 		frappe.db.rollback()
 		raise
