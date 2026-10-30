@@ -127,6 +127,19 @@ class AgentConfigTest(UnitTestCase):
 		cfg = AgentConfig.from_settings({"api_key": "sk-secret"}).with_overrides(model="candidate")
 		self.assertEqual(cfg.api_key, "sk-secret")
 
+	def test_another_endpoint_is_never_handed_the_site_s_key(self):
+		"""Audit L-04: a sweep with only ``base_url`` overridden replayed the site's
+		Bearer key at the candidate host -- the leak client._post refuses on a
+		redirect. The key goes only where the site sends it."""
+		site = AgentConfig.from_settings({"base_url": "http://gpu.local:8000/v1", "api_key": "sk-secret"})
+		self.assertEqual(site.with_overrides(base_url="http://candidate:8080/v1").api_key, "")
+		# the site's own endpoint, however it is typed, keeps it
+		self.assertEqual(site.with_overrides(base_url="http://gpu.local:8000/v1/").api_key, "sk-secret")
+		# and a candidate that needs a key of its own is given that one
+		candidate = site.with_overrides(base_url="http://candidate:8080/v1", api_key="sk-candidate")
+		self.assertEqual(candidate.api_key, "sk-candidate")
+		self.assertEqual(site.with_overrides(api_key="").api_key, "")
+
 	def test_a_zero_window_timeout_or_reply_budget_falls_back_to_the_default(self):
 		"""A site that upgraded across the release that added Context Window loads the
 		new Int field as 0 (a Single's field default is not applied to a record that

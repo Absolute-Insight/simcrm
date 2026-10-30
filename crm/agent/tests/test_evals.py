@@ -282,6 +282,25 @@ class EntryPointTest(UnitTestCase):
 			runner.run_and_print(repeats=1, base_url="http://candidate:8080/v1", model="candidate")
 		self.assertEqual(set(seen), {("http://candidate:8080/v1", "candidate")})
 
+	def test_a_candidate_is_sent_its_own_key_and_never_the_site_s(self):
+		"""Audit L-04: the sweep replayed the site's API key at whatever host
+		``base_url`` named."""
+		seen = []
+		site = AgentConfig(**{**CFG.__dict__, "api_key": "sk-site"})
+		with (
+			mock.patch.object(runner, "CASES", (cases.case_by_name("summarise/bare-override"),)),
+			mock.patch.object(runner, "get_config", return_value=site),
+			mock.patch.object(
+				runner.client,
+				"complete",
+				side_effect=lambda cfg, model, messages: seen.append(cfg.api_key) or summary(),
+			),
+		):
+			runner.run_and_print(repeats=1, base_url="http://candidate:8080/v1")
+			runner.run_and_print(repeats=1, base_url="http://candidate:8080/v1", api_key="sk-candidate")
+			runner.run_and_print(repeats=1, model="other-model")
+		self.assertEqual(seen, [""] * 2 + ["sk-candidate"] * 2 + ["sk-site"] * 2)
+
 	def test_a_budget_override_reaches_the_client(self):
 		"""The budget is the setting a sweep most often has to move -- it is what
 		invalidated the MiniCPM5-1B row."""

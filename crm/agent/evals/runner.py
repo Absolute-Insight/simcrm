@@ -22,6 +22,9 @@ Or, to measure a candidate without pointing the site at it::
 
     bench --site <site> execute crm.agent.evals.runner.run_and_print --kwargs \
       "{'base_url': 'http://candidate:8080/v1', 'model': 'candidate', 'max_tokens': 4096}"
+
+The site's API key is never sent to a candidate's ``base_url``; pass ``api_key``
+for one that needs its own.
 """
 
 from __future__ import annotations
@@ -203,6 +206,7 @@ def run_and_print(
 	timeout: int | str | None = None,
 	max_tokens: int | str | None = None,
 	reasoning_off: bool | int | str | None = None,
+	api_key: str | None = None,
 ) -> str:
 	"""``bench execute`` entry point. Prints the report and returns it.
 
@@ -213,7 +217,8 @@ def run_and_print(
 	most often worth moving -- a budget too small for a model's reasoning channel
 	reads as an unanswering endpoint rather than as a budget. ``reasoning_off`` is
 	the other: lfm3-vl thinking at 4096 ran out of budget on 21 of 53 calls, and
-	with it off answered all of them.
+	with it off answered all of them. ``api_key`` is the candidate's own: the
+	site's key goes only to the site's endpoint.
 	"""
 	cfg = get_config().with_overrides(
 		base_url=base_url,
@@ -221,6 +226,7 @@ def run_and_print(
 		timeout=timeout,
 		max_tokens=max_tokens,
 		reasoning_off=reasoning_off,
+		api_key=api_key,
 	)
 	report = format_report(run_evals(cfg, repeats=repeats, only=only), cfg)
 	print(report)
