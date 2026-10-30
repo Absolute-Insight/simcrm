@@ -407,7 +407,7 @@ class ServerOwnedFieldsTest(OutcomeTestCase):
 
 	def test_only_the_reps_own_cancellation_is_deleted(self):
 		"""Defence in depth for however an item came to name someone else's event:
-		_drop_cancellation deletes with permissions off, so it checks what it deletes."""
+		the planner deletes its events with permissions off, so it checks what it deletes."""
 		victim = self.colleagues_cancelled_visit()
 		item = self.plan_one()
 		frappe.db.set_value(
@@ -424,3 +424,74 @@ class ServerOwnedFieldsTest(OutcomeTestCase):
 		clear_override(item)
 
 		self.assertTrue(frappe.db.exists("Event", victim))
+
+
+class CorrectingACompletedVisitTest(OutcomeTestCase):
+	"""One visit, one event. "Log the outcome" puts a Completed Visit event on the
+	calendar; marking the item missed or handing it back used to unlink that event
+	and leave it there, where the visit counts and customer interaction still
+	counted it -- twice once the visit was logged again, and both ways once it
+	was then cancelled."""
+
+	def own_visit(self) -> str:
+		return (
+			frappe.get_doc(
+				{
+					"doctype": "Event",
+					"subject": "Visit",
+					"starts_on": datetime.combine(frappe.utils.getdate(), time.min),
+					"event_type": "Private",
+					"event_category": "Visit",
+					"status": "Completed",
+					"event_participants": [
+						{"reference_doctype": "CRM Organization", "reference_docname": self.org.name}
+					],
+				}
+			)
+			.insert()
+			.name
+		)
+
+	def test_marking_a_logged_visit_missed_takes_its_event_with_it(self):
+		item = self.plan_one()
+		first = complete_item(item, "Visited, quoted two valves")["items"][0]["fulfilled_by"]
+		mark_missed(item)
+		self.assertFalse(frappe.db.exists("Event", first))
+
+		second = complete_item(item, "Visited after all")["items"][0]["fulfilled_by"]
+		self.assertEqual(frappe.db.get_value("Event", second, "status"), "Completed")
+
+	def test_handing_a_logged_visit_back_takes_its_event_with_it(self):
+		item = self.plan_one()
+		logged = complete_item(item, "Visited")["items"][0]["fulfilled_by"]
+		clear_override(item)
+		self.assertFalse(frappe.db.exists("Event", logged))
+
+		# the path cancel_item's own message prescribes: no Completed event left behind
+		cancelled = cancel_item(item, "Customer moved it")["items"][0]["fulfilled_by"]
+		self.assertEqual(frappe.db.get_value("Event", cancelled, "status"), "Cancelled")
+		self.assertFalse(frappe.db.exists("Event", {"name": logged, "status": "Completed"}))
+
+	def test_a_visit_the_matcher_found_is_a_record_and_stays(self):
+		item = self.plan_one()
+		event = self.own_visit()
+		frappe.set_user("Administrator")
+		match_actuals()
+		frappe.set_user(REP)
+		self.assertEqual(frappe.db.get_value("CRM Rep Plan Item", item, "fulfilled_by"), event)
+
+		mark_missed(item)
+		self.assertTrue(frappe.db.exists("Event", event))
+
+	def test_a_visit_named_by_hand_is_a_record_and_stays(self):
+		from crm.api.rep_plan import mark_fulfilled
+
+		item = self.plan_one()
+		# a cancellation's reason is not an account of the visit named afterwards
+		cancel_item(item, "Customer moved it")
+		event = self.own_visit()
+		mark_fulfilled(item, "Event", event)
+		self.assertIsNone(frappe.db.get_value("CRM Rep Plan Item", item, "outcome"))
+
+		clear_override(item)
+		self.assertTrue(frappe.db.exists("Event", event))

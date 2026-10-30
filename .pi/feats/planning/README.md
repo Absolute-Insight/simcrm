@@ -32,7 +32,11 @@
   the customer (`EVENT_KINDS`), held in `fulfilled_by`. **Cancelled** is a
   status of its own, only ever set by hand: neither done nor missed, it drops
   out of adherence's "due". Changing your mind (mark missed, hand back,
-  complete after all) deletes the Cancelled event so it stops counting.
+  complete after all) deletes the Cancelled event so it stops counting, and
+  marking a logged visit missed or handing it back deletes its Completed
+  event the same way -- one visit, one event. Only the planner's own events
+  go (`_drop_own_event`): one the matcher found or `mark_fulfilled` named is a
+  record in its own right and stays.
 - **"Log activity"** (`log_unplanned_visit`, `activity_type` defaulting to
   Unplanned Meeting in the UI): unplanned work of any kind, recorded as Done.
   A visit kind needs a customer; the whole account is the outcome, the

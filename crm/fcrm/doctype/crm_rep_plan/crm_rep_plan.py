@@ -166,7 +166,7 @@ class CRMRepPlan(Document):
 		generic document API is a second door: frappe.client.set_value on an item
 		saves the rep's own plan, which she may write, and it let her name a
 		colleague's Cancelled event as her item's fulfilment -- which
-		_drop_cancellation then deleted -- or claim a colleague's meeting, so that
+		clear_override then deleted -- or claim a colleague's meeting, so that
 		colleague's own item could never be fulfilled by it.
 
 		Server code saves with ignore_permissions and is trusted with these fields,
