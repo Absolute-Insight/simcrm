@@ -269,3 +269,47 @@ describe('quick filters', () => {
     expect(vc.children.QuickFilterField.filter.value).toBe(42)
   })
 })
+
+describe('export', () => {
+  it('sends every selected name intact, whatever it contains', async () => {
+    setRoute({ name: 'Organizations' })
+    const m = await mountVC({ doctype: 'CRM Organization (export)' })
+    const selected = [
+      'Smith & Sons (Pty) Ltd',
+      'A+B Engineering',
+      'Unit #4 Holdings',
+      '100% Pumps',
+    ]
+    m.vc().updateSelections(new Set(selected))
+    vc.children.Dropdown.options[0].options
+      .find((o) => o.label === 'Export')
+      .onClick()
+    await settle()
+
+    let url = null
+    const location = window.location
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: {
+        set href(v) {
+          url = v
+        },
+      },
+    })
+    try {
+      m.el.querySelector('button[data-action="Download"]').click()
+    } finally {
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: location,
+      })
+    }
+
+    // the query string as the server parses it
+    const query = new URL(url, 'https://crm.example').searchParams
+    expect(JSON.parse(query.get('selected_items'))).toEqual(selected)
+    expect(query.get('doctype')).toBe('CRM Organization (export)')
+    expect(JSON.parse(query.get('fields'))).toEqual(['name'])
+    expect(query.get('order_by')).toBe('modified desc')
+  })
+})
