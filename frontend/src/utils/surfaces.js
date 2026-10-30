@@ -16,7 +16,7 @@
  * guarantees is inert. Keep it in step with the `condition:` on the surface.
  *
  * Adding a surface: add it here, and add `canSee('<key>') &&` to its existing
- * condition in AppSidebar.vue or Settings.vue. A surface missing from this list
+ * condition in useNavLinks.js or Settings.vue. A surface missing from this list
  * simply stays visible, which is the safe direction.
  *
  * Keys must match the server's shape check in `crm/api/access.py`:
@@ -31,7 +31,7 @@ export const REP_ROLE = 'Sales User'
 export const CONFIGURABLE_ROLES = [MANAGER_ROLE, REP_ROLE]
 
 export const SURFACES = [
-  // --- nav: AppSidebar.vue's `links` ---
+  // --- nav: useNavLinks.js ---
   { key: 'nav.dashboard', group: 'nav', label: 'Dashboard' },
   { key: 'nav.assistant', group: 'nav', label: 'Assistant' },
   { key: 'nav.analyst', group: 'nav', label: 'Analyst', floor: ADMIN_ROLE },
