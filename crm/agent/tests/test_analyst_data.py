@@ -508,6 +508,94 @@ class DeadlineTest(IntegrationTestCase):
 			self.assertEqual(analyst_data._erpnext_timeout(50.0), 1.0)
 
 
+class RowCapTest(IntegrationTestCase):
+	"""A read stopped at ERP_ROW_CAP used to report itself complete: the totals of a
+	long window on a big tenant fell short with nothing to say so."""
+
+	CAP = 5
+
+	def setUp(self):
+		super().setUp()
+		patcher = mock.patch.object(analyst_data, "ERP_ROW_CAP", self.CAP)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+
+	def acumatica(self, documents: int):
+		return FakeAcumatica(
+			{
+				"SalesInvoice": [
+					{
+						"Date": "2026-01-10",
+						"Amount": 100.0,
+						"Balance": 0.0,
+						"Type": "Invoice",
+						"Status": "Closed",
+					}
+				]
+				* documents,
+				"Payment": [
+					{
+						"ApplicationDate": "2026-01-10",
+						"PaymentAmount": 100.0,
+						"Type": "Payment",
+						"Status": "Closed",
+					}
+				]
+				* documents,
+			}
+		)
+
+	def test_an_acumatica_read_stopped_at_the_cap_is_partial(self):
+		with mock.patch.object(analyst_data, "_acumatica_client", return_value=self.acumatica(self.CAP + 3)):
+			invoices = analyst_data.acumatica_invoices("2026-01-01", "2026-01-31")
+			payments = analyst_data.acumatica_payments("2026-01-01", "2026-01-31")
+		self.assertEqual((len(invoices[0]), invoices[1]), (self.CAP, True))
+		self.assertEqual((len(payments[0]), payments[1]), (self.CAP, True))
+
+	def test_an_acumatica_window_holding_exactly_the_cap_is_complete(self):
+		with mock.patch.object(analyst_data, "_acumatica_client", return_value=self.acumatica(self.CAP)):
+			invoices = analyst_data.acumatica_invoices("2026-01-01", "2026-01-31")
+			payments = analyst_data.acumatica_payments("2026-01-01", "2026-01-31")
+		self.assertEqual((len(invoices[0]), invoices[1]), (self.CAP, False))
+		self.assertEqual((len(payments[0]), payments[1]), (self.CAP, False))
+
+	def test_an_erpnext_read_past_the_cap_is_partial(self):
+		invoice = {"posting_date": "2026-01-10", "grand_total": 100.0, "outstanding_amount": 0.0}
+		payment = {"posting_date": "2026-01-10", "paid_amount": 100.0}
+		for documents, partial in ((self.CAP + 1, True), (self.CAP, False)):
+			with self.subTest(documents=documents):
+				with mock.patch.object(analyst_data, "_erpnext_get", return_value=[invoice] * documents):
+					rows, cut = analyst_data.erpnext_invoices("2026-01-01", "2026-01-31")
+				self.assertEqual((len(rows), cut), (self.CAP, partial))
+				with mock.patch.object(analyst_data, "_erpnext_get", return_value=[payment] * documents):
+					rows, cut = analyst_data.erpnext_payments("2026-01-01", "2026-01-31")
+				self.assertEqual((len(rows), cut), (self.CAP, partial))
+
+	def test_the_erpnext_request_asks_for_one_row_past_the_cap(self):
+		"""Asking for the cap itself, a window holding exactly the cap and one holding
+		more come back alike."""
+		response = mock.Mock()
+		response.json.return_value = {"data": []}
+		settings = mock.Mock(erpnext_site_url="https://erp.test", api_key="key")
+		settings.get_password.return_value = "secret"
+		with (
+			mock.patch.object(frappe, "get_cached_doc", return_value=settings),
+			mock.patch.object(analyst_data.requests, "get", return_value=response) as get,
+		):
+			analyst_data.erpnext_invoices("2026-01-01", "2026-01-31")
+		self.assertEqual(get.call_args.kwargs["params"]["limit_page_length"], self.CAP + 1)
+
+	def test_a_capped_table_says_its_figures_are_a_floor(self):
+		with mock.patch.object(analyst_data, "_acumatica_client", return_value=self.acumatica(self.CAP + 3)):
+			(table,) = analyst_data.run_plan(
+				{"metrics": ["erp_invoices_by_month"], "from_date": "2026-01-01", "to_date": "2026-01-31"},
+				"acumatica",
+				today=frappe.utils.getdate("2026-10-30"),
+			)
+		self.assertIn(analyst_data.PARTIAL_NOTE, table["note"])
+		self.assertEqual(table["rows"][0]["invoiced"], 100.0 * self.CAP)
+
+
 class OwnerlessDealTest(IntegrationTestCase):
 	"""#24: get_fullname() substitutes the session user when its argument is falsy."""
 

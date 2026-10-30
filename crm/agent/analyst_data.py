@@ -40,12 +40,13 @@ ERP_ROW_CAP = 5000
 ERP_TIMEOUT = 30
 OVERDUE_AFTER_DAYS = 30
 
-# What a table says about itself when the clock stopped the read part-way. It
-# goes in the table's ``note``, which the answer prompt carries into the figures
-# block, so the narrative can say the number is a floor rather than a total.
+# What a table says about itself when a read stopped part-way: the clock ran out,
+# or the read reached ERP_ROW_CAP with documents still to come. It goes in the
+# table's ``note``, which the answer prompt carries into the figures block, so the
+# narrative can say the number is a floor rather than a total.
 PARTIAL_NOTE = (
-	"PARTIAL: the request ran out of time before this source finished; "
-	"the figures below cover only what had been read."
+	"PARTIAL: this source was not read to the end -- the request ran out of time, or the "
+	f"read reached its limit of {ERP_ROW_CAP:,} documents; the figures below cover only what had been read."
 )
 SKIPPED_NOTE = "the request ran out of time before this table was computed"
 
@@ -596,7 +597,7 @@ def _receivables(invoices, as_of: date) -> list[dict]:
 
 # Normalised record shapes: invoices -> {date, amount, balance, due}; payments -> {date, amount}.
 # Each reader returns ``(rows, partial)``: ``partial`` is True when the read was
-# stopped by the request deadline rather than by the end of the data.
+# stopped by the request deadline or by ERP_ROW_CAP rather than by the end of the data.
 
 
 def _erp_invoices(erp: str, from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
@@ -674,6 +675,10 @@ def _acumatica_invoices(filter_: str, deadline=None, window=None) -> tuple[list[
 	for record in client.iter_all(
 		"SalesInvoice", filter=filter_, select="Date,Amount,Balance,DueDate,Type,Status"
 	):
+		# the cap reached with documents still to come: what was read is a floor
+		if len(rows) >= ERP_ROW_CAP:
+			partial = True
+			break
 		# Checked per row, which is per *page* in effect: breaking out of the
 		# generator is what stops it fetching the next page, and one page is one
 		# 30-second request. Up to fifty of them fit inside a plan the caller
@@ -692,8 +697,6 @@ def _acumatica_invoices(filter_: str, deadline=None, window=None) -> tuple[list[
 				"due": str(v(record, "DueDate") or "")[:10] or None,
 			}
 		)
-		if len(rows) >= ERP_ROW_CAP:
-			break
 	return rows, partial
 
 
@@ -708,22 +711,23 @@ def acumatica_payments(from_date: str, to_date: str, deadline=None) -> tuple[lis
 		filter=_acumatica_window("ApplicationDate", from_date, to_date),
 		select="ApplicationDate,PaymentAmount,Type,Status",
 	):
-		if not _time_for_a_page(deadline):
+		if len(rows) >= ERP_ROW_CAP or not _time_for_a_page(deadline):
 			partial = True
 			break
 		day = _acumatica_dated(record, "ApplicationDate", (from_date, to_date))
 		if day is None or str(v(record, "Type") or "").lower() not in ("payment", "prepayment", ""):
 			continue
 		rows.append({"date": day, "amount": v(record, "PaymentAmount") or 0})
-		if len(rows) >= ERP_ROW_CAP:
-			break
 	return rows, partial
 
 
 def _erpnext_get(doctype: str, fields: list[str], filters: list, deadline=None) -> list[dict]:
 	"""One request for the whole window -- ERPNext pages server-side under
 	``limit_page_length``, so there is nothing to stop half-way. The deadline
-	bounds the single request instead of the paging."""
+	bounds the single request instead of the paging.
+
+	One row past :data:`ERP_ROW_CAP` is asked for, so :func:`_within_cap` can tell
+	a window that holds exactly the cap from one that holds more."""
 	settings = frappe.get_cached_doc("ERPNext CRM Settings")
 	secret = settings.get_password("api_secret", raise_exception=False) or ""
 	response = requests.get(
@@ -731,13 +735,19 @@ def _erpnext_get(doctype: str, fields: list[str], filters: list, deadline=None) 
 		params={
 			"fields": json.dumps(fields),
 			"filters": json.dumps(filters),
-			"limit_page_length": ERP_ROW_CAP,
+			"limit_page_length": ERP_ROW_CAP + 1,
 		},
 		headers={"Authorization": f"token {settings.api_key}:{secret}"},
 		timeout=_erpnext_timeout(deadline),
 	)
 	response.raise_for_status()
 	return response.json().get("data") or []
+
+
+def _within_cap(records: list[dict]) -> tuple[list[dict], bool]:
+	"""``records`` cut to :data:`ERP_ROW_CAP`, and whether that cut any: a read the
+	cap stopped is a floor, not a total."""
+	return records[:ERP_ROW_CAP], len(records) > ERP_ROW_CAP
 
 
 def _erpnext_timeout(deadline) -> float:
@@ -759,11 +769,13 @@ def erpnext_open_invoices(deadline=None) -> tuple[list[dict], bool]:
 
 
 def _erpnext_invoices(filters: list, deadline=None) -> tuple[list[dict], bool]:
-	records = _erpnext_get(
-		"Sales Invoice",
-		["posting_date", "grand_total", "outstanding_amount", "due_date", "is_return"],
-		filters,
-		deadline,
+	records, partial = _within_cap(
+		_erpnext_get(
+			"Sales Invoice",
+			["posting_date", "grand_total", "outstanding_amount", "due_date", "is_return"],
+			filters,
+			deadline,
+		)
 	)
 	return [
 		{
@@ -774,20 +786,22 @@ def _erpnext_invoices(filters: list, deadline=None) -> tuple[list[dict], bool]:
 		}
 		for r in records
 		if not r.get("is_return")
-	], False
+	], partial
 
 
 def erpnext_payments(from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
-	records = _erpnext_get(
-		"Payment Entry",
-		["posting_date", "paid_amount", "payment_type"],
-		[
-			["posting_date", "between", [from_date, to_date]],
-			["docstatus", "=", 1],
-			["payment_type", "=", "Receive"],
-		],
-		deadline,
+	records, partial = _within_cap(
+		_erpnext_get(
+			"Payment Entry",
+			["posting_date", "paid_amount", "payment_type"],
+			[
+				["posting_date", "between", [from_date, to_date]],
+				["docstatus", "=", 1],
+				["payment_type", "=", "Receive"],
+			],
+			deadline,
+		)
 	)
 	return [
 		{"date": str(r.get("posting_date") or "")[:10], "amount": r.get("paid_amount") or 0} for r in records
-	], False
+	], partial
