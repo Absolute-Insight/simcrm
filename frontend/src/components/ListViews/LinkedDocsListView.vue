@@ -22,7 +22,7 @@
       </ListHeaderItem>
     </ListHeader>
     <div class="*:mx-0 *:sm:mx-0">
-      <ListRows v-slot="{ column, item, row }" :rows="rows">
+      <ListRows v-slot="{ column, item, row }" :rows="rows" scrollKey="">
         <ListRowItem
           :item="item"
           class="!w-full"

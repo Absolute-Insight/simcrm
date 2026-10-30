@@ -46,6 +46,7 @@
       v-slot="{ idx, column, item, row }"
       :rows="rows"
       doctype="CRM Deal"
+      :scrollKey="options.scrollKey"
     >
       <ListRowItem :item="item" :align="column.align" class="overflow-hidden">
         <template #prefix>
