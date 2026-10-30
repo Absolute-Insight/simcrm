@@ -142,6 +142,18 @@ def job_timeout(s) -> int:
 	return int(seconds)
 
 
+def clear_runs(doc, method=None) -> None:
+	"""on_trash for CRM Lead, Deal and Organization: a deleted record takes its
+	enrichment history with it.
+
+	A Run's ``reference_name`` is a Dynamic Link, so left in place it made every
+	record ever enriched undeletable for Sales roles: they cannot write a Run, and the
+	delete modal's "unlink" only knows ``reference_docname``. The runs are this
+	record's history; once it is gone nothing reads them.
+	"""
+	frappe.db.delete("CRM Enrichment Run", {"reference_doctype": doc.doctype, "reference_name": doc.name})
+
+
 def enqueue_enrichment(
 	reference_doctype: str, reference_name: str, website: str, user: str, trigger: str = "manual"
 ) -> dict:

@@ -358,6 +358,71 @@ class AlreadyRunningTest(IntegrationTestCase):
 		self.assertEqual(answer["timeout"], enq.call_args.kwargs["timeout"])
 
 
+class EnrichedRecordDeleteTest(IntegrationTestCase):
+	"""Every enriched record has CRM Enrichment Runs whose ``reference_name`` is a
+	Dynamic Link to it. Nothing exempted or cleared them, so frappe refused to delete
+	the record; the delete modal listed the runs, its Unlink did nothing to them and
+	said it had, and its Delete needed write on a Run, which Sales roles lack."""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _enriched_org(self):
+		org = frappe.get_doc(
+			{"doctype": "CRM Organization", "organization_name": "Enriched " + frappe.generate_hash(length=6)}
+		).insert(ignore_permissions=True)
+		run = tasks.write_run(
+			"CRM Organization", org.name, "https://acme.example", "Completed", result=canned_result()
+		)
+		return org, run
+
+	def test_an_enriched_record_can_be_deleted_and_takes_its_runs_with_it(self):
+		for doctype, fields in (
+			("CRM Organization", {"organization_name": "Enriched " + frappe.generate_hash(length=6)}),
+			("CRM Lead", {"first_name": "Enriched", "lead_name": "Enriched Lead"}),
+			("CRM Deal", {}),
+		):
+			with self.subTest(doctype=doctype):
+				doc = frappe.get_doc({"doctype": doctype, **fields}).insert(ignore_permissions=True)
+				run = tasks.write_run(doctype, doc.name, "https://acme.example", "Completed")
+
+				frappe.delete_doc(doctype, doc.name)
+
+				self.assertFalse(frappe.db.exists(doctype, doc.name))
+				self.assertFalse(frappe.db.exists("CRM Enrichment Run", run))
+
+	def test_runs_are_not_offered_by_the_delete_modal(self):
+		from crm.api.doc import get_linked_docs_of_document
+
+		org, _run = self._enriched_org()
+		linked = get_linked_docs_of_document("CRM Organization", org.name)
+		self.assertNotIn("CRM Enrichment Run", {row["reference_doctype"] for row in linked})
+
+	def test_an_unlink_that_changed_nothing_is_reported_skipped(self):
+		from crm.api.doc import remove_linked_doc_reference
+
+		_org, run = self._enriched_org()
+		answer = remove_linked_doc_reference([{"doctype": "CRM Enrichment Run", "docname": run}])
+		self.assertEqual(answer["unlinked"], [])
+		self.assertEqual(answer["skipped"], [{"docname": run, "reason": "not_unlinkable"}])
+
+	def test_deleting_a_linked_document_takes_delete_permission_not_write(self):
+		"""Sales Manager holds delete on a Run and not write."""
+		from crm.api import doc as doc_api
+
+		_org, run = self._enriched_org()
+
+		def delete_only(doctype, ptype="read", doc=None, *args, **kwargs):
+			return ptype == "delete"
+
+		with mock.patch.object(doc_api.frappe, "has_permission", side_effect=delete_only):
+			answer = doc_api.remove_linked_doc_reference(
+				[{"doctype": "CRM Enrichment Run", "docname": run}], delete=True
+			)
+		self.assertEqual(answer, {"unlinked": [run], "skipped": []})
+		self.assertFalse(frappe.db.exists("CRM Enrichment Run", run))
+
+
 class ApiPermissionTest(IntegrationTestCase):
 	def tearDown(self):
 		frappe.db.rollback()
