@@ -664,6 +664,21 @@ class TestCRMLead(IntegrationTestCase):
 			with self.assertRaises(frappe.UniqueValidationError):
 				lead.save()
 
+	def test_a_filter_cannot_be_passed_off_as_a_unique_value(self):
+		"""A client can send a list for a Data field, and validate runs before the type
+		check, so what reaches the query has to stay a value."""
+		create_lead(first_name="Hidden", mobile_no="+35191000111")
+		mobile_field = frappe.get_meta("CRM Lead").get_field("mobile_no")
+		probe = frappe.get_doc(
+			{"doctype": "CRM Lead", "first_name": "Probe", "mobile_no": ["like", "+35191%"]}
+		)
+
+		with patch.object(mobile_field, "unique", 1):
+			try:
+				probe.validate_unique_fields()
+			except frappe.UniqueValidationError:
+				self.fail("the list was read as a filter")
+
 	def test_a_lead_that_was_already_a_duplicate_can_still_be_saved(self):
 		"""The index can stay non-unique after Unique is set, so duplicates may already be in
 		the table. Those leads must stay editable: only a new or changed value is judged."""
