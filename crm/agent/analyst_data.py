@@ -452,15 +452,37 @@ def _breakdown(getter_name: str, category: str):
 	return run
 
 
-def _tile(getter_name: str, label: str, field: str):
+def _tile(getter_name: str, label: str, field: str, compare: bool = False):
 	def run(from_date, to_date):
 		from crm.api import dashboard
 
-		tile = getattr(dashboard, getter_name)(from_date, to_date)
-		value = tile.get("value") or 0
-		return [{"metric": label, field: round(float(value), 2) if field == "value" else int(value)}], ""
+		getter = getattr(dashboard, getter_name)
+		value = _tile_value(getter(from_date, to_date), field)
+		rows = [{"metric": label, field: value}]
+		if not compare:
+			return rows, ""
+		# The comparison the catalogue promises. The tile's own delta is 0 both when
+		# nothing changed and when the period before had nothing to average, so that
+		# period is read through the same tile rather than inferred from the delta.
+		prev_from, _ = dashboard.period_windows(from_date, to_date)
+		prev_to = frappe.utils.add_days(from_date, -1)
+		previous = _tile_value(getter(prev_from, prev_to), field)
+		window = f"{frappe.utils.getdate(prev_from)} to {frappe.utils.getdate(prev_to)}"
+		if not previous:
+			return rows, f"Nothing to compare against: the period before ({window}) has no deals."
+		rows += [
+			{"metric": f"{label}, period before", field: previous},
+			{"metric": "Change against the period before", field: round(value - previous, 2)},
+		]
+		return rows, f"The period before is {window}, the same length."
 
 	return run
+
+
+def _tile_value(tile: dict, field: str):
+	value = float(tile.get("value") or 0)
+	# whole days, rounded rather than truncated: an average of 12.9 days is 13
+	return round(value, 2) if field == "value" else round(value)
 
 
 _CRM_RUNNERS = {
@@ -479,7 +501,7 @@ _CRM_RUNNERS = {
 	"deals_by_territory": _breakdown("get_deals_by_territory", "territory"),
 	"deals_by_salesperson": _breakdown("get_deals_by_salesperson", "salesperson"),
 	"plan_adherence_by_rep": _plan_adherence_by_rep,
-	"average_deal_value": _tile("get_average_deal_value", "Average deal value", "value"),
+	"average_deal_value": _tile("get_average_deal_value", "Average deal value", "value", compare=True),
 	"time_to_close": _tile("get_average_time_to_close_a_deal", "Average days to close", "days"),
 }
 

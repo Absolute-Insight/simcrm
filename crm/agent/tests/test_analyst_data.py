@@ -596,6 +596,51 @@ class RowCapTest(IntegrationTestCase):
 		self.assertEqual(table["rows"][0]["invoiced"], 100.0 * self.CAP)
 
 
+class TileTest(IntegrationTestCase):
+	"""The single-figure tables read a dashboard tile, which used to lose both the
+	comparison the catalogue promises and the fraction of a day."""
+
+	def test_average_deal_value_carries_the_period_before(self):
+		def tile(from_date, to_date):
+			current = str(frappe.utils.getdate(from_date)) == "2026-07-01"
+			return {"value": 120000.0 if current else 90000.0, "delta": 30000.0 if current else 0}
+
+		with mock.patch("crm.api.dashboard.get_average_deal_value", side_effect=tile) as read:
+			rows, note = analyst_data._CRM_RUNNERS["average_deal_value"]("2026-07-01", "2026-09-30")
+		self.assertEqual(
+			rows,
+			[
+				{"metric": "Average deal value", "value": 120000.0},
+				{"metric": "Average deal value, period before", "value": 90000.0},
+				{"metric": "Change against the period before", "value": 30000.0},
+			],
+		)
+		# the period before is the same length, ending the day before
+		self.assertEqual(
+			[tuple(str(frappe.utils.getdate(day)) for day in call.args) for call in read.call_args_list],
+			[("2026-07-01", "2026-09-30"), ("2026-03-31", "2026-06-30")],
+		)
+		self.assertIn("2026-03-31 to 2026-06-30", note)
+
+	def test_with_nothing_before_it_says_so_rather_than_reporting_no_change(self):
+		def tile(from_date, to_date):
+			current = str(frappe.utils.getdate(from_date)) == "2026-07-01"
+			# the tile's delta is 0 here too: "no change" and "nothing to compare" look alike
+			return {"value": 120000.0 if current else 0, "delta": 0}
+
+		with mock.patch("crm.api.dashboard.get_average_deal_value", side_effect=tile):
+			rows, note = analyst_data._CRM_RUNNERS["average_deal_value"]("2026-07-01", "2026-09-30")
+		self.assertEqual(rows, [{"metric": "Average deal value", "value": 120000.0}])
+		self.assertIn("Nothing to compare against", note)
+
+	def test_days_to_close_are_rounded_not_truncated(self):
+		with mock.patch(
+			"crm.api.dashboard.get_average_time_to_close_a_deal", return_value={"value": 12.9, "delta": 0}
+		):
+			rows, _note = analyst_data._CRM_RUNNERS["time_to_close"]("2026-07-01", "2026-09-30")
+		self.assertEqual(rows, [{"metric": "Average days to close", "days": 13}])
+
+
 class OwnerlessDealTest(IntegrationTestCase):
 	"""#24: get_fullname() substitutes the session user when its argument is falsy."""
 
