@@ -11,7 +11,13 @@ from frappe.rate_limiter import rate_limit
 from pypika.functions import Replace
 from werkzeug.wrappers import Response
 
-from crm.utils import are_same_phone_number, parse_phone_number, sales_user_only, user_rate_limited
+from crm.utils import (
+	are_same_phone_number,
+	default_phone_region,
+	parse_phone_number,
+	sales_user_only,
+	user_rate_limited,
+)
 
 # Per user and per minute. A recording plays once per click and the browser issues
 # a handful of Range requests per play; 30 is well above that and well below what
@@ -228,12 +234,13 @@ def get_contact_by_phone_number(phone_number: str):
 
 def lookup_contact_by_phone_number(phone_number: str):
 	"""Unrestricted lookup for server-side callers (inbound webhooks run without a sales user)."""
-	number = parse_phone_number(phone_number)
+	region = default_phone_region()
+	number = parse_phone_number(phone_number, region)
 
 	if number.get("is_valid"):
 		return get_contact(number.get("national_number"), number.get("country"))
 	else:
-		return get_contact(phone_number, number.get("country"), exact_match=True)
+		return get_contact(phone_number, number.get("country") or region, exact_match=True)
 
 
 def _restrict_to_readable(contact: dict):
@@ -526,9 +533,18 @@ def get_contact(phone_number: str, country: str = "IN", exact_match: bool = Fals
 				lead["full_name"] = lead.lead_name
 				return lead
 
-	if len(contacts) and are_same_phone_number(
-		contacts[0].matched_phone, phone_number, country, validate=not exact_match
-	):
-		return contacts[0]
+	# The LIKE above also catches numbers that merely contain these digits (a +44
+	# number holding a +27 one's national digits), so the newest row is not
+	# necessarily the match.
+	contact = next(
+		(
+			contact
+			for contact in contacts
+			if are_same_phone_number(contact.matched_phone, phone_number, country, validate=not exact_match)
+		),
+		None,
+	)
+	if contact:
+		return contact
 
 	return {"mobile_no": phone_number}

@@ -17,6 +17,7 @@ from crm.integrations.api import (
 	get_recording_url,
 	get_user_default_calling_medium,
 	is_call_integration_enabled,
+	lookup_contact_by_phone_number,
 	set_default_calling_medium,
 )
 from crm.integrations.exotel.handler import (
@@ -847,3 +848,64 @@ class TestExotelCallStatus(IntegrationTestCase):
 					status = get_call_log_status(payload, direction=direction)
 					if status is not None:
 						self.assertIn(status, options)
+
+
+class TestPhoneLookupRegion(IntegrationTestCase):
+	"""Numbers come in from a dialler, a webhook or a person typing, often without
+	the "+": the region they are read in has to be the site's, not upstream's India."""
+
+	def setUp(self):
+		super().setUp()
+		if not frappe.db.exists("Country", "South Africa"):
+			frappe.get_doc({"doctype": "Country", "country_name": "South Africa", "code": "za"}).insert(
+				ignore_permissions=True
+			)
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def site_country(self, country):
+		real = frappe.db.get_single_value
+
+		def get_single_value(doctype, fieldname, *args, **kwargs):
+			if (doctype, fieldname) == ("System Settings", "country"):
+				return country
+			return real(doctype, fieldname, *args, **kwargs)
+
+		return patch.object(frappe.db, "get_single_value", side_effect=get_single_value)
+
+	def contact(self, name, phone, modified=None):
+		doc = frappe.get_doc(
+			{
+				"doctype": "Contact",
+				"first_name": name,
+				"phone_nos": [{"phone": phone, "is_primary_mobile_no": 1}],
+			}
+		).insert(ignore_permissions=True)
+		if modified:
+			doc.db_set("modified", modified, update_modified=False)
+		return doc
+
+	def test_the_region_is_the_sites_country(self):
+		from crm.utils import default_phone_region
+
+		with self.site_country("South Africa"):
+			self.assertEqual(default_phone_region(), "ZA")
+		# no country set: upstream's default, so a site that never chose one is unchanged
+		with self.site_country(None):
+			self.assertEqual(default_phone_region(), "IN")
+
+	def test_a_local_number_without_plus_finds_the_contact(self):
+		contact = self.contact("Johan", "+27 82 555 0148")
+		with self.site_country("South Africa"):
+			for incoming in ("+27825550148", "0825550148", "082 555 0148", "27825550148"):
+				with self.subTest(incoming=incoming):
+					self.assertEqual(lookup_contact_by_phone_number(incoming).get("name"), contact.name)
+
+	def test_an_exact_match_further_down_the_list_is_found(self):
+		"""The LIKE pre-filter also catches a newer contact whose number merely
+		contains the same digits; the match below it must still be returned."""
+		caller = self.contact("Caller", "+27 82 555 0147", modified="2026-01-01 00:00:00")
+		self.contact("UK Supplier", "+44 7825 550147", modified="2026-06-01 00:00:00")
+
+		self.assertEqual(lookup_contact_by_phone_number("+27825550147").get("name"), caller.name)
