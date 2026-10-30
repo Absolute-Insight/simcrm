@@ -68,6 +68,20 @@ class TestWebhook(FrappeTestCase):
 			self._call("")
 		enqueue.assert_not_called()
 
+	@patch("crm.integrations.acumatica.importer.run_backfill")
+	def test_a_sweep_a_webhook_woke_runs_as_the_system_not_as_guest(self, run_backfill):
+		"""rq runs a job as the user who enqueued it, and the webhook enqueues from a
+		guest request -- so every record the sweep wrote, and every deal it closed,
+		was owned and modified by Guest."""
+		seen = []
+		run_backfill.side_effect = lambda **kw: seen.append(frappe.session.user)
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user("Guest")  # what the job inherits from handle_notification
+
+		importer.nightly_sweep()
+
+		self.assertEqual(seen, ["Administrator"])
+
 	@patch("crm.integrations.acumatica.webhook.frappe.enqueue")
 	def test_key_in_header_is_accepted(self, enqueue):
 		# Note: the brief's test constructs a FakeRequest(args=..., headers=...) and

@@ -451,6 +451,11 @@ def nightly_sweep() -> None:
 	"""Scheduler entry. Webhooks are the latency mechanism; this is the
 	correctness mechanism -- Acumatica keeps failed push notifications for
 	only 2 days, so the sweep must always run."""
+	if frappe.session.user != "Administrator":
+		# rq runs a job as whoever enqueued it, and the webhook enqueues from a guest
+		# request: every record that sweep wrote and every deal it closed was Guest's.
+		# The sweep is the system's, whatever woke it.
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser
 	settings = get_settings()
 	if not settings.enabled:
 		return
