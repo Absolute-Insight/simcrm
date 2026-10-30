@@ -111,6 +111,14 @@
               </div>
             </template>
           </Combobox>
+          <ErrorMessage
+            v-if="emails.error"
+            class="mt-2"
+            :message="
+              describeError(emails.error).message ||
+              __('Could not load the email accounts you can add.')
+            "
+          />
         </div>
       </div>
     </template>
@@ -119,7 +127,8 @@
 <script setup>
 import ToneBadge from '@/components/ui/ToneBadge.vue'
 import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
-import { Button, Combobox, createListResource, toast } from 'frappe-ui'
+import { describeError } from '@/utils/describeError'
+import { Button, Combobox, createResource, toast } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
 import { TextEditor } from 'frappe-ui/experimental'
 import { useOwnProfile } from '@/composables/useOwnProfile'
@@ -129,11 +138,11 @@ const emit = defineEmits(['updateStep'])
 
 const user = useOwnProfile()
 
-const emails = createListResource({
-  doctype: 'Email Account',
-  cache: 'Outgoing Email Accounts',
-  fields: ['name', 'email_id'],
-  filters: { enable_outgoing: 1 },
+// Not frappe.client.get_list: Email Account is readable by System Manager and
+// Inbox User only, so for a Sales User that list was refused and the picker
+// was silently empty. The endpoint offers what update_profile would accept.
+const emails = createResource({
+  url: 'crm.api.user.get_linkable_email_accounts',
   auto: true,
 })
 
