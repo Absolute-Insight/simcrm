@@ -95,8 +95,10 @@
           />
         </template>
       </Button>
-      <ErrorMessage v-if="error" class="mt-2 pl-2" :message="error" />
     </div>
+    <!-- Outside the list, which renders only once there is an attendee: the
+         first address typed, if invalid, was refused without a word. -->
+    <ErrorMessage v-if="error" class="mt-2 pl-2" :message="error" />
   </div>
 </template>
 
@@ -137,7 +139,6 @@ const search = ref(null)
 const error = ref(null)
 const info = ref(null)
 const query = ref('')
-const text = ref('')
 const showOptions = ref(false)
 const optionsRef = ref(null)
 const tempSelection = ref(null)
@@ -149,22 +150,31 @@ function getTooltip(m) {
   return parts.length ? parts.join(': ') : m.email
 }
 
+// The contacts found and the query they answer. The search is debounced and
+// goes to the server, so it lags the input; reka highlights the first option
+// on every keystroke and selects it on Enter. Offered while the answer was
+// still for an older query, that option was a stale suggestion, and Enter
+// right after typing or pasting an address added it in place of the address.
+const results = ref({ txt: null, rows: [] })
+let searching = null
+
 watchDebounced(
   query,
   (val) => {
     val = val || ''
-    if (text.value === val && options.value?.length) return
-    text.value = val
+    if (results.value.txt === val) return
     reload(val)
   },
   { debounce: 300, immediate: true },
 )
 
+// Not cached: a cache key is shared by every picker, and this one was the
+// first query's, so a picker opened later started from the previous one's
+// search results and never ran its own.
 const filterOptions = createResource({
   url: 'crm.api.contact.search_emails',
   method: 'POST',
-  cache: [text.value, 'Contact'],
-  params: { txt: text.value },
+  params: { txt: '' },
   transform: (data) => {
     let allData = data.map((option) => {
       let fullName = option[0]
@@ -189,15 +199,19 @@ const filterOptions = createResource({
 })
 
 const options = computed(() => {
-  let searchedContacts = props.fetchContacts ? filterOptions.data : []
-  if (!searchedContacts?.length && query.value) {
-    searchedContacts.push({
-      name: 'new',
-      label: query.value,
-      value: query.value,
-    })
+  const typed = query.value
+    ? [{ name: 'new', label: query.value, value: query.value }]
+    : []
+  if (!props.fetchContacts || results.value.txt !== (query.value || '')) {
+    return typed
   }
-  return searchedContacts || []
+  const rows = results.value.rows
+  // a complete address goes first, as its own Contact if it has one, so
+  // Enter adds what was typed rather than a partial match listed above it
+  const exact = rows.find((o) => o.value === query.value)
+  if (exact) return [exact, ...rows.filter((o) => o !== exact)]
+  if (query.value && props.validate?.(query.value)) return [...typed, ...rows]
+  return rows.length ? rows : typed
 })
 
 const emptyStateText = computed(() =>
@@ -209,10 +223,17 @@ const emptyStateText = computed(() =>
 function reload(val) {
   if (!props.fetchContacts) return
 
-  filterOptions.update({
-    params: { txt: val },
-  })
-  filterOptions.reload()
+  searching = val
+  filterOptions.fetch(
+    { txt: val },
+    {
+      onSuccess: () => {
+        // an older search answering after a newer one is not its answer
+        if (searching !== val) return
+        results.value = { txt: val, rows: filterOptions.data || [] }
+      },
+    },
+  )
 }
 
 function onSelect(val, fullOption = null) {
