@@ -2841,7 +2841,10 @@ def take_forecast_snapshot():
 	rather than derived. A rerun on the same day updates in place.
 	"""
 	today = nowdate()
-	from_date, to_date = frappe.utils.add_months(today, -1), frappe.utils.add_months(today, 6)
+	# From the first of last month, not a month back from today: a mid-month run
+	# otherwise stored only the tail of the month just closed as its actual.
+	from_date = get_first_day(frappe.utils.add_months(today, -1))
+	to_date = frappe.utils.add_months(today, 6)
 
 	written = 0
 	for scope, who, kwargs in forecast_snapshot_scopes():

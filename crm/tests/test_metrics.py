@@ -300,6 +300,33 @@ class MetricsTest(IntegrationTestCase):
 
 	# --- snapshots and accuracy -----------------------------------------
 
+	def test_a_mid_month_snapshot_stores_the_whole_previous_month(self):
+		"""The snapshot window used to open a month before *today*, so a run on
+		the 15th recorded only the second half of last month as its actual."""
+		from unittest.mock import patch
+
+		from crm.api import dashboard
+
+		won = self.make_deal(deal_value=30_000, exchange_rate=1)
+		frappe.db.set_value(
+			"CRM Deal",
+			won.name,
+			{"status": self.status_of_type("Won"), "closed_date": "2026-06-02"},
+			update_modified=False,
+		)
+		with (
+			patch.object(dashboard, "nowdate", return_value="2026-07-15"),
+			patch.object(dashboard, "forecast_snapshot_scopes", return_value=[("Rep", USER, {"user": USER})]),
+		):
+			take_forecast_snapshot()
+
+		stored = frappe.db.get_value(
+			"CRM Forecast Snapshot",
+			{"snapshot_date": "2026-07-15", "month": "2026-06", "scope": "Rep", "user": USER},
+			"actual_at_snapshot",
+		)
+		self.assertEqual(stored, 30_000)
+
 	def test_snapshot_job_is_idempotent_per_day(self):
 		take_forecast_snapshot()
 		first = frappe.db.count("CRM Forecast Snapshot")
