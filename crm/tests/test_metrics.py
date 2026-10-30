@@ -547,6 +547,34 @@ class MetricsTest(IntegrationTestCase):
 		rows = get_deal_status_change_counts(today, today, USER)
 		self.assertEqual(next(r for r in rows if r["stage"] == stage)["count"], 1)
 
+	# --- sales trend and time to close ---------------------------------
+
+	def test_the_sales_trend_plots_a_win_on_the_day_it_was_won(self):
+		"""The Won deals tile counts by closed_date; the trend summed wins into the
+		creation-dated arm, so a deal opened last quarter and won today never
+		reached the chart beside the tile."""
+		from crm.api.dashboard import get_sales_trend, get_won_deals
+
+		today = frappe.utils.getdate()
+		deal = self.make_deal()
+		frappe.db.set_value(
+			"CRM Deal",
+			deal.name,
+			{
+				"status": self.status_of_type("Won"),
+				"closed_date": today,
+				"creation": frappe.utils.add_days(frappe.utils.now_datetime(), -45),
+			},
+			update_modified=False,
+		)
+
+		start, end = str(frappe.utils.add_days(today, -29)), str(today)
+		trend = get_sales_trend(start, end, USER)["data"]
+		wins = {row["date"]: row["won_deals"] for row in trend if row["won_deals"]}
+		self.assertEqual(wins, {str(today): 1})
+		self.assertEqual(sum(row["deals"] for row in trend), 0)
+		self.assertEqual(get_won_deals(start, end, USER)["value"], sum(wins.values()))
+
 	# --- the chart registry ---------------------------------------------
 
 	def test_only_registered_charts_are_reachable(self):

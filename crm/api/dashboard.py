@@ -837,13 +837,11 @@ def get_sales_trend(
 	# Build deals query
 	deals_query = (
 		frappe.qb.from_(Deal)
-		.join(Status)
-		.on(Deal.status == Status.name)
 		.select(
 			Date(Deal.creation).as_("date"),
 			frappe.qb.terms.ValueWrapper(0).as_("leads"),
 			Count("*").as_("deals"),
-			Sum(Case().when(Status.type == "Won", 1).else_(0)).as_("won_deals"),
+			frappe.qb.terms.ValueWrapper(0).as_("won_deals"),
 		)
 		.where(Date(Deal.creation).between(from_date, to_date))
 	)
@@ -854,8 +852,31 @@ def get_sales_trend(
 	deals_query = apply_territory(deals_query, Deal, territory)
 	deals_query = scope_deals(deals_query).groupby(Date(Deal.creation))
 
+	# Wins on the day they were won, which is how the Won deals tile beside this
+	# chart counts them. Summed into the creation-dated arm above, a win landed on
+	# the day the deal was opened: a deal opened last quarter and won today never
+	# reached the chart, and every win rewrote a day already plotted.
+	wins_query = (
+		frappe.qb.from_(Deal)
+		.join(Status)
+		.on(Deal.status == Status.name)
+		.select(
+			Date(Deal.closed_date).as_("date"),
+			frappe.qb.terms.ValueWrapper(0).as_("leads"),
+			frappe.qb.terms.ValueWrapper(0).as_("deals"),
+			Count("*").as_("won_deals"),
+		)
+		.where((Status.type == "Won") & Deal.closed_date.between(from_date, to_date))
+	)
+
+	if user:
+		wins_query = wins_query.where(belongs_to(Deal, user, "CRM Deal"))
+
+	wins_query = apply_territory(wins_query, Deal, territory)
+	wins_query = scope_deals(wins_query).groupby(Date(Deal.closed_date))
+
 	# Combine with UNION ALL and aggregate by date
-	union_query = leads_query.union_all(deals_query)
+	union_query = leads_query.union_all(deals_query).union_all(wins_query)
 
 	# Wrap in outer query to aggregate by date
 	daily = (
