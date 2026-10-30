@@ -6,7 +6,13 @@ import ListBulkActions from '@/components/ListBulkActions.vue'
 import AssignmentModal from '@/components/Modals/AssignmentModal.vue'
 
 // The real ListBulkActions with the real AssignmentModal it opens.
-const S = vi.hoisted(() => ({ calls: [], link: null }))
+const S = vi.hoisted(() => ({
+  calls: [],
+  link: null,
+  dialog: null,
+  // when set, each call waits here until the test answers it
+  held: null,
+}))
 
 vi.mock('frappe-ui', async (importOriginal) => {
   const { h } = await import('vue')
@@ -14,9 +20,10 @@ vi.mock('frappe-ui', async (importOriginal) => {
     ...(await importOriginal()),
     call: (method, args) => {
       S.calls.push({ method, args })
-      return Promise.resolve({})
+      if (!S.held) return Promise.resolve({})
+      return new Promise((resolve, reject) => S.held.push({ resolve, reject }))
     },
-    toast: { success() {}, error() {}, create() {} },
+    toast: { success: vi.fn(), error: vi.fn(), create() {} },
     Tooltip: {
       name: 'Tooltip',
       render() {
@@ -28,7 +35,7 @@ vi.mock('frappe-ui', async (importOriginal) => {
 vi.mock('vue-router', () => ({ useRouter: () => ({ push() {} }) }))
 vi.mock('@/utils', () => ({ setupListCustomizations: async () => ({}) }))
 vi.mock('@/stores/global', () => ({
-  globalStore: () => ({ $dialog() {}, $socket: null }),
+  globalStore: () => ({ $dialog: (o) => (S.dialog = o), $socket: null }),
 }))
 vi.mock('@/stores/users', () => ({
   usersStore: () => ({
@@ -104,6 +111,7 @@ const addMultiple = () =>
 
 beforeEach(() => {
   S.calls.length = 0
+  S.held = null
   errors.length = 0
 })
 
@@ -174,6 +182,52 @@ describe('bulk Assign To, twice in one list visit', () => {
     expect(page.chips()).toEqual([])
     await page.update()
     expect(addMultiple()).toEqual([])
+    page.unmount()
+  })
+})
+
+describe('bulk Convert to Deal', () => {
+  const converts = () =>
+    S.calls
+      .filter((c) => c.method.endsWith('crm_lead.convert_to_deal'))
+      .map((c) => c.args.lead)
+
+  async function convert(page, names) {
+    const actions = page.vm.bulkActions(new Set(names), () => {})
+    actions.find((a) => a.label === 'Convert to Deal').onClick()
+    const done = S.dialog.actions[0].onClick({ close() {} })
+    await flush()
+    return done
+  }
+
+  it('converts one lead at a time', async () => {
+    // Two leads naming the same new organization: sent together, both pass
+    // create_organization's exists() check and the second insert fails.
+    S.held = []
+    const page = await listPage()
+    const done = convert(page, ['LEAD-1', 'LEAD-2'])
+    await flush()
+    expect(converts()).toEqual(['LEAD-1'])
+    S.held.shift().resolve('DEAL-1')
+    await flush()
+    expect(converts()).toEqual(['LEAD-1', 'LEAD-2'])
+    S.held.shift().resolve('DEAL-2')
+    await done
+    page.unmount()
+  })
+
+  it('carries on past a failed lead and reports it', async () => {
+    S.held = []
+    const { toast } = await import('frappe-ui')
+    const page = await listPage()
+    const done = convert(page, ['LEAD-1', 'LEAD-2'])
+    await flush()
+    S.held.shift().reject(new Error('Lost lead'))
+    await flush()
+    S.held.shift().resolve('DEAL-2')
+    await done
+    expect(converts()).toEqual(['LEAD-1', 'LEAD-2'])
+    expect(toast.error).toHaveBeenCalledWith('Converted 1 of 2; 1 failed')
     page.unmount()
   })
 })
