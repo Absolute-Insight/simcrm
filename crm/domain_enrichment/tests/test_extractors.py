@@ -12,6 +12,8 @@ standalone.
 
 from __future__ import annotations
 
+import json
+
 from frappe.tests import UnitTestCase
 
 from crm.domain_enrichment import extractors
@@ -218,6 +220,44 @@ class JsonLdTest(UnitTestCase):
 	def test_ignores_invalid_json(self):
 		_page, soup = fixtures.make_page("https://x.com", fixtures.BROKEN_JSON_LD)
 		self.assertEqual(extractors.parse_json_ld(soup), [])
+
+
+def _ld_page(block):
+	html = (
+		"<html><head><title>Acme | Industrial pumps</title>"
+		f'<script type="application/ld+json">{json.dumps(block)}</script>'
+		"</head><body><p>x</p></body></html>"
+	)
+	return fixtures.make_page("https://acme.example", html)
+
+
+class JsonLdValueShapesTest(UnitTestCase):
+	"""JSON-LD allows a language-tagged ``{"@value": ...}`` object or an array wherever
+	a string can go. Calling ``.strip()`` on one raised AttributeError: the preview
+	answered 500, and a full run was marked Failed before contacts and industry were
+	even looked at -- on every retry."""
+
+	def test_a_language_tagged_name_is_read(self):
+		page, soup = _ld_page({"@type": "Organization", "name": {"@value": " Acme ", "@language": "en"}})
+		self.assertEqual(extractors.extract_company_info(page, soup)["company_name"].value, "Acme")
+
+	def test_a_list_takes_its_first_string(self):
+		page, soup = _ld_page({"@type": "Organization", "name": "Acme", "description": [{"x": 1}, "Pumps."]})
+		self.assertEqual(extractors.extract_company_info(page, soup)["description"].value, "Pumps.")
+		self.assertEqual(extractors.select_description([page], {page.url: soup}).value, "Pumps.")
+
+	def test_a_logo_url_list_is_read(self):
+		page, soup = _ld_page({"@type": "Organization", "logo": {"@type": "ImageObject", "url": ["/a.png"]}})
+		self.assertEqual(
+			extractors.extract_company_info(page, soup)["image"].value, "https://acme.example/a.png"
+		)
+
+	def test_an_unreadable_value_is_skipped_for_the_next_source(self):
+		page, soup = _ld_page({"@type": "Organization", "name": 42, "description": {"@id": "#d"}})
+		info = extractors.extract_company_info(page, soup)
+		self.assertEqual(info["company_name"].value, "Acme")  # from the <title>
+		self.assertEqual(info["company_name"].method, Method.TITLE_TAG)
+		self.assertEqual(info["description"].value, "")
 
 
 class DescriptionSelectionTest(UnitTestCase):
