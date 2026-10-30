@@ -16,6 +16,7 @@ from unittest import mock
 from frappe.tests import UnitTestCase
 from rq.timeouts import JobTimeoutException
 
+from crm.domain_enrichment import extractors
 from crm.domain_enrichment import pipeline as pipeline_mod
 from crm.domain_enrichment.pipeline import PROGRESS_STEPS, _normalize_website
 from crm.domain_enrichment.pipeline import run as run_pipeline
@@ -223,6 +224,33 @@ class PreviewTest(UnitTestCase):
 			result = pipeline_mod.preview("https://acme.example", cfg=self.cfg)
 		self.assertEqual(result.company_name.value, "")
 		self.assertTrue(result.notes)
+
+	CHALLENGE = (
+		"<!DOCTYPE html><html><head><title>Just a moment...</title></head><body>"
+		"<noscript>Enable JavaScript and cookies to continue</noscript></body></html>"
+	)
+
+	def _preview_of(self, html, status_code):
+		page = fixtures.make_page("https://acme.example", html, status_code=status_code)
+		with mock.patch.object(pipeline_mod, "crawl", lambda *a, **k: [page]):
+			return pipeline_mod.preview("https://acme.example", cfg=self.cfg)
+
+	def test_a_bot_challenge_is_not_read_as_the_company(self):
+		"""A Cloudflare 403 parses as HTML like any other page; read as the homepage it
+		prefilled the create modal with the company "Just a moment..." and its favicon."""
+		result = self._preview_of(self.CHALLENGE, 403)
+		self.assertEqual((result.company_name.value, result.logo.value), ("", ""))
+		self.assertEqual(result.notes, [extractors.READABILITY_MESSAGES["blocked"]])
+
+	def test_a_challenge_served_as_200_is_caught_by_its_markers(self):
+		result = self._preview_of(self.CHALLENGE, 200)
+		self.assertEqual(result.company_name.value, "")
+		self.assertEqual(result.notes, [extractors.READABILITY_MESSAGES["blocked"]])
+
+	def test_an_error_page_is_not_read_as_the_company(self):
+		result = self._preview_of("<html><head><title>Service Unavailable</title></head></html>", 503)
+		self.assertEqual(result.company_name.value, "")
+		self.assertEqual(result.notes, [extractors.READABILITY_MESSAGES["unreachable"]])
 
 
 class SchemaStabilityTest(UnitTestCase):

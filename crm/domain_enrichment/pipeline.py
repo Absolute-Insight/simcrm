@@ -95,6 +95,13 @@ def preview(website: str, cfg: EnrichmentConfig = None) -> EnrichmentResult:
 			(homepage.error if homepage else "") or extractors.READABILITY_MESSAGES["unreachable"]
 		)
 		return result
+	# The verdict run() short-circuits on. A bot challenge (401/403/429, or a 200 with
+	# a WAF's markers) or an error page parses like any other HTML, and its <title> --
+	# "Just a moment..." -- would otherwise prefill the form as the company.
+	reason = extractors.diagnose_readability([homepage])
+	if reason in ("blocked", "unreachable"):
+		result.notes.append(extractors.READABILITY_MESSAGES[reason])
+		return result
 
 	# Metadata only: name / description / logo / sameAs social links from the <head>.
 	company = extractors.extract_company_info(homepage, home_soup)
