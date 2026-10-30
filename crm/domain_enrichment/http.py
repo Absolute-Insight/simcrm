@@ -45,8 +45,8 @@ MAX_REDIRECTS = 5
 # nothing against a host that trickles; this does, at the socket (``_Deadline``).
 # Derived from the configured per-read timeout so the preview path (which lowers it)
 # gets a tighter budget than a background crawl, and capped so no setting can hand a
-# web worker away for long.
-# Override with the `max_fetch_seconds` setting for an absolute value.
+# web worker away for long. The `max_fetch_seconds` setting sets it outright, under
+# the same cap.
 FETCH_BUDGET_FACTOR = 3
 MAX_FETCH_SECONDS = 30
 # Default crawler UA: a current desktop-Chrome string so bot walls that reject bare
@@ -520,10 +520,10 @@ def _fetch_budget(cfg, timeout: int) -> float:
 	a short one (the preview path lowers ``request_timeout`` to ``preview_timeout``)
 	gets a proportionally short budget, capped by ``MAX_FETCH_SECONDS`` so no setting
 	can hand a web worker over for minutes. The ``max_fetch_seconds`` setting
-	overrides it outright."""
+	replaces the multiple, but not the cap."""
 	configured = cfg.setting("max_fetch_seconds", None) if cfg else None
 	if configured:
-		return float(configured)
+		return float(min(float(configured), MAX_FETCH_SECONDS))
 	return float(min(timeout * FETCH_BUDGET_FACTOR, MAX_FETCH_SECONDS))
 
 

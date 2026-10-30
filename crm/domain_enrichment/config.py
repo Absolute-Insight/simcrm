@@ -40,13 +40,14 @@ DEFAULT_SETTINGS = {
 	"max_depth": 2,
 	"use_sitemap": 1,
 	"request_timeout": 10,
+	# 0: the fetch budget follows request_timeout (see http._fetch_budget)
+	"max_fetch_seconds": 0,
 	"max_download_bytes": 3_000_000,
 	"retry_count": 2,
 	"user_agent": (
 		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 		"(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 	),
-	"preview_max_pages": 1,
 	"preview_timeout": 8,
 	# Off by default and separately from the agent tier's own switch. Enabling the
 	# model tier for summaries must not silently start sending crawled third-party

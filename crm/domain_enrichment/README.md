@@ -81,10 +81,11 @@ Three doctypes hold all the tunable knowledge. `get_config()` reads them on dema
 | `auto_enrich` | When `1`, a newly-created CRM **Lead, Deal or Organization** that has a website is enriched automatically in a background job (`after_insert`). A new Deal with a new Organization enriches both (each crawls and writes its own fields). Default `0` — enrichment is otherwise manual via the Enrich button. Gated per doctype by `enable_lead` / `enable_deal` / `enable_organization`. |
 | `max_pages` / `max_depth` | Crawl breadth/depth caps (BFS). |
 | `request_timeout` | Per-request timeout (seconds). |
+| `max_fetch_seconds` | Wall-clock cap on one fetch, redirects and retries included. Empty: 3 × `request_timeout`; never above 30 s. |
 | `max_download_bytes` | Hard cap on bytes read per page (streamed). |
 | `retry_count` | Transient-error retries on the session. |
 | `user_agent` | Crawler User-Agent header. |
-| `preview_max_pages` / `preview_timeout` | Bounds for the fast `enrich_preview` (create-modal) path. |
+| `preview_timeout` | Per-request timeout for the fast `enrich_preview` (create-modal) path, which reads the homepage alone. |
 | `allowed_domains` / `blocked_domains` (child) | SSRF allow/block lists (subdomain-aware). A blocked host is always rejected; if an allow list exists, only listed hosts pass. |
 | `link_priority_order` (child) | `keyword` + `weight`: a crawl-ordering hint — links whose URL/anchor contain these are fetched first (higher weight = sooner). Defaults are seeded on install. |
 | `skip_patterns` (child) | URL substrings/regexes to never crawl. |

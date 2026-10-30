@@ -34,8 +34,8 @@ class CRMEnrichmentSettings(Document):
 		link_priority_order: DF.Table[CRMEnrichmentLinkPriority]
 		max_depth: DF.Int
 		max_download_bytes: DF.Int
+		max_fetch_seconds: DF.Int
 		max_pages: DF.Int
-		preview_max_pages: DF.Int
 		preview_timeout: DF.Int
 		request_timeout: DF.Int
 		retry_count: DF.Int
