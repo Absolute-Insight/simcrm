@@ -64,7 +64,11 @@ export const FormControl = defineComponent({
       return h(props.type === 'textarea' ? 'textarea' : 'input', {
         ...common,
         value: props.modelValue ?? '',
-        onInput: (e) => update(e.target.value),
+        // the real control passes the native event on to an @input listener
+        onInput: (e) => {
+          update(e.target.value)
+          attrs.onInput?.(e)
+        },
       })
     }
   },
