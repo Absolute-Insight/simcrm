@@ -34,7 +34,12 @@
     <template #actions>
       <div class="flex items-center justify-end gap-2">
         <Button variant="outline" :label="__('Cancel')" @click="show = false" />
-        <Button variant="solid" :label="__('Add')" @click="addChart" />
+        <Button
+          variant="solid"
+          :label="__('Add')"
+          :disabled="!selectedChart"
+          @click="addChart"
+        />
       </div>
     </template>
   </Dialog>
@@ -45,7 +50,7 @@ import { getRandom } from '@/utils'
 import { describeError } from '@/utils/describeError'
 import { quiet } from '@/utils/quiet'
 import { createResource, Dialog, FormControl, toast } from 'frappe-ui'
-import { ref, reactive, inject } from 'vue'
+import { computed, ref, reactive, inject } from 'vue'
 
 const show = defineModel({
   type: Boolean,
@@ -110,7 +115,21 @@ const donutCharts = [
   { label: __('Deals by Source'), value: 'deals_by_source' },
 ]
 
+/* The chart Add would place. Number Chart starts with no metric picked, and
+   Add used to send that empty name: the server answered "Invalid chart name",
+   which landed in the grid as a blank panel and, once saved, came back with
+   no data at all. */
+const selectedChart = computed(() => {
+  if (chartType.value == 'spacer') return 'spacer'
+  return chartType.value == 'number_chart'
+    ? numberChart.value
+    : chartType.value == 'axis_chart'
+      ? axisChart.value
+      : donutChart.value
+})
+
 async function addChart() {
+  if (!selectedChart.value) return
   if (chartType.value == 'spacer') {
     items.value.push({
       name: 'spacer',
@@ -129,12 +148,7 @@ async function addChart() {
    resource's own rejection is swallowed here because onError already told the
    user (frappe-ui rethrows after onError). */
 function getChart(type: string): Promise<boolean> {
-  let name =
-    type == 'number_chart'
-      ? numberChart.value
-      : type == 'axis_chart'
-        ? axisChart.value
-        : donutChart.value
+  let name = selectedChart.value
 
   return new Promise((resolve) => {
     const chart = createResource({
@@ -154,7 +168,14 @@ function getChart(type: string): Promise<boolean> {
         toast.error(describeError(e).message || __('Could not add that chart'))
         resolve(false)
       },
-      onSuccess: (data = {}) => {
+      onSuccess: (data) => {
+        // get_chart refuses an unknown chart with a 200 and an `error` key,
+        // not an HTTP error: that is no chart, and nothing to place
+        if (!data || data.error) {
+          toast.error(data?.error || __('Could not add that chart'))
+          resolve(false)
+          return
+        }
         let width = 4
         let height = 2
 
