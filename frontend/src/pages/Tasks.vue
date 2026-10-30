@@ -228,7 +228,7 @@ import { useTelemetry } from '@framework/ui/telemetry'
 import { Tooltip, Avatar, Dropdown, call } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
 import { TextEditor } from 'frappe-ui/experimental'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 const { getFormattedPercent, getFormattedFloat, getFormattedCurrency } =
@@ -266,7 +266,6 @@ const rows = computed(() => {
     return getKanbanRows(tasks.value.data.data, tasks.value.data.fields)
   }
 
-  openTaskFromURL()
   return parseRows(tasks.value?.data.data, tasks.value?.data.columns)
 })
 
@@ -419,4 +418,9 @@ const openTaskFromURL = () => {
     window.history.replaceState(null, '', window.location.pathname)
   }
 }
+
+// Not from inside `rows`: openTaskFromURL reads rows.value, and a computed
+// that reads itself gets its previous value -- undefined on the first
+// evaluation -- so a first visit to ?open=<task> opened nothing.
+watch(rows, () => openTaskFromURL(), { immediate: true })
 </script>
