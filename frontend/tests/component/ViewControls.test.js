@@ -44,7 +44,7 @@ vi.mock('@/stores/views', () => ({
 }))
 vi.mock('@/stores/users', () => ({
   usersStore: () => ({
-    isManager: () => false,
+    isManager: () => vc.isManager,
     getUser: () => ({ name: 'rep@example.com' }),
   }),
 }))
@@ -133,6 +133,7 @@ beforeEach(() => {
     socket: {},
     actionErrors: [],
     quickFilters: [],
+    isManager: false,
     getData: (params) => later(payload(params)),
   })
 })
@@ -444,9 +445,7 @@ describe('overlapping reloads', () => {
 
 describe('resizing a column on a private saved view', () => {
   const updates = () =>
-    vc.calls.filter(([method]) =>
-      method.endsWith('crm_view_settings.update'),
-    )
+    vc.calls.filter(([method]) => method.endsWith('crm_view_settings.update'))
 
   it('saves the column layout, not an unsaved filter or sort', async () => {
     savedView(21, { filters: '{"status": "Open"}' })
@@ -470,7 +469,9 @@ describe('resizing a column on a private saved view', () => {
     expect(saved.name).toBe(21)
     expect(JSON.parse(saved.filters)).toEqual({ status: 'Open' })
     expect(saved.order_by).toBe('modified desc')
-    expect(saved.columns).toEqual([{ key: 'name', label: 'Name', type: 'Data' }])
+    expect(saved.columns).toEqual([
+      { key: 'name', label: 'Name', type: 'Data' },
+    ])
     // the filter and sort are still unsaved, and still on screen
     expect(m.button('Cancel')).not.toBeNull()
     expect(vc.fetches.at(-1).filters).toEqual({
@@ -487,5 +488,106 @@ describe('resizing a column on a private saved view', () => {
     await settle()
     expect(updates()).toHaveLength(1)
     expect(m.button('Save Changes')).toBeNull()
+  })
+})
+
+describe('the view dialog is handed a copy', () => {
+  it('a cancelled Duplicate leaves the original view as it was', async () => {
+    const original = savedView(51, { label: 'Hot leads' })
+    setRoute({ view: 51 })
+    const m = await mountVC()
+    m.vc()
+      .viewActions({ name: 51, label: 'Hot leads' }, () => {})[0]
+      .options.find((o) => o.label === 'Duplicate')
+      .onClick()
+    await settle()
+    expect(vc.children.ViewModal.view).toMatchObject({
+      label: 'Hot leads (New)',
+      mode: 'duplicate',
+    })
+    // the dialog is dismissed: nothing was saved
+    expect(original.label).toBe('Hot leads')
+    expect(original.mode).toBeUndefined()
+  })
+
+  it('a cancelled Edit leaves the stored view as it was', async () => {
+    const original = savedView(52)
+    setRoute({ view: 52 })
+    const m = await mountVC()
+    m.vc()
+      .viewActions({ name: 52, label: 'View 52' }, () => {})[0]
+      .options.find((o) => o.label === 'Edit')
+      .onClick()
+    await settle()
+    expect(vc.children.ViewModal.view).toMatchObject({
+      name: 52,
+      mode: 'edit',
+    })
+    expect(vc.children.ViewModal.view).not.toBe(original)
+    expect(original.mode).toBeUndefined()
+  })
+
+  it('a cancelled Create View leaves the view on screen as it was', async () => {
+    savedView(61, { label: 'My Gauteng leads' })
+    setRoute({ view: 61 })
+    const m = await mountVC()
+    m.vc()
+      .viewsDropdownOptions.find((g) => g.group === 'Actions')
+      .options.find((o) => o.label === 'Create View')
+      .onClick()
+    await settle()
+    expect(vc.children.ViewModal.view).toMatchObject({
+      name: '',
+      label: '',
+      mode: 'create',
+    })
+    // dismissed; an unsaved filter, then Save Changes saves view 61
+    m.vc().applyFilter({
+      event: click(),
+      idx: 1,
+      column: { key: 'status', type: 'Select' },
+      item: 'Open',
+      firstColumn: { key: 'lead_name' },
+    })
+    await settle()
+    m.button('Save Changes').click()
+    await settle()
+    expect(vc.children.ViewModal.view).toMatchObject({
+      name: 61,
+      label: 'My Gauteng leads',
+      mode: 'edit',
+    })
+  })
+
+  it('a cancelled Save Changes leaves the view on screen as it was', async () => {
+    vc.isManager = true
+    savedView(63, { public: 1 })
+    setRoute({ view: 63 })
+    const m = await mountVC()
+    m.vc().applyFilter({
+      event: click(),
+      idx: 1,
+      column: { key: 'status', type: 'Select' },
+      item: 'Open',
+      firstColumn: { key: 'lead_name' },
+    })
+    await settle()
+    m.button('Save Changes').click()
+    await settle()
+    expect(vc.children.ViewModal.view).toMatchObject({
+      name: 63,
+      filters: { status: 'Open' },
+      mode: 'edit',
+    })
+    // dismissed: it is still a public view, whose columns wait for Save
+    // Changes like everything else rather than saving on a resize
+    m.resize()
+    await settle()
+    expect(
+      vc.calls.filter(([method]) =>
+        method.endsWith('crm_view_settings.update'),
+      ),
+    ).toEqual([])
+    expect(m.button('Save Changes')).not.toBeNull()
   })
 })

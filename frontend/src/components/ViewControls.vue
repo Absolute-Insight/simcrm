@@ -1481,12 +1481,18 @@ function isStandardDefault(type) {
 
 const viewModalObj = ref({})
 
+// The view dialog gets a copy from each of these. It used to get the live
+// object (the view on screen, or the views store's own), so a dismissed
+// dialog still renamed it, stacked " (New)" on each Duplicate, or blanked the
+// name of the view on screen so its next save went nowhere.
 function createView() {
-  view.value.name = ''
-  view.value.label = ''
-  view.value.icon = ''
-  viewModalObj.value = view.value
-  viewModalObj.value.mode = 'create'
+  viewModalObj.value = {
+    ...view.value,
+    name: '',
+    label: '',
+    icon: '',
+    mode: 'create',
+  }
   showViewModal.value = true
 }
 
@@ -1507,16 +1513,17 @@ function setAsDefault(v, close) {
 }
 
 function duplicateView(v, close) {
-  v.label = v.label + __(' (New)')
-  viewModalObj.value = v
-  viewModalObj.value.mode = 'duplicate'
+  viewModalObj.value = {
+    ...v,
+    label: v.label + __(' (New)'),
+    mode: 'duplicate',
+  }
   showViewModal.value = true
   close()
 }
 
 function editView(v, close) {
-  viewModalObj.value = v
-  viewModalObj.value.mode = 'edit'
+  viewModalObj.value = { ...v, mode: 'edit' }
   showViewModal.value = true
   close()
 }
@@ -1587,7 +1594,7 @@ function cancelChanges() {
 }
 
 function saveView() {
-  view.value = {
+  viewModalObj.value = {
     label: view.value.label,
     type: view.value.type || 'list',
     icon: view.value.icon,
@@ -1603,9 +1610,8 @@ function saveView() {
     rows: defaultParams.value.rows,
     route_name: route.name,
     load_default_columns: view.value.load_default_columns,
+    mode: 'edit',
   }
-  viewModalObj.value = view.value
-  viewModalObj.value.mode = 'edit'
   showViewModal.value = true
 }
 
