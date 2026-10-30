@@ -521,6 +521,40 @@ class TestCRMLead(IntegrationTestCase):
 		self.assertEqual(contact.mobile_no, "+27830000001")
 		self.assertEqual(sorted(row.phone for row in contact.phone_nos), ["+27830000001", "+27830000002"])
 
+	def test_conversion_fires_status_changed_to_qualified_rules(self):
+		"""Conversion moves the lead to Qualified with db_set, which skips the
+		on_update event the rule engine listens on, so a "Status Changed ->
+		Qualified" rule missed the commonest way a lead gets there."""
+		rule = frappe.get_doc(
+			{
+				"doctype": "CRM Automation Rule",
+				"title": "Qualified lead kick-off",
+				"enabled": 1,
+				"document_type": "CRM Lead",
+				"trigger": "Status Changed",
+				"to_status": "Qualified",
+				"action": "Create Task",
+				"title_template": "Kick-off with {{ doc.lead_name }}",
+			}
+		).insert(ignore_permissions=True)
+		lead = create_lead(first_name="Rule", last_name="Convert", email="rule.convert@example.com")
+		self.assertEqual(lead.status, "New")
+
+		convert_to_deal(lead=lead.name)
+
+		self.assertEqual(frappe.db.get_value("CRM Lead", lead.name, "status"), "Qualified")
+		self.assertEqual(
+			frappe.db.count(
+				"CRM Task",
+				{
+					"automation_rule": rule.name,
+					"reference_doctype": "CRM Lead",
+					"reference_docname": lead.name,
+				},
+			),
+			1,
+		)
+
 	def test_cannot_convert_lost_lead_to_deal(self):
 		"""Leads with a Lost-type status (Junk, Unqualified, ...) cannot be converted."""
 		if not frappe.db.exists("CRM Lost Reason", "Not interested"):

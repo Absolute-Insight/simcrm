@@ -599,7 +599,14 @@ def convert_to_deal(
 	if frappe.get_cached_value("CRM Lead Status", lead.status, "type") == "Lost":
 		frappe.throw(_("Cannot convert a lead with status {0}").format(lead.status))
 	if frappe.db.exists("CRM Lead Status", "Qualified"):
+		# db_set skips on_update, which is where the rule engine listens; hand it
+		# the before/after a save would have, or "Status Changed -> Qualified"
+		# rules miss the commonest way a lead gets there
+		from crm.automation import run_automations
+
+		lead.load_doc_before_save()
 		lead.db_set("status", "Qualified")
+		run_automations(lead, "on_update")
 	lead.db_set("converted", 1)
 	if lead.sla and frappe.db.exists("CRM Communication Status", "Replied"):
 		lead.db_set("communication_status", "Replied")
