@@ -294,7 +294,9 @@ const from = computed(() => {
       }
     })
 
-  if (emails.length == 1 && emails[0].email_id === sessionUser) return []
+  // The options are already { label, value }: a lone account that is the
+  // rep's own address leaves nothing to choose, so the picker stays hidden.
+  if (emails.length == 1 && emails[0].value === sessionUser) return []
 
   return emails
 })
