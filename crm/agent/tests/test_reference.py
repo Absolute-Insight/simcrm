@@ -119,6 +119,26 @@ class NormaliseTest(UnitTestCase):
 		# "SABS 1600" must find the row the sheet labels "1600 kPa"
 		self.assertTrue({"1600kpa", "1600"} <= reference.tokens("1600 kPa"))
 
+	def test_in_before_a_unit_is_a_word_not_an_inch_mark(self):
+		"""Audit H-05: "class 600 in bar" asked for a 600" flange and lost class600."""
+		for question, meant, not_meant in (
+			("rated pressure of class 600 in bar", {"class600"}, {"600in"}),
+			("bolts for DN150 PN 16 in mm", {"pn16", "150mm"}, {"16in"}),
+			("PCD of 6 inch class 150 in mm", {"6in", "class150"}, {"150in"}),
+			("what is 150 in inches", set(), {"150in"}),
+			("1600 in kPa", set(), {"1600in"}),
+			# a rating's number is not a size whatever follows "in"
+			("is class 300 in stock", {"class300"}, {"300in"}),
+			("PN 16 in the catalogue", {"pn16"}, {"16in"}),
+		):
+			with self.subTest(question=question):
+				found = reference.tokens(question)
+				self.assertTrue(meant <= found, sorted(found))
+				self.assertFalse(not_meant & found, sorted(found))
+		# a bare "in" after a size is still the inch mark
+		self.assertIn("6in", reference.tokens("what is 6 in in mm"))
+		self.assertIn("2-1/2in", reference.tokens("2 1/2 in flange"))
+
 
 class NumbersTest(UnitTestCase):
 	def test_a_sign_is_kept_unless_it_is_a_hyphen(self):
@@ -159,6 +179,24 @@ class SelectEntriesTest(UnitTestCase):
 		# the 36" class 300 flange takes 2" bolts; a 2" question is not about it
 		picked = reference.select_entries("bolt size for 2 inch class 300", ROWS)
 		self.assertNotIn("d-900-Class 300", [row["name"] for row in picked])
+
+	def test_a_rating_followed_by_in_and_a_unit_selects_that_rating(self):
+		"""Audit H-05: the 16" BS 10 bolt set came back for "DN150 PN 16 in mm"."""
+		rows = [
+			*ROWS,
+			bolt_set(400, 16, "BS 10 Table H", "20 Off M24 x 150", "BS 10 BS10 Table H"),
+			{
+				**ROWS[7],
+				"name": "rating-600",
+				"label": "ANSI CLASS 600",
+				"search": "ANSI CLASS 600 class 600",
+			},
+			{**ROWS[7], "name": "rating-pn16", "label": "PN16", "search": "PN16 PN 16 16 bar"},
+		]
+		picked = reference.select_entries("what is the rated pressure of class 600 in bar", rows)
+		self.assertEqual([row["name"] for row in picked][:1], ["rating-600"])
+		picked = reference.select_entries("bolts for DN150 PN 16 in mm", rows)
+		self.assertTrue(picked and all("150 mm" in row["label"] for row in picked), labels(picked))
 
 	def test_a_short_row_wins_a_conversion_question(self):
 		picked = reference.select_entries("what is 2 1/2 inch in mm", ROWS)

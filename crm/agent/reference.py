@@ -87,7 +87,14 @@ _QUOTES = re.compile(r"[“”″ʺ]|''")
 _THOUSANDS = re.compile(r"(\d),(\d{3})\b")
 
 # An inch size in any of the ways a rep types one: 6", 6 inch, 1 1/2", 1-1/2in.
-_INCH = re.compile(r"(?<![\w./])(\d+[ -]+\d+/\d+|\d+/\d+|\d+)\s*-?\s*(?:\"|inches\b|inch\b|in\b)")
+# A bare "in" is the word, not the mark, before a unit ("class 600 in bar",
+# "150 in inches") and after a rating or bore keyword ("PN 16 in mm"): that
+# number is the rating or the bore, never a 16" flange.
+_INCH = re.compile(
+	r"(?<![\w./])(\d+[ -]+\d+/\d+|\d+/\d+|\d+)\s*-?\s*"
+	r"(?:\"|inches\b|inch\b|in\b(?!\s*(?:mm\b|cm\b|millimet|met(?:er|re)s?\b|bar\b|kpa\b|mpa\b|psi\b|inch)))"
+)
+_RATED = re.compile(r"\b(?:class|pn|dn|nb)\s*$")
 _MM = re.compile(r"(?<![\w.])(\d+)\s*mm\b")
 _BORE = re.compile(r"\b(?:dn|nb)\s*(\d+)\b|(?<![\w.])(\d+)\s*(?:nb|dn)\b")
 _KPA = re.compile(r"(?<![\w.])(\d+)\s*kpa\b")
@@ -110,19 +117,27 @@ _STOPWORDS = frozenset(
 )
 
 
+def _inch(match: re.Match) -> str:
+	# a rating's number is never a size, however it is followed
+	if _RATED.search(match.string, max(0, match.start() - 12), match.start()):
+		return match.group(0)
+	return " " + re.sub(r"[ -]+", "-", match.group(1)) + "in "
+
+
 def normalise(text: str) -> str:
 	"""Lower-case text with sizes, ratings and standards spelled one way.
 
 	Questions and rows go through the same function, so "6 inch", '6"' and
 	"6in" meet as ``6in``; "DN150" and "150 mm" as ``150mm``; "PN 16" as
-	``pn16``; "class 150" and "150 lb" as ``class150``.
+	``pn16``; "class 150" and "150 lb" as ``class150`` -- also when "in" and a
+	unit follow ("PN 16 in mm" asks for PN16 in millimetres, not a 16" size).
 	"""
 	text = (text or "").lower()
 	for glyph, spelled in _FRACTIONS.items():
 		text = text.replace(glyph, spelled)
 	text = _QUOTES.sub('"', text)
 	text = _THOUSANDS.sub(r"\1\2", text)
-	text = _INCH.sub(lambda m: " " + re.sub(r"[ -]+", "-", m.group(1)) + "in ", text)
+	text = _INCH.sub(_inch, text)
 	# the tagged token and the bare number both: "SABS 1600" must still find
 	# the row a sheet labels "1600 kPa"
 	text = _MM.sub(r" \1mm \1 ", text)
