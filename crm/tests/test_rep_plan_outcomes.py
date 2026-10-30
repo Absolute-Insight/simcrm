@@ -345,3 +345,82 @@ class DoneAndCancelledDoNotOverlapTest(OutcomeTestCase):
 		event = cancel_item(item, "Moved")["items"][0]["fulfilled_by"]
 		mark_fulfilled(item)
 		self.assertFalse(frappe.db.exists("Event", {"name": event, "status": "Cancelled"}))
+
+
+class ServerOwnedFieldsTest(OutcomeTestCase):
+	"""An item's status and fulfilment are written by the server, never a client.
+
+	The planner endpoints only ever took the editable fields, but the generic
+	document API saves the rep's own plan too, and nothing refused the rest: a rep
+	pointed her item at a colleague's Cancelled visit and clear_override then
+	deleted it, permissions bypassed.
+	"""
+
+	def colleagues_cancelled_visit(self) -> str:
+		frappe.set_user(OTHER)
+		event = frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "Visit: Outcome Canyon Coal",
+				"starts_on": frappe.utils.now_datetime(),
+				"event_type": "Private",
+				"event_category": "Visit",
+				"status": "Cancelled",
+			}
+		).insert(ignore_permissions=True)
+		frappe.set_user(REP)
+		return event.name
+
+	def test_the_document_api_cannot_write_an_items_fulfilment(self):
+		victim = self.colleagues_cancelled_visit()
+		item = self.plan_one()
+		for values in (
+			{"status": "Cancelled", "fulfilled_by_doctype": "Event", "fulfilled_by": victim},
+			{"status": "Done", "manual_override": 1},
+			{"outcome": "Went"},
+		):
+			with self.subTest(values=values), self.assertRaises(frappe.PermissionError):
+				frappe.client.set_value("CRM Rep Plan Item", item, values)
+		stored = frappe.db.get_value("CRM Rep Plan Item", item, ["status", "fulfilled_by"], as_dict=True)
+		self.assertEqual((stored.status, stored.fulfilled_by), ("Planned", None))
+
+		# a new row is no way round it either
+		plan = frappe.db.get_value("CRM Rep Plan Item", item, "parent")
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.insert(
+				{
+					"doctype": "CRM Rep Plan Item",
+					"parenttype": "CRM Rep Plan",
+					"parentfield": "items",
+					"parent": plan,
+					"activity_type": "Visit",
+					"planned_date": today(),
+					"status": "Cancelled",
+					"fulfilled_by_doctype": "Event",
+					"fulfilled_by": victim,
+				}
+			)
+
+		# what a client may edit still goes through
+		frappe.client.set_value("CRM Rep Plan Item", item, "note", "After lunch")
+		self.assertEqual(frappe.db.get_value("CRM Rep Plan Item", item, "note"), "After lunch")
+
+	def test_only_the_reps_own_cancellation_is_deleted(self):
+		"""Defence in depth for however an item came to name someone else's event:
+		_drop_cancellation deletes with permissions off, so it checks what it deletes."""
+		victim = self.colleagues_cancelled_visit()
+		item = self.plan_one()
+		frappe.db.set_value(
+			"CRM Rep Plan Item",
+			item,
+			{
+				"status": "Cancelled",
+				"manual_override": 1,
+				"fulfilled_by_doctype": "Event",
+				"fulfilled_by": victim,
+			},
+		)
+
+		clear_override(item)
+
+		self.assertTrue(frappe.db.exists("Event", victim))

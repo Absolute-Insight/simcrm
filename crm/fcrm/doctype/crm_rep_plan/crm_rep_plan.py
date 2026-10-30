@@ -8,6 +8,11 @@ from frappe.utils import getdate
 
 READABLE = ("read", "select", "report", "export", "print", "email")
 
+# What the matcher, complete_item and cancel_item write on an item. crm.api.rep_plan
+# never takes these from a client (its EDITABLE_ITEM_FIELDS); validate refuses them
+# from the generic document API, the other door into this doctype.
+SERVER_ITEM_FIELDS = ("status", "outcome", "fulfilled_by_doctype", "fulfilled_by", "manual_override")
+
 
 def visible_users(user=None) -> list[str] | None:
 	"""Whose plans ``user`` may read, or None for everyone.
@@ -131,6 +136,8 @@ class CRMRepPlan(Document):
 		if not self.is_new() and self.has_value_changed("user"):
 			frappe.throw(_("A plan cannot be moved to another user."), frappe.PermissionError)
 
+		self._refuse_client_fulfilment()
+
 		week_start = getdate(self.week_start)
 		if week_start.weekday() != 0:
 			frappe.throw(_("Week start must be a Monday."))
@@ -151,3 +158,41 @@ class CRMRepPlan(Document):
 						item.note or item.activity_type, self.week_start
 					)
 				)
+
+	def _refuse_client_fulfilment(self):
+		"""An item's status and what fulfilled it are the server's to write.
+
+		``crm.api.rep_plan`` takes only the editable fields from a client. The
+		generic document API is a second door: frappe.client.set_value on an item
+		saves the rep's own plan, which she may write, and it let her name a
+		colleague's Cancelled event as her item's fulfilment -- which
+		_drop_cancellation then deleted -- or claim a colleague's meeting, so that
+		colleague's own item could never be fulfilled by it.
+
+		Server code saves with ignore_permissions and is trusted with these fields,
+		the way frappe trusts it past a higher permlevel; so is Administrator.
+		"""
+		if self.flags.ignore_permissions or frappe.session.user == "Administrator":
+			return
+		for item in self.items:
+			# frappe loads each stored row before validate; a new row has none
+			stored = item.get_doc_before_save()
+			for field in SERVER_ITEM_FIELDS:
+				if _server_value(field, item.get(field)) != _server_value(
+					field, stored.get(field) if stored else None
+				):
+					frappe.throw(
+						_("{0} of a planned activity is set by the planner, not edited directly.").format(
+							_(item.meta.get_label(field))
+						),
+						frappe.PermissionError,
+					)
+
+
+def _server_value(field: str, value):
+	"""A server-owned item field as compared by validate, with a new row's defaults."""
+	if field == "manual_override":
+		return frappe.utils.cint(value)
+	if field == "status":
+		return value or "Planned"
+	return frappe.utils.cstr(value) or None

@@ -503,7 +503,7 @@ def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled
 		_refuse_a_second_claim(item, fulfilled_by_doctype, fulfilled_by)
 		_refuse_a_record_from_another_week(kind, rows[0], plan, fulfilled_by_doctype, fulfilled_by)
 
-	_drop_cancellation(item)
+	_drop_cancellation(item, plan.user)
 	frappe.db.set_value(
 		"CRM Rep Plan Item",
 		item,
@@ -522,7 +522,7 @@ def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled
 def mark_missed(item: str):
 	"""Write one of the caller's own items off by hand, before its week is over."""
 	plan = _own_plan_of(item)
-	_drop_cancellation(item)
+	_drop_cancellation(item, plan.user)
 	frappe.db.set_value(
 		"CRM Rep Plan Item",
 		item,
@@ -541,7 +541,7 @@ def mark_missed(item: str):
 def clear_override(item: str):
 	"""Hand an item the rep had corrected back to the matcher."""
 	plan = _own_plan_of(item)
-	_drop_cancellation(item)
+	_drop_cancellation(item, plan.user)
 	frappe.db.set_value(
 		"CRM Rep Plan Item",
 		item,
@@ -576,7 +576,7 @@ def _item_row(item: str):
 	)
 
 
-def _drop_cancellation(item: str) -> None:
+def _drop_cancellation(item: str, user: str) -> None:
 	"""Undo the calendar side of :func:`cancel_item` when the rep changes their mind.
 
 	A cancelled visit is recorded as a Cancelled Visit event so the calendar,
@@ -585,11 +585,18 @@ def _drop_cancellation(item: str) -> None:
 	happen, so it goes with the status. Only an event this item holds and that
 	is itself Cancelled is touched -- a completed visit is a record of real work
 	and stays.
+
+	The delete bypasses permissions, so what the item names is not taken on
+	trust: only a Cancelled Visit event of the plan's own rep -- what cancel_item
+	writes -- is deleted, whatever else an item may have come to point at.
 	"""
 	row = _item_row(item)
 	if not row or row.status != "Cancelled" or row.fulfilled_by_doctype != "Event" or not row.fulfilled_by:
 		return
-	if frappe.db.get_value("Event", row.fulfilled_by, "status") == "Cancelled":
+	event = frappe.db.get_value(
+		"Event", row.fulfilled_by, ["status", "owner", "event_category"], as_dict=True
+	)
+	if event and event.status == "Cancelled" and event.owner == user and event.event_category == "Visit":
 		frappe.delete_doc("Event", row.fulfilled_by, ignore_permissions=True, force=True)
 
 
@@ -682,7 +689,7 @@ def complete_item(item: str, outcome: str, when: str | None = None):
 	_refuse_outside_horizon(plan.week_start)
 	moment = _when_in_week(when, row.planned_date, plan.week_start)
 
-	_drop_cancellation(item)
+	_drop_cancellation(item, plan.user)
 	event = None
 	if row.activity_type in EVENT_KINDS:
 		event = _visit_event(
