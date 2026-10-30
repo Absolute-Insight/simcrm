@@ -95,6 +95,32 @@ class FallbackPlanTest(UnitTestCase):
 			["revenue_projection", "forecast_by_month", "won_revenue_by_month"],
 		)
 
+	def test_a_keyword_matches_a_whole_word_not_the_start_of_one(self):
+		"""A report is not a rep, and to wonder is not to have won."""
+		self.assertEqual(
+			analyst.fallback_plan("Give me a report on revenue this year", CRM_KEYS),
+			["won_revenue_by_month"],
+		)
+		self.assertEqual(
+			analyst.fallback_plan("I wonder how our pipeline looks", CRM_KEYS), ["pipeline_by_stage"]
+		)
+		self.assertEqual(
+			analyst.fallback_plan("how is the salesperson Kevin doing?", CRM_KEYS), ["deals_by_salesperson"]
+		)
+
+	def test_the_inflections_a_question_uses_still_match(self):
+		for question, metric in (
+			("show me our receivables", "erp_receivables"),
+			("how much have we invoiced?", "erp_cashflow_by_month"),
+			("which deals are slipping?", "deals_at_risk"),
+			("are we growing?", "growth_rates"),
+			("how many leads converted?", "funnel_conversion"),
+			("who hit their targets?", "quota_attainment_by_rep"),
+			("what did we forecast?", "revenue_projection"),
+		):
+			with self.subTest(question=question):
+				self.assertIn(metric, analyst.fallback_plan(question, ALL_KEYS))
+
 
 class RowListSummaryTest(UnitTestCase):
 	"""A reasoning model walks a row list row by row, and its thinking is charged to

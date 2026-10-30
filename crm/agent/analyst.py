@@ -363,31 +363,78 @@ def _parse_date(value) -> date | None:
 
 # Keyword -> metrics, first match wins per keyword group, in this order. A
 # question that names nothing gets the two tables anyone asking about "the
-# business" wants: what we won, and what is open.
+# business" wants: what we won, and what is open. Keywords match whole words
+# only -- "report" is not "rep", "wonder" is not "won" -- so each inflection a
+# question is likely to use is listed.
 _KEYWORD_PLANS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
 	(
-		("cash", "cashflow", "receivable", "invoice", "payment", "paid"),
+		(
+			"cash",
+			"cashflow",
+			"receivable",
+			"receivables",
+			"invoice",
+			"invoices",
+			"invoiced",
+			"invoicing",
+			"payment",
+			"payments",
+			"paid",
+		),
 		("erp_cashflow_by_month", "erp_receivables"),
 	),
-	(("quota", "target", "behind", "attainment"), ("quota_attainment_by_rep",)),
+	(("quota", "quotas", "target", "targets", "behind", "attainment"), ("quota_attainment_by_rep",)),
 	(
-		("project", "projection", "next quarter", "next month", "forecast"),
+		(
+			"project",
+			"projected",
+			"projection",
+			"projections",
+			"next quarter",
+			"next month",
+			"forecast",
+			"forecasts",
+			"forecasted",
+			"forecasting",
+		),
 		("revenue_projection", "forecast_by_month"),
 	),
 	(
-		("risk", "slip", "quiet", "maintain", "maintenance", "cold", "cooling"),
+		(
+			"risk",
+			"risks",
+			"risky",
+			"slip",
+			"slips",
+			"slipping",
+			"slipped",
+			"quiet",
+			"maintain",
+			"maintenance",
+			"cold",
+			"cooling",
+		),
 		("deals_at_risk", "accounts_going_quiet"),
 	),
-	(("grow", "growth", "trend"), ("growth_rates", "sales_trend")),
-	(("pipeline", "stage"), ("pipeline_by_stage",)),
-	(("funnel", "conversion", "convert"), ("funnel_conversion",)),
-	(("industry", "industries", "sector"), ("deals_by_industry",)),
-	(("territory", "territories", "region"), ("deals_by_territory",)),
-	(("rep", "reps", "salesperson", "team"), ("deals_by_salesperson",)),
-	(("source", "sources", "campaign"), ("leads_by_source",)),
-	(("plan", "adherence", "planned"), ("plan_adherence_by_rep",)),
-	(("average", "avg", "deal size", "deal value"), ("average_deal_value",)),
-	(("close", "cycle", "how long"), ("time_to_close",)),
+	(
+		("grow", "grows", "growing", "grew", "grown", "growth", "trend", "trends", "trending"),
+		("growth_rates", "sales_trend"),
+	),
+	(("pipeline", "stage", "stages"), ("pipeline_by_stage",)),
+	(
+		("funnel", "conversion", "conversions", "convert", "converted", "converting"),
+		("funnel_conversion",),
+	),
+	(("industry", "industries", "sector", "sectors"), ("deals_by_industry",)),
+	(("territory", "territories", "region", "regions", "regional"), ("deals_by_territory",)),
+	(("rep", "reps", "salesperson", "salespeople", "team", "teams"), ("deals_by_salesperson",)),
+	(("source", "sources", "campaign", "campaigns"), ("leads_by_source",)),
+	(("plan", "plans", "adherence", "planned"), ("plan_adherence_by_rep",)),
+	(
+		("average", "avg", "deal size", "deal sizes", "deal value", "deal values"),
+		("average_deal_value",),
+	),
+	(("close", "closing", "cycle", "how long"), ("time_to_close",)),
 	(("revenue", "sales", "won", "sold"), ("won_revenue_by_month",)),
 ]
 
@@ -399,7 +446,7 @@ def fallback_plan(question: str, available: list[str]) -> list[str]:
 	text = (question or "").lower()
 	chosen: list[str] = []
 	for keywords, metrics in _KEYWORD_PLANS:
-		if any(re.search(rf"\b{re.escape(word)}", text) for word in keywords):
+		if any(re.search(rf"\b{re.escape(word)}\b", text) for word in keywords):
 			for metric in metrics:
 				if metric in available and metric not in chosen:
 					chosen.append(metric)
