@@ -171,25 +171,29 @@ const createTemplate = () => {
     return
   }
 
-  templates.insert.submit(
-    { ...template.value },
-    {
-      onSuccess: () => {
-        emit('updateStep', 'template-list')
-        toast.success(__('Template created successfully'))
-        send('refresh-email-templates')
-      },
-      onError: (error) => {
-        errorMessage.value =
-          error.messages[0] || __('Failed to create template')
-      },
+  // Frappe renders response_html only when use_html is set; content_type is
+  // this form's name for that flag, not an Email Template field.
+  const { content_type, ...doc } = template.value
+  doc.use_html = content_type === 'HTML' ? 1 : 0
+
+  templates.insert.submit(doc, {
+    onSuccess: () => {
+      emit('updateStep', 'template-list')
+      toast.success(__('Template created successfully'))
+      send('refresh-email-templates')
     },
-  )
+    onError: (error) => {
+      errorMessage.value = error.messages[0] || __('Failed to create template')
+    },
+  })
 }
 
 onMounted(() => {
   if (props.templateData?.name) {
     Object.assign(template.value, props.templateData)
+    template.value.content_type = props.templateData.use_html
+      ? 'HTML'
+      : 'Rich Text'
     template.value.name = template.value.name + ' - Copy'
     template.value.enabled = false // Default to disabled for new templates
   } else {
