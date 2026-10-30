@@ -375,6 +375,22 @@ class ApiPermissionTest(IntegrationTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			enrich("CRM Organization", org.name)
 
+	def test_enrich_checks_the_allow_list_without_assembling_the_rules(self):
+		from crm.domain_enrichment import api
+
+		org = frappe.new_doc("CRM Organization")
+		org.organization_name = "Allow-list Org " + frappe.generate_hash(length=4)
+		org.website = "https://acme.example"
+		org.insert()
+
+		with (
+			mock.patch.object(config, "_build_rules", side_effect=AssertionError("rules built")) as build,
+			mock.patch.object(api, "enqueue_enrichment", return_value={"queued": True}) as enqueue,
+		):
+			api.enrich("CRM Organization", org.name)
+		build.assert_not_called()
+		enqueue.assert_called_once()
+
 	def test_enrich_routes_are_rate_limited(self):
 		# enrich / retry / enrich_preview each carry rate_limit(limit=ENRICH_RATE_LIMIT).
 		from crm.domain_enrichment import api
@@ -425,6 +441,16 @@ class CrossRecordCopyTest(IntegrationTestCase):
 		self.assertTrue(filled)
 		self.assertEqual(deal.company_description, "AI powered analytics SaaS.")
 		self.assertEqual(deal.linkedin, "https://www.linkedin.com/company/acme")
+
+	def test_the_copy_does_not_assemble_the_rules(self):
+		"""It runs on every save of a Deal or Lead linked to an enriched org and uses
+		only the field mappings; building the full config cost a get_doc per rule."""
+		deal = frappe.new_doc("CRM Deal")
+		deal.organization = self.org.name
+		with mock.patch.object(config, "_build_rules", side_effect=AssertionError("rules built")) as build:
+			filled = copy_enrichment_from_organization(deal)
+		build.assert_not_called()
+		self.assertTrue(filled)
 
 	def test_does_not_clobber_user_set_fields(self):
 		deal = frappe.new_doc("CRM Deal")

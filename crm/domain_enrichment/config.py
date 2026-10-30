@@ -278,6 +278,16 @@ def _build_config() -> EnrichmentConfig:
 	)
 
 
+def get_mapping_config() -> EnrichmentConfig:
+	"""Settings and Field Mappings only, for callers that write fields and never match
+	a rule. The Organization -> Lead/Deal copy runs on every save of a linked record,
+	and assembling the rules there cost a ``get_doc`` per rule for nothing."""
+	return EnrichmentConfig(
+		settings=_build_settings(frappe.get_cached_doc("CRM Enrichment Settings")),
+		mappings_by_doctype=_build_mappings(),
+	)
+
+
 def get_config() -> EnrichmentConfig:
 	"""Assemble the full enrichment config (Settings + Rules + Field Mappings) fresh.
 
