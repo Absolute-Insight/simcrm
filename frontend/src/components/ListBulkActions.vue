@@ -148,6 +148,10 @@ const showAssignmentModal = ref(false)
 const bulkAssignees = ref([])
 
 function assignValues(selections, unselectAll) {
+  // A bulk assign starts from nobody: the last batch's reps are not this
+  // selection's, and AssignmentModal's Update closes it without the @close
+  // that would have reset them.
+  bulkAssignees.value = []
   showAssignmentModal.value = true
   selectedValues.value = selections
   unselectAllAction.value = unselectAll

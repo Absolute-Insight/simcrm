@@ -134,15 +134,21 @@ const addValue = (value) => {
 }
 
 async function updateAssignees() {
-  const removedAssignees = oldAssignees.value
-    .filter(
-      (assignee) => !assignees.value.find((a) => a.name === assignee.name),
-    )
-    .map((assignee) => assignee.name)
+  // Bulk mode has no record to diff against: every rep shown is assigned to
+  // every selected record, and nothing is removed (that call is per record).
+  const bulk = props.docs.size > 0
+  const removedAssignees = bulk
+    ? []
+    : oldAssignees.value
+        .filter(
+          (assignee) => !assignees.value.find((a) => a.name === assignee.name),
+        )
+        .map((assignee) => assignee.name)
 
   const addedAssignees = assignees.value
     .filter(
-      (assignee) => !oldAssignees.value.find((a) => a.name === assignee.name),
+      (assignee) =>
+        bulk || !oldAssignees.value.find((a) => a.name === assignee.name),
     )
     .map((assignee) => assignee.name)
 
@@ -155,7 +161,7 @@ async function updateAssignees() {
   }
 
   if (addedAssignees.length) {
-    if (props.docs.size) {
+    if (bulk) {
       capture('bulk_assign_to', { doctype: props.doctype })
       call('frappe.desk.form.assign_to.add_multiple', {
         doctype: props.doctype,
