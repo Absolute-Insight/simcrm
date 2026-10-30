@@ -79,7 +79,7 @@
             </Tooltip>
           </div>
           <div v-else-if="column.key === 'status'" class="truncate text-base">
-            <Badge
+            <ToneBadge
               :variant="'subtle'"
               :theme="item.color"
               size="md"
@@ -190,6 +190,7 @@ import HeartIcon from '@/components/Icons/HeartIcon.vue'
 import Icon from '@/components/Icon.vue'
 import ListBulkActions from '@/components/ListBulkActions.vue'
 import ListRows from '@/components/ListViews/ListRows.vue'
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import RatingInput from '@/components/Controls/RatingInput.vue'
 import { isTranslatable } from '@/utils'
 import { Avatar, Tooltip, Dropdown } from 'frappe-ui'

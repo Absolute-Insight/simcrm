@@ -141,7 +141,7 @@
             v-else-if="column.key === 'sla_status'"
             class="truncate text-base"
           >
-            <Badge
+            <ToneBadge
               v-if="item.value"
               :variant="'subtle'"
               :theme="item.color"
@@ -234,6 +234,7 @@ import RatingInput from '@/components/Controls/RatingInput.vue'
 import MultipleAvatar from '@/components/MultipleAvatar.vue'
 import ListBulkActions from '@/components/ListBulkActions.vue'
 import ListRows from '@/components/ListViews/ListRows.vue'
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import { isTranslatable, formatDuration } from '@/utils'
 import { Avatar, Dropdown, Tooltip } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)

@@ -118,7 +118,7 @@
           </Tooltip>
         </div>
         <div v-else-if="titleField === 'sla_status'" class="truncate text-base">
-          <Badge
+          <ToneBadge
             v-if="getRow(itemName, titleField).value"
             :variant="'subtle'"
             :theme="getRow(itemName, titleField).color"
@@ -190,7 +190,7 @@
           </Tooltip>
         </div>
         <div v-else-if="fieldName === 'sla_status'" class="truncate text-base">
-          <Badge
+          <ToneBadge
             v-if="getRow(itemName, fieldName).value"
             :variant="'subtle'"
             :theme="getRow(itemName, fieldName).color"
@@ -284,6 +284,7 @@ import EmptyState from '@/components/ListViews/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import KanbanView from '@/components/Kanban/KanbanView.vue'
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import KanbanActivityCounts from '@/components/Kanban/KanbanActivityCounts.vue'
 import LeadModal from '@/components/Modals/LeadModal.vue'
 import ViewControls from '@/components/ViewControls.vue'

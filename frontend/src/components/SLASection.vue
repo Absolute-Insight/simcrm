@@ -11,7 +11,7 @@
       <div class="grid min-h-[28px] items-center">
         <Tooltip v-if="s.tooltipText" :text="__(s.tooltipText)">
           <div class="ml-2 cursor-pointer">
-            <Badge
+            <ToneBadge
               v-if="s.type == 'Badge'"
               class="-ml-1"
               :label="s.value"
@@ -35,6 +35,7 @@
   </div>
 </template>
 <script setup>
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import { Dropdown, Tooltip } from 'frappe-ui'
 import { timeAgo, formatDate, formatTime } from '@/utils'
 import { statusesStore } from '@/stores/statuses'
