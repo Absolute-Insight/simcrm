@@ -91,8 +91,9 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
   const cached = documentsCache[doctype][docname || '']
   if (cached && docname && error.value && !cached.get?.loading) {
     // The last load failed and nothing will retry it: ask again for the page
-    // now mounting, which then shows either the record or the failure.
-    cached.reload()
+    // now mounting, which then shows either the record or the failure (the
+    // resource's onError reports that, hence the empty catch).
+    cached.reload().catch(() => {})
   }
 
   if (!cached) {

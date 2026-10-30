@@ -42,7 +42,7 @@ vi.mock('frappe-ui', () => ({
     const resource = {
       doc: null,
       options,
-      reload: vi.fn(),
+      reload: vi.fn(async () => {}),
       save: { submit: vi.fn() },
     }
     created[options.name] = resource
