@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import time
+from urllib.parse import urlsplit
 
 import requests
 from pydantic import BaseModel
@@ -235,6 +236,14 @@ def _post(cfg: AgentConfig, body: dict, timeout: float | None = None) -> str:
 			allow_redirects=False,
 		)
 		try:
+			if 300 <= response.status_code < 400:
+				# refused above, so say so: read as a reply, the redirect's empty
+				# body came back as "Expecting value: line 1 column 1"
+				raise AgentUnavailable(
+					f"{cfg.base_url}: endpoint redirected (HTTP {response.status_code}) to "
+					f"{_redirect_target(response)}, which is not followed; set the base URL "
+					"to where it points"
+				)
 			if response.status_code in (401, 403):
 				# distinguished so test_connection can point the admin at api_key
 				# rather than at the URL; the body is not echoed, it may be anything
@@ -255,6 +264,14 @@ def _post(cfg: AgentConfig, body: dict, timeout: float | None = None) -> str:
 		return _content(raw)
 	except (requests.RequestException, KeyError, IndexError, TypeError, ValueError) as exc:
 		raise AgentUnavailable(f"{cfg.base_url}: {exc}") from exc
+
+
+def _redirect_target(response) -> str:
+	"""Where a redirect points, as scheme and host: enough to fix the base URL by."""
+	target = urlsplit(str(response.headers.get("Location") or "")[:500])
+	if not target.hostname:
+		return "another path on the same host"
+	return f"{target.scheme}://{target.hostname}" if target.scheme else target.hostname
 
 
 def _error_body(response) -> str:
