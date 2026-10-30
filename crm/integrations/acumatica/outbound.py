@@ -161,7 +161,11 @@ def _remote_customer_exists(client, customer_id: str) -> bool:
 	return bool(page)
 
 
-@frappe.whitelist()
+# POST only. Frappe checks CSRF on unsafe methods alone and rolls a GET's writes back:
+# a pasted link or an <img> on any page a rep opened would PUT an order into the
+# client's ERP on every visit, and the rollback threw away the OrderNbr that stops
+# the next one.
+@frappe.whitelist(methods=["POST"])
 def create_sales_quote_from_deal(crm_deal: str) -> str:
 	frappe.has_permission("CRM Deal", "write", doc=crm_deal, throw=True)
 	settings = get_settings()

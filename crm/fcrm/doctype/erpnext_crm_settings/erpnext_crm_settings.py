@@ -261,7 +261,7 @@ def get_open_sync_issues():
 	]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def dismiss_sync_issue(issue_name: str | int):
 	frappe.only_for(["System Manager", "Sales Manager"], True)
 	settings = frappe.get_single("ERPNext CRM Settings")

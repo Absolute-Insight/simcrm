@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -229,6 +229,42 @@ class TestSyncIssueEndpoints(FrappeTestCase):
 			get_open_sync_issues()
 		with self.assertRaises(frappe.PermissionError):
 			dismiss_sync_issue("1")
+
+
+class TestMutatingEndpointsRefuseGet(FrappeTestCase):
+	"""Frappe checks CSRF on unsafe methods only and rolls a GET's writes back. A
+	mutating endpoint that answers GET can be fired by a link or an <img> on any page
+	the user opens -- for Create Sales Quote, one more order in the client's ERP per
+	visit, with the rollback discarding the OrderNbr that blocks the next one."""
+
+	def _refused_on_get(self, fn):
+		from frappe.handler import is_valid_http_method
+
+		request = MagicMock()
+		request.method = "GET"
+		with patch.object(frappe.local, "request", request, create=True):
+			with self.assertRaises(frappe.PermissionError):
+				is_valid_http_method(fn)
+		request.method = "POST"
+		with patch.object(frappe.local, "request", request, create=True):
+			is_valid_http_method(fn)  # the form script and the panel POST
+
+	def test_create_sales_quote_refuses_get(self):
+		from crm.integrations.acumatica.outbound import create_sales_quote_from_deal
+
+		self._refused_on_get(create_sales_quote_from_deal)
+
+	def test_test_connection_refuses_get(self):
+		from crm.integrations.acumatica.api import test_connection
+
+		self._refused_on_get(test_connection)
+
+	def test_dismissing_a_sync_issue_refuses_get(self):
+		from crm.fcrm.doctype.erpnext_crm_settings import erpnext_crm_settings
+		from crm.integrations.acumatica.api import dismiss_sync_issue
+
+		self._refused_on_get(dismiss_sync_issue)
+		self._refused_on_get(erpnext_crm_settings.dismiss_sync_issue)
 
 
 class TestFormScript(FrappeTestCase):

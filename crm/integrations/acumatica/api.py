@@ -44,7 +44,9 @@ def get_sync_status() -> dict:
 	}
 
 
-@frappe.whitelist()
+# POST only, like everything here that acts: frappe skips the CSRF check on a GET, so
+# a link or an <img> in a page the admin opens could fire it on their session.
+@frappe.whitelist(methods=["POST"])
 def test_connection() -> dict:
 	"""Never raises: a transport failure is exactly what an admin clicking this button
 	is trying to see, not a stack trace on the panel."""
@@ -90,7 +92,7 @@ def get_open_sync_issues() -> list[dict]:
 	]
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def dismiss_sync_issue(issue_name: str | int) -> bool:
 	"""Child rows autoincrement, so ``get_open_sync_issues`` hands the panel an int and
 	the panel posts it back as a JSON number. A bare ``str`` annotation made Frappe's
