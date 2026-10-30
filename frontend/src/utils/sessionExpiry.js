@@ -40,3 +40,26 @@ export function loginUrlFor(location) {
   const here = `${location.pathname}${location.search}${location.hash}`
   return `/login?redirect-to=${encodeURIComponent(here || '/crm')}`
 }
+
+let redirectingToLogin = false
+
+/**
+ * Send the person to log in when `error` is a lapsed session.
+ *
+ * Shared by the two ways a request leaves the app: the resources' fetcher
+ * (main.js) and `call()` (lib/frappe-ui-compat/call.js), which frappe-ui sends
+ * straight to frappeRequest, past any fetcher. Once per page load, so a burst
+ * of failing requests does not queue a navigation each. The caller still
+ * rethrows: whatever was waiting on the request must not carry on as if it
+ * had succeeded.
+ *
+ * @returns {boolean} true when it started the redirect
+ */
+export function redirectIfSessionGone(error) {
+  if (redirectingToLogin || !isSessionGone(error, document.cookie)) {
+    return false
+  }
+  redirectingToLogin = true
+  window.location.assign(loginUrlFor(window.location))
+  return true
+}

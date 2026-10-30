@@ -4,7 +4,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { createDialog } from './utils/dialogs'
 import { cleanUpSupersededWorkers } from './utils/staleServiceWorkers'
-import { isSessionGone, loginUrlFor } from './utils/sessionExpiry'
+import { redirectIfSessionGone } from './utils/sessionExpiry'
 import { initSocket } from './socket'
 import router from './router'
 import translationPlugin from './translation'
@@ -66,14 +66,11 @@ app.provide('color', 'currentColor')
    frappe answers 403 to everything, which the pages used to render as a
    permission problem ("ask an administrator"). Send the person back to log in,
    returning to the page they were on; a genuine 403 on a live session still
-   surfaces as a permission error. */
-let redirectingToLogin = false
+   surfaces as a permission error. `call()` bypasses this hook, so the
+   'frappe-ui' compat shim wraps it with the same check. */
 setConfig('resourceFetcher', (options) =>
   frappeRequest(options).catch((error) => {
-    if (!redirectingToLogin && isSessionGone(error, document.cookie)) {
-      redirectingToLogin = true
-      window.location.assign(loginUrlFor(window.location))
-    }
+    redirectIfSessionGone(error)
     throw error
   }),
 )
