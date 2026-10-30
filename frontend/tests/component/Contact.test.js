@@ -3,9 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from './mount.js'
 
 /**
- * The mobile contact page, mounted for two contacts in one session the way the
- * router does it (a fresh mount per record), with frappe-ui's real resource
- * cache underneath. The side-panel layout is cached per doctype, so anything
+ * The desktop and mobile contact pages, mounted per record the way the router
+ * does it (a fresh mount per record), with frappe-ui's real resource cache and
+ * Tabs underneath. The side-panel layout is cached per doctype, so anything
  * the page hangs off it outlives the contact it was built for.
  */
 
@@ -25,6 +25,19 @@ const blank = (name) => ({
 vi.mock('@/components/Icon.vue', () => blank('Icon'))
 vi.mock('@/components/ErrorPage.vue', () => blank('ErrorPage'))
 vi.mock('@/components/LayoutHeader.vue', () => blank('LayoutHeader'))
+vi.mock('@/components/CustomActions.vue', () => blank('CustomActions'))
+vi.mock('@/components/DeleteLinkedDocModal.vue', () =>
+  blank('DeleteLinkedDocModal'),
+)
+vi.mock('@/components/Resizer.vue', () => ({
+  default: defineComponent({
+    name: 'Resizer',
+    setup:
+      (_, { slots }) =>
+      () =>
+        h('div', slots.default?.()),
+  }),
+}))
 vi.mock('@/components/ListViews/DealsListView.vue', () =>
   blank('DealsListView'),
 )
@@ -42,6 +55,7 @@ vi.mock('@/data/document', () => ({
   useDocument: (doctype, name) => ({
     document: S.docs[name],
     permissions: { data: {} },
+    scripts: { data: [] },
     triggerOnRender: async () => {},
     error: ref(''),
   }),
@@ -77,6 +91,7 @@ vi.mock('@/composables/useTimelinePreferences', () => ({
 }))
 vi.mock('@/utils', () => ({
   validateIsImageFile: () => true,
+  setupCustomizations: async () => ({}),
   validateEmail: () => true,
   validatePhone: () => true,
 }))
@@ -89,6 +104,7 @@ vi.mock('vue-router', async (importOriginal) => ({
 
 const { setConfig, Badge, Button } = await import('frappe-ui')
 const { useDoctypeModal } = await import('@/composables/doctypeModal')
+const Contact = (await import('@/pages/Contact.vue')).default
 const MobileContact = (await import('@/pages/MobileContact.vue')).default
 
 function contact(name, email, phone) {
@@ -142,9 +158,9 @@ async function flush() {
 }
 
 let page
-async function visit(contactId) {
+async function visit(contactId, Page = MobileContact) {
   S.panels.length = 0
-  page = mount(MobileContact, {
+  page = mount(Page, {
     props: { contactId },
     stubs: { Badge, Button, ErrorMessage: { render: () => null } },
     plugins: [{ install: (app) => (app.config.globalProperties.__ = __) }],
@@ -188,5 +204,16 @@ describe('MobileContact side panel', () => {
     expect(S.docs['CONT-B'].doc.address).toBe('ADDR-1')
     expect(S.docs['CONT-A'].doc.address).toBeUndefined()
     expect(S.docs['CONT-A'].save.submit).not.toHaveBeenCalled()
+  })
+})
+
+describe.each([
+  ['Contact', Contact, ['Deals2']],
+  ['MobileContact', MobileContact, ['Details', 'Deals2']],
+])('%s tabs', (name, Page, expected) => {
+  it('shows the number of deals on the Deals tab', async () => {
+    await visit('CONT-B', Page)
+    const triggers = [...page.el.querySelectorAll('[role="tab"]')]
+    expect(triggers.map((t) => t.textContent.trim())).toEqual(expected)
   })
 })

@@ -210,6 +210,17 @@ async function visit(Page, organizationId) {
   await flush()
 }
 
+const tabTriggers = () => [...page.el.querySelectorAll('[role="tab"]')]
+
+// reka selects a tab on a primary-button mousedown, as a click does
+async function openTab(label) {
+  const trigger = tabTriggers().find((t) => t.textContent.startsWith(label))
+  trigger.dispatchEvent(new MouseEvent('mousedown', { button: 0 }))
+  await flush()
+}
+
+const lastList = (name) => S.children[name]?.at(-1)
+
 afterEach(() => {
   page?.unmount()
   S.docs = {}
@@ -270,5 +281,49 @@ describe.each([
     S.panel.change('website', 'https://gamma.example') // the rep carries on
     expect(S.docs['Gamma Pipes'].save.submit).toHaveBeenCalledTimes(1)
     expect(S.docs['Gamma Pipes'].doc.organization_name).toBe('Gamma Pipes')
+  })
+
+  it("shows each tab's total on the tab", async () => {
+    // each test its own organization: the lists are cached per organization
+    await visit(Page, `Big ${name} Totals`)
+    const labels = tabTriggers().map((t) => t.textContent.trim())
+    expect(labels.filter((l) => l !== 'Details')).toEqual([
+      'Deals25',
+      'Contacts1',
+    ])
+  })
+
+  it('pages through more deals than fit on the first page', async () => {
+    await visit(Page, `Big ${name} Paging`)
+    await openTab('Deals')
+    let deals = lastList('DealsListView')
+    expect(deals.rows).toHaveLength(20)
+    // a page length is what makes the list view draw its Load More footer
+    expect(deals.modelValue).toBe(20)
+    expect(deals.options).toMatchObject({ rowCount: 20, totalCount: 25 })
+
+    deals.onLoadMore()
+    await flush()
+    deals = lastList('DealsListView')
+    expect(deals.rows).toHaveLength(25)
+    expect(deals.options).toMatchObject({ rowCount: 25, totalCount: 25 })
+  })
+
+  it('asks for a page of the chosen length from the top', async () => {
+    await visit(Page, `Big ${name} PageLength`)
+    await openTab('Deals')
+    lastList('DealsListView')['onUpdate:modelValue'](50)
+    await flush()
+    const deals = lastList('DealsListView')
+    expect(deals.rows).toHaveLength(25)
+    expect(deals.modelValue).toBe(50)
+  })
+
+  it('draws no footer when everything fits on one page', async () => {
+    await visit(Page, `Big ${name} Fits`)
+    await openTab('Contacts')
+    const contacts = lastList('ContactsListView')
+    expect(contacts.rows).toHaveLength(1)
+    expect(contacts.modelValue).toBeUndefined()
   })
 })
