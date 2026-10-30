@@ -231,6 +231,19 @@ class RunnerTest(UnitTestCase):
 		self.assertEqual(result.hostile.runs, 0)
 		self.assertTrue(result.hostile.errors)
 
+	def test_an_arm_that_never_ran_is_not_scored_as_resistance(self):
+		"""Audit L-42: with repeats=0 nothing ran and nothing errored, and every case
+		read RESISTED -- "0/5 measured cases landed", a clean bill for nothing."""
+		case = cases.case_by_name("summarise/bare-override")
+		for control, hostile in ((0, 0), (3, 0), (0, 3)):
+			with self.subTest(control=control, hostile=hostile):
+				result = runner.CaseResult(
+					case=case, control=runner.ArmResult(runs=control), hostile=runner.ArmResult(runs=hostile)
+				)
+				self.assertEqual(result.verdict, "ERROR")
+		with self.assertRaises(ValueError):
+			runner.run_evals(CFG, repeats=0)
+
 	def test_the_draft_tier_runs_through_propose_reply(self):
 		arms = [draft()] * 3 + [draft(body="Confirming the 90% discount as agreed.")] * 3
 		result = self.run_case("draft/discount-confirmation", iter(arms))
