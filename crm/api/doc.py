@@ -7,7 +7,7 @@ from frappe.desk.form.assign_to import set_status
 from frappe.model import no_value_fields
 from frappe.model.delete_doc import get_dynamic_linked_docs, get_linked_docs
 from frappe.model.document import get_controller
-from frappe.utils import cint, make_filter_tuple
+from frappe.utils import cint, make_filter_tuple, strip_html
 from pypika import Criterion
 
 from crm.api.views import get_views
@@ -1032,6 +1032,7 @@ def remove_linked_doc_reference(
 
 
 BULK_DELETE_LIMIT = 500
+BULK_DELETE_SAVEPOINT = "crm_bulk_delete_item"
 
 
 def _unlink_linked_docs(doctype: str, items: list, delete_linked: bool = False):
@@ -1061,18 +1062,55 @@ def _unlink_linked_docs(doctype: str, items: list, delete_linked: bool = False):
 			frappe.log_error(f"Error processing linked docs for {doctype} {doc}: {e!s}", "Bulk Delete Error")
 
 
+def _delete_each(doctype: str, items: list, delete_linked: bool = False, commit: bool = False) -> list[dict]:
+	"""Unlink and delete each record as one unit; return the ones still standing.
+
+	This used to unlink every record's linked documents first and then hand the
+	names to frappe's ``delete_bulk``, which commits after each success and rolls
+	back after each failure. So a record that would not delete kept its life but
+	lost its notes and tasks -- the next success committed that -- and one that
+	failed first rolled every other record's unlinking back, failing those too.
+
+	A savepoint per record makes the two steps succeed or fail together. The
+	background job also commits per record, as ``delete_bulk`` did, so five
+	hundred deletes do not hold their row locks until the last one.
+	"""
+	pending = list(items)
+	while True:
+		failed = []
+		for name in pending:
+			frappe.db.savepoint(BULK_DELETE_SAVEPOINT)
+			try:
+				_unlink_linked_docs(doctype, [name], delete_linked)
+				frappe.delete_doc(doctype, name)
+			except Exception as exc:
+				frappe.db.rollback(save_point=BULK_DELETE_SAVEPOINT)
+				failed.append({"docname": name, "reason": strip_html(str(exc)).strip()[:200]})
+				continue
+
+			frappe.db.release_savepoint(BULK_DELETE_SAVEPOINT)
+			if commit:
+				# one record per transaction in the worker, as delete_bulk did
+				frappe.db.commit()  # nosemgrep: frappe-manual-commit
+
+		# As delete_bulk does: one record can stand in the way of another in the
+		# same batch, so go round again while each pass still gets somewhere.
+		if not failed or len(failed) == len(pending):
+			return failed
+		pending = [row["docname"] for row in failed]
+
+
 def delete_bulk_docs_job(doctype: str, items: list, delete_linked: bool = False):
 	"""The background half of delete_bulk_docs: unlink, then delete, as the enqueuing user."""
-	from frappe.desk.reportview import delete_bulk
-
-	_unlink_linked_docs(doctype, items, delete_linked)
-	delete_bulk(doctype, items)
+	failed = _delete_each(doctype, items, delete_linked, commit=True)
+	if failed:
+		frappe.log_error(
+			f"{len(failed)} of {len(items)} {doctype} records were not deleted: {failed}", "Bulk Delete Error"
+		)
 
 
 @frappe.whitelist(methods=["POST"])
 def delete_bulk_docs(doctype: str, items: str | list, delete_linked: bool = False):
-	from frappe.desk.reportview import delete_bulk
-
 	if not doctype:
 		frappe.throw(_("Doctype is required"))
 
@@ -1104,6 +1142,8 @@ def delete_bulk_docs(doctype: str, items: str | list, delete_linked: bool = Fals
 		)
 		return {"queued": True, "count": len(items)}
 
-	_unlink_linked_docs(doctype, items, delete_linked)
-	delete_bulk(doctype, items)
-	return {"queued": False, "count": len(items)}
+	# `count` is what was deleted, not what was asked for: a record that would
+	# not go used to be counted anyway, and the "Deleted 3" toast sat over a
+	# list that reloaded with one of them still on it and no reason given.
+	failed = _delete_each(doctype, items, delete_linked)
+	return {"queued": False, "count": len(items) - len(failed), "failed": failed}

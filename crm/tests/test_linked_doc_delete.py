@@ -4,7 +4,8 @@
 """Deleting a record that other records point at.
 
 The "Unlink" choice in the delete modals has to take away only the link to the
-record going.
+record going, and a bulk delete has to treat each record's unlinking and its
+delete as one thing that either happens or does not.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from __future__ import annotations
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from crm.api.doc import _unlink_linked_docs, get_linked_docs_of_document
+from crm.api.doc import _unlink_linked_docs, delete_bulk_docs, get_linked_docs_of_document
 
 
 def make_contact(first_name: str) -> str:
@@ -101,3 +102,91 @@ class UnlinkOneContactTest(IntegrationTestCase):
 				remove_contact=True,
 			)
 		self.assertEqual(len(self.contacts_left()), 3)
+
+
+class BulkDeleteIsPerRecordTest(IntegrationTestCase):
+	"""Unlink-then-delete ran as two passes: every record's links first, then
+	frappe's delete loop, which commits after each success and rolls back after
+	each failure. A record that would not delete survived without its notes, or
+	a failure early in the batch rolled the others' unlinking back and failed
+	them too -- and either way the response counted every record as deleted.
+	"""
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		self.made: list[tuple[str, str]] = []
+		self.addCleanup(self.purge)
+		org = self.made_one("CRM Organization", make_org())
+		self.plain = frappe.get_doc({"doctype": "CRM Deal", "organization": org}).insert(
+			ignore_permissions=True
+		)
+		self.made_one("CRM Deal", self.plain.name)
+		self.plain_note = self.note_on(self.plain.name)
+		self.blocked = frappe.get_doc({"doctype": "CRM Deal", "organization": org}).insert(
+			ignore_permissions=True
+		)
+		self.made_one("CRM Deal", self.blocked.name)
+		self.blocked_note = self.note_on(self.blocked.name)
+		# A link the unlink step cannot take away (it is a reference_name, not a
+		# reference_docname), so this deal cannot be deleted.
+		run = frappe.get_doc(
+			{
+				"doctype": "CRM Enrichment Run",
+				"reference_doctype": "CRM Deal",
+				"reference_name": self.blocked.name,
+			}
+		).insert(ignore_permissions=True)
+		self.made_one("CRM Enrichment Run", run.name)
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def made_one(self, doctype: str, name: str) -> str:
+		self.made.append((doctype, name))
+		return name
+
+	def purge(self):
+		# The old two-pass delete went through frappe's delete_bulk, which commits
+		# after every record it deletes -- and so commits this setup with it. What
+		# outlived tearDown's rollback has to be removed the same way.
+		left = [(doctype, name) for doctype, name in reversed(self.made) if frappe.db.exists(doctype, name)]
+		for doctype, name in left:
+			frappe.delete_doc(doctype, name, force=True, ignore_permissions=True)
+		if left:
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit
+
+	def note_on(self, deal: str) -> str:
+		return self.made_one(
+			"FCRM Note",
+			frappe.get_doc(
+				{
+					"doctype": "FCRM Note",
+					"title": f"Note on {deal}",
+					"reference_doctype": "CRM Deal",
+					"reference_docname": deal,
+				}
+			)
+			.insert(ignore_permissions=True)
+			.name,
+		)
+
+	def assert_outcome(self, result):
+		self.assertFalse(frappe.db.exists("CRM Deal", self.plain.name))
+		self.assertFalse(frappe.db.get_value("FCRM Note", self.plain_note, "reference_docname"))
+
+		self.assertTrue(frappe.db.exists("CRM Deal", self.blocked.name))
+		self.assertEqual(
+			frappe.db.get_value("FCRM Note", self.blocked_note, "reference_docname"),
+			self.blocked.name,
+			"the deal that survived lost its note",
+		)
+
+		self.assertEqual(result["count"], 1, "only one deal was deleted")
+		self.assertEqual([row["docname"] for row in result["failed"]], [self.blocked.name])
+		self.assertIn("CRM Enrichment Run", result["failed"][0]["reason"])
+
+	def test_a_record_that_will_not_delete_keeps_its_links(self):
+		self.assert_outcome(delete_bulk_docs("CRM Deal", [self.plain.name, self.blocked.name]))
+
+	def test_a_failure_first_does_not_take_the_rest_down_with_it(self):
+		self.assert_outcome(delete_bulk_docs("CRM Deal", [self.blocked.name, self.plain.name]))

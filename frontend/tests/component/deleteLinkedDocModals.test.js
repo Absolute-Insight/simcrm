@@ -36,6 +36,9 @@ vi.mock('@/data/document', () => ({
 const { default: DeleteLinkedDocModal } = await import(
   '@/components/DeleteLinkedDocModal.vue'
 )
+const { default: BulkDeleteLinkedDocModal } = await import(
+  '@/components/BulkDeleteLinkedDocModal.vue'
+)
 
 const stubs = {
   Dialog: passthrough,
@@ -105,5 +108,51 @@ describe('DeleteLinkedDocModal', () => {
         contact: 'contact-a',
       }),
     )
+  })
+})
+
+describe('BulkDeleteLinkedDocModal', () => {
+  const mountBulk = () =>
+    mount(BulkDeleteLinkedDocModal, {
+      props: {
+        modelValue: true,
+        doctype: 'CRM Organization',
+        items: ['ORG-1', 'ORG-2'],
+        reload: vi.fn(),
+      },
+      stubs,
+    })
+
+  it('says which records were not deleted, and why', async () => {
+    frappe.call.mockResolvedValue({
+      queued: false,
+      count: 1,
+      failed: [
+        {
+          docname: 'ORG-2',
+          reason: 'Cannot delete ORG-2 because it is linked with RUN-1',
+        },
+      ],
+    })
+    wrapper = mountBulk()
+
+    await click(wrapper, 'Unlink & Delete 2 items')
+    await click(wrapper, 'Unlink & Delete')
+
+    expect(frappe.toast.success).not.toHaveBeenCalled()
+    expect(frappe.toast.error).toHaveBeenCalledWith(
+      'Deleted 1 of 2. ORG-2 was not deleted: Cannot delete ORG-2 because it is linked with RUN-1',
+    )
+  })
+
+  it('still reports a clean delete as done', async () => {
+    frappe.call.mockResolvedValue({ queued: false, count: 2, failed: [] })
+    wrapper = mountBulk()
+
+    await click(wrapper, 'Unlink & Delete 2 items')
+    await click(wrapper, 'Unlink & Delete')
+
+    expect(frappe.toast.success).toHaveBeenCalledWith('Deleted 2')
+    expect(frappe.toast.error).not.toHaveBeenCalled()
   })
 })
