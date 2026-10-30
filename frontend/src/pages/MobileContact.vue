@@ -129,7 +129,7 @@
             class="flex flex-1 flex-col justify-between overflow-hidden"
           >
             <SidePanelLayout
-              :sections="sections.data"
+              :sections="parsedSections"
               doctype="Contact"
               :docname="contact.doc.name"
               @reload="sections.reload"
@@ -358,25 +358,30 @@ const rows = computed(() => {
   return deals.data.map((row) => getDealRowObject(row))
 })
 
+// The layout is cached per doctype for the session, so nothing that belongs to
+// this contact may live on it: a transform runs with the options of whichever
+// page created the resource, which put the first contact's emails, phones and
+// address handlers on every contact opened after it. The fields are mapped
+// here, per page, instead -- as Contact.vue does.
 const sections = createResource({
   url: 'crm.fcrm.doctype.crm_fields_layout.crm_fields_layout.get_sidepanel_sections',
   cache: ['sidePanelSections', 'Contact'],
   params: { doctype: 'Contact' },
   auto: true,
-  transform: (data) => computed(() => getParsedSections(data)),
 })
 
-function getParsedSections(_sections) {
-  return _sections.map((section) => {
-    section.columns = section.columns.map((column) => {
-      column.fields = column.fields.map((field) =>
+const parsedSections = computed(() => {
+  if (!sections.data) return []
+  return sections.data.map((section) => ({
+    ...section,
+    columns: section.columns.map((column) => ({
+      ...column,
+      fields: column.fields.map((field) =>
         transformField(field, { showAddressModal }),
-      )
-      return column
-    })
-    return section
-  })
-}
+      ),
+    })),
+  }))
+})
 
 const { getFormattedCurrency } = getMeta('CRM Deal')
 
