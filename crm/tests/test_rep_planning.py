@@ -723,3 +723,40 @@ class MatchOnCustomerUnitTest(UnitTestCase):
 		specific = self.visit(name="specific", planned_date=date(2026, 8, 14), organization="Impala")
 		out = match_items([vague, specific], [self.event(organizations=["Impala"])])
 		self.assertEqual(list(out), ["specific"])
+
+
+class FulfilmentHoldsUnitTest(UnitTestCase):
+	"""A Done item is re-checked against everything that matched it.
+
+	Only the record's kind, doctype, name and week were: an item matched to a
+	visit at Impala and then edited to Canyon Coal stayed Done on the Impala
+	visit for good, and kept it claimed from the item it was really for.
+	"""
+
+	def holds(self, row, actuals):
+		return rep_planning._fulfilment_holds(row, "rep@x", WEEK, WEEK + timedelta(days=6), actuals)
+
+	def test_an_item_moved_to_another_customer_lets_go_of_the_visit(self):
+		done = item(
+			activity_type="Visit",
+			status="Done",
+			reference_doctype=None,
+			reference_docname=None,
+			fulfilled_by_doctype="Event",
+			fulfilled_by="EV-1",
+		)
+		visit = actual(
+			doctype="Event",
+			name="EV-1",
+			kind="Visit",
+			reference_doctype=None,
+			reference_docname=None,
+			organizations=["Impala"],
+		)
+		self.assertTrue(self.holds({**done, "organization": "Impala"}, [visit]))
+		self.assertFalse(self.holds({**done, "organization": "Canyon Coal"}, [visit]))
+
+	def test_an_item_moved_to_another_deal_lets_go_of_the_record(self):
+		done = item(status="Done", fulfilled_by_doctype="CRM Task", fulfilled_by="TASK-9")
+		self.assertTrue(self.holds(done, [actual()]))
+		self.assertFalse(self.holds({**done, "reference_docname": "DEAL-2"}, [actual()]))

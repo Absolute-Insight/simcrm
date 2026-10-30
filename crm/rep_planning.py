@@ -163,12 +163,7 @@ def match_items(items: list[dict], actuals: list[dict]) -> dict[str, dict]:
 				continue
 			if item["activity_type"] != actual["kind"]:
 				continue
-			if item.get("reference_docname") and (
-				item.get("reference_doctype") != actual.get("reference_doctype")
-				or item.get("reference_docname") != actual.get("reference_docname")
-			):
-				continue
-			if not _same_customer(item, actual):
+			if not _fits(item, actual):
 				continue
 			start, end = week_of(item["planned_date"])
 			if when < start or when > end:
@@ -179,6 +174,22 @@ def match_items(items: list[dict], actuals: list[dict]) -> dict[str, dict]:
 			assigned[best["name"]] = actual
 
 	return assigned
+
+
+def _fits(item: dict, actual: dict) -> bool:
+	"""Is this actual about what the item names -- its deal or lead, its customer?
+
+	Kind and week are the caller's to check. ``match_items`` asks this before
+	assigning a record and ``_fulfilment_holds`` again on every later run, so an
+	item edited to another customer or deal lets go of a record that no longer
+	answers it.
+	"""
+	if item.get("reference_docname") and (
+		item.get("reference_doctype") != actual.get("reference_doctype")
+		or item.get("reference_docname") != actual.get("reference_docname")
+	):
+		return False
+	return _same_customer(item, actual)
 
 
 def _same_customer(item: dict, actual: dict) -> bool:
@@ -358,7 +369,9 @@ def _fulfilment_holds(
 	"""Does the record recorded against a Done item still fulfil it?
 
 	Deleting the call, reopening the task or cancelling the meeting takes the
-	fulfilment with it — Done is a statement about a record, not a flag.
+	fulfilment with it — Done is a statement about a record, not a flag. So does
+	editing the item to another customer or deal (``_fits``): the record still
+	exists, but it is no longer what the item asks for.
 
 	``actuals`` is the rep's activity over the whole run's window, already
 	fetched; it answers the question without a query. A Task holds regardless
@@ -377,6 +390,7 @@ def _fulfilment_holds(
 				actual["doctype"] != source["doctype"]
 				or str(actual["name"]) != str(item["fulfilled_by"])
 				or actual["kind"] != item["activity_type"]
+				or not _fits(item, actual)
 			):
 				continue
 			if not source["when_is_activity_time"]:
@@ -385,7 +399,8 @@ def _fulfilment_holds(
 				return True
 		return False
 	window = (start, end) if source["when_is_activity_time"] else None
-	return bool(_query_source(item["activity_type"], user, window, names=[item["fulfilled_by"]]))
+	rows = _query_source(item["activity_type"], user, window, names=[item["fulfilled_by"]])
+	return any(_fits(item, row) for row in rows)
 
 
 def _day_of(when) -> date:
