@@ -6,7 +6,9 @@ from time import monotonic
 
 import frappe
 from frappe.tests import IntegrationTestCase
-from frappe.utils import add_to_date, get_datetime, now_datetime
+from frappe.utils import add_days, add_to_date, get_datetime, now_datetime, nowdate
+
+from crm.fcrm.doctype.crm_service_level_agreement.utils import get_sla
 
 
 class TestCRMServiceLevelAgreement(IntegrationTestCase):
@@ -511,6 +513,25 @@ class TestCRMServiceLevelAgreement(IntegrationTestCase):
 			get_datetime(sla.calc_time(get_datetime("2024-01-15 16:00:00"), 3600)),
 			get_datetime("2024-01-16 10:00:00"),
 		)
+
+	def test_get_sla_applies_through_its_end_date(self):
+		"""end_date is a DATE column: compared with now_datetime() it read as
+		midnight, so an SLA stopped applying at 00:00 on its own last day."""
+		status = "SLA Last Day Probe"  # a priority no other SLA carries
+		if not frappe.db.exists("CRM Communication Status", status):
+			frappe.get_doc({"doctype": "CRM Communication Status", "status": status}).insert(
+				ignore_permissions=True
+			)
+		sla = create_test_sla(
+			sla_name="Ends Today",
+			start_date=add_days(nowdate(), -30),
+			end_date=nowdate(),
+			priorities=[{"priority": status, "default_priority": 1, "first_response_time": 3600}],
+		)
+
+		found = get_sla(frappe._dict(doctype="CRM Lead", communication_status=status))
+
+		self.assertEqual(found and found.name, sla.name)
 
 	def test_calc_elapsed_time_over_a_month_counts_only_working_hours(self):
 		holiday_list = create_test_holiday_list()  # Monday 2024-01-15
