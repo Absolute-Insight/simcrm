@@ -93,10 +93,10 @@ def run_plan(
 	(:func:`analyst_facts.table_facts`). ``today`` is the caller's: pass the one
 	the grounding check will use.
 	"""
-	tables = _run_tables(plan, erp, deadline)
 	# the caller's today, read once: the grounding check decides which month is
 	# partial from the same value, and a second read can land after midnight
 	today = today or frappe.utils.getdate()
+	tables = _run_tables(plan, erp, deadline, today)
 	for table in tables:
 		table["facts"] = analyst_facts.table_facts(table, today)
 	return tables
@@ -117,7 +117,7 @@ def data_start() -> str | None:
 _HISTORY_TABLES = ("won_revenue_by_month", "growth_rates")
 
 
-def _run_tables(plan: dict, erp: str | None, deadline: float | None) -> list[dict]:
+def _run_tables(plan: dict, erp: str | None, deadline: float | None, today: date) -> list[dict]:
 	from_date, to_date = plan["from_date"], plan["to_date"]
 	starts = data_start()
 	tables = []
@@ -136,7 +136,7 @@ def _run_tables(plan: dict, erp: str | None, deadline: float | None) -> list[dic
 			tables.append(_table(key, metric, label, [], from_date, to_date, "", error=SKIPPED_NOTE))
 			continue
 		if is_erp:
-			tables.append(_erp_table(key, metric, erp, from_date, to_date, deadline))
+			tables.append(_erp_table(key, metric, erp, from_date, to_date, today, deadline))
 			continue
 		rows, note = runner(from_date, to_date)
 		if key in _HISTORY_TABLES:
@@ -486,28 +486,34 @@ _CRM_RUNNERS = {
 # --- ERP -------------------------------------------------------------------------
 
 
-def _erp_table(key, metric, erp, from_date, to_date, deadline=None) -> dict:
+def _erp_table(key, metric, erp, from_date, to_date, today: date, deadline=None) -> dict:
 	label = ERP_LABELS[erp]
+	# documents exist up to today: a month after it is unknown, not one with nothing in it
+	end = min(str(to_date), today.isoformat())
+	months = analyst.months_between(from_date, end) if from_date <= end else []
 	partial = False
 	try:
 		invoices = payments = None
-		if key in ("erp_invoices_by_month", "erp_receivables", "erp_cashflow_by_month"):
-			invoices, cut = _erp_invoices(erp, from_date, to_date, deadline)
+		if key == "erp_receivables" or (months and key in ("erp_invoices_by_month", "erp_cashflow_by_month")):
+			invoices, cut = _erp_invoices(erp, from_date, end, deadline)
 			partial = partial or cut
-		if key in ("erp_payments_by_month", "erp_cashflow_by_month"):
-			payments, cut = _erp_payments(erp, from_date, to_date, deadline)
+		if months and key in ("erp_payments_by_month", "erp_cashflow_by_month"):
+			payments, cut = _erp_payments(erp, from_date, end, deadline)
 			partial = partial or cut
 	except Exception as exc:
 		frappe.log_error(title="CRM analyst ERP read failed", message=f"{erp} {key}: {exc}")
 		return _table(key, metric, label, [], from_date, to_date, "", error="unreachable")
 
-	months = analyst.months_between(from_date, to_date)
+	note = f"Figures from {label}, in its own currency."
+	if key != "erp_receivables":
+		months, coverage = _from_first_document(months, invoices, payments, label)
+		note = f"{note} {coverage}".strip()
 	if key == "erp_invoices_by_month":
 		rows = _sum_by_month(months, invoices, "amount", "invoiced", "invoices")
 	elif key == "erp_payments_by_month":
 		rows = _sum_by_month(months, payments, "amount", "received", "payments")
 	elif key == "erp_receivables":
-		rows = _receivables(invoices, date.fromisoformat(to_date))
+		rows = _receivables(invoices, date.fromisoformat(end))
 	else:
 		invoiced = {
 			row["month"]: row["invoiced"]
@@ -526,10 +532,28 @@ def _erp_table(key, metric, erp, from_date, to_date, deadline=None) -> dict:
 			}
 			for month in months
 		]
-	note = f"Figures from {label}, in its own currency."
 	if partial:
 		note = f"{PARTIAL_NOTE} {note}"
 	return _table(key, metric, label, rows, from_date, to_date, note)
+
+
+def _from_first_document(months: list[str], invoices, payments, label: str) -> tuple[list[str], str]:
+	"""``months`` from the first one any document falls in, and a note when that cut some.
+
+	The ERP's history starts somewhere, and a month before it is unknown: shown as
+	0 it reads as "nothing invoiced", the way the CRM's months before its imported
+	history did (``analyst_facts.trim_to_coverage``).
+	"""
+	dated = {str(record.get("date") or "")[:7] for record in [*(invoices or []), *(payments or [])]}
+	first = next((index for index, month in enumerate(months) if month in dated), len(months))
+	if not first:
+		return months, ""
+	if first == len(months):
+		return [], f"{label} holds no documents for this period."
+	return months[first:], (
+		f"{label} holds no documents in this period before {analyst.month_label(months[first])}; "
+		"earlier months are not shown rather than shown as 0."
+	)
 
 
 def _sum_by_month(months, records, amount_key, total_label, count_label) -> list[dict]:

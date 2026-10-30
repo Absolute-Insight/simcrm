@@ -161,6 +161,45 @@ class RunPlanTest(IntegrationTestCase):
 			],
 		)
 
+	def test_erp_months_stop_at_today_and_start_at_the_first_document(self):
+		"""A "this year" plan listed November and December as nothing invoiced, and the
+		months before the ERP's first document as nothing invoiced too."""
+		today = frappe.utils.getdate("2026-10-30")
+		invoices = [{"date": "2026-03-10", "amount": 100.0, "balance": 0.0, "due": None}]
+		with mock.patch.object(analyst_data, "acumatica_invoices", return_value=(invoices, False)) as read:
+			table = analyst_data.run_plan(
+				{"metrics": ["erp_invoices_by_month"], "from_date": "2026-01-01", "to_date": "2026-12-31"},
+				"acumatica",
+				today=today,
+			)[0]
+		self.assertEqual(read.call_args.args[:2], ("2026-01-01", "2026-10-30"))
+		self.assertEqual(
+			[row["month"] for row in table["rows"]],
+			["2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"],
+		)
+		self.assertEqual(table["rows"][0], {"month": "2026-03", "invoiced": 100.0, "invoices": 1})
+		self.assertIn("before March 2026", table["note"])
+
+	def test_a_plan_running_to_the_year_9999_is_answered_not_a_500(self):
+		from crm.agent import analyst
+		from crm.agent.schemas import AnalystPlan
+
+		today = frappe.utils.getdate("2026-10-30")
+		plan = analyst.normalise_plan(
+			AnalystPlan(
+				metrics=["erp_cashflow_by_month"], from_date="2026-01-01", to_date="9999-12-31", reasoning=""
+			),
+			analyst.available_keys(erp_enabled=True),
+			today,
+		)
+		with (
+			mock.patch.object(analyst_data, "acumatica_invoices", return_value=([], False)),
+			mock.patch.object(analyst_data, "acumatica_payments", return_value=([], False)),
+		):
+			table = analyst_data.run_plan(plan, "acumatica", today=today)[0]
+		self.assertIsNone(table["error"])
+		self.assertEqual(table["rows"], [])
+
 	def test_an_unreachable_erp_marks_its_table_and_the_crm_table_still_runs(self):
 		with mock.patch.object(analyst_data, "acumatica_invoices", side_effect=AcumaticaError("boom")):
 			tables = analyst_data.run_plan(

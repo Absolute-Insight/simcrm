@@ -248,6 +248,10 @@ CATALOGUE: dict[str, dict] = {
 MAX_METRICS = 4
 DEFAULT_PERIOD_MONTHS = 12
 PROJECTION_HORIZON = 3
+# The widest period a plan may name: no CRM or ERP history this app reads starts
+# before 2000, and no forecast it computes reaches past two years out.
+EARLIEST_PLAN_DATE = date(2000, 1, 1)
+PLAN_MONTHS_AHEAD = 24
 
 # How much of a table the answer prompt carries. Enough to narrate a year by
 # month or a team of reps; past this the model is being asked to read a
@@ -461,7 +465,9 @@ def normalise_plan(plan, available: list[str], today: date, question: str = "") 
 	Unknown or unavailable metrics are dropped, duplicates collapse, the list is
 	capped at :data:`MAX_METRICS`; an empty selection falls back to keywords.
 	Dates default to the last :data:`DEFAULT_PERIOD_MONTHS` months ending today,
-	a reversed pair is swapped, and an unparseable one takes the default.
+	a reversed pair is swapped, an unparseable one takes the default, and both
+	are clamped between :data:`EARLIEST_PLAN_DATE` and :data:`PLAN_MONTHS_AHEAD`
+	months from today.
 	"""
 	requested = list(getattr(plan, "metrics", None) or [])
 	metrics: list[str] = []
@@ -478,6 +484,11 @@ def normalise_plan(plan, available: list[str], today: date, question: str = "") 
 	end = _parse_date(getattr(plan, "to_date", "")) or default_to
 	if start > end:
 		start, end = end, start
+	# a date past either bound is a model's or a typo's: 9999-12-31 overflowed the
+	# month arithmetic downstream into a 500
+	latest = add_months(today, PLAN_MONTHS_AHEAD)
+	start = min(max(start, EARLIEST_PLAN_DATE), latest)
+	end = min(max(end, EARLIEST_PLAN_DATE), latest)
 	return {"metrics": metrics, "from_date": start.isoformat(), "to_date": end.isoformat()}
 
 

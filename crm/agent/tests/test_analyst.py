@@ -62,6 +62,12 @@ class NormalisePlanTest(UnitTestCase):
 		self.assertEqual(out["from_date"], "2025-09-01")
 		self.assertEqual(out["to_date"], "2026-03-15")
 
+	def test_a_period_is_clamped_to_a_range_the_month_arithmetic_survives(self):
+		"""A model's 9999-12-31 overflowed months_between into a 500."""
+		out = analyst.normalise_plan(plan(from_date="1066-10-14", to_date="9999-12-31"), CRM_KEYS, TODAY)
+		self.assertEqual((out["from_date"], out["to_date"]), ("2000-01-01", "2028-09-01"))
+		self.assertEqual(len(analyst.months_between(out["from_date"], out["to_date"])), 345)
+
 	def test_empty_selection_falls_back_by_keyword(self):
 		out = analyst.normalise_plan(plan(), CRM_KEYS, TODAY, question="are we behind quota?")
 		self.assertEqual(out["metrics"], ["quota_attainment_by_rep"])
