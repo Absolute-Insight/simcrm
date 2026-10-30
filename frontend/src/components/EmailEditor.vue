@@ -105,6 +105,22 @@
       />
       <EditorTableMenu />
       <div v-if="editable" class="flex flex-col gap-2">
+        <div
+          v-if="unsubscribedEmails.length"
+          role="status"
+          class="mx-4 flex items-start gap-2 rounded-4 bg-surface-orange-1 px-3 py-2 text-sm text-ink-orange-9"
+        >
+          <span
+            class="lucide-triangle-alert mt-0.5 size-4 shrink-0"
+            aria-hidden="true"
+          />
+          {{
+            __(
+              "{0} unsubscribed from emails for this record, so they won't receive this email. Remove them to send.",
+              [unsubscribedEmails.join(', ')],
+            )
+          }}
+        </div>
         <div class="flex flex-wrap gap-2 px-4">
           <AttachmentItem
             v-for="a in attachments"
@@ -164,6 +180,7 @@
             <Button
               variant="solid"
               v-bind="submitButtonProps || {}"
+              :disabled="submitButtonProps?.disabled || sendBlocked"
               :label="`${__('Send')} (${submitShortcutLabel})`"
             />
           </div>
@@ -297,6 +314,47 @@ watch(
 
 const editor = computed(() => textEditor.value?.editor)
 
+const unsubscribedEmails = ref([])
+const checkingRecipients = ref(false)
+const sendBlocked = computed(
+  () => checkingRecipients.value || unsubscribedEmails.value.length > 0,
+)
+
+const allRecipients = computed(() => [
+  ...new Set([...toEmails.value, ...ccEmails.value, ...bccEmails.value]),
+])
+
+watch(
+  [allRecipients, () => modelValue.value?.name],
+  async ([emails, name], _, onCleanup) => {
+    let stale = false
+    onCleanup(() => (stale = true))
+    if (!emails.length || !name) {
+      unsubscribedEmails.value = []
+      checkingRecipients.value = false
+      return
+    }
+    checkingRecipients.value = true
+    // Fail open: frappe drops an unsubscribed recipient on its own, so a failed
+    // check must not stop every other email from going out.
+    const unsubscribed = await call('crm.api.get_unsubscribed_emails', {
+      emails,
+      doctype: props.doctype,
+      name,
+    }).catch(() => [])
+    if (stale) return
+    unsubscribedEmails.value = unsubscribed
+    checkingRecipients.value = false
+  },
+  { immediate: true },
+)
+
+// A blocked send has to show why, so a hidden Cc/Bcc row holding the address opens.
+watch(unsubscribedEmails, (emails) => {
+  if (emails.some((email) => ccEmails.value.includes(email))) cc.value = true
+  if (emails.some((email) => bccEmails.value.includes(email))) bcc.value = true
+})
+
 function removeAttachment(attachment) {
   attachments.value = attachments.value.filter((a) => a !== attachment)
 }
@@ -358,5 +416,6 @@ defineExpose({
   toEmails,
   ccEmails,
   bccEmails,
+  sendBlocked,
 })
 </script>

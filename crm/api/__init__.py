@@ -5,8 +5,14 @@ from frappe.rate_limiter import rate_limit
 from frappe.translate import get_all_translations
 from frappe.utils import sanitize_html, split_emails, validate_email_address
 
+from crm.api.access import _require_crm_user
 from crm.fcrm.doctype.crm_invitation.crm_invitation import hash_key
-from crm.utils import is_frappe_version
+from crm.utils import is_frappe_version, user_rate_limited
+
+MAX_UNSUBSCRIBE_CHECK = 100
+UNSUBSCRIBE_CHECK_DOCTYPES = ("CRM Lead", "CRM Deal")
+UNSUBSCRIBE_RATE_SCOPE = "unsubscribe_check"
+UNSUBSCRIBE_RATE_LIMIT = 60
 
 
 # Guest access is required -- the login screen is rendered before there is a
@@ -47,6 +53,47 @@ def get_user_signature():
 	# The signature is stored HTML that gets rendered into the composer;
 	# sanitize it so a script in a user's or account's signature never runs.
 	return f'<br><p class="signature">{sanitize_html(signature, always_sanitize=True)}</p>'
+
+
+@frappe.whitelist()
+def get_unsubscribed_emails(emails: list[str], doctype: str, name: str) -> list[str]:
+	"""The recipients frappe's mail queue will drop for this record.
+
+	Mirrors the filter in frappe's QueueBuilder, which skips them without an
+	error while the Communication still lands on the timeline, so the email looks
+	sent. The composer asks first so a rep is told. Past the cap a recipient goes
+	unchecked, which is the same as the check failing: frappe still drops them.
+
+	``Email Unsubscribe`` is System Manager only and this reads it directly, so
+	these checks are all that stands in front of it. A global unsubscribe has
+	nothing to do with the record, so the record only proves the caller is
+	composing somewhere real, and the limit is what bounds probing typed addresses.
+	An empty ``name`` has to be refused here: ``has_permission`` treats it as no
+	document and answers for the doctype.
+	"""
+	_require_crm_user()
+	if doctype not in UNSUBSCRIBE_CHECK_DOCTYPES or not name:
+		frappe.throw(_("Not permitted"), frappe.PermissionError)
+	frappe.has_permission(doctype, "read", doc=name, throw=True)
+	if user_rate_limited(UNSUBSCRIBE_RATE_SCOPE, UNSUBSCRIBE_RATE_LIMIT):
+		frappe.throw(_("Too many requests. Try again shortly."), frappe.TooManyRequestsError)
+
+	emails = emails[:MAX_UNSUBSCRIBE_CHECK]
+	if not emails:
+		return []
+
+	EmailUnsubscribe = frappe.qb.DocType("Email Unsubscribe")
+	return (
+		frappe.qb.from_(EmailUnsubscribe)
+		.select(EmailUnsubscribe.email)
+		.distinct()
+		.where(EmailUnsubscribe.email.isin(emails))
+		.where(
+			(EmailUnsubscribe.global_unsubscribe == 1)
+			| ((EmailUnsubscribe.reference_doctype == doctype) & (EmailUnsubscribe.reference_name == name))
+		)
+		.run(pluck=True)
+	)
 
 
 def check_app_permission():
