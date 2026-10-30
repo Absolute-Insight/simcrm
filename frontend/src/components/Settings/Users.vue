@@ -132,10 +132,10 @@
                   iconRight: 'lucide-chevron-down',
                   iconLeft:
                     user.role === 'System Manager'
-                      ? 'shield'
+                      ? 'lucide-shield'
                       : user.role === 'Sales Manager'
-                        ? 'briefcase'
-                        : 'user-check',
+                        ? 'lucide-briefcase'
+                        : 'lucide-user-check',
                 }"
                 align="end"
               />
