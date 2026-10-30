@@ -7,7 +7,7 @@ import frappe
 from frappe import _
 from frappe.desk.form.assign_to import _add as assign
 from frappe.model.document import Document
-from frappe.utils import validate_email_address
+from frappe.utils import cstr, escape_html, validate_email_address
 
 from crm.fcrm.doctype.crm_service_level_agreement.utils import get_sla
 from crm.fcrm.doctype.crm_status_change_log.crm_status_change_log import (
@@ -90,6 +90,7 @@ class CRMLead(Document):
 		self.set_lead_name()
 		self.set_title()
 		self.validate_email()
+		self.validate_unique_fields()
 		self.validate_lost_reason()
 		if not self.is_new() and self.has_value_changed("lead_owner") and self.lead_owner:
 			self.share_with_agent(self.lead_owner)
@@ -153,6 +154,25 @@ class CRMLead(Document):
 
 			if self.email == self.lead_owner:
 				frappe.throw(_("Lead Owner cannot be same as the Lead Email Address"))
+
+	def validate_unique_fields(self):
+		# The DB may keep a non-unique index when Unique is set via Customize Form, so
+		# duplicates can already be there. Only a new or changed value is judged, which
+		# keeps those rows editable. "=" because this runs before the type check, and a
+		# value has to stay a value.
+		for df in self.meta.get("fields", {"unique": 1}):
+			value = self.get(df.fieldname)
+			if (
+				value
+				and self.has_value_changed(df.fieldname)
+				and frappe.db.exists(
+					self.doctype, {df.fieldname: ("=", cstr(value)), "name": ("!=", self.name)}
+				)
+			):
+				frappe.throw(
+					_("{0} {1} already exists").format(_(df.label), frappe.bold(escape_html(value))),
+					frappe.UniqueValidationError,
+				)
 
 	def validate_lost_reason(self):
 		"""
@@ -410,6 +430,13 @@ class CRMLead(Document):
 		for user in self.get_assigned_users():
 			if user and user != new_deal.deal_owner:
 				new_deal.assign_agent(user)
+
+		# Each co-assignee's ToDo makes them the owner (the newest owns), so put back
+		# the owner the deal was created with.
+		if new_deal.deal_owner:
+			frappe.db.set_value(
+				"CRM Deal", new_deal.name, "deal_owner", new_deal.deal_owner, update_modified=False
+			)
 
 		return new_deal.name
 

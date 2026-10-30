@@ -67,6 +67,7 @@ gotcha, not a location, and it stays in `AGENTS.md`.
 | `frontend/src/pages/Dashboard.vue` | Role-aware dashboard (rep home / manager view) |
 | `frontend/src/components/CommandPalette/` | Ctrl/Cmd+K: `useCRMCommands.js` builds the rows, `crm/api/command_palette.py` searches; `utils/commandPalette.js` ranks |
 | `frontend/src/composables/useNavLinks.js` | The app's places and their conditions, read by the sidebar and the palette |
+| `frontend/src/composables/useCRMOnboarding.js` | The checklist for every caller but the sidebar and its panel; reporting a step is a no-op where no steps are registered |
 | `frontend/src/components/Settings/Quotas.vue` | Sales targets: rep × month grid |
 | `frontend/src/components/Settings/VisitTargets.vue` | Visit targets: visits per working week per rep |
 | `frontend/src/components/Settings/AutomationRules.vue` | Automation rule admin |

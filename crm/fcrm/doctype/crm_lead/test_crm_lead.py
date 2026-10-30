@@ -1,6 +1,8 @@
 # Copyright (c) 2023, Frappe Technologies Pvt. Ltd. and Contributors
 # See license.txt
 
+from unittest.mock import patch
+
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 from frappe.desk.form.assign_to import add as assign_add
@@ -605,6 +607,30 @@ class TestCRMLead(IntegrationTestCase):
 		self.assertIn("Administrator", deal_assignees)
 		self.assertIn("crm.user1@example.com", deal_assignees)
 
+	def test_deal_owner_kept_on_conversion_with_co_assignees(self):
+		"""Transferring co-assignees must not take ownership of the converted deal."""
+		lead = create_lead(first_name="KeepOwner", lead_owner="crm.user1@example.com")
+		assign_add({"assign_to": ["crm.user2@example.com"], "doctype": "CRM Lead", "name": lead.name})
+		lead.reload()
+		self.assertEqual(lead.lead_owner, "crm.user2@example.com")
+
+		deal_name = lead.convert_to_deal()
+
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal_name, "deal_owner"), "crm.user2@example.com")
+		deal = frappe.get_doc("CRM Deal", deal_name)
+		self.assertEqual(set(deal.get_assigned_users()), {"crm.user1@example.com", "crm.user2@example.com"})
+
+	def test_an_owner_chosen_at_conversion_is_kept(self):
+		"""`deal` overrides what the lead maps across, including its owner."""
+		lead = create_lead(first_name="ChosenOwner", lead_owner="Administrator")
+		lead.assign_agent("crm.user1@example.com")
+		frappe.db.set_value("CRM Lead", lead.name, "lead_owner", "Administrator", update_modified=False)
+		lead.reload()
+
+		deal_name = lead.convert_to_deal(deal={"deal_owner": "crm.user2@example.com"})
+
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal_name, "deal_owner"), "crm.user2@example.com")
+
 	def test_owner_cleared_on_unassign(self):
 		"""Unassigning the current owner clears lead_owner"""
 		lead = create_lead(first_name="Owner", lead_owner="crm.user1@example.com")
@@ -619,6 +645,56 @@ class TestCRMLead(IntegrationTestCase):
 		lead = create_lead(first_name="Override", lead_owner="crm.user1@example.com")
 		assign_add({"assign_to": ["crm.user2@example.com"], "doctype": "CRM Lead", "name": lead.name})
 		self.assertEqual(frappe.db.get_value("CRM Lead", lead.name, "lead_owner"), "crm.user2@example.com")
+
+	def test_unique_email_rejects_duplicates(self):
+		"""A Unique field set via Customize Form is enforced even when the DB index stays non-unique"""
+		email_field = frappe.get_meta("CRM Lead").get_field("email")
+		with patch.object(email_field, "unique", 1):
+			lead = create_lead(first_name="Unique", email="unique.lead@example.com")
+			with self.assertRaises(frappe.UniqueValidationError):
+				create_lead(first_name="Duplicate", email="unique.lead@example.com")
+			lead.save()
+
+	def test_changing_a_value_to_a_duplicate_is_rejected(self):
+		email_field = frappe.get_meta("CRM Lead").get_field("email")
+		with patch.object(email_field, "unique", 1):
+			create_lead(first_name="Taken", email="taken.lead@example.com")
+			lead = create_lead(first_name="Other", email="other.lead@example.com")
+			lead.email = "taken.lead@example.com"
+			with self.assertRaises(frappe.UniqueValidationError):
+				lead.save()
+
+	def test_a_filter_cannot_be_passed_off_as_a_unique_value(self):
+		"""A client can send a list for a Data field, and validate runs before the type
+		check, so what reaches the query has to stay a value."""
+		create_lead(first_name="Hidden", mobile_no="+35191000111")
+		mobile_field = frappe.get_meta("CRM Lead").get_field("mobile_no")
+		probe = frappe.get_doc(
+			{"doctype": "CRM Lead", "first_name": "Probe", "mobile_no": ["like", "+35191%"]}
+		)
+
+		with patch.object(mobile_field, "unique", 1):
+			try:
+				probe.validate_unique_fields()
+			except frappe.UniqueValidationError:
+				self.fail("the list was read as a filter")
+
+	def test_a_lead_that_was_already_a_duplicate_can_still_be_saved(self):
+		"""The index can stay non-unique after Unique is set, so duplicates may already be in
+		the table. Those leads must stay editable: only a new or changed value is judged."""
+		first = create_lead(first_name="Old", email="old.duplicate@example.com")
+		second = create_lead(first_name="Older", email="old.duplicate@example.com")
+
+		email_field = frappe.get_meta("CRM Lead").get_field("email")
+		with patch.object(email_field, "unique", 1):
+			first.reload()
+			first.job_title = "Buyer"
+			first.save()
+			second.reload()
+			second.job_title = "Owner"
+			second.save()
+
+		self.assertEqual(frappe.db.get_value("CRM Lead", second.name, "job_title"), "Owner")
 
 
 def create_lead(**kwargs):

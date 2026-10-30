@@ -104,7 +104,7 @@ import { statusesStore } from '@/stores/statuses'
 import { getMeta } from '@/stores/meta'
 import { showQuickEntryModal, quickEntryProps } from '@/composables/modals'
 import { isMobileView } from '@/composables/settings'
-import { useOnboarding } from '@framework/ui/components/Onboarding'
+import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { Switch, Dialog, createResource, call } from 'frappe-ui'
 import { ref, computed, watch } from 'vue'
@@ -121,7 +121,7 @@ const router = useRouter()
 const { statusOptions, getDealStatus } = statusesStore()
 const { isManager } = usersStore()
 const { user } = sessionStore()
-const { updateOnboardingStep } = useOnboarding('frappecrm')
+const { updateOnboardingStep } = useCRMOnboarding()
 const { doctypeMeta: leadMeta } = getMeta('CRM Lead')
 
 const existingContactChecked = ref(false)

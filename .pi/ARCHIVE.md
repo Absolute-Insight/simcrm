@@ -1234,27 +1234,10 @@ in quote numbers and customer IDs, and whose day is built around a plan.
   that removes the `DataImport` component `pages/DataImport.vue` imports, so #3009 has to land
   with that bump.
 
-### Fixes from the same window, still to take
+### Fixes from the same window
 
-Triaged 2026-10-30, not ported here. Each applies to our code:
-
-- **#3220:** Sales Users and Managers cannot edit their own comment; `frappe.client.set_value`
-  needs Comment write. Reproduced. `frappe.client.delete` fails the same way and upstream did not
-  fix that; frappe has no owner-delete endpoint, so it needs a small one of ours.
-- **#3090:** converting a lead with a co-assignee gives the deal to the co-assignee, because
-  `crm/api/todo.py` makes the newest assignee the owner. Reproduced. Does not repair past deals.
-- **#3213:** Settings → Sales Hierarchy loads 20 nodes. frappe-ui's `options.pageLength || 20`
-  makes `pageLength: 0` mean 20.
-- **#3186:** Create Lead and Create Deal may not scroll on iPad. Same dialog code; not tested on
-  iOS.
-- **#3077:** the From list offers accounts that cannot send. Upstream's filter empties the list
-  here, because `get_profile` omits `enable_outgoing`, and `USER_EMAIL_FIELDS` also shapes what
-  `update_profile` writes, so add a separate read list.
-- **#3194** (logo line only), **#3137** lead unique fields, **#3033** comments filter, and the
-  `create_deal` half of **#2992**, which only matters for custom roles.
-
-Left alone on purpose: #3103 and the rest of #2992 are here already and stricter; #3218 fixes a
-patch prod has already run.
+Taken in the next section. #3103 and the rest of #2992 are here already and stricter; #3218 fixes
+a patch prod has already run.
 
 ### Verification
 
@@ -1262,3 +1245,54 @@ See the PR. Notes for the next port: mutation runs caught a test that passed for
 (`assigned_to` looked pinned by row scoping), so remove a guard and watch a test fail before
 trusting it; the kanban helper's `title_field` comment explains why one test needs `lead_name`;
 and `bench serve` needs `--host 0.0.0.0` to be reachable from the host.
+---
+
+## Upstream fixes — frappe/crm develop to 14b5efa59
+
+**Completed 2026-10-31.** Branch `fix/upstream-v1-90-fixes`. Same range as the section above: merge
+base `7dcd8430d`, next port starts from `14b5efa59`.
+
+### What was taken
+
+- **#3220 comment edit,** plus delete, which upstream did not fix: `crm.api.comment.delete_comment`,
+  owner-checked like frappe's `update_comment`, and limited to written comments for CRM users.
+  A mention's notification links through `notification_type_doc`, not the `comment` field, and
+  would otherwise refuse the delete. Editing is new for reps, so `notify_mentions` now skips anyone
+  already notified for that comment; upstream's dedupe compares the message, and a typo fix pinged
+  everyone again.
+- **#3090 deal owner on convert,** unchanged. Does not repair deals already converted; prod's
+  count is unknown.
+- **#3213 hierarchy limit,** unchanged. `pageLength: 0` means 20 in frappe-ui; a test now refuses
+  it anywhere in `src`.
+- **#3186 create modal scroll,** applied by hand to our markup.
+- **#3077 From list, adapted.** Upstream's filter empties the list here because `get_profile`
+  omitted the field. The row's own `enable_outgoing` will not do either: frappe refreshes it only
+  for an account whose address is a user's, so a shared mailbox goes stale and goes on being
+  offered. `_user_emails` joins the account. `USER_EMAIL_FIELDS` stays the write list.
+- **#3194 brand logo,** the logo line only. The `ActivityHeader` button hunk is a restyle.
+- **#3137 lead unique fields, adapted.** Upstream judges every save, which would lock a lead that
+  is already a duplicate. Only a new or changed value is judged, and the value is escaped.
+- **#3033 comments filter, with more tests:** kanban, no match, and that a rep finds only leads they
+  can read. The lookups are unscoped by necessity and feed only the `name` filter.
+- **The `create_deal` half of #2992.** frappe grants Contact create to All, so that check only bites
+  on a site that tightened it. The rest of #2992 is left out: ours is stricter, and upstream's
+  bulk-delete `get_linked_docs_data` path skips the read check.
+
+### Found on the way: the checklist broke rep flows
+
+Since `e0683e86f` (v3.10.1) only a manager on the desktop sidebar registers the checklist's steps,
+but 13 callers report one for everyone, and the framework's `updateOnboardingStep` reads the
+unregistered list unguarded. For a Sales User it threw part way through the caller: a converted lead
+stayed on the lead page while the deal was created, and a changed password never said so and left
+its dialog open. Both were run with and without the guard. From the code, not run: adding a task,
+note or call from a record skipped its redirect the same way.
+`useCRMOnboarding` does nothing until steps are registered, which also avoids a write per action
+for a checklist a rep never sees. Registering the steps for everyone was rejected for that write.
+
+### Verification
+
+See the PR. Safari's engine was driven through Playwright's WebKit with iPad and iPhone emulation,
+in the `mcr.microsoft.com/playwright` image because this host lacks two of its libraries; a real
+device was not. Notes for the next port: the first conversion repro failed on a mandatory field,
+not on the bug, and reading the screenshot caught it. Tests in one class share the database until
+it ends, so an `IntegrationTestCase` that changes a shared row has to put it back.

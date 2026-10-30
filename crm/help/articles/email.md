@@ -10,6 +10,8 @@ is on that record's timeline, not in a separate inbox.
 ## Sending
 
 - Open a lead or deal and compose from the timeline. Replies keep the thread.
+- The **From** list offers the accounts linked to you that can send. An account
+  with outgoing turned off is not listed.
 - **Templates** (**Settings → Email → Templates**) pre-fill common replies;
   pick one from the compose window.
 - Attachments added to a message are also kept on the record.

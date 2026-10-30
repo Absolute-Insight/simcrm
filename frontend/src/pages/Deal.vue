@@ -394,7 +394,7 @@ import {
   usePageMeta,
   toast,
 } from 'frappe-ui'
-import { useOnboarding } from '@framework/ui/components/Onboarding'
+import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
 import {
   ref,
   computed,
@@ -414,8 +414,7 @@ const { $dialog, $socket, makeCall } = globalStore()
 const { statusOptions, getDealStatus } = statusesStore()
 const { doctypeMeta } = getMeta('CRM Deal')
 
-const { updateOnboardingStep, isOnboardingStepsCompleted } =
-  useOnboarding('frappecrm')
+const { updateOnboardingStep, isOnboardingStepsCompleted } = useCRMOnboarding()
 
 const route = useRoute()
 const router = useRouter()
