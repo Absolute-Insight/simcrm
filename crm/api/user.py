@@ -233,6 +233,14 @@ def update_user_role(user: str, new_role: str):
 	if new_role == "Sales Manager" and not is_system_manager:
 		frappe.throw(_("Only System Managers can assign the Sales Manager role"), frappe.PermissionError)
 
+	# Somebody already in the CRM is somebody's rep: a scoped manager changes
+	# their own team's, not another manager's. Bringing in an account with no
+	# CRM role yet is onboarding -- it is on no team to be outside of.
+	if not is_system_manager and set(target_roles) & {"Sales User", "Sales Manager"}:
+		from crm.api.quota import _only_own_team
+
+		_only_own_team(user)
+
 	# After the permission checks, as in remove_crm_roles_from_user: a caller
 	# who may not touch this user should not learn how their roles are managed.
 	validate_no_role_profile(user_doc)
@@ -281,6 +289,14 @@ def remove_crm_roles_from_user(user: str):
 
 	if "Sales Manager" in roles and not current_user_is_system_manager:
 		frappe.throw(_("Only System Managers can modify other Sales Managers"), frappe.PermissionError)
+
+	# A manager offboards their own reps. Without this an in-tree manager could
+	# strip another team's rep of their CRM role and delete their place in the
+	# hierarchy -- a node Sales Manager may otherwise only read.
+	if not current_user_is_system_manager:
+		from crm.api.quota import _only_own_team
+
+		_only_own_team(user)
 
 	validate_no_role_profile(user_doc)
 
