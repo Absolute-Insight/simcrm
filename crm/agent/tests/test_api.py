@@ -732,6 +732,18 @@ class UnreachableModelRefundTest(IntegrationTestCase):
 			self.assertEqual(api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001"), {"status": "unavailable"})
 		self.assertEqual(self.counters(), (1, 1))
 
+	def test_a_reply_cut_off_at_max_tokens_keeps_the_charge(self):
+		"""Audit L-38: ReplyCutOff is an AgentUnavailable, so it was refunded like an
+		outage -- but the model was reached and generated a whole max_tokens, the
+		most expensive call there is."""
+		patches = self.stubs(api_mod.client.ReplyCutOff("the reply budget ran out"))
+		with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+			self.assertEqual(
+				api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001"),
+				{"status": "unavailable", "reason": "reply_length"},
+			)
+		self.assertEqual(self.counters(), (1, 1))
+
 	def test_the_analyst_refunds_once_when_both_its_completions_fail(self):
 		"""Two completions, one budget unit: a plan that could not be reached
 		falls back to keywords and is not refunded on its own, or the answer

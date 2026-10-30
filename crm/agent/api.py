@@ -586,7 +586,9 @@ def _model_call(cfg, log_title: str, call, *, refund: bool = True) -> tuple:
 	was used up -- with Try again hidden -- long after the endpoint was back.
 
 	A ``SchemaMismatch`` keeps the charge: the model was reached and answered,
-	twice, and that is exactly what the budget meters.
+	twice, and that is exactly what the budget meters. So does a
+	``ReplyCutOff``: an ``AgentUnavailable`` by type, but the model was reached
+	and generated a whole ``max_tokens`` -- the most a call can cost.
 
 	``refund=False`` is for a call whose failure the caller survives (the
 	Analyst's plan falls back to keywords); refunding there and again when the
@@ -596,7 +598,7 @@ def _model_call(cfg, log_title: str, call, *, refund: bool = True) -> tuple:
 		return call(), None
 	except AgentUnavailable as exc:
 		frappe.log_error(title=log_title, message=str(exc))
-		if refund:
+		if refund and not isinstance(exc, client.ReplyCutOff):
 			_refund_budget(cfg)
 		# A prompt the endpoint refused as too long is not weather: it is up, and
 		# the same question will be refused again. Say which it was.
