@@ -201,6 +201,7 @@ import CustomActions from '@/components/CustomActions.vue'
 import EnrichFromWebsite from '@/components/EnrichFromWebsite.vue'
 import { useDocument } from '@/data/document'
 import { useDocumentError } from '@/composables/useDocumentError'
+import { useOrganizationFieldChange } from '@/composables/useOrganizationFieldChange'
 import { getSettings } from '@/stores/settings'
 import { globalStore } from '@/stores/global'
 import { getMeta } from '@/stores/meta'
@@ -229,7 +230,6 @@ import { useDoctypeModal } from '@/composables/doctypeModal'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { computed, ref, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { reportActionError } from '@/utils/reportActionError'
 
 const props = defineProps({
   organizationId: { type: String, required: true },
@@ -326,26 +326,10 @@ function changeOrganizationImage(file) {
   })
 }
 
-function beforeFieldChange(data) {
-  if (Object.hasOwn(data ?? {}, 'organization_name')) {
-    call('frappe.client.rename_doc', {
-      doctype: 'CRM Organization',
-      old_name: props.organizationId,
-      new_name: data.organization_name,
-    })
-      .then(() => {
-        router.push({
-          name: 'Organization',
-          params: { organizationId: data.organization_name },
-        })
-      })
-      .catch((error) =>
-        reportActionError(error, __('Could not rename the organization.')),
-      )
-  } else {
-    organization.save.submit()
-  }
-}
+const beforeFieldChange = useOrganizationFieldChange(
+  organization,
+  props.organizationId,
+)
 
 function website(url) {
   return url && url.replace(/^(?:https?:\/\/)?(?:www\.)?/i, '')

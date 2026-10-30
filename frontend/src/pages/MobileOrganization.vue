@@ -118,6 +118,7 @@
               doctype="CRM Organization"
               :docname="organization.doc.name"
               @reload="sections.reload"
+              @beforeFieldChange="beforeFieldChange"
             />
           </div>
         </div>
@@ -175,6 +176,7 @@ import {
   expireDeletionMarker,
 } from '@/data/document'
 import { useDocumentError } from '@/composables/useDocumentError'
+import { useOrganizationFieldChange } from '@/composables/useOrganizationFieldChange'
 import { getSettings } from '@/stores/settings'
 import { getMeta } from '@/stores/meta'
 import { globalStore } from '@/stores/global'
@@ -318,6 +320,11 @@ async function deleteOrganization() {
     ],
   })
 }
+
+const beforeFieldChange = useOrganizationFieldChange(
+  organization,
+  props.organizationId,
+)
 
 function openWebsite() {
   if (!organization.doc.website) {

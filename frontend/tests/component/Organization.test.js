@@ -239,4 +239,36 @@ describe.each([
     expect(S.docs['Acme Pumps'].doc.address).toBeUndefined()
     expect(S.docs['Acme Pumps'].save.submit).not.toHaveBeenCalled()
   })
+
+  it('renames the record when Organization Name is edited', async () => {
+    await visit(Page, 'Acme Pumps')
+    S.panel.change('organization_name', 'Acme Pumps SA')
+    await flush()
+    expect(S.calls).toContainEqual({
+      method: 'frappe.client.rename_doc',
+      args: {
+        doctype: 'CRM Organization',
+        old_name: 'Acme Pumps',
+        new_name: 'Acme Pumps SA',
+      },
+    })
+    expect(S.pushed.at(-1).params.organizationId).toBe('Acme Pumps SA')
+    expect(S.docs['Acme Pumps'].save.submit).not.toHaveBeenCalled()
+  })
+
+  it('puts a refused name back, so the next edit does not send it', async () => {
+    await visit(Page, 'Gamma Pipes')
+    S.callImpl = (method) =>
+      method === 'frappe.client.rename_doc'
+        ? Promise.reject(new Error('Acme Pumps already exists'))
+        : true
+    S.panel.change('organization_name', 'Acme Pumps') // taken: refused
+    await flush()
+    expect(S.reported).toHaveLength(1)
+    expect(S.docs['Gamma Pipes'].doc.organization_name).toBe('Gamma Pipes')
+
+    S.panel.change('website', 'https://gamma.example') // the rep carries on
+    expect(S.docs['Gamma Pipes'].save.submit).toHaveBeenCalledTimes(1)
+    expect(S.docs['Gamma Pipes'].doc.organization_name).toBe('Gamma Pipes')
+  })
 })
