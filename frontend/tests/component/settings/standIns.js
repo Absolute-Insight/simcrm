@@ -172,3 +172,6 @@ const Tooltip = defineComponent({
     () =>
       slots.default?.(),
 })
+
+/** For a pane that uses a control main.js registers globally: `stubs: { Button }`. */
+export { Button, FormControl }
