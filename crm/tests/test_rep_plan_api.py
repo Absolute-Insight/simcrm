@@ -11,6 +11,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from crm.api.rep_plan import (
+	EDITABLE_ITEM_FIELDS,
 	clear_override,
 	get_plan,
 	get_visible_reps,
@@ -521,6 +522,84 @@ class RepPlanApiTest(IntegrationTestCase):
 		# get_all ignores permissions by design; get_list is the door a rep has
 		visible = frappe.get_list("CRM Rep Plan", filters={"user": ("in", USERS)}, pluck="user")
 		self.assertEqual(sorted(visible), [REP])
+
+	def loaded(self, plan) -> list[dict]:
+		"""The rows as the planner holds them: what it sends back on save."""
+		return [
+			{"name": row["name"], **{f: row.get(f) for f in EDITABLE_ITEM_FIELDS}} for row in plan["items"]
+		]
+
+	def test_a_deleted_fulfilment_does_not_make_the_week_unsaveable(self):
+		"""CRM Rep Plan Item is in ignore_links_on_delete, so the task behind an
+		item can be deleted -- and every save re-validated the stale name and
+		failed the rep's whole week on "Could not find Fulfilled By"."""
+		frappe.set_user(REP)
+		out = save_plan(
+			self.monday,
+			[
+				{"activity_type": "Task", "planned_date": self.monday, "note": "matched"},
+				{"activity_type": "Task", "planned_date": self.monday, "note": "by hand"},
+			],
+		)
+		matched, by_hand = (row["name"] for row in out["items"])
+		found, named = self.make_task(assigned_to=REP), self.make_task(assigned_to=REP)
+		frappe.db.set_value(
+			"CRM Rep Plan Item",
+			matched,
+			{"status": "Done", "fulfilled_by_doctype": "CRM Task", "fulfilled_by": found},
+		)
+		mark_fulfilled(by_hand, fulfilled_by_doctype="CRM Task", fulfilled_by=named)
+
+		frappe.set_user("Administrator")
+		for task in (found, named):
+			frappe.delete_doc("CRM Task", task, ignore_permissions=True)
+
+		frappe.set_user(REP)
+		week = get_plan(self.monday)
+		out = save_plan(
+			self.monday,
+			[*self.loaded(week), {"activity_type": "Call", "planned_date": self.monday, "note": "new"}],
+			modified=str(week["modified"]),
+		)
+		by_note = {row["note"]: row for row in out["items"]}
+		# the matcher's verdict goes with its record; the rep's own word stands
+		self.assertEqual(
+			(by_note["matched"]["status"], by_note["matched"]["fulfilled_by"]), ("Planned", None)
+		)
+		self.assertEqual((by_note["by hand"]["status"], by_note["by hand"]["fulfilled_by"]), ("Done", None))
+		self.assertIn("new", by_note)
+
+		# logging appends to the same week and re-validates the same rows
+		from crm.api.rep_plan import log_unplanned_visit
+
+		frappe.db.set_value(
+			"CRM Rep Plan Item",
+			by_note["by hand"]["name"],
+			{"fulfilled_by_doctype": "CRM Task", "fulfilled_by": named},
+		)
+		logged = log_unplanned_visit(note="Rang about the pump", activity_type="Call")
+		self.assertEqual(logged["items"][-1]["activity_type"], "Call")
+
+	def test_a_suggestion_deleted_with_its_deal_does_not_make_the_week_unsaveable(self):
+		"""Deleting a deal deletes its suggestions and unlinks the plan item, but
+		the open planner resends the suggestion it loaded, verbatim."""
+		suggestion = self.make_suggestion(REP)
+		frappe.set_user(REP)
+		plan = save_plan(self.monday, propose_week(self.monday))
+
+		frappe.set_user("Administrator")
+		frappe.delete_doc("CRM Deal", self.deal, force=True, ignore_permissions=True)
+		self.assertFalse(frappe.db.exists("CRM Suggestion", suggestion))
+
+		frappe.set_user(REP)
+		out = save_plan(
+			self.monday,
+			[*self.loaded(plan), {"activity_type": "Call", "planned_date": self.monday, "note": "new"}],
+			modified=str(plan["modified"]),
+		)
+		self.assertEqual(len(out["items"]), 2)
+		self.assertIsNone(out["items"][0]["suggestion"])
+		self.assertIsNone(out["items"][0]["reference_docname"])
 
 	def test_one_plan_per_rep_week_is_enforced_by_the_database(self):
 		frappe.set_user(REP)

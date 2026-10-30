@@ -201,29 +201,13 @@ def _stage_items(plan, items: list[dict]) -> set[str]:
 	dropped = {row.suggestion for row in plan.get("items", []) if row.suggestion and row.status != "Done"}
 
 	plan.set("items", [])
+	staged = []
 	for row in items:
 		reference_doctype = row.get("reference_doctype")
 		if reference_doctype and reference_doctype not in REFERENCE_DOCTYPES:
 			frappe.throw(_("Cannot plan against {0}.").format(reference_doctype))
 
 		clean = {f: row.get(f) for f in EDITABLE_ITEM_FIELDS}
-		# The client resends the reference it loaded the week with, and a deal or
-		# lead can now be deleted out from under a plan item (clear_plan_item_references
-		# nulls the stored row without touching the plan's `modified`, so the
-		# optimistic-lock check cannot see it). Re-adopting a name that is gone
-		# would fail the whole save on a link-validation error the rep can do
-		# nothing about, losing the rest of their week's edits.
-		if clean.get("reference_doctype") and clean.get("reference_docname"):
-			# ...and a record the rep may not read is not theirs to plan against: the
-			# item's reference reaches the visit event closing it, and through that
-			# event client_reliability would show the deal's organization
-			if not _can_reference(clean["reference_doctype"], clean["reference_docname"]):
-				clean["reference_doctype"] = None
-				clean["reference_docname"] = None
-		# same reasoning for the customer: a merged or deleted organization must
-		# not fail the whole week's save
-		if clean.get("organization") and not frappe.db.exists("CRM Organization", clean["organization"]):
-			clean["organization"] = None
 		existing = preserved.get(str(row.get("name") or ""))
 		if existing:
 			# rescheduling a row is not the same as replacing it: it keeps its name,
@@ -236,9 +220,84 @@ def _stage_items(plan, items: list[dict]) -> set[str]:
 				"fulfilled_by": existing.fulfilled_by,
 				"manual_override": existing.manual_override,
 			}
+		staged.append(clean)
+
+	for clean in _settle_links(staged):
 		plan.append("items", clean)
 
 	return dropped - {row.get("suggestion") for row in items if row.get("suggestion")}
+
+
+def _settle_links(rows: list[dict]) -> list[dict]:
+	"""Drop, in place, the links a save will not store, and return the rows.
+
+	The client resends the reference it loaded the week with, and a deal or lead
+	can be deleted out from under a plan item (clear_plan_item_references nulls
+	the stored row without touching the plan's `modified`, so the
+	optimistic-lock check cannot see it). A record the rep may not read is not
+	theirs to plan against either: the item's reference reaches the visit event
+	closing it, and through that event client_reliability would show the deal's
+	organization. Everything else that is gone goes too (_drop_dangling_links).
+	"""
+	for row in rows:
+		doctype, name = row.get("reference_doctype"), row.get("reference_docname")
+		if doctype in REFERENCE_DOCTYPES and name and not _can_reference(doctype, name):
+			row.update({"reference_doctype": None, "reference_docname": None})
+	_drop_dangling_links(rows)
+	return rows
+
+
+def _drop_dangling_links(rows) -> None:
+	"""Null every link on these plan rows whose record is gone, in one query per doctype.
+
+	CRM Rep Plan Item is in ``ignore_links_on_delete``, so the deal, customer,
+	suggestion, or the task, call or event that fulfilled an item can all be
+	deleted from under it -- and ``plan.save`` re-validates every row's links,
+	so one such name failed the rep's whole week on a "Could not find" they
+	could do nothing about, losing the rest of their edits. A Done row the
+	matcher fulfilled with a record that is gone is Planned again, as the next
+	match would have made it (``_fulfilment_holds``); a rep's own word
+	(manual_override) stands without its record.
+
+	``rows`` are child rows or plain dicts; a link to a doctype a plan item
+	cannot hold is left for the save to refuse.
+	"""
+	links = [
+		(row, field, doctype_field, doctype, str(row.get(field)))
+		for row in rows
+		for field, doctype_field, doctype in _links_of(row)
+		if row.get(field)
+	]
+	wanted: dict[str, set[str]] = {}
+	for _row, _field, _doctype_field, doctype, name in links:
+		wanted.setdefault(doctype, set()).add(name)
+	# the database matches names case-blind, and so does frappe's link check
+	found = {
+		doctype: {
+			str(name).casefold()
+			for name in frappe.get_all(doctype, filters={"name": ("in", list(names))}, pluck="name")
+		}
+		for doctype, names in wanted.items()
+	}
+
+	for row, field, doctype_field, doctype, name in links:
+		if name.casefold() in found[doctype]:
+			continue
+		row.update({field: None})
+		if doctype_field:
+			row.update({doctype_field: None})
+		if field == "fulfilled_by" and row.get("status") == "Done" and not row.get("manual_override"):
+			row.update({"status": "Planned"})
+
+
+def _links_of(row):
+	"""(field, the field naming its doctype or None, doctype) for each link a plan row can hold."""
+	yield "organization", None, "CRM Organization"
+	yield "suggestion", None, "CRM Suggestion"
+	if row.get("reference_doctype") in REFERENCE_DOCTYPES:
+		yield "reference_docname", "reference_doctype", row.get("reference_doctype")
+	if row.get("fulfilled_by_doctype") in FULFILMENT_DOCTYPES:
+		yield "fulfilled_by", "fulfilled_by_doctype", row.get("fulfilled_by_doctype")
 
 
 def _can_reference(doctype: str, name: str) -> bool:
@@ -359,21 +418,36 @@ def _refuse_the_past(plan, items: list[dict]) -> None:
 	def snapshot(row):
 		return {field: value(field, row.get(field)) for field in EDITABLE_ITEM_FIELDS}
 
-	past = {
-		str(row.name): snapshot(row)
+	def settled(rows):
+		# Both sides as they would be stored. A deal deleted since the week was
+		# loaded is already gone from the stored row (clear_plan_item_references)
+		# while the client still sends it, and save_plan drops it anyway: that is
+		# the server tidying a link, not the rep changing a past activity.
+		return [
+			snapshot(row)
+			for row in _settle_links(
+				[{field: row.get(field) for field in EDITABLE_ITEM_FIELDS} for row in rows]
+			)
+		]
+
+	stored = [
+		row
 		for row in plan.get("items", [])
 		if row.planned_date and frappe.utils.getdate(row.planned_date) < today
-	}
+	]
+	past = {str(row.name): before for row, before in zip(stored, settled(stored), strict=True)}
+	resent = [row for row in items if str(row.get("name") or "") in past]
+	for row, after in zip(resent, settled(resent), strict=True):
+		before = past[str(row.get("name"))]
+		if after != before:
+			frappe.throw(
+				_(
+					"An activity on {0} has passed and cannot be changed. Log its outcome or cancel it."
+				).format(frappe.utils.formatdate(before["planned_date"])),
+				frappe.ValidationError,
+			)
 	for row in items:
-		before = past.get(str(row.get("name") or ""))
-		if before is not None:
-			if snapshot(row) != before:
-				frappe.throw(
-					_(
-						"An activity on {0} has passed and cannot be changed. Log its outcome or cancel it."
-					).format(frappe.utils.formatdate(before["planned_date"])),
-					frappe.ValidationError,
-				)
+		if str(row.get("name") or "") in past:
 			continue
 		day = value("planned_date", row.get("planned_date"))
 		if day and day < today:
@@ -951,6 +1025,8 @@ def log_unplanned_visit(
 	user = frappe.session.user
 	for attempt in range(2):
 		plan = _plan_for(user, str(monday))
+		# the save re-validates every row already in the week, as save_plan's does
+		_drop_dangling_links(plan.get("items", []))
 		plan.append(
 			"items",
 			{
