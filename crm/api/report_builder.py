@@ -202,7 +202,32 @@ def build_rows(
 	query = scope_deals(query)
 
 	rows = [{"label": row[0], "value": row[1] or 0} for row in query.run()]
+	if dim.key == "owner":
+		_name_reps(rows)
 	return _label_and_order(rows, dim)
+
+
+def _name_reps(rows: list[dict]) -> None:
+	"""Show a rep's name where the owner column holds their login.
+
+	The email stays on the row as ``user`` -- the stable key the built-in rep
+	reports keep beside their ``rep`` column, since two reps can share a name.
+	One query for every rep on the page rather than one per row.
+	"""
+	emails = [row["label"] for row in rows if row["label"]]
+	names = (
+		dict(
+			frappe.get_all(
+				"User", filters={"name": ("in", emails)}, fields=["name", "full_name"], as_list=True
+			)
+		)
+		if emails
+		else {}
+	)
+	for row in rows:
+		row["user"] = row["label"]
+		if row["label"]:
+			row["label"] = names.get(row["label"]) or row["label"]
 
 
 def _label_and_order(rows: list[dict], dim: Dimension) -> list[dict]:

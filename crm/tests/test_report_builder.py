@@ -331,7 +331,15 @@ class ScopingTest(IntegrationTestCase):
 
 	def total(self):
 		rows = run(dimension="owner", measure="expected_value", status_scope="all")["rows"]
-		return {row["label"]: row["value"] for row in rows}
+		return {row["user"]: row["value"] for row in rows}
+
+	def test_the_rep_dimension_shows_names_and_keeps_the_login(self):
+		"""The built-in rep reports read "Jane Sales"; the builder printed the
+		login email into the same column, and into every export of it."""
+		rows = run(dimension="owner", measure="expected_value", status_scope="all")["rows"]
+		mine = next(row for row in rows if row["user"] == SCOPED_REP)
+		self.assertEqual(mine["label"], frappe.utils.get_fullname(SCOPED_REP))
+		self.assertNotEqual(mine["label"], SCOPED_REP)
 
 	def test_a_rep_reads_their_own_deals_and_not_another_reps(self):
 		frappe.set_user(SCOPED_REP)
@@ -390,7 +398,7 @@ class ScopingTest(IntegrationTestCase):
 		this asserts the outcome rather than the mechanism."""
 		frappe.set_user(SCOPED_REP)
 		totals = {
-			row["label"]: row["value"]
+			row["user"]: row["value"]
 			for row in run(dimension="owner", measure="expected_value", status_scope="all", user=OTHER_REP)[
 				"rows"
 			]
