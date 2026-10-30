@@ -51,11 +51,68 @@ class TestUpserts(ImporterTestCase):
 
 		rec2 = C(NoteID="guid-org-1", CustomerID="ACME01", CustomerName="Acme Limited")
 		name2 = importer.upsert_organization(rec2)
-		self.assertEqual(name, name2)  # matched on NoteID, not created twice
+		# matched on NoteID, not created twice -- and renamed, since the docname is the name
 		self.assertEqual(
-			frappe.db.get_value("CRM Organization", name, "organization_name"),
+			frappe.get_all("CRM Organization", {"acumatica_noteid": "guid-org-1"}, pluck="name"), [name2]
+		)
+		self.assertEqual(name2, "Acme Limited")
+		self.assertEqual(
+			frappe.db.get_value("CRM Organization", name2, "organization_name"),
 			"Acme Limited",
 		)
+
+	def test_a_customer_renamed_in_acumatica_stays_renamed_after_an_ordinary_save(self):
+		"""The importer wrote the new name past the autoname with db_set, leaving the
+		docname on the old one -- and Document._sync_autoname_field() copies the docname
+		back into organization_name on every save. A rep editing the website, or the
+		enrichment job, quietly undid the rename until Acumatica touched it again."""
+		old = importer.upsert_organization(
+			C(NoteID="g-ren-1", CustomerID="C-REN01", CustomerName="Renamer Ltd")
+		)
+		contact = frappe.get_doc(
+			{"doctype": "Contact", "first_name": "Rena", "last_name": "Mer", "company_name": old}
+		).insert(ignore_permissions=True)
+		deal = frappe.get_doc({"doctype": "CRM Deal", "organization": old, "status": "Qualification"}).insert(
+			ignore_permissions=True
+		)
+
+		new = importer.upsert_organization(
+			C(NoteID="g-ren-1", CustomerID="C-REN01", CustomerName="Renamer Holdings")
+		)
+
+		org = frappe.get_doc("CRM Organization", new)
+		org.website = "https://renamer.example"
+		org.save(ignore_permissions=True)
+		self.assertEqual(
+			frappe.db.get_value(
+				"CRM Organization", {"acumatica_noteid": "g-ren-1"}, ["name", "organization_name"]
+			),
+			("Renamer Holdings", "Renamer Holdings"),
+		)
+		self.assertFalse(frappe.db.exists("CRM Organization", "Renamer Ltd"))
+		# what pointed at the old name points at the new one: the deal by its Link, the
+		# contact by the Data field the org page lists contacts by
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "organization"), new)
+		self.assertEqual(frappe.db.get_value("Contact", contact.name, "company_name"), new)
+
+	def test_following_a_rename_keeps_the_syncs_api_login(self):
+		"""rename_doc clears the whole site cache, the sync's shared Acumatica token
+		included: the next call logged in again, and the dropped login held one of the
+		API user's concurrent-login slots until it expired -- one per renamed customer."""
+		importer.upsert_organization(C(NoteID="g-ren-2", CustomerID="C-REN02", CustomerName="Keeper Ltd"))
+		# frappe.clear_cache() reads persistent_cache_keys from hooks cached per site,
+		# possibly by a process running other code; start from this code's
+		frappe.clear_cache()
+		key = "acumatica_token::https://t.acumatica.com"
+		frappe.cache().set_value(key, "T-SYNC")
+		self.addCleanup(frappe.cache().delete_value, key)
+
+		importer.upsert_organization(
+			C(NoteID="g-ren-2", CustomerID="C-REN02", CustomerName="Keeper Holdings")
+		)
+
+		self.assertTrue(frappe.db.exists("CRM Organization", "Keeper Holdings"))
+		self.assertEqual(frappe.cache().get_value(key), "T-SYNC")
 
 	def test_a_new_customer_whose_name_another_org_holds_in_its_column_is_suffixed(self):
 		"""The spreadsheet import created shared-name accounts as "Name (CustomerID)"
@@ -256,12 +313,13 @@ class TestUpserts(ImporterTestCase):
 		# a different CustomerName on the second call means the organization_name
 		# fallback would find a DIFFERENT (nonexistent) row -- only the acumatica_id
 		# lookup can make this reuse the first call's org rather than duplicate it.
-		first = importer.upsert_organization(C(CustomerID="C-REP01", CustomerName="Repeat Ltd"))
+		importer.upsert_organization(C(CustomerID="C-REP01", CustomerName="Repeat Ltd"))
 		second = importer.upsert_organization(C(CustomerID="C-REP01", CustomerName="Repeat Limited"))
-		self.assertEqual(first, second)
-		self.assertEqual(frappe.db.count("CRM Organization", {"acumatica_id": "C-REP01"}), 1)
 		self.assertEqual(
-			frappe.db.get_value("CRM Organization", first, "organization_name"), "Repeat Limited"
+			frappe.get_all("CRM Organization", {"acumatica_id": "C-REP01"}, pluck="name"), [second]
+		)
+		self.assertEqual(
+			frappe.db.get_value("CRM Organization", second, "organization_name"), "Repeat Limited"
 		)
 
 	def test_a_name_collision_with_another_customer_is_not_merged(self):

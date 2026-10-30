@@ -448,6 +448,14 @@ after_migrate = [
 	"crm.fcrm.doctype.crm_forecast_snapshot.crm_forecast_snapshot.on_doctype_update",
 ]
 
+# frappe.clear_cache() deletes every other key on the site -- and frappe.rename_doc
+# calls it, so the Acumatica sync renaming an organization ran it mid-sync. These are
+# state, not caches: dropping the shared API token leaves its login holding one of
+# the API user's concurrent-login slots until it expires (a logout needs the token).
+persistent_cache_keys = [
+	"acumatica_token::*",
+]
+
 standard_dropdown_items = [
 	{
 		"name1": "app_selector",

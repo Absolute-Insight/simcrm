@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 import frappe
 import requests
+from frappe.model.rename_doc import rename_doc
 from frappe.utils.synchronization import LockTimeoutError, filelock
 
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
@@ -127,9 +128,7 @@ def upsert_organization(rec) -> str:
 				existing = _holder_of(organization_name)
 		name = _adopt("CRM Organization", existing, noteid)
 	elif name and organization_name:
-		# the unique index is on the organization_name COLUMN, and a record created as
-		# "Name (CustomerID)" may still hold the plain name there
-		holder = frappe.db.get_value("CRM Organization", {"organization_name": organization_name}, "name")
+		holder = _holder_of(organization_name)
 		if holder and holder != name:
 			# found by its own link, but its plain name belongs to another organization:
 			# keep the suffixed name it was created under rather than collide on rename
@@ -144,12 +143,42 @@ def upsert_organization(rec) -> str:
 	if currency and frappe.db.exists("Currency", currency):
 		doc.currency = currency
 	doc.save(ignore_permissions=True)
-	if name and doc.organization_name != organization_name:
-		# CRM Organization autonames on `field:organization_name`; Document._sync_autoname_field()
-		# re-derives the field FROM the (stable) docname on every save, clobbering an update to the
-		# display name for an existing record. db_set writes it through without a rename.
-		doc.db_set("organization_name", organization_name)
+	# A record already under its "Name (CustomerID)" form keeps it: it was disambiguated
+	# on purpose, and following the plain name back and forth would rename it every time
+	# the other holder came and went.
+	if (
+		name
+		and organization_name
+		and doc.name not in (organization_name, f"{organization_name} ({customer_id})")
+	):
+		return _rename_organization(doc.name, organization_name)
 	return doc.name
+
+
+def _rename_organization(old: str, new: str) -> str:
+	"""Follow a customer renamed in Acumatica.
+
+	CRM Organization autonames on its name, and Document._sync_autoname_field() copies
+	the docname back into organization_name on every save. Writing the new name past
+	the autoname (db_set) therefore lasted until the next ordinary save of the record
+	-- a rep's edit, the enrichment job -- which quietly put the old name back. A
+	rename makes the docname the new name too, and the links follow it."""
+	# frappe.model's rename_doc, not frappe.rename_doc: only it takes ignore_permissions,
+	# and whoever woke the sync is not the one renaming the customer
+	new = rename_doc(
+		"CRM Organization",
+		old,
+		new,
+		force=True,
+		ignore_permissions=True,
+		show_alert=False,
+		rebuild_search=False,
+	)
+	# Contact.company_name is a Data field holding the organization's name, and
+	# rename_doc rewrites Link columns only: without this every contact the
+	# customer has drops off its page.
+	frappe.db.set_value("Contact", {"company_name": old}, "company_name", new, update_modified=False)
+	return new
 
 
 def _find_matching_contact(first, last, company_name, email):
