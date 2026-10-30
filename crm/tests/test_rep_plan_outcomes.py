@@ -495,3 +495,11 @@ class CorrectingACompletedVisitTest(OutcomeTestCase):
 
 		clear_override(item)
 		self.assertTrue(frappe.db.exists("Event", event))
+
+	def test_re_marking_done_without_a_record_keeps_the_account(self):
+		from crm.api.rep_plan import mark_fulfilled
+
+		item = self.plan_one("Call")
+		complete_item(item, "Spoke to the buyer")
+		mark_fulfilled(item)
+		self.assertEqual(frappe.db.get_value("CRM Rep Plan Item", item, "outcome"), "Spoke to the buyer")
