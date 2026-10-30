@@ -174,17 +174,22 @@ import MinimizeIcon from '@/components/Icons/MinimizeIcon.vue'
 import PhoneIcon from '@/components/Icons/PhoneIcon.vue'
 import CountUpTimer from '@/components/CountUpTimer.vue'
 import { useDoctypeModal } from '@/composables/doctypeModal'
-import { Device } from '@twilio/voice-sdk'
 import { useDraggable, useWindowSize } from '@vueuse/core'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
-import { Avatar, call, createResource } from 'frappe-ui'
-import { ref, watch } from 'vue'
+import { Avatar, call, createResource, toast } from 'frappe-ui'
+import { onBeforeUnmount, ref, watch } from 'vue'
 
 const { capture } = useTelemetry()
 const { updateOnboardingStep } = useCRMOnboarding()
 
-let device = ''
+let device = null
+// setup() runs again whenever telephony is switched back on; one Device per
+// instance, or every one of them rings and the losers hide the accepted call.
+// A start that got no Device may be tried again.
+let started = false
+// Why this rep has no Device, shown when they try to call instead of nothing.
+let unavailable = ''
 let log = ref('Connecting...')
 let _call = null
 
@@ -210,6 +215,9 @@ watch(phoneNumber, (value) => {
   getContact.fetch()
 })
 
+// No `cache`: a cached resource is shared, closures and all, by every instance
+// that asks for the same key, so after a layout swap the new popup would look up
+// the old one's number and write the caller into the unmounted one.
 const getContact = createResource({
   url: 'crm.integrations.api.get_contact_by_phone_number',
   makeParams() {
@@ -217,7 +225,6 @@ const getContact = createResource({
       phone_number: phoneNumber.value,
     }
   },
-  cache: ['contact', phoneNumber.value],
   onSuccess(data) {
     contact.value = data
   },
@@ -231,22 +238,25 @@ const note = ref({
 })
 
 function openNoteModal() {
+  // Taken now: the call can end while the note is being written, and _call is
+  // cleared when it does.
+  const callSid = _call?.parameters?.CallSid
   showModal({
     name: note.value.name || null,
-    doctype: 'CRM Call Log',
-    title: 'Call Log',
+    doctype: 'FCRM Note',
+    title: __('Note'),
     callbacks: {
-      afterInsert: (n) => updateNote(n, true),
-      afterUpdate: updateNote,
+      afterInsert: (n) => updateNote(n, callSid, true),
+      afterUpdate: (n) => updateNote(n, callSid),
     },
   })
 }
 
-async function updateNote(_note, isInsert = false) {
+async function updateNote(_note, callSid, isInsert = false) {
   note.value = _note
   if (isInsert && _note.name) {
     await call('crm.integrations.api.add_note_to_call_log', {
-      call_sid: _call.parameters.CallSid,
+      call_sid: callSid,
       note: _note,
     })
     updateOnboardingStep('create_first_note')
@@ -264,18 +274,36 @@ let { style } = useDraggable(callPopup, {
 })
 
 async function startupClient() {
+  if (started) return
+  started = true
   log.value = 'Requesting Access Token...'
 
   try {
     const data = await call('crm.integrations.twilio.api.generate_access_token')
+    if (!data?.token) {
+      // A rep with no Twilio number gets {ok: false, detail} instead of a token
+      unavailable = data?.detail
+        ? __(data.detail)
+        : __('Twilio calling is not set up for your user.')
+      log.value = unavailable
+      started = false
+      return
+    }
     log.value = 'Got a token.'
-    intitializeDevice(data.token)
+    // Loaded here, not imported at the top: this component is in the chunk every
+    // page loads, and most sites never enable Twilio.
+    const { Device } = await import('@twilio/voice-sdk')
+    if (!started) return // unmounted while the SDK loaded
+    unavailable = ''
+    intitializeDevice(Device, data.token)
   } catch (err) {
-    log.value = 'An error occurred. ' + err.message
+    unavailable = __('Twilio calling could not start: {0}', [err.message])
+    log.value = unavailable
+    started = false
   }
 }
 
-function intitializeDevice(token) {
+function intitializeDevice(Device, token) {
   device = new Device(token, {
     codecPreferences: ['opus', 'pcmu'],
     fakeLocalDTMF: true,
@@ -298,6 +326,7 @@ function addDeviceListeners() {
 
   device.on('error', (error) => {
     log.value = 'Twilio.Device Error: ' + error.message
+    toast.error(__('Twilio: {0}', [error.message]))
   })
 
   device.on('incoming', handleIncomingCall)
@@ -442,9 +471,13 @@ async function makeOutgoingCall(number) {
       })
     } catch (error) {
       log.value = `Could not connect call: ${error.message}`
+      toast.error(__('Could not connect the call: {0}', [error.message]))
     }
   } else {
     log.value = 'Unable to make call.'
+    toast.error(
+      unavailable || __('Twilio is still connecting. Try again in a moment.'),
+    )
   }
 }
 
@@ -467,6 +500,14 @@ function toggleCallWindow() {
   showCallPopup.value = !showCallPopup.value
   showSmallCallWindow.value = !showSmallCallWindow.value
 }
+
+onBeforeUnmount(() => {
+  // The layout swaps headers at the mobile breakpoint; a Device left registered
+  // keeps ringing for an instance nobody can see.
+  started = false
+  device?.destroy()
+  device = null
+})
 
 defineExpose({ makeOutgoingCall, setup: startupClient })
 </script>
