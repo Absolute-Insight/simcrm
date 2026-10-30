@@ -204,6 +204,20 @@ class CompanyNameCleaningTest(UnitTestCase):
 			"Innovative IT & Software Development Services",
 		)
 
+	def test_brand_matches_under_a_two_label_public_suffix(self):
+		"""The brand was the second-to-last label, which under .co.za is "co" -- so it
+		never matched, and "Home | Acme Engineering" came out as "Home"."""
+		for site in ("https://www.acmeengineering.co.za/", "https://acmeengineering.co.uk/"):
+			with self.subTest(site=site):
+				self.assertEqual(
+					extractors._clean_company_name("Home | Acme Engineering", site), "Acme Engineering"
+				)
+
+	def test_domain_brand_is_the_registrable_label(self):
+		self.assertEqual(extractors._domain_brand("https://www.acme.co.za/about"), "acme")
+		self.assertEqual(extractors._domain_brand("https://shop.acme.com.au"), "acme")
+		self.assertEqual(extractors._domain_brand("https://acme.com:8443/"), "acme")
+
 
 class JsonLdTest(UnitTestCase):
 	def test_parses_graph_blocks(self):

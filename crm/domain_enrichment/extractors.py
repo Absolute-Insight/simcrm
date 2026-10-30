@@ -17,6 +17,7 @@ import re
 from urllib.parse import urljoin, urlparse
 
 from .config import INDUSTRY_MIN_CONFIDENCE, INDUSTRY_MIN_SCORE
+from .crawler import registrable_domain
 from .result import (
 	Email,
 	Field,
@@ -201,11 +202,11 @@ _NAME_MAX_WORDS = 6
 
 
 def _domain_brand(url):
-	netloc = (urlparse(url or "").netloc or "").lower().split(":")[0]
-	if netloc.startswith("www."):
-		netloc = netloc[4:]
-	labels = [label for label in netloc.split(".") if label]
-	return labels[-2] if len(labels) >= 2 else (labels[0] if labels else "")
+	"""The registrable label of ``url``'s host: ``acme`` for www.acme.co.za. The
+	second-to-last label is the public suffix's "co" there, which never matched a
+	title chunk."""
+	netloc = urlparse(url or "").netloc or ""
+	return registrable_domain(netloc).split(".")[0] if netloc else ""
 
 
 def _compact(text):
