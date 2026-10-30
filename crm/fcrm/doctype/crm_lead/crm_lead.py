@@ -13,7 +13,6 @@ from crm.fcrm.doctype.crm_service_level_agreement.utils import get_sla
 from crm.fcrm.doctype.crm_status_change_log.crm_status_change_log import (
 	add_status_change_log,
 )
-from crm.fcrm.doctype.utils import add_or_remove_lost_reason_section_in_sidepanel
 
 LEAD_DEAL_FIELD_MAP = {"lead_owner": "deal_owner"}
 
@@ -183,8 +182,6 @@ class CRMLead(Document):
 				frappe.throw(_("Please specify a reason for losing the lead."), frappe.ValidationError)
 			elif self.lost_reason == "Other" and not self.lost_notes:
 				frappe.throw(_("Please specify the reason for losing the lead."), frappe.ValidationError)
-		if self.has_value_changed("status"):
-			add_or_remove_lost_reason_section_in_sidepanel(self)
 
 	def assign_agent(self, agent):
 		if not agent:
