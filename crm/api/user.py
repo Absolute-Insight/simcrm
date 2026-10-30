@@ -152,6 +152,9 @@ def change_password(old_password: str, new_password: str):
 	if not tracker.is_user_allowed():
 		frappe.throw(_("Too many failed attempts. Please try again after some time."))
 
+	if not new_password:
+		frappe.throw(_("Please enter a new password."))
+
 	if old_password == new_password:
 		frappe.throw(
 			_("New password cannot be the same as current password. Please choose a different password.")
@@ -168,9 +171,11 @@ def change_password(old_password: str, new_password: str):
 	# Validate new password strength (server-side enforcement)
 	from frappe.core.doctype.user.user import test_password_strength
 
-	result = test_password_strength(new_password)
-	feedback = result.get("feedback", {})
-	if not feedback.get("password_policy_validation_passed", False):
+	# With the password policy off frappe answers ``{}`` -- no verdict, not a
+	# failed one -- so only a verdict that says "failed" refuses the password.
+	result = test_password_strength(new_password) or {}
+	feedback = result.get("feedback") or {}
+	if feedback and not feedback.get("password_policy_validation_passed"):
 		suggestions = feedback.get("suggestions", [])
 		frappe.throw(_("Password is too weak. {0}").format(" ".join(suggestions) if suggestions else ""))
 
