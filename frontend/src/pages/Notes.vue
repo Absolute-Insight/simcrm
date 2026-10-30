@@ -136,7 +136,7 @@ import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { usersStore } from '@/stores/users'
 import { timeAgo, formatDate } from '@/utils'
-import { useOnboarding } from '@framework/ui/components/Onboarding'
+import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { call, Dropdown, Tooltip } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
@@ -144,7 +144,7 @@ import { TextEditor, ListFooter } from 'frappe-ui/experimental'
 import { ref, watch } from 'vue'
 
 const { getUser } = usersStore()
-const { updateOnboardingStep } = useOnboarding('frappecrm')
+const { updateOnboardingStep } = useCRMOnboarding()
 const { capture } = useTelemetry()
 
 const { showModal } = useDoctypeModal()

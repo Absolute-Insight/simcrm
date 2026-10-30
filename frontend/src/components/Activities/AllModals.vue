@@ -12,7 +12,7 @@ import EventModal from '@/components/Modals/EventModal.vue'
 import { collectClosingValues } from '@/utils/taskClosing'
 import { showEventModal, activeEvent } from '@/composables/event'
 import { useDoctypeModal } from '@/composables/doctypeModal'
-import { useOnboarding } from '@framework/ui/components/Onboarding'
+import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { call } from 'frappe-ui'
 import { useRoute, useRouter } from 'vue-router'
@@ -26,7 +26,7 @@ const props = defineProps({
 const activities = defineModel({ type: Object })
 
 const { showModal } = useDoctypeModal()
-const { updateOnboardingStep } = useOnboarding('frappecrm')
+const { updateOnboardingStep } = useCRMOnboarding()
 const { capture } = useTelemetry()
 
 // Event

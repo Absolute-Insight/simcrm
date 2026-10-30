@@ -223,7 +223,7 @@ import { getMeta } from '@/stores/meta'
 import { usersStore } from '@/stores/users'
 import { formatDate, ConfirmDelete } from '@/utils'
 import { timestampCell } from '@/composables/useTimelinePreferences'
-import { useOnboarding } from '@framework/ui/components/Onboarding'
+import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { Tooltip, Avatar, Dropdown, call } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
@@ -234,7 +234,7 @@ import { useRouter } from 'vue-router'
 const { getFormattedPercent, getFormattedFloat, getFormattedCurrency } =
   getMeta('CRM Task')
 const { getUser } = usersStore()
-const { updateOnboardingStep } = useOnboarding('frappecrm')
+const { updateOnboardingStep } = useCRMOnboarding()
 const { capture } = useTelemetry()
 
 const router = useRouter()

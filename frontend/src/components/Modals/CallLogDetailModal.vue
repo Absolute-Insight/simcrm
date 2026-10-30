@@ -206,7 +206,7 @@ import { sanitizeHTML } from '@/utils'
 import { isMobileView } from '@/composables/settings'
 import { useDoctypeModal } from '@/composables/doctypeModal'
 import { useDocument } from '@/data/document'
-import { useOnboarding } from '@framework/ui/components/Onboarding'
+import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { Dropdown, Avatar, Tooltip, call, toast } from 'frappe-ui'
 import { ref, computed, h, watch } from 'vue'
@@ -218,7 +218,7 @@ const show = defineModel({ type: Boolean })
 
 const callLog = defineModel('callLog', { type: Object })
 
-const { updateOnboardingStep } = useOnboarding('frappecrm')
+const { updateOnboardingStep } = useCRMOnboarding()
 const { capture } = useTelemetry()
 const { showModal } = useDoctypeModal()
 

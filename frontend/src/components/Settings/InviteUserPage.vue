@@ -97,7 +97,7 @@
 <script setup>
 import { validateEmail, convertArrayToString } from '@/utils'
 import { usersStore } from '@/stores/users'
-import { useOnboarding } from '@framework/ui/components/Onboarding'
+import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
 import { useTelemetry } from '@framework/ui/telemetry'
 import {
   toast,
@@ -107,7 +107,7 @@ import {
 } from 'frappe-ui'
 import { ref, computed } from 'vue'
 
-const { updateOnboardingStep } = useOnboarding('frappecrm')
+const { updateOnboardingStep } = useCRMOnboarding()
 const { users, isAdmin } = usersStore()
 const { capture } = useTelemetry()
 

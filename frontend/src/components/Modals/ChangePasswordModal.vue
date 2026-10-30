@@ -73,12 +73,12 @@
 <script setup>
 import { PhLockKey as LockKeyhole } from '@phosphor-icons/vue'
 import { Dialog, toast, createResource, Password } from 'frappe-ui'
-import { useOnboarding } from '@framework/ui/components/Onboarding'
+import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
 import { ref, watch } from 'vue'
 
 const show = defineModel({ type: Boolean })
 
-const { updateOnboardingStep } = useOnboarding('frappecrm')
+const { updateOnboardingStep } = useCRMOnboarding()
 
 const currentPassword = ref('')
 const newPassword = ref('')

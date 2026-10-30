@@ -68,7 +68,7 @@ import { statusesStore } from '@/stores/statuses'
 import { sessionStore } from '@/stores/session'
 import { isMobileView } from '@/composables/settings'
 import { showQuickEntryModal, quickEntryProps } from '@/composables/modals'
-import { useOnboarding } from '@framework/ui/components/Onboarding'
+import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { createResource, call, toast } from 'frappe-ui'
 import { useDocument } from '@/data/document'
@@ -83,7 +83,7 @@ const props = defineProps({
 const { user } = sessionStore()
 const { getUser, isManager } = usersStore()
 const { getLeadStatus, statusOptions } = statusesStore()
-const { updateOnboardingStep } = useOnboarding('frappecrm')
+const { updateOnboardingStep } = useCRMOnboarding()
 
 const show = defineModel({ type: Boolean })
 const router = useRouter()
