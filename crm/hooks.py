@@ -292,6 +292,7 @@ doc_events = {
 	"User": {
 		"before_validate": ["crm.api.live_demo.validate_user"],
 		"validate_reset_password": ["crm.api.live_demo.validate_reset_password"],
+		"after_rename": ["crm.api.user.rename_user_keyed_rows"],
 	},
 }
 

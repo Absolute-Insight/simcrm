@@ -335,6 +335,45 @@ def remove_crm_roles_from_user(user: str):
 	frappe.msgprint(_("User {0} has been removed from CRM roles.").format(user))
 
 
+# One row per user, named by that user (autoname ``field:user``).
+USER_KEYED_DOCTYPES = ("CRM Visit Target", "CRM Telephony Agent")
+
+
+def rename_user_keyed_rows(doc, method=None, old=None, new=None, merge=False):
+	"""User after_rename: rename the rows that are named after the user, too.
+
+	``rename_doc("User")`` rewrites every Link to the user, so a visit target or a
+	telephony agent was left named after the old address while its ``user`` held
+	the new one. Everything looks those rows up by name -- ``set_visit_target``
+	then inserted a second row and collided on the unique ``user``, a clear
+	reported success and left the old target counting, and Twilio no longer found
+	the agent's number. And a save of such a row would have written the old
+	address back into ``user`` (frappe keeps a ``field:`` autoname field in step
+	with the name).
+	"""
+	if merge:
+		return
+	for doctype in USER_KEYED_DOCTYPES:
+		rename_user_keyed_row(doctype, old, new)
+
+
+def rename_user_keyed_row(doctype: str, old: str, new: str) -> None:
+	# the model function, not frappe.rename_doc: this follows a rename somebody
+	# was already allowed to make, and only the model one takes ignore_permissions
+	from frappe.model.rename_doc import rename_doc
+
+	if frappe.db.exists(doctype, old) and not frappe.db.exists(doctype, new):
+		rename_doc(
+			doctype=doctype,
+			old=old,
+			new=new,
+			force=True,
+			ignore_permissions=True,
+			show_alert=False,
+			rebuild_search=False,
+		)
+
+
 def validate_no_role_profile(user_doc):
 	"""
 	Throw if the user's roles are governed by a Role Profile.
