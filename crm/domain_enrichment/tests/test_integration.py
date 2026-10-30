@@ -61,6 +61,42 @@ class SeederIdempotencyTest(IntegrationTestCase):
 		self.assertGreater(mappings_before, 0)
 
 
+class AnchorTwitterRulePatchTest(IntegrationTestCase):
+	"""Sites seeded before the twitter pattern was anchored keep the old one until the
+	patch replaces it -- but only where it is still the seeded text."""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _rule(self, pattern):
+		return frappe.get_doc(
+			{
+				"doctype": "CRM Enrichment Rule",
+				"rule_name": "QA twitter " + frappe.generate_hash(length=6),
+				"rule_type": "Social",
+				"target_value": "twitter",
+				"match_scope": "HTML",
+				"patterns": [{"pattern": pattern, "is_regex": 1}],
+			}
+		).insert(ignore_permissions=True)
+
+	def test_the_seeded_pattern_is_anchored_and_an_admins_is_left_alone(self):
+		from crm.patches.v1_0 import anchor_seeded_twitter_rule
+
+		seeded = self._rule(install.TWITTER_PATTERN_V1)
+		admins = self._rule(r"twitter\.com/acme_only")
+
+		anchor_seeded_twitter_rule.execute()
+
+		self.assertEqual(
+			frappe.get_doc("CRM Enrichment Rule", seeded.name).patterns[0].pattern,
+			install.SOCIAL_PATTERNS["twitter"][0],
+		)
+		self.assertEqual(
+			frappe.get_doc("CRM Enrichment Rule", admins.name).patterns[0].pattern, r"twitter\.com/acme_only"
+		)
+
+
 class MapperWritePolicyTest(IntegrationTestCase):
 	def setUp(self):
 		self.cfg = get_config()

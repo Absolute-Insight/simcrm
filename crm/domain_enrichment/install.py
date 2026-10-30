@@ -230,9 +230,13 @@ INDUSTRY_KEYWORDS = {
 }
 
 # social network -> regex (matched against HTML; stored as regex patterns)
+# The twitter host is anchored: "x.com/" alone is the tail of wix.com, fedex.com and
+# dropbox.com. Earlier sites were seeded with TWITTER_PATTERN_V1, which a patch
+# replaces (crm.patches.v1_0.anchor_seeded_twitter_rule).
+TWITTER_PATTERN_V1 = r"(twitter\.com|x\.com)/[A-Za-z0-9_]+"
 SOCIAL_PATTERNS = {
 	"linkedin": [r"linkedin\.com/(company|in|school)/"],
-	"twitter": [r"(twitter\.com|x\.com)/[A-Za-z0-9_]+"],
+	"twitter": [r"^https?://(www\.|mobile\.)?(twitter|x)\.com/[A-Za-z0-9_]+"],
 	"github": [r"github\.com/[A-Za-z0-9_.-]+"],
 	"facebook": [r"facebook\.com/[A-Za-z0-9_.\-/]+"],
 	"instagram": [r"instagram\.com/[A-Za-z0-9_.]+"],

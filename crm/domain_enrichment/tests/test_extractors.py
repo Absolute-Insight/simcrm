@@ -16,7 +16,7 @@ import json
 
 from frappe.tests import UnitTestCase
 
-from crm.domain_enrichment import extractors
+from crm.domain_enrichment import extractors, install
 from crm.domain_enrichment.config import Rule, _compile_pattern
 from crm.domain_enrichment.result import CrawledPage, Method
 from crm.domain_enrichment.tests import fixtures
@@ -575,6 +575,32 @@ class SocialTest(UnitTestCase):
 		self.assertEqual(profiles["linkedin"].method, Method.JSON_LD)
 		# A facebook 'sharer' link must be ignored.
 		self.assertEqual(profiles["facebook"].value, "")
+
+	def test_the_seeded_twitter_rule_needs_twitter_or_x_as_the_host(self):
+		"""Unanchored, ``x\\.com/`` matched inside wix.com, fedex.com and dropbox.com, and
+		every free Wix site's footer link landed in the Twitter field."""
+		rule = fixtures.regex_rule("Social", install.SOCIAL_PATTERNS["twitter"], target_value="twitter")
+		for href in (
+			"https://www.wix.com/lpviral/enviral?utm_campaign=vir_wixad_live",
+			"https://www.fedex.com/en-za/shipping.html",
+			"https://www.dropbox.com/s/abc/brochure.pdf",
+			"https://nottwitter.com/acme",
+		):
+			with self.subTest(href=href):
+				page, soup = fixtures.make_page("https://acme.example", f"<a href='{href}'>x</a>")
+				profiles = extractors.extract_social_profiles([page], {page.url: soup}, [rule])
+				self.assertEqual(profiles["twitter"].value, "")
+		for href in (
+			"https://twitter.com/acme",
+			"https://x.com/acme",
+			"https://www.x.com/acme",
+			"https://mobile.twitter.com/acme",
+			"//twitter.com/acme",
+		):
+			with self.subTest(href=href):
+				page, soup = fixtures.make_page("https://acme.example", f"<a href='{href}'>x</a>")
+				profiles = extractors.extract_social_profiles([page], {page.url: soup}, [rule])
+				self.assertTrue(profiles["twitter"].value)
 
 	def test_protocol_relative_links_made_absolute(self):
 		page, soup = fixtures.make_page(
