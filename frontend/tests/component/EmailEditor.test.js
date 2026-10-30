@@ -84,4 +84,22 @@ describe('EmailEditor', () => {
     const w = open()
     expect(w.el.textContent).toContain('FROM:')
   })
+
+  it('uploads an inline image where the recipient can load it, under a name nobody can guess', async () => {
+    open()
+    const image = new File(['png'], 'image.png', { type: 'image/png' })
+    await S.editor.uploadFunction(image)
+    await S.editor.uploadFunction(image)
+
+    const [first, second] = S.uploads
+    // A private file is a 403 for the recipient's mail client.
+    expect(first.options).toEqual({
+      private: false,
+      doctype: 'CRM Deal',
+      docname: 'CRM-DEAL-2026-00042',
+    })
+    expect(first.file.name).toMatch(/^[0-9a-f]{24}-image\.png$/)
+    expect(first.file.type).toBe('image/png')
+    expect(second.file.name).not.toBe(first.file.name)
+  })
 })

@@ -5,7 +5,7 @@
     :extensions="extensions"
     :placeholder="placeholder"
     :editable="editable"
-    :upload-function="(file) => uploadFile(file, doctype, modelValue.name)"
+    :upload-function="(file) => uploadEmailFile(file, doctype, modelValue.name)"
   >
     <div class="relative w-full">
       <div class="flex flex-col gap-3">
@@ -206,7 +206,7 @@ import EmailTemplateSelectorModal from '@/components/Modals/EmailTemplateSelecto
 import {
   buildEditorExtensions,
   fullToolbar,
-  uploadFile,
+  uploadEmailFile,
 } from '@/components/editor/config'
 import { FileUploader, call, FormControl } from 'frappe-ui'
 import {
