@@ -37,6 +37,22 @@ class CRMOrganization(Document):
 
 		auto_enrich_on_create(self)
 
+	def after_rename(self, old_name, new_name, merge=False):
+		"""Carry the organization's contacts across a rename or a merge.
+
+		A contact belongs to an organization through core's
+		``Contact.company_name``, which is a Data field rather than a Link, so
+		rename_doc does not rewrite it. Left behind, every contact pointed at a
+		name that no longer exists and the org page's Contacts tab came up empty.
+		"""
+		frappe.db.set_value(
+			"Contact",
+			{"company_name": old_name},
+			"company_name",
+			new_name,
+			update_modified=False,
+		)
+
 	def update_exchange_rate(self):
 		"""Refresh the rate, but never let a third party decide whether the record saves.
 
