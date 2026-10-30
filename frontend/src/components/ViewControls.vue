@@ -387,6 +387,7 @@ import Draggable from 'vuedraggable'
 import isEqual from 'lodash/isEqual'
 import { PhTrayArrowDown as ImportIcon } from '@phosphor-icons/vue'
 import { reportActionError } from '@/utils/reportActionError'
+import { nextPageLength } from '@/utils/listPaging'
 import { collectClosingValues, needsClosingNote } from '@/utils/taskClosing'
 
 const props = defineProps({
@@ -1306,7 +1307,22 @@ function updatePageLength(value, loadMore = false) {
   }
   list.value.params = defaultParams.value
   if (loadMore) {
-    list.value.params.page_length += list.value.params.page_length_count
+    // The server stops at max_page_length; asking past it re-fetched the same
+    // rows on every click, so say where the list stops instead.
+    const next = nextPageLength(
+      list.value.params.page_length,
+      list.value.params.page_length_count,
+      list.value.data?.max_page_length,
+    )
+    if (next === null) {
+      toast.info(
+        __('Only the first {0} rows can be listed. Filter to narrow it.', [
+          list.value.data.max_page_length,
+        ]),
+      )
+      return
+    }
+    list.value.params.page_length = next
   } else {
     if (
       value == list.value.params.page_length &&

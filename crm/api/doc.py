@@ -705,6 +705,9 @@ def get_data(
 		"group_by_field": group_by_field,
 		"page_length": page_length,
 		"page_length_count": page_length_count,
+		# The client grows its own page length on "load more"; past this the
+		# server stops following, and the client has to know to stop asking.
+		"max_page_length": MAX_PAGE_LENGTH,
 		"is_default": is_default,
 		"views": get_views(doctype),
 		"total_count": frappe.get_list(doctype, filters=filters, fields=[COUNT_NAME])[0].total_count,
