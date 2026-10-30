@@ -1,5 +1,5 @@
 import { usersStore } from '@/stores/users'
-import { dayjs, createListResource } from 'frappe-ui'
+import { dayjs, createListResource, call } from 'frappe-ui'
 import { computed, ref, watch } from 'vue'
 import { allTimeSlots } from '@/components/Calendar/utils'
 
@@ -241,6 +241,52 @@ export function normalizeParticipants(list = []) {
     out.push(row)
   }
   return out
+}
+
+/**
+ * Give every typed attendee a Contact before the event is saved.
+ *
+ * Event Participants' reference is a required Dynamic Link, and Attendee
+ * hands over an address that matches no Contact as `reference_docname: 'new'`
+ * (or none at all, for a comma-separated paste), which the server refuses.
+ * An existing Contact with that email is used; otherwise one is created.
+ */
+export async function ensureParticipantContacts(participants) {
+  if (!Array.isArray(participants) || !participants.length) return participants
+  const updated = []
+  for (const part of participants) {
+    const p = { ...part }
+    try {
+      if (
+        p.reference_doctype === 'Contact' &&
+        UNRESOLVED_DOCNAMES.has(p.reference_docname || '') &&
+        p.email
+      ) {
+        const existing = await call('frappe.client.get_value', {
+          doctype: 'Contact',
+          filters: { email_id: p.email },
+          fieldname: 'name',
+        })
+        if (existing?.name) {
+          p.reference_docname = existing.name
+        } else {
+          const firstName = p.email.split('@')[0] || p.email
+          const contactDoc = await call('frappe.client.insert', {
+            doc: {
+              doctype: 'Contact',
+              first_name: firstName,
+              email_ids: [{ email_id: p.email, is_primary: 1 }],
+            },
+          })
+          if (contactDoc?.name) p.reference_docname = contactDoc.name
+        }
+      }
+    } catch (e) {
+      console.error('Failed creating contact for participant', p.email, e)
+    }
+    updated.push(p)
+  }
+  return updated
 }
 
 export function formatDuration(mins) {

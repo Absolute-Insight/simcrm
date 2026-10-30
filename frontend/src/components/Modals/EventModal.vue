@@ -247,6 +247,7 @@ import { validateEmail } from '@/utils'
 import {
   useEvent,
   normalizeParticipants,
+  ensureParticipantContacts,
   buildEndTimeOptions,
   computeAutoToTime,
   validateTimeRange,
@@ -414,7 +415,7 @@ function update() {
   }
 }
 
-function createEvent() {
+async function createEvent() {
   eventsResource.insert.submit(
     {
       subject: _event.value.title,
@@ -427,7 +428,9 @@ function createEvent() {
       color: _event.value.color,
       reference_doctype: props.doctype,
       reference_docname: props.docname,
-      event_participants: _event.value.event_participants,
+      event_participants: await ensureParticipantContacts(
+        _event.value.event_participants,
+      ),
       notifications: _event.value.notifications,
     },
     {
@@ -439,7 +442,7 @@ function createEvent() {
   )
 }
 
-function updateEvent() {
+async function updateEvent() {
   if (!_event.value.id) {
     error.value = __('Event ID is required')
     return
@@ -459,7 +462,9 @@ function updateEvent() {
       reference_doctype: props.doctype,
       reference_docname: props.docname,
       ...(loadedTables.value.event_participants && {
-        event_participants: _event.value.event_participants,
+        event_participants: await ensureParticipantContacts(
+          _event.value.event_participants,
+        ),
       }),
       ...(loadedTables.value.notifications && {
         notifications: _event.value.notifications,
