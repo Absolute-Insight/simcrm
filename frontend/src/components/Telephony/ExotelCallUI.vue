@@ -386,6 +386,7 @@ function updateWindowHeight(condition) {
 }
 
 function makeOutgoingCall(number) {
+  resetCallState()
   phoneNumber.value = number
 
   createResource({
@@ -413,28 +414,42 @@ function makeOutgoingCall(number) {
   })
 }
 
-function setup() {
-  $socket.on('exotel_call', (data) => {
-    callData.value = data
+function onExotelCall(data) {
+  const { user } = sessionStore()
+  const isNewCall = !showCallPopup.value && !showSmallCallPopup.value
+  if (isNewCall) resetCallState()
 
-    callStatus.value = updateStatus(data)
-    const { user } = sessionStore()
+  callData.value = data
+  callStatus.value = updateStatus(data)
 
-    if (!showCallPopup.value && !showSmallCallPopup.value) {
-      if (data.AgentEmail && data.AgentEmail == (user || user.value)) {
-        // Incoming call
-        phoneNumber.value = data.CallFrom || data.From
-        showCallPopup.value = true
-      } else {
-        // Outgoing call
-        phoneNumber.value = data.To
-      }
+  if (isNewCall) {
+    if (data.AgentEmail && data.AgentEmail == (user || user.value)) {
+      // Incoming call
+      phoneNumber.value = data.CallFrom || data.From
+      showCallPopup.value = true
+    } else {
+      // Outgoing call
+      phoneNumber.value = data.To
     }
-  })
+  }
+}
+
+// setup() runs again whenever telephony is switched back on. A second listener
+// would handle every event twice and start a second call timer that is never
+// stopped, so it is added once and removed by reference: off() without the
+// handler would also drop every other component's listener for the event.
+let listening = false
+
+function setup() {
+  if (listening) return
+  listening = true
+  $socket.on('exotel_call', onExotelCall)
 }
 
 onBeforeUnmount(() => {
-  $socket.off('exotel_call')
+  if (!listening) return
+  listening = false
+  $socket.off('exotel_call', onExotelCall)
 })
 
 const router = useRouter()
@@ -456,6 +471,17 @@ function openDealOrLead() {
 function closeCallPopup() {
   showCallPopup.value = false
   showSmallCallPopup.value = false
+  resetCallState()
+}
+
+/* A note or task belongs to the call it was written on. Left over into the next
+   call, its name made Save an Update, which rewrote the previous call's note
+   and linked it to this one. Reset whenever a call starts, not only when the
+   popup is closed, because a rep can dial the next lead with it still open. */
+function resetCallState() {
+  if (showNote.value || showTask.value) updateWindowHeight(false)
+  showNote.value = false
+  showTask.value = false
   note.value = {
     name: '',
     content: '',
@@ -469,6 +495,10 @@ function closeCallPopup() {
     status: 'Backlog',
     priority: 'Low',
   }
+  callDuration.value = '00:00'
+  nextTick(() => {
+    dirty.value = false
+  })
 }
 
 function save() {
