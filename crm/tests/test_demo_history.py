@@ -18,6 +18,7 @@ from crm.demo.history import (
 	MONTHS_BACK,
 	SEED,
 	_create_snapshots,
+	_settle_lead,
 	create_demo_history,
 	delete_demo_history,
 )
@@ -108,6 +109,19 @@ class DemoHistoryTest(IntegrationTestCase):
 		won = frappe.db.count("CRM Deal", {"name": ["in", self.created["deals"]], "status": "Won"})
 		self.assertGreater(won, 0)
 		self.assertEqual(self.queued_pushes, [])
+
+	def test_no_seeded_lead_is_lost_without_a_reason(self):
+		lost_statuses = frappe.get_all("CRM Lead Status", {"type": "Lost"}, pluck="name")
+		reasonless = frappe.get_all(
+			"CRM Lead",
+			filters={
+				"name": ["in", self.created["leads"]],
+				"status": ["in", lost_statuses],
+				"lost_reason": ["is", "not set"],
+			},
+			pluck="name",
+		)
+		self.assertEqual(reasonless, [])
 
 	def test_zz_delete_removes_everything_it_created(self):
 		"""Runs last (unittest orders by name): tears the fixture down and checks nothing is left."""
@@ -267,3 +281,21 @@ class DemoSeedingGuardsTest(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_value("CRM Forecast Snapshot", real_name, "forecasted"), forecasted)
 		self.assertNotIn(real_name, created["snapshots"])
 		self.assertTrue(created["snapshots"])
+
+	def test_a_lead_settled_on_a_lost_status_carries_a_reason_and_can_be_edited(self):
+		"""The status was written with db.set_value, skipping the controller, so a
+		Junk or Unqualified demo lead had no lost reason and every later edit to it
+		was refused with "Please specify a reason for losing the lead"."""
+		lead = frappe.get_doc(
+			{"doctype": "CRM Lead", "first_name": "Settled", "last_name": "Probe", "status": "New"}
+		).insert(ignore_permissions=True)
+
+		# Random(0) draws Junk for a lead a year old
+		_settle_lead(lead.name, "Administrator", date(2025, 1, 6), 12, random.Random(0), date(2026, 10, 30))
+
+		status, lost_reason = frappe.db.get_value("CRM Lead", lead.name, ["status", "lost_reason"])
+		self.assertEqual(frappe.db.get_value("CRM Lead Status", status, "type"), "Lost")
+		self.assertTrue(lost_reason)
+		doc = frappe.get_doc("CRM Lead", lead.name)
+		doc.job_title = "Plant Engineer"
+		doc.save(ignore_permissions=True)

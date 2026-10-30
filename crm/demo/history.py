@@ -389,7 +389,12 @@ def _settle_lead(lead_name: str, rep: str, lead_day: date, age_months: int, rng,
 	else:
 		status = rng.choices(["New", "Contacted", "Qualified"], weights=[45, 40, 15])[0]
 	touched = min(today, lead_day + timedelta(days=rng.randint(1, 20)))
-	frappe.db.set_value("CRM Lead", lead_name, "status", status, update_modified=False)
+	values = {"status": status}
+	# Written past the controller, so do what validate_lost_reason would ask:
+	# without a reason every later edit to an Unqualified or Junk lead is refused.
+	if frappe.get_cached_value("CRM Lead Status", status, "type") == "Lost":
+		values["lost_reason"] = rng.choice(LOST_REASONS)
+	frappe.db.set_value("CRM Lead", lead_name, values, update_modified=False)
 	backdate("CRM Lead", lead_name, rep, _dt(touched, rng.randint(8, 17)), set_creation=False)
 
 
