@@ -280,9 +280,13 @@ function getValueControl() {
 }
 
 function updateValue(value) {
-  value = value.target ? value.target.value : value
+  value = value?.target ? value.target.value : value
   if (condition.value[1] === 'between') {
-    condition.value[2] = [value.split(',')[0], value.split(',')[1]]
+    // frappe-ui v1's DateRangePicker emits [from, to], and [] once cleared;
+    // the old one emitted "from,to". An incomplete range is left unset.
+    const range = Array.isArray(value) ? value : String(value ?? '').split(',')
+    condition.value[2] =
+      range.length === 2 && range[0] && range[1] ? [range[0], range[1]] : ''
   } else {
     condition.value[2] = isNaN(value) ? value : Number(value)
   }

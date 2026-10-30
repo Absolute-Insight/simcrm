@@ -154,3 +154,31 @@ describe('CFConditions rows follow the data', () => {
     w.unmount()
   })
 })
+
+describe('CFCondition between on a date field', () => {
+  // frappe-ui v1's DateRangePicker emits update:modelValue then change, both
+  // with [from, to], and [] when the range is cleared.
+  async function emitRange(w, payload) {
+    const range = live.picker.find((p) => p.name === 'DateRangePicker')
+    range.emit('update:modelValue', payload)
+    range.emit('change', payload)
+    await w.nextTick()
+  }
+
+  it('stores a picked range as [from, to]', async () => {
+    const conditions = reactive([['creation', 'between', '']])
+    const w = open(conditions)
+    await w.nextTick()
+    await emitRange(w, ['2026-01-01', '2026-01-31'])
+    expect(w.errors).toEqual([])
+    expect(plain(conditions)).toEqual([
+      ['creation', 'between', ['2026-01-01', '2026-01-31']],
+    ])
+
+    // Cleared: unset, so the rule cannot be saved half-filled.
+    await emitRange(w, [])
+    expect(w.errors).toEqual([])
+    expect(plain(conditions)).toEqual([['creation', 'between', '']])
+    w.unmount()
+  })
+})
