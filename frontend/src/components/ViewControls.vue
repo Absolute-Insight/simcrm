@@ -44,7 +44,7 @@
             :tooltip="__('Refresh')"
             icon="lucide-refresh-ccw"
             :loading="isLoading"
-            @click="reload()"
+            @click="refresh()"
           />
           <SortBy
             v-if="route.params.viewType !== 'kanban'"
@@ -180,7 +180,7 @@
           :tooltip="__('Refresh')"
           icon="lucide-refresh-ccw"
           :loading="isLoading"
-          @click="reload()"
+          @click="refresh()"
         />
         <GroupBy
           v-if="route.params.viewType === 'group_by'"
@@ -633,7 +633,7 @@ if (!resource.params) {
 // doctype, so newly-filled fields (logo, etc.) show without a manual reload.
 function onEnrichmentDone(data) {
   if (data?.status !== 'completed') return
-  if (data.reference_doctype === props.doctype) reload()
+  if (data.reference_doctype === props.doctype) refresh()
   // The Deals list logo comes from the cached organizations store
   // (getOrganization → organization_logo), not the deal row. Refresh that store so a
   // newly enriched org's logo appears without a hard refresh; `rows` is a
@@ -653,9 +653,18 @@ onBeforeUnmount(() => {
 
 const isLoading = computed(() => list.value?.loading)
 
+// Back to the saved view: Cancel, and a change of view.
 function reload() {
   if (isLoading.value) return
   list.value.params = getParams()
+  list.value.reload()
+}
+
+// Fetch again what is on screen. Refresh used to call reload(), which put
+// the saved view's params back: an unsaved filter vanished from the list
+// while Save Changes and Cancel stayed up for a change no longer applied.
+function refresh() {
+  if (isLoading.value) return
   list.value.reload()
 }
 
@@ -1626,7 +1635,7 @@ function likeDoc({ name, liked }) {
     url: 'frappe.desk.like.toggle_like',
     params: { doctype: props.doctype, name: name, add: liked ? 'No' : 'Yes' },
     auto: true,
-    onSuccess: () => reload(),
+    onSuccess: () => refresh(),
   })
 }
 

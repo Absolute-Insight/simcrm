@@ -365,3 +365,46 @@ describe('coming back to a saved view with an unsaved change', () => {
     })
   })
 })
+
+describe('Refresh', () => {
+  async function withUnsavedFilter(view, doctype = 'CRM Lead') {
+    savedView(view)
+    setRoute({ view })
+    const m = await mountVC({ doctype })
+    m.vc().applyFilter({
+      event: click(),
+      idx: 1,
+      column: { key: 'territory', type: 'Link' },
+      item: 'Gauteng',
+      firstColumn: { key: 'lead_name' },
+    })
+    await settle()
+    return m
+  }
+
+  it('re-fetches the filter on screen instead of reverting it', async () => {
+    const m = await withUnsavedFilter(31)
+    m.el.querySelector('button[data-icon="lucide-refresh-ccw"]').click()
+    await settle()
+    expect(vc.fetches.at(-1).filters).toEqual({ territory: 'Gauteng' })
+    expect(m.button('Save Changes')).not.toBeNull()
+  })
+
+  it('so does the refresh after an enrichment finishes', async () => {
+    await withUnsavedFilter(32, 'CRM Organization')
+    vc.socket.domain_enrichment_progress({
+      status: 'completed',
+      reference_doctype: 'CRM Organization',
+    })
+    await settle()
+    expect(vc.fetches.at(-1).filters).toEqual({ territory: 'Gauteng' })
+  })
+
+  it('Cancel still goes back to the saved view', async () => {
+    const m = await withUnsavedFilter(33)
+    m.button('Cancel').click()
+    await settle()
+    expect(vc.fetches.at(-1).filters).toEqual({})
+    expect(m.button('Save Changes')).toBeNull()
+  })
+})
