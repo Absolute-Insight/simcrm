@@ -494,7 +494,11 @@ def _erp_table(key, metric, erp, from_date, to_date, today: date, deadline=None)
 	partial = False
 	try:
 		invoices = payments = None
-		if key == "erp_receivables" or (months and key in ("erp_invoices_by_month", "erp_cashflow_by_month")):
+		if key == "erp_receivables":
+			# a balance now, not a flow inside the period: every open invoice, whatever its date
+			invoices, cut = _erp_open_invoices(erp, deadline)
+			partial = partial or cut
+		if months and key in ("erp_invoices_by_month", "erp_cashflow_by_month"):
 			invoices, cut = _erp_invoices(erp, from_date, end, deadline)
 			partial = partial or cut
 		if months and key in ("erp_payments_by_month", "erp_cashflow_by_month"):
@@ -513,7 +517,11 @@ def _erp_table(key, metric, erp, from_date, to_date, today: date, deadline=None)
 	elif key == "erp_payments_by_month":
 		rows = _sum_by_month(months, payments, "amount", "received", "payments")
 	elif key == "erp_receivables":
-		rows = _receivables(invoices, date.fromisoformat(end))
+		rows = _receivables(invoices, today)
+		note = (
+			f"{note} Unpaid balances as of today, whatever the invoice date; overdue means more than "
+			f"{OVERDUE_AFTER_DAYS} days past due."
+		)
 	else:
 		invoiced = {
 			row["month"]: row["invoiced"]
@@ -597,6 +605,12 @@ def _erp_invoices(erp: str, from_date: str, to_date: str, deadline=None) -> tupl
 	return erpnext_invoices(from_date, to_date, deadline)
 
 
+def _erp_open_invoices(erp: str, deadline=None) -> tuple[list[dict], bool]:
+	if erp == "acumatica":
+		return acumatica_open_invoices(deadline)
+	return erpnext_open_invoices(deadline)
+
+
 def _erp_payments(erp: str, from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
 	if erp == "acumatica":
 		return acumatica_payments(from_date, to_date, deadline)
@@ -616,16 +630,22 @@ def _acumatica_window(field: str, from_date: str, to_date: str) -> str:
 
 
 def acumatica_invoices(from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
+	return _acumatica_invoices(_acumatica_window("Date", from_date, to_date), deadline)
+
+
+def acumatica_open_invoices(deadline=None) -> tuple[list[dict], bool]:
+	"""Every invoice still carrying a balance, whatever its date. Open is Acumatica's
+	status for a released document with a balance; a paid one is Closed."""
+	return _acumatica_invoices("Status eq 'Open'", deadline)
+
+
+def _acumatica_invoices(filter_: str, deadline=None) -> tuple[list[dict], bool]:
 	from crm.integrations.acumatica.client import v
 
 	client = _acumatica_client()
 	rows = []
 	partial = False
-	for record in client.iter_all(
-		"SalesInvoice",
-		filter=_acumatica_window("Date", from_date, to_date),
-		select="Date,Amount,Balance,DueDate,Type",
-	):
+	for record in client.iter_all("SalesInvoice", filter=filter_, select="Date,Amount,Balance,DueDate,Type"):
 		# Checked per row, which is per *page* in effect: breaking out of the
 		# generator is what stops it fetching the next page, and one page is one
 		# 30-second request. Up to fifty of them fit inside a plan the caller
@@ -700,10 +720,21 @@ def _erpnext_timeout(deadline) -> float:
 
 
 def erpnext_invoices(from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
+	return _erpnext_invoices(
+		[["posting_date", "between", [from_date, to_date]], ["docstatus", "=", 1]], deadline
+	)
+
+
+def erpnext_open_invoices(deadline=None) -> tuple[list[dict], bool]:
+	"""Every submitted invoice with something outstanding, whatever its date."""
+	return _erpnext_invoices([["outstanding_amount", ">", 0], ["docstatus", "=", 1]], deadline)
+
+
+def _erpnext_invoices(filters: list, deadline=None) -> tuple[list[dict], bool]:
 	records = _erpnext_get(
 		"Sales Invoice",
 		["posting_date", "grand_total", "outstanding_amount", "due_date", "is_return"],
-		[["posting_date", "between", [from_date, to_date]], ["docstatus", "=", 1]],
+		filters,
 		deadline,
 	)
 	return [

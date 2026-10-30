@@ -6,6 +6,7 @@ from stubbed adapters, and an ERP failure marks its table rather than raising.""
 
 from __future__ import annotations
 
+import re
 from typing import ClassVar
 from unittest import mock
 
@@ -29,6 +30,27 @@ def make_won_deal(organization: str, value: float, closed_on: str) -> str:
 	).insert()
 	frappe.db.set_value("CRM Deal", deal.name, "closed_date", closed_on)
 	return deal.name
+
+
+class FakeAcumatica:
+	"""An Acumatica client over a fixed ledger, honouring the two filters the readers
+	send: a ``datetimeoffset`` window on the document date and ``Status eq '...'``."""
+
+	def __init__(self, records: dict[str, list[dict]]):
+		self.records = records
+		self.reads: list[tuple[str, str]] = []
+
+	def iter_all(self, entity, filter=None, select=None, **_kw):
+		self.reads.append((entity, filter or ""))
+		window = re.findall(r"datetimeoffset'(\d{4}-\d{2}-\d{2})", filter or "")
+		status = re.search(r"Status eq '([^']+)'", filter or "")
+		for record in self.records.get(entity, []):
+			when = record.get("Date") or record.get("ApplicationDate") or ""
+			if window and not (window[0] <= when[:10] <= window[1]):
+				continue
+			if status and record.get("Status") != status.group(1):
+				continue
+			yield {field: {"value": value} for field, value in record.items()}
 
 
 class RunPlanTest(IntegrationTestCase):
@@ -134,15 +156,10 @@ class RunPlanTest(IntegrationTestCase):
 			mock.patch.object(analyst_data, "acumatica_invoices", return_value=(invoices, False)),
 			mock.patch.object(analyst_data, "acumatica_payments", return_value=(payments, False)),
 		):
-			tables = analyst_data.run_plan(
-				{
-					"metrics": ["erp_cashflow_by_month", "erp_receivables"],
-					"from_date": "2026-01-01",
-					"to_date": "2026-03-31",
-				},
+			(cashflow,) = analyst_data.run_plan(
+				{"metrics": ["erp_cashflow_by_month"], "from_date": "2026-01-01", "to_date": "2026-03-31"},
 				"acumatica",
 			)
-		cashflow, receivables = tables
 		self.assertEqual(cashflow["source"], "Acumatica")
 		self.assertEqual(
 			cashflow["rows"],
@@ -152,14 +169,68 @@ class RunPlanTest(IntegrationTestCase):
 				{"month": "2026-03", "invoiced": 70.0, "received": 0.0, "net": -70.0},
 			],
 		)
-		# as of 2026-03-31: the January balance is overdue (due 2026-02-19, > 30 days), March's is current
-		self.assertEqual(
-			receivables["rows"],
-			[
-				{"bucket": "Current", "amount": 70.0, "invoices": 1},
-				{"bucket": "Overdue", "amount": 50.0, "invoices": 1},
-			],
+
+	def test_receivables_are_every_open_balance_aged_against_today(self):
+		"""Receivables were read through the period's invoice query and aged against its
+		to_date: an invoice unpaid since before the period was missing, and on a period
+		ending in December one not yet due was already overdue."""
+		today = frappe.utils.getdate("2026-10-30")
+		client = FakeAcumatica(
+			{
+				"SalesInvoice": [
+					{
+						"Date": "2025-06-01",
+						"Amount": 1000.0,
+						"Balance": 1000.0,
+						"DueDate": "2025-07-01",
+						"Type": "Invoice",
+						"Status": "Open",
+					},
+					{
+						"Date": "2026-09-20",
+						"Amount": 500.0,
+						"Balance": 500.0,
+						"DueDate": "2026-11-15",
+						"Type": "Invoice",
+						"Status": "Open",
+					},
+					{
+						"Date": "2026-08-01",
+						"Amount": 80.0,
+						"Balance": 0.0,
+						"DueDate": "2026-08-31",
+						"Type": "Invoice",
+						"Status": "Closed",
+					},
+				]
+			}
 		)
+		with mock.patch.object(analyst_data, "_acumatica_client", return_value=client):
+			for from_date, to_date in (("2025-10-30", "2026-10-30"), ("2026-01-01", "2026-12-31")):
+				with self.subTest(period=(from_date, to_date)):
+					(table,) = analyst_data.run_plan(
+						{"metrics": ["erp_receivables"], "from_date": from_date, "to_date": to_date},
+						"acumatica",
+						today=today,
+					)
+					self.assertEqual(
+						table["rows"],
+						[
+							{"bucket": "Current", "amount": 500.0, "invoices": 1},
+							{"bucket": "Overdue", "amount": 1000.0, "invoices": 1},
+						],
+					)
+					self.assertIn("as of today", table["note"])
+
+	def test_erpnext_receivables_are_read_by_outstanding_amount_not_by_date(self):
+		with mock.patch.object(analyst_data, "_erpnext_get", return_value=[]) as get:
+			analyst_data.run_plan(
+				{"metrics": ["erp_receivables"], "from_date": "2026-01-01", "to_date": "2026-03-31"},
+				"erpnext",
+			)
+		filters = get.call_args.args[2]
+		self.assertIn(["outstanding_amount", ">", 0], filters)
+		self.assertNotIn("posting_date", str(filters))
 
 	def test_erp_months_stop_at_today_and_start_at_the_first_document(self):
 		"""A "this year" plan listed November and December as nothing invoiced, and the
