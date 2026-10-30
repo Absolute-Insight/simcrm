@@ -29,6 +29,8 @@ describe('Icon and the lucide sprite', () => {
   it('a string icon loads the sprite once, and draws from it', async () => {
     const first = mount(Icon, { props: { icon: 'lucide-zap' } })
     mount(Icon, { props: { icon: 'phone' } })
+    await nextTick()
+    const before = first.el.querySelector('use')
     await ensureLucideSprite()
     await settle()
 
@@ -36,5 +38,7 @@ describe('Icon and the lucide sprite', () => {
     expect(sprite().querySelector('symbol#zap')).not.toBeNull()
     expect(lucideSpriteReady.value).toBe(true)
     expect(first.el.querySelector('use').getAttribute('href')).toBe('#zap')
+    // a fresh <use> once the symbols exist, so every browser resolves it
+    expect(first.el.querySelector('use')).not.toBe(before)
   })
 })
