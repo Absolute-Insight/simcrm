@@ -79,6 +79,12 @@ def resolve_destination(reference_doc, to: str | None = None) -> str:
 
 
 def validate(doc, method):
+	# An outgoing message was sent from a record's thread and stays filed there.
+	# Matching its number instead re-filed it -- on every status save, too --
+	# onto whichever lead or deal the lookup found first, so a message sent from
+	# one deal of a contact who is primary on two turned up on the other one.
+	if doc.type == "Outgoing" and doc.reference_doctype and doc.reference_name:
+		return
 	phone_number = doc.get("from") if doc.type == "Incoming" else doc.get("to")
 	if phone_number:
 		try:

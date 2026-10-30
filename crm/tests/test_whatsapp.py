@@ -54,6 +54,39 @@ class TestWhatsAppHooks(FrappeTestCase):
 		self.assertIsNone(doc.reference_doctype)
 		self.assertIsNone(doc.reference_name)
 
+	def test_validate_keeps_an_outgoing_message_on_the_record_it_was_sent_from(self):
+		"""The number lookup found another deal of the same contact and re-filed
+		the message there, replies and status saves included."""
+		doc = MagicMock()
+		doc.type = "Outgoing"
+		doc.get.return_value = "+27825550199"
+		doc.reference_doctype = "CRM Deal"
+		doc.reference_name = "CRM-DEAL-1"
+
+		with patch(
+			"crm.api.whatsapp.lookup_contact_lead_or_deal_from_number",
+			return_value=("CRM-DEAL-2", "CRM Deal"),
+		) as lookup:
+			validate(doc, None)
+
+		lookup.assert_not_called()
+		self.assertEqual((doc.reference_doctype, doc.reference_name), ("CRM Deal", "CRM-DEAL-1"))
+
+	def test_validate_still_files_an_outgoing_message_with_no_reference(self):
+		doc = MagicMock()
+		doc.type = "Outgoing"
+		doc.get.return_value = "+27825550199"
+		doc.reference_doctype = None
+		doc.reference_name = None
+
+		with patch(
+			"crm.api.whatsapp.lookup_contact_lead_or_deal_from_number",
+			return_value=("CRM-DEAL-2", "CRM Deal"),
+		):
+			validate(doc, None)
+
+		self.assertEqual((doc.reference_doctype, doc.reference_name), ("CRM Deal", "CRM-DEAL-2"))
+
 	def test_validate_logs_error_on_exception(self):
 		"""validate() catches lookup exceptions and logs them instead of raising"""
 		doc = MagicMock()
