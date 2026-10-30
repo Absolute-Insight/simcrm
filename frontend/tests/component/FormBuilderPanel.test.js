@@ -125,6 +125,15 @@ beforeEach(async () => {
   await flush()
 })
 
+function setInput(node, value) {
+  node.value = value
+  node.dispatchEvent(new Event('input', { bubbles: true }))
+}
+const saveButton = () =>
+  [...view.el.querySelectorAll('button')].find(
+    (b) => b.textContent.trim() === 'Save',
+  )
+
 describe('FormBuilderPanel tabs', () => {
   const tab = (label) =>
     [...view.el.querySelectorAll('[role="tab"]')].find((t) =>
@@ -159,5 +168,80 @@ describe('FormBuilderPanel section menu', () => {
     // the seeded section has two of the four columns allowed: both apply
     expect(rows).toContain('Add Column')
     expect(rows).toContain('Remove Last Column')
+  })
+})
+
+describe('FormBuilderPanel unsaved changes', () => {
+  it('keeps an edit made while Save is in flight marked unsaved', async () => {
+    let release
+    backend.saveReply = (args) =>
+      new Promise(
+        (resolve) =>
+          (release = () =>
+            resolve({ name: args.name, route: args.form.route })),
+      )
+    setInput(view.el.querySelector('input[placeholder="Form title"]'), 'v2')
+    await flush()
+    saveButton().click()
+    await flush()
+    // typed while the request is pending: not part of the payload being saved
+    setInput(
+      view.el.querySelector('textarea[placeholder^="Add a description"]'),
+      'Typed during save',
+    )
+    await flush()
+    release()
+    await flush()
+
+    const sent = backend.calls.find((c) => c[0] === 'crm.api.form.save_form')
+    expect(sent[1].form.title).toBe('v2')
+    expect(sent[1].form.description).toBe('')
+    expect(view.el.textContent).toContain('Not Saved')
+    expect(saveButton().disabled).toBe(false)
+  })
+
+  it('keeps a route typed while Save is in flight', async () => {
+    let release
+    backend.saveReply = () => new Promise((resolve) => (release = resolve))
+    view.el
+      .querySelector('[role="tab"]:nth-child(2)')
+      .dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+    await flush()
+    const route = () => view.el.querySelector('input:not([placeholder])')
+    expect(view.el.textContent).toContain('/crm-form/')
+    setInput(route(), 'sales')
+    await flush()
+    saveButton().click()
+    await flush()
+    setInput(route(), 'sales-team')
+    await flush()
+    // the server answers with the route it stored, which is now the older one
+    release({ name: 'contact-sales', route: 'sales' })
+    await flush()
+
+    expect(route().value).toBe('sales-team')
+    expect(view.el.textContent).toContain('Not Saved')
+  })
+
+  it('clears the badge when nothing changed during the save (control)', async () => {
+    setInput(view.el.querySelector('input[placeholder="Form title"]'), 'v2')
+    await flush()
+    saveButton().click()
+    await flush()
+    expect(view.el.textContent).not.toContain('Not Saved')
+  })
+
+  it('asks before a reload or tab close drops unsaved edits', async () => {
+    const leave = () => {
+      const ev = new Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(ev)
+      return ev.defaultPrevented
+    }
+    expect(leave(), 'nothing to lose yet').toBe(false)
+    setInput(view.el.querySelector('input[placeholder="Form title"]'), 'v2')
+    await flush()
+    expect(leave(), 'unsaved title').toBe(true)
+    view.unmount()
+    expect(leave(), 'listener removed with the panel').toBe(false)
   })
 })
