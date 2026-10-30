@@ -24,10 +24,10 @@ import {
 } from 'frappe-ui'
 
 import { telemetryPlugin } from '@framework/ui/telemetry'
-// injects the lucide SVG sprite into the DOM so the IconPicker and lucide Icons
-// (used for view icons) can render from it
-// parked in experimental for v1 (frappe-ui migration doc)
-import { spritePlugin } from 'frappe-ui/experimental'
+// The lucide sprite the IconPicker and string icons draw from is injected on
+// first use (utils/lucideSprite), not here: frappe-ui's spritePlugin put all
+// of it in the entry chunk, and the experimental barrel it came through
+// pulled the rich-text editor into the boot chunks with it.
 
 /* Vectora ships dark-first: a visitor with no stored preference boots into
    the premium dark theme. Any stored choice — light, dark, or system — wins
@@ -75,7 +75,6 @@ setConfig('resourceFetcher', (options) =>
   }),
 )
 app.use(FrappeUI)
-app.use(spritePlugin)
 app.use(pinia)
 app.use(router)
 app.use(translationPlugin)

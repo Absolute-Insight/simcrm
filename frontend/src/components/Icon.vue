@@ -16,16 +16,30 @@
     class="shrink-0"
     v-bind="$attrs"
   >
-    <use :href="`#${icon.replace(/^lucide-/, '')}`" />
+    <use
+      :key="String(lucideSpriteReady)"
+      :href="`#${icon.replace(/^lucide-/, '')}`"
+    />
   </svg>
   <component :is="icon" v-else v-bind="$attrs" />
 </template>
 <script setup>
 import { isEmoji } from '@/utils'
+import { ensureLucideSprite, lucideSpriteReady } from '@/utils/lucideSprite'
+import { watchEffect } from 'vue'
 
 /* `Object` alone rejects a render function, and Settings passes one for the
    Profile row (an Avatar built from the live user). Vue renders it correctly
    either way -- only the type check failed -- so the fix is to admit the form
    the call sites already use. */
-defineProps({ icon: { type: [String, Object, Function], required: true } })
+const props = defineProps({
+  icon: { type: [String, Object, Function], required: true },
+})
+
+// The sprite is loaded on demand, only once a string icon is drawn from it.
+watchEffect(() => {
+  if (typeof props.icon === 'string' && !isEmoji(props.icon)) {
+    ensureLucideSprite().catch(() => {})
+  }
+})
 </script>

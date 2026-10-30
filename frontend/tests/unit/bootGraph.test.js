@@ -8,9 +8,11 @@ import { describe, expect, it } from 'vitest'
  * like, so it is not followed. Package specifiers are leaves -- they are
  * recorded, not walked.
  *
- * The rich-text editor (tiptap, ProseMirror, lowlight: ~276 KB gz) used to
- * sit on this path for no page's benefit, through App.vue -> DoctypeModals ->
- * DoctypeModal -> FieldLayout -> Field -> TextEditorControl.
+ * Two heavy things used to sit on this path for no page's benefit: the
+ * rich-text editor (tiptap, ProseMirror, lowlight: ~276 KB gz, through
+ * App.vue -> DoctypeModals -> DoctypeModal -> FieldLayout -> Field ->
+ * TextEditorControl) and the whole 1777-icon lucide sprite (~82 KB gz of
+ * the entry chunk, innerHTML-parsed into <body> on every boot).
  */
 const SRC = join(process.cwd(), 'src')
 const STATIC_IMPORT =
@@ -88,6 +90,19 @@ describe('the static boot graph', () => {
           n.endsWith('/TextEditorControl.vue') ||
           n.endsWith('/FieldLayout/Field.vue') ||
           /^pkg:(@tiptap\/|frappe-ui\/editor)/.test(n),
+      ),
+    ).toEqual([])
+  })
+
+  it('does not carry the lucide sprite', () => {
+    // frappe-ui's spritePlugin imports it inside the package, where the walk
+    // stops, so look for the plugin by name as well as for the file.
+    expect(
+      reached(
+        (n) =>
+          n.startsWith('pkg:lucide-static') ||
+          (!n.startsWith('pkg:') &&
+            /import\s*\{[^}]*\bspritePlugin\b/.test(codeOf(n))),
       ),
     ).toEqual([])
   })

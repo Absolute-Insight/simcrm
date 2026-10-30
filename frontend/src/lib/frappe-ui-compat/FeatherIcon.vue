@@ -14,9 +14,16 @@
     class="shrink-0"
     aria-hidden="true"
   >
-    <use :href="`#${String(name).replace(/^lucide-/, '')}`" />
+    <use
+      :key="String(lucideSpriteReady)"
+      :href="`#${String(name).replace(/^lucide-/, '')}`"
+    />
   </svg>
 </template>
 <script setup>
+import { ensureLucideSprite, lucideSpriteReady } from '@/utils/lucideSprite'
+
 defineProps({ name: { type: String, required: true } })
+
+ensureLucideSprite().catch(() => {})
 </script>
