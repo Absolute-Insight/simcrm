@@ -153,7 +153,8 @@
                         "
                         :filters="field.filters"
                         :onCreate="
-                          (value, close) => field.create(v, field, row, close)
+                          (value, close) =>
+                            field.create(value, field, row, close)
                         "
                         :disabled="Boolean(field.read_only)"
                         @change="(v) => fieldChange(v, field, row)"

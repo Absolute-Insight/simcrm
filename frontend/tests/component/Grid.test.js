@@ -296,3 +296,14 @@ describe('Grid [parentfield]_remove hook', () => {
     unmount()
   })
 })
+
+describe('Grid columns', () => {
+  it('Create New from a row Link passes the typed text on', async () => {
+    linkAttrs.length = 0
+    created.length = 0
+    const { unmount } = await mountGrid([row('r1', 1, 100)])
+    linkAttrs[0].onCreate('Pump X', () => {})
+    expect(created[0].slice(0, 2)).toEqual(['CRM Product', 'Pump X'])
+    unmount()
+  })
+})
