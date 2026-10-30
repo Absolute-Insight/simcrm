@@ -3,6 +3,7 @@ import { defineComponent, h } from 'vue'
 import { fakeBackend, frappeError } from './fakeBackend.js'
 import { collectRejections, flushPromises } from './flush.js'
 import { mount } from './mount.js'
+import { buttonByText, setValue } from './stubs.js'
 
 const { toast } = vi.hoisted(() => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
@@ -94,5 +95,27 @@ describe('UserEmailSettings Add Email (FE-136)', () => {
       'Could not load the email accounts you can add.',
     )
     expect(rejections.filter((r) => r !== failure)).toEqual([])
+  })
+})
+
+describe('UserEmailSettings Update (FE-130)', () => {
+  it('toasts why a refused save was refused', async () => {
+    const refusal = frappeError(
+      'Signature contains a script tag',
+      'crm.api.user.update_profile',
+    )
+    backend.handlers['crm.api.user.update_profile'] = () => {
+      throw refusal
+    }
+    const w = mount(UserEmailSettings, { stubs })
+    await flushPromises()
+    setValue(w.el.querySelector('[data-label="editor"]'), '<p>Regards</p>')
+    await flushPromises()
+
+    const rejections = await collectRejections(() =>
+      buttonByText(w.el, 'Update').click(),
+    )
+    expect(toast.error).toHaveBeenCalledWith('Signature contains a script tag')
+    expect(rejections.filter((r) => r !== refusal)).toEqual([])
   })
 })

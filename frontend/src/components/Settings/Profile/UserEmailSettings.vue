@@ -183,6 +183,11 @@ function update() {
     onSuccess: () => {
       toast.success(__('Email settings updated successfully'))
     },
+    onError: (err) => {
+      toast.error(
+        describeError(err).message || __('Failed to update email settings'),
+      )
+    },
   })
 }
 
