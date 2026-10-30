@@ -61,6 +61,64 @@ class SeederIdempotencyTest(IntegrationTestCase):
 		self.assertGreater(mappings_before, 0)
 
 
+class SeedOnceTest(IntegrationTestCase):
+	"""The seeder runs on every migrate. Keyed on names an admin can change, it put
+	back every default they had deleted and duplicated every rule they had renamed."""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _marker(self):
+		return frappe.db.get_singles_dict("CRM Enrichment Settings").get("seed_version")
+
+	def test_a_deleted_default_stays_deleted(self):
+		install.seed_default_rules_and_mappings()  # the site as an admin finds it
+		mapping = {"source_key": "industry", "target_doctype": "CRM Deal", "target_fieldname": "industry"}
+		frappe.db.delete("CRM Enrichment Field Mapping", mapping)
+		frappe.db.delete("CRM Enrichment Rule", {"rule_name": "Industry: Ecommerce"})
+		frappe.db.delete("CRM Industry", {"name": "Ecommerce"})
+
+		install.seed_default_rules_and_mappings()  # the next migrate
+
+		self.assertFalse(frappe.db.exists("CRM Enrichment Field Mapping", mapping))
+		self.assertFalse(frappe.db.exists("CRM Enrichment Rule", {"rule_name": "Industry: Ecommerce"}))
+		self.assertFalse(frappe.db.exists("CRM Industry", "Ecommerce"))
+
+	def test_a_renamed_rule_is_not_seeded_again(self):
+		install.seed_default_rules_and_mappings()
+		frappe.db.set_value(
+			"CRM Enrichment Rule",
+			{"rule_name": "Industry: Manufacturing"},
+			"rule_name",
+			"Manufacturing (engineering)",
+		)
+
+		install.seed_default_rules_and_mappings()
+
+		self.assertEqual(frappe.db.count("CRM Enrichment Rule", {"industry": "Manufacturing"}), 1)
+
+	def test_a_site_seeded_before_the_marker_is_not_reseeded(self):
+		"""Upgrading must not resurrect what was deleted under the old seeder either."""
+		frappe.db.set_single_value("CRM Enrichment Settings", "seed_version", 0)
+		frappe.db.delete("CRM Enrichment Rule", {"rule_name": "Industry: Ecommerce"})
+
+		install.seed_default_rules_and_mappings()
+
+		self.assertFalse(frappe.db.exists("CRM Enrichment Rule", {"rule_name": "Industry: Ecommerce"}))
+		self.assertEqual(int(self._marker()), install.SEED_VERSION)
+
+	def test_a_fresh_site_is_seeded_and_marked(self):
+		frappe.db.set_single_value("CRM Enrichment Settings", "seed_version", 0)
+		frappe.db.delete("CRM Enrichment Rule")
+		frappe.db.delete("CRM Enrichment Field Mapping")
+
+		install.seed_default_rules_and_mappings()
+
+		self.assertTrue(frappe.db.exists("CRM Enrichment Rule", {"rule_name": "Industry: Ecommerce"}))
+		self.assertTrue(frappe.db.count("CRM Enrichment Field Mapping"))
+		self.assertEqual(int(self._marker()), install.SEED_VERSION)
+
+
 class AnchorTwitterRulePatchTest(IntegrationTestCase):
 	"""Sites seeded before the twitter pattern was anchored keep the old one until the
 	patch replaces it -- but only where it is still the seeded text."""

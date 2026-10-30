@@ -39,7 +39,8 @@
   "allowed_domains_section",
   "allowed_domains",
   "blocked_domains_section",
-  "blocked_domains"
+  "blocked_domains",
+  "seed_version"
  ],
  "fields": [
   {
@@ -260,12 +261,21 @@
    "fieldtype": "Table",
    "label": "Blocked Domains",
    "options": "CRM Enrichment Domain"
+  },
+  {
+   "description": "Which release's default rules, field mappings and industries this site has been seeded with. Set by migrate; each default is added once, so one you delete or rename stays that way.",
+   "fieldname": "seed_version",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Seed Version",
+   "no_copy": 1,
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-07-14 00:00:00.000000",
+ "modified": "2026-10-31 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Domain Enrichment",
  "name": "CRM Enrichment Settings",

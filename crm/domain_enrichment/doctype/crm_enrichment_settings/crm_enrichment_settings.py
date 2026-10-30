@@ -39,6 +39,7 @@ class CRMEnrichmentSettings(Document):
 		preview_timeout: DF.Int
 		request_timeout: DF.Int
 		retry_count: DF.Int
+		seed_version: DF.Int
 		skip_patterns: DF.Table[CRMEnrichmentSkipPattern]
 		user_agent: DF.Data | None
 	# end: auto-generated types
