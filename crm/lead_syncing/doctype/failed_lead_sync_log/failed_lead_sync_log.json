@@ -8,6 +8,7 @@
   "type",
   "column_break_dhay",
   "source",
+  "facebook_lead_id",
   "section_break_fhot",
   "lead_data",
   "section_break_knec",
@@ -45,6 +46,14 @@
    "read_only": 1
   },
   {
+   "description": "The lead's id on Facebook. A lead already logged here is not logged again by the next scheduled sync.",
+   "fieldname": "facebook_lead_id",
+   "fieldtype": "Data",
+   "label": "Facebook Lead ID",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
    "fieldname": "section_break_fhot",
    "fieldtype": "Section Break"
   },
@@ -63,7 +72,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-02-23 12:45:12.218952",
+ "modified": "2026-10-31 00:30:00.000000",
  "modified_by": "Administrator",
  "module": "Lead Syncing",
  "name": "Failed Lead Sync Log",
