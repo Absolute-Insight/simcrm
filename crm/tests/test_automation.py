@@ -235,6 +235,46 @@ class AutomationRuleTest(IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			make_rule(title="Bad target", document_type="CRM Task")
 
+	def test_a_created_rule_does_not_keep_a_hidden_status_filter(self):
+		"""The editor shows "Status becomes" only for Status Changed, but a value
+		picked before the trigger was switched to Created was saved anyway, and the
+		engine applied it: a rule listed as "When created" fired only for deals
+		created in that one status."""
+		statuses = frappe.get_all(
+			"CRM Deal Status", filters={"type": ("in", ("Open", "Ongoing"))}, pluck="name", limit=2
+		)
+		rule = make_rule(title="Hidden filter", trigger="Created", to_status=statuses[1])
+		self.assertFalse(frappe.db.get_value("CRM Automation Rule", rule.name, "to_status"))
+		deal = self.make_deal(status=statuses[0])
+		self.assertEqual(len(self.tasks_for(deal)), 1)
+
+	def test_a_status_the_document_type_does_not_have_is_rejected_at_save(self):
+		"""A status kept across a switch of "Applies to" names a status the record
+		can never reach, so the rule saved and then never fired."""
+		lead_statuses = set(frappe.get_all("CRM Lead Status", pluck="name"))
+		deal_only = next(s for s in frappe.get_all("CRM Deal Status", pluck="name") if s not in lead_statuses)
+		with self.assertRaises(frappe.ValidationError):
+			make_rule(
+				title="Lead rule, deal status",
+				document_type="CRM Lead",
+				trigger="Status Changed",
+				to_status=deal_only,
+			)
+		# the same status on a deal rule is fine
+		make_rule(title="Deal rule", trigger="Status Changed", to_status=deal_only)
+
+	def test_the_patch_clears_a_status_filter_saved_on_a_created_rule(self):
+		from crm.patches.v1_0.clear_status_filter_on_created_rules import execute
+
+		status = frappe.get_all("CRM Deal Status", pluck="name", limit=1)[0]
+		created = make_rule(title="Old created rule")
+		changed = make_rule(title="Status rule", trigger="Status Changed", to_status=status)
+		# what a save before validate_to_status left behind
+		frappe.db.set_value("CRM Automation Rule", created.name, "to_status", status, update_modified=False)
+		execute()
+		self.assertFalse(frappe.db.get_value("CRM Automation Rule", created.name, "to_status"))
+		self.assertEqual(frappe.db.get_value("CRM Automation Rule", changed.name, "to_status"), status)
+
 	def test_an_invalid_condition_is_rejected_at_save(self):
 		with self.assertRaises(frappe.ValidationError):
 			make_rule(title="Bad condition", condition="doc.status ==")
