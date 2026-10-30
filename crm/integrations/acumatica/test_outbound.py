@@ -546,6 +546,37 @@ class TestCreateSalesQuote(FrappeTestCase):
 		client.put.assert_not_called()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_deal_priced_in_another_currency_than_its_customer_is_refused(self, ClientCls):
+		"""Acumatica books a quote in its customer's currency and reads every UnitPrice
+		in it: a ZAR-priced deal reached a USD customer as dollars, about 18x the price."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		org, deal = _mapped_deal()
+		frappe.db.set_value("CRM Organization", org.name, "currency", "USD")
+		frappe.db.set_value("CRM Deal", deal.name, "currency", "ZAR")
+
+		with self.assertRaises(frappe.ValidationError) as ctx:
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertIn("billed in USD", str(ctx.exception))
+		client.put.assert_not_called()
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_the_quote_says_which_currency_its_prices_are_in(self, ClientCls):
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.return_value = _wrapped(OrderNbr="QT000132")
+		org, deal = _mapped_deal()
+		frappe.db.set_value("CRM Organization", org.name, "currency", "USD")
+		frappe.db.set_value("CRM Deal", deal.name, "currency", "USD")
+
+		outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertEqual(client.put.call_args[0][1]["CurrencyID"], "USD")
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_a_free_text_line_is_refused_by_name_not_with_a_type_error(self, ClientCls):
 		"""A line typed in by name has no product_code: its None went into the list of
 		unlinked codes and ", ".join() raised a TypeError -- a generic error toast and

@@ -220,11 +220,31 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 			).format(", ".join(unlinked))
 		)
 
+	# Acumatica books a quote in its customer's currency and reads every UnitPrice in
+	# it. A deal priced in another currency would reach a USD customer as ZAR figures
+	# taken for dollars -- about eighteen times the price, and nothing flags it.
+	base_currency = frappe.db.get_single_value("FCRM Settings", "currency")
+	deal_currency = deal.get("currency") or base_currency
+	customer_currency = (
+		frappe.db.get_value("CRM Organization", deal.organization, "currency") or base_currency
+	)
+	if deal_currency != customer_currency:
+		frappe.throw(
+			_(
+				"This deal is priced in {0}, but its customer is billed in {1} in Acumatica. "
+				"Change the deal's currency to {1} and its prices with it, then try again."
+			).format(deal_currency, customer_currency)
+		)
+
 	payload = {
 		"OrderType": settings.quote_order_type,
 		"CustomerID": customer_id,
 		"Description": f"Vectora deal {deal.name}",
 	}
+	if deal_currency:
+		# said outright rather than left to the customer's default, so a currency the
+		# CRM has out of date is refused or honoured by Acumatica, never misread
+		payload["CurrencyID"] = deal_currency
 	if details:
 		payload["Details"] = details
 
