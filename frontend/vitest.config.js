@@ -1,21 +1,35 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
+import vueJsx from '@vitejs/plugin-vue-jsx'
+import { lucideIconsPlugin } from 'frappe-ui/vite'
+import fs from 'node:fs'
+import path from 'node:path'
 import appConfig from './vite.config.js'
 
-// Component tests resolve imports exactly as the app does: the frappe-ui
-// compat shim, its subpath entries and the @framework/ui stub all come from
-// vite.config.js rather than a copy that would drift from it.
+// Component tests resolve imports the way the app does: the frappe-ui compat
+// shim, its subpath entries and the @framework/ui stub all come from
+// vite.config.js rather than a copy that would drift from it. Of the app's
+// plugins only the ones that change how a module resolves are repeated here:
+// JSX (utils/dialogs.jsx) and the `~icons/lucide/*` resolver. frappe-ui's full
+// lucideIcons() is left out because its auto-import plugins write .d.ts files.
 export default defineConfig(async (env) => {
   // Tests never see the bench's @framework/ui: the no-op stub keeps a run on
   // a bare checkout (CI, a worktree) identical to one inside the devcontainer.
   process.env.FRAMEWORK_UI_STUB = '1'
   const app = await appConfig({ ...env, mode: 'test' })
   return {
-    plugins: [vue()],
+    plugins: [vue(), vueJsx(), lucideIconsPlugin()],
     // A worktree symlinks frontend/node_modules from the main checkout, which
     // puts every package outside vite's fs allow-list ("Denied ID ...?raw").
-    // Nothing is served to a browser here, so the restriction protects nothing.
-    server: { fs: { strict: false } },
+    // Allow that one real path rather than turning the check off.
+    server: {
+      fs: {
+        allow: [
+          import.meta.dirname,
+          fs.realpathSync(path.join(import.meta.dirname, 'node_modules')),
+        ],
+      },
+    },
     test: {
       globals: true,
       environment: 'happy-dom',

@@ -1,25 +1,33 @@
-import { defineComponent, h } from 'vue'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from './mount.js'
-import { Badge } from 'frappe-ui'
+import StatTile from '@/components/Dashboard/StatTile.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
 
 describe('component test harness', () => {
-  it('mounts an SFC from the app and records its emits', async () => {
-    const Probe = defineComponent({
-      props: { label: { type: String, default: '' } },
-      emits: ['picked'],
-      setup(props, { emit }) {
-        return () =>
-          h('button', { onClick: () => emit('picked', props.label) }, [
-            h(Badge, { label: props.label }),
-          ])
+  it('mounts an app SFC and records its emits alongside a handler from props', async () => {
+    const onDrill = vi.fn()
+    const w = mount(StatTile, {
+      props: {
+        label: 'Open deals',
+        value: 7,
+        drilldownLabel: 'Open deals',
+        onDrill,
       },
     })
-    const w = mount(Probe, { props: { label: 'Open' } })
-    w.el.querySelector('button').click()
     await w.nextTick()
-    expect(w.el.textContent).toContain('Open')
-    expect(w.emitted.picked).toEqual([['Open']])
-    w.unmount()
+    expect(w.el.textContent).toContain('Open deals')
+    w.el.querySelector('button')?.click()
+    expect(w.emitted.drill).toHaveLength(1)
+    expect(onDrill).toHaveBeenCalledOnce()
+  })
+
+  it('resolves ~icons/lucide imports and gives templates __()', async () => {
+    const w = mount(ErrorState, { props: { title: 'Nothing here' } })
+    await w.nextTick()
+    expect(w.el.textContent).toContain('Nothing here')
+  })
+
+  it('cleans up after a test that did not unmount', () => {
+    expect(document.body.children).toHaveLength(0)
   })
 })

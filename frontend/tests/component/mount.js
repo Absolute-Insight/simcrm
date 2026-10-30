@@ -1,4 +1,13 @@
+import { afterEach } from 'vitest'
 import { createApp, h, nextTick } from 'vue'
+
+const mounted = new Set()
+
+// A test that throws before its own unmount() would otherwise leave the app,
+// and anything it teleported into <body>, for the next test in the file.
+afterEach(() => {
+  for (const wrapper of [...mounted]) wrapper.unmount()
+})
 
 /**
  * Mount a single-file component into happy-dom for a component test.
@@ -6,6 +15,8 @@ import { createApp, h, nextTick } from 'vue'
  * The repo has no @vue/test-utils; createApp is enough for what these tests
  * check (rendered DOM, emitted events, calls the component makes). `stubs`
  * registers global components by name, the way main.js registers frappe-ui's.
+ * Templates get `__()` from tests/setup.js unless a plugin installs its own.
+ * A handler passed in `props` runs as well as the emit capture, not instead.
  *
  *   const { el, vm, emitted, unmount } = mount(MyModal, { props: { show: true } })
  */
@@ -14,24 +25,28 @@ export function mount(
   { props = {}, slots = {}, stubs = {}, plugins = [] } = {},
 ) {
   const emitted = {}
-  const listeners = {}
+  const handlers = { ...props }
   for (const name of component.emits
     ? Object.keys(normaliseEmits(component.emits))
     : []) {
     const key = 'on' + name[0].toUpperCase() + name.slice(1)
-    listeners[key] = (...args) => (emitted[name] ||= []).push(args)
+    const own = props[key]
+    handlers[key] = (...args) => {
+      ;(emitted[name] ||= []).push(args)
+      return own?.(...args)
+    }
   }
   let vm
   const app = createApp({
-    render: () =>
-      h(component, { ...listeners, ...props, ref: (r) => (vm = r) }, slots),
+    render: () => h(component, { ...handlers, ref: (r) => (vm = r) }, slots),
   })
+  app.config.globalProperties.__ = globalThis.__
   for (const [name, stub] of Object.entries(stubs)) app.component(name, stub)
   for (const plugin of plugins) app.use(...[].concat(plugin))
   const el = document.createElement('div')
   document.body.appendChild(el)
   app.mount(el)
-  return {
+  const wrapper = {
     el,
     get vm() {
       return vm
@@ -39,10 +54,13 @@ export function mount(
     emitted,
     nextTick,
     unmount() {
+      if (!mounted.delete(wrapper)) return
       app.unmount()
       el.remove()
     },
   }
+  mounted.add(wrapper)
+  return wrapper
 }
 
 function normaliseEmits(emits) {
