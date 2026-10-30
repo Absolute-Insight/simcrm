@@ -234,7 +234,9 @@ const activeRangeKey = ref('')
 const currentUser = ref(user)
 
 async function updateUser(u) {
-  currentUser.value = u
+  // The picker's Clear sends '': the events asked for owner '' while the
+  // picker, falling back to the session user, still read your own name.
+  currentUser.value = u || user
   events.update({
     orFilters: buildEventOrFilters(),
   })

@@ -168,6 +168,20 @@ describe('Calendar page', () => {
     )
   })
 
+  it('falls back to your own calendar when the user picker is cleared', async () => {
+    await open()
+    const before = eventLists().length
+    state.pickers.at(-1).onChange('') // Link's Clear emits ''
+    await settle()
+
+    const request = eventLists().slice(before).at(-1)
+    expect(request.params.or_filters).toEqual([
+      ['owner', '=', 'rep@example.com'],
+      ['Event Participants', 'email', '=', 'rep@example.com'],
+    ])
+    expect(state.pickers.at(-1).value).toBe('Full(rep@example.com)')
+  })
+
   it('lists an event once when it matches more than one participant row', async () => {
     const row = {
       name: 'EV-1',
