@@ -138,20 +138,32 @@ def _validated_ips(url: str, cfg) -> list:
 	if allowed and not _domain_in_list(host, allowed):
 		raise SSRFError(f"host is not on the allowed-domains list: {host}")
 
+	# One answer for "no such name" and "an internal name", and never the address:
+	# this text reaches whoever typed the URL, and telling them which internal IP a
+	# compose service sits on -- or that the name exists at all -- maps the network
+	# for them. The specifics go to the server log.
+	not_public = f"host {host} does not resolve to a public address"
 	try:
 		ips = _resolve_ips(host)
 	except socket.gaierror as exc:
-		raise SSRFError(f"could not resolve host {host}: {exc}") from exc
+		_log_rejection(host, f"could not resolve: {exc}")
+		raise SSRFError(not_public) from exc
 	if not ips:
-		raise SSRFError(f"could not resolve host {host}")
+		_log_rejection(host, "resolved to nothing")
+		raise SSRFError(not_public)
 	for ip in ips:
 		if _is_blocked_ip(ip):
-			raise SSRFError(f"host {host} resolves to a non-public address: {ip}")
+			_log_rejection(host, f"resolves to a non-public address: {ip}")
+			raise SSRFError(not_public)
 
 	# Deterministic order, IPv4 first: the caller pins the first entry, and unlike
 	# requests' resolver it won't fall back across address families, so an IPv6
 	# answer must not shadow a reachable IPv4 one on v4-only networks.
 	return sorted(ips, key=lambda ip: (":" in ip, ip))
+
+
+def _log_rejection(host: str, detail: str) -> None:
+	frappe.logger("crm.enrichment").info(f"SSRF guard rejected {host}: {detail}")
 
 
 # --------------------------------------------------------------------------- #
