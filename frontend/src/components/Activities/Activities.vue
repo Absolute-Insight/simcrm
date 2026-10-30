@@ -412,7 +412,7 @@
       v-model="doc"
       v-model:reload="reload_email"
       :doctype="doctype"
-      @scroll="scroll"
+      @scroll="scrollToLatest"
     />
     <WhatsAppBox
       v-if="title == 'WhatsApp'"
@@ -421,7 +421,7 @@
       v-model:reply="replyMessage"
       v-model:whatsapp="whatsappMessages"
       :doctype="doctype"
-      @scroll="scroll"
+      @scroll="scrollToLatest"
     />
   </div>
   <WhatsappTemplateSelectorModal
@@ -495,7 +495,6 @@ import { whatsappEnabled } from '@/composables/whatsapp'
 import { useDocument } from '@/data/document'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { Button, createResource, toast } from 'frappe-ui'
-import { useElementVisibility } from '@vueuse/core'
 import {
   ref,
   computed,
@@ -565,12 +564,34 @@ const all_activities = createResource({
   transform: ([versions, calls, notes, tasks, attachments]) => {
     return { versions, calls, notes, tasks, attachments }
   },
-  onSuccess: () => nextTick(() => scroll()),
   onError: (error) => {
     toast.error(error.messages?.[0] || __('Failed to load activities'))
   },
 })
 if (showsTimeline) all_activities.reload()
+
+// Where a load leaves the timeline: on the activity a deep link names
+// (#<comment> from a mention notification) until the rep posts something,
+// else on the newest row. Watched here rather than in onSuccess, which on the
+// cached resource is the closure of whichever Activities created it.
+let linkedActivity = deepLink()
+if (showsTimeline) {
+  watch(
+    () => all_activities.data,
+    () => {
+      if (!all_activities.error) nextTick(() => scroll(linkedActivity))
+    },
+  )
+}
+
+function deepLink() {
+  const hash = route.hash?.slice(1)
+  if (!hash) return null
+  const isTab = props.tabs?.some(
+    (tab) => String(tab.value ?? tab.name).toLowerCase() === hash.toLowerCase(),
+  )
+  return isTab ? null : hash
+}
 
 const showWhatsappTemplates = ref(false)
 
@@ -617,13 +638,7 @@ onMounted(() => {
   $socket.on('docinfo_update', handleDocinfoUpdate)
   $socket.on('whatsapp_message', handleWhatsappMessage)
 
-  nextTick(() => {
-    const hash = route.hash.slice(1) || null
-    let tabNames = props.tabs?.map((tab) => tab.name)
-    if (!tabNames?.includes(hash)) {
-      scroll(hash)
-    }
-  })
+  nextTick(() => scroll(linkedActivity))
 })
 
 function handleDocinfoUpdate({ doc, key }) {
@@ -909,11 +924,18 @@ function scroll(hash) {
     } else {
       el = document.getElementById(hash)
     }
-    if (el && !useElementVisibility(el).value) {
+    if (el) {
       el.scrollIntoView({ behavior: 'smooth' })
       el.focus()
     }
   }, 500)
+}
+
+// After the rep sends something, the newest row is what they want to see,
+// whatever the URL was pointing at.
+function scrollToLatest() {
+  linkedActivity = null
+  scroll()
 }
 
 defineExpose({ emailBox, all_activities, changeTabTo })

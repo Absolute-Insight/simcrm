@@ -237,3 +237,59 @@ describe('Activities realtime refresh', () => {
     expect(S.mounts.DataFields).toBe(1)
   })
 })
+
+describe('Activities scroll position', () => {
+  let scrolled
+  let original
+  beforeEach(async () => {
+    // Let the 500 ms scroll timers of earlier tests run out first.
+    await new Promise((r) => setTimeout(r, 600))
+    scrolled = []
+    original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function () {
+      scrolled.push(this.id || 'newest')
+    }
+    return () => (Element.prototype.scrollIntoView = original)
+  })
+
+  const comments = () => [
+    [1, 2, 3, 4, 5].map((i) => ({
+      name: 'CMT-' + i,
+      activity_type: 'comment',
+      owner: 'rep@example.com',
+      content: '<p>c' + i + '</p>',
+      creation: `2026-10-2${i} 10:00:00`,
+      attachments: [],
+    })),
+    [],
+    [],
+    [],
+    [],
+  ]
+
+  it('stays on the comment a mention notification links to', async () => {
+    S.timeline = comments
+    S.slow = 100
+    open(newDeal(), 'activity', '#CMT-3')
+    await settle(400)
+    expect(scrolled.length).toBeGreaterThan(0)
+    expect(scrolled.at(-1)).toBe('CMT-3')
+  })
+
+  it('goes to the newest row once the rep has posted', async () => {
+    S.timeline = comments
+    const name = newDeal()
+    open(name, 'activity', '#CMT-3')
+    await settle(200)
+    expect(scrolled.at(-1)).toBe('CMT-3')
+
+    // The rep posts; the timeline reloads with their comment on it.
+    S.composer.sent()
+    S.socket.docinfo_update({
+      doc: { reference_doctype: 'CRM Deal', reference_name: name },
+      key: 'comments',
+    })
+    await settle(200)
+    expect(scrolled.at(-1)).toBe('newest')
+  })
+})
