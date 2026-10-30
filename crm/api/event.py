@@ -5,9 +5,10 @@ This module handles event notifications for the CRM system, supporting both:
 1. Custom event notifications set on individual events
 2. Global default notifications from CRM Settings for events without custom notifications
 
-The notification system processes events that are either:
-- Starting from now or in the future (normal case)
-- Currently in progress (between starts_on and ends_on) to handle delayed notifications
+One sweep, on the scheduler's every-tick job, sends each reminder once: when its
+trigger time has passed, before the event starts, and no earlier sweep has sent
+it. A sweep that runs late (a busy worker, a restart) catches up, as does a
+reminder added after its time had already passed.
 
 Global notifications are configured in CRM Settings under the Calendar tab and are applied
 to events that don't have custom notifications set. This ensures all events can receive
@@ -18,49 +19,69 @@ from datetime import datetime, timedelta
 
 import frappe
 from frappe import _
-from frappe.utils import add_to_date, escape_html, format_datetime, now_datetime
+from frappe.utils import add_to_date, escape_html, format_datetime, get_time, now_datetime
+
+# How late a reminder may still go out. It covers a delayed sweep and a reminder
+# set after its time (a meeting booked five minutes before it starts), and it
+# bounds what losing the sent ledger below can cost: at most the last hour's
+# reminders are sent a second time.
+REMINDER_CATCH_UP = timedelta(hours=1)
+# Sent ledger, in the cache: one key per reminder per trigger time.
+SENT_REMINDER_KEY = "crm:event_reminder_sent:"
 
 
 def trigger_offset_event_notifications():
-	"""Trigger event notifications for offset-based intervals (minutes)."""
-	_process_event_notifications_by_interval("minutes")
-	_process_event_notifications_by_interval("hours")
+	"""Send every event reminder that has come due, once.
 
-
-def trigger_hourly_event_notifications():
-	"""Trigger event notifications for hourly intervals."""
-	_process_event_notifications_by_interval("hours")
-
-
-def trigger_daily_event_notifications():
-	"""Trigger event notifications for daily intervals."""
-	_process_event_notifications_by_interval("days")
-
-
-def trigger_weekly_event_notifications():
-	"""Trigger event notifications for weekly intervals."""
-	_process_event_notifications_by_interval("weeks")
-
-
-def _process_event_notifications_by_interval(interval):
-	"""
-	Process event notifications for a specific interval.
-
-	Args:
-		interval (str): The interval type ('minutes', 'hours', 'days', 'weeks')
+	The only reminder job. There used to be one per interval, each sending
+	whatever fell within a window around the trigger time (+/-5 minutes up to
+	+/-4 days) with no record of what had gone out: the every-tick job and the
+	hourly one both swept hours, every tick inside a window sent again, and an
+	event in progress widened the window to the whole meeting -- 17 emails for
+	"10 minutes before", 48 for "1 hour before", to every external participant.
+	The once-a-day "days" sweep, meanwhile, could not reach a +/-8 h window
+	around a business-hours trigger, so those never fired.
 	"""
 
 	if frappe.flags.in_import or frappe.flags.in_patch:
 		return
 
 	current_time = now_datetime()
-	# A site-wide sweep. This used to filter on `e.owner = frappe.session.user OR
-	# ep.email = frappe.session.user`, which under the scheduler is Administrator:
-	# every event a rep or manager created -- including the meetings and visits
-	# the planner writes -- was excluded, and no reminder ever fired for anyone
-	# but Administrator. Who each reminder reaches is decided per event by
-	# _notification_audience (owner plus participants), not by who runs the job.
-	all_events_data = frappe.db.sql(
+	for notification in _due_notifications(current_time):
+		try:
+			if not _claim_reminder(notification):
+				continue
+
+			if notification.notification_type == "Email":
+				_send_email_notification(
+					notification,
+					notification.starts_on,
+					notification.before_value,
+					notification.notification_interval,
+				)
+			elif notification.notification_type == "Notification":
+				_send_system_notification(notification)
+
+		except Exception as e:
+			frappe.log_error(
+				f"Error processing {notification.notification_interval} notification for event {notification.event_name}: {e!s}"
+			)
+			continue
+
+
+def _due_notifications(current_time):
+	"""Every reminder whose trigger time has passed, within REMINDER_CATCH_UP,
+	for an event that has not started yet.
+
+	A site-wide sweep. This used to filter on `e.owner = frappe.session.user OR
+	ep.email = frappe.session.user`, which under the scheduler is Administrator:
+	every event a rep or manager created -- including the meetings and visits
+	the planner writes -- was excluded, and no reminder ever fired for anyone
+	but Administrator. Who each reminder reaches is decided per event by
+	_notification_audience (owner plus participants), not by who runs the job.
+	"""
+
+	rows = frappe.db.sql(
 		"""
 		SELECT
 			e.name as event_name,
@@ -73,152 +94,121 @@ def _process_event_notifications_by_interval(interval):
 			en.type as notification_type,
 			en.before as before_value,
 			en.time as time_of_day,
-			en.interval as notification_interval,
-			ep_all.participant_emails_csv,
-			CASE WHEN en.parent IS NULL THEN 0 ELSE 1 END as has_custom_notifications
+			en.interval as notification_interval
 		FROM `tabEvent` e
-		LEFT JOIN `tabEvent Notifications` en ON e.name = en.parent AND en.interval = %s
-		LEFT JOIN (
-			SELECT parent, GROUP_CONCAT(email) AS participant_emails_csv
-			FROM `tabEvent Participants`
-			GROUP BY parent
-		) AS ep_all ON ep_all.parent = e.name
-		WHERE (e.starts_on >= %s OR (%s >= e.starts_on AND %s < e.ends_on))
+		LEFT JOIN `tabEvent Notifications` en
+			ON en.parent = e.name AND en.parenttype = 'Event' AND en.parentfield = 'notifications'
+		WHERE e.starts_on > %(now)s
 		AND e.status != 'Cancelled'
-		ORDER BY e.starts_on, e.name
+		ORDER BY e.starts_on, e.name, en.idx
 	""",
-		(interval, current_time, current_time, current_time),
+		{"now": current_time},
 		as_dict=True,
 	)
 
-	for event_data in all_events_data:
-		participant_emails_csv = event_data.pop("participant_emails_csv", None)
-		event_data["event_participants"] = _split_participant_emails(participant_emails_csv)
+	global_notifications = None
+	due = []
+	for row in rows:
+		if row.notification_type:
+			notifications = [row]
+		else:
+			# No reminder of its own, so the defaults from CRM Settings apply. Decided
+			# per event: the join is not filtered by interval, so an event with only
+			# an hours reminder does not pick up the minutes defaults as well.
+			if global_notifications is None:
+				global_notifications = _global_notifications()
+			notifications = _apply_global_notifications(row, global_notifications)
 
-	notifications = _process_unified_event_data(all_events_data, interval)
-
-	for notification in notifications:
-		try:
-			event_start = notification.get("starts_on")
-			event_end = notification.get("ends_on")
-			before_value = notification.get("before_value", 1)
-
-			trigger_datetime = _calculate_trigger_datetime(
-				event_start,
-				before_value,
-				interval,
-				notification.get("all_day_event"),
-				notification.get("time_of_day"),
-			)
-
-			event_is_in_progress = event_start <= current_time < event_end
-			trigger_time_passed = current_time > trigger_datetime
-
-			if event_is_in_progress and trigger_time_passed:
-				trigger_window_start = trigger_datetime
-				trigger_window_end = event_end
-			else:
-				window_duration = _get_trigger_window_duration(interval)
-				trigger_window_start = add_to_date(
-					trigger_datetime, **{k: -v for k, v in window_duration.items()}
+		for notification in notifications:
+			try:
+				notification.trigger_datetime = _calculate_trigger_datetime(
+					notification.starts_on,
+					notification.before_value,
+					notification.notification_interval,
+					notification.all_day_event,
+					notification.time_of_day,
 				)
-				trigger_window_end = add_to_date(trigger_datetime, **window_duration)
-
-			if not (trigger_window_start <= current_time <= trigger_window_end):
+			except Exception as e:
+				frappe.log_error(f"Error scheduling notification for event {notification.event_name}: {e!s}")
 				continue
 
-			if notification.get("notification_type") == "Email":
-				_send_email_notification(notification, event_start, before_value, interval)
-			elif notification.get("notification_type") == "Notification":
-				_send_system_notification(notification)
+			if (
+				notification.trigger_datetime
+				<= current_time
+				< (notification.trigger_datetime + REMINDER_CATCH_UP)
+			):
+				due.append(notification)
 
-		except Exception as e:
-			frappe.log_error(
-				f"Error processing {interval} notification for event {notification.get('event_name', 'Unknown')}: {e!s}"
-			)
-			continue
+	if due:
+		participants = {}
+		for participant in frappe.get_all(
+			"Event Participants",
+			filters={
+				"parenttype": "Event",
+				"parent": ["in", list({n.event_name for n in due})],
+			},
+			fields=["parent", "email"],
+			order_by="idx asc",
+		):
+			if participant.email:
+				participants.setdefault(participant.parent, []).append(participant.email)
+		for notification in due:
+			notification.event_participants = participants.get(notification.event_name, [])
 
-
-def _process_unified_event_data(all_events_data, interval):
-	"""
-	Process unified event data that includes both events with and without custom notifications.
-
-	Args:
-		all_events_data (list): List of event data from the unified query
-		interval (str): The interval type ('minutes', 'hours', 'days', 'weeks')
-
-	Returns:
-		list: List of processed notifications ready for sending
-	"""
-	notifications = []
-	events_without_notifications = []
-
-	for event_data in all_events_data:
-		if event_data.get("has_custom_notifications") == 1:
-			notifications.append(event_data)
-		else:
-			event_key = event_data.get("event_name")
-			if not any(e.get("event_name") == event_key for e in events_without_notifications):
-				events_without_notifications.append(event_data)
-	if events_without_notifications:
-		global_notifications = _apply_global_notifications_to_events(events_without_notifications, interval)
-		notifications.extend(global_notifications)
-
-	return notifications
+	return due
 
 
-def _apply_global_notifications_to_events(events_without_notifications, interval):
-	"""
-	Apply global CRM Settings notifications to events that don't have custom notifications.
-
-	Args:
-		events_without_notifications (list): List of events without custom notifications
-		interval (str): The interval type ('minutes', 'hours', 'days', 'weeks')
-
-	Returns:
-		list: List of notification dictionaries using global settings
-	"""
+def _global_notifications():
+	"""The default reminders from CRM Settings, as (table, row) pairs."""
 
 	fcrm_settings = frappe.get_single("FCRM Settings")
-	global_notifications = []
-	if hasattr(fcrm_settings, "event_notifications"):
-		for notification in fcrm_settings.event_notifications:
-			if notification.interval == interval:
-				notification._table_type = "regular"
-				global_notifications.append(notification)
+	return [
+		*(("regular", row) for row in fcrm_settings.get("event_notifications") or []),
+		*(("all_day", row) for row in fcrm_settings.get("all_day_event_notifications") or []),
+	]
 
-	if hasattr(fcrm_settings, "all_day_event_notifications"):
-		for notification in fcrm_settings.all_day_event_notifications:
-			if notification.interval == interval:
-				notification._table_type = "all_day"
-				global_notifications.append(notification)
 
-	if not global_notifications:
-		return []
-	notifications = []
-	for event in events_without_notifications:
-		for global_notification in global_notifications:
-			if (global_notification._table_type == "all_day" and not event.all_day_event) or (
-				global_notification._table_type == "regular" and event.all_day_event
-			):
-				continue
+def _apply_global_notifications(event, global_notifications):
+	"""The CRM Settings defaults as this event's own reminders: the all-day table
+	for an all-day event, the regular one otherwise.
 
-			notification = {
-				"event_name": event.event_name,
-				"notification_type": global_notification.type,
-				"before_value": global_notification.before,
-				"time_of_day": global_notification.time,
-				"subject": event.subject,
-				"starts_on": event.starts_on,
-				"ends_on": event.ends_on,
-				"owner": event.owner,
-				"description": event.description,
-				"all_day_event": event.all_day_event,
-				"event_participants": event.get("event_participants", []),
-			}
-			notifications.append(notification)
+	Built as frappe._dict: the senders read them by attribute, which on a plain
+	dict raised "'dict' object has no attribute 'owner'" on every sweep and sent
+	nothing.
+	"""
 
-	return notifications
+	table = "all_day" if event.all_day_event else "regular"
+	return [
+		frappe._dict(
+			event,
+			notification_type=row.type,
+			before_value=row.before,
+			time_of_day=row.time,
+			notification_interval=row.interval,
+		)
+		for table_type, row in global_notifications
+		if table_type == table
+	]
+
+
+def _claim_reminder(notification) -> bool:
+	"""Record in the sent ledger that this reminder is going out; False when an
+	earlier sweep already sent it.
+
+	Keyed by what the reminder is rather than by its row: the frontend re-saves
+	an event's reminder rows under new names, and a moved event's reminder is a
+	new one and should fire again. Two rows of the same type that land on the
+	same minute are one reminder. SET NX makes the claim atomic, so two sweeps
+	running at once cannot both send it.
+	"""
+
+	key = frappe.cache.make_key(
+		f"{SENT_REMINDER_KEY}{notification.event_name}:{notification.notification_type}:"
+		f"{notification.trigger_datetime.isoformat()}"
+	)
+	# kept past the end of the catch-up window, after which it cannot fire again
+	expires = int(REMINDER_CATCH_UP.total_seconds()) + 600
+	return bool(frappe.cache.set(key, 1, ex=expires, nx=True))
 
 
 def _calculate_trigger_datetime(event_start, before_value, interval, all_day_event, time_of_day):
@@ -242,7 +232,9 @@ def _calculate_trigger_datetime(event_start, before_value, interval, all_day_eve
 		elif interval == "weeks":
 			trigger_date = event_start.date() - timedelta(weeks=before_value)
 
-		trigger_datetime = datetime.combine(trigger_date, time_of_day)
+		# A Time column is read back from MariaDB as a timedelta, which
+		# datetime.combine refuses: every all-day reminder with a time raised here.
+		trigger_datetime = datetime.combine(trigger_date, get_time(time_of_day))
 	else:
 		interval_kwargs = _get_interval_kwargs(interval, before_value)
 		trigger_datetime = add_to_date(event_start, **interval_kwargs)
@@ -269,35 +261,6 @@ def _get_interval_kwargs(interval, before_value):
 	}
 
 	return interval_mapping.get(interval, {"hours": -before_value})
-
-
-def _get_trigger_window_duration(interval):
-	"""
-	Get the trigger window duration based on interval type.
-
-	Args:
-		interval (str): The interval type ('minutes', 'hours', 'days', 'weeks')
-
-	Returns:
-		dict: Window duration to be used symmetrically around the trigger time
-	"""
-	window_mapping = {
-		"minutes": {"minutes": 5},
-		"hours": {"hours": 1},
-		"days": {"hours": 8},
-		"weeks": {"days": 4},
-	}
-
-	return window_mapping.get(interval, {"hours": 1})
-
-
-def _split_participant_emails(participant_emails_csv):
-	"""Return a clean list of participant emails from a comma-separated string."""
-
-	if not participant_emails_csv:
-		return []
-
-	return [email.strip() for email in participant_emails_csv.split(",") if email and email.strip()]
 
 
 def _notification_audience(notification) -> set[str]:
