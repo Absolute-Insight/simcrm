@@ -12,6 +12,7 @@ import json
 import tempfile
 from datetime import date, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
@@ -376,6 +377,32 @@ class ImportTest(IntegrationTestCase):
 		self.assertEqual(summary["updated"], 1)
 		item = self.items_of(REP)[0]
 		self.assertEqual(frappe.get_all("Event", {"owner": REP}, pluck="name"), [item.fulfilled_by])
+
+	def test_every_commit_is_preceded_by_a_manifest_naming_what_it_commits(self):
+		"""A run killed outright never reaches its finally. Written only there, the
+		manifest named none of the plans already committed, and the re-run appended
+		every one of them again."""
+		self.write(
+			[row(id="a"), row(id="b", date="24/03/2026 09:00"), row(id="c", date="31/03/2026 09:00")]
+		)  # three weeks: three plans, a batch commit after two and the closing one
+		path = self.dir / h.MANIFEST_NAME
+		unnamed = []
+
+		def commit():
+			named = set()
+			if path.exists():
+				named = {r["item"] for r in json.loads(path.read_text())["rows"].values()}
+			unnamed.append({item.name for item in self.items_of(REP)} - named)
+
+		in_test = frappe.flags.in_test
+		frappe.flags.in_test = False  # what lets _commit_every commit; commit itself is stubbed
+		try:
+			with patch.object(h, "COMMIT_EVERY", 2), patch.object(frappe.db, "commit", side_effect=commit):
+				self.run_import()
+		finally:
+			frappe.flags.in_test = in_test
+
+		self.assertEqual(unnamed, [set(), set()])
 
 	def test_a_new_row_for_an_existing_week_is_appended_not_duplicated(self):
 		self.write([row(id="a")])

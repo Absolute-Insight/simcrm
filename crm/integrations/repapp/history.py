@@ -247,9 +247,15 @@ def _write_manifest(path: Path, manifest: dict[str, dict]) -> None:
 	path.write_text(json.dumps({"rows": manifest}, indent=1))
 
 
-def _commit_every(done: int) -> None:
+def _commit_every(done: int, manifest_path: Path, manifest: dict[str, dict]) -> None:
 	# never under test (one rolled-back transaction) and never on a dry run
 	if done % COMMIT_EVERY == 0 and not (frappe.flags.in_test or frappe.flags.repapp_import_dry_run):
+		# The ids go to disk before the plans they name are made durable. Written only
+		# in the finally, a run killed outright -- SIGKILL, a dropped SSH session --
+		# left committed plans no manifest named, and the re-run appended every one of
+		# them again. An id whose commit then never happened costs nothing: the next
+		# run checks that its item exists before it skips the row.
+		_write_manifest(manifest_path, manifest)
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 
@@ -500,7 +506,7 @@ def import_history(
 			summary["imported"] += len(pending)
 			summary["plans"] += 1
 			done += 1
-			_commit_every(done)
+			_commit_every(done, manifest_path, manifest)
 		for shaped, landed in catch_up:
 			organization = companies.get(shaped["company"]) if shaped["company"] else None
 			outcome = _catch_up(shaped, landed, organization, contacts)
@@ -512,6 +518,9 @@ def import_history(
 		if dry_run:
 			frappe.db.rollback()
 		elif not frappe.flags.in_test:
+			# ahead of the commit, as in _commit_every: the finally below is not reached
+			# by a run killed in between
+			_write_manifest(manifest_path, manifest)
 			frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	finally:
 		frappe.flags.repapp_import_dry_run = False
