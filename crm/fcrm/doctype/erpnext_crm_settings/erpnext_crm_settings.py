@@ -3,6 +3,7 @@
 
 import functools
 import json
+from urllib.parse import urlencode
 
 import frappe
 from frappe import _
@@ -458,8 +459,10 @@ def get_quotation_url(crm_deal: str, organization: str | None = None):
 			"customer_address": address_name,
 		}
 
-	# Filter out None values and build query string
-	query_string = "&".join(f"{key}={value}" for key, value in params.items() if value is not None)
+	# Filter out None values and build query string. Encoded, not joined by hand: a
+	# party named "Smith & Sons" otherwise reached ERPNext as "Smith ", and a "#"
+	# dropped everything after it.
+	query_string = urlencode({key: value for key, value in params.items() if value is not None})
 
 	return f"{base_url}?{query_string}"
 

@@ -131,6 +131,36 @@ class CustomerPushOffTheSavePathTest(IntegrationTestCase):
 		self.assertFalse(frappe.db.get_single_value("ERPNext CRM Settings", "last_customer_push_error"))
 
 
+class QuotationUrlTest(IntegrationTestCase):
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		_enable(erpnext_company="Smith & Sons #2 Co")
+
+	def tearDown(self):
+		frappe.db.rollback()
+		super().tearDown()
+
+	def test_every_value_reaches_erpnext_whole(self):
+		"""The query string was joined by hand: "Smith & Sons" arrived as "Smith " and a
+		"#" cut off everything after it, prefilling the quotation with half a party."""
+		from urllib.parse import parse_qs, urlsplit
+
+		deal = _won_deal()
+		with patch.object(erp, "create_prospect_in_remote_site", return_value="Smith & Sons #1"):
+			url = erp.get_quotation_url(deal.name)
+
+		parts = urlsplit(url)
+		self.assertEqual(
+			f"{parts.scheme}://{parts.netloc}{parts.path}", "https://erp.invalid/app/quotation/new"
+		)
+		query = parse_qs(parts.query)
+		self.assertEqual(query["party_name"], ["Smith & Sons #1"])
+		self.assertEqual(query["company"], ["Smith & Sons #2 Co"])
+		self.assertEqual(query["crm_deal"], [deal.name])
+		self.assertEqual(query["quotation_to"], ["Prospect"])
+
+
 class SyncIssueDismissalTest(IntegrationTestCase):
 	def tearDown(self):
 		frappe.set_user("Administrator")
