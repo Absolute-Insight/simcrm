@@ -1,58 +1,60 @@
 <template>
   <Dialog v-model:open="show" bare :size="'3xl'">
     <template #default>
-      <div class="bg-surface-elevation-2 px-4 pb-6 pt-5 sm:px-6">
-        <div class="mb-5 flex items-center justify-between">
-          <div>
-            <DialogTitle as-child>
-              <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">
-                {{ __('Create Lead') }}
-              </h3>
-            </DialogTitle>
-            <VisuallyHidden>
-              <DialogDescription>{{
-                __('Create a new lead')
-              }}</DialogDescription>
-            </VisuallyHidden>
+      <div class="flex max-h-[calc(100dvh-6rem)] flex-col">
+        <div class="flex min-h-0 flex-1 flex-col bg-surface-elevation-2 pt-5">
+          <div class="mb-5 flex items-center justify-between px-4 sm:px-6">
+            <div>
+              <DialogTitle as-child>
+                <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">
+                  {{ __('Create Lead') }}
+                </h3>
+              </DialogTitle>
+              <VisuallyHidden>
+                <DialogDescription>{{
+                  __('Create a new lead')
+                }}</DialogDescription>
+              </VisuallyHidden>
+            </div>
+            <div class="flex items-center gap-1">
+              <Button
+                v-if="isManager() && !isMobileView"
+                variant="ghost"
+                class="w-7"
+                :tooltip="__('Edit Fields Layout')"
+                :icon="EditIcon"
+                @click="openQuickEntryModal"
+              />
+              <Button
+                variant="ghost"
+                class="w-7"
+                icon="lucide-x"
+                @click="show = false"
+              />
+            </div>
           </div>
-          <div class="flex items-center gap-1">
-            <Button
-              v-if="isManager() && !isMobileView"
-              variant="ghost"
-              class="w-7"
-              :tooltip="__('Edit Fields Layout')"
-              :icon="EditIcon"
-              @click="openQuickEntryModal"
-            />
-            <Button
-              variant="ghost"
-              class="w-7"
-              icon="lucide-x"
-              @click="show = false"
-            />
+          <div class="min-h-0 flex-1 overflow-y-auto px-4 pb-6 sm:px-6">
+            <FieldLayout v-if="tabs.data" :tabs="tabs.data" :data="lead.doc" />
+            <ErrorMessage v-if="error" class="mt-4" :message="__(error)" />
           </div>
         </div>
-        <div>
-          <FieldLayout v-if="tabs.data" :tabs="tabs.data" :data="lead.doc" />
-          <ErrorMessage v-if="error" class="mt-4" :message="__(error)" />
-        </div>
-      </div>
-      <div class="px-4 pb-7 pt-4 sm:px-6">
-        <div class="flex flex-row-reverse gap-2">
-          <Button
-            variant="solid"
-            :label="__('Create')"
-            :loading="isLeadCreating"
-            @click="createNewLead"
-          />
-          <Button
-            :label="__('Enrich')"
-            :loading="isEnriching"
-            :disabled="!lead.doc.website"
-            :tooltip="__('Fill fields from the company website')"
-            iconLeft="lucide-zap"
-            @click="enrichFromWebsite"
-          />
+        <div class="px-4 pb-7 pt-4 sm:px-6">
+          <div class="flex flex-row-reverse gap-2">
+            <Button
+              variant="solid"
+              :label="__('Create')"
+              :loading="isLeadCreating"
+              @click="createNewLead"
+            />
+            <Button
+              :label="__('Enrich')"
+              :loading="isEnriching"
+              :disabled="!lead.doc.website"
+              :tooltip="__('Fill fields from the company website')"
+              iconLeft="lucide-zap"
+              @click="enrichFromWebsite"
+            />
+          </div>
         </div>
       </div>
     </template>
