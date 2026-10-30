@@ -113,10 +113,11 @@
 
           <div class="grid grid-cols-2 gap-3">
             <FormControl
-              v-model="draft.document_type"
+              :model-value="draft.document_type"
               type="select"
               :label="__('Applies to')"
               :options="documentTypes"
+              @update:model-value="setDocumentType"
             />
             <FormControl
               v-model="draft.trigger"
@@ -362,6 +363,16 @@ watch(
   () => editorOpen.value && quiet(statuses.reload()),
 )
 
+/* A status belongs to one document type: kept across a switch of "Applies to",
+   a Lead rule waited for a Deal status no lead can have. Cleared here, on the
+   person's change, rather than in a watch -- opening a rule assigns
+   document_type too, and must keep the status it was saved with. */
+function setDocumentType(value) {
+  if (value === draft.document_type) return
+  draft.document_type = value
+  draft.to_status = ''
+}
+
 const statusOptions = computed(() => [
   { label: __('Any status'), value: '' },
   ...(statuses.data || []).map((s) => ({ label: s.name, value: s.name })),
@@ -398,6 +409,10 @@ async function save() {
   saving.value = true
   const { name, ...values } = draft
   values.title = title
+  // The status field is shown only for Status Changed; a value picked before
+  // the trigger moved to Created would otherwise be saved as a hidden filter.
+  if (values.trigger !== 'Status Changed') values.to_status = ''
+  let renamed = false
   try {
     if (name) {
       // The doctype is named by its title, and Frappe rewrites the title back
@@ -410,6 +425,11 @@ async function save() {
           old_name: name,
           new_name: title,
         })
+        // Two requests, not one: if the set_value below is refused, the rule
+        // already carries the new name, and a retry must not rename it from
+        // the old one, which no longer exists.
+        draft.name = title
+        renamed = true
       }
       await rules.setValue.submit({ name: title, ...values })
     } else {
@@ -421,6 +441,9 @@ async function save() {
   } catch (error) {
     saveError.value =
       describeError(error).message || __('The rule could not be saved.')
+    // and the list must show it under that name too, or Cancel and reopen
+    // edits the stale row
+    if (renamed) quiet(rules.reload())
   } finally {
     saving.value = false
   }
