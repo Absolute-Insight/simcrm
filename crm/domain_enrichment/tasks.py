@@ -16,6 +16,7 @@ reported over realtime.
 from __future__ import annotations
 
 import frappe
+from frappe.utils.background_jobs import is_job_enqueued
 from frappe.utils.telemetry import capture
 
 from .config import (
@@ -156,6 +157,12 @@ def enqueue_enrichment(
 	"""
 	timeout = job_timeout(get_settings())
 	job_id = f"domain-enrich-{reference_doctype}-{reference_name}"
+	if is_job_enqueued(job_id):
+		# frappe.enqueue would fold this into the job already queued or running, and
+		# say nothing: that job reports to whoever enqueued it -- nobody, for the
+		# nightly sweep -- so a caller told "queued" waited for an event that never
+		# came. Say it is already running instead.
+		return {"queued": False, "already_running": True, "job_id": job_id, "website": website}
 	frappe.enqueue(
 		"crm.domain_enrichment.tasks.run_enrichment",
 		queue="long",
@@ -169,7 +176,7 @@ def enqueue_enrichment(
 		user=user,
 		trigger=trigger,
 	)
-	return {"queued": True, "job_id": job_id, "website": website}
+	return {"queued": True, "job_id": job_id, "website": website, "timeout": timeout}
 
 
 def auto_enrich_on_create(doc, method=None):

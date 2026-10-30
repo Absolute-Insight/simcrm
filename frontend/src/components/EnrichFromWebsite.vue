@@ -35,6 +35,10 @@ const { capture } = useTelemetry()
 const EVENT = 'domain_enrichment_progress'
 
 const running = ref(false)
+// rq stops a job this long after its own timeout. A worker killed outright never
+// publishes a terminal event, so past this nothing is coming.
+const JOB_KILL_GRACE_SECONDS = 60
+let giveUp = null
 
 function isForThisDoc(data) {
   return (
@@ -46,6 +50,7 @@ function isForThisDoc(data) {
 
 function stop() {
   running.value = false
+  clearTimeout(giveUp)
   $socket.off(EVENT, onProgress)
 }
 
@@ -90,16 +95,41 @@ async function enrich() {
   // Subscribe before enqueueing so we never miss the completion event.
   $socket.on(EVENT, onProgress)
 
+  let answer
   try {
-    await call('crm.domain_enrichment.api.enrich', {
+    answer = await call('crm.domain_enrichment.api.enrich', {
       reference_doctype: props.doctype,
       reference_name: props.docname,
     })
   } catch (error) {
     stop()
     toast.error(error.messages?.[0] || __('Could not start enrichment.'))
+    return
+  }
+
+  if (answer?.already_running) {
+    // Folded into a run already queued or running (the nightly sweep's, say),
+    // which reports to whoever queued it: no event for this click is coming.
+    stop()
+    toast.info(
+      __(
+        'Enrichment is already running for this record. Reload in a minute to see the results.',
+      ),
+    )
+  } else if (running.value && answer?.timeout) {
+    giveUp = setTimeout(
+      () => {
+        stop()
+        toast.warning(
+          __(
+            'Enrichment did not report back. Reload the page to see whether it finished.',
+          ),
+        )
+      },
+      (answer.timeout + JOB_KILL_GRACE_SECONDS) * 1000,
+    )
   }
 }
 
-onBeforeUnmount(() => $socket.off(EVENT, onProgress))
+onBeforeUnmount(stop)
 </script>

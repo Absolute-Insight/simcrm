@@ -330,6 +330,34 @@ class JobTimeoutTest(IntegrationTestCase):
 		self.assertEqual(published[-1]["status"], "error")
 
 
+class AlreadyRunningTest(IntegrationTestCase):
+	"""A click while a run for the record is queued or running -- typically the
+	nightly sweep's -- is folded into that run by frappe.enqueue, which reports to
+	whoever enqueued it. Told "queued", the Enrich button waited for an event that
+	never came."""
+
+	def _enqueue(self, already_queued):
+		with (
+			mock.patch.object(tasks, "is_job_enqueued", return_value=already_queued) as probe,
+			mock.patch.object(tasks.frappe, "enqueue") as enq,
+		):
+			answer = tasks.enqueue_enrichment("CRM Organization", "O1", "https://acme.example", "rep@x.test")
+		probe.assert_called_once_with("domain-enrich-CRM Organization-O1")
+		return answer, enq
+
+	def test_a_deduplicated_click_is_not_told_it_was_queued(self):
+		answer, enq = self._enqueue(already_queued=True)
+		self.assertFalse(answer["queued"])
+		self.assertTrue(answer["already_running"])
+		enq.assert_not_called()
+
+	def test_a_fresh_click_is_queued_with_its_deadline(self):
+		answer, enq = self._enqueue(already_queued=False)
+		self.assertTrue(answer["queued"])
+		self.assertNotIn("already_running", answer)
+		self.assertEqual(answer["timeout"], enq.call_args.kwargs["timeout"])
+
+
 class ApiPermissionTest(IntegrationTestCase):
 	def tearDown(self):
 		frappe.db.rollback()

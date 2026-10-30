@@ -81,7 +81,9 @@ def enrich(reference_doctype: str, reference_name: str) -> dict:
 	"""Enqueue a full enrichment run for one CRM record, using the record's own
 	``website`` field. The initial trigger (the "Enrich from Website" button).
 
-	Returns ``{queued: bool, job_id: str, website: str}``.
+	Returns ``{queued: bool, job_id: str, website: str}``, plus ``timeout`` (the job's,
+	in seconds) when queued, or ``already_running: True`` when a run for the record
+	was already queued or running and nothing new was enqueued.
 	"""
 	_check_user_rate_limit()
 	# The allow-list gates the lookup, not just the enqueue. Loading the document
