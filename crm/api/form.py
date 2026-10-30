@@ -12,6 +12,7 @@ doctype; this module only:
 """
 
 import json
+import re
 
 import frappe
 from frappe import _
@@ -405,6 +406,23 @@ def _assert_hidden_defaults_set(hidden: list[dict]):
 		frappe.throw(_("Set a default value before publishing for: {0}").format(", ".join(missing)))
 
 
+# An author-typed redirect is followed by both public pages, and frappe's own puts it
+# in an href unescaped: a fixed http(s) scheme or a site path, and no character that
+# could end the attribute.
+REDIRECT_URL_RE = re.compile(r"^(?:https?://|/)[^\s\"<>`\\]*$", re.IGNORECASE)
+
+
+def _is_safe_redirect_url(url: str | None) -> bool:
+	url = (url or "").strip()
+	return not url or bool(REDIRECT_URL_RE.match(url))
+
+
+def _validated_redirect_url(url: str | None) -> str:
+	if not _is_safe_redirect_url(url):
+		frappe.throw(_("The redirect URL must start with https://, http:// or /"))
+	return (url or "").strip()
+
+
 def _validated_visible_fields(document_type: str, fields: list[dict]) -> list[dict]:
 	"""Re-apply the catalog the picker filters by: `accept()` lets a public visitor
 	write anything listed in `web_form_fields`."""
@@ -465,7 +483,7 @@ def save_form(name: str | None, form: dict | str) -> dict:
 	doc.success_message = form.get("success_message")
 	# redirect visitors here after a successful submission (native Web Form field);
 	# blank falls back to showing the success message
-	doc.success_url = form.get("redirect_url") or ""
+	doc.success_url = _validated_redirect_url(form.get("redirect_url"))
 	doc.allowed_embedding_domains = form.get("allowed_embedding_domains")
 	# `crm_published` drives the CRM's own branded page at /crm-form/<route>; mirror
 	# it onto the native `published` so the Desk Web Form view shows the right state.

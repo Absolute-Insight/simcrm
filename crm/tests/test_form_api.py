@@ -343,6 +343,42 @@ class TestFormAPI(IntegrationTestCase):
 					},
 				)
 
+	# ---- what a public page will act on ----
+
+	def test_save_form_refuses_a_redirect_that_is_not_http_or_a_site_path(self):
+		"""Both public pages navigate to success_url after a submission, and frappe's own
+		at /<route> puts it in an href unescaped: a javascript: URL, or a quote, is
+		script a Sales Manager could plant on the site's origin."""
+		name = make_form("redirect-guard")
+
+		def save(url):
+			F.save_form(
+				name=name,
+				form={
+					"title": "R",
+					"route": "redirect-guard",
+					"document_type": "CRM Lead",
+					"redirect_url": url,
+				},
+			)
+
+		for url in (
+			"javascript:alert(document.domain)",
+			" JavaScript:alert(1)",
+			"java\tscript:alert(1)",
+			"data:text/html,<script>alert(1)</script>",
+			"javascript&#58;alert(1)",
+			'https://example.com/" onmouseover="alert(1)',
+			"www.example.com/thanks",
+		):
+			with self.assertRaises(frappe.ValidationError, msg=url):
+				save(url)
+		self.assertFalse(frappe.db.get_value("Web Form", name, "success_url"))
+
+		for url in ("https://example.com/thanks?a=1&b=2", "HTTP://example.com", "/thank-you", ""):
+			save(url)
+			self.assertEqual(F.get_form_config(name)["redirect_url"], url)
+
 	# ---- draft dry-run ----
 
 	def test_test_submit_validates_but_creates_nothing(self):
