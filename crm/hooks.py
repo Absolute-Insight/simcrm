@@ -249,17 +249,17 @@ doc_events = {
 		"on_update": ["crm.api.whatsapp.on_update"],
 	},
 	"CRM Deal": {
-		"after_insert": ["crm.automation.run_automations"],
 		"on_update": [
 			"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.create_customer_in_erpnext",
 			"crm.integrations.acumatica.outbound.queue_customer_push",
 			"crm.automation.run_automations",
 		],
+		"on_change": ["crm.automation.run_automations"],
 		"after_delete": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
 	},
 	"CRM Lead": {
-		"after_insert": ["crm.automation.run_automations"],
 		"on_update": ["crm.automation.run_automations"],
+		"on_change": ["crm.automation.run_automations"],
 		"after_delete": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
 	},
 	"ERPNext CRM Settings": {
