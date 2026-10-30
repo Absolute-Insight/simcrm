@@ -54,10 +54,11 @@ def test_connection() -> dict:
 	settings = frappe.get_doc("CRM Acumatica Settings")  # the saved doc -- the operator just saved it
 	if not settings.instance_url:
 		return {"ok": False, "error": _("Instance URL is required")}
-	client = AcumaticaClient(settings)
-	# the operator may have just changed the credentials; a cached token from the old
-	# ones would test those, not the ones on screen
-	frappe.cache().delete_value(client._cache_key())
+	# Its own login, never the shared cached one: the operator may have just changed
+	# the credentials, and a cached token from the old ones would test those. Deleting
+	# the shared key instead did not end that login -- a running sync minted another,
+	# and the one dropped from the cache held an API login slot until it expired.
+	client = AcumaticaClient(settings, shared_session=False)
 	try:
 		return client.ping()
 	except AcumaticaError as e:

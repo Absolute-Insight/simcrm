@@ -163,20 +163,37 @@ class TestConnection(FrappeTestCase):
 		test_connection()
 		self.assertEqual(MockClient.return_value.logout.call_count, 2)
 
-	@patch("crm.integrations.acumatica.api.AcumaticaClient")
-	def test_forces_a_fresh_token_before_pinging(self, MockClient):
-		"""The operator just saved new credentials -- a cached token from the old
-		ones would make the test pass or fail on stale creds instead of the new ones."""
+	@patch("crm.integrations.acumatica.client.requests.get")
+	@patch("crm.integrations.acumatica.client.requests.post")
+	def test_pings_on_a_login_of_its_own_and_ends_only_that_one(self, rpost, rget):
+		"""The operator just saved new credentials, so the cached token -- the running
+		sync's -- must not be what gets tested. Deleting it from the cache used to be
+		how: that never ended the sync's login, the sync minted another, and the
+		dropped one held one of the API user's concurrent-login slots for an hour."""
 		from crm.integrations.acumatica.api import test_connection
 
 		frappe.set_user("Administrator")
 		frappe.db.set_single_value("CRM Acumatica Settings", "instance_url", "https://t.acumatica.com")
-		MockClient.return_value._cache_key.return_value = "acumatica_token::https://t.acumatica.com"
-		MockClient.return_value.ping.return_value = {"ok": True, "sample": None}
-		frappe.cache().set_value("acumatica_token::https://t.acumatica.com", "stale")
+		key = "acumatica_token::https://t.acumatica.com"
+		frappe.cache().set_value(key, "T-SYNC")  # a sync is running on this login
+		self.addCleanup(frappe.cache().delete_value, key)
 
-		test_connection()
-		self.assertIsNone(frappe.cache().get_value("acumatica_token::https://t.acumatica.com"))
+		def post(url, data=None, headers=None, timeout=None, **kw):
+			resp = MagicMock(status_code=200)
+			resp.json.return_value = {"access_token": "T-TEST", "expires_in": 3600}
+			return resp
+
+		rpost.side_effect = post
+		rget.return_value = MagicMock(status_code=200)
+		rget.return_value.json.return_value = [{"CustomerID": {"value": "C001"}}]
+
+		self.assertEqual(test_connection(), {"ok": True, "sample": "C001"})
+
+		self.assertEqual(rget.call_args.kwargs["headers"]["Authorization"], "Bearer T-TEST")
+		logouts = [c for c in rpost.call_args_list if c.args[0].endswith("/entity/auth/logout")]
+		self.assertEqual([c.kwargs["headers"]["Authorization"] for c in logouts], ["Bearer T-TEST"])
+		# the sync's login is still the shared one, and still alive
+		self.assertEqual(frappe.cache().get_value(key), "T-SYNC")
 
 
 class TestSyncIssueEndpoints(FrappeTestCase):
