@@ -39,7 +39,7 @@
 
     <!-- Empty State -->
     <EmptyState
-      v-else-if="!templates.loading && !templates.data?.length"
+      v-else-if="!templates.loading && !templates.data?.length && !filtering"
       name="Email Templates"
       :description="__('Add one to get started.')"
       :icon="EmailTemplateIcon"
@@ -47,11 +47,11 @@
 
     <!-- Email template list -->
     <div
-      v-if="!templates.loading && templates.data?.length"
+      v-if="!templates.loading && (templates.data?.length || filtering)"
       class="flex flex-col overflow-hidden"
     >
       <div
-        v-if="templates.data?.length > 10"
+        v-if="templates.data?.length > 10 || filtering"
         class="flex items-center gap-2 mb-4 px-2 pt-0.5"
       >
         <TextInput
@@ -131,6 +131,12 @@
             class="h-px border-t mx-2 border-outline-elevation-2"
           />
         </template>
+        <li
+          v-if="!templatesList.length"
+          class="p-3 text-p-base text-ink-gray-5"
+        >
+          {{ __('No templates match the current filter.') }}
+        </li>
         <!-- Load More Button -->
         <div
           v-if="!templates.loading && templates.hasNextPage"
@@ -154,7 +160,7 @@ import EmailTemplateIcon from '@/components/Icons/EmailTemplateIcon.vue'
 import EmptyState from '../../ListViews/EmptyState.vue'
 import { useBroadcast } from '@/composables/useBroadcast'
 import { TextInput, Select, Dropdown, toast } from 'frappe-ui'
-import { ref, computed, inject } from 'vue'
+import { ref, computed, inject, watch } from 'vue'
 import { ConfirmDelete } from '../../../utils'
 
 const emit = defineEmits(['updateStep'])
@@ -167,22 +173,50 @@ const search = ref('')
 const currentDoctype = ref('All')
 const confirmDelete = ref(false)
 
-const templatesList = computed(() => {
-  let list = templates.data || []
-  if (search.value) {
-    list = list.filter(
-      (template) =>
-        template.name.toLowerCase().includes(search.value.toLowerCase()) ||
-        template.subject.toLowerCase().includes(search.value.toLowerCase()),
-    )
+const filtering = computed(
+  () => Boolean(search.value) || currentDoctype.value !== 'All',
+)
+
+// The list is paged on the server (EmailTemplatePage asks for 20), so the
+// search and the doctype filter have to be part of the query: filtering the
+// rows already loaded answered "no match" for any older template.
+function listFilters() {
+  const query = search.value.trim()
+  return {
+    filters: {
+      reference_doctype:
+        currentDoctype.value === 'All'
+          ? ['in', ['CRM Lead', 'CRM Deal']]
+          : currentDoctype.value,
+    },
+    orFilters: query
+      ? [
+          ['name', 'like', `%${query}%`],
+          ['subject', 'like', `%${query}%`],
+        ]
+      : undefined,
   }
-  if (currentDoctype.value !== 'All') {
-    list = list.filter(
-      (template) => template.reference_doctype === currentDoctype.value,
-    )
-  }
-  return list
-})
+}
+
+// immediate: the resource outlives this pane, so a search left behind by the
+// last visit is cleared when the list is shown again with an empty box.
+watch(
+  [search, currentDoctype],
+  () => {
+    const next = listFilters()
+    if (
+      JSON.stringify(next.filters) === JSON.stringify(templates.filters) &&
+      JSON.stringify(next.orFilters) === JSON.stringify(templates.orFilters)
+    ) {
+      return
+    }
+    templates.update({ ...next, start: 0 })
+    templates.reload()
+  },
+  { immediate: true },
+)
+
+const templatesList = computed(() => templates.data || [])
 
 function toggleEmailTemplate(template, enabledVal) {
   templates.setValue.submit(
