@@ -112,6 +112,17 @@ def _tokens(text: str) -> list[str]:
 	return [word for word in _WORD.findall(text.lower()) if word not in _STOPWORDS and len(word) > 1]
 
 
+def search_terms(question: str) -> list[str]:
+	"""The words :func:`score_article` scores ``question`` on, longest first.
+
+	For a caller that narrows a source too large to score whole (an ERP's
+	product catalogue) in SQL first: the same words, so nothing the scorer
+	would rank is filtered out before it, and the longest -- usually the most
+	specific -- first.
+	"""
+	return sorted(set(_tokens(question)), key=lambda word: (-len(word), word))
+
+
 def score_article(question: str, article: dict) -> float:
 	"""Relevance of one article to one question. Zero means unrelated."""
 	question_tokens = set(_tokens(question))

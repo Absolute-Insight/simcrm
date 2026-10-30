@@ -413,6 +413,19 @@ MAX_CITATIONS = 3
 # not a prompt's.
 KNOWLEDGE_ROW_LIMIT = 500
 
+# The product catalogue is an ERP's (~15k rows at MBP), far past a scan, so it
+# is narrowed in SQL on the question's words first, a word at a time and at most
+# PRODUCT_TERM_LIMIT products a word: every product a specific word matches is
+# a candidate, and a word thousands share ("valve", at a valve maker) adds only
+# a slice -- it names none of them. The candidates are ranked on name and code
+# as the scorer ranks titles, and only the best PRODUCT_ARTICLE_LIMIT are read
+# whole. Reading the first 500 by name left every product past the 500th out
+# of reach, whatever the question said.
+PRODUCT_TERM_LIMIT = 200
+PRODUCT_QUERY_TERMS = 12
+PRODUCT_ARTICLE_LIMIT = 50
+PRODUCT_SEARCH_FIELDS = ("product_name", "product_code", "description")
+
 
 @frappe.whitelist()
 @sales_user_only
@@ -440,9 +453,9 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 	if not cfg.enabled:
 		return {"status": "disabled"}
 
-	articles = _knowledge_articles(cfg)
+	articles = _knowledge_articles(cfg, question)
 	entries, index = reference_api.load_entries()
-	if not articles and not entries:
+	if not articles and not entries and not _reads_a_catalogue(cfg):
 		return {"status": "empty"}
 
 	rows = reference.select_entries(question, entries, index=index)
@@ -483,8 +496,8 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 	return {"status": "ok", "answer": reply.answer, "sources": sources}
 
 
-def _knowledge_articles(cfg) -> list[dict]:
-	"""Every row the Assistant may quote, in the article shape the scorer reads."""
+def _knowledge_articles(cfg, question: str) -> list[dict]:
+	"""Every row the Assistant may quote for ``question``, in the article shape the scorer reads."""
 	rows = frappe.get_list(
 		"CRM Knowledge Article",
 		filters={"available_to_assistant": 1},
@@ -498,18 +511,57 @@ def _knowledge_articles(cfg) -> list[dict]:
 	]
 	if cfg.assistant_reads_products:
 		currency = frappe.db.get_single_value("FCRM Settings", "currency") or ""
-		products = frappe.get_list(
-			"CRM Product",
-			filters={"disabled": 0},
-			fields=["name", "product_code", "product_name", "description", "standard_rate"],
-			order_by="product_name asc",
-			limit=KNOWLEDGE_ROW_LIMIT,
-		)
-		for row in products:
+		for row in _matching_products(question):
 			row = dict(row)
 			row["description"] = html.unescape(strip_html_tags(row.get("description") or ""))
 			articles.append(knowledge.article_from_product(row, currency))
 	return articles
+
+
+def _matching_products(question: str) -> list[dict]:
+	"""The enabled products ``question`` is most likely about, best first.
+
+	Read with ``get_list`` under the asking user, like the articles. See
+	``PRODUCT_TERM_LIMIT`` for how the catalogue is narrowed.
+	"""
+	terms = knowledge.search_terms(question)
+	found: dict[str, dict] = {}
+	for term in terms[:PRODUCT_QUERY_TERMS]:
+		for row in frappe.get_list(
+			"CRM Product",
+			filters={"disabled": 0},
+			or_filters=[[field, "like", f"%{term}%"] for field in PRODUCT_SEARCH_FIELDS],
+			fields=["name", "product_code", "product_name"],
+			order_by="name asc",
+			limit=PRODUCT_TERM_LIMIT,
+		):
+			found.setdefault(row.name, row)
+	# ranked as the scorer ranks a title: by the question's words it shares
+	asked = set(terms)
+	ranked = sorted(
+		found.values(),
+		key=lambda row: -len(
+			asked & set(knowledge.search_terms(f"{row.product_name or ''} {row.product_code or ''}"))
+		),
+	)[:PRODUCT_ARTICLE_LIMIT]
+	if not ranked:
+		return []
+	position = {row.name: index for index, row in enumerate(ranked)}
+	rows = frappe.get_list(
+		"CRM Product",
+		filters={"name": ["in", list(position)], "disabled": 0},
+		fields=["name", "product_code", "product_name", "description", "standard_rate"],
+		limit=len(position),
+	)
+	return sorted(rows, key=lambda row: position[row.name])
+
+
+def _reads_a_catalogue(cfg) -> bool:
+	"""Whether the Assistant has products to read, whatever this question matched."""
+	return bool(
+		cfg.assistant_reads_products
+		and frappe.get_list("CRM Product", filters={"disabled": 0}, pluck="name", limit=1)
+	)
 
 
 def _clean_question(question: str) -> str:
