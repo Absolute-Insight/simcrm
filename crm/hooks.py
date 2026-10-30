@@ -212,9 +212,11 @@ has_permission = {
 # override_doctype_class, which *replaces* the framework controller: only one
 # app can hold that per DocType, so installing anything else that overrides
 # Contact would have silently taken the CRM's columns away. Mixins stack.
+# The Assignment Rule one marks the rule that is running, for crm.api.todo.
 extend_doctype_class = {
 	"Contact": ["crm.overrides.contact.ContactListView"],
 	"Email Template": ["crm.overrides.email_template.EmailTemplateListView"],
+	"Assignment Rule": ["crm.overrides.assignment_rule.AssignmentRuleRun"],
 }
 
 # Document Events
@@ -230,6 +232,7 @@ doc_events = {
 	},
 	"ToDo": {
 		"before_insert": ["crm.api.todo.before_insert"],
+		"validate": ["crm.api.todo.validate"],
 		"after_insert": ["crm.api.todo.after_insert"],
 		"on_update": ["crm.api.todo.on_update"],
 	},

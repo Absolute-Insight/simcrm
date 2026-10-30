@@ -107,7 +107,122 @@ class ToDoOwnershipTest(IntegrationTestCase):
 		frappe.set_user("Administrator")
 		self.assertEqual(self._owner(), ALICE)
 
+	# --- reaching the deal by editing a ToDo instead --------------------
+	#
+	# frappe's ToDo grants write to All and lets the row's owner and assignee
+	# edit it, so a guard on the insert alone was two set_value calls away.
+
+	def _mallory_reads_the_deal(self) -> bool:
+		frappe.set_user(MALLORY)
+		return bool(frappe.has_permission("CRM Deal", "read", doc=self.deal.name))
+
+	def test_a_rep_cannot_point_a_personal_todo_at_someone_elses_deal(self):
+		frappe.set_user(MALLORY)
+		todo = frappe.get_doc(
+			{"doctype": "ToDo", "description": "My reminder", "allocated_to": MALLORY}
+		).insert()
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value(
+				"ToDo", todo.name, {"reference_type": "CRM Deal", "reference_name": self.deal.name}
+			)
+		self.assertFalse(self._mallory_reads_the_deal())
+
+	def test_a_rep_cannot_allocate_an_unallocated_todo_on_the_deal_to_themselves(self):
+		frappe.set_user(MALLORY)
+		todo = frappe.get_doc(
+			{
+				"doctype": "ToDo",
+				"description": "Nobody's",
+				"reference_type": "CRM Deal",
+				"reference_name": self.deal.name,
+			}
+		).insert()
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("ToDo", todo.name, "allocated_to", MALLORY)
+		self.assertFalse(self._mallory_reads_the_deal())
+
+	def test_a_rep_cannot_reopen_an_assignment_a_manager_cancelled(self):
+		frappe.set_user("Administrator")
+		assign_to_add({"assign_to": [MALLORY], "doctype": "CRM Deal", "name": self.deal.name})
+		remove_assignments("CRM Deal", self.deal.name, [MALLORY])
+		frappe.db.set_value("CRM Deal", self.deal.name, "deal_owner", ALICE, update_modified=False)
+		cancelled = frappe.db.get_value(
+			"ToDo",
+			{"reference_type": "CRM Deal", "reference_name": self.deal.name, "allocated_to": MALLORY},
+		)
+		self.assertFalse(self._mallory_reads_the_deal())
+
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("ToDo", cancelled, "status", "Open")
+		self.assertFalse(self._mallory_reads_the_deal())
+
+	def test_naming_an_assignment_rule_does_not_exempt_a_client_insert(self):
+		"""``assignment_rule`` is an ordinary field; only a rule that is actually
+		running may hand a record to someone the inserting account could not."""
+		rule = self._deal_rule(BOB, condition='next_step == "never matches"')
+		frappe.set_user(MALLORY)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.get_doc(
+				{
+					"doctype": "ToDo",
+					"reference_type": "CRM Deal",
+					"reference_name": self.deal.name,
+					"allocated_to": MALLORY,
+					"assignment_rule": rule,
+					"description": "Planted",
+				}
+			).insert()
+		frappe.set_user("Administrator")
+		self.assertEqual(self._owner(), ALICE)
+
+	def test_a_rep_still_edits_and_closes_their_own_assignment(self):
+		frappe.set_user("Administrator")
+		assign_to_add({"assign_to": [BOB], "doctype": "CRM Deal", "name": self.deal.name})
+		todo = frappe.db.get_value(
+			"ToDo", {"reference_type": "CRM Deal", "reference_name": self.deal.name, "allocated_to": BOB}
+		)
+		frappe.set_user(BOB)
+		frappe.client.set_value("ToDo", todo, "description", "Call them on Monday")
+		frappe.client.set_value("ToDo", todo, "status", "Closed")
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("ToDo", todo, "status"), "Closed")
+
+	def _deal_rule(self, user: str, condition: str) -> str:
+		rule = frappe.get_doc(
+			{
+				"doctype": "Assignment Rule",
+				"name": "todoown deal routing",
+				"description": "ToDo ownership test",
+				"document_type": "CRM Deal",
+				"priority": 999,
+				"assign_condition": condition,
+				"rule": "Round Robin",
+				"assignment_days": [
+					{"day": day}
+					for day in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+				],
+				"users": [{"user": user}],
+			}
+		).insert(ignore_permissions=True)
+		# through the document, so the rule's cached doctype map is cleared with it
+		self.addCleanup(frappe.delete_doc, "Assignment Rule", rule.name, force=True, ignore_permissions=True)
+		self.addCleanup(frappe.set_user, "Administrator")
+		return rule.name
+
 	# --- the assignment flows that must keep working --------------------
+
+	def test_a_running_assignment_rule_still_routes_a_deal_its_creator_cannot_write(self):
+		"""The exemption the guard keeps. Alice logs a deal with no owner and the
+		rule hands it to Bob; Alice cannot write the deal she just created, so the
+		rule's ToDo is let through only because the rule itself is writing it."""
+		self._deal_rule(BOB, condition='next_step == "todoown-routed"')
+		frappe.set_user(ALICE)
+		deal = frappe.get_doc(
+			{"doctype": "CRM Deal", "organization": self.org, "next_step": "todoown-routed"}
+		).insert()
+		self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True, ignore_permissions=True)
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "deal_owner"), BOB)
 
 	def test_an_authorised_assignment_still_moves_the_owner(self):
 		"""What the frontend's AssignmentModal calls, as someone who may write the deal."""
