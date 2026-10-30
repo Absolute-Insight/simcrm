@@ -66,14 +66,14 @@
                   <div v-else class="flex items-center gap-1">
                     <TextInput
                       ref="fullNameRef"
-                      v-model="fullName"
-                      @keydown.enter="save"
+                      v-model="nameDraft"
+                      @keydown.enter="saveName"
                       @keydown.esc.stop="editName = false"
                     />
                     <Button
                       variant="outline"
                       icon="lucide-check"
-                      @click="save"
+                      @click="saveName"
                     />
                   </div>
                   <span class="text-p-sm text-ink-gray-6">
@@ -162,19 +162,32 @@ const profileTooltipText = computed(() => {
 })
 
 const fullNameRef = useTemplateRef('fullNameRef')
-const fullName = computed({
-  get: () =>
-    [user.doc.first_name, user.doc.last_name].filter(Boolean).join(' '),
-  set: (val) => {
-    const [firstName, ...lastName] = val.split(' ')
-    user.doc.first_name = firstName
-    user.doc.last_name = lastName.join(' ')
-  },
-})
+const fullName = computed(() =>
+  [user.doc.first_name, user.doc.last_name].filter(Boolean).join(' '),
+)
+
+// The box edits a draft, not the doc. Bound to `fullName` with a splitting
+// setter it did not round-trip: "Thabo " stored an empty surname, the getter
+// handed back "Thabo", and the space the user had kept was gone before the
+// next key. Writing through also meant Esc left the abandoned name on the doc
+// for the next photo save to send.
+const nameDraft = ref('')
 
 function editFullName() {
+  nameDraft.value = fullName.value
   editName.value = true
   nextTick(() => fullNameRef.value?.el?.focus())
+}
+
+function saveName() {
+  const draft = nameDraft.value.trim().replace(/\s+/g, ' ')
+  // unchanged: leave a two-word first name where it is rather than re-split it
+  if (draft !== fullName.value) {
+    const [firstName = '', ...lastName] = draft.split(' ')
+    user.doc.first_name = firstName
+    user.doc.last_name = lastName.join(' ')
+  }
+  save()
 }
 
 const isDirty = computed(() => {
@@ -210,7 +223,9 @@ useKeyboardShortcuts({
     {
       match: (e) => (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's',
       action: () => {
-        if (isDirty.value) {
+        if (editName.value) {
+          saveName()
+        } else if (isDirty.value) {
           save()
         }
       },
