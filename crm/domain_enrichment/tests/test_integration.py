@@ -122,6 +122,33 @@ class MapperWritePolicyTest(IntegrationTestCase):
 		apply_to_document(org, self.result, self.cfg)
 		self.assertEqual(org.company_description, "Hand-written by sales.")
 
+	def test_a_value_too_long_for_its_column_is_skipped_not_fatal(self):
+		"""Data fields are varchar(140), and frappe refuses the whole save over one value
+		that does not fit -- so a LinkedIn URL with a tracking query string failed the
+		run, rolled back every other field, and did the same on every retry."""
+		long_linkedin = (
+			"https://www.linkedin.com/company/mbp-engineering-pty-ltd/"
+			"?viewAsMember=true&originalSubdomain=za&utm_source=website&utm_medium=footer&utm_campaign=social"
+		)
+		self.assertGreater(len(long_linkedin), 140)
+		result = canned_result()
+		result.social_profiles = {"linkedin": SocialProfile(long_linkedin, result.website)}
+		cfg = fixtures.make_config(
+			mappings_by_doctype={
+				"CRM Organization": [
+					fixtures.make_mapping("linkedin", "CRM Organization", "linkedin"),
+					fixtures.make_mapping("description", "CRM Organization", "company_description"),
+				]
+			}
+		)
+		org = self._new_org(organization_name="Overlength Org " + frappe.generate_hash(length=4))
+
+		apply_to_document(org, result, cfg)
+		org.insert()
+
+		self.assertFalse(org.linkedin)
+		self.assertEqual(org.company_description, "AI powered analytics SaaS for product teams.")
+
 	def test_create_missing_link_creates_industry(self):
 		industry = "Quantum Widgets " + frappe.generate_hash(length=6)
 		self.assertFalse(frappe.db.exists("CRM Industry", industry))
@@ -177,6 +204,18 @@ class RunWriterTest(IntegrationTestCase):
 		self.assertEqual(run.industry, "SaaS")
 		self.assertTrue(run.finished_on)
 		self.assertIn("Acme Analytics", run.raw_json)
+
+	def test_an_overlong_scraped_name_does_not_fail_the_run(self):
+		"""The summary is history; cut to its column, the full value stays in raw_json."""
+		result = canned_result()
+		result.company_name = Field("M" * 150, result.website, "JSON-LD")
+
+		run_name = tasks.write_run(
+			"CRM Organization", "O1", "https://acme.example", "Completed", result=result
+		)
+
+		self.assertEqual(frappe.db.get_value("CRM Enrichment Run", run_name, "company_name"), "M" * 140)
+		self.assertIn("M" * 150, frappe.db.get_value("CRM Enrichment Run", run_name, "raw_json"))
 
 
 class JobTimeoutTest(IntegrationTestCase):

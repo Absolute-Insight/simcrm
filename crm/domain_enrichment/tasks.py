@@ -30,7 +30,7 @@ from .config import (
 )
 from .crawler import max_fetches
 from .http import JobTimeout, _fetch_budget
-from .mapper import apply_to_document
+from .mapper import apply_to_document, column_limit
 from .pipeline import PROGRESS_STEPS
 from .pipeline import run as run_pipeline
 
@@ -100,8 +100,10 @@ def write_run(
 		# extract_social_profiles pre-seeds an empty entry per configured rule; only
 		# summarise the networks that were actually found.
 		social = ", ".join(sorted(k for k, v in result.social_profiles.items() if v.value))
-		doc.company_name = result.company_name.value or ""
-		doc.industry = result.industry.value or ""
+		# Summary columns, cut to fit: an over-long scraped name must not fail the
+		# insert, and the whole value is kept in raw_json.
+		doc.company_name = (result.company_name.value or "")[: column_limit(doc.meta, "company_name")]
+		doc.industry = (result.industry.value or "")[: column_limit(doc.meta, "industry")]
 		doc.industry_confidence = result.industry_confidence or 0
 		doc.emails_found = len(result.emails)
 		doc.phones_found = len(result.phones)
