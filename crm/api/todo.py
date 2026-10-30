@@ -137,6 +137,7 @@ def after_insert(doc, method):
 			doc.allocated_to,
 			update_modified=False,
 		)
+		_resync_suggestions(doc, doc.allocated_to)
 
 	if doc.reference_type in ["CRM Lead", "CRM Deal", "CRM Task"] and doc.reference_name and doc.allocated_to:
 		notify_assigned_user(doc)
@@ -165,6 +166,20 @@ def clear_owner_on_unassign(doc):
 	if frappe.db.get_value(doc.reference_type, doc.reference_name, fieldname) != doc.allocated_to:
 		return
 	frappe.db.set_value(doc.reference_type, doc.reference_name, fieldname, None, update_modified=False)
+	_resync_suggestions(doc, None)
+
+
+def _resync_suggestions(doc, owner: str | None) -> None:
+	"""Move the record's open suggestions to the owner just written.
+
+	The owner is written here with ``db.set_value``, which fires no on_update, so
+	the resync crm.automation runs when a lead or deal is saved with a new owner
+	never ran for "Assign to": the previous rep kept the suggestions until they
+	expired, possibly for a record they can no longer open.
+	"""
+	from crm.agent.signals import resync_owner
+
+	resync_owner(doc.reference_type, doc.reference_name, owner)
 
 
 def notify_assigned_user(doc, is_cancelled=False):

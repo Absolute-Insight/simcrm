@@ -8,7 +8,10 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import frappe
+from frappe.desk.form.assign_to import add as assign_to_add
 from frappe.tests import IntegrationTestCase
+
+from crm.api.doc import remove_assignments
 
 LEAD_OWNER = "automation-owner@crmtest.test"
 
@@ -396,6 +399,21 @@ class SuggestionOwnershipTest(IntegrationTestCase):
 		self.deal.deal_owner = self.second
 		self.deal.save()
 		self.assertEqual(frappe.db.get_value("CRM Suggestion", name, "user"), self.second)
+
+	def test_assigning_the_deal_to_someone_else_moves_its_open_suggestions(self):
+		""" "Assign to" writes the owner from the ToDo with db.set_value, which runs
+		no on_update, so the resync above never followed that path."""
+		name = self.make_suggestion()
+		assign_to_add({"assign_to": [self.second], "doctype": "CRM Deal", "name": self.deal.name})
+		self.assertEqual(frappe.db.get_value("CRM Deal", self.deal.name, "deal_owner"), self.second)
+		self.assertEqual(frappe.db.get_value("CRM Suggestion", name, "user"), self.second)
+
+	def test_unassigning_the_owner_takes_the_open_suggestions_with_the_deal(self):
+		"""The same as clearing the owner on the deal and saving it."""
+		name = self.make_suggestion()
+		remove_assignments("CRM Deal", self.deal.name, [self.first])
+		self.assertIsNone(frappe.db.get_value("CRM Deal", self.deal.name, "deal_owner"))
+		self.assertIsNone(frappe.db.get_value("CRM Suggestion", name, "user"))
 
 	def test_a_settled_suggestion_stays_with_whoever_settled_it(self):
 		name = self.make_suggestion(status="Dismissed")
