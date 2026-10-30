@@ -909,3 +909,73 @@ class TestPhoneLookupRegion(IntegrationTestCase):
 		self.contact("UK Supplier", "+44 7825 550147", modified="2026-06-01 00:00:00")
 
 		self.assertEqual(lookup_contact_by_phone_number("+27825550147").get("name"), caller.name)
+
+
+EXOTEL_REP = "exotel-rep@crmtest.test"
+NOT_A_REP = "exotel-outsider@crmtest.test"
+
+
+class TestExotelMakeACall(IntegrationTestCase):
+	"""Every call placed here is billed to the company's Exotel account and shows the
+	company's number, so it is for sales users, from their own phone."""
+
+	def setUp(self):
+		super().setUp()
+		for email, role in ((EXOTEL_REP, "Sales User"), (NOT_A_REP, None)):
+			if not frappe.db.exists("User", email):
+				user = frappe.get_doc(
+					{"doctype": "User", "email": email, "first_name": "Exotel", "send_welcome_email": 0}
+				).insert(ignore_permissions=True)
+				if role:
+					user.add_roles(role)
+		# the outsider has an agent row too, so the role is all that stands in the way
+		for email, mobile in ((EXOTEL_REP, "+27825550101"), (NOT_A_REP, "+27825550102")):
+			if not frappe.db.exists("CRM Telephony Agent", email):
+				frappe.get_doc(
+					{
+						"doctype": "CRM Telephony Agent",
+						"user": email,
+						"mobile_no": mobile,
+						"exotel_number": "+27105550100",
+					}
+				).insert(ignore_permissions=True)
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def place_call(self, **form):
+		from crm.integrations.exotel import handler
+
+		response = MagicMock()
+		response.json.return_value = {"Call": {"Sid": "EX-1"}}
+		with (
+			patch.object(handler, "user_rate_limited", return_value=False),
+			patch.object(handler, "is_integration_enabled", return_value=True),
+			patch.object(handler, "get_exotel_endpoint", return_value="https://exotel.invalid/connect"),
+			patch.object(handler, "get_exotel_auth", return_value=("key", "token")),
+			patch.object(handler, "get_all_exophones", return_value=["+27105550100"]),
+			patch.object(handler, "get_status_updater_url", return_value="https://crm.invalid/cb"),
+			patch.object(handler, "create_call_log"),
+			patch.object(handler.requests, "post", return_value=response) as post,
+		):
+			self.post = post
+			# frappe.call is what the HTTP handler runs: it drops form keys the method
+			# does not take, exactly as a request would see them dropped
+			frappe.call("crm.integrations.exotel.handler.make_a_call", **form)
+		return post
+
+	def test_a_user_without_a_sales_role_cannot_place_a_call(self):
+		frappe.set_user(NOT_A_REP)
+		with self.assertRaises(frappe.PermissionError):
+			self.place_call(to_number="+27825550199")
+		self.post.assert_not_called()
+
+	def test_the_call_rings_the_reps_own_phone_whatever_the_request_says(self):
+		"""``From`` is the leg Exotel rings first and bridges to ``To``. Taken from
+		the request, any two numbers could be connected under the company's caller ID."""
+		frappe.set_user(EXOTEL_REP)
+		post = self.place_call(to_number="+27825550199", from_number="+27825550666")
+
+		self.assertEqual(post.call_args.kwargs["data"]["From"], "+27825550101")
+		self.assertEqual(post.call_args.kwargs["data"]["To"], "+27825550199")
