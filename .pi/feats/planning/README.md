@@ -52,6 +52,13 @@
   (`fulfilled_by_doctype`, `fulfilled_by`, `status`).
 - `manual_override` — set when a rep corrects an item by hand. The daily job
   never touches an overridden row.
+- Status, outcome, fulfilment and `manual_override` are **server-owned**:
+  `CRMRepPlan.validate` refuses a client change to them through the generic
+  document API (`SERVER_ITEM_FIELDS`); only code saving with
+  `ignore_permissions` (the endpoints, the matcher, imports, patches) writes
+  them. A link to a record deleted since (the item is in
+  `ignore_links_on_delete`) is dropped on the next save or log rather than
+  failing the week (`_drop_dangling_links`).
 
 Concrete items are the source of truth; rollups are derived, so "planned 30
 calls" and the 30 planned call items can never disagree.
@@ -113,7 +120,7 @@ run reached rather than a state the item is stuck in. Items older than
 | `get_plan(week_start, user?)` | The week, its items, a rollup, and a `modified` token |
 | `save_plan(week_start, items, modified?)` | Upsert. Send `modified` back for optimistic concurrency (raises `TimestampMismatchError`); send surviving rows **with their `name`** so a reschedule keeps matcher state and its suggestion link |
 | `propose_week(week_start)` | Drafts from open suggestions, spread over the *remaining* weekdays. Writes nothing |
-| `mark_fulfilled(item, ...)` / `mark_missed(item)` / `clear_override(item)` | Manual override; the matcher then leaves the row alone. A named fulfilment record is verified — it must exist, satisfy its kind's status filters, and belong to the caller |
+| `mark_fulfilled(item, ...)` / `mark_missed(item)` / `clear_override(item)` | Manual override; the matcher then leaves the row alone. A named fulfilment record is verified — it must exist, satisfy its kind's status filters, belong to the caller, and fulfil no other item in any week. Like every hand correction, refused for a week past the matching horizon |
 | `get_visible_reps()` | Exactly the reps whose plans the caller may open |
 | `log_unplanned_visit(organization?, note, when?, reference?, activity_type="Visit")` | Unplanned work of any loggable kind as a Done, overridden item; the visit kinds also get their Event. A note is required — closing anything without saying why is the habit the old rep app enforced and the one reps notice first |
 | `complete_item(item, outcome, when?)` / `cancel_item(item, reason)` | Close one of the caller's own items with what happened / why; visit kinds get a Completed / Cancelled Visit event at the customer |
