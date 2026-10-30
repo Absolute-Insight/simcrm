@@ -936,10 +936,12 @@ const quickFilterList = computed(() => {
         )
           return
         filter['value'] = value[1]?.replace(/%/g, '')
-      } else if (typeof value == 'boolean') {
-        filter['value'] = value
+      } else if (typeof value == 'string') {
+        filter['value'] = value.replace(/%/g, '')
       } else {
-        filter['value'] = value?.replace(/%/g, '')
+        // a boolean, or a number from a numeric field: `.replace` threw on
+        // every render and took the whole quick-filter bar with it
+        filter['value'] = value
       }
     }
   })
