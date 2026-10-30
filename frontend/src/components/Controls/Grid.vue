@@ -720,7 +720,9 @@ const addRow = () => {
   newRow.name = getRandom(10)
   showRowList.value.push(false)
   newRow['__islocal'] = true
-  newRow['idx'] = rows.value.length + 1
+  // Past the highest idx, not rows.length + 1: form scripts find a row by its
+  // idx (getRow), so two rows sharing one point a hook at the wrong row.
+  newRow['idx'] = Math.max(0, ...rows.value.map((r) => r.idx || 0)) + 1
   newRow['doctype'] = props.doctype
   newRow['parentfield'] = props.parentFieldname
   newRow['parenttype'] = props.parentDoctype
@@ -729,8 +731,14 @@ const addRow = () => {
 }
 
 const deleteRows = () => {
-  rows.value = rows.value.filter((row) => !selectedRows.has(row.name))
-  triggerOnRowRemove(selectedRows, rows.value)
+  // Snapshots, not selectedRows and rows.value: the hook runs a microtask
+  // later, after the Set is cleared, and with a parent v-model rows.value
+  // still returns the old array until the parent re-renders.
+  const removed = rows.value.filter((row) => selectedRows.has(row.name))
+  const remaining = rows.value.filter((row) => !selectedRows.has(row.name))
+  remaining.forEach((row, index) => (row.idx = index + 1))
+  rows.value = remaining
+  if (removed.length) triggerOnRowRemove(removed, remaining)
 
   showRowList.value.pop()
   selectedRows.clear()
