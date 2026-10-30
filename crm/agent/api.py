@@ -347,9 +347,14 @@ def _latest_outside_sender(thread: list[dict]) -> str:
 	"""Who a reply to this thread goes to: the newest sender who is not one of us.
 
 	The thread is newest first and mixes inbound mail with the team's own outbound
-	messages, whose sender is a User. The rep still reads and can change the address
-	-- this only saves them retyping one the record already holds."""
+	messages. Outbound is told by ``sent_or_received``, not by the sender being a
+	User: a rep sending from a shared mailbox sends as an address no User has, and
+	that address was pre-filled as the customer's. An inbound mail from a colleague
+	is skipped too. The rep still reads and can change the address -- this only
+	saves them retyping one the record already holds."""
 	for row in thread:
+		if row.get("sent_or_received") == "Sent":
+			continue
 		sender = (row.get("sender") or "").strip()
 		if sender and not frappe.db.exists("User", sender):
 			return sender
