@@ -1737,6 +1737,14 @@ def get_deal_status_change_counts(
 	deal entered the funnel; the ``Leads`` row above it counts leads created in the
 	same window.
 
+	A stage is reached when a log row names it at either end, ``from`` or ``to``:
+	``add_status_change_log`` writes the status a deal is created in only into
+	its first row's ``from``, so counting ``to`` alone never saw a deal's entry
+	stage -- nor any deal created straight into Won, which is every win the
+	Acumatica import writes. Lost stages are left to the funnel's own terminal
+	row, which counts the deals that leaked out; counting them here as well put
+	two Lost bars on one chart.
+
 	Returns:
 	[
 	  {"stage": "Qualification", "count": 120},
@@ -1754,17 +1762,19 @@ def get_deal_status_change_counts(
 		.join(CRMDeal)
 		.on(CRMStatusChangeLog.parent == CRMDeal.name)
 		.join(TargetStatus)
-		.on(CRMStatusChangeLog.to == TargetStatus.name)
+		# either end of a log row: ``from`` is a reserved word, hence the subscript.
+		# COUNT DISTINCT below keeps a deal at one per stage, however many rows name it.
+		.on((CRMStatusChangeLog["from"] == TargetStatus.name) | (CRMStatusChangeLog.to == TargetStatus.name))
 		.select(
-			CRMStatusChangeLog.to.as_("stage"),
+			TargetStatus.name.as_("stage"),
 			Count(CRMStatusChangeLog.parent).distinct().as_("count"),
 		)
 		.where(
-			(CRMStatusChangeLog.to.isnotnull())
-			& (CRMStatusChangeLog.to != "")
+			(CRMStatusChangeLog.parenttype == "CRM Deal")
+			& (IfNull(TargetStatus.type, "") != "Lost")
 			& (Date(CRMDeal.creation).between(from_date, to_date))
 		)
-		.groupby(CRMStatusChangeLog.to, TargetStatus.position)
+		.groupby(TargetStatus.name, TargetStatus.position)
 		.orderby(TargetStatus.position)
 	)
 

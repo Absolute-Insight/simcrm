@@ -318,9 +318,21 @@ class FunnelTerritoryTest(TerritoryFixture, IntegrationTestCase):
 		self.assertEqual(self.rows(SOUTH)["Lost"], 1)
 
 	def test_the_stage_rows_narrow_to_the_territory(self):
-		"""A deal logs a ``to`` row only on a real transition (insert writes the
-		initial status into ``from``), so make one transition in North: its stage
-		row must count there and not in South's funnel."""
+		"""Every deal counts in the stage it was created in (insert writes that
+		status into its first log row's ``from``), and a transition adds the stage
+		it moved to. Make one transition in North: it must count there and not in
+		South's funnel."""
+
+		def stage_total(rows):
+			return sum(count for stage, count in rows.items() if stage not in ("Leads", "Lost"))
+
+		# exact, not merely greater: a partially-applied filter could still
+		# order the two, and the fixture makes the true counts knowable -- the
+		# open and won deals each in their entry stage, the lost ones left to the
+		# terminal Lost row
+		self.assertEqual(stage_total(self.rows(NORTH)), 3 + 2)
+		self.assertEqual(stage_total(self.rows(SOUTH)), 1 + 1)
+
 		deal_name = next(name for doctype, name in self.created if doctype == "CRM Deal")
 		deal = frappe.get_doc("CRM Deal", deal_name)
 		deal.status = frappe.db.get_value(
@@ -328,10 +340,5 @@ class FunnelTerritoryTest(TerritoryFixture, IntegrationTestCase):
 		)
 		deal.save(ignore_permissions=True)
 
-		def stage_total(rows):
-			return sum(count for stage, count in rows.items() if stage not in ("Leads", "Lost"))
-
-		# exact, not merely greater: a partially-applied filter could still
-		# order the two, and the fixture makes the true counts knowable
-		self.assertEqual(stage_total(self.rows(NORTH)), 1)
-		self.assertEqual(stage_total(self.rows(SOUTH)), 0)
+		self.assertEqual(stage_total(self.rows(NORTH)), 3 + 2 + 1)
+		self.assertEqual(stage_total(self.rows(SOUTH)), 1 + 1)

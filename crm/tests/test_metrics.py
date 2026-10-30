@@ -501,6 +501,33 @@ class MetricsTest(IntegrationTestCase):
 		self.assertEqual(data[-1]["stage"], _("Lost"))
 		self.assertEqual(data[-1]["count"], 1)
 
+	def test_the_funnel_counts_the_stage_a_deal_was_created_in(self):
+		"""The status a deal is created in is written only to its first log row's
+		``from``. Counting ``to`` alone left every deal out of its entry stage --
+		and every deal created straight into Won, which is how the Acumatica
+		import writes its wins -- out of the funnel entirely."""
+		from crm.api.dashboard import get_deal_status_change_counts, get_funnel_conversion
+
+		entry, won, lost = (self.status_of_type(t) for t in ("Open", "Won", "Lost"))
+		reason = "Metrics Funnel Reason"
+		frappe.get_doc({"doctype": "CRM Lost Reason", "lost_reason": reason}).insert(
+			ignore_permissions=True, ignore_if_duplicate=True
+		)
+		self.make_deal(status=entry)  # the new-deal form, or a lead conversion
+		self.make_deal(status=won)  # crm/integrations/acumatica/spreadsheet.py
+		self.make_deal(status=lost, lost_reason=reason)
+
+		today = str(frappe.utils.nowdate())
+		counts = {row["stage"]: row["count"] for row in get_deal_status_change_counts(today, today, USER)}
+		self.assertEqual(counts.get(entry), 1, counts)
+		self.assertEqual(counts.get(won), 1, counts)
+		# Lost is the funnel's own terminal row; a stage row for it as well drew
+		# two Lost bars on one chart
+		self.assertNotIn(lost, counts)
+		funnel = get_funnel_conversion(today, today, USER)["data"]
+		self.assertEqual([row["stage"] for row in funnel].count(_("Lost")), 1, funnel)
+		self.assertEqual(funnel[-1]["count"], 1)
+
 	def test_a_deal_that_re_enters_a_stage_is_still_one_deal(self):
 		from crm.api.dashboard import get_deal_status_change_counts
 
