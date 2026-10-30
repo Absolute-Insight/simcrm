@@ -255,12 +255,12 @@ doc_events = {
 			"crm.integrations.acumatica.outbound.queue_customer_push",
 			"crm.automation.run_automations",
 		],
-		"on_trash": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
+		"after_delete": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
 	},
 	"CRM Lead": {
 		"after_insert": ["crm.automation.run_automations"],
 		"on_update": ["crm.automation.run_automations"],
-		"on_trash": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
+		"after_delete": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
 	},
 	"ERPNext CRM Settings": {
 		"validate": ["crm.integrations.acumatica.install.block_dual_erp"],
@@ -370,10 +370,10 @@ before_tests = "crm.tests.before_tests"
 # -----------------------------------------------------------
 
 # CRM Suggestion holds a Dynamic Link to the deal or lead it is about. Without this
-# an open suggestion makes its own record undeletable; the on_trash handler above
-# clears the rows so nothing orphaned survives the delete.
+# an open suggestion makes its own record undeletable; the after_delete handler
+# above clears the rows so nothing orphaned survives the delete.
 # CRM Rep Plan Item's reference is a Dynamic Link too, and a rep's planned week
-# must never make a deal undeletable nor be deleted to free one; the on_trash
+# must never make a deal undeletable nor be deleted to free one; the after_delete
 # handler above unlinks the items and keeps them.
 ignore_links_on_delete = ["Failed Lead Sync Log", "CRM Suggestion", "CRM Rep Plan Item", "CRM Rep Plan"]
 

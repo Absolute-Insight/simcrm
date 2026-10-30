@@ -130,18 +130,25 @@ def _resync_suggestion_owner(doc) -> None:
 
 
 def clear_suggestions(doc, method=None) -> None:
-	"""on_trash entry point: a deleted record leaves no suggestions behind."""
+	"""after_delete entry point: a deleted record leaves no suggestions behind.
+
+	Not on_trash: frappe runs on_trash before it checks whether anything still
+	links to the record, so a delete it then refused (a task or a note on the
+	deal) had already wiped the suggestions and their dismiss history -- and the
+	"delete linked" flow catches that refusal and commits.
+	"""
 	clear_suggestions_for(doc.doctype, doc.name)
 
 
 def clear_plan_item_references(doc, method=None) -> None:
-	"""on_trash entry point: plan items that pointed at the record keep the item, lose the link.
+	"""after_delete entry point: plan items that pointed at the record keep the item, lose the link.
 
 	``CRM Rep Plan Item.reference_docname`` is a Dynamic Link. Left alone, frappe's
 	link check refused to delete a deal any rep had planned work against, and the
 	app's "delete linked" flow, which knows only records with their own reference
 	fields, deleted the *plan* -- the rep's whole week -- to free the deal. The
 	planned activity is the rep's; the record it was about is what is going away.
+	After the delete, like clear_suggestions, so a refused one leaves the links.
 	"""
 	frappe.db.set_value(
 		"CRM Rep Plan Item",
