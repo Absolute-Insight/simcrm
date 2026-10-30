@@ -35,6 +35,9 @@ export function formatTime(seconds) {
 export function formatDate(date, format, onlyDate = false, onlyTime = false) {
   if (!date) return ''
   format = getFormat(date, format, onlyDate, onlyTime, false)
+  // A Date field is a calendar date, not an instant: converting it from the
+  // site's timezone moved it a day back for a user west of the site.
+  if (onlyDate && !onlyTime) return dayjs(date).format(format)
   return dayjsLocal(date).format(format)
 }
 
