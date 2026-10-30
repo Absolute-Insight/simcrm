@@ -461,21 +461,29 @@ def get_from_name(message):
 	return from_name
 
 
+#: What each CRM role is given on frappe_whatsapp's doctypes: what the CRM's
+#: pages read through the document API, and the settings pane for a manager.
+#: Every send goes through the endpoints above, which ask for write on the record
+#: and take the destination from it, and insert with ignore_permissions. Create,
+#: write and delete here were a REST door around both: a POST to
+#: /api/resource/WhatsApp Message sends to any number, and a list read every
+#: rep's conversations. WhatsApp Message rows are scoped to the record they are
+#: on by crm.permissions.linked_records.
+WHATSAPP_PERMISSIONS = {
+	"WhatsApp Message": {"Sales Manager": ("read",), "Sales User": ("read",)},
+	"WhatsApp Templates": {"Sales Manager": ("read",), "Sales User": ("read",)},
+	"WhatsApp Settings": {"Sales Manager": ("read", "write")},
+}
+
+
 def add_roles():
 	if "frappe_whatsapp" not in frappe.get_installed_apps():
 		return
 
-	role_list = ["Sales Manager", "Sales User"]
-	doctypes = ["WhatsApp Message", "WhatsApp Templates", "WhatsApp Settings"]
-	for doctype in doctypes:
-		for role in role_list:
+	for doctype, roles in WHATSAPP_PERMISSIONS.items():
+		for role, ptypes in roles.items():
 			if frappe.db.exists("Custom DocPerm", {"parent": doctype, "role": role}):
 				continue
-			add_permission(doctype, role, 0, "write")
-			update_permission_property(doctype, role, 0, "create", 1)
-			update_permission_property(doctype, role, 0, "delete", 1)
-			update_permission_property(doctype, role, 0, "share", 1)
-			update_permission_property(doctype, role, 0, "email", 1)
-			update_permission_property(doctype, role, 0, "print", 1)
-			update_permission_property(doctype, role, 0, "report", 1)
-			update_permission_property(doctype, role, 0, "export", 1)
+			add_permission(doctype, role, 0, ptypes[0])
+			for ptype in ptypes[1:]:
+				update_permission_property(doctype, role, 0, ptype, 1)

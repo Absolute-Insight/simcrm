@@ -368,3 +368,96 @@ class TestWhatsAppSendPermission(FrappeTestCase):
 		):
 			react_on_whatsapp_message("\U0001f44d", "WA-INCOMING-1")
 		sent.insert.assert_not_called()
+
+
+class TestWhatsAppDoctypeAccess(FrappeTestCase):
+	"""frappe_whatsapp's own doctypes, as the document API reaches them.
+
+	add_roles gave both CRM roles create, write and delete on WhatsApp Message,
+	Templates and Settings, with no row scoping on messages: a REST insert sent a
+	message to any number past the send endpoints' checks, and a list read every
+	rep's conversations. frappe_whatsapp is not installed on the test site, so the
+	grants are read off the calls and the row scope off its SQL.
+	"""
+
+	REP = "whatsapp-scope-rep@crmtest.test"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		self.addCleanup(frappe.set_user, "Administrator")
+		self.addCleanup(frappe.db.rollback)
+
+	def test_add_roles_gives_the_crm_roles_read_and_a_manager_the_settings(self):
+		granted = set()
+
+		def add_permission(doctype, role, permlevel=0, ptype=None):
+			granted.add((doctype, role, ptype or "read"))
+
+		def update_permission_property(doctype, role, permlevel, ptype, value=None, *args, **kwargs):
+			if value:
+				granted.add((doctype, role, ptype))
+
+		with (
+			patch("frappe.get_installed_apps", return_value=["frappe", "crm", "frappe_whatsapp"]),
+			patch.object(frappe.db, "exists", return_value=False),
+			patch("crm.api.whatsapp.add_permission", side_effect=add_permission),
+			patch("crm.api.whatsapp.update_permission_property", side_effect=update_permission_property),
+		):
+			from crm.api.whatsapp import add_roles
+
+			add_roles()
+
+		self.assertEqual(
+			granted,
+			{
+				("WhatsApp Message", "Sales User", "read"),
+				("WhatsApp Message", "Sales Manager", "read"),
+				("WhatsApp Templates", "Sales User", "read"),
+				("WhatsApp Templates", "Sales Manager", "read"),
+				("WhatsApp Settings", "Sales Manager", "read"),
+				("WhatsApp Settings", "Sales Manager", "write"),
+			},
+		)
+
+	def test_a_rep_lists_only_the_messages_on_records_they_can_see(self):
+		from crm.permissions.linked_records import get_whatsapp_message_permission_query_conditions
+
+		self.assertEqual(
+			frappe.get_hooks("permission_query_conditions")["WhatsApp Message"][-1],
+			"crm.permissions.linked_records.get_whatsapp_message_permission_query_conditions",
+		)
+		self.assertEqual(
+			frappe.get_hooks("has_permission")["WhatsApp Message"][-1],
+			"crm.permissions.linked_records.has_whatsapp_message_permission",
+		)
+		if not frappe.db.exists("User", self.REP):
+			user = frappe.get_doc(
+				{"doctype": "User", "email": self.REP, "first_name": "Scope Rep", "send_welcome_email": 0}
+			).insert(ignore_permissions=True)
+			user.add_roles("Sales User")
+		frappe.db.delete("CRM Sales Hierarchy", {"user": self.REP})
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "WhatsApp Scope Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		own = frappe.get_doc({"doctype": "CRM Deal", "organization": org, "deal_owner": self.REP}).insert(
+			ignore_permissions=True
+		)
+		other = frappe.get_doc({"doctype": "CRM Deal", "organization": org}).insert(ignore_permissions=True)
+
+		conditions = get_whatsapp_message_permission_query_conditions(self.REP)
+		# the conditions name `tabWhatsApp Message`; a derived table of that name
+		# stands in for frappe_whatsapp's, which the test site does not have
+		visible = frappe.db.sql(
+			f"""select `tabWhatsApp Message`.name from (
+				select 'on-own' as name, 'CRM Deal' as reference_doctype, %(own)s as reference_name
+				union all select 'on-other', 'CRM Deal', %(other)s
+				union all select 'on-nothing', null, null
+			) as `tabWhatsApp Message` where {conditions}""",
+			{"own": own.name, "other": other.name},
+			pluck=True,
+		)
+		self.assertEqual(visible, ["on-own"])
+		self.assertEqual(get_whatsapp_message_permission_query_conditions("Administrator"), "")
