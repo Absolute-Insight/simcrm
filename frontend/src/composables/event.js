@@ -210,17 +210,35 @@ export function useEvent({
   }
 }
 
+// A placeholder docname: Attendee's typed address that names no Contact yet.
+const UNRESOLVED_DOCNAMES = new Set(['', 'new'])
+
+/**
+ * The participant rows to save, from what the attendee picker holds.
+ *
+ * Saving replaces the child table: a row sent without its `name` is deleted
+ * and inserted afresh, and a row not sent is deleted. This used to keep only
+ * rows with an email, and only their email and reference, so one attendee
+ * added to a planner visit dropped its e-mail-less CRM Organization row (the
+ * visit's customer, which plan matching and the visit reports read) and
+ * reset everyone's RSVP.
+ */
 export function normalizeParticipants(list = []) {
   const seen = new Set()
   const out = []
   for (const a of list || []) {
-    if (!a?.email || seen.has(a.email)) continue
-    seen.add(a.email)
-    out.push({
-      email: a.email,
-      reference_doctype: a.reference_doctype || 'Contact',
-      reference_docname: a.reference_docname || '',
-    })
+    if (!a) continue
+    const reference_doctype = a.reference_doctype || 'Contact'
+    const reference_docname = a.reference_docname || ''
+    const key = !UNRESOLVED_DOCNAMES.has(reference_docname)
+      ? `${reference_doctype}\u0000${reference_docname}`
+      : a.email
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    const row = { email: a.email || '', reference_doctype, reference_docname }
+    if (a.name) row.name = a.name
+    if (a.attending) row.attending = a.attending
+    out.push(row)
   }
   return out
 }

@@ -74,14 +74,15 @@
       ref="optionsRef"
       class="flex flex-col gap-2 mt-2 max-h-[165px] overflow-y-auto"
     >
+      <!-- A visit's CRM Organization row has no email: named by its reference -->
       <Button
         v-for="att in values"
         ref="emails"
-        :key="att.email"
-        :label="att.email"
+        :key="att.email || `${att.reference_doctype}:${att.reference_docname}`"
+        :label="att.email || att.reference_docname"
         theme="gray"
         class="rounded-full w-fit"
-        :tooltip="getTooltip(att.email)"
+        :tooltip="getTooltip(att)"
       >
         <template #prefix>
           <UserAvatar :user="att.email" class="-ml-1 !size-5.5" />
@@ -90,7 +91,7 @@
           <span
             class="lucide-x h-3.5"
             aria-hidden="true"
-            @click.stop="removeValue(att.email)"
+            @click.stop="removeValue(att)"
           />
         </template>
       </Button>
@@ -141,22 +142,11 @@ const showOptions = ref(false)
 const optionsRef = ref(null)
 const tempSelection = ref(null)
 
-const metaByEmail = computed(() => {
-  const out = {}
-  const source = values.value || []
-  for (const a of source) {
-    if (a?.email) out[a.email] = a
-  }
-  return out
-})
-
-function getTooltip(email) {
-  const m = metaByEmail.value[email]
-  if (!m) return email
+function getTooltip(m) {
   const parts = []
   if (m.reference_doctype) parts.push(m.reference_doctype)
   if (m.reference_docname) parts.push(m.reference_docname)
-  return parts.length ? parts.join(': ') : email
+  return parts.length ? parts.join(': ') : m.email
 }
 
 watchDebounced(
@@ -305,8 +295,8 @@ const addValue = (option) => {
   })
 }
 
-const removeValue = (email) => {
-  values.value = (values.value || []).filter((a) => a.email !== email)
+const removeValue = (att) => {
+  values.value = (values.value || []).filter((a) => a !== att)
 }
 
 function setFocus() {
