@@ -9,12 +9,15 @@ holds the worker until gunicorn kills it. ``enrich_preview`` runs that fetch ins
 the web request, rate-limited at 10 a minute against eight shipped workers, so a
 handful of slow-drip hosts is enough to stall the app for everyone.
 
-Fully offline: no socket is opened, the responses are fakes and the clock is real but
-the budgets are milliseconds.
+Offline: the fakes open no socket, and the real-socket cases below talk only to a
+server on 127.0.0.1 (the SSRF guard is stubbed to let it through). The clock is
+real but the budgets are fractions of a second.
 """
 
 from __future__ import annotations
 
+import socket
+import threading
 import time
 from unittest import mock
 
@@ -161,3 +164,106 @@ class FetchDeadlineTest(UnitTestCase):
 			http.fetch("https://slow.example/", cfg)
 
 		self.assertLessEqual(seen[0], 2)
+
+
+def _serve_once(respond):
+	"""A one-connection server on 127.0.0.1; ``respond(conn)`` writes the reply.
+
+	Returns the port. The server thread ends when ``respond`` does or the client
+	hangs up -- a send into a socket the fetch shut down raises, and that is fine."""
+	server = socket.socket()
+	server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+	server.bind(("127.0.0.1", 0))
+	server.listen(1)
+
+	def handle():
+		try:
+			conn, _addr = server.accept()
+			conn.recv(65536)
+			try:
+				respond(conn)
+			except OSError:
+				pass
+			finally:
+				conn.close()
+		finally:
+			server.close()
+
+	threading.Thread(target=handle, daemon=True).start()
+	return server.getsockname()[1]
+
+
+def _trickle(conn, payload: bytes, pause: float, seconds: float):
+	ends = time.monotonic() + seconds
+	while time.monotonic() < ends:
+		time.sleep(pause)
+		conn.sendall(payload)
+
+
+class RealSocketBudgetTest(UnitTestCase):
+	"""The bound must hold against a real socket, not just a fake that yields one byte
+	at a time: ``iter_content`` blocks in ``recv()`` until a whole chunk arrives, and
+	the status line and headers are read before any of fetch's own code runs."""
+
+	BUDGET = 0.5
+	TRICKLE = 4.0  # how long the server would keep going if nothing stopped it
+
+	def _fetch(self, port):
+		# request_timeout (per read) is far longer than the gap between bytes, so only
+		# the budget can end this
+		cfg = make_config({"request_timeout": 2, "retry_count": 0, "max_fetch_seconds": self.BUDGET})
+		with mock.patch.object(http, "_validated_ips", return_value=["127.0.0.1"]):
+			started = time.monotonic()
+			result = http.fetch(f"http://trickle.example:{port}/", cfg)
+		return time.monotonic() - started, result
+
+	def test_a_trickled_body_ends_at_the_budget_and_keeps_what_arrived(self):
+		first_chunk = b"<html>" + b"x" * (16_384 - len(b"<html>"))
+
+		def respond(conn):
+			conn.sendall(
+				b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 100000\r\n\r\n" + first_chunk
+			)
+			_trickle(conn, b"x", 0.05, self.TRICKLE)
+
+		elapsed, (status, html, error, _final) = self._fetch(_serve_once(respond))
+
+		self.assertLess(elapsed, self.BUDGET + 1.0, f"a trickled body held fetch for {elapsed:.2f}s")
+		self.assertEqual((status, error), (200, ""))
+		self.assertTrue(html.startswith("<html>xxx"), "a chunk that arrived before the deadline is kept")
+
+	def test_a_body_trickled_from_the_first_byte_reports_the_budget(self):
+		def respond(conn):
+			conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 100000\r\n\r\n")
+			_trickle(conn, b"x", 0.05, self.TRICKLE)
+
+		elapsed, (status, html, error, _final) = self._fetch(_serve_once(respond))
+
+		self.assertLess(elapsed, self.BUDGET + 1.0, f"a trickled body held fetch for {elapsed:.2f}s")
+		self.assertEqual((status, html), (0, ""))
+		self.assertIn("fetch budget", error)
+
+	def test_trickled_headers_end_at_the_budget(self):
+		def respond(conn):
+			conn.sendall(b"HTTP/1.1 200 OK\r\nX-Pad: ")
+			_trickle(conn, b"a", 0.05, self.TRICKLE)
+
+		elapsed, (status, html, error, _final) = self._fetch(_serve_once(respond))
+
+		self.assertLess(elapsed, self.BUDGET + 1.0, f"trickled headers held fetch for {elapsed:.2f}s")
+		self.assertEqual((status, html), (0, ""))
+		self.assertIn("fetch budget", error)
+
+	def test_a_prompt_answer_is_untouched(self):
+		def respond(conn):
+			body = b"<html><title>Acme</title></html>"
+			conn.sendall(
+				b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+				+ f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+				+ body
+			)
+
+		elapsed, (status, html, error, _final) = self._fetch(_serve_once(respond))
+
+		self.assertEqual((status, error), (200, ""))
+		self.assertIn("<title>Acme</title>", html)
