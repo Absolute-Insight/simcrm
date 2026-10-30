@@ -725,7 +725,12 @@ const tabs = [
     label: __('Settings'),
     iconLeft: LucideSettings,
   },
-  { name: 'share', label: __('Share'), icon: LucideShare2 },
+  {
+    value: 'share',
+    name: 'share',
+    label: __('Share'),
+    iconLeft: LucideShare2,
+  },
 ]
 const expanded = ref(null) // fieldname of the expanded field editor
 const descInput = ref(null)
@@ -1154,7 +1159,7 @@ function sectionMenu(sec) {
         },
       ],
     },
-    { group: __('Column'), items: columnOps(sec.columns) },
+    { group: __('Column'), options: columnOps(sec.columns) },
   ]
 }
 function optionList(f) {
