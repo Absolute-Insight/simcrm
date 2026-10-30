@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { h, nextTick } from 'vue'
 import { setConfig } from 'frappe-ui'
+import { validateTimeRange } from '@/composables/event'
 import { mount } from './mount.js'
 import CalendarPage from '@/pages/Calendar.vue'
 
@@ -139,6 +140,17 @@ const eventLists = () =>
     (r) => r.url === 'frappe.client.get_list' && r.params.doctype === 'Event',
   )
 
+async function clickCell(time) {
+  state.calendar.onCellClick({
+    date: '2026-10-30',
+    time,
+    isFullDay: false,
+    view: 'Week',
+  })
+  await settle()
+  return state.panels.at(-1).event
+}
+
 beforeEach(() => {
   state.requests.length = 0
   state.panels.length = 0
@@ -166,6 +178,41 @@ describe('Calendar page', () => {
         ['ends_on', '>=', '2026-10-25 00:00:00'],
       ]),
     )
+  })
+
+  it.each([
+    ['7 am', '07:00', '08:00'],
+    ['6:30 am', '06:30', '07:30'],
+    ['12 am', '00:00', '01:00'],
+    ['12:30 pm', '12:30', '13:30'],
+    ['4:30 pm', '16:30', '17:30'],
+    ['07:30', '07:30', '08:30'],
+  ])('starts an event clicked at %s at %s', async (time, from, to) => {
+    await open()
+    const event = await clickCell(time)
+    expect([event.fromTime, event.toTime]).toEqual([from, to])
+  })
+
+  it.each(['11 pm', '11:30 pm'])(
+    'gives an event started at %s an end it can be saved with',
+    async (time) => {
+      await open()
+      const event = await clickCell(time)
+      expect(event.toTime).toBe('23:59')
+      expect(validateTimeRange({ ...event, isFullDay: false }).valid).toBe(true)
+    },
+  )
+
+  it('gives an event made with the shortcut after 23:00 a valid end', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 9, 30, 23, 10))
+    await open()
+    state.shortcuts[0].action()
+    await settle()
+
+    const event = state.panels.at(-1).event
+    expect([event.fromTime, event.toTime]).toEqual(['23:10', '23:59'])
+    expect(validateTimeRange({ ...event, isFullDay: false }).valid).toBe(true)
   })
 
   it('falls back to your own calendar when the user picker is cleared', async () => {

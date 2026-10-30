@@ -190,6 +190,7 @@ import { globalStore } from '@/stores/global'
 import { getSettings } from '@/stores/settings'
 import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
 import { isMobileView } from '@/composables/settings'
+import { computeAutoToTime } from '@/composables/event'
 import {
   createListResource,
   dayjs,
@@ -617,25 +618,24 @@ function getFromToTime(time) {
   let fromHour = h
   let fromMinute = m
   if (time) {
-    if (/am|pm/i.test(time)) {
-      const raw = time.trim().replace(' ', '')
-      const ampm = raw.slice(-2).toLowerCase()
-      let hour = parseInt(raw.slice(0, -2))
-      if (ampm === 'pm' && hour < 12) hour += 12
-      if (ampm === 'am' && hour === 12) hour = 0
-      fromHour = hour
-      fromMinute = 0
+    // The hour grid hands back "7 am", or "6:30 am" for a click near a row's
+    // edge. The minutes were dropped, so that event began half an hour early.
+    const twelveHour = time.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i)
+    if (twelveHour) {
+      const [, hh, mm = '00', ampm] = twelveHour
+      fromHour = (parseInt(hh) % 12) + (ampm.toLowerCase() === 'pm' ? 12 : 0)
+      fromMinute = parseInt(mm)
     } else if (/^\d{1,2}:?\d{0,2}$/.test(time)) {
       const [hh, mm = '00'] = time.split(':')
       fromHour = parseInt(hh)
       fromMinute = parseInt(mm) || 0
     }
   }
-  const toHour = (fromHour + 1) % 24
-  return [
-    `${pad(fromHour)}:${pad(fromMinute)}`,
-    `${pad(toHour)}:${pad(fromMinute)}`,
-  ]
+  const fromTime = `${pad(fromHour)}:${pad(fromMinute)}`
+  // An hour later, as the panel picks when the start changes, so not past
+  // midnight: the panel checks both times against the start date, and the
+  // 11 pm row's old default end of 00:00 could not be saved.
+  return [fromTime, computeAutoToTime(fromTime)]
 }
 
 async function ensureParticipantContacts(participants) {
