@@ -344,14 +344,28 @@ onMounted(() => {
   }
 })
 
+// The form shows one date. A timed event ends on it, or on the next day when
+// its end time is before its start time (it runs past midnight). Every date or
+// time edit re-derives the end date by this one rule, and validation and save
+// both read the result: a hidden end date left over from the seed (a new event
+// begun after 23:00) or from the date before used to be saved as is, a day
+// after what the form showed.
+function endDate(fromDate, fromTime, toTime) {
+  if (!fromDate || !fromTime || !toTime || toTime >= fromTime) return fromDate
+  return dayjs(fromDate).add(1, 'day').format('YYYY-MM-DD')
+}
+
 function updateDate(d) {
   _event.value.fromDate = d
-  _event.value.toDate = d
+  _event.value.toDate = _event.value.isFullDay
+    ? d
+    : endDate(d, _event.value.fromTime, _event.value.toTime)
 }
 
 function updateTime(t, fromTime = false) {
   error.value = null
   const prevTo = _event.value.toTime
+  const prevToDate = _event.value.toDate
   if (fromTime) {
     _event.value.fromTime = t
     if (!_event.value.toTime || _event.value.toTime <= t) {
@@ -360,8 +374,14 @@ function updateTime(t, fromTime = false) {
   } else {
     _event.value.toTime = t
   }
+  _event.value.toDate = endDate(
+    _event.value.fromDate,
+    _event.value.fromTime,
+    _event.value.toTime,
+  )
   const { valid, error: err } = validateTimeRange({
     fromDate: _event.value.fromDate,
+    toDate: _event.value.toDate,
     fromTime: _event.value.fromTime,
     toTime: _event.value.toTime,
     isFullDay: _event.value.isFullDay,
@@ -369,6 +389,7 @@ function updateTime(t, fromTime = false) {
   if (!valid) {
     error.value = err
     _event.value.toTime = prevTo
+    _event.value.toDate = prevToDate
   }
 }
 
@@ -382,6 +403,7 @@ function update() {
 
   const { valid, error: err } = validateTimeRange({
     fromDate: _event.value.fromDate,
+    toDate: _event.value.toDate,
     fromTime: _event.value.fromTime,
     toTime: _event.value.toTime,
     isFullDay: _event.value.isFullDay,
