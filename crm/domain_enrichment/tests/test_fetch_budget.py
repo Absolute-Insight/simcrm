@@ -22,6 +22,7 @@ import time
 from unittest import mock
 
 from frappe.tests import UnitTestCase
+from rq.timeouts import JobTimeoutException
 
 from crm.domain_enrichment import extractors, http
 from crm.domain_enrichment.result import CrawledPage
@@ -348,3 +349,34 @@ class RetryPolicyTest(UnitTestCase):
 		self.assertEqual((status, error), (429, ""))
 		page = CrawledPage(url=final, status_code=status, html=html, error=error)
 		self.assertEqual(extractors.diagnose_readability([page]), "blocked")
+
+
+class JobDeadlineTest(UnitTestCase):
+	"""rq's job deadline is an ordinary Exception subclass raised wherever the job is
+	-- most often mid-fetch. ``fetch`` never raising is a promise about the page, not
+	the job: turned into a page error, the crawl ran on until rq killed the worker,
+	with no Run written and no terminal event for the waiting button."""
+
+	def _fetch(self, pinned_get):
+		cfg = make_config({"request_timeout": 5})
+		with (
+			mock.patch.object(http, "_validated_ips", return_value=["93.184.216.34"]),
+			mock.patch.object(http, "_pinned_get", side_effect=pinned_get),
+			mock.patch.object(http, "build_session", return_value=mock.MagicMock()),
+		):
+			return http.fetch("https://slow.example/", cfg)
+
+	def test_the_job_deadline_during_a_request_stops_the_job(self):
+		def alarm(*_a, **_k):
+			raise JobTimeoutException("Task exceeded maximum timeout value (160 seconds)")
+
+		with self.assertRaises(JobTimeoutException):
+			self._fetch(alarm)
+
+	def test_the_job_deadline_during_the_body_stops_the_job(self):
+		def body():
+			yield b"<html>"
+			raise JobTimeoutException("Task exceeded maximum timeout value (160 seconds)")
+
+		with self.assertRaises(JobTimeoutException):
+			self._fetch(lambda *_a, **_k: FakeResponse(body()))

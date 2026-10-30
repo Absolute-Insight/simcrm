@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from . import extractors, model_fallback
 from .config import EnrichmentConfig, get_config
 from .crawler import crawl, probe_about_pages
-from .http import build_session
+from .http import JobTimeout, build_session
 from .result import EnrichmentResult, Field, Method
 
 # Said on the run rather than left to the provenance labels alone. A reviewer
@@ -124,6 +124,8 @@ def run(website: str, cfg: EnrichmentConfig = None, progress=None) -> Enrichment
 		if progress:
 			try:
 				progress(step_index, message or PROGRESS_STEPS[step_index])
+			except JobTimeout:
+				raise
 			except Exception:
 				pass  # progress reporting must never break enrichment
 

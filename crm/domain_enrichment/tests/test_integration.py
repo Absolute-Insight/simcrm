@@ -17,6 +17,7 @@ from unittest import mock
 
 import frappe
 from frappe.tests import IntegrationTestCase
+from rq.timeouts import JobTimeoutException
 
 from crm.domain_enrichment import config, install, tasks
 from crm.domain_enrichment.config import get_config
@@ -140,6 +141,60 @@ class RunWriterTest(IntegrationTestCase):
 		self.assertEqual(run.industry, "SaaS")
 		self.assertTrue(run.finished_on)
 		self.assertIn("Acme Analytics", run.raw_json)
+
+
+class JobTimeoutTest(IntegrationTestCase):
+	"""rq's timeout must cover the run's own bounded worst case. At the old
+	``request_timeout x max_pages + 60`` (160 s by default) it landed mid-crawl on a
+	site that was merely slow, and the worker was killed with no Run written."""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _timeout(self, **settings):
+		s = frappe._dict({"request_timeout": 10, "max_pages": 10, **settings})
+		with (
+			mock.patch.object(tasks, "get_settings", return_value=s),
+			mock.patch.object(tasks.frappe, "enqueue") as enq,
+		):
+			tasks.enqueue_enrichment("CRM Organization", "O1", "https://acme.example", "Administrator")
+		return enq.call_args.kwargs["timeout"]
+
+	def test_it_covers_every_fetch_a_run_can_make(self):
+		# robots.txt + 5 sitemaps + 10 pages + a second robots.txt + 4 About probes,
+		# each allowed its whole fetch budget (3 x request_timeout, capped at 30 s)
+		self.assertGreaterEqual(self._timeout(), 21 * 30)
+
+	def test_it_grows_with_the_page_budget(self):
+		self.assertGreaterEqual(self._timeout(max_pages=40) - self._timeout(), 30 * 30)
+
+	def test_the_model_call_is_allowed_for_when_the_fallback_is_on(self):
+		with mock.patch("crm.agent.config.get_config", return_value=frappe._dict(timeout=45)):
+			self.assertGreaterEqual(self._timeout(model_fallback=1), 21 * 30 + 45 * 2)
+
+	def test_the_job_deadline_while_publishing_stops_the_job(self):
+		"""Realtime is best-effort; rq's deadline landing mid-publish is not a realtime
+		failure, and swallowed there nothing else would ever stop the job."""
+		with mock.patch.object(tasks.frappe, "publish_realtime", side_effect=JobTimeoutException("late")):
+			with self.assertRaises(JobTimeoutException):
+				tasks._publish("CRM Organization", "O1", "running", user="Administrator")
+
+	def test_a_run_that_times_out_ends_failed_with_a_terminal_event(self):
+		org = frappe.new_doc("CRM Organization")
+		org.organization_name = "Timed Out Org " + frappe.generate_hash(length=4)
+		org.website = "https://slow.example"
+		org.insert()
+		published = []
+
+		with (
+			mock.patch.object(tasks, "run_pipeline", side_effect=JobTimeoutException("late")),
+			mock.patch.object(tasks, "_publish", side_effect=lambda *a, **k: published.append(k)),
+		):
+			tasks.run_enrichment("CRM Organization", org.name, org.website, user="Administrator")
+
+		status = frappe.db.get_value("CRM Enrichment Run", {"reference_name": org.name}, "status")
+		self.assertEqual(status, "Failed")
+		self.assertEqual(published[-1]["status"], "error")
 
 
 class ApiPermissionTest(IntegrationTestCase):

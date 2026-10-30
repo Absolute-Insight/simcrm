@@ -19,13 +19,17 @@ import frappe
 from frappe.utils.telemetry import capture
 
 from .config import (
+	DEFAULT_SETTINGS,
 	ENABLE_FLAG_BY_DOCTYPE,
+	EnrichmentConfig,
 	_setting,
 	auto_enrich_enabled_for,
 	enrichment_enabled_for,
 	get_config,
 	get_settings,
 )
+from .crawler import max_fetches
+from .http import JobTimeout, _fetch_budget
 from .mapper import apply_to_document
 from .pipeline import PROGRESS_STEPS
 from .pipeline import run as run_pipeline
@@ -35,6 +39,10 @@ PROGRESS_EVENT = "domain_enrichment_progress"
 
 # Total number of pipeline progress steps (mirrors pipeline.PROGRESS_STEPS).
 TOTAL_STEPS = len(PROGRESS_STEPS)
+
+# On top of the fetches and the model call: DNS lookups (outside the fetch budget),
+# the Settings and document reads, the mapper, the save and the Run insert.
+JOB_TIMEOUT_SLACK = 60
 
 
 def _publish(reference_doctype, reference_name, status, message="", step=0, payload=None, user=None):
@@ -56,6 +64,8 @@ def _publish(reference_doctype, reference_name, status, message="", step=0, payl
 			},
 			user=user,
 		)
+	except JobTimeout:
+		raise
 	except Exception:
 		pass
 
@@ -104,6 +114,31 @@ def write_run(
 	return doc.name
 
 
+def job_timeout(s) -> int:
+	"""Seconds the ``run_enrichment`` job may run: the run's own bounded worst case.
+
+	Every fetch is held to the fetch budget and a run makes at most
+	``crawler.max_fetches`` of them; with the model tier on, one completion adds up to
+	the agent's ``timeout x MAX_ATTEMPTS``. The old ``request_timeout x max_pages + 60``
+	(160 s by default) ignored the budget's multiple, the robots/sitemap/About fetches
+	and the model, so rq's deadline landed mid-crawl on a site that was merely slow.
+	"""
+	cfg = EnrichmentConfig(settings={key: _setting(s, key) for key in DEFAULT_SETTINGS})
+	per_fetch = _fetch_budget(cfg, int(cfg.setting("request_timeout")))
+	seconds = max_fetches(int(cfg.setting("max_pages"))) * per_fetch + JOB_TIMEOUT_SLACK
+	if int(cfg.setting("model_fallback") or 0):
+		from crm.agent import client
+		from crm.agent.config import DEFAULT_SETTINGS as AGENT_DEFAULTS
+		from crm.agent.config import get_config as get_agent_config
+
+		try:
+			agent_timeout = get_agent_config().timeout
+		except Exception:
+			agent_timeout = AGENT_DEFAULTS["timeout"]
+		seconds += agent_timeout * client.MAX_ATTEMPTS
+	return int(seconds)
+
+
 def enqueue_enrichment(
 	reference_doctype: str, reference_name: str, website: str, user: str, trigger: str = "manual"
 ) -> dict:
@@ -117,8 +152,7 @@ def enqueue_enrichment(
 	Reads only the Settings Single for the timeout bound (cheap, framework-cached) --
 	it never assembles the full config.
 	"""
-	s = get_settings()
-	timeout = int(_setting(s, "request_timeout")) * int(_setting(s, "max_pages")) + 60
+	timeout = job_timeout(get_settings())
 	job_id = f"domain-enrich-{reference_doctype}-{reference_name}"
 	frappe.enqueue(
 		"crm.domain_enrichment.tasks.run_enrichment",

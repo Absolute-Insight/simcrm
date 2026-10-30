@@ -32,6 +32,7 @@ from urllib.parse import urlparse
 import frappe
 from frappe.utils import get_request_session
 from requests.adapters import HTTPAdapter, Retry
+from rq.timeouts import BaseTimeoutException as JobTimeout
 from urllib3.connection import HTTPConnection, HTTPSConnection
 from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 
@@ -54,6 +55,11 @@ DEFAULT_USER_AGENT = (
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 	"(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 )
+
+# ``JobTimeout`` is rq's job deadline. It is an ordinary ``Exception`` subclass raised
+# wherever the job happens to be -- usually inside a fetch -- so every catch-all on the
+# crawl path re-raises it. Swallowed as a page error, the crawl ran on until rq killed
+# the worker outright: no Run written, no terminal event for the waiting button.
 
 
 class SSRFError(Exception):
@@ -487,6 +493,8 @@ def _read_capped(resp, max_bytes: int, deadline: float | None = None) -> str:
 			# traffic that keeps the per-read timeout from ever firing
 			if deadline is not None and time.monotonic() >= deadline:
 				break
+	except JobTimeout:
+		raise
 	except Exception:
 		guard = _active_deadline()
 		if not (guard and guard.expired):
@@ -607,6 +615,8 @@ def fetch(url: str, cfg, session=None, html_only: bool = True):
 				return status, html, "", current
 
 			return 0, "", "too many redirects", current
+	except JobTimeout:
+		raise
 	except Exception as exc:
 		if deadline.expired:
 			# whatever broke, it broke because the deadline shut the socket under it

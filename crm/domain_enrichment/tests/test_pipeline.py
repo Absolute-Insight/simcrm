@@ -14,6 +14,7 @@ from __future__ import annotations
 from unittest import mock
 
 from frappe.tests import UnitTestCase
+from rq.timeouts import JobTimeoutException
 
 from crm.domain_enrichment import pipeline as pipeline_mod
 from crm.domain_enrichment.pipeline import PROGRESS_STEPS, _normalize_website
@@ -125,6 +126,25 @@ class PipelineRunTest(UnitTestCase):
 		self.assertEqual(out["company_name"]["value"], "")
 		self.assertTrue(out["_meta"]["errors"])
 		self.assertTrue(result.notes)  # carries the "couldn't reach" note
+
+	def test_a_failing_progress_callback_is_ignored(self):
+		def broken(_i, _m):
+			raise RuntimeError("realtime is down")
+
+		with mock.patch.object(pipeline_mod, "crawl", _canned_crawl):
+			result = run_pipeline("https://acme.example", cfg=self.cfg, progress=broken)
+		self.assertEqual(result.company_name.value, "Acme Analytics Inc.")
+
+	def test_the_job_deadline_in_a_progress_callback_stops_the_run(self):
+		"""Progress is best-effort; rq's job deadline landing while it publishes is not
+		a progress failure (see ``http.JobTimeout``)."""
+
+		def alarm(_i, _m):
+			raise JobTimeoutException("Task exceeded maximum timeout value (160 seconds)")
+
+		with mock.patch.object(pipeline_mod, "crawl", _canned_crawl):
+			with self.assertRaises(JobTimeoutException):
+				run_pipeline("https://acme.example", cfg=self.cfg, progress=alarm)
 
 
 class JsSpaSiteTest(UnitTestCase):
