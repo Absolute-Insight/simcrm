@@ -363,7 +363,7 @@ const settings = createResource({
   url: 'crm.agent.api.get_settings',
   auto: true,
   onSuccess: (data) => {
-    saved.value = { ...(data || {}) }
+    saved.value = { ...data }
     Object.assign(draft, saved.value)
   },
 })

@@ -1,5 +1,5 @@
+/* eslint-disable vue/one-component-per-file, vue/require-default-prop -- stand-ins for frappe-ui controls */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ref } from 'vue'
 import { mount } from '../mount.js'
 import { flush } from './standIns.js'
 
