@@ -477,6 +477,9 @@ def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled
 	it, in either direction.
 	"""
 	plan = _own_plan_of(item)
+	# a closed week's adherence is not rewritten after the fact, the same line
+	# complete_item, cancel_item and save_plan hold
+	_refuse_outside_horizon(plan.week_start)
 	if fulfilled_by_doctype and fulfilled_by_doctype not in FULFILMENT_DOCTYPES:
 		frappe.throw(_("{0} cannot fulfil a plan item.").format(fulfilled_by_doctype))
 	if fulfilled_by and not fulfilled_by_doctype:
@@ -527,6 +530,7 @@ def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled
 def mark_missed(item: str):
 	"""Write one of the caller's own items off by hand, before its week is over."""
 	plan = _own_plan_of(item)
+	_refuse_outside_horizon(plan.week_start)
 	_drop_own_event(item, plan.user)
 	frappe.db.set_value(
 		"CRM Rep Plan Item",
@@ -546,6 +550,7 @@ def mark_missed(item: str):
 def clear_override(item: str):
 	"""Hand an item the rep had corrected back to the matcher."""
 	plan = _own_plan_of(item)
+	_refuse_outside_horizon(plan.week_start)
 	_drop_own_event(item, plan.user)
 	frappe.db.set_value(
 		"CRM Rep Plan Item",

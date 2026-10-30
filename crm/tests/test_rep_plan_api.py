@@ -322,6 +322,28 @@ class RepPlanApiTest(IntegrationTestCase):
 		self.assertEqual(out["items"][0]["status"], "Planned")
 		self.assertEqual(out["items"][0]["manual_override"], 0)
 
+	def test_a_week_past_the_horizon_cannot_be_corrected_by_hand(self):
+		"""complete_item and cancel_item refused a closed week, but the three
+		override endpoints rewrote it, and with it a closed period's adherence."""
+		stranded = frappe.utils.add_days(frappe.utils.getdate(self.monday), -7 * (MATCH_HORIZON_WEEKS + 4))
+		plan = frappe.get_doc(
+			{
+				"doctype": "CRM Rep Plan",
+				"user": REP,
+				"week_start": stranded,
+				"items": [{"activity_type": "Call", "planned_date": stranded, "status": "Missed"}],
+			}
+		).insert(ignore_permissions=True)
+		item = plan.items[0].name
+
+		frappe.set_user(REP)
+		for override in (mark_fulfilled, mark_missed, clear_override):
+			with self.subTest(override=override.__name__), self.assertRaises(frappe.ValidationError):
+				override(item)
+		self.assertEqual(
+			frappe.db.get_value("CRM Rep Plan Item", item, ["status", "manual_override"]), ("Missed", 0)
+		)
+
 	def test_a_manual_override_survives_a_replan(self):
 		frappe.set_user(REP)
 		out = save_plan(self.monday, [{"activity_type": "Call", "planned_date": self.monday}])
