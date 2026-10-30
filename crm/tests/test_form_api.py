@@ -410,6 +410,39 @@ class TestFormAPI(IntegrationTestCase):
 			stored = save(fieldname="first_name", fieldtype="Data", depends_on=expression)
 			self.assertEqual(stored.depends_on or "", expression)
 
+	def test_patch_clears_unsafe_redirects_and_conditions_already_stored(self):
+		from unittest.mock import patch
+
+		from crm.patches.v1_0 import clear_unsafe_public_form_scripts
+
+		planted = make_form("planted", title="Planted", redirect_url="https://example.com/thanks")
+		safe = make_form(
+			"untouched",
+			title="Untouched",
+			redirect_url="/thank-you",
+			fields=[{"fieldname": "first_name", "fieldtype": "Data", "depends_on": "eval:doc.email"}],
+		)
+		# written past save_form, as a form saved before it checked these would be
+		frappe.db.set_value("Web Form", planted, "success_url", "javascript:alert(document.domain)")
+		rows = frappe.get_doc("Web Form", planted).web_form_fields
+		frappe.db.set_value("Web Form Field", rows[1].name, "depends_on", "eval:alert(document.domain)")
+		frappe.db.set_value("Web Form Field", rows[2].name, "read_only_depends_on", "eval:doc.first_name")
+
+		with patch.object(frappe, "log_error") as log_error:
+			clear_unsafe_public_form_scripts.execute()
+
+		doc = frappe.get_doc("Web Form", planted)
+		self.assertEqual(doc.success_url, "")
+		self.assertEqual(doc.web_form_fields[1].depends_on, "")
+		self.assertEqual(doc.web_form_fields[2].read_only_depends_on, "eval:doc.first_name")
+		self.assertEqual(len(doc.web_form_fields), len(rows))
+		other = frappe.get_doc("Web Form", safe)
+		self.assertEqual(other.success_url, "/thank-you")
+		self.assertEqual(other.web_form_fields[0].depends_on, "eval:doc.email")
+		log_error.assert_called_once()
+		self.assertIn(planted, log_error.call_args.kwargs["message"])
+		self.assertNotIn(safe, log_error.call_args.kwargs["message"])
+
 	# ---- draft dry-run ----
 
 	def test_test_submit_validates_but_creates_nothing(self):
