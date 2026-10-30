@@ -104,23 +104,33 @@ def complete(
 				# an empty answer already refused; spend the second attempt only
 				# when there is something for the model to correct.
 				break
-			attempt_messages = prompting.fit_messages(
-				[
-					*messages,
-					# The rejected reply goes back with the complaint. Without it the
-					# retry was a fresh request with an instruction appended, and a
-					# model that cannot see what it got wrong repeats it.
-					{"role": "assistant", "content": str(raw)[:RETRY_ECHO_CHARS]},
-					{"role": "user", "content": RETRY_INSTRUCTION.format(error=last_error)},
-				],
-				budget,
-			)
+			attempt_messages = _retry_messages(messages, raw, last_error, budget)
 			if deadline is not None and time.monotonic() >= deadline:
 				# the retry would be refused at _time_allowed anyway; say why
 				# the reply was bad rather than that the clock ran out
 				break
 
 	raise SchemaMismatch(last_error)
+
+
+def _retry_messages(messages: list[dict], raw: str, error: str, budget: int) -> list[dict]:
+	"""The request again, then the rejected reply, then the complaint.
+
+	The rejected reply goes back with the complaint. Without it the retry was a
+	fresh request with an instruction appended, and a model that cannot see
+	what it got wrong repeats it. But the request is what the retry answers:
+	re-fitted as one list, the oldest droppable turn was the quoted thread or
+	the rep's question itself, and a valid reply to nothing came back as ok. So
+	the request and the complaint are both protected, history goes only if the
+	complaint does not fit beside it, and the echo takes whatever room is left.
+	"""
+	complaint = {"role": "user", "content": RETRY_INSTRUCTION.format(error=error)}
+	request = prompting.fit_messages([*messages, complaint], budget, protected=2)
+	room = budget - prompting.estimate_messages(request) - prompting.MESSAGE_OVERHEAD_TOKENS
+	echo = str(raw)[: min(RETRY_ECHO_CHARS, prompting.tokens_to_chars(room))]
+	if not echo.strip():
+		return request
+	return [*request[:-1], {"role": "assistant", "content": echo}, request[-1]]
 
 
 def _time_allowed(cfg: AgentConfig, deadline: float | None) -> float:
