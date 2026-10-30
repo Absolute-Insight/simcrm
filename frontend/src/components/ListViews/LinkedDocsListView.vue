@@ -99,48 +99,28 @@ function onColumnWidthUpdated({ width, save }, column) {
   if (save) emit('columnWidthUpdated', column)
 }
 
+// Where the CRM shows a record of each doctype. Anything else -- a linked
+// CRM Notification, an enrichment run -- opens in the desk, rather than at
+// `/crm//` as an unlisted doctype (CRM Deal included) used to.
+const crmPages = {
+  'CRM Lead': (name) => `/crm/leads/${name}`,
+  'CRM Deal': (name) => `/crm/deals/${name}`,
+  Contact: (name) => `/crm/contacts/${name}`,
+  'CRM Organization': (name) => `/crm/organizations/${name}`,
+  'CRM Call Log': (name) => `/crm/call-logs/view?open=${name}`,
+  'CRM Task': (name) => `/crm/tasks/view?open=${name}`,
+  'FCRM Note': (name) => `/crm/notes/view?open=${name}`,
+}
+
 const viewLinkedDoc = (doc) => {
-  let page = ''
-  let id = ''
-  let openDesk = false
-  switch (doc.reference_doctype) {
-    case 'CRM Lead':
-      page = 'leads'
-      id = doc.reference_docname
-      break
-    case 'CRM Call Log':
-      page = 'call-logs'
-      id = `view?open=${doc.reference_docname}`
-      break
-    case 'CRM Task':
-      page = 'tasks'
-      id = `view?open=${doc.reference_docname}`
-      break
-    case 'Contact':
-      page = 'contacts'
-      id = doc.reference_docname
-      break
-    case 'CRM Organization':
-      page = 'organizations'
-      id = doc.reference_docname
-      break
-    case 'CRM Notification':
-      page = 'crm-notification'
-      id = doc.reference_docname
-      openDesk = true
-      break
-    case 'FCRM Note':
-      page = 'notes'
-      id = `view?open=${doc.reference_docname}`
-      break
-    default:
-      break
-  }
-  let base = '/crm'
-  if (openDesk) {
-    base = '/app'
-  }
-  window.open(`${base}/${page}/${id}`)
+  // Names are free text ("Smith & Sons t/a #2"); a `/` or `#` in one cut the URL.
+  const name = encodeURIComponent(doc.reference_docname)
+  const page = crmPages[doc.reference_doctype]
+  window.open(
+    page
+      ? page(name)
+      : `/app/${doc.reference_doctype.toLowerCase().replace(/ /g, '-')}/${name}`,
+  )
 }
 
 const getDoctypeName = (doctype) => {
