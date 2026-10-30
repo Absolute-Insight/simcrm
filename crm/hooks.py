@@ -444,6 +444,7 @@ after_migrate = [
 	# gets them without a patch
 	"crm.fcrm.doctype.crm_task.crm_task.on_doctype_update",
 	"crm.fcrm.doctype.crm_call_log.crm_call_log.on_doctype_update",
+	"crm.fcrm.doctype.fcrm_note.fcrm_note.on_doctype_update",
 	"crm.fcrm.doctype.crm_status_change_log.crm_status_change_log.on_doctype_update",
 	"crm.fcrm.doctype.crm_forecast_snapshot.crm_forecast_snapshot.on_doctype_update",
 ]

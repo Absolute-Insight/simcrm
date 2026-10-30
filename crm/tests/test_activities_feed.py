@@ -6,8 +6,8 @@
 ``get_activities`` was built on frappe's ``get_docinfo``, which is a desk form's
 first screen -- the latest 10 versions and 21 emails -- so a long-lived record's
 Activity and Emails tabs were silently cut short. It also shipped that docinfo a
-second time in the response, and looked the translatable doctypes up again for
-every change.
+second time in the response, looked the translatable doctypes up again for
+every change, and read its four linked tables on columns no index leads with.
 """
 
 from __future__ import annotations
@@ -132,3 +132,80 @@ class TimelineHotPathTest(IntegrationTestCase):
 		get_activities(self.lead)
 
 		self.assertNotIn("docinfo", frappe.response)
+
+
+class TimelineReadsUseIndexesTest(IntegrationTestCase):
+	"""Calls, notes, tasks and call links were read on the record's name alone.
+
+	Every index on those tables leads with the doctype column, and MariaDB has no
+	skip-scan, so each one was a full table scan on every page load -- twice for
+	a converted deal. FCRM Note had no index at all.
+	"""
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def declared_indexes(self) -> dict[str, list[tuple[str, ...]]]:
+		from crm.fcrm.doctype.crm_call_log import crm_call_log
+		from crm.fcrm.doctype.crm_task import crm_task
+		from crm.fcrm.doctype.fcrm_note import fcrm_note
+
+		# frappe's own, on Dynamic Link
+		declared = {"Dynamic Link": [("link_doctype", "link_name")]}
+
+		def add_index(doctype, fields, index_name=None):
+			declared.setdefault(doctype, []).append(tuple(fields))
+
+		with patch.object(frappe.db, "add_index", side_effect=add_index):
+			for module in (crm_task, crm_call_log, fcrm_note):
+				hook = getattr(module, "on_doctype_update", None)
+				if hook:
+					hook()
+		return declared
+
+	def test_fcrm_note_declares_its_record_index_and_migrate_applies_it(self):
+		import crm.hooks
+
+		self.assertIn(
+			("reference_doctype", "reference_docname"), self.declared_indexes().get("FCRM Note", [])
+		)
+		self.assertIn("crm.fcrm.doctype.fcrm_note.fcrm_note.on_doctype_update", crm.hooks.after_migrate)
+
+	def test_every_feed_read_leads_with_an_indexed_column(self):
+		declared = self.declared_indexes()
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Feed Index Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		lead = make_lead("Indexed")
+		deal = frappe.get_doc({"doctype": "CRM Deal", "organization": org, "lead": lead}).insert(
+			ignore_permissions=True
+		)
+
+		reads = []
+		real_get_all = frappe.db.get_all
+
+		def get_all(doctype, *args, **kwargs):
+			reads.append((doctype, kwargs.get("filters")))
+			return real_get_all(doctype, *args, **kwargs)
+
+		with patch.object(frappe.db, "get_all", side_effect=get_all):
+			get_activities(deal.name)
+
+		checked = set()
+		for doctype, filters in reads:
+			if doctype not in ("CRM Call Log", "Dynamic Link", "FCRM Note", "CRM Task"):
+				continue
+			if "name" in filters:
+				continue  # by primary key
+			leading = {index[0] for index in declared.get(doctype, [])}
+			self.assertTrue(
+				leading & set(filters),
+				f"{doctype} is read on {sorted(filters)}, and no index leads with any of them",
+			)
+			checked.add(doctype)
+		self.assertEqual(checked, {"CRM Call Log", "Dynamic Link", "FCRM Note", "CRM Task"})

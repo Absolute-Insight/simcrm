@@ -1,7 +1,7 @@
 # Copyright (c) 2023, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-# import frappe
+import frappe
 from frappe.model.document import Document
 
 
@@ -32,3 +32,9 @@ class FCRMNote(Document):
 			"modified",
 		]
 		return {"columns": [], "rows": rows}
+
+
+def on_doctype_update():
+	"""The per-record activity feed and the kanban note counts read notes by the
+	record they are on, and the table had no index on that at all."""
+	frappe.db.add_index("FCRM Note", ["reference_doctype", "reference_docname"])

@@ -223,10 +223,10 @@ def get_deal_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 		}
 		activities.append(activity)
 
-	linked_calls = get_linked_calls(name)
+	linked_calls = get_linked_calls(name, "CRM Deal")
 	calls = calls + linked_calls.get("calls", [])
-	notes = notes + get_linked_notes(name) + linked_calls.get("notes", [])
-	tasks = tasks + get_linked_tasks(name) + linked_calls.get("tasks", [])
+	notes = notes + get_linked_notes(name, "CRM Deal") + linked_calls.get("notes", [])
+	tasks = tasks + get_linked_tasks(name, "CRM Deal") + linked_calls.get("tasks", [])
 	attachments = attachments + get_attachments("CRM Deal", name)
 
 	activities.sort(key=lambda x: x["creation"], reverse=True)
@@ -371,10 +371,10 @@ def get_lead_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 		}
 		activities.append(activity)
 
-	linked_calls = get_linked_calls(name)
+	linked_calls = get_linked_calls(name, "CRM Lead")
 	calls = linked_calls.get("calls", [])
-	notes = get_linked_notes(name) + linked_calls.get("notes", [])
-	tasks = get_linked_tasks(name) + linked_calls.get("tasks", [])
+	notes = get_linked_notes(name, "CRM Lead") + linked_calls.get("notes", [])
+	tasks = get_linked_tasks(name, "CRM Lead") + linked_calls.get("tasks", [])
 	attachments = get_attachments("CRM Lead", name)
 
 	activities.sort(key=lambda x: x["creation"], reverse=True)
@@ -465,10 +465,23 @@ def parse_grouped_versions(versions: list):
 	return version
 
 
-def get_linked_calls(name: str):
+def _record_filters(link_field: str, name: str, doctype_field: str, doctype: str | None) -> dict:
+	"""Filter on the record's doctype as well as its name.
+
+	The name alone finds the same rows -- names are unique per naming series --
+	but every index on these tables leads with the doctype column, so without it
+	each timeline load scanned the whole table, four times over.
+	"""
+	filters = {link_field: name}
+	if doctype:
+		filters[doctype_field] = doctype
+	return filters
+
+
+def get_linked_calls(name: str, doctype: str | None = None):
 	calls = frappe.db.get_all(
 		"CRM Call Log",
-		filters={"reference_docname": name},
+		filters=_record_filters("reference_docname", name, "reference_doctype", doctype),
 		fields=[
 			"name",
 			"caller",
@@ -489,7 +502,12 @@ def get_linked_calls(name: str):
 	)
 
 	linked_calls = frappe.db.get_all(
-		"Dynamic Link", filters={"link_name": name, "parenttype": "CRM Call Log"}, pluck="parent"
+		"Dynamic Link",
+		filters={
+			**_record_filters("link_name", name, "link_doctype", doctype),
+			"parenttype": "CRM Call Log",
+		},
+		pluck="parent",
 	)
 
 	notes = []
@@ -566,19 +584,19 @@ def get_linked_calls(name: str):
 	return {"calls": calls, "notes": notes, "tasks": tasks}
 
 
-def get_linked_notes(name: str):
+def get_linked_notes(name: str, doctype: str | None = None):
 	notes = frappe.db.get_all(
 		"FCRM Note",
-		filters={"reference_docname": name},
+		filters=_record_filters("reference_docname", name, "reference_doctype", doctype),
 		fields=["name", "title", "content", "owner", "modified", "creation"],
 	)
 	return notes or []
 
 
-def get_linked_tasks(name: str):
+def get_linked_tasks(name: str, doctype: str | None = None):
 	tasks = frappe.db.get_all(
 		"CRM Task",
-		filters={"reference_docname": name},
+		filters=_record_filters("reference_docname", name, "reference_doctype", doctype),
 		fields=[
 			"name",
 			"title",
