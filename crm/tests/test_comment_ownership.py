@@ -149,6 +149,31 @@ class CommentOwnershipTest(IntegrationTestCase):
 		self.assertFalse(frappe.db.exists("Comment", name))
 		self.assertFalse(frappe.db.exists("CRM Notification", notification))
 
+	def test_editing_a_comment_does_not_notify_the_same_people_again(self):
+		name = self.comment_as(ALICE, f"<p>Look {mention(BOB)}</p>")
+
+		update_comment(name, f"<p>Look again {mention(BOB)}</p>")
+
+		self.assertEqual(
+			frappe.db.count(
+				"CRM Notification",
+				{"notification_type_doctype": "Comment", "notification_type_doc": name, "to_user": BOB},
+			),
+			1,
+		)
+
+	def test_editing_a_new_mention_into_a_comment_notifies_them(self):
+		name = self.comment_as(ALICE, "<p>Look</p>")
+
+		update_comment(name, f"<p>Look {mention(BOB)}</p>")
+
+		self.assertTrue(
+			frappe.db.exists(
+				"CRM Notification",
+				{"notification_type_doctype": "Comment", "notification_type_doc": name, "to_user": BOB},
+			)
+		)
+
 	def test_deleting_a_comment_updates_the_cached_list_on_the_record(self):
 		name = self.comment_as(ALICE, "<p>Unique marker text</p>")
 		self.assertIn("Unique marker text", frappe.db.get_value("CRM Lead", self.lead.name, "_comments"))

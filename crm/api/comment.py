@@ -27,6 +27,11 @@ def notify_mentions(doc):
 	mentions = extract_mentions(content)
 	reference_doc = frappe.get_doc(doc.reference_doctype, doc.reference_name)
 	for mention in mentions:
+		# An edit saves the comment again, and a typo fix must not ping everyone it names
+		if frappe.db.exists(
+			"CRM Notification", {**mention_notifications(doc.name), "to_user": mention.email}
+		):
+			continue
 		owner = frappe.get_cached_value("User", doc.owner, "full_name")
 		doctype = doc.reference_doctype
 		if doctype.startswith("CRM "):
@@ -56,6 +61,10 @@ def notify_mentions(doc):
 				"redirect_to_docname": doc.reference_name,
 			}
 		)
+
+
+def mention_notifications(comment: str) -> dict:
+	return {"notification_type_doctype": "Comment", "notification_type_doc": comment}
 
 
 def extract_mentions(html):
@@ -113,9 +122,7 @@ def delete_comment(name: str) -> None:
 		frappe.get_doc(doc.reference_doctype, doc.reference_name).check_permission("read")
 
 	# A mention's notification links to the comment, which would refuse the delete
-	frappe.db.delete(
-		"CRM Notification", {"notification_type_doctype": "Comment", "notification_type_doc": doc.name}
-	)
+	frappe.db.delete("CRM Notification", mention_notifications(doc.name))
 	doc.delete(ignore_permissions=True)
 
 

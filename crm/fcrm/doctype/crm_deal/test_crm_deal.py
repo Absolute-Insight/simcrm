@@ -573,6 +573,8 @@ class TestCreateDealLinkedRecords(IntegrationTestCase):
 		self.assertFalse(frappe.db.exists("CRM Organization", {"organization_name": "Brand New Org"}))
 
 	def test_an_existing_contact_needs_no_create_permission(self):
+		update_permission_property("Contact", "All", 0, "create", 0)
+		self.addCleanup(frappe.clear_cache, doctype="Contact")
 		contact = create_test_contact(
 			first_name="Reused", email_ids=[{"email_id": "reused.contact@example.com", "is_primary": 1}]
 		)

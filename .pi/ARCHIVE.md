@@ -1257,7 +1257,9 @@ base `7dcd8430d`, next port starts from `14b5efa59`.
 - **#3220 comment edit,** plus delete, which upstream did not fix: `crm.api.comment.delete_comment`,
   owner-checked like frappe's `update_comment`, and limited to written comments for CRM users.
   A mention's notification links through `notification_type_doc`, not the `comment` field, and
-  would otherwise refuse the delete.
+  would otherwise refuse the delete. Editing is new for reps, so `notify_mentions` now skips anyone
+  already notified for that comment; upstream's dedupe compares the message, and a typo fix pinged
+  everyone again.
 - **#3090 deal owner on convert,** unchanged. Does not repair deals already converted; prod's
   count is unknown.
 - **#3213 hierarchy limit,** unchanged. `pageLength: 0` means 20 in frappe-ui; a test now refuses
