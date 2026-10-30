@@ -3,24 +3,38 @@ import { createResource } from 'frappe-ui'
 import { computed, ref } from 'vue'
 import { formatCompactNumber } from '@/utils/numberFormat.js'
 import { neverLoaded } from '@/utils/resourceState'
+import { quiet } from '@/utils/quiet'
 
 export const visible = ref(false)
+
+/* The inbox is the newest page only, so the badge cannot count unread rows in
+   what came back: it asks the server. Declared first because the inbox's own
+   first fetch, which starts as it is created, reloads it. */
+const unreadCount = createResource({
+  url: 'crm.api.notifications.get_unread_count',
+  initialData: 0,
+})
 
 export const notifications = createResource({
   url: 'crm.api.notifications.get_notifications',
   initialData: [],
   auto: true,
+  // Everything that refreshes the inbox -- a crm_notification event, a mark
+  // as read, a retry -- refreshes the count alongside it.
+  onFetch: () => quiet(unreadCount.reload()),
 })
 
 export const unreadNotificationsCount = computed(() => {
-  const count = notifications.data?.filter((n) => !n.read).length || 0
+  const count = unreadCount.data || 0
   return count ? formatCompactNumber(count) : 0
 })
 
-/* Same trap as the suggestions badge: `initialData` is [], frappe-ui leaves it
-   there when the first fetch fails, the filter counts 0, and the sidebar hides
-   the badge -- indistinguishable from having read everything. */
-export const unreadCountUnavailable = computed(() => neverLoaded(notifications))
+/* Same trap as the suggestions badge: `initialData` is 0, frappe-ui leaves it
+   there when the first fetch fails, and the sidebar hides the badge --
+   indistinguishable from having read everything. */
+export const unreadCountUnavailable = computed(
+  () => neverLoaded(unreadCount) || neverLoaded(notifications),
+)
 
 export const notificationsStore = defineStore('crm-notifications', () => {
   const mark_as_read = createResource({
