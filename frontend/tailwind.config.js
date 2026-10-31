@@ -68,8 +68,8 @@ export default {
         // let you spend.
         brand: {
           // `text-brand` / `bg-brand` is the brand used as ink, so it has to
-          // flip with the theme: 500 is 4.9:1 on the light canvas but 3.3:1 on
-          // the dark one. The numbered steps below stay literal.
+          // flip with the theme: each resolves its own step that clears AA on
+          // its canvas. The numbered steps below stay literal.
           DEFAULT: 'var(--brand-ink)',
           50: '#EFF0FD',
           100: '#E0E2FB',

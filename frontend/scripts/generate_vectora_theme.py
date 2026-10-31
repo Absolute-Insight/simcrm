@@ -408,13 +408,14 @@ BRAND = {
 # with no magenta stop to confuse the two.
 #
 # It is a *light* blue, and that is what forces the ink choice: white cannot sit
-# on it. brand-sky against white is 2.54:1, and every light-blue candidate tried
+# on it. The dark ramp's sky against white is 2.54:1, and every light-blue candidate tried
 # came in under AA -- the best reached 4.15:1. A deep navy ink clears it at
 # 6.95:1 on the binding stop, so "light blue" and "readable" stop being a
 # trade-off. The assertions below hold that.
 #
-# The edge is not decoration either: the fill is only 1.59:1 against the light
-# canvas, so without a border the control's own boundary fails SC 1.4.11 in
+# The edge is not decoration either: the dark ramp would be 1.59:1 on a light
+# canvas and the light ramp's pale top is no better, so without a border the
+# control's own boundary fails SC 1.4.11 in
 # light mode. CTA_EDGE is solved against both canvases.
 CTA_FROM = "#7fd4ff"
 CTA_TO = BRAND["--brand-start"]
