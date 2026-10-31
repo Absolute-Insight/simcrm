@@ -1,18 +1,21 @@
 import { createDocumentResource } from 'frappe-ui'
-import { reactive, ref } from 'vue'
+import { computed, reactive } from 'vue'
 
-const settings = ref({})
 const brand = reactive({})
 
 const _settings = createDocumentResource({
   doctype: 'FCRM Settings',
   name: 'FCRM Settings',
-  onSuccess: (data) => {
-    settings.value = data
-    getSettings().setupBrand()
-    return data
-  },
+  onSuccess: () => getSettings().setupBrand(),
 })
+
+/* The saved settings, for everything outside the Settings panes. This was a
+   ref set once, in the first fetch's onSuccess, to `_settings.doc` itself: a
+   pane's unsaved edits showed app-wide, and once the first save replaced that
+   doc the ref never changed again -- the second Brand save of a session left
+   the sidebar on the first one's name. `originalDoc` is what the resource last
+   read from, or wrote to, the server. */
+const settings = computed(() => _settings.originalDoc || {})
 
 export function getSettings() {
   function setupBrand() {
