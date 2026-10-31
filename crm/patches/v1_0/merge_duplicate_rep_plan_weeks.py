@@ -19,11 +19,20 @@ migration that silently rewrites someone's week is worse than one that fails.
 """
 
 import frappe
+from frappe.model import no_value_fields
 
 # Two items are the same planned activity if they say the same thing about the
-# same record on the same day. Anything else is a genuinely separate item, even
-# if it looks similar.
-IDENTITY_FIELDS = ("activity_type", "planned_date", "reference_doctype", "reference_docname", "note")
+# same record, at the same customer, on the same day. Anything else is a
+# genuinely separate item, even if it looks similar -- two visits on one day to
+# different mines are two visits.
+IDENTITY_FIELDS = (
+	"activity_type",
+	"planned_date",
+	"reference_doctype",
+	"reference_docname",
+	"organization",
+	"note",
+)
 
 
 def execute():
@@ -87,9 +96,13 @@ def _merge_week(user: str, week_start: str) -> None:
 		elif _is_fulfilled(item) and not _is_fulfilled(existing):
 			# the same activity recorded twice, once with the matcher's verdict on
 			# it — keep the verdict rather than the blank
-			for field in ("status", "fulfilled_by_doctype", "fulfilled_by", "manual_override"):
+			for field in ("status", "outcome", "fulfilled_by_doctype", "fulfilled_by", "manual_override"):
 				existing.set(field, item.get(field))
 
+	# CRM Rep Plan Item is in ignore_links_on_delete, so an item can point at a
+	# task or event deleted since. This merge only moves rows; a full link check
+	# would stop the whole migrate on one the planner itself copes with.
+	keep.flags.ignore_links = True
 	keep.save(ignore_permissions=True)
 
 	# names are autoincrement ints, so stringify before joining
@@ -111,12 +124,11 @@ def _is_fulfilled(item) -> bool:
 
 
 def _copy(item) -> dict:
-	fields = (
-		*IDENTITY_FIELDS,
-		"status",
-		"fulfilled_by_doctype",
-		"fulfilled_by",
-		"manual_override",
-		"suggestion",
-	)
+	"""Every data field of the item, read from the schema: a hand-kept list fell
+	behind it and moved items without their customer and outcome."""
+	fields = [
+		df.fieldname
+		for df in frappe.get_meta("CRM Rep Plan Item").fields
+		if df.fieldtype not in no_value_fields
+	]
 	return {field: item.get(field) for field in fields}

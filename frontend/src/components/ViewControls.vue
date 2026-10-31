@@ -44,7 +44,7 @@
             :tooltip="__('Refresh')"
             icon="lucide-refresh-ccw"
             :loading="isLoading"
-            @click="reload()"
+            @click="refresh()"
           />
           <SortBy
             v-if="route.params.viewType !== 'kanban'"
@@ -180,7 +180,7 @@
           :tooltip="__('Refresh')"
           icon="lucide-refresh-ccw"
           :loading="isLoading"
-          @click="reload()"
+          @click="refresh()"
         />
         <GroupBy
           v-if="route.params.viewType === 'group_by'"
@@ -280,7 +280,13 @@
           query: { view: v.name },
         })
       },
-      afterUpdate: () => {
+      afterUpdate: (v) => {
+        // The dialog edits a copy. The views store re-read below usually lands
+        // while the list is still loading, so the getView watcher's reload()
+        // stands down and would not rebuild the view on screen from it.
+        if (v?.name && v.name === view.name) {
+          Object.assign(view, { label: v.label, icon: v.icon })
+        }
         viewUpdated = false
         reloadView()
         list.reload()
@@ -387,6 +393,7 @@ import Draggable from 'vuedraggable'
 import isEqual from 'lodash/isEqual'
 import { PhTrayArrowDown as ImportIcon } from '@phosphor-icons/vue'
 import { reportActionError } from '@/utils/reportActionError'
+import { nextPageLength } from '@/utils/listPaging'
 import { collectClosingValues, needsClosingNote } from '@/utils/taskClosing'
 
 const props = defineProps({
@@ -565,15 +572,22 @@ function getParams() {
   }
 }
 
-list.value = createResource({
+// Held here as well as in the model: until the page re-renders, `list.value`
+// still reads back the page's `ref({})` placeholder, so anything set on it
+// during setup landed on the placeholder instead of the resource.
+const resource = createResource({
   url: 'crm.api.doc.get_data',
   params: getParams(),
   cache: [props.doctype, route.query.view, route.params.viewType],
   auto: true,
   onSuccess(data) {
     let cv = getView(route.query.view, route.params.viewType, props.doctype)
-    let params = list.value.params ? list.value.params : getParams()
-    list.value.params = params
+    let params = resource.params ? resource.params : getParams()
+    // The first load is asked for before there is an answer to read the page
+    // length from, so take the server's: Load More added to undefined.
+    params.page_length ??= data.page_length
+    params.page_length_count ??= data.page_length_count
+    resource.params = params
     defaultParams.value = {
       doctype: props.doctype,
       filters: params.filters,
@@ -584,10 +598,13 @@ list.value = createResource({
         view_type: cv?.type || route.params.viewType || 'list',
         group_by_field: params?.view?.group_by_field || 'owner',
       },
-      column_field: data.column_field,
-      title_field: data.title_field,
+      // As asked, not as answered: get_data parses kanban_fields and fills a
+      // kanban view's blank title and fields with defaults, and the re-entry
+      // check below read that as an unsaved change.
+      column_field: params.column_field,
+      title_field: params.title_field,
       kanban_columns: data.kanban_columns,
-      kanban_fields: data.kanban_fields,
+      kanban_fields: params.kanban_fields,
       columns: data.columns,
       rows: data.rows,
       page_length: params.page_length,
@@ -595,12 +612,16 @@ list.value = createResource({
     }
   },
 })
+list.value = resource
 
 // createResource leaves `params` null until a fetch passes them explicitly.
 // With `cache:` set, frappe-ui hands back the cached instance on re-entry, and
 // its params still hold the user's unsaved filter/sort/group change; keep them
 // and flag the view as modified instead of resetting to the saved view.
 // kanban_columns is left out: "load more" mutates it without it being an edit.
+// kanban_fields is a list once Kanban Settings set it, and the JSON string the
+// server stores once it is saved: compare it parsed.
+const parseFields = (f) => (typeof f === 'string' ? JSON.parse(f || '[]') : f)
 const dirtySignature = (p) =>
   JSON.stringify([
     p.filters || {},
@@ -608,22 +629,28 @@ const dirtySignature = (p) =>
     p.view?.group_by_field,
     p.column_field,
     p.title_field,
-    p.kanban_fields,
+    parseFields(p.kanban_fields) || [],
   ])
 const initialParams = getParams()
-if (!list.value.params) {
-  list.value.params = initialParams
-} else if (
-  dirtySignature(list.value.params) !== dirtySignature(initialParams)
-) {
-  viewUpdated.value = true
+if (!resource.params) {
+  resource.params = initialParams
+} else {
+  // The cached resource's onSuccess belongs to the instance that created it,
+  // so it never sets this one's defaultParams: seed them from what is on
+  // screen, or the next sort, filter or column change rebuilt the params from
+  // the saved view and dropped the kept change (and Save Changes had nothing
+  // to save).
+  defaultParams.value = resource.params
+  if (dirtySignature(resource.params) !== dirtySignature(initialParams)) {
+    viewUpdated.value = true
+  }
 }
 
 // Refresh the list when a Domain Enrichment enrichment finishes for this
 // doctype, so newly-filled fields (logo, etc.) show without a manual reload.
 function onEnrichmentDone(data) {
   if (data?.status !== 'completed') return
-  if (data.reference_doctype === props.doctype) reload()
+  if (data.reference_doctype === props.doctype) refresh()
   // The Deals list logo comes from the cached organizations store
   // (getOrganization → organization_logo), not the deal row. Refresh that store so a
   // newly enriched org's logo appears without a hard refresh; `rows` is a
@@ -643,9 +670,26 @@ onBeforeUnmount(() => {
 
 const isLoading = computed(() => list.value?.loading)
 
+// A change of params supersedes the request in flight. Without the abort the
+// last response to land won, so a slower, earlier one showed its rows under
+// the newer filter.
+function reloadList() {
+  list.value.abort?.()
+  list.value.reload()
+}
+
+// Back to the saved view: Cancel, and a change of view.
 function reload() {
   if (isLoading.value) return
   list.value.params = getParams()
+  reloadList()
+}
+
+// Fetch again what is on screen. Refresh used to call reload(), which put
+// the saved view's params back: an unsaved filter vanished from the list
+// while Save Changes and Cancel stayed up for a change no longer applied.
+function refresh() {
+  if (isLoading.value) return
   list.value.reload()
 }
 
@@ -693,20 +737,28 @@ async function exportRows() {
     page_length = list.value.data.total_count
   }
 
-  let url = `/api/method/frappe.desk.reportview.export_query?file_format_type=${
-    export_type.value
-  }&title=${props.doctype}&doctype=${
-    props.doctype
-  }&fields=${fields}&filters=${encodeURIComponent(
+  // Every value is encoded: names are free text, and only `filters` used to
+  // be, so a selected "Smith & Sons" split the query at the `&`, a `#` cut
+  // it off and a `+` arrived as a space.
+  const query = new URLSearchParams({
+    file_format_type: export_type.value,
+    title: props.doctype,
+    doctype: props.doctype,
+    fields,
     filters,
-  )}&order_by=${order_by}&page_length=${page_length}&start=0&view=Report&with_comment_count=1`
+    order_by,
+    page_length,
+    start: 0,
+    view: 'Report',
+    with_comment_count: 1,
+  })
 
   // Add selected items parameter if rows are selected
   if (selectedRows.value?.length && !export_all.value) {
-    url += `&selected_items=${JSON.stringify(selectedRows.value)}`
+    query.set('selected_items', JSON.stringify(selectedRows.value))
   }
 
-  window.location.href = url
+  window.location.href = `/api/method/frappe.desk.reportview.export_query?${query}`
 
   showExportDialog.value = false
   export_all.value = false
@@ -936,10 +988,12 @@ const quickFilterList = computed(() => {
         )
           return
         filter['value'] = value[1]?.replace(/%/g, '')
-      } else if (typeof value == 'boolean') {
-        filter['value'] = value
+      } else if (typeof value == 'string') {
+        filter['value'] = value.replace(/%/g, '')
       } else {
-        filter['value'] = value?.replace(/%/g, '')
+        // a boolean, or a number from a numeric field: `.replace` threw on
+        // every render and took the whole quick-filter bar with it
+        filter['value'] = value
       }
     }
   })
@@ -993,7 +1047,7 @@ function updateFilter(filters) {
   list.value.params = defaultParams.value
   list.value.params.filters = filters
   view.value.filters = filters
-  list.value.reload()
+  reloadList()
 
   if (!route.query.view) {
     createOrUpdateStandardView()
@@ -1008,7 +1062,7 @@ function updateSort(order_by) {
   list.value.params = defaultParams.value
   list.value.params.order_by = order_by
   view.value.order_by = order_by
-  list.value.reload()
+  reloadList()
 
   if (!route.query.view) {
     createOrUpdateStandardView()
@@ -1023,7 +1077,7 @@ function updateGroupBy(group_by_field) {
   list.value.params = defaultParams.value
   list.value.params.view.group_by_field = group_by_field
   view.value.group_by_field = group_by_field
-  list.value.reload()
+  reloadList()
 
   if (!route.query.view) {
     createOrUpdateStandardView()
@@ -1055,26 +1109,39 @@ function updateColumns(obj) {
 
   if (obj.reload) {
     list.value.params = defaultParams.value
-    list.value.reload()
+    reloadList()
   }
-  viewUpdated.value = true
 
   if (!route.query.view) {
+    viewUpdated.value = true
     createOrUpdateStandardView()
   } else if (!view.value.public) {
+    // Saved straight away, so it is not an unsaved change; whatever else is
+    // unsaved stays that way, with Save Changes and Cancel still offered.
     persistCustomView()
+  } else {
+    viewUpdated.value = true
   }
 }
 
+// Saves the column layout of a private saved view, and only that. view.value
+// holds the filter, sort and group-by as they are on screen, unsaved changes
+// included, and sending it made a column resize quietly save those too.
 function persistCustomView() {
-  view.value.doctype = props.doctype
+  const saved = getView(route.query.view, route.params.viewType, props.doctype)
+  if (!saved) return
   call('crm.fcrm.doctype.crm_view_settings.crm_view_settings.update', {
-    view: view.value,
+    view: {
+      ...saved,
+      doctype: props.doctype,
+      columns: view.value.columns,
+      rows: view.value.rows,
+      load_default_columns: view.value.load_default_columns,
+    },
   })
-    .then(() => {
-      reloadView()
-      viewUpdated.value = false
-    })
+    // Our own save: the columns are already on screen, and letting the getView
+    // watcher reload from the saved view would drop the unsaved filter.
+    .then(() => reloadViewAfterSave())
     .catch((error) => reportActionError(error, __('Could not save the view.')))
 }
 
@@ -1218,7 +1285,7 @@ function updateKanbanSettings(data) {
     view.value.title_field = data.title_field
   }
 
-  list.value.reload()
+  reloadList()
 
   if (!route.query.view) {
     createOrUpdateStandardView()
@@ -1241,7 +1308,7 @@ function loadMoreKanban(columnName) {
   }
   list.value.params.kanban_columns = columns
   view.value.kanban_columns = columns
-  list.value.reload()
+  reloadList()
 }
 
 // Saving the standard view re-reads the views store, which trips the deep
@@ -1306,7 +1373,22 @@ function updatePageLength(value, loadMore = false) {
   }
   list.value.params = defaultParams.value
   if (loadMore) {
-    list.value.params.page_length += list.value.params.page_length_count
+    // The server stops at max_page_length; asking past it re-fetched the same
+    // rows on every click, so say where the list stops instead.
+    const next = nextPageLength(
+      list.value.params.page_length,
+      list.value.params.page_length_count,
+      list.value.data?.max_page_length,
+    )
+    if (next === null) {
+      toast.info(
+        __('Only the first {0} rows can be listed. Filter to narrow it.', [
+          list.value.data.max_page_length,
+        ]),
+      )
+      return
+    }
+    list.value.params.page_length = next
   } else {
     if (
       value == list.value.params.page_length &&
@@ -1316,7 +1398,7 @@ function updatePageLength(value, loadMore = false) {
     list.value.params.page_length = value
     list.value.params.page_length_count = value
   }
-  list.value.reload()
+  reloadList()
 }
 
 // View Actions
@@ -1431,12 +1513,18 @@ function isStandardDefault(type) {
 
 const viewModalObj = ref({})
 
+// The view dialog gets a copy from each of these. It used to get the live
+// object (the view on screen, or the views store's own), so a dismissed
+// dialog still renamed it, stacked " (New)" on each Duplicate, or blanked the
+// name of the view on screen so its next save went nowhere.
 function createView() {
-  view.value.name = ''
-  view.value.label = ''
-  view.value.icon = ''
-  viewModalObj.value = view.value
-  viewModalObj.value.mode = 'create'
+  viewModalObj.value = {
+    ...view.value,
+    name: '',
+    label: '',
+    icon: '',
+    mode: 'create',
+  }
   showViewModal.value = true
 }
 
@@ -1457,16 +1545,17 @@ function setAsDefault(v, close) {
 }
 
 function duplicateView(v, close) {
-  v.label = v.label + __(' (New)')
-  viewModalObj.value = v
-  viewModalObj.value.mode = 'duplicate'
+  viewModalObj.value = {
+    ...v,
+    label: v.label + __(' (New)'),
+    mode: 'duplicate',
+  }
   showViewModal.value = true
   close()
 }
 
 function editView(v, close) {
-  viewModalObj.value = v
-  viewModalObj.value.mode = 'edit'
+  viewModalObj.value = { ...v, mode: 'edit' }
   showViewModal.value = true
   close()
 }
@@ -1524,7 +1613,7 @@ function fetchAndUpdateKanbanColumns(v) {
     .then((columns) => {
       list.value.params.kanban_columns = columns
       view.value.kanban_columns = columns
-      list.value.reload()
+      reloadList()
     })
     .catch((error) =>
       reportActionError(error, __('Could not refresh the Kanban columns.')),
@@ -1537,7 +1626,7 @@ function cancelChanges() {
 }
 
 function saveView() {
-  view.value = {
+  viewModalObj.value = {
     label: view.value.label,
     type: view.value.type || 'list',
     icon: view.value.icon,
@@ -1553,13 +1642,12 @@ function saveView() {
     rows: defaultParams.value.rows,
     route_name: route.name,
     load_default_columns: view.value.load_default_columns,
+    mode: 'edit',
   }
-  viewModalObj.value = view.value
-  viewModalObj.value.mode = 'edit'
   showViewModal.value = true
 }
 
-function applyFilter({ event, idx, column, item, firstColumn }) {
+function applyFilter({ event, idx, column, item, firstColumn, row }) {
   let restrictedFieldtypes = ['Datetime', 'Time']
   if (restrictedFieldtypes.includes(column.type) || idx === 0) return
   if (idx === 1 && firstColumn.key == '_liked_by') return
@@ -1569,7 +1657,15 @@ function applyFilter({ event, idx, column, item, firstColumn }) {
 
   let filters = { ...list.value.params.filters }
 
-  let value = item.name ?? item.label ?? item
+  // A cell shows a display value -- "Declined" for Busy, a rep's full name
+  // for a User link, a website without its scheme, a formatted amount -- and
+  // an equality filter on that matched nothing. Filter on the value stored on
+  // the row's own record; the cell is the fallback for a column it lacks.
+  const doc =
+    row?.name != null &&
+    list.value.data?.data?.find?.((d) => d?.name === row.name)
+  let value =
+    doc && column.key in doc ? doc[column.key] : item.name ?? item.label ?? item
 
   if (value !== null && value !== undefined && value !== '') {
     filters[column.key] = value
@@ -1606,7 +1702,7 @@ function likeDoc({ name, liked }) {
     url: 'frappe.desk.like.toggle_like',
     params: { doctype: props.doctype, name: name, add: liked ? 'No' : 'Yes' },
     auto: true,
-    onSuccess: () => reload(),
+    onSuccess: () => refresh(),
   })
 }
 

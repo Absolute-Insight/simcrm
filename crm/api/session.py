@@ -181,13 +181,19 @@ def get_user_info(users: str | list):
 
 @frappe.whitelist()
 def get_organizations():
+	"""The logos the list pages draw beside a deal's or a contact's organization.
+
+	``organization_logo`` is the one thing the frontend's organizations store is
+	read for (``getOrganization(name)?.organization_logo``), and it loads on every
+	app start. It used to be every column of every organization, de-duplicated
+	across all of them -- about 840 KB for a site with a thousand customers to
+	draw a few dozen logos. Now it is the name and logo of those that have one.
+	"""
 	get_session_role_flags()
 
-	organizations = frappe.qb.get_query(
+	return frappe.get_all(
 		"CRM Organization",
-		fields=["*"],
+		filters={"organization_logo": ["is", "set"]},
+		fields=["name", "organization_logo"],
 		order_by="name asc",
-		distinct=True,
-	).run(as_dict=1)
-
-	return organizations
+	)

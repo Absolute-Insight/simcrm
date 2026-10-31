@@ -22,7 +22,16 @@ from datetime import datetime
 import frappe
 from frappe.utils import add_days, getdate, nowdate
 
+from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import record_sync_issue
 from crm.integrations.acumatica.client import v
+
+try:
+	from rq.timeouts import JobTimeoutException
+except ImportError:  # pragma: no cover - rq is a frappe dependency; guard for bench-less imports
+
+	class JobTimeoutException(BaseException):
+		"""Stand-in that is never raised, so the except clauses below stay valid."""
+
 
 LOST_CANCELLED = "Quote cancelled in Acumatica"
 LOST_REJECTED = "Quote rejected in Acumatica"
@@ -64,6 +73,46 @@ def _close(deal_name: str, status: str, lost_reason: str | None = None, closed_o
 		doc.db_set("closed_date", closed_on, update_modified=False)
 
 
+def _try_close(deal_name: str, status: str, **kw) -> bool:
+	"""``_close`` under a savepoint of its own: True when the deal closed.
+
+	A close is a whole-document save, and one deal that cannot pass validation -- a
+	required field it predates, forecasting switched on over a zero-value deal --
+	used to raise straight out of the sweep: no high-water mark, no later quote ever
+	applied or expired, and an error on the panel that did not say which deal. As
+	the entity loops do, the record is rolled back and named, and the run goes on.
+	"""
+	frappe.db.savepoint("acumatica_outcome")
+	try:
+		_close(deal_name, status, **kw)
+		return True
+	except JobTimeoutException:
+		# the run's deadline, not this deal's fault (see importer._retry_pending)
+		frappe.db.rollback(save_point="acumatica_outcome")
+		raise
+	except Exception as e:
+		frappe.db.rollback(save_point="acumatica_outcome")
+		# The quote is not offered again unless it changes, so this row is what tells
+		# an admin to close the deal by hand -- and as what.
+		_log_close_failure(deal_name, f"could not mark the deal {status}: {e}")
+		return False
+
+
+def _log_close_failure(deal_name: str, detail: str) -> None:
+	try:
+		# The expiry rule offers the same stale deal every night until somebody fixes
+		# it; one open row says so, a row per night only buries the other issues.
+		# "Deal" rows come from here alone (the entity loops log Customer, Contact and
+		# StockItem), so an open one for this deal is this failure.
+		issues = frappe.get_doc("CRM Acumatica Settings").sync_issues
+		if any(row.entity == "Deal" and row.remote_id == deal_name and not row.dismissed for row in issues):
+			return
+		record_sync_issue("Deal", deal_name, "Import Failed", detail)
+	except Exception:
+		# losing the ability to log one bad deal must not abort the rest of the run
+		frappe.log_error(frappe.get_traceback(), "Acumatica sync issue recording failed")
+
+
 def _date_of(value) -> datetime | None:
 	if not value:
 		return None
@@ -102,11 +151,11 @@ def pull_quote_outcomes(client, modified_since: str | None) -> dict:
 				continue
 			status = v(quote, "Status")
 			if status in WON_STATUSES:
-				_close(deal, "Won", closed_on=_date_of(v(quote, "LastModified")))
-				counts["won"] += 1
+				if _try_close(deal, "Won", closed_on=_date_of(v(quote, "LastModified"))):
+					counts["won"] += 1
 			elif status in LOST_STATUSES:
-				_close(deal, "Lost", lost_reason=LOST_STATUSES[status])
-				counts["lost"] += 1
+				if _try_close(deal, "Lost", lost_reason=LOST_STATUSES[status]):
+					counts["lost"] += 1
 			else:
 				counts["unchanged"] += 1
 		skip += len(page)
@@ -137,6 +186,8 @@ def expire_stale_quotes(grace_days: int) -> dict:
 		pluck="name",
 		limit=100000,
 	)
+	expired = 0
 	for name in stale:
-		_close(name, "Lost", lost_reason=LOST_EXPIRED)
-	return {"expired": len(stale)}
+		if _try_close(name, "Lost", lost_reason=LOST_EXPIRED):
+			expired += 1
+	return {"expired": expired}

@@ -16,7 +16,10 @@
     v-model="showChangePasswordModal"
   />
   <AboutModal v-model="showAboutModal" />
-  <HelpCenterModal v-if="helpCenterVisible" />
+  <!-- Mounted while closed, like AboutModal: its on-open watchers reset the
+       Mentor pane and pick the phone pane on the false -> true change, which a
+       modal created already open never sees. -->
+  <HelpCenterModal />
   <FieldLayoutDialogContainer />
   <LeadModal v-if="showCreateLeadModal" v-model="showCreateLeadModal" />
   <DealModal v-if="showCreateDealModal" v-model="showCreateDealModal" />
@@ -31,7 +34,6 @@ import CreateDocumentModal from '@/components/Modals/CreateDocumentModal.vue'
 import QuickEntryModal from '@/components/Modals/QuickEntryModal.vue'
 import AboutModal from '@/components/Modals/AboutModal.vue'
 import HelpCenterModal from '@/components/Modals/HelpCenterModal.vue'
-import { helpCenterVisible } from '@/stores/help'
 import {
   showCreateDocumentModal,
   createDocumentDoctype,

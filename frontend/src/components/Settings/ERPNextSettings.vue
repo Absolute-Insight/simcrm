@@ -43,8 +43,16 @@
       </div>
     </template>
     <template #content>
+      <!-- Ahead of the spinner: that branch waits on `get.fetched`, which a failed
+           load never sets, so it spun for good with nothing to retry. -->
+      <ErrorState
+        v-if="erpnextCRMSettingsResource.get.error"
+        :error="erpnextCRMSettingsResource.get.error"
+        :title="__('Could not load SIMERP settings')"
+        :retry="loadSettings"
+      />
       <div
-        v-if="
+        v-else-if="
           erpnextCRMSettingsResource.get.loading ||
           erpnextCRMSettingsResource.isERPNextInstalled.loading ||
           (erpnextCRMSettingsResource.getExternalCompanies.loading &&
@@ -187,9 +195,7 @@
                           erpnextCRMSettingsResource.getExternalCompanies
                             .loading
                         "
-                        @click="
-                          erpnextCRMSettingsResource.getExternalCompanies.submit()
-                        "
+                        @click="refreshCompanies"
                       />
                     </template>
                   </Combobox>
@@ -517,6 +523,9 @@ const { capture } = useTelemetry()
 const erpnextCRMSettingsResource = createDocumentResource({
   doctype: 'ERPNext CRM Settings',
   name: 'ERPNext CRM Settings',
+  // loadSettings() fetches it, in order with the calls that depend on it; the
+  // resource's own auto-fetch sent the same GET a second time on every mount
+  auto: false,
   whitelistedMethods: {
     isERPNextInstalled: 'is_erpnext_installed',
     getExternalCompanies: {
@@ -737,18 +746,45 @@ const toggleEnable = (value) => {
   }
 }
 
+// A document method answers with the saved doc, and frappe-ui puts it in place of
+// the one on screen -- as does a setValue. Either silently threw away every edit
+// the admin had not saved yet, and Update stopped offering to save them. Hold the
+// unsaved fields across the call and put them back.
+async function keepingEdits(fn) {
+  const resource = erpnextCRMSettingsResource
+  const edits = Object.fromEntries(
+    Object.entries(resource.doc || {}).filter(
+      ([field, value]) =>
+        JSON.stringify(value) !== JSON.stringify(resource.originalDoc?.[field]),
+    ),
+  )
+  try {
+    return await fn()
+  } finally {
+    if (resource.doc) Object.assign(resource.doc, edits)
+  }
+}
+
+function refreshCompanies() {
+  return keepingEdits(() =>
+    erpnextCRMSettingsResource.getExternalCompanies.submit(),
+  )
+}
+
 async function runProductSync() {
   capture('erpnext_sync_now_clicked')
-  if (
-    erpnextCRMSettingsResource.originalDoc?.sync_products !==
-    erpnextCRMSettingsResource.doc.sync_products
-  ) {
-    await updateFields(
-      'sync_products',
-      erpnextCRMSettingsResource.doc.sync_products,
-    )
-  }
-  await erpnextCRMSettingsResource.runProductSync.submit()
+  await keepingEdits(async () => {
+    if (
+      erpnextCRMSettingsResource.originalDoc?.sync_products !==
+      erpnextCRMSettingsResource.doc.sync_products
+    ) {
+      await updateFields(
+        'sync_products',
+        erpnextCRMSettingsResource.doc.sync_products,
+      )
+    }
+    await erpnextCRMSettingsResource.runProductSync.submit()
+  })
 }
 
 function getProductSyncSection(name, label, emptyLabel) {
@@ -877,9 +913,15 @@ function updateFields(fields, value, options) {
   return erpnextCRMSettingsResource.setValue.submit(obj, options)
 }
 
-onMounted(async () => {
+async function loadSettings() {
   // Call APIs one after another to avoid race conditions
-  await erpnextCRMSettingsResource.get.submit()
+  try {
+    await erpnextCRMSettingsResource.get.submit()
+  } catch {
+    // get.error renders the error state and its retry; nothing below can run
+    // without the document
+    return
+  }
   await erpnextCRMSettingsResource.isERPNextInstalled.submit(null, {
     onSuccess: (data) => {
       if (
@@ -899,7 +941,9 @@ onMounted(async () => {
   ) {
     productSyncStatus.submit()
   }
-})
+}
+
+onMounted(loadSettings)
 
 // Fetch logs lazily when the tab is opened (e.g. after enabling in the same session)
 watch(activeSettingsTab, (tab) => {
