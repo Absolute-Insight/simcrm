@@ -16,6 +16,7 @@ class CRMOrganization(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		account_owner: DF.Link | None
 		address: DF.Link | None
 		annual_revenue: DF.Currency
 		currency: DF.Link | None
@@ -29,9 +30,18 @@ class CRMOrganization(Document):
 	# end: auto-generated types
 
 	def validate(self):
+		from crm.permissions.customers import validate_account_owner_change
+
+		validate_account_owner_change(self)
 		self.update_exchange_rate()
 
 	def after_insert(self):
+		# A customer a rep adds is theirs. Written after insert, as the claim is the
+		# system's: a rep has no write access to the (permlevel 1) field.
+		from crm.permissions.customers import claim_if_unowned
+
+		claim_if_unowned(self.name, frappe.session.user)
+
 		# Auto-enrich a new Organization from its website (best-effort, background job).
 		from crm.domain_enrichment.tasks import auto_enrich_on_create
 
@@ -99,6 +109,13 @@ class CRMOrganization(Document):
 				"width": "14rem",
 			},
 			{
+				"label": "Account Owner",
+				"type": "Link",
+				"key": "account_owner",
+				"options": "User",
+				"width": "12rem",
+			},
+			{
 				"label": "Last Modified",
 				"type": "Datetime",
 				"key": "modified",
@@ -113,6 +130,7 @@ class CRMOrganization(Document):
 			"industry",
 			"currency",
 			"annual_revenue",
+			"account_owner",
 			"modified",
 		]
 		return {"columns": columns, "rows": rows}

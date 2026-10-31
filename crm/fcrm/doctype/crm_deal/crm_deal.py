@@ -89,6 +89,7 @@ class CRMDeal(Document):
 
 	def validate(self):
 		self.validate_status()
+		self.validate_customer_access()
 		self.set_primary_contact()
 		self.set_primary_email_mobile_no()
 		if not self.is_new() and self.has_value_changed("deal_owner") and self.deal_owner:
@@ -106,6 +107,25 @@ class CRMDeal(Document):
 		self.update_exchange_rate()
 		if self.organization and (self.is_new() or self.has_value_changed("organization")):
 			self.copy_enrichment_from_organization()
+
+	def validate_customer_access(self):
+		"""A rep cannot open a deal on another rep's customer, nor move one there.
+
+		Checked only when the organization is set or changes, so a deal that predates
+		a reassignment of its customer stays editable by the rep who holds it.
+		"""
+		if not self.organization or not (self.is_new() or self.has_value_changed("organization")):
+			return
+		from crm.permissions.customers import assert_customer_allowed
+
+		assert_customer_allowed(self.organization)
+
+	def on_update(self):
+		# a rep's first deal on an unowned customer makes the customer theirs
+		if self.organization and self.deal_owner:
+			from crm.permissions.customers import claim_if_unowned
+
+			claim_if_unowned(self.organization, self.deal_owner)
 
 	def after_insert(self):
 		if self.deal_owner:

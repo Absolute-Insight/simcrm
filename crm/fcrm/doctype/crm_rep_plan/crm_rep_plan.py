@@ -149,6 +149,8 @@ class CRMRepPlan(Document):
 		if exists:
 			frappe.throw(_("A plan for {0} starting {1} already exists.").format(self.user, self.week_start))
 
+		self.validate_customer_access()
+
 		week_end = frappe.utils.add_days(week_start, 6)
 		for item in self.items:
 			planned = getdate(item.planned_date)
@@ -158,6 +160,24 @@ class CRMRepPlan(Document):
 						item.note or item.activity_type, self.week_start
 					)
 				)
+
+	def validate_customer_access(self):
+		"""A rep cannot plan a visit to another rep's customer.
+
+		Checked against the session user even when the planner API saves with
+		ignore_permissions -- that API is how a rep plans, so it is exactly the
+		path to guard. Only rows whose customer is new or changed are checked, so
+		an old visit to a customer since reassigned does not lock the week.
+		"""
+		from crm.permissions.customers import assert_customer_allowed
+
+		for item in self.items:
+			if not item.organization:
+				continue
+			stored = item.get_doc_before_save()
+			if stored is not None and stored.get("organization") == item.organization:
+				continue
+			assert_customer_allowed(item.organization)
 
 	def _refuse_client_fulfilment(self):
 		"""An item's status and what fulfilled it are the server's to write.

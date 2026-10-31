@@ -31,7 +31,11 @@ from frappe import _
 from frappe.utils import cint
 
 from crm.api.session import CRM_ALLOWED_ROLES
-from crm.fcrm.doctype.crm_access_settings.crm_access_settings import CONFIGURABLE_ROLES, MANAGER_SCOPES
+from crm.fcrm.doctype.crm_access_settings.crm_access_settings import (
+	CONFIGURABLE_ROLES,
+	CUSTOMER_SCOPES,
+	MANAGER_SCOPES,
+)
 
 SETTINGS_DOCTYPE = "CRM Access Settings"
 
@@ -121,6 +125,17 @@ def manager_outside_hierarchy_sees_all() -> bool:
 	return (value or "All records") == "All records"
 
 
+def reps_see_all_customers() -> bool:
+	"""Whether the customer rule in ``crm.permissions.customers`` is switched off.
+
+	Unlike ``manager_outside_hierarchy`` the fallback for a never-saved Single
+	is the narrow answer: keeping one rep out of another's customers is the
+	behaviour this setting was added to deliver, so an upgrade turns it on.
+	"""
+	value = frappe.db.get_single_value(SETTINGS_DOCTYPE, "rep_customer_scope")
+	return (value or CUSTOMER_SCOPES[0]) == "All customers"
+
+
 # --- surface visibility ----------------------------------------------------
 
 
@@ -205,7 +220,7 @@ def set_visibility(role: str, hidden: list | str) -> dict:
 
 @frappe.whitelist()
 def get_data_access() -> dict:
-	"""The two switches that actually change what the database returns.
+	"""The switches that actually change what the database returns.
 
 	Readable by a Sales Manager, not just an administrator, so the pane can
 	render for a manager as read-only context -- knowing the site scopes by
@@ -220,6 +235,8 @@ def get_data_access() -> dict:
 		"manager_outside_hierarchy": frappe.db.get_single_value(SETTINGS_DOCTYPE, "manager_outside_hierarchy")
 		or "All records",
 		"hierarchy_size": frappe.db.count("CRM Sales Hierarchy"),
+		"rep_customer_scope": frappe.db.get_single_value(SETTINGS_DOCTYPE, "rep_customer_scope")
+		or CUSTOMER_SCOPES[0],
 	}
 
 
@@ -227,6 +244,7 @@ def get_data_access() -> dict:
 def set_data_access(
 	enable_sales_hierarchy: int | str | None = None,
 	manager_outside_hierarchy: str | None = None,
+	rep_customer_scope: str | None = None,
 ) -> dict:
 	"""Move the real boundary. Administrator only.
 
@@ -248,5 +266,14 @@ def set_data_access(
 				)
 			)
 		frappe.db.set_single_value(SETTINGS_DOCTYPE, "manager_outside_hierarchy", manager_outside_hierarchy)
+
+	if rep_customer_scope is not None:
+		if rep_customer_scope not in CUSTOMER_SCOPES:
+			frappe.throw(
+				_("{0} is not a valid setting. Choose one of: {1}.").format(
+					rep_customer_scope, ", ".join(CUSTOMER_SCOPES)
+				)
+			)
+		frappe.db.set_single_value(SETTINGS_DOCTYPE, "rep_customer_scope", rep_customer_scope)
 
 	return get_data_access()

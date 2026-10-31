@@ -7,6 +7,7 @@
  "field_order": [
   "data_access_section",
   "manager_outside_hierarchy",
+  "rep_customer_scope",
   "surface_section",
   "hidden_surfaces"
  ],
@@ -25,6 +26,14 @@
    "options": "All records\nOwn records only"
   },
   {
+   "default": "Own and unclaimed customers",
+   "description": "Which customers a rep sees. \"Own and unclaimed\" hides another rep's customers, and the contacts at them, unless the rep has a deal or a planned visit there.",
+   "fieldname": "rep_customer_scope",
+   "fieldtype": "Select",
+   "label": "Customers a rep sees",
+   "options": "Own and unclaimed customers\nAll customers"
+  },
+  {
    "description": "Which nav links and settings panes each role is shown. Hiding a surface tidies the app; it does not protect data. Nothing can be hidden from an administrator.",
    "fieldname": "surface_section",
    "fieldtype": "Section Break",
@@ -40,7 +49,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-08 00:00:00.000000",
+ "modified": "2026-10-31 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM Access Settings",

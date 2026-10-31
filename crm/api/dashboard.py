@@ -2569,7 +2569,8 @@ def customer_interaction(
 
 	period_end = getdate(to_date)
 	rows = []
-	for org in frappe.get_all("CRM Organization", pluck="name"):
+	# get_list, not get_all: a rep's report lists only the customers they may see
+	for org in frappe.get_list("CRM Organization", pluck="name", limit_page_length=0):
 		bucket = counts.get(org) or dict.fromkeys(INTERACTION_BUCKETS, 0)
 		at, rep = last.get(org, (None, None))
 		row = frappe._dict({"organization": org, **bucket})

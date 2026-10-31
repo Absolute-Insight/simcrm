@@ -170,6 +170,9 @@ before_uninstall = "crm.uninstall.before_uninstall"
 permission_query_conditions = {
 	"CRM Lead": "crm.permissions.org_hierarchy.get_lead_permission_query_conditions",
 	"CRM Deal": "crm.permissions.org_hierarchy.get_deal_permission_query_conditions",
+	# one rep cannot reach another's customers, or the people at them
+	"CRM Organization": "crm.permissions.customers.get_organization_permission_query_conditions",
+	"Contact": "crm.permissions.customers.get_contact_permission_query_conditions",
 	"FCRM Note": "crm.permissions.linked_records.get_note_permission_query_conditions",
 	"CRM Task": "crm.permissions.linked_records.get_task_permission_query_conditions",
 	"CRM Call Log": "crm.permissions.linked_records.get_call_log_permission_query_conditions",
@@ -189,6 +192,8 @@ permission_query_conditions = {
 has_permission = {
 	"CRM Lead": "crm.permissions.org_hierarchy.has_lead_permission",
 	"CRM Deal": "crm.permissions.org_hierarchy.has_deal_permission",
+	"CRM Organization": "crm.permissions.customers.has_organization_permission",
+	"Contact": "crm.permissions.customers.has_contact_permission",
 	"FCRM Note": "crm.permissions.linked_records.has_note_permission",
 	"CRM Task": "crm.permissions.linked_records.has_task_permission",
 	"CRM Call Log": "crm.permissions.linked_records.has_call_log_permission",
