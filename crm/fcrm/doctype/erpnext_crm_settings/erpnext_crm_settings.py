@@ -577,6 +577,9 @@ def create_customer_in_erpnext(doc, method):
 	ERP was down. The Acumatica twin (``outbound.queue_customer_push``) was fixed for
 	exactly this shape; this is the same fix.
 	"""
+	if frappe.flags.in_demo_seed:
+		# demo data's Won deals must not become customers in a real ERP
+		return
 	erpnext_crm_settings = frappe.get_single("ERPNext CRM Settings")
 	if (
 		not erpnext_crm_settings.enabled

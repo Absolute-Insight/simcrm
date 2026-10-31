@@ -202,6 +202,13 @@ export function standardViewPayload(
 }
 
 /**
+ * On Hold by type, but out of the open-deal tiles and the forecast by name
+ * (`still_open` in crm/api/dashboard.py): a quote that ran out is not expected
+ * revenue, where a paused deal is.
+ */
+export const EXPIRED_STATUS = 'Expired'
+
+/**
  * Whether deals in a CRM Deal Status of this `type` are what the open-deal
  * tiles count: neither Won nor Lost (`Status.type.notin(["Won", "Lost"])` in
  * crm/api/dashboard.py), which takes in On Hold. Listing only Open and Ongoing

@@ -59,6 +59,28 @@ describe('viewsStore.getDefaultView', () => {
     expect(store.getDefaultView().name).toBe('Alpha View')
   })
 
+  it('skips a default filed under a route the app does not have', async () => {
+    // get_route_name filed a Notes default under "FCRM Notes"; a manager whose
+    // only default it was got next({ name: 'FCRM Notes' }) -- "No match" --
+    // and a blank Home on every login.
+    const routes = new Set(['Leads', 'Deals', 'Notes'])
+    const isRoutable = (name) => routes.has(name)
+
+    const broken = await storeWithViews([
+      defaultView('FCRM Notes', 'Notes Kanban'),
+    ])
+    expect(broken.getDefaultView(null, isRoutable)).toBeNull()
+
+    vi.resetModules()
+    setActivePinia(createPinia())
+    const mixed = await storeWithViews([
+      defaultView('FCRM Notes', 'Broken Notes'),
+      defaultView('Zeta', 'Zeta View'),
+      defaultView('Deals', 'My Deals'),
+    ])
+    expect(mixed.getDefaultView(null, isRoutable).name).toBe('My Deals')
+  })
+
   it('returns null when no default exists', async () => {
     const store = await storeWithViews([
       { name: 'Plain', route_name: 'Leads', type: 'list', is_default: 0 },
