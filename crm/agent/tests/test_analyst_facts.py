@@ -426,3 +426,203 @@ class RankedByWonValueTest(UnitTestCase):
 	def test_the_best_win_rate_is_a_different_claim_from_the_best_rep(self):
 		text = "Janca Meiring has the highest win rate, at 75%."
 		self.assertEqual(ground(text, WON_BY_REP)["answer"], text)
+
+
+# The months prod's narrative called growth, with today in the month after them.
+FALLING = won(
+	("2026-06", 16103594.09),
+	("2026-07", 11358307.02),
+	("2026-08", 4598159.90),
+	("2026-09", 2578053.92),
+	("2026-10", 0.0),
+)
+FALLING_TODAY = date(2026, 11, 2)
+
+
+def series(*values, start=1):
+	return [(f"2026-{start + i:02d}", value) for i, value in enumerate(values)]
+
+
+def ground_at(answer, *tables, today=FALLING_TODAY, question="", caveats=()):
+	facted = [{**t, "facts": analyst_facts.table_facts(t, today)} for t in tables]
+	return analyst_facts.ground_reply(answer, list(caveats), facted, today, question=question)
+
+
+class TrendDirectionTest(UnitTestCase):
+	def direction(self, *values, today=date(2026, 12, 15)):
+		return analyst_facts.trend_direction(series(*values), today)
+
+	def test_a_steady_fall(self):
+		trend = analyst_facts.trend_direction(
+			[(r["month"], r["value"]) for r in FALLING["rows"]], FALLING_TODAY
+		)
+		self.assertEqual(trend["direction"], "down")
+		self.assertEqual(trend["first"], ("2026-06", 16103594.09))
+		self.assertEqual(trend["last"], ("2026-10", 0.0))
+		self.assertEqual(trend["peak"], ("2026-06", 16103594.09))
+		self.assertEqual(trend["falls"], 4)
+
+	def test_a_steady_rise(self):
+		trend = self.direction(100, 200, 300)
+		self.assertEqual(trend["direction"], "up")
+		self.assertEqual(trend["rises"], 2)
+
+	def test_the_current_month_does_not_set_the_direction(self):
+		"""Two days of November are not a collapse, nor an end point."""
+		self.assertEqual(self.direction(100, 200, 5, today=date(2026, 3, 2))["direction"], "up")
+
+	def test_months_before_revenue_began_are_not_a_low_start(self):
+		self.assertEqual(self.direction(0, 0, 500, 400, 300)["direction"], "down")
+
+	def test_a_change_inside_the_band_is_flat(self):
+		self.assertEqual(self.direction(1000, 1200, 1030)["direction"], "flat")
+		self.assertEqual(self.direction(1000, 1000)["direction"], "flat")
+
+	def test_a_rise_that_has_since_fallen_three_months_running_is_mixed(self):
+		"""2 -> 3 is a rise; 2, 20, 16, 15, 14, 3 is not a business that is growing."""
+		self.assertEqual(self.direction(2, 20, 16, 15, 14, 3)["direction"], "mixed")
+		self.assertEqual(self.direction(100, 90, 95, 110, 120)["direction"], "up")
+
+	def test_too_few_points(self):
+		self.assertEqual(self.direction(500)["direction"], "unclear")
+		self.assertEqual(self.direction(0, 0, 0)["direction"], "unclear")
+		self.assertEqual(analyst_facts.trend_direction([], TODAY)["direction"], "unclear")
+
+
+class TrendFactTest(UnitTestCase):
+	def line(self, tbl, today=FALLING_TODAY):
+		return next(line for line in analyst_facts.table_facts(tbl, today) if line.startswith("Direction:"))
+
+	def test_the_direction_is_a_fact_the_model_is_handed(self):
+		self.assertEqual(
+			self.line(FALLING),
+			"Direction: Revenue from won deals fell from 16,103,594 in June 2026 to 0 in October 2026, "
+			"down 4 months running.",
+		)
+
+	def test_it_survives_the_cap_on_lines_shown(self):
+		facted = [{**YEAR, "facts": analyst_facts.table_facts(YEAR, TODAY)}]
+		self.assertTrue(any(line.startswith("Direction:") for line in analyst_facts.highlights(facted)))
+
+	def test_a_partial_month_is_named_as_left_out(self):
+		self.assertIn("October 2026 is month to date and not counted", self.line(YEAR, TODAY))
+
+	def test_flat_mixed_and_too_few_say_so(self):
+		flat = won(("2026-06", 1000.0), ("2026-07", 1020.0))
+		self.assertIn("held roughly level", self.line(flat))
+		mixed = won(*series(2.0, 20.0, 16.0, 15.0, 14.0, 3.0))
+		self.assertIn("ended above where it started", self.line(mixed))
+		self.assertIn("down 4 months running", self.line(mixed))
+		one = won(("2026-10", 1000.0))
+		self.assertIn("Not enough complete months", self.line(one))
+
+	def test_a_forward_series_has_no_direction(self):
+		forward = table(
+			"forecast_by_month", [{"month": "2026-12", "value": 5.0}, {"month": "2027-01", "value": 9.0}]
+		)
+		self.assertFalse(
+			[l for l in analyst_facts.table_facts(forward, FALLING_TODAY) if l.startswith("Direction:")]
+		)
+
+	def test_the_answer_prompt_says_the_question_does_not_set_the_direction(self):
+		self.assertIn("Direction", analyst.ANSWER_SYSTEM_PROMPT)
+		self.assertIn("whatever the question assumes", analyst.ANSWER_SYSTEM_PROMPT)
+
+
+class TrendClaimTest(UnitTestCase):
+	FACT = "Revenue from won deals fell from 16,103,594 in June 2026 to 0 in October 2026, down 4 months running."
+
+	def test_prods_sentence_is_replaced_by_the_computed_one(self):
+		reply = ground_at("Revenue grew to a total of 42,198,807.", FALLING)
+		self.assertEqual(reply["answer"], self.FACT)
+		self.assertEqual(reply["dropped"], 1)
+
+	def test_a_question_about_growth_does_not_coax_grew(self):
+		for answer in ("Yes, revenue has grown steadily.", "Yes.", "Sales are growing nicely."):
+			with self.subTest(answer=answer):
+				reply = ground_at(answer, FALLING, question="Has revenue grown this year?")
+				self.assertEqual(reply["answer"], self.FACT)
+
+	def test_a_growth_question_answered_without_a_direction_gets_one(self):
+		text = "The total for the period is 34,638,115."
+		reply = ground_at(text, FALLING, question="Are we growing?")
+		self.assertEqual(reply["answer"], f"{self.FACT} {text}")
+
+	def test_an_unrelated_question_is_not_handed_a_direction(self):
+		text = "September 2026 brought in 2,578,053.92."
+		self.assertEqual(ground_at(text, FALLING, question="What did we win?")["answer"], text)
+
+	def test_the_true_claim_stands(self):
+		text = "Revenue fell every month after June 2026."
+		reply = ground_at(text, FALLING, question="Are we growing?")
+		self.assertEqual(reply["answer"], text)
+		self.assertEqual(reply["dropped"], 0)
+		rising = won(("2026-07", 100.0), ("2026-08", 200.0), ("2026-09", 400.0))
+		self.assertEqual(ground_at("Revenue grew.", rising)["answer"], "Revenue grew.")
+
+	def test_a_fall_claimed_against_a_rise_is_replaced_too(self):
+		rising = won(("2026-07", 100.0), ("2026-08", 200.0), ("2026-09", 400.0))
+		reply = ground_at("Revenue declined over the period.", rising)
+		self.assertEqual(
+			reply["answer"],
+			"Revenue from won deals rose from 100 in July 2026 to 400 in September 2026, up 2 months running.",
+		)
+
+	def test_flat_and_too_few_reject_both_directions(self):
+		flat = won(("2026-07", 1000.0), ("2026-08", 1010.0), ("2026-09", 1020.0))
+		one = won(("2026-10", 1000.0))
+		for tbl in (flat, one):
+			for claim in ("Revenue grew.", "Revenue fell."):
+				with self.subTest(claim=claim):
+					self.assertEqual(ground_at(claim, tbl)["dropped"], 1)
+					self.assertNotEqual(ground_at(claim, tbl)["answer"], claim)
+
+	def test_a_claim_about_named_months_is_checked_on_those_months(self):
+		"""May to June really did rise, in a year that fell."""
+		text = "Revenue grew from May 2026 to June 2026."
+		self.assertEqual(ground(text, YEAR)["answer"], text)
+		self.assertEqual(ground("Revenue grew in June 2026.", YEAR)["answer"], "Revenue grew in June 2026.")
+		self.assertEqual(ground("Revenue grew in July 2026.", YEAR)["dropped"], 1)
+		self.assertEqual(ground("Revenue fell from May 2026 to June 2026.", YEAR)["dropped"], 1)
+		self.assertEqual(ground("Revenue has grown since June 2026.", YEAR)["dropped"], 1)
+
+	def test_a_sentence_telling_both_halves_is_left_alone(self):
+		text = "Revenue rose to a peak in February 2026, then fell."
+		self.assertEqual(ground(text, YEAR)["answer"], text)
+
+	def test_a_denied_rise_is_not_a_claim_of_one(self):
+		for text in ("Revenue did not grow.", "There was no growth in revenue.", "Revenue has not risen."):
+			with self.subTest(text=text):
+				self.assertEqual(ground_at(text, FALLING)["answer"], text)
+
+	def test_a_table_name_is_not_a_claim(self):
+		text = "The growth rates are shown below."
+		self.assertEqual(ground_at(text, FALLING)["answer"], text)
+		self.assertEqual(ground_at("Let me break down the revenue.", FALLING)["dropped"], 0)
+
+	def test_other_subjects_are_not_held_to_the_revenue_direction(self):
+		for text in ("New leads grew.", "The pipeline grew.", "Ann-Mari Prins improved."):
+			with self.subTest(text=text):
+				self.assertEqual(ground_at(text, FALLING, REPS)["answer"], text)
+
+	def test_each_series_answers_for_its_own_claims(self):
+		invoices = table(
+			"erp_invoices_by_month",
+			[
+				{"month": "2026-07", "invoiced": 100.0, "invoices": 2},
+				{"month": "2026-08", "invoiced": 300.0, "invoices": 3},
+			],
+		)
+		text = "Invoicing grew."
+		self.assertEqual(ground_at(text, FALLING, invoices)["answer"], text)
+		self.assertEqual(ground_at("Revenue grew.", FALLING, invoices)["answer"], self.FACT)
+
+	def test_the_replacement_appears_once(self):
+		reply = ground_at("Revenue grew. Sales rose again.", FALLING)
+		self.assertEqual(reply["answer"], self.FACT)
+		self.assertEqual(reply["dropped"], 2)
+
+	def test_a_caveat_is_dropped_not_replaced(self):
+		reply = ground_at("Revenue fell.", FALLING, caveats=["Revenue is growing."])
+		self.assertEqual(reply["caveats"], [])
+		self.assertEqual(reply["dropped"], 1)

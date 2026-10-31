@@ -165,3 +165,28 @@ class DeadlineTest(IntegrationTestCase):
 		self.assertEqual(len(deadlines), 2)
 		self.assertEqual(deadlines[0], deadlines[1])
 		self.assertEqual(deadlines[0], 1000.0 + GRANTED.timeout * api_mod.client.MAX_ATTEMPTS)
+
+
+class DirectionTest(IntegrationTestCase):
+	def test_the_question_reaches_the_direction_check(self):
+		"""Asked whether revenue grew, "yes" is the wrong answer to a fall."""
+		falling = {
+			**TABLE,
+			"rows": [{"month": "2026-07", "value": 30.0}, {"month": "2026-08", "value": 10.0}],
+		}
+		replies = iter(
+			[
+				AnalystPlan(metrics=["won_revenue_by_month"], from_date="", to_date="", reasoning=""),
+				AnalystAnswer(answer="Yes.", highlights=[], caveats=[]),
+			]
+		)
+		patches = stubs(GRANTED, lambda *_args, **_kwargs: next(replies))
+		with (
+			patches[0],
+			patches[1],
+			patches[2],
+			mock.patch.object(api_mod.analyst_data, "run_plan", return_value=[falling]),
+			patches[4],
+		):
+			result = api_mod.ask_analyst("Has revenue grown?")
+		self.assertIn("fell from 30 in July 2026 to 10 in August 2026", result["answer"])

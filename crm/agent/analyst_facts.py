@@ -24,6 +24,11 @@ belongs to someone it does not name, that calls a period the tables cover
 missing, or that leaks the prompt's own vocabulary is dropped, not repaired:
 the screen still shows every table, so a dropped sentence loses words, never
 data.
+
+Direction is the one claim that is replaced rather than dropped. "Revenue grew to
+a total of 42,198,807" quoted a true total in a period that fell every month
+(:func:`trend_direction`), and silence would leave a question about growth
+unanswered, so the computed sentence takes its place.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from __future__ import annotations
 import calendar
 import re
 from datetime import date
+from itertools import pairwise
 
 from crm.agent import analyst
 
@@ -72,7 +78,32 @@ _RANKED = {
 # table. Grounding leaves their numbers to the row that owns them: read as totals,
 # which may stand beside any name, they let one rep's value through under another
 # rep's name -- the very misattribution the check exists to catch.
-_ROW_FACTS = ("Highest month:", "Lowest month:", "Ranked by ", "Largest at risk:", "Most new deals:")
+_ROW_FACTS = (
+	"Highest month:",
+	"Lowest month:",
+	"Ranked by ",
+	"Largest at risk:",
+	"Most new deals:",
+	"Direction:",
+)
+
+# Past series a direction is worked out for: catalogue key -> [(row field, what it
+# is called, the words a claim about it uses)]. Not the forecast, which has no past.
+_REVENUE_TREND = [("value", "Revenue from won deals", r"\b(?:revenue|sales|won value|income|turnover)\b")]
+_INVOICED_TREND = ("invoiced", "Invoiced value", r"\binvoic\w*")
+_RECEIVED_TREND = ("received", "Cash received", r"\b(?:cash|payments?|receipts?)\b")
+_TRENDED = {
+	"won_revenue_by_month": _REVENUE_TREND,
+	"growth_rates": _REVENUE_TREND,
+	"erp_invoices_by_month": [_INVOICED_TREND],
+	"erp_payments_by_month": [_RECEIVED_TREND],
+	"erp_cashflow_by_month": [_INVOICED_TREND, _RECEIVED_TREND],
+}
+
+# First to last within this share of the larger is level, not a direction.
+TREND_FLAT_BAND = 0.05
+# A run this long against the overall direction is news the overall direction hides.
+TREND_TURN_MONTHS = 3
 
 
 # --- facts -------------------------------------------------------------------
@@ -87,7 +118,10 @@ def table_facts(table: dict, today: date) -> list[str]:
 	if key in _MONTHLY:
 		lines = []
 		for field, label in _MONTHLY[key]:
-			lines.extend(_monthly_facts(rows, field, label, today, forward=key in _FORWARD))
+			block = _monthly_facts(rows, field, label, today, forward=key in _FORWARD)
+			# second, right after the total: only the first few lines reach the screen
+			block[1:1] = [f"Direction: {line}" for line in _direction_lines(key, field, rows, today)]
+			lines.extend(block)
 		return lines
 	if key in _RANKED:
 		return _ranked_facts(key, rows)
@@ -147,6 +181,102 @@ def _monthly_facts(rows, field, label, today, forward=False) -> list[str]:
 		for name, value, _count, to_date in quarters:
 			lines.append(f"{name}{' to date' if to_date else ''}: {_money(value)}")
 	return lines
+
+
+def trend_direction(series: list[tuple[str, float]], today: date) -> dict:
+	"""Which way a monthly series went, over its complete months.
+
+	``direction`` is ``up``, ``down``, ``flat``, ``mixed`` or ``unclear``. It is the
+	first complete month against the last (:func:`analyst.trend_series` leaves out
+	the current month and the months before anything happened). ``flat`` is a change
+	inside :data:`TREND_FLAT_BAND`; ``unclear`` is fewer than two months; ``mixed``
+	is a last run of :data:`TREND_TURN_MONTHS` months or more against the overall
+	direction, because 2, 20, 16, 15, 14, 3 ended higher and is not growing.
+
+	``rises`` and ``falls`` count the run of moves at the end of the series.
+	"""
+	fit = analyst.trend_series(series, today)
+	trend = {"direction": "unclear", "first": None, "last": None, "peak": None, "rises": 0, "falls": 0}
+	if len(fit) < 2:
+		return trend
+	first, last = fit[0], fit[-1]
+	values = [value for _month, value in fit]
+	moves = [later - earlier for earlier, later in pairwise(values)]
+	for move in reversed(moves):
+		if move >= 0:
+			break
+		trend["falls"] += 1
+	for move in reversed(moves):
+		if move <= 0:
+			break
+		trend["rises"] += 1
+
+	change = last[1] - first[1]
+	if abs(change) <= TREND_FLAT_BAND * max(abs(first[1]), abs(last[1])):
+		direction = "flat"
+	elif change > 0:
+		direction = "mixed" if trend["falls"] >= TREND_TURN_MONTHS else "up"
+	else:
+		direction = "mixed" if trend["rises"] >= TREND_TURN_MONTHS else "down"
+	return {
+		**trend,
+		"direction": direction,
+		"first": first,
+		"last": last,
+		"peak": max(fit, key=lambda m: m[1]),
+	}
+
+
+def _point(point: tuple[str, float]) -> str:
+	return f"{_money(point[1])} in {analyst.month_label(point[0])}"
+
+
+def trend_sentence(name: str, trend: dict, partial: str = "") -> str:
+	"""The computed direction as a sentence an admin can read as it stands.
+
+	``partial`` is the month to date left out of it, when the series holds one.
+	"""
+	first, last, peak = trend["first"], trend["last"], trend["peak"]
+	direction = trend["direction"]
+	if direction == "unclear":
+		lowered = name[0].lower() + name[1:]
+		text = f"Not enough complete months to say whether {lowered} rose or fell."
+	else:
+		run = f"{trend['falls']} months running" if trend["falls"] > 1 else ""
+		climb = f"{trend['rises']} months running" if trend["rises"] > 1 else ""
+		if direction == "flat":
+			text = f"{name} held roughly level, at {_point(first)} and {_point(last)}."
+		elif direction == "up":
+			text = f"{name} rose from {_point(first)} to {_point(last)}" + (
+				f", up {climb}." if climb else "."
+			)
+		elif direction == "down":
+			text = f"{name} fell from {_point(first)} to {_point(last)}" + (f", down {run}." if run else ".")
+		elif last[1] > first[1]:
+			text = f"{name} ended above where it started, {_point(last)} against {_point(first)}, but is down {run}."
+		else:
+			text = f"{name} ended below where it started, {_point(last)} against {_point(first)}, but is up {climb}."
+		if peak not in (first, last):
+			text += f" The peak was {_point(peak)}."
+	if partial:
+		text += f" {analyst.month_label(partial)} is month to date and not counted."
+	return text
+
+
+def _trend_of(rows, field, name, today) -> tuple[list[tuple[str, float]], dict, str]:
+	series = [(row["month"], float(row.get(field) or 0)) for row in rows if row.get("month")]
+	trend = trend_direction(series, today)
+	current = analyst.month_key(today)
+	partial = current if any(month == current for month, _value in series) else ""
+	return series, trend, trend_sentence(name, trend, partial)
+
+
+def _direction_lines(key, field, rows, today) -> list[str]:
+	return [
+		_trend_of(rows, field, name, today)[2]
+		for trend_field, name, _words in _TRENDED.get(key, [])
+		if trend_field == field
+	]
 
 
 def _extremes(series, current, forward=False):
@@ -311,6 +441,43 @@ _WORST = re.compile(r"\b(?:lowest|worst|weakest|slowest|smallest)\b", re.IGNOREC
 _CHANGE = re.compile(
 	r"%|\b(?:decrease|decline|drop|dropped|fell|fall|collapse|plunge)\b|(?<!break )\bdown\b", re.IGNORECASE
 )
+# What a rise or a fall is claimed in. Nouns only where they cannot be a table's name:
+# "the growth rates are below" says nothing about which way anything went.
+_RISES = (
+	r"grew|grow|grows|grown|growing|rose|rise|rises|risen|rising|increas(?:e|es|ed|ing)|"
+	r"climb(?:s|ed|ing)?|improv(?:e|es|ed|ing)|gain(?:s|ed|ing)?|surg(?:e|es|ed|ing)|"
+	r"jump(?:s|ed|ing)?|soar(?:s|ed|ing)?|expand(?:s|ed|ing)?|upward|went up|trending up|"
+	r"(?:strong|steady|solid|positive|healthy|significant|continued|good|this|that) growth"
+)
+_FALLS = (
+	r"fell|fall|falls|fallen|falling|drop(?:s|ped|ping)?|declin(?:e|es|ed|ing)|"
+	r"decreas(?:e|es|ed|ing)|shrink|shrinks|shrinking|shrank|shrunk|slump(?:s|ed|ing)?|"
+	r"slide|slides|slid|sliding|sink|sinks|sinking|sank|collaps(?:e|es|ed|ing)|"
+	r"plung(?:e|es|ed|ing)|tumbl(?:e|es|ed|ing)|weaken(?:s|ed|ing)?|downward|went down|trending down"
+)
+_RISE_CLAIM = re.compile(rf"\b(?:{_RISES})\b", re.IGNORECASE)
+_FALL_CLAIM = re.compile(rf"\b(?:{_FALLS})\b", re.IGNORECASE)
+# "did not grow" and "you could grow" claim nothing.
+_NOT_A_CLAIM = re.compile(
+	r"(?:\b(?:not|never|no|without|failed to|stopped|could|should|would|might|may|must|will|"
+	r"need to|needs to|how to)|n't)\s+(?:\w+\s+)?"
+	rf"(?:{_RISES}|{_FALLS})\b",
+	re.IGNORECASE,
+)
+_AFFIRMS = re.compile(r"^\s*(?:yes|yep|correct|indeed)\b", re.IGNORECASE)
+_ASKS_DIRECTION = re.compile(
+	r"\b(?:grow|grows|grew|grown|growing|growth|trend\w*|increas\w*|declin\w*|rising|falling|"
+	r"improv\w*|up or down|better or worse|getting better|getting worse)\b",
+	re.IGNORECASE,
+)
+_SINCE = re.compile(r"\b(?:since|after)\b", re.IGNORECASE)
+# Things that can rise and fall by themselves, and are not the revenue series.
+_OTHER_SUBJECT = re.compile(
+	r"\b(?:leads?|deals?|pipeline|forecast\w*|win rate|customers?|clients?|accounts?|"
+	r"organi[sz]ations?|contacts?|invoic\w*|cash|payments?|receivables?|quotas?|targets?|"
+	r"attainment|adherence|averages?|margins?|costs?|prices?)\b",
+	re.IGNORECASE,
+)
 # "no data before December 2025" names a covered month to say what is *not* covered
 _BEFORE = re.compile(r"\b(?:before|prior to|earlier than)\b", re.IGNORECASE)
 # Crowning a rep. The best win rate is another claim, and may be someone else's.
@@ -326,9 +493,19 @@ _NOT_NAMES = {"reasons", "reason", "kind"}
 
 
 def ground_reply(
-	answer: str, caveats: list[str], tables: list[dict], today: date, history: list[dict] | None = None
+	answer: str,
+	caveats: list[str],
+	tables: list[dict],
+	today: date,
+	history: list[dict] | None = None,
+	question: str = "",
 ) -> dict:
 	"""``answer`` and ``caveats`` with every sentence the tables do not support removed.
+
+	A claim that a series rose or fell, against what its numbers did, becomes the
+	computed sentence, once; so does a ``question`` about direction that the answer
+	does not answer. The wording of the question decides nothing else: asked "did we
+	grow?", "yes" is a claim of growth.
 
 	``history`` is the conversation so far. A follow-up ("and the quarter before?")
 	is answered from this turn's tables but compares with a figure the last answer
@@ -341,20 +518,45 @@ def ground_reply(
 	for turn in history or []:
 		if isinstance(turn, dict) and turn.get("role") == "assistant":
 			index.known.extend(_parse_numbers(_MASKED.sub(" ", str(turn.get("content") or ""))))
-	kept, dropped = _keep(answer or "", index)
+	asked = bool(_ASKS_DIRECTION.search(question or ""))
+	kept, dropped = _keep(answer or "", index, asked, replace=True)
+	if asked:
+		kept = index.with_direction(kept, question)
 	out_caveats = []
 	for caveat in caveats or []:
-		text, lost = _keep(caveat, index)
+		text, lost = _keep(caveat, index, asked)
 		dropped += lost
 		if text:
 			out_caveats.append(text)
 	return {"answer": kept or FALLBACK_ANSWER, "caveats": out_caveats, "dropped": dropped}
 
 
-def _keep(text: str, index: _Index) -> tuple[str, int]:
+def _keep(text: str, index: _Index, asked: bool = False, replace: bool = False) -> tuple[str, int]:
+	"""``text`` with its unsupported sentences gone, and how many went. With ``replace``
+	a sentence that gets a direction wrong leaves the computed one in its place."""
 	sentences = [part.strip() for part in _SENTENCE.split(text.strip()) if part.strip()]
-	kept = [sentence for sentence in sentences if index.supports(sentence)]
-	return " ".join(kept), len(sentences) - len(kept)
+	kept: list[str] = []
+	held = 0
+	for sentence in sentences:
+		correction = index.wrong_direction(sentence, asked)
+		if correction is not None:
+			if replace and correction not in kept:
+				kept.append(correction)
+		elif index.supports(sentence):
+			kept.append(sentence)
+			held += 1
+	return " ".join(kept), len(sentences) - held
+
+
+def _claimed_direction(sentence: str, asked: bool = False) -> str | None:
+	"""``up``, ``down`` or ``None``: a sentence with both is telling a story, not a direction."""
+	text = _NOT_A_CLAIM.sub(" ", sentence)
+	rises, falls = bool(_RISE_CLAIM.search(text)), bool(_FALL_CLAIM.search(text))
+	if rises and falls:
+		return None
+	if rises or (asked and not falls and _AFFIRMS.search(sentence)):
+		return "up"
+	return "down" if falls else None
 
 
 class _Index:
@@ -373,6 +575,9 @@ class _Index:
 		# the months a "best"/"worst" claim may name, one per monthly series
 		self.best: set[str] = set()
 		self.worst: set[str] = set()
+		# one per past series: its name, words, months, direction and computed sentence
+		self.trends: list[dict] = []
+		self.month_names: set[str] = set()
 		# who a ranking of reps puts first, and who else it holds
 		self.top_rep: set[str] = set()
 		self.ranked_reps: set[str] = set()
@@ -380,6 +585,19 @@ class _Index:
 			if table.get("error"):
 				self.erp_unavailable = self.erp_unavailable or str(table.get("key", "")).startswith("erp_")
 				continue
+			for field, name, words in _TRENDED.get(table.get("key"), []):
+				if not any(entry["name"] == name for entry in self.trends):
+					series, trend, sentence = _trend_of(table.get("rows") or [], field, name, today)
+					if series:
+						self.trends.append(
+							{
+								"name": name,
+								"words": re.compile(words, re.IGNORECASE),
+								"series": analyst.trend_series(series, today),
+								"direction": trend["direction"],
+								"sentence": sentence,
+							}
+						)
 			if table.get("key") == "won_by_rep" and table.get("rows"):
 				ranked = rank_rows("won_by_rep", table["rows"])
 				self.ranked_reps.update(str(row.get("rep")).lower() for row in ranked)
@@ -407,6 +625,8 @@ class _Index:
 				for column in text_columns:
 					for name in _names_for(row.get(column), month=column == "month"):
 						self.owned.setdefault(name, []).extend(values)
+						if column == "month":
+							self.month_names.add(name)
 				if row.get("month"):
 					self.covered.add(str(row["month"]))
 			self.totals.append(float(len(rows)))
@@ -424,6 +644,63 @@ class _Index:
 					self.totals.extend(value for value, _tol in numbers)
 		# longest first, so "impala - shaft 12" is matched before "impala - shaft 1"
 		self.names = sorted((name for name in self.owned if len(name) >= 3), key=len, reverse=True)
+
+	def _trends_about(self, text: str) -> list[dict]:
+		"""The series ``text`` is about: those it names, else the first one -- unless it
+		names something else, which this index has no direction for."""
+		if not self.trends:
+			return []
+		mentioned, _masked = self._mentions(text)
+		if mentioned - self.month_names:
+			return []
+		named = [trend for trend in self.trends if trend["words"].search(text)]
+		if named or _OTHER_SUBJECT.search(text):
+			return named
+		return self.trends[:1]
+
+	def wrong_direction(self, sentence: str, asked: bool = False) -> str | None:
+		"""The computed sentence, when ``sentence`` claims a direction its series did not go."""
+		claim = _claimed_direction(sentence, asked)
+		if not claim:
+			return None
+		for trend in self._trends_about(sentence):
+			actual = self._direction_of(trend, sentence)
+			if actual is not None and actual != claim:
+				return trend["sentence"]
+		return None
+
+	def _direction_of(self, trend: dict, sentence: str) -> str | None:
+		"""Which way ``trend`` went over what ``sentence`` covers, ``None`` when it cannot be
+		said. A named month is measured from the month before, or with "since" to the last
+		complete month, so "grew in June" can be true in a year that fell. A month the
+		series does not hold, or the month to date, is nothing to measure."""
+		periods = self._periods(sentence)
+		if not periods:
+			return trend["direction"]
+		months = [month for month, _value in trend["series"]]
+		named = sorted(periods & set(months))
+		if not named:
+			return None
+		if len(named) > 1:
+			start, end = named[0], named[-1]
+		elif _SINCE.search(sentence):
+			start, end = named[0], months[-1]
+		elif months.index(named[0]):
+			start, end = months[months.index(named[0]) - 1], named[0]
+		else:
+			return None
+		values = dict(trend["series"])
+		return "up" if values[end] > values[start] else "down" if values[end] < values[start] else "flat"
+
+	def with_direction(self, answer: str, question: str) -> str:
+		"""``answer``, opening with the computed direction if it does not already give one."""
+		trends = self._trends_about(question)
+		if not trends or trends[0]["sentence"] in answer:
+			return answer
+		parts = [part for part in _SENTENCE.split(answer) if part]
+		if any(_claimed_direction(part) for part in parts):
+			return answer
+		return f"{trends[0]['sentence']} {answer}".strip() if answer else trends[0]["sentence"]
 
 	def supports(self, sentence: str) -> bool:
 		if _JARGON.search(sentence) or _FENCE_WORD.search(sentence):
