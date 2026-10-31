@@ -212,3 +212,18 @@ class HttpTransportTest(UnitTestCase):
 			client_mod.complete(self._cfg(api_key="s3cret"), ThreadSummary, MESSAGES)
 
 		self.assertEqual(elsewhere.seen, [])
+
+	def test_a_redirect_is_reported_as_one_with_the_host_it_names(self):
+		"""Audit L-60: an http base URL on an https-only host came back as "Expecting
+		value: line 1 column 1" -- the refused redirect parsed as a reply."""
+		self.handler.replies.append((308, {"location": "https://llm.example.test/v1/chat/completions"}))
+
+		with self.assertRaises(AgentUnavailable) as caught:
+			client_mod.complete(self._cfg(api_key="s3cret"), ThreadSummary, MESSAGES)
+
+		message = str(caught.exception)
+		self.assertIn("redirect", message.lower())
+		self.assertIn("HTTP 308", message)
+		self.assertIn("https://llm.example.test", message)
+		self.assertNotIn("/v1/chat/completions", message.split("redirect", 1)[1])
+		self.assertEqual(len(self.handler.seen), 1)

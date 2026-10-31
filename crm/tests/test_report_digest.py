@@ -543,6 +543,13 @@ class RenderDigestTest(UnitTestCase):
 		html = _render_digest(self.typed("number", 12345), "2026-01-01", "2026-01-02")
 		self.assertIn(">12,345</td>", html)
 
+	def test_a_fractional_number_cell_keeps_its_decimal(self):
+		"""Visits against target pro-rates the weekly target to one decimal and
+		judges the status against it; rounding 2.4 to 2 beside 2 completed made
+		"Behind" read as a contradiction."""
+		html = _render_digest(self.typed("number", 2.4), "2026-01-01", "2026-01-02")
+		self.assertIn(">2.4</td>", html)
+
 	def test_numeric_cells_are_right_aligned_and_text_cells_are_not(self):
 		html = _render_digest(self.typed("number", 5), "2026-01-01", "2026-01-02")
 		self.assertIn(f'<td style="{TD_STYLE};text-align:right">5</td>', html)

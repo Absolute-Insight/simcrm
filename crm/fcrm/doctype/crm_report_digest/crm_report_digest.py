@@ -285,7 +285,9 @@ def _cell(value, col_type: str | None = None, currency: str | None = None) -> st
 			return fmt_money(number, currency=currency or get_base_currency())
 		if col_type == "percent":
 			return f"{value}%"
-		return fmt_money(number, precision=0)
+		# Counts are whole, but a pro-rated visit target is not: 2.4 printed as 2
+		# beside 2 completed and a status of Behind. One decimal, as on screen.
+		return fmt_money(number, precision=0 if number.is_integer() else 1)
 	return str(value)
 
 

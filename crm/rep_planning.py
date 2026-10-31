@@ -163,12 +163,7 @@ def match_items(items: list[dict], actuals: list[dict]) -> dict[str, dict]:
 				continue
 			if item["activity_type"] != actual["kind"]:
 				continue
-			if item.get("reference_docname") and (
-				item.get("reference_doctype") != actual.get("reference_doctype")
-				or item.get("reference_docname") != actual.get("reference_docname")
-			):
-				continue
-			if not _same_customer(item, actual):
+			if not _fits(item, actual):
 				continue
 			start, end = week_of(item["planned_date"])
 			if when < start or when > end:
@@ -179,6 +174,22 @@ def match_items(items: list[dict], actuals: list[dict]) -> dict[str, dict]:
 			assigned[best["name"]] = actual
 
 	return assigned
+
+
+def _fits(item: dict, actual: dict) -> bool:
+	"""Is this actual about what the item names -- its deal or lead, its customer?
+
+	Kind and week are the caller's to check. ``match_items`` asks this before
+	assigning a record and ``_fulfilment_holds`` again on every later run, so an
+	item edited to another customer or deal lets go of a record that no longer
+	answers it.
+	"""
+	if item.get("reference_docname") and (
+		item.get("reference_doctype") != actual.get("reference_doctype")
+		or item.get("reference_docname") != actual.get("reference_docname")
+	):
+		return False
+	return _same_customer(item, actual)
 
 
 def _same_customer(item: dict, actual: dict) -> bool:
@@ -358,7 +369,9 @@ def _fulfilment_holds(
 	"""Does the record recorded against a Done item still fulfil it?
 
 	Deleting the call, reopening the task or cancelling the meeting takes the
-	fulfilment with it — Done is a statement about a record, not a flag.
+	fulfilment with it — Done is a statement about a record, not a flag. So does
+	editing the item to another customer or deal (``_fits``): the record still
+	exists, but it is no longer what the item asks for.
 
 	``actuals`` is the rep's activity over the whole run's window, already
 	fetched; it answers the question without a query. A Task holds regardless
@@ -377,6 +390,7 @@ def _fulfilment_holds(
 				actual["doctype"] != source["doctype"]
 				or str(actual["name"]) != str(item["fulfilled_by"])
 				or actual["kind"] != item["activity_type"]
+				or not _fits(item, actual)
 			):
 				continue
 			if not source["when_is_activity_time"]:
@@ -385,28 +399,43 @@ def _fulfilment_holds(
 				return True
 		return False
 	window = (start, end) if source["when_is_activity_time"] else None
-	return bool(_query_source(item["activity_type"], user, window, names=[item["fulfilled_by"]]))
+	rows = _query_source(item["activity_type"], user, window, names=[item["fulfilled_by"]])
+	return any(_fits(item, row) for row in rows)
 
 
 def _day_of(when) -> date:
 	return when.date() if hasattr(when, "date") else when
 
 
-def _claimed_actuals(horizon: date) -> dict[tuple[str, str], str]:
+def _claimed_actuals(horizon: date, records=()) -> dict[tuple[str, str], str]:
 	"""(doctype, name) -> the plan item already holding that record.
 
 	One record fulfils one item, ever. Without this a task completed in one week
 	and edited in the next would be counted twice — once where it was planned,
 	once where it was touched.
+
+	Claims are read from the weeks inside the horizon, and for ``records`` --
+	(doctype, name) pairs -- from any week at all. A task is dated by its
+	``modified``, so one done and claimed months ago is back in today's window
+	the moment somebody edits it; its claim, outside the horizon, went unseen
+	and the task fulfilled a second item. The caller names the records it is
+	about to hand out, which keeps the read bounded by the window, not by
+	every plan ever written.
 	"""
 	item = frappe.qb.DocType("CRM Rep Plan Item")
 	plan = frappe.qb.DocType("CRM Rep Plan")
+	in_scope = plan.week_start >= horizon
+	by_doctype: dict[str, set[str]] = {}
+	for doctype, name in records:
+		by_doctype.setdefault(doctype, set()).add(str(name))
+	for doctype, names in by_doctype.items():
+		in_scope = in_scope | ((item.fulfilled_by_doctype == doctype) & item.fulfilled_by.isin(list(names)))
 	rows = (
 		frappe.qb.from_(item)
 		.join(plan)
 		.on(item.parent == plan.name)
 		.select(item.name, item.fulfilled_by_doctype, item.fulfilled_by)
-		.where(plan.week_start >= horizon)
+		.where(in_scope)
 		.where(item.fulfilled_by.isnotnull())
 		.where(item.fulfilled_by != "")
 		.run(as_dict=True)
@@ -542,7 +571,15 @@ def match_actuals() -> int:
 			sorted({plan.user for plan in plans}), horizon, max(today, last_week_end)
 		)
 
-	claimed = _claimed_actuals(horizon)
+	# a record dated by an edit marker can turn up long after the week that
+	# claimed it, so its claim is looked for beyond the horizon too
+	drifting = {
+		(actual["doctype"], str(actual["name"]))
+		for actuals in actuals_by_user.values()
+		for actual in actuals
+		if not ACTUAL_SOURCES[actual["kind"]]["when_is_activity_time"]
+	}
+	claimed = _claimed_actuals(horizon, drifting)
 	fulfilled = 0
 	for plan in plans:
 		plan.actuals = actuals_by_user.get(plan.user, [])

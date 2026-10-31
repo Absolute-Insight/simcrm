@@ -16,7 +16,14 @@ from datetime import datetime, time, timedelta
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from crm.api.rep_plan import cancel_item, complete_item, get_plan, log_unplanned_visit, save_plan
+from crm.api.rep_plan import (
+	EDITABLE_ITEM_FIELDS,
+	cancel_item,
+	complete_item,
+	get_plan,
+	log_unplanned_visit,
+	save_plan,
+)
 from crm.tests.test_rep_plan_outcomes import make_sales_user, this_monday
 
 REP = "past-lock-rep@crmtest.test"
@@ -87,6 +94,40 @@ class PastDaysLockedTest(IntegrationTestCase):
 	def test_resending_the_past_unchanged_still_saves(self):
 		saved = save_plan(self.monday, self.rows())
 		self.assertEqual([row["note"] for row in saved["items"]], ["Ring the plant", "Follow up"])
+
+	def test_a_deal_deleted_since_the_week_was_loaded_does_not_lock_it(self):
+		"""Deleting a deal nulls the stored item's reference, while the open planner
+		still holds it and sends it back. Compared raw, the past row looked edited
+		and the whole week was refused; without the lock the same save just drops
+		the stale reference."""
+		frappe.set_user("Administrator")
+		org = frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Past Lock Org"}).insert(
+			ignore_if_duplicate=True
+		)
+		deal = frappe.get_doc({"doctype": "CRM Deal", "organization": org.name, "deal_owner": REP}).insert(
+			ignore_permissions=True
+		)
+		past = self.plan.items[0].name
+		frappe.db.set_value(
+			"CRM Rep Plan Item", past, {"reference_doctype": "CRM Deal", "reference_docname": deal.name}
+		)
+		frappe.set_user(REP)
+		loaded = [
+			{key: row[key] for key in ("name", *EDITABLE_ITEM_FIELDS)}
+			for row in get_plan(self.monday)["items"]
+		]
+
+		frappe.set_user("Administrator")
+		frappe.delete_doc("CRM Deal", deal.name, force=True, ignore_permissions=True)
+
+		frappe.set_user(REP)
+		saved = save_plan(self.monday, loaded)
+		self.assertIsNone(next(row for row in saved["items"] if row["name"] == past)["reference_docname"])
+
+		# a real change to the past row is still refused
+		loaded[0]["note"] = "Rang the plant twice"
+		with self.assertRaises(frappe.ValidationError):
+			save_plan(self.monday, loaded)
 
 	def test_a_past_activity_is_not_edited_or_moved_forward(self):
 		today = str(frappe.utils.getdate())

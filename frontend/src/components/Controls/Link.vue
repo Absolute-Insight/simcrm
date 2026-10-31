@@ -104,34 +104,30 @@ const value = computed({
 const autocomplete = ref(null)
 const text = ref('')
 
+// Compared by content: callers often pass inline filters, which are new on
+// every parent render and would otherwise force a search each time.
+const searchSource = computed(() =>
+  JSON.stringify([props.doctype, props.filters]),
+)
+
+// One watcher, so a Link sends one search when it mounts rather than one per
+// watched value (the doctype and filters watchers each fired on mount). A new
+// doctype or filter always searches again; new text only if it differs from
+// the last search.
 watchDebounced(
-  () => autocomplete.value?.query,
-  (val) => {
-    val = val || ''
-    if (text.value === val) return
-    text.value = val
-    reload(val)
+  () => [autocomplete.value?.query || '', searchSource.value],
+  ([query, source], [, previousSource] = []) => {
+    text.value = query
+    reload(query, source !== previousSource)
   },
   { debounce: 300, immediate: true },
 )
 
-watchDebounced(
-  () => props.doctype,
-  () => reload(''),
-  { debounce: 300, immediate: true },
-)
-
-watchDebounced(
-  () => props.filters,
-  () => {
-    reload('', true)
-  },
-  { debounce: 300, immediate: true },
-)
-
+// Not cached: createResource returns one shared resource for a repeated cache
+// key, so every Link to the same doctype and filters (each row of a grid)
+// showed whichever search another of them ran last.
 const options = createResource({
   url: 'frappe.desk.search.search_link',
-  cache: [props.doctype, text.value, props.hideMe, props.filters],
   method: 'POST',
   params: {
     txt: text.value,

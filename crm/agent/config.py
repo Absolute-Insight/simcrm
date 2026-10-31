@@ -10,7 +10,7 @@ normalised into a plain dataclass, so nothing downstream touches the database.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 import frappe
 
@@ -186,6 +186,7 @@ class AgentConfig:
 		max_tokens: int | str | None = None,
 		context_tokens: int | str | None = None,
 		reasoning_off: bool | int | str | None = None,
+		api_key: str | None = None,
 	) -> AgentConfig:
 		"""This config with the named fields replaced, normalised as settings are.
 
@@ -205,6 +206,11 @@ class AgentConfig:
 		purpose: a misspelled one has to be a ``TypeError`` here, not a sweep that
 		quietly measures the site's own endpoint and gets written down as the
 		candidate's.
+
+		The API key goes only where the site sends it. A ``base_url`` other than
+		the site's own drops it -- replaying the site's key at a candidate host is
+		the credential leak ``client._post`` refuses on a redirect -- and
+		``api_key`` gives a candidate that needs one its own.
 		"""
 		supplied = {
 			key: value
@@ -218,9 +224,14 @@ class AgentConfig:
 			)
 			if value is not None
 		}
-		if not supplied:
+		if not supplied and api_key is None:
 			return self
-		return self.from_settings({**asdict(self), **supplied})
+		swept = self.from_settings({**asdict(self), **supplied})
+		if api_key is not None:
+			return replace(swept, api_key=str(api_key))
+		if swept.base_url != self.base_url:
+			return replace(swept, api_key="")
+		return swept
 
 
 @dataclass(frozen=True)

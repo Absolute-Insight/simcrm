@@ -71,7 +71,7 @@
             <PlayIcon class="size-3" />
           </template>
         </Badge>
-        <Badge
+        <ToneBadge
           :label="getCallStatusLabel(call.status, call.type)"
           :theme="statusColorMap[call.status]"
         />
@@ -102,6 +102,7 @@ import MultipleAvatar from '@/components/MultipleAvatar.vue'
 import AudioPlayer from '@/components/Activities/AudioPlayer.vue'
 import CallLogDetailModal from '@/components/Modals/CallLogDetailModal.vue'
 import TimelineTimestamp from '@/components/Activities/TimelineTimestamp.vue'
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import { getCallStatusLabel, statusColorMap } from '@/utils/callLog.js'
 import { formatDate } from '@/utils'
 import { Avatar, Badge, createResource } from 'frappe-ui'

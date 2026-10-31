@@ -281,13 +281,15 @@ function openMentor() {
 
 // Which pane a phone shows. A plain open lands on the list; an open that
 // arrives with an article (the assistant or a help link handing one over)
-// lands on that article, as does an article change while already open.
+// lands on that article, as does an article change while already open. On
+// open the request decides, not a comparison with `previous`: the modal stays
+// mounted, so that is whatever article the last session ended on.
 const mobilePane = ref('nav')
 watch(
   [helpCenterVisible, activeHelpArticle],
   ([open, article], [wasOpen, previous]) => {
     if (!open) return
-    if (!wasOpen) mobilePane.value = article !== previous ? 'page' : 'nav'
+    if (!wasOpen) mobilePane.value = article ? 'page' : 'nav'
     else if (article !== previous) mobilePane.value = 'page'
   },
 )

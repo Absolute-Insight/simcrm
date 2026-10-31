@@ -134,15 +134,18 @@ import { useDoctypeModal } from '@/composables/doctypeModal'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import { globalStore } from '@/stores/global'
 import { usersStore } from '@/stores/users'
 import { timeAgo, formatDate } from '@/utils'
 import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
+import { reportActionError } from '@/utils/reportActionError'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { call, Dropdown, Tooltip } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
 import { TextEditor, ListFooter } from 'frappe-ui/experimental'
 import { ref, watch } from 'vue'
 
+const { $dialog } = globalStore()
 const { getUser } = usersStore()
 const { updateOnboardingStep } = useCRMOnboarding()
 const { capture } = useTelemetry()
@@ -192,12 +195,29 @@ function editNote(noteName) {
   })
 }
 
-async function deleteNote(name) {
-  await call('frappe.client.delete', {
-    doctype: 'FCRM Note',
-    name,
+// One tap on Delete removed the note outright, and a refused delete rejected
+// into nothing: no prompt before, no message after.
+function deleteNote(name) {
+  $dialog({
+    title: __('Delete Note'),
+    message: __('Are you sure you want to delete this note?'),
+    variant: 'danger',
+    actions: [
+      {
+        label: __('Delete'),
+        variant: 'solid',
+        theme: 'red',
+        onClick: ({ close }) => {
+          close()
+          call('frappe.client.delete', { doctype: 'FCRM Note', name })
+            .then(() => notes.value.reload())
+            .catch((error) =>
+              reportActionError(error, __('Could not delete the note.')),
+            )
+        },
+      },
+    ],
   })
-  notes.value.reload()
 }
 
 const openNoteFromURL = () => {
