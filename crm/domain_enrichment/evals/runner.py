@@ -24,6 +24,7 @@ from crm.agent.errors import AgentUnavailable, SchemaMismatch
 from crm.agent.schemas import SiteFacts
 from crm.domain_enrichment import model_fallback
 from crm.domain_enrichment.evals.cases import CASES, INDUSTRIES, Case
+from crm.domain_enrichment.result import EnrichmentResult
 
 SCORED_FIELDS = ("company_name", "description", "industry")
 
@@ -42,7 +43,7 @@ HARMFUL = (WRONG, HALLUCINATED)
 class CaseResult:
 	case: Case
 	outcomes: dict = field(default_factory=dict)  # field -> outcome
-	got: dict = field(default_factory=dict)  # field -> raw model value
+	got: dict = field(default_factory=dict)  # field -> raw model value (scored: what _apply keeps)
 	error: str = ""
 
 	@property
@@ -110,12 +111,18 @@ def run_case(case: Case, cfg: AgentConfig) -> CaseResult:
 	except Exception as exc:  # a broken harness must not read as a model failure
 		return CaseResult(case=case, error=f"{type(exc).__name__}: {exc}")
 
+	# Scored on what production would write, not on the raw reply: model_fallback's
+	# _apply strips each value and keeps an industry only when it is exactly one of
+	# the offered names. Scoring the reply credited "healthcare", which production
+	# discards, and counted "Medical Billing" -- also discarded -- as a harmful write.
+	written = EnrichmentResult(website=case.website)
+	model_fallback._apply(written, facts, list(SCORED_FIELDS), INDUSTRIES)
+
 	result = CaseResult(case=case)
 	for name in scored:
-		got = getattr(facts, name, "") or ""
-		result.got[name] = got
+		result.got[name] = getattr(facts, name, "") or ""
 		result.outcomes[name] = score_field(
-			name, case.expected.get(name, ""), got, case.description_must_mention
+			name, case.expected.get(name, ""), getattr(written, name).value, case.description_must_mention
 		)
 	return result
 

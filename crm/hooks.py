@@ -269,12 +269,23 @@ doc_events = {
 			"crm.automation.run_automations",
 		],
 		"on_change": ["crm.automation.run_automations"],
-		"after_delete": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
+		"after_delete": [
+			"crm.automation.clear_suggestions",
+			"crm.automation.clear_plan_item_references",
+			"crm.domain_enrichment.tasks.clear_runs",
+		],
 	},
 	"CRM Lead": {
 		"on_update": ["crm.automation.run_automations"],
 		"on_change": ["crm.automation.run_automations"],
-		"after_delete": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
+		"after_delete": [
+			"crm.automation.clear_suggestions",
+			"crm.automation.clear_plan_item_references",
+			"crm.domain_enrichment.tasks.clear_runs",
+		],
+	},
+	"CRM Organization": {
+		"after_delete": ["crm.domain_enrichment.tasks.clear_runs"],
 	},
 	"ERPNext CRM Settings": {
 		"validate": ["crm.integrations.acumatica.install.block_dual_erp"],
@@ -388,7 +399,16 @@ before_tests = "crm.tests.before_tests"
 # CRM Rep Plan Item's reference is a Dynamic Link too, and a rep's planned week
 # must never make a deal undeletable nor be deleted to free one; the after_delete
 # handler above unlinks the items and keeps them.
-ignore_links_on_delete = ["Failed Lead Sync Log", "CRM Suggestion", "CRM Rep Plan Item", "CRM Rep Plan"]
+# CRM Enrichment Run's reference_name is a Dynamic Link to the record it enriched:
+# without this every enriched record was undeletable for Sales roles; the on_trash
+# handler above deletes the runs with the record.
+ignore_links_on_delete = [
+	"Failed Lead Sync Log",
+	"CRM Suggestion",
+	"CRM Rep Plan Item",
+	"CRM Rep Plan",
+	"CRM Enrichment Run",
+]
 
 # Request Events
 # ----------------

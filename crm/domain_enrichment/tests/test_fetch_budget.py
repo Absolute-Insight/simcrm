@@ -9,18 +9,23 @@ holds the worker until gunicorn kills it. ``enrich_preview`` runs that fetch ins
 the web request, rate-limited at 10 a minute against eight shipped workers, so a
 handful of slow-drip hosts is enough to stall the app for everyone.
 
-Fully offline: no socket is opened, the responses are fakes and the clock is real but
-the budgets are milliseconds.
+Offline: the fakes open no socket, and the real-socket cases below talk only to a
+server on 127.0.0.1 (the SSRF guard is stubbed to let it through). The clock is
+real but the budgets are fractions of a second.
 """
 
 from __future__ import annotations
 
+import socket
+import threading
 import time
 from unittest import mock
 
 from frappe.tests import UnitTestCase
+from rq.timeouts import JobTimeoutException
 
-from crm.domain_enrichment import http
+from crm.domain_enrichment import extractors, http
+from crm.domain_enrichment.result import CrawledPage
 from crm.domain_enrichment.tests.fixtures import make_config
 
 
@@ -161,3 +166,217 @@ class FetchDeadlineTest(UnitTestCase):
 			http.fetch("https://slow.example/", cfg)
 
 		self.assertLessEqual(seen[0], 2)
+
+
+def _serve_once(respond):
+	"""A one-connection server on 127.0.0.1; ``respond(conn)`` writes the reply.
+
+	Returns the port. The server thread ends when ``respond`` does or the client
+	hangs up -- a send into a socket the fetch shut down raises, and that is fine."""
+	server = socket.socket()
+	server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+	server.bind(("127.0.0.1", 0))
+	server.listen(1)
+
+	def handle():
+		try:
+			conn, _addr = server.accept()
+			conn.recv(65536)
+			try:
+				respond(conn)
+			except OSError:
+				pass
+			finally:
+				conn.close()
+		finally:
+			server.close()
+
+	threading.Thread(target=handle, daemon=True).start()
+	return server.getsockname()[1]
+
+
+def _trickle(conn, payload: bytes, pause: float, seconds: float):
+	ends = time.monotonic() + seconds
+	while time.monotonic() < ends:
+		time.sleep(pause)
+		conn.sendall(payload)
+
+
+class RealSocketBudgetTest(UnitTestCase):
+	"""The bound must hold against a real socket, not just a fake that yields one byte
+	at a time: ``iter_content`` blocks in ``recv()`` until a whole chunk arrives, and
+	the status line and headers are read before any of fetch's own code runs."""
+
+	BUDGET = 0.5
+	TRICKLE = 4.0  # how long the server would keep going if nothing stopped it
+
+	def _fetch(self, port):
+		# request_timeout (per read) is far longer than the gap between bytes, so only
+		# the budget can end this
+		cfg = make_config({"request_timeout": 2, "retry_count": 0, "max_fetch_seconds": self.BUDGET})
+		with mock.patch.object(http, "_validated_ips", return_value=["127.0.0.1"]):
+			started = time.monotonic()
+			result = http.fetch(f"http://trickle.example:{port}/", cfg)
+		return time.monotonic() - started, result
+
+	def test_a_trickled_body_ends_at_the_budget_and_keeps_what_arrived(self):
+		first_chunk = b"<html>" + b"x" * (16_384 - len(b"<html>"))
+
+		def respond(conn):
+			conn.sendall(
+				b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 100000\r\n\r\n" + first_chunk
+			)
+			_trickle(conn, b"x", 0.05, self.TRICKLE)
+
+		elapsed, (status, html, error, _final) = self._fetch(_serve_once(respond))
+
+		self.assertLess(elapsed, self.BUDGET + 1.0, f"a trickled body held fetch for {elapsed:.2f}s")
+		self.assertEqual((status, error), (200, ""))
+		self.assertTrue(html.startswith("<html>xxx"), "a chunk that arrived before the deadline is kept")
+
+	def test_a_body_trickled_from_the_first_byte_reports_the_budget(self):
+		def respond(conn):
+			conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 100000\r\n\r\n")
+			_trickle(conn, b"x", 0.05, self.TRICKLE)
+
+		elapsed, (status, html, error, _final) = self._fetch(_serve_once(respond))
+
+		self.assertLess(elapsed, self.BUDGET + 1.0, f"a trickled body held fetch for {elapsed:.2f}s")
+		self.assertEqual((status, html), (0, ""))
+		self.assertIn("fetch budget", error)
+
+	def test_trickled_headers_end_at_the_budget(self):
+		def respond(conn):
+			conn.sendall(b"HTTP/1.1 200 OK\r\nX-Pad: ")
+			_trickle(conn, b"a", 0.05, self.TRICKLE)
+
+		elapsed, (status, html, error, _final) = self._fetch(_serve_once(respond))
+
+		self.assertLess(elapsed, self.BUDGET + 1.0, f"trickled headers held fetch for {elapsed:.2f}s")
+		self.assertEqual((status, html), (0, ""))
+		self.assertIn("fetch budget", error)
+
+	def test_a_prompt_answer_is_untouched(self):
+		def respond(conn):
+			body = b"<html><title>Acme</title></html>"
+			conn.sendall(
+				b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+				+ f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+				+ body
+			)
+
+		elapsed, (status, html, error, _final) = self._fetch(_serve_once(respond))
+
+		self.assertEqual((status, error), (200, ""))
+		self.assertIn("<title>Acme</title>", html)
+
+
+def _serve_every(status: int, connections: int, extra_headers: str = ""):
+	"""A server on 127.0.0.1 that answers each of ``connections`` requests with the same
+	small HTML ``status`` page, one connection each. Returns ``(port, hits)``."""
+	body = b"<html><title>Busy</title><body>Come back later.</body></html>"
+	reply = (
+		f"HTTP/1.1 {status} Busy\r\nContent-Type: text/html\r\n{extra_headers}"
+		f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+	).encode() + body
+	server = socket.socket()
+	server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+	server.bind(("127.0.0.1", 0))
+	server.listen(connections)
+	hits = []
+
+	def handle():
+		try:
+			for _ in range(connections):
+				conn, _addr = server.accept()
+				try:
+					conn.recv(65536)
+					hits.append(time.monotonic())
+					conn.sendall(reply)
+				except OSError:
+					pass
+				finally:
+					conn.close()
+		except OSError:
+			pass
+		finally:
+			server.close()
+
+	threading.Thread(target=handle, daemon=True).start()
+	return server.getsockname()[1], hits
+
+
+class RetryPolicyTest(UnitTestCase):
+	"""Retries happen inside ``adapter.send``, below every check ``fetch`` makes, and no
+	socket is open while urllib3 sleeps between them -- so no deadline on a socket can
+	cut a sleep short. The policy itself has to keep its sleeps inside the budget."""
+
+	def _fetch(self, port, retries=2, budget=1.0):
+		cfg = make_config({"request_timeout": 2, "retry_count": retries, "max_fetch_seconds": budget})
+		with mock.patch.object(http, "_validated_ips", return_value=["127.0.0.1"]):
+			started = time.monotonic()
+			result = http.fetch(f"http://busy.example:{port}/", cfg)
+		return time.monotonic() - started, result
+
+	def test_a_retry_after_header_does_not_hold_the_fetch(self):
+		"""WordPress maintenance mode answers 503 with ``Retry-After: 600``. Honoured, two
+		retries held the preview's web worker for twenty minutes (urllib3 caps the wait
+		at six hours, not at anything of ours)."""
+		port, _hits = _serve_every(503, 3, "Retry-After: 3\r\n")
+
+		elapsed, (status, _html, _error, _final) = self._fetch(port)
+
+		self.assertLess(elapsed, 2.0, f"Retry-After held a 1s fetch for {elapsed:.2f}s")
+		self.assertEqual(status, 503)
+
+	def test_backoff_never_sleeps_past_the_budget(self):
+		"""Exponential backoff with a generous retry_count adds up to minutes."""
+		port, _hits = _serve_every(500, 12)
+
+		elapsed, (_status, _html, _error, _final) = self._fetch(port, retries=10)
+
+		self.assertLess(elapsed, 2.0, f"backoff held a 1s fetch for {elapsed:.2f}s")
+
+	def test_a_persistent_429_comes_back_as_a_429(self):
+		"""A site that answers 429 to everything is a bot wall, and its status is the only
+		thing that says so. Raised as a RetryError once the retries ran out, it came
+		back as status 0 and was diagnosed "Couldn't reach this website"."""
+		port, hits = _serve_every(429, 3)
+
+		_elapsed, (status, html, error, final) = self._fetch(port, budget=5)
+
+		self.assertEqual(len(hits), 3, "a 429 is still retried")
+		self.assertEqual((status, error), (429, ""))
+		page = CrawledPage(url=final, status_code=status, html=html, error=error)
+		self.assertEqual(extractors.diagnose_readability([page]), "blocked")
+
+
+class JobDeadlineTest(UnitTestCase):
+	"""rq's job deadline is an ordinary Exception subclass raised wherever the job is
+	-- most often mid-fetch. ``fetch`` never raising is a promise about the page, not
+	the job: turned into a page error, the crawl ran on until rq killed the worker,
+	with no Run written and no terminal event for the waiting button."""
+
+	def _fetch(self, pinned_get):
+		cfg = make_config({"request_timeout": 5})
+		with (
+			mock.patch.object(http, "_validated_ips", return_value=["93.184.216.34"]),
+			mock.patch.object(http, "_pinned_get", side_effect=pinned_get),
+			mock.patch.object(http, "build_session", return_value=mock.MagicMock()),
+		):
+			return http.fetch("https://slow.example/", cfg)
+
+	def test_the_job_deadline_during_a_request_stops_the_job(self):
+		def alarm(*_a, **_k):
+			raise JobTimeoutException("Task exceeded maximum timeout value (160 seconds)")
+
+		with self.assertRaises(JobTimeoutException):
+			self._fetch(alarm)
+
+	def test_the_job_deadline_during_the_body_stops_the_job(self):
+		def body():
+			yield b"<html>"
+			raise JobTimeoutException("Task exceeded maximum timeout value (160 seconds)")
+
+		with self.assertRaises(JobTimeoutException):
+			self._fetch(lambda *_a, **_k: FakeResponse(body()))

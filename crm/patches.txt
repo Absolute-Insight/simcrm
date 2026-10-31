@@ -59,5 +59,6 @@ crm.patches.v1_0.drop_enrichment_headers_scope
 crm.patches.v1_0.rename_user_keyed_rows_after_user_renames
 crm.patches.v1_0.narrow_whatsapp_role_permissions
 crm.patches.v1_0.backfill_organization_account_owner
+crm.patches.v1_0.anchor_seeded_twitter_rule
 crm.patches.v1_0.clear_status_filter_on_created_rules
 crm.patches.v1_0.disable_rules_waiting_on_a_foreign_status
