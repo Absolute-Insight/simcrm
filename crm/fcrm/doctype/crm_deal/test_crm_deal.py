@@ -1,6 +1,8 @@
 # Copyright (c) 2023, Frappe Technologies Pvt. Ltd. and Contributors
 # See license.txt
 
+import json
+
 import frappe
 from frappe.desk.form.assign_to import add as assign_add
 from frappe.desk.form.assign_to import remove as assign_remove
@@ -466,6 +468,55 @@ class TestCRMDeal(IntegrationTestCase):
 		with self.assertRaises(frappe.exceptions.ValidationError) as context:
 			deal.save()
 		self.assertIn("specify the reason", str(context.exception))
+
+	def test_a_status_change_leaves_the_shared_side_panel_layout_alone(self):
+		"""Whether a record shows its Lost Reason is a per-record display rule. It
+		was implemented by saving the one side-panel layout every deal (or lead)
+		page reads, from validate, so the section followed whichever record last
+		changed status anywhere on the site."""
+		if not frappe.db.exists("CRM Lost Reason", "Layout Probe"):
+			frappe.get_doc({"doctype": "CRM Lost Reason", "lost_reason": "Layout Probe"}).insert()
+
+		def layout(doctype):
+			return frappe.db.get_value(
+				"CRM Fields Layout", f"{doctype}-Side Panel", ["layout", "modified"], as_dict=True
+			)
+
+		lost_deal = create_test_deal(organization="Lost Layout Org")
+		open_deal = create_test_deal(organization="Open Layout Org")
+		lead = frappe.get_doc({"doctype": "CRM Lead", "first_name": "Layout Probe"}).insert()
+
+		for doc, status in ((lost_deal, "Lost"), (open_deal, "Demo/Making"), (lead, "Junk"), (lead, "New")):
+			with self.subTest(doctype=doc.doctype, status=status):
+				before = layout(doc.doctype)
+				doc.status = status
+				doc.lost_reason = "Layout Probe"
+				doc.save()
+				self.assertEqual(layout(doc.doctype), before)
+
+	def test_the_patch_puts_a_lost_reason_section_in_both_side_panels_once(self):
+		from crm.patches.v1_0.add_lost_reason_section_to_side_panels import execute
+
+		for doctype in ("CRM Deal", "CRM Lead"):
+			name = f"{doctype}-Side Panel"
+			sections = json.loads(frappe.db.get_value("CRM Fields Layout", name, "layout"))
+			sections = [s for s in sections if s.get("name") != "lost_reason_section"]
+			frappe.db.set_value("CRM Fields Layout", name, "layout", json.dumps(sections))
+
+		execute()
+		execute()
+
+		for doctype in ("CRM Deal", "CRM Lead"):
+			with self.subTest(doctype=doctype):
+				sections = json.loads(
+					frappe.db.get_value("CRM Fields Layout", f"{doctype}-Side Panel", "layout")
+				)
+				names = [s.get("name") for s in sections]
+				self.assertEqual(names.count("lost_reason_section"), 1)
+				if names[0] == "contacts_section":
+					self.assertEqual(names[1], "lost_reason_section")
+				lost = sections[names.index("lost_reason_section")]
+				self.assertEqual(lost["columns"][0]["fields"], ["lost_reason", "lost_notes"])
 
 	def test_closed_date_set_on_won(self):
 		"""Test that closed_date is set when status is Won"""

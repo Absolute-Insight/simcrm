@@ -60,6 +60,14 @@ describe('the Home redirect', () => {
     expect(branch).not.toMatch(/next\(\{ name: 'Planner' \}\)/)
   })
 
+  it('only lands a manager on a default view whose route exists', () => {
+    // A Notes default filed under "FCRM Notes" made next() throw "No match"
+    // on every Home visit; the guard now asks the router before choosing.
+    expect(branch).toMatch(
+      /getDefaultView\(null, \(name\) => router\.hasRoute\(name\)\)/,
+    )
+  })
+
   it('reads canSee from the store the guard already awaited', () => {
     expect(routerSrc).toMatch(/canSee,\n\s*\} = accessStore\(\)/)
   })

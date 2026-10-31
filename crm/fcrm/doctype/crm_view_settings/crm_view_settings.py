@@ -265,7 +265,11 @@ def sync_default_columns(view):
 			columns = frappe.get_list(
 				field_meta.options,
 				fields=["name"],
-				order_by="modified asc",
+				order_by=(
+					"position asc"
+					if frappe.get_meta(field_meta.options).has_field("position")
+					else "modified asc"
+				),
 			)
 		elif field_meta.fieldtype == "Select":
 			columns = [{"name": option} for option in field_meta.options.split("\n")]
@@ -401,7 +405,24 @@ def clear_old_versions(days=14):
 	)
 
 
+# The SPA's list route for each doctype it lists (frontend/src/router.js). Spelt
+# out because the name is not always derivable: "FCRM Note" came out as "FCRM
+# Notes", a route the SPA does not have, and a Notes default sent Home nowhere.
+ROUTE_NAMES = {
+	"CRM Lead": "Leads",
+	"CRM Deal": "Deals",
+	"Contact": "Contacts",
+	"CRM Organization": "Organizations",
+	"FCRM Note": "Notes",
+	"CRM Task": "Tasks",
+	"CRM Call Log": "Call Logs",
+}
+
+
 def get_route_name(doctype):
+	if doctype in ROUTE_NAMES:
+		return ROUTE_NAMES[doctype]
+
 	# Example: "CRM Lead" -> "Leads"
 	if doctype.startswith("CRM "):
 		doctype = doctype[4:]

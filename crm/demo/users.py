@@ -3,6 +3,8 @@ from datetime import datetime, timedelta
 import frappe
 from frappe.query_builder import DocType
 
+from crm.demo.utils import delete_unless_linked
+
 DEMO_USERS = [
 	{
 		"email": "sarah.demo@example.com",
@@ -74,12 +76,20 @@ def delete_demo_users(demo_user_emails):
 		(Notification.from_user.isin(demo_user_emails)) | (Notification.to_user.isin(demo_user_emails))
 	).run()
 
-	# collect contact names before deleting users — User.on_trash NULLs contact.user
-	contact_names = frappe.get_all("Contact", filters={"user": ["in", demo_user_emails]}, pluck="name")
-
+	contact_names = []
 	for email in demo_user_emails:
-		if frappe.db.exists("User", email):
-			frappe.delete_doc("User", email, ignore_permissions=True, force=True)
+		if not frappe.db.exists("User", email):
+			continue
+		# collect before deleting -- User.on_trash NULLs contact.user
+		contacts = frappe.get_all("Contact", filters={"user": email}, pluck="name")
+		if delete_unless_linked("User", email):
+			contact_names.extend(contacts)
+			continue
+		# A real record adopted this demo rep -- a lead they own, say -- and would
+		# refuse every save with the user gone. Disabled, it cannot sign in.
+		user = frappe.get_doc("User", email)
+		user.enabled = 0
+		user.save(ignore_permissions=True)
 
 	if contact_names:
 		for child_doctype in ("Contact Email", "Contact Phone", "Dynamic Link"):
