@@ -591,10 +591,13 @@ const resource = createResource({
         view_type: cv?.type || route.params.viewType || 'list',
         group_by_field: params?.view?.group_by_field || 'owner',
       },
-      column_field: data.column_field,
-      title_field: data.title_field,
+      // As asked, not as answered: get_data parses kanban_fields and fills a
+      // kanban view's blank title and fields with defaults, and the re-entry
+      // check below read that as an unsaved change.
+      column_field: params.column_field,
+      title_field: params.title_field,
       kanban_columns: data.kanban_columns,
-      kanban_fields: data.kanban_fields,
+      kanban_fields: params.kanban_fields,
       columns: data.columns,
       rows: data.rows,
       page_length: params.page_length,
@@ -609,6 +612,9 @@ list.value = resource
 // its params still hold the user's unsaved filter/sort/group change; keep them
 // and flag the view as modified instead of resetting to the saved view.
 // kanban_columns is left out: "load more" mutates it without it being an edit.
+// kanban_fields is a list once Kanban Settings set it, and the JSON string the
+// server stores once it is saved: compare it parsed.
+const parseFields = (f) => (typeof f === 'string' ? JSON.parse(f || '[]') : f)
 const dirtySignature = (p) =>
   JSON.stringify([
     p.filters || {},
@@ -616,7 +622,7 @@ const dirtySignature = (p) =>
     p.view?.group_by_field,
     p.column_field,
     p.title_field,
-    p.kanban_fields,
+    parseFields(p.kanban_fields) || [],
   ])
 const initialParams = getParams()
 if (!resource.params) {

@@ -110,6 +110,11 @@ function payload(params, data = []) {
     page_length_count: params?.page_length_count || 20,
     total_count: data.length,
     view_type: params?.view?.view_type || 'list',
+    // as get_data answers a list view: these two as asked, kanban_fields
+    // parsed (the store holds it as the string '[]')
+    column_field: params?.column_field,
+    title_field: params?.title_field,
+    kanban_fields: [],
   }
 }
 
@@ -160,6 +165,7 @@ function savedView(name, fields = {}) {
     order_by: 'modified desc',
     columns: '',
     rows: '',
+    kanban_fields: '[]',
     public: 0,
     pinned: 0,
     is_standard: 0,
@@ -370,6 +376,84 @@ describe('coming back to a saved view with an unsaved change', () => {
     expect(vc.fetches.at(-1).filters).toEqual({
       lead_name: ['LIKE', '%smith%'],
     })
+  })
+})
+
+describe('coming back to a saved view with nothing unsaved', () => {
+  // Both leave the list fetching with the params onSuccess built from
+  // get_data's answer, kanban_fields parsed, where the store holds a string.
+  it('after Load More, offers nothing to save', async () => {
+    savedView(15)
+    setRoute({ view: 15 })
+    const first = await mountVC()
+    first.loadMore()
+    await settle()
+    expect(first.button('Save Changes')).toBeNull()
+    first.unmount()
+    const back = await mountVC()
+    expect(back.button('Save Changes')).toBeNull()
+  })
+
+  it('after its change was saved, offers nothing to save', async () => {
+    savedView(16)
+    setRoute({ view: 16 })
+    const first = await mountVC()
+    first.vc().applyFilter({
+      event: click(),
+      idx: 1,
+      column: { key: 'status', type: 'Select' },
+      item: 'Open',
+      firstColumn: { key: 'lead_name' },
+    })
+    await settle()
+    first.button('Save Changes').click()
+    await settle()
+    // the dialog's Save Changes: the server stores it, then afterUpdate
+    const dialog = vc.children.ViewModal
+    vc.views[16].filters = JSON.stringify(dialog.view.filters)
+    dialog.options.afterUpdate({ ...dialog.view })
+    await settle()
+    expect(first.button('Save Changes')).toBeNull()
+    first.unmount()
+    const back = await mountVC()
+    expect(vc.fetches.at(-1).filters).toEqual({ status: 'Open' })
+    expect(back.button('Save Changes')).toBeNull()
+  })
+
+  it('a kanban view, after its card fields were saved', async () => {
+    // get_data fills a blank kanban title with a default; the store holds
+    // kanban_fields as the JSON string the server dumped
+    vc.getData = (params) =>
+      later({
+        ...payload(params),
+        title_field: params.title_field || 'lead_name',
+        kanban_fields: JSON.parse(JSON.stringify(params.kanban_fields)),
+      })
+    savedView(18, { type: 'kanban', title_field: '', kanban_fields: '[]' })
+    setRoute({ view: 18 })
+    route.params = { viewType: 'kanban' }
+    const options = { allowedViews: ['list', 'kanban'] }
+    const first = await mountVC({ options })
+    vc.children.KanbanSettings.onUpdate({
+      column_field: 'status',
+      title_field: 'lead_name',
+      kanban_fields: ['name', 'status'],
+    })
+    await settle()
+    first.button('Save Changes').click()
+    await settle()
+    // the server stores the dialog's view, kanban_fields through json.dumps
+    const dialog = vc.children.ViewModal
+    Object.assign(vc.views[18], {
+      title_field: dialog.view.title_field,
+      kanban_fields: '["name", "status"]',
+    })
+    dialog.options.afterUpdate({ ...dialog.view })
+    await settle()
+    first.unmount()
+    const back = await mountVC({ options })
+    expect(vc.fetches.at(-1).kanban_fields).toEqual(['name', 'status'])
+    expect(back.button('Save Changes')).toBeNull()
   })
 })
 
