@@ -1,25 +1,24 @@
-"""Close a way round every document's ``validate``.
+"""Keep a request from choosing how a document is saved.
 
-frappe keeps ``_action`` out of nothing: it is not in ``RESERVED_KEYWORDS``, so a
-request can set it, and ``Document._save`` skips ``validate``, ``before_save`` and
-``on_update`` when it reads "discard", along with the docstatus transition check.
-``PUT /api/resource/CRM Deal/<own deal>`` with ``{"_action": "discard", ...}`` wrote
-any field past every rule in this app.
+frappe does not reserve ``_action``, so a request can set it, and ``Document._save``
+reads it: "discard" skips ``validate``, ``before_save`` and ``on_update`` and the
+docstatus transition check, and on a Single any value does. ``PUT /api/resource/CRM
+Deal/<own deal>`` with ``{"_action": "discard", ...}`` wrote any field past every
+rule in this app.
 
-A genuine discard is ``Document.discard()``, which runs ``before_discard`` first; a
-request cannot set ``flags``, so that mark tells the two apart. ``docstatus`` cannot:
-a request can send that too. Remove this once the frappe pin reserves ``_action``.
+Refusing it after the write does not hold, because ``frappe.client.bulk_update``
+swallows the exception and commits. So it never reaches the document: both
+``BaseDocument.update`` and ``set`` read this set at call time and drop what is in
+it, and frappe itself only ever assigns the attribute.
+
+Runs as ``before_request`` rather than at import, because hooks are served from
+cache and ``hooks.py`` is not imported in every worker. Client input only arrives
+in a request. Remove this once the frappe pin reserves ``_action``.
 """
 
-import frappe
-from frappe import _
+from frappe.model import base_document
 
 
-def mark_real_discard(doc, method=None) -> None:
-	doc.flags.in_discard = True
-
-
-def refuse_forged_discard(doc, method=None) -> None:
-	"""``on_change`` still runs on the skipped path, and raising rolls the save back."""
-	if doc.get("_action") == "discard" and not doc.flags.in_discard:
-		frappe.throw(_("This save was refused: it asked to skip validation."), frappe.PermissionError)
+def reserve_action() -> None:
+	if "_action" not in base_document.RESERVED_KEYWORDS:
+		base_document.RESERVED_KEYWORDS = base_document.RESERVED_KEYWORDS | {"_action"}

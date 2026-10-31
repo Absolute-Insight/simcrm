@@ -1,5 +1,7 @@
 """One rep cannot see, or take, another rep's customers."""
 
+import json
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
@@ -361,27 +363,47 @@ class TestCustomerScope(IntegrationTestCase):
 					).insert()
 				frappe.set_user("Administrator")
 
+	def _forged(self, name, organization):
+		"""What a request could send, had frappe's _action not been reserved."""
+		from crm.permissions.document_guard import reserve_action
+
+		reserve_action()
+		return {"_action": "discard", "organization": organization, "doctype": "CRM Deal", "docname": name}
+
 	def test_a_client_action_cannot_skip_the_customer_check(self):
-		"""frappe does not reserve ``_action``: a request sending "discard" skips
-		validate, and with it every rule here."""
+		"""frappe does not reserve ``_action``: "discard" skipped validate, and with
+		it every rule here."""
 		name = self.deal(self.org_a, REP_A)
+		forged = self._forged(name, self.org_b)
 		frappe.set_user(REP_A)
 		doc = frappe.get_doc("CRM Deal", name)
-		doc.update({"_action": "discard", "organization": self.org_b})
+		doc.update(forged)
+		self.assertFalse(doc.get("_action"))
 		with self.assertRaises(frappe.PermissionError):
 			doc.save()
+
+	def test_bulk_update_cannot_keep_a_forged_write(self):
+		"""It swallows exceptions, so refusing after the write would not hold."""
+		from frappe.client import bulk_update
+
+		name = self.deal(self.org_a, REP_A)
+		forged = self._forged(name, self.org_b)
+		frappe.set_user(REP_A)
+		result = bulk_update(json.dumps([forged]))
 		frappe.set_user("Administrator")
-		frappe.db.rollback()
+		self.assertEqual(len(result["failed_docs"]), 1)
+		self.assertEqual(frappe.db.get_value("CRM Deal", name, "organization"), self.org_a)
 
-	def test_a_genuine_discard_still_goes_through(self):
-		from crm.permissions.document_guard import mark_real_discard, refuse_forged_discard
+	def test_a_single_cannot_skip_its_validate_either(self):
+		from crm.permissions.document_guard import reserve_action
 
-		doc = frappe.new_doc("CRM Deal")
-		doc._action = "discard"
-		with self.assertRaises(frappe.PermissionError):
-			refuse_forged_discard(doc)
-		mark_real_discard(doc)
-		refuse_forged_discard(doc)
+		reserve_action()
+		doc = frappe.get_doc("FCRM Settings")
+		doc.update({"_action": "x"})
+		self.assertNotEqual(doc.get("_action"), "x")
+
+	def test_the_action_is_reserved_on_every_request(self):
+		self.assertIn("crm.permissions.document_guard.reserve_action", frappe.get_hooks("before_request"))
 
 	def test_frappes_event_digest_is_stopped(self):
 		from crm.permissions.customers import stop_frappe_event_digest

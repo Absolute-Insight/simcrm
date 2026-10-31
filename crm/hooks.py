@@ -235,10 +235,6 @@ extend_doctype_class = {
 # Hook on document methods and events
 
 doc_events = {
-	"*": {
-		"before_discard": ["crm.permissions.document_guard.mark_real_discard"],
-		"on_change": ["crm.permissions.document_guard.refuse_forged_discard"],
-	},
 	"Contact": {
 		"validate": ["crm.api.contact.validate"],
 	},
@@ -420,7 +416,7 @@ ignore_links_on_delete = [
 
 # Request Events
 # ----------------
-# before_request = ["crm.utils.before_request"]
+before_request = ["crm.permissions.document_guard.reserve_action"]
 # after_request = ["crm.utils.after_request"]
 
 # Job Events
