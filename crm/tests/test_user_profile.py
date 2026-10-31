@@ -17,7 +17,12 @@ import frappe
 from frappe.tests import IntegrationTestCase
 from frappe.utils.password import check_password, update_password
 
-from crm.api.user import change_password, get_profile, update_profile
+from crm.api.user import (
+	change_password,
+	get_linkable_email_accounts,
+	get_profile,
+	update_profile,
+)
 
 REP = "profile-rep@crmtest.test"
 OTHER = "profile-other@crmtest.test"
@@ -106,24 +111,7 @@ class OwnProfileEmailTest(IntegrationTestCase):
 		"""These rows are what the composer offers as From, and this endpoint
 		saves with ignore_permissions -- so without this a rep could advertise
 		a colleague's mailbox as one of their own sender addresses."""
-		ensure_rep(OTHER, "Profile Other")
-		theirs = frappe.db.get_value("Email Account", {"email_id": OTHER})
-		if not theirs:
-			theirs = (
-				frappe.get_doc(
-					{
-						"doctype": "Email Account",
-						"email_account_name": "Profile Other Desk",
-						"email_id": OTHER,
-						"enable_outgoing": 1,
-						"smtp_server": "smtp.example.com",
-						"login_id_is_different": 0,
-						"password": "x",
-					}
-				)
-				.insert(ignore_permissions=True)
-				.name
-			)
+		theirs = self.other_users_mailbox()
 
 		frappe.set_user(REP)
 		with self.assertRaises(frappe.PermissionError):
@@ -136,6 +124,28 @@ class OwnProfileEmailTest(IntegrationTestCase):
 			update_profile(
 				{"user_emails": [{"email_account": "No Such Account", "email_id": "x@example.com"}]}
 			)
+
+	def other_users_mailbox(self) -> str:
+		"""An outgoing account on a colleague's own address."""
+		ensure_rep(OTHER, "Profile Other")
+		theirs = frappe.db.get_value("Email Account", {"email_id": OTHER})
+		if theirs:
+			return theirs
+		return (
+			frappe.get_doc(
+				{
+					"doctype": "Email Account",
+					"email_account_name": "Profile Other Desk",
+					"email_id": OTHER,
+					"enable_outgoing": 1,
+					"smtp_server": "smtp.example.com",
+					"login_id_is_different": 0,
+					"password": "x",
+				}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
 
 	def shared_mailbox(self):
 		"""An outgoing account on an address no user answers to -- sales@, in
@@ -192,6 +202,44 @@ class OwnProfileEmailTest(IntegrationTestCase):
 
 		frappe.set_user(REP)
 		self.assertEqual(get_profile()["user_emails"][0]["enable_outgoing"], 0)
+
+	def test_a_rep_is_offered_the_accounts_they_may_link(self):
+		"""The Add Email picker read Email Account with frappe.client.get_list,
+		which a Sales User may not read, so the picker was empty for every rep.
+		The endpoint offers what update_profile would accept from them."""
+		shared = self.shared_mailbox()
+		theirs = self.other_users_mailbox()
+
+		frappe.set_user(REP)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.get_list("Email Account", fields=["name"], filters={"enable_outgoing": 1})
+
+		offered = {row.name: row for row in get_linkable_email_accounts()}
+		self.assertIn(shared.name, offered)
+		self.assertEqual(set(offered[shared.name]), {"name", "email_id"})
+		self.assertNotIn(theirs, offered)
+		# and what is offered is what the save accepts
+		update_profile({"user_emails": [{"email_account": shared.name, "email_id": shared.email_id}]})
+
+	def test_a_system_manager_is_offered_every_outgoing_account(self):
+		shared = self.shared_mailbox()
+		theirs = self.other_users_mailbox()
+		frappe.set_user("Administrator")
+		offered = {row.name for row in get_linkable_email_accounts()}
+		self.assertTrue({shared.name, theirs} <= offered)
+
+	def test_only_crm_users_are_offered_accounts(self):
+		outsider = "profile-outsider@crmtest.test"
+		if not frappe.db.exists("User", outsider):
+			frappe.get_doc(
+				{"doctype": "User", "email": outsider, "first_name": "Outsider", "send_welcome_email": 0}
+			).insert(ignore_permissions=True)
+		frappe.set_user(outsider)
+		with self.assertRaises(frappe.PermissionError):
+			get_linkable_email_accounts()
+		frappe.set_user("Guest")
+		with self.assertRaises(frappe.AuthenticationError):
+			get_linkable_email_accounts()
 
 
 class ChangePasswordTest(IntegrationTestCase):

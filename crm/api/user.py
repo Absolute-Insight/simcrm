@@ -4,6 +4,8 @@ from frappe.auth import LoginAttemptTracker
 from frappe.rate_limiter import rate_limit
 from frappe.utils.password import check_password, update_password
 
+from crm.api.access import _require_crm_user
+
 # What Settings -> Profile and Settings -> Preferences show and let a person change
 # about themselves. frappe's User doctype grants read and write to System Manager
 # only (plus `select` to Desk User), so the frappe.client document resource the
@@ -95,6 +97,45 @@ def update_profile(changes: dict | str) -> dict:
 			doc.set(field, value)
 	doc.save(ignore_permissions=True)
 	return get_profile()
+
+
+@frappe.whitelist()
+def get_linkable_email_accounts() -> list[dict]:
+	"""The outgoing Email Accounts the caller may link on their own profile.
+
+	The Add Email picker listed Email Account through frappe.client.get_list,
+	but that doctype is readable by System Manager and Inbox User only, so for
+	every Sales User the request was refused and the picker was simply empty.
+	This serves the rows ``_reject_other_peoples_mailboxes`` would accept --
+	shared mailboxes and the caller's own, never an address another enabled
+	user answers to -- and only their name and address. A System Manager, whom
+	that guard does not restrict, is offered every outgoing account.
+	"""
+	user = _own_user()
+	_require_crm_user()
+	accounts = frappe.get_all(
+		"Email Account",
+		filters={"enable_outgoing": 1},
+		fields=["name", "email_id"],
+		order_by="name asc",
+	)
+	if "System Manager" in frappe.get_roles():
+		return accounts
+
+	def address(account) -> str:
+		return (account.email_id or "").strip().lower()
+
+	own_address = (frappe.db.get_value("User", user, "email") or "").strip().lower()
+	candidates = {address(a) for a in accounts} - {"", own_address}
+	taken = set()
+	if candidates:
+		taken = {
+			(email or "").strip().lower()
+			for email in frappe.get_all(
+				"User", filters={"email": ["in", list(candidates)], "enabled": 1}, pluck="email"
+			)
+		}
+	return [a for a in accounts if address(a) not in taken]
 
 
 def _reject_other_peoples_mailboxes(doc, rows: list[dict]) -> None:

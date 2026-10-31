@@ -166,6 +166,7 @@
 <script setup>
 import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import { useDocument } from '@/data/document'
+import { describeError } from '@/utils/describeError'
 import { onMounted, inject, ref, computed, watch } from 'vue'
 import { supportedSourceTypes } from './leadSyncSourceConfig'
 import { Button, FormControl, toast, ErrorMessage, Tabs } from 'frappe-ui'
@@ -261,14 +262,19 @@ function updateSource(data) {
     },
     {
       onSuccess: () => {
+        toast.success(__('Lead sync source updated successfully'))
         if (docResource.value) {
           docResource.value.document.reload()
         }
 
-        mappingFormDocResource.value.document.save.submit()
+        // Only a chosen Lead Form has a mapping to save; without one this is
+        // the new-document draft, which has no save.
+        mappingFormDocResource.value?.document?.save?.submit()
       },
       onError(e) {
-        toast.error(e.messages[0] || __('Error updating lead sync source'))
+        toast.error(
+          describeError(e).message || __('Error updating lead sync source'),
+        )
       },
     },
   )
@@ -287,7 +293,9 @@ function createSource() {
         docResource.value = getSourceDocResource(newDoc.name)
       },
       onError(error) {
-        toast.error(error.messages[0] || __('Error creating lead sync source'))
+        toast.error(
+          describeError(error).message || __('Error creating lead sync source'),
+        )
       },
     },
   )
@@ -309,6 +317,9 @@ onMounted(() => {
     Object.assign(syncSource.value, props.sourceData)
     isLocal.value = false // edit form
     docResource.value = getSourceDocResource(props.sourceData.name)
+  } else if (props.sourceData) {
+    // a duplicate: the copyable fields of another source, as a new one
+    Object.assign(syncSource.value, props.sourceData)
   }
 
   if (syncSource.value.facebook_lead_form) {
@@ -378,9 +389,7 @@ function getSourceDocResource(name) {
           toast.success(__('Syncing started in background'))
         },
         onError(e) {
-          toast.error(
-            (e.messages ?? e.messages[0]) || __('Error syncing leads'),
-          )
+          toast.error(describeError(e).message || __('Error syncing leads'))
         },
       },
     },

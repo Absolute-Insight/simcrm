@@ -92,6 +92,7 @@ import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
 import { getSettings } from '@/stores/settings'
 import { Combobox, toast, createResource } from 'frappe-ui'
 import { useOwnProfile } from '@/composables/useOwnProfile'
+import { describeError } from '@/utils/describeError'
 import { ref, computed } from 'vue'
 
 const refreshRequired = ref(false)
@@ -112,7 +113,9 @@ function save() {
       }
     },
     onError: (err) => {
-      toast.error(err.message + ': ' + err.messages[0])
+      toast.error(
+        describeError(err).message || __('Failed to update preferences'),
+      )
     },
   })
 }

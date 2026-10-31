@@ -272,17 +272,23 @@ import {
   call,
   createDocumentResource,
   createListResource,
+  createResource,
   toast,
 } from 'frappe-ui'
 import { computed, ref } from 'vue'
 
 const DOCTYPE = 'CRM Sales Hierarchy'
 
+// A System Manager placed in the tree (in the desk, or promoted after being
+// added here) ranks with the managers; without a rank the node was dropped and
+// its reports were shown as top-level rows.
 const ROLE_RANK = {
+  'System Manager': 0,
   'Sales Manager': 0,
   'Sales User': 1,
 }
 const ROLE_LABEL = {
+  'System Manager': __('System Manager'),
   'Sales Manager': __('Sales Manager'),
   'Sales User': __('Sales User'),
 }
@@ -314,6 +320,17 @@ const nodes = createListResource({
   pageLength: 99999,
   auto: true,
 })
+
+// The users store lists enabled CRM users only, so it cannot say that a rep in
+// the tree has since been disabled, nor what role they held. This does, for
+// every user the tree places.
+const nodeUsers = createResource({
+  url: 'crm.fcrm.doctype.crm_sales_hierarchy.crm_sales_hierarchy.get_node_users',
+  auto: true,
+})
+const nodeUserByName = computed(
+  () => new Map((nodeUsers.data || []).map((u) => [u.user, u])),
+)
 
 function toggleEnable(currentlyEnabled) {
   if (currentlyEnabled) {
@@ -366,25 +383,24 @@ const treeOptions = {
 function enrich(node) {
   const user =
     usersResource.data?.crmUsers?.find((x) => x.name === node.user) || {}
-  const role = getUserRole(node.user) || 'Sales User'
-  const role_rank = ROLE_RANK[role]
-  if (role_rank == undefined) return
+  // a user added since nodeUsers loaded is an enabled CRM user from the store
+  const placed = nodeUserByName.value.get(node.user)
+  const role = placed ? placed.role : getUserRole(node.user) || 'Sales User'
 
   return {
     ...node,
     full_name: user.full_name || node.full_name || node.user,
     email: user.email || node.user,
     user_image: user.user_image,
-    enabled: user.enabled !== 0,
+    enabled: placed ? Boolean(placed.enabled) : user.enabled !== 0,
     role,
-    role_label: ROLE_LABEL[role] || role,
-    role_rank,
+    // a user left with no CRM role is shown as such, ranked as a rep
+    role_label: role ? ROLE_LABEL[role] || role : __('No CRM role'),
+    role_rank: ROLE_RANK[role] ?? ROLE_RANK['Sales User'],
   }
 }
 
-const enrichedNodes = computed(() =>
-  (nodes.data || []).map(enrich).filter(Boolean),
-)
+const enrichedNodes = computed(() => (nodes.data || []).map(enrich))
 
 const tree = computed(() => {
   const byName = new Map(

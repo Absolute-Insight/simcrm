@@ -115,37 +115,38 @@ const invitees = ref([])
 const role = ref('Sales User')
 const error = ref(null)
 
+// Not Set.prototype.intersection: it is ES2025 (Safari 17), nothing in the
+// build polyfills it, and on Safari/iPadOS 16 the first valid address typed
+// threw during render and blanked the pane. Lower-cased because the invitees
+// are: a member or a live invitation stored with capitals is the same address.
+function alreadyIn(emails) {
+  const existing = new Set(emails.map((email) => email.toLowerCase()))
+  return [...new Set(invitees.value)].filter((email) => existing.has(email))
+}
+
 const userExistMessage = computed(() => {
-  const inviteesSet = new Set(invitees.value)
-  if (!inviteesSet.size) return null
+  if (!invitees.value.length) return null
 
   if (!users.data?.crmUsers?.length) return null
-  const existingEmails = users.data.crmUsers.map((user) => user.name)
-  const existingUsersSet = new Set(existingEmails)
+  const existingInvitees = alreadyIn(
+    users.data.crmUsers.map((user) => user.name),
+  )
+  if (existingInvitees.length === 0) return null
 
-  const existingInvitees = inviteesSet.intersection(existingUsersSet)
-  if (existingInvitees.size === 0) return null
-
-  return __('User with email {0} already exists', [
-    Array.from(existingInvitees).join(', '),
-  ])
+  return __('User with email {0} already exists', [existingInvitees.join(', ')])
 })
 
 const inviteeExistMessage = computed(() => {
-  const inviteesSet = new Set(invitees.value)
-  if (!inviteesSet.size) return null
+  if (!invitees.value.length) return null
 
   if (!pendingInvitations.data?.length) return null
-  const existingEmails = pendingInvitations.data.map((user) =>
-    user.email.toLowerCase(),
+  const existingInvitees = alreadyIn(
+    pendingInvitations.data.map((user) => user.email),
   )
-  const existingUsersSet = new Set(existingEmails)
-
-  const existingInvitees = inviteesSet.intersection(existingUsersSet)
-  if (existingInvitees.size === 0) return null
+  if (existingInvitees.length === 0) return null
 
   return __('User with email {0} already invited', [
-    Array.from(existingInvitees).join(', '),
+    existingInvitees.join(', '),
   ])
 })
 
