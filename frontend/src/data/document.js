@@ -3,6 +3,7 @@ import { newDocumentDraft } from '@/utils/newDocument'
 import { globalStore } from '@/stores/global'
 import { getMeta } from '@/stores/meta'
 import { useAttachments } from '@/composables/useAttachments'
+import { readableLoadError } from '@/composables/useDocumentError'
 import { showSettings, activeSettingsPage } from '@/composables/settings'
 import { runSequentially, parseAssignees, sanitizeText } from '@/utils'
 import { findMissingMandatory } from '@/utils/fieldTransforms'
@@ -122,7 +123,7 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
             }
             if (err.exc_type === 'PermissionError') {
               toast.error(
-                __(
+                readableLoadError(
                   err.messages[0] ||
                     'You do not have permission to access this document',
                 ),

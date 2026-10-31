@@ -186,9 +186,63 @@ class GroundingTest(UnitTestCase):
 		)
 		self.assertEqual(reply["answer"], "Janca Meiring holds 144 deals worth 13,320,006.")
 
+	def test_a_figure_a_fact_line_quotes_for_one_row_still_belongs_to_that_row(self):
+		"""A ranking, a best or worst month and the largest deals at risk each quote one
+		row's own figure. Read as totals -- which may stand beside any name -- they
+		let the 2026-10-15 failure through: one rep's value under another's name."""
+		risk = table(
+			"deals_at_risk",
+			[
+				{"deal": "CRM-DEAL-1", "organization": "Acme Mining", "health_score": 10, "value": 500000.0},
+				{"deal": "CRM-DEAL-2", "organization": "Beta Metals", "health_score": 20, "value": 300000.0},
+			],
+		)
+		trend = table(
+			"sales_trend",
+			[
+				{"month": "2026-03", "leads": 60, "deals": 45, "won_deals": 9},
+				{"month": "2026-04", "leads": 70, "deals": 12, "won_deals": 4},
+			],
+		)
+		for wrong, right, figures in (
+			(
+				"Lilly de Villiers holds deals worth 28,946,451.89.",
+				"Ann-Mari Prins holds deals worth 28,946,451.89.",
+				OWNERS,
+			),
+			("January 2026 brought in 17,151,670.", "February 2026 brought in 17,151,670.", YEAR),
+			("August 2026 brought in 2,578,054.", "September 2026 brought in 2,578,054.", YEAR),
+			("Beta Metals has 500,000 at risk.", "Acme Mining has 500,000 at risk.", risk),
+			("April 2026 had 45 new deals.", "March 2026 had 45 new deals.", trend),
+		):
+			with self.subTest(wrong=wrong):
+				self.assertEqual(ground(wrong, figures)["dropped"], 1)
+				self.assertEqual(ground(right, figures)["dropped"], 0)
+
 	def test_a_change_may_be_written_without_its_sign(self):
 		growth = table("growth_rates", [{"month": "2026-03", "value": 9711636.15, "change_pct": -43.4}])
 		self.assertEqual(ground("Revenue fell 43.4% in March 2026.", growth)["dropped"], 0)
+
+	def test_a_small_percentage_is_a_figure_and_is_checked(self):
+		"""Whole numbers up to 31 are skipped as days, months and small counts. A
+		percentage is none of those, and a wrong 25% passed where 35% was caught."""
+		growth = table(
+			"growth_rates",
+			[
+				{"month": "2026-02", "value": 17151669.63, "change_pct": None},
+				{"month": "2026-03", "value": 9711636.15, "change_pct": -43.4},
+			],
+		)
+		adherence = table(
+			"plan_adherence_by_rep",
+			[{"rep": "Kevin Purdon", "planned": 8, "done": 2, "missed": 6, "adherence_pct": 25}],
+		)
+		self.assertEqual(ground("Revenue fell 25% in March 2026.", growth)["dropped"], 1)
+		self.assertEqual(ground("Kevin Purdon kept 28% of his plan.", adherence)["dropped"], 1)
+		self.assertEqual(ground("Kevin Purdon kept 28 percent of his plan.", adherence)["dropped"], 1)
+		# the percentage the table holds is still quotable, and a small count still is not checked
+		self.assertEqual(ground("Kevin Purdon kept 25% of his plan.", adherence)["dropped"], 0)
+		self.assertEqual(ground("Kevin Purdon did 3 of his visits.", adherence)["dropped"], 0)
 
 	def test_years_quarters_and_small_counts_are_not_checked(self):
 		self.assertEqual(ground("Over the 3 months of Q3 2026 sales slowed.", Q3)["dropped"], 0)

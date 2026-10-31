@@ -26,7 +26,8 @@ def find_by_code(code: str) -> list[dict]:
 	code = (code or "").strip()
 	if not code:
 		frappe.throw(_("Enter a customer code."), frappe.ValidationError)
-	return frappe.get_all(
+	# get_list: a code search must not reveal another rep's customer
+	return frappe.get_list(
 		"CRM Organization",
 		filters={"acumatica_id": ("like", f"{code}%")},
 		fields=["name", "acumatica_id"],

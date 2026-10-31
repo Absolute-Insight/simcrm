@@ -83,6 +83,7 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { useDocument } from '@/data/document'
+import { describeError } from '@/utils/describeError'
 import {
   Badge,
   createListResource,
@@ -133,12 +134,9 @@ watch(selectedLog, () => {
           toast.success(__('Sync successful!'))
         },
         onError(e) {
-          toast.error(
-            e.message ||
-              (e.messages ?? e.messages[0]) ||
-              e.exc_type ||
-              __('Error syncing lead'),
-          )
+          // frappeRequest's Error.message is "<url> <exc_type>"; the reason
+          // the server gave is in e.messages
+          toast.error(describeError(e).message || __('Error syncing lead'))
         },
       },
     },

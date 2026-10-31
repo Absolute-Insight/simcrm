@@ -191,7 +191,8 @@ def get_organizations():
 	"""
 	get_session_role_flags()
 
-	return frappe.get_all(
+	# get_list: the names are customer names, so a rep gets only those they may see
+	return frappe.get_list(
 		"CRM Organization",
 		filters={"organization_logo": ["is", "set"]},
 		fields=["name", "organization_logo"],

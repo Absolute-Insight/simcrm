@@ -101,6 +101,7 @@ import OrganizationModal from '@/components/Modals/OrganizationModal.vue'
 import OrganizationsListView from '@/components/ListViews/OrganizationsListView.vue'
 import ViewControls from '@/components/ViewControls.vue'
 import { getMeta } from '@/stores/meta'
+import { usersStore } from '@/stores/users'
 import { formatDate, website } from '@/utils'
 import { timestampCell } from '@/composables/useTimelinePreferences'
 import { ref, computed } from 'vue'
@@ -113,6 +114,7 @@ const { getFormattedPercent, getFormattedFloat, getFormattedCurrency } =
   getMeta('CRM Organization')
 
 const router = useRouter()
+const { getUser } = usersStore()
 
 const organizationsListView = ref(null)
 const showOrganizationModal = ref(false)
@@ -171,6 +173,10 @@ const rows = computed(() => {
           label: organization.organization_name,
           logo: organization.organization_logo,
         }
+      } else if (row === 'account_owner') {
+        _rows[row] = organization.account_owner
+          ? getUser(organization.account_owner).full_name
+          : ''
       } else if (row === 'website') {
         _rows[row] = website(organization.website)
       } else if (['modified', 'creation'].includes(row)) {

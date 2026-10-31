@@ -40,12 +40,13 @@ ERP_ROW_CAP = 5000
 ERP_TIMEOUT = 30
 OVERDUE_AFTER_DAYS = 30
 
-# What a table says about itself when the clock stopped the read part-way. It
-# goes in the table's ``note``, which the answer prompt carries into the figures
-# block, so the narrative can say the number is a floor rather than a total.
+# What a table says about itself when a read stopped part-way: the clock ran out,
+# or the read reached ERP_ROW_CAP with documents still to come. It goes in the
+# table's ``note``, which the answer prompt carries into the figures block, so the
+# narrative can say the number is a floor rather than a total.
 PARTIAL_NOTE = (
-	"PARTIAL: the request ran out of time before this source finished; "
-	"the figures below cover only what had been read."
+	"PARTIAL: this source was not read to the end -- the request ran out of time, or the "
+	f"read reached its limit of {ERP_ROW_CAP:,} documents; the figures below cover only what had been read."
 )
 SKIPPED_NOTE = "the request ran out of time before this table was computed"
 
@@ -93,10 +94,10 @@ def run_plan(
 	(:func:`analyst_facts.table_facts`). ``today`` is the caller's: pass the one
 	the grounding check will use.
 	"""
-	tables = _run_tables(plan, erp, deadline)
 	# the caller's today, read once: the grounding check decides which month is
 	# partial from the same value, and a second read can land after midnight
 	today = today or frappe.utils.getdate()
+	tables = _run_tables(plan, erp, deadline, today)
 	for table in tables:
 		table["facts"] = analyst_facts.table_facts(table, today)
 	return tables
@@ -117,9 +118,10 @@ def data_start() -> str | None:
 _HISTORY_TABLES = ("won_revenue_by_month", "growth_rates")
 
 
-def _run_tables(plan: dict, erp: str | None, deadline: float | None) -> list[dict]:
+def _run_tables(plan: dict, erp: str | None, deadline: float | None, today: date) -> list[dict]:
 	from_date, to_date = plan["from_date"], plan["to_date"]
 	starts = data_start()
+	reads = _Reads()
 	tables = []
 	for key in plan.get("metrics", []):
 		metric = analyst.CATALOGUE.get(key)
@@ -136,9 +138,12 @@ def _run_tables(plan: dict, erp: str | None, deadline: float | None) -> list[dic
 			tables.append(_table(key, metric, label, [], from_date, to_date, "", error=SKIPPED_NOTE))
 			continue
 		if is_erp:
-			tables.append(_erp_table(key, metric, erp, from_date, to_date, deadline))
+			tables.append(_erp_table(key, metric, erp, from_date, to_date, today, deadline, reads))
 			continue
-		rows, note = runner(from_date, to_date)
+		if key in _SCORED_TABLES:
+			rows, note = runner(from_date, to_date, scores=reads.get(("scores",), _pipeline_scores))
+		else:
+			rows, note = runner(from_date, to_date)
 		if key in _HISTORY_TABLES:
 			rows, coverage = analyst_facts.trim_to_coverage(rows, starts)
 			note = f"{note} {coverage}".strip()
@@ -152,6 +157,32 @@ def _run_tables(plan: dict, erp: str | None, deadline: float | None) -> list[dic
 				table["summary"] = summarise(rows)
 		tables.append(table)
 	return tables
+
+
+class _Reads:
+	"""The inputs two tables of one plan share, each read once for the plan.
+
+	A plan picks tables that read the same thing: cashflow beside invoiced or
+	received by month, deals at risk beside accounts going quiet. Each table used
+	to read its own copy, so one question paged the ERP's invoices twice and scored
+	the whole open pipeline twice, inside the deadline the answer shares with the
+	model. A read that failed is kept as a failure: an ERP that has just timed out
+	is not asked again for the next table.
+	"""
+
+	def __init__(self):
+		self._done: dict[tuple, tuple] = {}
+
+	def get(self, key: tuple, read):
+		if key not in self._done:
+			try:
+				self._done[key] = (read(), None)
+			except Exception as exc:
+				self._done[key] = (None, exc)
+		value, error = self._done[key]
+		if error is not None:
+			raise error
+		return value
 
 
 def _out_of_time(deadline: float | None) -> bool:
@@ -171,6 +202,8 @@ def _time_for_a_page(deadline: float | None) -> bool:
 
 # Tables that are lists of records rather than aggregates, and what counts them.
 _ROW_LISTS = {"deals_at_risk": analyst.summarise_at_risk, "accounts_going_quiet": None}
+# Tables read from the open pipeline's health scores, which a plan computes once.
+_SCORED_TABLES = ("deals_at_risk", "accounts_going_quiet")
 
 
 def _table(key, metric, source, rows, from_date, to_date, note="", error=None) -> dict:
@@ -243,7 +276,10 @@ def _revenue_projection(from_date, to_date):
 	to_date_row = next(
 		({"month": m, "value": v, "kind": "month to date"} for m, v in series if m == current), None
 	)
-	projection = analyst.project_revenue(fit, after=current if to_date_row else None)
+	# "the next three months" are the next three from today, whatever month the
+	# window ends in: continued from a window that ended in June, the projection
+	# landed on July to September -- months that have happened and have actuals
+	projection = analyst.project_revenue(fit, after=current)
 	points = projection["points"]
 	if to_date_row:
 		# the current month is shown for what it is, and averaged into nothing
@@ -252,11 +288,13 @@ def _revenue_projection(from_date, to_date):
 			+ [to_date_row]
 			+ [p for p in points if p["kind"] == "projected"]
 		)
-	note = (
-		f"Projected months are the {projection['method']}; the current month is shown to date "
-		"and not included. A run rate, not booked deals."
+	note = f"Projected months are the {projection['method']}, for the months after {analyst.month_label(current)}; "
+	note += (
+		"the current month is shown to date and not included."
+		if to_date_row
+		else "the months between the period and today are not shown."
 	)
-	return points, note
+	return points, note + " A run rate, not booked deals."
 
 
 def _pipeline_by_stage(from_date, to_date):
@@ -314,10 +352,23 @@ def _plan_adherence_by_rep(from_date, to_date):
 	return rows, "Only settled items (planned before today) are counted."
 
 
-def _deals_at_risk(from_date, to_date):
+def _pipeline_scores() -> list[dict]:
+	"""Every open deal the caller may read, scored now: the dashboard's one-pass scorer."""
 	from crm.api.dashboard import _at_risk_deals
 
-	scored = [row for row in _at_risk_deals(to_date) if row["score"] < AT_RISK_BELOW]
+	return _at_risk_deals()
+
+
+def _deals_at_risk(from_date, to_date, scores: list[dict] | None = None):
+	scores = _pipeline_scores() if scores is None else scores
+	# the scorer's own to_date bound (deals created by then), applied to the scores
+	# the plan shares rather than by scoring the pipeline a second time
+	cutoff = frappe.utils.get_datetime(f"{to_date} 23:59:59") if to_date else None
+	scored = [
+		row
+		for row in scores
+		if row["score"] < AT_RISK_BELOW and not (cutoff and row.get("creation") and row["creation"] > cutoff)
+	]
 	scored.sort(key=lambda row: row["score"])
 	names = [row["name"] for row in scored]
 	details = (
@@ -357,7 +408,7 @@ def _deals_at_risk(from_date, to_date):
 	return rows, f"Health below {AT_RISK_BELOW} out of 100. Scored now, not as of the period."
 
 
-def _accounts_going_quiet(from_date, to_date):
+def _accounts_going_quiet(from_date, to_date, scores: list[dict] | None = None):
 	"""Organizations whose open deals are cooling or slipping -- the maintenance list.
 
 	Every working deal is scanned. This used to take the first 200 rows of
@@ -368,8 +419,6 @@ def _accounts_going_quiet(from_date, to_date):
 	the dashboard's one-pass scorer, so the full scan costs what ``deals_at_risk``
 	already costs.
 	"""
-	from crm.api.dashboard import _at_risk_deals
-
 	now = frappe.utils.now_datetime()
 	horizon = get_signal_config().close_horizon_days
 	deals = _working_deal_rows()
@@ -379,10 +428,18 @@ def _accounts_going_quiet(from_date, to_date):
 	# Scored under the caller's own permission scope (get_list), like the
 	# dashboard tile: a deal the admin may not read has no score and is skipped,
 	# which is what the per-deal get_deal_health PermissionError used to do.
-	health_by_deal = {row["name"]: row["score"] for row in _at_risk_deals()}
+	scores = _pipeline_scores() if scores is None else scores
+	health_by_deal = {row["name"]: row["score"] for row in scores}
 
+	# An account is every open deal it has, not only the flagged ones: counted over
+	# its flagged deals alone, an organization touched yesterday on one deal read as
+	# one deal and five weeks quiet. A flag on any deal lists the account; its last
+	# contact is its most recent one, across all of them.
 	by_org: dict[str, dict] = {}
 	for deal in deals:
+		health = health_by_deal.get(deal["name"])
+		if health is None:
+			continue
 		reasons = []
 		measured = cadence_ratio(history.get(deal["name"]) or [], now)
 		if measured and measured[0] >= COOLING_RATIO:
@@ -390,32 +447,30 @@ def _accounts_going_quiet(from_date, to_date):
 		closes = deal.get("expected_closure_date")
 		if closes and (closes - now.date()).days <= horizon and (deal.get("stage_probability") or 0) < 50:
 			reasons.append("close date near, stage still early")
-		if not reasons:
-			continue
-		health = health_by_deal.get(deal["name"])
-		if health is None:
-			continue
-		last = latest.get(deal["name"]) or deal["creation"]
+		days = max(0, (now - (latest.get(deal["name"]) or deal["creation"])).days)
 		org = deal.get("organization") or "(no organization)"
 		entry = by_org.setdefault(
 			org,
 			{
 				"organization": org,
 				"deals": 0,
-				"days_since_contact": 0,
+				"days_since_contact": days,
 				"lowest_health": 100,
 				"reasons": set(),
 			},
 		)
 		entry["deals"] += 1
-		entry["days_since_contact"] = max(entry["days_since_contact"], max(0, (now - last).days))
+		entry["days_since_contact"] = min(entry["days_since_contact"], days)
 		entry["lowest_health"] = min(entry["lowest_health"], int(health))
 		entry["reasons"].update(reasons)
 
-	rows = [
-		{**entry, "reason": ", ".join(sorted(entry.pop("reasons")))}
-		for entry in sorted(by_org.values(), key=lambda e: (e["lowest_health"], -e["days_since_contact"]))
-	]
+	rows = []
+	for entry in sorted(by_org.values(), key=lambda e: (e["lowest_health"], -e["days_since_contact"])):
+		# popped before the row is built: spread first, the set itself went into
+		# every row and its repr into the prompt
+		reasons = entry.pop("reasons")
+		if reasons:
+			rows.append({**entry, "reason": ", ".join(sorted(reasons))})
 	return rows, (
 		f"From the cadence and slip-risk signals on all {len(deals)} open deals, scored now; "
 		"not equipment maintenance."
@@ -451,15 +506,37 @@ def _breakdown(getter_name: str, category: str):
 	return run
 
 
-def _tile(getter_name: str, label: str, field: str):
+def _tile(getter_name: str, label: str, field: str, compare: bool = False):
 	def run(from_date, to_date):
 		from crm.api import dashboard
 
-		tile = getattr(dashboard, getter_name)(from_date, to_date)
-		value = tile.get("value") or 0
-		return [{"metric": label, field: round(float(value), 2) if field == "value" else int(value)}], ""
+		getter = getattr(dashboard, getter_name)
+		value = _tile_value(getter(from_date, to_date), field)
+		rows = [{"metric": label, field: value}]
+		if not compare:
+			return rows, ""
+		# The comparison the catalogue promises. The tile's own delta is 0 both when
+		# nothing changed and when the period before had nothing to average, so that
+		# period is read through the same tile rather than inferred from the delta.
+		prev_from, _ = dashboard.period_windows(from_date, to_date)
+		prev_to = frappe.utils.add_days(from_date, -1)
+		previous = _tile_value(getter(prev_from, prev_to), field)
+		window = f"{frappe.utils.getdate(prev_from)} to {frappe.utils.getdate(prev_to)}"
+		if not previous:
+			return rows, f"Nothing to compare against: the period before ({window}) has no deals."
+		rows += [
+			{"metric": f"{label}, period before", field: previous},
+			{"metric": "Change against the period before", field: round(value - previous, 2)},
+		]
+		return rows, f"The period before is {window}, the same length."
 
 	return run
+
+
+def _tile_value(tile: dict, field: str):
+	value = float(tile.get("value") or 0)
+	# whole days, rounded rather than truncated: an average of 12.9 days is 13
+	return round(value, 2) if field == "value" else round(value)
 
 
 _CRM_RUNNERS = {
@@ -478,7 +555,7 @@ _CRM_RUNNERS = {
 	"deals_by_territory": _breakdown("get_deals_by_territory", "territory"),
 	"deals_by_salesperson": _breakdown("get_deals_by_salesperson", "salesperson"),
 	"plan_adherence_by_rep": _plan_adherence_by_rep,
-	"average_deal_value": _tile("get_average_deal_value", "Average deal value", "value"),
+	"average_deal_value": _tile("get_average_deal_value", "Average deal value", "value", compare=True),
 	"time_to_close": _tile("get_average_time_to_close_a_deal", "Average days to close", "days"),
 }
 
@@ -486,28 +563,47 @@ _CRM_RUNNERS = {
 # --- ERP -------------------------------------------------------------------------
 
 
-def _erp_table(key, metric, erp, from_date, to_date, deadline=None) -> dict:
+def _erp_table(key, metric, erp, from_date, to_date, today: date, deadline=None, reads=None) -> dict:
 	label = ERP_LABELS[erp]
+	reads = reads or _Reads()
+	# documents exist up to today: a month after it is unknown, not one with nothing in it
+	end = min(str(to_date), today.isoformat())
+	months = analyst.months_between(from_date, end) if from_date <= end else []
 	partial = False
 	try:
 		invoices = payments = None
-		if key in ("erp_invoices_by_month", "erp_receivables", "erp_cashflow_by_month"):
-			invoices, cut = _erp_invoices(erp, from_date, to_date, deadline)
+		if key == "erp_receivables":
+			# a balance now, not a flow inside the period: every open invoice, whatever its date
+			invoices, cut = reads.get(("open invoices", erp), lambda: _erp_open_invoices(erp, deadline))
 			partial = partial or cut
-		if key in ("erp_payments_by_month", "erp_cashflow_by_month"):
-			payments, cut = _erp_payments(erp, from_date, to_date, deadline)
+		if months and key in ("erp_invoices_by_month", "erp_cashflow_by_month"):
+			invoices, cut = reads.get(
+				("invoices", erp, from_date, end), lambda: _erp_invoices(erp, from_date, end, deadline)
+			)
+			partial = partial or cut
+		if months and key in ("erp_payments_by_month", "erp_cashflow_by_month"):
+			payments, cut = reads.get(
+				("payments", erp, from_date, end), lambda: _erp_payments(erp, from_date, end, deadline)
+			)
 			partial = partial or cut
 	except Exception as exc:
 		frappe.log_error(title="CRM analyst ERP read failed", message=f"{erp} {key}: {exc}")
 		return _table(key, metric, label, [], from_date, to_date, "", error="unreachable")
 
-	months = analyst.months_between(from_date, to_date)
+	note = f"Figures from {label}, in its own currency."
+	if key != "erp_receivables":
+		months, coverage = _from_first_document(months, invoices, payments, label)
+		note = f"{note} {coverage}".strip()
 	if key == "erp_invoices_by_month":
 		rows = _sum_by_month(months, invoices, "amount", "invoiced", "invoices")
 	elif key == "erp_payments_by_month":
 		rows = _sum_by_month(months, payments, "amount", "received", "payments")
 	elif key == "erp_receivables":
-		rows = _receivables(invoices, date.fromisoformat(to_date))
+		rows = _receivables(invoices, today)
+		note = (
+			f"{note} Unpaid balances as of today, whatever the invoice date; overdue means more than "
+			f"{OVERDUE_AFTER_DAYS} days past due."
+		)
 	else:
 		invoiced = {
 			row["month"]: row["invoiced"]
@@ -526,10 +622,28 @@ def _erp_table(key, metric, erp, from_date, to_date, deadline=None) -> dict:
 			}
 			for month in months
 		]
-	note = f"Figures from {label}, in its own currency."
 	if partial:
 		note = f"{PARTIAL_NOTE} {note}"
 	return _table(key, metric, label, rows, from_date, to_date, note)
+
+
+def _from_first_document(months: list[str], invoices, payments, label: str) -> tuple[list[str], str]:
+	"""``months`` from the first one any document falls in, and a note when that cut some.
+
+	The ERP's history starts somewhere, and a month before it is unknown: shown as
+	0 it reads as "nothing invoiced", the way the CRM's months before its imported
+	history did (``analyst_facts.trim_to_coverage``).
+	"""
+	dated = {str(record.get("date") or "")[:7] for record in [*(invoices or []), *(payments or [])]}
+	first = next((index for index, month in enumerate(months) if month in dated), len(months))
+	if not first:
+		return months, ""
+	if first == len(months):
+		return [], f"{label} holds no documents for this period."
+	return months[first:], (
+		f"{label} holds no documents in this period before {analyst.month_label(months[first])}; "
+		"earlier months are not shown rather than shown as 0."
+	)
 
 
 def _sum_by_month(months, records, amount_key, total_label, count_label) -> list[dict]:
@@ -564,13 +678,19 @@ def _receivables(invoices, as_of: date) -> list[dict]:
 
 # Normalised record shapes: invoices -> {date, amount, balance, due}; payments -> {date, amount}.
 # Each reader returns ``(rows, partial)``: ``partial`` is True when the read was
-# stopped by the request deadline rather than by the end of the data.
+# stopped by the request deadline or by ERP_ROW_CAP rather than by the end of the data.
 
 
 def _erp_invoices(erp: str, from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
 	if erp == "acumatica":
 		return acumatica_invoices(from_date, to_date, deadline)
 	return erpnext_invoices(from_date, to_date, deadline)
+
+
+def _erp_open_invoices(erp: str, deadline=None) -> tuple[list[dict], bool]:
+	if erp == "acumatica":
+		return acumatica_open_invoices(deadline)
+	return erpnext_open_invoices(deadline)
 
 
 def _erp_payments(erp: str, from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
@@ -585,23 +705,61 @@ def _acumatica_client():
 	return AcumaticaClient(frappe.get_cached_doc("CRM Acumatica Settings"))
 
 
+# Released documents. On Hold, Balanced and the pending states are drafts the ERP
+# has not posted; Voided and Canceled were posted and taken back. None of them is
+# money invoiced or received -- the spreadsheet import draws the same line.
+_ACUMATICA_RELEASED = ("open", "closed")
+
+
 def _acumatica_window(field: str, from_date: str, to_date: str) -> str:
-	return (
-		f"{field} ge datetimeoffset'{from_date}T00:00:00Z' and {field} le datetimeoffset'{to_date}T23:59:59Z'"
-	)
+	"""The server-side filter for a document-date window, a day wider at each end.
+
+	Acumatica holds a document date as local midnight with the tenant's offset
+	(``2026-01-01T00:00:00+02:00``) and compares a ``Z`` literal as UTC, so exact
+	bounds dropped the window's first local day and took in the day after its last.
+	The readers cut the widened read back to the window on each document's own
+	local date (:func:`_acumatica_dated`), which needs no offset at all.
+	"""
+	start = (date.fromisoformat(from_date) - timedelta(days=1)).isoformat()
+	end = (date.fromisoformat(to_date) + timedelta(days=1)).isoformat()
+	return f"{field} ge datetimeoffset'{start}T00:00:00Z' and {field} le datetimeoffset'{end}T23:59:59Z'"
+
+
+def _acumatica_dated(record, field: str, window: tuple[str, str] | None) -> str | None:
+	"""The document's local date when it is a released one inside ``window``, else None."""
+	from crm.integrations.acumatica.client import v
+
+	if str(v(record, "Status") or "").strip().lower() not in _ACUMATICA_RELEASED:
+		return None
+	day = str(v(record, field) or "")[:10]
+	if window and not window[0] <= day <= window[1]:
+		return None
+	return day
 
 
 def acumatica_invoices(from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
+	return _acumatica_invoices(_acumatica_window("Date", from_date, to_date), deadline, (from_date, to_date))
+
+
+def acumatica_open_invoices(deadline=None) -> tuple[list[dict], bool]:
+	"""Every invoice still carrying a balance, whatever its date. Open is Acumatica's
+	status for a released document with a balance; a paid one is Closed."""
+	return _acumatica_invoices("Status eq 'Open'", deadline)
+
+
+def _acumatica_invoices(filter_: str, deadline=None, window=None) -> tuple[list[dict], bool]:
 	from crm.integrations.acumatica.client import v
 
 	client = _acumatica_client()
 	rows = []
 	partial = False
 	for record in client.iter_all(
-		"SalesInvoice",
-		filter=_acumatica_window("Date", from_date, to_date),
-		select="Date,Amount,Balance,DueDate,Type",
+		"SalesInvoice", filter=filter_, select="Date,Amount,Balance,DueDate,Type,Status"
 	):
+		# the cap reached with documents still to come: what was read is a floor
+		if len(rows) >= ERP_ROW_CAP:
+			partial = True
+			break
 		# Checked per row, which is per *page* in effect: breaking out of the
 		# generator is what stops it fetching the next page, and one page is one
 		# 30-second request. Up to fifty of them fit inside a plan the caller
@@ -609,18 +767,17 @@ def acumatica_invoices(from_date: str, to_date: str, deadline=None) -> tuple[lis
 		if not _time_for_a_page(deadline):
 			partial = True
 			break
-		if str(v(record, "Type") or "").lower().startswith("credit"):
+		day = _acumatica_dated(record, "Date", window)
+		if day is None or str(v(record, "Type") or "").lower().startswith("credit"):
 			continue
 		rows.append(
 			{
-				"date": str(v(record, "Date") or "")[:10],
+				"date": day,
 				"amount": v(record, "Amount") or 0,
 				"balance": v(record, "Balance") or 0,
 				"due": str(v(record, "DueDate") or "")[:10] or None,
 			}
 		)
-		if len(rows) >= ERP_ROW_CAP:
-			break
 	return rows, partial
 
 
@@ -633,25 +790,25 @@ def acumatica_payments(from_date: str, to_date: str, deadline=None) -> tuple[lis
 	for record in client.iter_all(
 		"Payment",
 		filter=_acumatica_window("ApplicationDate", from_date, to_date),
-		select="ApplicationDate,PaymentAmount,Type",
+		select="ApplicationDate,PaymentAmount,Type,Status",
 	):
-		if not _time_for_a_page(deadline):
+		if len(rows) >= ERP_ROW_CAP or not _time_for_a_page(deadline):
 			partial = True
 			break
-		if str(v(record, "Type") or "").lower() not in ("payment", "prepayment", ""):
+		day = _acumatica_dated(record, "ApplicationDate", (from_date, to_date))
+		if day is None or str(v(record, "Type") or "").lower() not in ("payment", "prepayment", ""):
 			continue
-		rows.append(
-			{"date": str(v(record, "ApplicationDate") or "")[:10], "amount": v(record, "PaymentAmount") or 0}
-		)
-		if len(rows) >= ERP_ROW_CAP:
-			break
+		rows.append({"date": day, "amount": v(record, "PaymentAmount") or 0})
 	return rows, partial
 
 
 def _erpnext_get(doctype: str, fields: list[str], filters: list, deadline=None) -> list[dict]:
 	"""One request for the whole window -- ERPNext pages server-side under
 	``limit_page_length``, so there is nothing to stop half-way. The deadline
-	bounds the single request instead of the paging."""
+	bounds the single request instead of the paging.
+
+	One row past :data:`ERP_ROW_CAP` is asked for, so :func:`_within_cap` can tell
+	a window that holds exactly the cap from one that holds more."""
 	settings = frappe.get_cached_doc("ERPNext CRM Settings")
 	secret = settings.get_password("api_secret", raise_exception=False) or ""
 	response = requests.get(
@@ -659,13 +816,19 @@ def _erpnext_get(doctype: str, fields: list[str], filters: list, deadline=None) 
 		params={
 			"fields": json.dumps(fields),
 			"filters": json.dumps(filters),
-			"limit_page_length": ERP_ROW_CAP,
+			"limit_page_length": ERP_ROW_CAP + 1,
 		},
 		headers={"Authorization": f"token {settings.api_key}:{secret}"},
 		timeout=_erpnext_timeout(deadline),
 	)
 	response.raise_for_status()
 	return response.json().get("data") or []
+
+
+def _within_cap(records: list[dict]) -> tuple[list[dict], bool]:
+	"""``records`` cut to :data:`ERP_ROW_CAP`, and whether that cut any: a read the
+	cap stopped is a floor, not a total."""
+	return records[:ERP_ROW_CAP], len(records) > ERP_ROW_CAP
 
 
 def _erpnext_timeout(deadline) -> float:
@@ -676,11 +839,24 @@ def _erpnext_timeout(deadline) -> float:
 
 
 def erpnext_invoices(from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
-	records = _erpnext_get(
-		"Sales Invoice",
-		["posting_date", "grand_total", "outstanding_amount", "due_date", "is_return"],
-		[["posting_date", "between", [from_date, to_date]], ["docstatus", "=", 1]],
-		deadline,
+	return _erpnext_invoices(
+		[["posting_date", "between", [from_date, to_date]], ["docstatus", "=", 1]], deadline
+	)
+
+
+def erpnext_open_invoices(deadline=None) -> tuple[list[dict], bool]:
+	"""Every submitted invoice with something outstanding, whatever its date."""
+	return _erpnext_invoices([["outstanding_amount", ">", 0], ["docstatus", "=", 1]], deadline)
+
+
+def _erpnext_invoices(filters: list, deadline=None) -> tuple[list[dict], bool]:
+	records, partial = _within_cap(
+		_erpnext_get(
+			"Sales Invoice",
+			["posting_date", "grand_total", "outstanding_amount", "due_date", "is_return"],
+			filters,
+			deadline,
+		)
 	)
 	return [
 		{
@@ -691,20 +867,22 @@ def erpnext_invoices(from_date: str, to_date: str, deadline=None) -> tuple[list[
 		}
 		for r in records
 		if not r.get("is_return")
-	], False
+	], partial
 
 
 def erpnext_payments(from_date: str, to_date: str, deadline=None) -> tuple[list[dict], bool]:
-	records = _erpnext_get(
-		"Payment Entry",
-		["posting_date", "paid_amount", "payment_type"],
-		[
-			["posting_date", "between", [from_date, to_date]],
-			["docstatus", "=", 1],
-			["payment_type", "=", "Receive"],
-		],
-		deadline,
+	records, partial = _within_cap(
+		_erpnext_get(
+			"Payment Entry",
+			["posting_date", "paid_amount", "payment_type"],
+			[
+				["posting_date", "between", [from_date, to_date]],
+				["docstatus", "=", 1],
+				["payment_type", "=", "Receive"],
+			],
+			deadline,
+		)
 	)
 	return [
 		{"date": str(r.get("posting_date") or "")[:10], "amount": r.get("paid_amount") or 0} for r in records
-	], False
+	], partial

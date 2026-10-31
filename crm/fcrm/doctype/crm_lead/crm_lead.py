@@ -235,6 +235,10 @@ class CRMLead(Document):
 
 		existing_contact = existing_contact or self.contact_exists(throw)
 		if existing_contact:
+			# before the copy below puts its name and numbers on this lead
+			from crm.permissions.customers import assert_contact_allowed
+
+			assert_contact_allowed(existing_contact)
 			self.update_lead_contact(existing_contact)
 			return existing_contact
 
@@ -273,6 +277,10 @@ class CRMLead(Document):
 			"CRM Organization", {"organization_name": self.organization}
 		)
 		if existing_organization:
+			# before the copy below puts its details on this lead
+			from crm.permissions.customers import assert_customer_allowed
+
+			assert_customer_allowed(existing_organization)
 			self.db_set("organization", existing_organization)
 			self.copy_enrichment_from_organization()
 			return existing_organization

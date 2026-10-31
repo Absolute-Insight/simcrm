@@ -28,8 +28,11 @@ class CRMNotification(Document):
 	# end: auto-generated types
 
 	def on_update(self):
+		# After commit: the client answers by reloading the inbox, which read it
+		# before this row was committed, and frappe sends a message queued twice
+		# in one transaction once rather than once per row.
 		if self.to_user:
-			frappe.publish_realtime("crm_notification", user=self.to_user)
+			frappe.publish_realtime("crm_notification", user=self.to_user, after_commit=True)
 
 
 def get_permission_query_conditions(user=None):

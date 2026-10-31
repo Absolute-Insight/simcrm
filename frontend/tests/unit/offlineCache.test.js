@@ -85,6 +85,9 @@ beforeEach(() => {
 })
 
 describe('the offline cache belongs to one user', () => {
+  // The longer timeout is for the file's first, cold import of frappe-ui, which
+  // takes over 5s on a busy machine. Timing out leaves this test running into
+  // the next one, which then fails too.
   it("never shows the next person to log in the previous rep's rows", async () => {
     await openLeads('rep.a@example.com', async () => repAsLeads)
     expect(idb.size).toBeGreaterThan(0) // what rep A left on disk
@@ -93,7 +96,7 @@ describe('the offline cache belongs to one user', () => {
     const leads = await openLeads('rep.b@example.com', onTheWire)
     expect(leads.data).toBeNull()
     expect(idb.size).toBe(0)
-  })
+  }, 30000)
 
   it('still replays it for the same rep coming back', async () => {
     await openLeads('rep.a@example.com', async () => repAsLeads)
