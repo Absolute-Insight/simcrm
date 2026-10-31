@@ -20,6 +20,12 @@ export class CRMTask {
           },
         },
       ]
+    } else {
+      // The new-document form reuses this controller: without this, an action
+      // set for a linked record is still offered on the next, unlinked one.
+      this.actions = (this.actions || []).filter(
+        (action) => action.name !== 'Redirect Action',
+      )
     }
   }
 }
