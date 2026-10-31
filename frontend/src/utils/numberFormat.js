@@ -69,9 +69,7 @@ export function flt(v, decimals, numberFormat, roundingMethod) {
     if (v.indexOf(' ') != -1) {
       // using slice(1).join(" ") because space could also be a group separator
       var parts = v.split(' ')
-      v = isNaN(parseFloat(parts[0]))
-        ? parts.slice(parts.length - 1).join(' ')
-        : v
+      v = isNaN(parseFloat(parts[0])) ? parts.slice(1).join(' ') : v
     }
 
     v = stripNumberGroups(v, numberFormat)
