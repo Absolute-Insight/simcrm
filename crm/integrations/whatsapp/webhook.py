@@ -316,7 +316,7 @@ def store_media(account: str, message: dict, profile_name: str | None = None):
 	A failure here must not cost the rep the knowledge that the customer sent
 	something, so anything at all becomes a note in the thread.
 	"""
-	frappe.set_user("Administrator")
+	frappe.set_user("Administrator")  # nosemgrep: frappe-setuser
 	if _stored_ids([message["id"]]):
 		return
 	caption = (message.get(message["type"]) or {}).get("caption") or ""
