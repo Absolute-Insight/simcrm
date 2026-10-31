@@ -82,9 +82,14 @@ caught up.
 
 Acumatica never expires a quote, so the validity rule lives here: an open deal
 whose `expected_closure_date` (the validity date, set by the import) is more
-than `quote_expiry_grace_days` (default 30, 0 = off) in the past is Lost as
-"Quote expired" — unless a rep edited it in the last 14 days, in which case it
-is theirs to decide. Health scoring does not bump `modified`, so that guard
+than `quote_expiry_grace_days` (default 30, 0 = off) in the past is marked
+**Expired** — unless a rep edited it in the last 14 days, in which case it is
+theirs to decide. Expired (`crm_deal_status.EXPIRED`, type On Hold, created by
+`ensure_expired_status`) is not a close: it drops out of the weighted open
+pipeline but the deal can still be won or lost, by a rep or by the quote's
+outcome above. Lost only ever comes from Acumatica (Canceled/Rejected) or a
+person. Before Expired existed the sweep closed these as Lost, reason "Quote expired";
+patch `add_expired_deal_status` reopened those as Expired. Health scoring does not bump `modified`, so that guard
 measures people, not jobs.
 
 ## Customer push (outbound)
