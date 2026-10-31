@@ -11,6 +11,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const assign = vi.fn()
 const realLocation = window.location
 
+/* The session cookie as the page would read it. Stubbed rather than written:
+   the code under test only reads it, and a getter cannot outlive the test. */
+function sessionCookie(value) {
+  vi.spyOn(document, 'cookie', 'get').mockReturnValue(value)
+}
+
 function answer(status, body) {
   vi.stubGlobal(
     'fetch',
@@ -40,12 +46,12 @@ afterEach(() => {
     configurable: true,
     value: realLocation,
   })
-  document.cookie = 'user_id=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/'
+  vi.restoreAllMocks()
 })
 
 describe('call() on a lapsed session', () => {
   it('sends the rep to log in, back to the page they were on', async () => {
-    document.cookie = 'user_id=Guest; path=/'
+    sessionCookie('user_id=Guest')
     answer(403, { exc_type: 'PermissionError', session_expired: 1 })
     const { call } = await import('frappe-ui')
 
@@ -61,7 +67,7 @@ describe('call() on a lapsed session', () => {
   })
 
   it('redirects once when several calls fail together', async () => {
-    document.cookie = 'user_id=Guest; path=/'
+    sessionCookie('user_id=Guest')
     answer(403, { exc_type: 'PermissionError', session_expired: 1 })
     const { call } = await import('frappe-ui')
 
@@ -70,7 +76,7 @@ describe('call() on a lapsed session', () => {
   })
 
   it('leaves a real permission refusal on a live session alone', async () => {
-    document.cookie = 'user_id=rep%40example.com; path=/'
+    sessionCookie('user_id=rep%40example.com')
     answer(403, { exc_type: 'PermissionError' })
     const { call } = await import('frappe-ui')
 

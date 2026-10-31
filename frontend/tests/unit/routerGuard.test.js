@@ -53,7 +53,10 @@ async function bootTab({ role = 'Sales User', hidden = [], views }) {
     if (url === 'crm.api.views.get_views') return views()
     return null
   })
-  document.cookie = `user_id=${encodeURIComponent(REP)}; path=/`
+  // stubbed, not written: the session store only reads it
+  vi.spyOn(document, 'cookie', 'get').mockReturnValue(
+    `user_id=${encodeURIComponent(REP)}`,
+  )
   setActivePinia(createPinia())
   const router = (await import('@/router')).default
   return { router, requests }
