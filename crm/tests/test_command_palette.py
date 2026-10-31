@@ -206,8 +206,15 @@ class TestSearch(CommandPaletteTest):
 		with patch("crm.api.command_palette.frappe.get_list", wraps=frappe.get_list) as get_list:
 			self.matches("x" * (MAX_QUERY_LENGTH + 500))
 
-		pattern = get_list.call_args.kwargs["or_filters"][0][2]
-		self.assertEqual(len(pattern), MAX_QUERY_LENGTH + len("%%"))
+		# not call_args: frappe's own share lookup goes through get_list after the search
+		patterns = [
+			call.kwargs["or_filters"][0][2]
+			for call in get_list.call_args_list
+			if str((call.kwargs.get("or_filters") or [[0, 0, ""]])[0][2]).startswith("%x")
+		]
+		self.assertTrue(patterns, "the search never ran")
+		for pattern in patterns:
+			self.assertEqual(len(pattern), MAX_QUERY_LENGTH + len("%%"))
 
 	def test_a_user_with_no_crm_role_is_refused(self):
 		if not frappe.db.exists("User", OUTSIDER):

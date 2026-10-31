@@ -29,6 +29,16 @@ describe('documentErrorCopy', () => {
     ).toBe('Not permitted for CRM Organization ORG-0007')
   })
 
+  it("replaces frappe's wording for a record a permission hook refused", () => {
+    const copy = documentErrorCopy({
+      exc_type: 'PermissionError',
+      messages: ['Not allowed via controller permission check'],
+    })
+    expect(copy.title).toBe('No access')
+    expect(copy.message).toMatch(/do not have access to this record/)
+    expect(copy.message).not.toMatch(/controller/)
+  })
+
   it('falls back when the error carried no message', () => {
     expect(documentErrorCopy({ exc_type: 'ValidationError' }).message).toBe(
       'An error occurred',

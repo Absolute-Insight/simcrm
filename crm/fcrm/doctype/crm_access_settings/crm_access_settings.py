@@ -14,6 +14,10 @@ CONFIGURABLE_ROLES = ("Sales Manager", "Sales User")
 #: on that path.
 MANAGER_SCOPES = ("All records", "Own records only")
 
+#: ``rep_customer_scope``'s options, for the same reason as MANAGER_SCOPES. The
+#: first is the default and the answer for a Single that was never saved.
+CUSTOMER_SCOPES = ("Own and unclaimed customers", "All customers")
+
 
 class CRMAccessSettings(Document):
 	def validate(self):

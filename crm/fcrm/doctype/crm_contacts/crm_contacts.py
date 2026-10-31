@@ -1,7 +1,8 @@
 # Copyright (c) 2023, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-# import frappe
+import frappe
+from frappe import _
 from frappe.model.document import Document
 
 
@@ -26,4 +27,14 @@ class CRMContacts(Document):
 		phone: DF.Data | None
 	# end: auto-generated types
 
-	pass
+	def validate(self):
+		"""A deal's contact is saved with its deal, never on its own.
+
+		frappe runs this only when the row itself is saved -- a deal's save does not
+		call its rows' controllers -- so a row saved directly skipped the check in
+		CRMDeal.validate, and the fetched name, email and mobile came back in the
+		response. Attaching a contact the rep cannot see was a way to read it.
+		"""
+		if self.flags.ignore_permissions or frappe.session.user == "Administrator":
+			return
+		frappe.throw(_("A deal's contact is saved with its deal, not on its own."), frappe.PermissionError)

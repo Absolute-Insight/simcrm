@@ -12,6 +12,7 @@ from crm.fcrm.doctype.crm_access_settings.crm_access_settings import MANAGER_SCO
 from crm.fcrm.doctype.crm_dashboard.crm_dashboard import create_default_manager_dashboard
 from crm.fcrm.doctype.crm_products.crm_products import create_product_details_script
 from crm.integrations.acumatica.install import ensure_custom_fields as ensure_acumatica_fields
+from crm.permissions.customers import stop_frappe_event_digest
 
 
 def before_install():
@@ -24,6 +25,8 @@ def after_install(force=False):
 	# may run again from the Restore Defaults button (see ``restore_defaults``).
 	apply_endpoint_defaults()
 	ensure_access_defaults()
+	# after_migrate also does this, but a new site has no migrate until its first upgrade
+	stop_frappe_event_digest()
 	# install/migrate runs outside a request, so nothing else will commit the
 	# fixtures created above.
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
@@ -389,7 +392,7 @@ def add_default_fields_layout(force=False):
 		},
 		"CRM Organization-Side Panel": {
 			"doctype": "CRM Organization",
-			"layout": '[{"label": "Details", "name": "details_section", "opened": true, "columns": [{"name": "column_IJOV", "fields": ["organization_name", "company_description", "website", "territory", "industry", "no_of_employees", "address", "linkedin", "twitter", "facebook"]}]}]',
+			"layout": '[{"label": "Details", "name": "details_section", "opened": true, "columns": [{"name": "column_IJOV", "fields": ["organization_name", "company_description", "website", "territory", "account_owner", "industry", "no_of_employees", "address", "linkedin", "twitter", "facebook"]}]}]',
 		},
 	}
 
