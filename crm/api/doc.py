@@ -304,7 +304,9 @@ def kanban_link_columns(
 		)
 	else:
 		try:
-			columns = frappe.get_list(target, fields=["name"], order_by="modified asc", limit=limit)
+			# a status board reads in pipeline order, not in the order rows were last saved
+			order_by = "position asc" if frappe.get_meta(target).has_field("position") else "modified asc"
+			columns = frappe.get_list(target, fields=["name"], order_by=order_by, limit=limit)
 		except frappe.PermissionError:
 			# Grouped by a doctype the caller may not read at all: no columns, rather
 			# than a 403 that takes the whole list request down with it.

@@ -167,7 +167,7 @@ class AnUnsaveableDealTest(OutcomesTestCase):
 
 	def test_expiry_carries_on_past_it_and_names_it_once(self):
 		self.assertEqual(outcomes.expire_stale_quotes(grace_days=30), {"expired": 1})
-		self.assertEqual(frappe.db.get_value("CRM Deal", self.healthy, "status"), "Lost")
+		self.assertEqual(frappe.db.get_value("CRM Deal", self.healthy, "status"), "Expired")
 		self.assertEqual(frappe.db.get_value("CRM Deal", self.poisoned, "status"), "Proposal/Quotation")
 		# the rule offers the same deal every night until somebody fixes it
 		outcomes.expire_stale_quotes(grace_days=30)
@@ -188,13 +188,60 @@ class ExpireStaleQuotesTest(OutcomesTestCase):
 	Open regardless of age. The CRM applies the rule, with a grace period so a deal a
 	rep is still working is not cut off on day 31."""
 
-	def test_a_quote_past_validity_plus_grace_is_lost_as_expired(self):
+	def test_a_quote_past_validity_plus_grace_is_marked_expired_not_lost(self):
 		stale = self._deal("QT000010", closes_in=-45, modified_days_ago=40)
 		counts = outcomes.expire_stale_quotes(grace_days=30)
 		self.assertEqual(counts["expired"], 1)
-		self.assertEqual(
-			frappe.db.get_value("CRM Deal", stale, ["status", "lost_reason"]), ("Lost", outcomes.LOST_EXPIRED)
+		status, lost_reason = frappe.db.get_value("CRM Deal", stale, ["status", "lost_reason"])
+		self.assertEqual(status, "Expired")
+		self.assertFalse(lost_reason, "an expired quote is not a lost deal")
+		self.assertEqual(frappe.db.get_value("CRM Deal Status", "Expired", "type"), "On Hold")
+
+	def test_an_expired_deal_is_not_expired_again(self):
+		stale = self._deal("QT000014", closes_in=-45, modified_days_ago=40)
+		outcomes.expire_stale_quotes(grace_days=30)
+		frappe.db.set_value(
+			"CRM Deal", stale, "modified", frappe.utils.add_days(frappe.utils.now_datetime(), -40)
 		)
+		self.assertEqual(outcomes.expire_stale_quotes(grace_days=30)["expired"], 0)
+
+	def test_the_quote_outcome_still_closes_an_expired_deal(self):
+		"""Expired only says the first quote ran out; the customer can still accept
+		or decline it, and Acumatica's answer decides the deal."""
+		won = self._deal("QT000015", status="Proposal/Quotation", closes_in=-45, modified_days_ago=40)
+		lost = self._deal("QT000016", status="Proposal/Quotation", closes_in=-45, modified_days_ago=40)
+		outcomes.expire_stale_quotes(grace_days=30)
+		client = self._client(
+			[Q(OrderNbr="QT000015", Status="Completed"), Q(OrderNbr="QT000016", Status="Rejected")]
+		)
+		outcomes.pull_quote_outcomes(client, None)
+		self.assertEqual(frappe.db.get_value("CRM Deal", won, "status"), "Won")
+		self.assertEqual(
+			frappe.db.get_value("CRM Deal", lost, ["status", "lost_reason"]), ("Lost", outcomes.LOST_REJECTED)
+		)
+
+	def test_the_once_only_reread_closes_expired_deals_and_no_others(self):
+		"""A rep reopened the second deal after the sync lost it; its old quote must
+		not close it again."""
+		expired = self._deal("QT000017", status="Proposal/Quotation", closes_in=-45, modified_days_ago=40)
+		outcomes.expire_stale_quotes(grace_days=30)
+		reopened = self._deal("QT000018")
+		frappe.db.set_default(outcomes.REREAD_ALL_QUOTES, 1)
+		self.addCleanup(frappe.defaults.clear_default, outcomes.REREAD_ALL_QUOTES)
+		client = self._client(
+			[Q(OrderNbr="QT000017", Status="Completed"), Q(OrderNbr="QT000018", Status="Canceled")]
+		)
+		client.get_page.side_effect = lambda entity, top=100, skip=0, **kw: (
+			[]
+			if skip or "LastModified gt" in (kw.get("filter") or "")
+			else [Q(OrderNbr="QT000017", Status="Completed"), Q(OrderNbr="QT000018", Status="Canceled")]
+		)
+
+		outcomes.pull_quote_outcomes(client, "2030-01-01 00:00:00")
+
+		self.assertEqual(frappe.db.get_value("CRM Deal", expired, "status"), "Won")
+		self.assertEqual(frappe.db.get_value("CRM Deal", reopened, "status"), "Proposal/Quotation")
+		self.assertFalse(frappe.db.get_default(outcomes.REREAD_ALL_QUOTES))
 
 	def test_inside_the_grace_period_nothing_happens(self):
 		fresh = self._deal("QT000011", closes_in=-10, modified_days_ago=5)

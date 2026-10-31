@@ -66,7 +66,7 @@
           :label="__('Quote Expiry Grace (days)')"
           :description="
             __(
-              'Days past a quote\'s validity before the nightly sync marks its deal Lost as expired. Deals edited in the last 14 days are left alone; 0 switches this off.',
+              'Days past a quote\'s validity before the nightly sync marks its deal Expired. The deal can still be won or lost afterwards. Deals edited in the last 14 days are left alone; 0 switches this off.',
             )
           "
         />

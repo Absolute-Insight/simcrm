@@ -39,7 +39,14 @@ from datetime import date, datetime, timedelta
 import frappe
 from frappe.utils import get_first_day, getdate
 
-from crm.demo.utils import backdate, build_full_names, insert_comment, resolve_owners
+from crm.demo.utils import (
+	backdate,
+	build_full_names,
+	delete_unless_linked,
+	insert_comment,
+	resolve_owners,
+	seeds_demo_data,
+)
 
 SEED = 20260902
 MONTHS_BACK = 24
@@ -234,6 +241,7 @@ def _ensure_catalogue(doctype: str, field: str, values: list[str], created: list
 		created.append(value)
 
 
+@seeds_demo_data
 def create_demo_history(demo_users: list[str]) -> dict:
 	"""Write the history and return the names of everything it created."""
 	rng = random.Random(SEED)
@@ -381,7 +389,12 @@ def _settle_lead(lead_name: str, rep: str, lead_day: date, age_months: int, rng,
 	else:
 		status = rng.choices(["New", "Contacted", "Qualified"], weights=[45, 40, 15])[0]
 	touched = min(today, lead_day + timedelta(days=rng.randint(1, 20)))
-	frappe.db.set_value("CRM Lead", lead_name, "status", status, update_modified=False)
+	values = {"status": status}
+	# Written past the controller, so do what validate_lost_reason would ask:
+	# without a reason every later edit to an Unqualified or Junk lead is refused.
+	if frappe.get_cached_value("CRM Lead Status", status, "type") == "Lost":
+		values["lost_reason"] = rng.choice(LOST_REASONS)
+	frappe.db.set_value("CRM Lead", lead_name, values, update_modified=False)
 	backdate("CRM Lead", lead_name, rep, _dt(touched, rng.randint(8, 17)), set_creation=False)
 
 
@@ -559,30 +572,26 @@ def _create_snapshots(rng, reps, today, won_by_rep_month, created) -> None:
 			actual = won_by_rep_month.get((rep, month.strftime("%Y-%m")), 0.0)
 			forecast = round(max(actual, 50_000) * rng.uniform(0.7, 1.35), -2)
 			site_total += forecast
-			doc = frappe.get_doc(
-				{
-					"doctype": "CRM Forecast Snapshot",
-					"snapshot_date": snapshot_date,
-					"month": month.strftime("%Y-%m"),
-					"scope": "Rep",
-					"user": rep,
-					"forecasted": forecast,
-					"actual_at_snapshot": 0,
-				}
-			).insert(ignore_permissions=True)
-			created["snapshots"].append(doc.name)
-		doc = frappe.get_doc(
-			{
-				"doctype": "CRM Forecast Snapshot",
-				"snapshot_date": snapshot_date,
-				"month": month.strftime("%Y-%m"),
-				"scope": "Site",
-				"user": "",
-				"forecasted": round(site_total, -2),
-				"actual_at_snapshot": 0,
-			}
-		).insert(ignore_permissions=True)
-		created["snapshots"].append(doc.name)
+			_insert_snapshot(snapshot_date, month, "Rep", rep, forecast, created)
+		_insert_snapshot(snapshot_date, month, "Site", "", round(site_total, -2), created)
+
+
+def _insert_snapshot(snapshot_date, month, scope, user, forecasted, created) -> None:
+	"""Insert one demo snapshot unless its key is taken.
+
+	A month's snapshot is dated a week before it, which is the weekly forecast
+	job's own Sunday whenever the month starts on one. On a site that was live
+	then, the blind insert hit the unique key after two years of history had been
+	committed. The row the job wrote is a real record of what was believed, so it
+	stays and the demo's goes without.
+	"""
+	key = {"snapshot_date": snapshot_date, "month": month.strftime("%Y-%m"), "scope": scope, "user": user}
+	if frappe.db.exists("CRM Forecast Snapshot", key):
+		return
+	doc = frappe.get_doc(
+		{"doctype": "CRM Forecast Snapshot", **key, "forecasted": forecasted, "actual_at_snapshot": 0}
+	).insert(ignore_permissions=True)
+	created["snapshots"].append(doc.name)
 
 
 def _create_plans(rng, reps, today, open_deals, created) -> None:
@@ -662,15 +671,13 @@ def delete_demo_history(created: dict) -> None:
 	for name in created.get("leads", []):
 		if frappe.db.exists("CRM Lead", name):
 			frappe.delete_doc("CRM Lead", name, ignore_permissions=True, force=True)
-	for name in created.get("organizations", []):
-		if frappe.db.exists("CRM Organization", name):
-			frappe.delete_doc("CRM Organization", name, ignore_permissions=True, force=True)
-	for doctype, key in (("CRM Territory", "territories"), ("CRM Industry", "industries")):
+	# A real record that adopted one of these meanwhile keeps it: it is theirs now.
+	for doctype, key in (
+		("CRM Organization", "organizations"),
+		("CRM Territory", "territories"),
+		("CRM Industry", "industries"),
+	):
 		for name in created.get(key, []):
 			if frappe.db.exists(doctype, name):
-				try:
-					frappe.delete_doc(doctype, name, ignore_permissions=True, force=True)
-				except frappe.LinkExistsError:
-					# a real record adopted the value meanwhile; it is theirs now
-					pass
+				delete_unless_linked(doctype, name)
 	frappe.db.commit()
