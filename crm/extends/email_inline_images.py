@@ -18,6 +18,13 @@ email's own:
   mail verbatim, and frappe keeps ``<img src>`` on incoming mail, so an outside
   sender who names ``/private/files/...`` of some other deal would otherwise
   have the rep's reply mail that file back to them;
+- it is not in quoted reply content, so an outside sender cannot pull that
+  deal's own images out either. The quote is everything from the first
+  ``<blockquote>`` (or the composer's ``reply-to-content`` marker) on, not just
+  what the blockquote encloses: the composer builds a reply as
+  ``<blockquote>${received}</blockquote>`` from a string, so a received mail
+  that says ``</blockquote><img ...>`` closes the quote early and puts its
+  ``<img>`` after it. The rep's own words go above the quote;
 - it is an image, so a quoted ``<img>`` cannot carry a price list out;
 - the user building the mail could download it from the CRM (the check behind
   ``/private/files/`` itself);
@@ -62,6 +69,11 @@ QUEUED = policy.SMTP.clone(refold_source="none")
 
 # `\s` before src so `data-src` is not taken for it.
 IMG_SRC = re.compile(r"""(<img\b[^>]*?\ssrc\s*=\s*)(["'])(.*?)\2""", re.IGNORECASE)
+
+# Where quoted reply content starts. A plain text search on purpose: a match
+# anywhere -- a comment, an attribute -- only moves the cut-off earlier, so it
+# can stop an image being inlined but never let a quoted one through.
+QUOTE_START = re.compile(r"<blockquote\b|reply-to-content", re.IGNORECASE)
 
 
 def embed_private_images(doc, method=None) -> None:
@@ -137,8 +149,12 @@ class Inliner:
 		"""Point each of this email's own images at a ``cid:`` and return their bytes."""
 		site = get_url().rstrip("/")
 		images: dict[str, dict] = {}
+		quote = QUOTE_START.search(message)
+		quote_start = quote.start() if quote else len(message)
 
 		def swap(match: re.Match) -> str:
+			if match.start() >= quote_start:
+				return match.group(0)
 			path = html_lib.unescape(match.group(3))
 			if path.startswith(site + "/"):
 				path = path[len(site) :]

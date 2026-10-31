@@ -8,10 +8,10 @@ client has no session, so the ``/private/files/`` URL frappe writes into the
 mail is a 403 for them; uploading it public instead let every rep list and
 download it (audit FE-95, and the review of its first fix). The mail carries
 the image as a ``cid:`` part instead -- but only an image uploaded to the very
-deal the email is about, and one the sender may read. The html is not always
-the sender's own: a reply quotes the received mail, ``<img src>`` and all, so
-an outside sender could otherwise name another deal's file and have the rep's
-reply mail it back to them.
+deal the email is about, that the sender may read, and that is not in quoted
+reply content. The html is not always the sender's own: a reply quotes the
+received mail, ``<img src>`` and all, so an outside sender could otherwise name
+a deal's file and have the rep's reply mail it back to them.
 """
 
 from __future__ import annotations
@@ -172,17 +172,8 @@ class EmailInlineImageTest(IntegrationTestCase):
 		self.assertEqual(inline_images(message), [])
 		self.assertIn(f"{self.file.file_url}", html_of(message))
 
-	def test_a_quoted_image_from_another_deal_is_not_mailed_back(self):
-		# An outside sender writes <img src="/private/files/..."> naming a file
-		# on some other deal; frappe keeps the src on the received mail, and the
-		# composer quotes it verbatim -- out of the rep's sight -- when they
-		# click Reply. The rep can read that deal, so a read check alone would
-		# inline its bytes into the reply and send them to the attacker.
-		other_deal = self.new_deal()
-		elsewhere = self.attach("contract.png", OTHER_PNG, other_deal.name)
-		frappe.set_user(OWNER)
-		self.assertTrue(elsewhere.is_downloadable())
-
+	def reply(self, content: str) -> email.message.Message:
+		"""Reply on the deal as the current user, the way the composer sends it."""
 		from frappe.core.doctype.communication.email import make
 
 		sent = make(
@@ -190,15 +181,64 @@ class EmailInlineImageTest(IntegrationTestCase):
 			name=self.deal.name,
 			recipients="attacker@outside.test",
 			subject="Re: Pricing",
-			content=f'<p>Sure</p><blockquote><img src="{elsewhere.file_url}"></blockquote>',
+			content=content,
 			send_email=1,
 		)
-
+		user = frappe.session.user
 		frappe.set_user("Administrator")
 		[queued] = frappe.get_all("Email Queue", filters={"communication": sent["name"]}, pluck="message")
-		message = email.message_from_string(queued)
+		frappe.set_user(user)
+		return email.message_from_string(queued)
+
+	def test_an_image_from_another_deal_is_not_mailed_out(self):
+		# An outside sender writes <img src="/private/files/..."> naming a file
+		# on some other deal; frappe keeps the src on the received mail. The rep
+		# can read that deal, so a read check alone would inline its bytes and
+		# send them to the attacker. Outside any quote here, so the deal check is
+		# what stops it.
+		other_deal = self.new_deal()
+		elsewhere = self.attach("contract.png", OTHER_PNG, other_deal.name)
+		frappe.set_user(OWNER)
+		self.assertTrue(elsewhere.is_downloadable())
+
+		message = self.reply(f'<p>Sure</p><p><img src="{elsewhere.file_url}"></p>')
+
 		self.assertEqual(inline_images(message), [])
 		self.assertIn(elsewhere.file_url, html_of(message))
+
+	def test_a_quoted_image_from_the_deal_itself_is_not_mailed_back(self):
+		# The composer quotes the received mail verbatim -- out of the rep's
+		# sight -- when they click Reply. An image the attacker names there that
+		# is on this very deal passes the deal and read checks, so the quote
+		# itself must keep it out. A fresh image above the quote still goes.
+		quoted = self.attach("site-survey.png", OTHER_PNG, self.deal.name)
+		frappe.set_user(OWNER)
+		self.assertTrue(quoted.is_downloadable())
+
+		# What EmailArea.vue's reply() hands frappe: the rep's paragraphs, then
+		# the received mail inside a blockquote.
+		message = self.reply(
+			f'<p>Thanks, see ours</p><p><img src="{self.file.file_url}"></p>'
+			f'<blockquote><p>Can you resend this?</p><p><img src="{quoted.file_url}"></p></blockquote>'
+		)
+
+		# Only the fresh image went inline; the quoted one kept its link.
+		self.assertEqual([p.get_payload(decode=True) for p in inline_images(message)], [PNG])
+		self.assertIn(quoted.file_url, html_of(message))
+
+	def test_a_quoted_image_that_closes_the_quote_early_is_not_mailed_back(self):
+		# reply() builds `<blockquote>${received}</blockquote>` from a string,
+		# so a received mail saying `</blockquote><img ...>` puts its image
+		# after the quote rather than in it.
+		quoted = self.attach("site-survey.png", OTHER_PNG, self.deal.name)
+		frappe.set_user(OWNER)
+
+		message = self.reply(
+			f'<p>Thanks</p><blockquote><p>Hi</p></blockquote><p><img src="{quoted.file_url}"></p>'
+		)
+
+		self.assertEqual(inline_images(message), [])
+		self.assertIn(quoted.file_url, html_of(message))
 
 	def test_a_private_file_that_is_not_an_image_is_not_inlined(self):
 		price_list = self.attach("Price List.pdf", blank_pdf(), self.deal.name)
