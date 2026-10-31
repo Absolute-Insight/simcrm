@@ -63,7 +63,12 @@ class TestCustomerScope(IntegrationTestCase):
 	def deal(self, organization, owner):
 		return (
 			frappe.get_doc(
-				{"doctype": "CRM Deal", "organization": organization, "deal_owner": owner, "status": "Qualification"}
+				{
+					"doctype": "CRM Deal",
+					"organization": organization,
+					"deal_owner": owner,
+					"status": "Qualification",
+				}
 			)
 			.insert(ignore_permissions=True)
 			.name
@@ -112,12 +117,12 @@ class TestCustomerScope(IntegrationTestCase):
 		self.assertEqual(find_by_code("C-SCOPEB"), [])
 
 	def test_contacts_at_a_hidden_customer_are_hidden_with_it(self):
-		at_b = frappe.get_doc({"doctype": "Contact", "first_name": "At B", "company_name": self.org_b}).insert(
-			ignore_permissions=True
-		)
-		at_a = frappe.get_doc({"doctype": "Contact", "first_name": "At A", "company_name": self.org_a}).insert(
-			ignore_permissions=True
-		)
+		at_b = frappe.get_doc(
+			{"doctype": "Contact", "first_name": "At B", "company_name": self.org_b}
+		).insert(ignore_permissions=True)
+		at_a = frappe.get_doc(
+			{"doctype": "Contact", "first_name": "At A", "company_name": self.org_a}
+		).insert(ignore_permissions=True)
 		nowhere = frappe.get_doc({"doctype": "Contact", "first_name": "Freelancer"}).insert(
 			ignore_permissions=True
 		)
@@ -135,7 +140,12 @@ class TestCustomerScope(IntegrationTestCase):
 		frappe.set_user(REP_A)
 		with self.assertRaises(frappe.PermissionError):
 			frappe.get_doc(
-				{"doctype": "CRM Deal", "organization": self.org_b, "deal_owner": REP_A, "status": "Qualification"}
+				{
+					"doctype": "CRM Deal",
+					"organization": self.org_b,
+					"deal_owner": REP_A,
+					"status": "Qualification",
+				}
 			).insert()
 
 	def test_a_rep_cannot_move_their_deal_onto_another_reps_customer(self):
@@ -174,7 +184,12 @@ class TestCustomerScope(IntegrationTestCase):
 	def test_the_first_deal_on_an_unclaimed_customer_claims_it(self):
 		frappe.set_user(REP_A)
 		frappe.get_doc(
-			{"doctype": "CRM Deal", "organization": self.org_free, "deal_owner": REP_A, "status": "Qualification"}
+			{
+				"doctype": "CRM Deal",
+				"organization": self.org_free,
+				"deal_owner": REP_A,
+				"status": "Qualification",
+			}
 		).insert()
 		frappe.set_user("Administrator")
 		self.assertEqual(frappe.db.get_value("CRM Organization", self.org_free, "account_owner"), REP_A)
@@ -183,7 +198,10 @@ class TestCustomerScope(IntegrationTestCase):
 	def test_a_customer_a_rep_adds_is_theirs(self):
 		frappe.set_user(REP_A)
 		doc = frappe.get_doc(
-			{"doctype": "CRM Organization", "organization_name": f"Scope New {frappe.generate_hash(length=6)}"}
+			{
+				"doctype": "CRM Organization",
+				"organization_name": f"Scope New {frappe.generate_hash(length=6)}",
+			}
 		).insert()
 		frappe.set_user("Administrator")
 		self.assertEqual(frappe.db.get_value("CRM Organization", doc.name, "account_owner"), REP_A)
@@ -227,7 +245,10 @@ class TestAccountOwnerBackfill(IntegrationTestCase):
 		def org():
 			return (
 				frappe.get_doc(
-					{"doctype": "CRM Organization", "organization_name": f"Fill {frappe.generate_hash(length=6)}"}
+					{
+						"doctype": "CRM Organization",
+						"organization_name": f"Fill {frappe.generate_hash(length=6)}",
+					}
 				)
 				.insert(ignore_permissions=True)
 				.name
@@ -236,7 +257,12 @@ class TestAccountOwnerBackfill(IntegrationTestCase):
 		contested, admins_only = org(), org()
 		for owner in (REP_A, REP_A, REP_B):
 			frappe.get_doc(
-				{"doctype": "CRM Deal", "organization": contested, "deal_owner": owner, "status": "Qualification"}
+				{
+					"doctype": "CRM Deal",
+					"organization": contested,
+					"deal_owner": owner,
+					"status": "Qualification",
+				}
 			).insert(ignore_permissions=True)
 		frappe.get_doc(
 			{
@@ -248,7 +274,8 @@ class TestAccountOwnerBackfill(IntegrationTestCase):
 		).insert(ignore_permissions=True)
 		# the deals' on_update claim already ran; the backfill is for history that predates it
 		frappe.db.sql(
-			"update `tabCRM Organization` set account_owner=NULL where name in %s", ((contested, admins_only),)
+			"update `tabCRM Organization` set account_owner=NULL where name in %s",
+			((contested, admins_only),),
 		)
 
 		backfill()
