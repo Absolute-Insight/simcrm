@@ -22,7 +22,7 @@ from xml.etree import ElementTree as ET
 import tldextract
 from bs4 import BeautifulSoup
 
-from .http import build_session, fetch
+from .http import JobTimeout, build_session, fetch
 from .result import CrawledPage
 
 SKIP_EXTENSIONS = (
@@ -201,6 +201,8 @@ def load_robots(start_url, cfg, session=None):
 		rp = RobotFileParser()
 		rp.parse(body.splitlines())
 		return rp
+	except JobTimeout:
+		raise
 	except Exception:
 		return None
 
@@ -250,6 +252,13 @@ def probe_about_pages(home_url, cfg, session=None, skip_urls=()):
 # Additive on top of link-following BFS: seeds pages the sitemap author flagged.
 SITEMAP_MAX_SITEMAPS = 5  # sitemap files fetched; guards pathological sitemap indexes
 SITEMAP_MAX_URLS = 200  # total <loc> entries collected across all fetched sitemaps
+
+
+def max_fetches(max_pages: int) -> int:
+	"""The most fetches one full enrichment run can make: robots.txt, the sitemaps, the
+	pages themselves, and -- when the crawl came up short -- ``probe_about_pages``'
+	second robots.txt and its About probes. The job's timeout is sized from this."""
+	return 1 + SITEMAP_MAX_SITEMAPS + max_pages + 1 + len(ABOUT_PROBE_PATHS)
 
 
 def _local_tag(tag: str) -> str:
@@ -339,6 +348,8 @@ def discover_sitemap_urls(start_url, cfg, session, robots):
 						break
 
 		return urls
+	except JobTimeout:
+		raise
 	except Exception:
 		return []
 
@@ -432,7 +443,10 @@ def crawl(start_url, cfg, session=None, progress=None):
 
 			results.append((page, soup))
 
-			if soup is None or depth >= max_depth:
+			# An error page (a bot wall's 429, a 503 that outlasted the retries) is kept
+			# for diagnosis, but its links are not the site's, and following them only
+			# asks a host that just refused us for more pages.
+			if soup is None or depth >= max_depth or page.status_code >= 400:
 				continue
 
 			# Resolve links against the page's resolved URL, not the requested one.

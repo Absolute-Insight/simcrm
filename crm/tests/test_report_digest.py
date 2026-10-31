@@ -353,10 +353,10 @@ class ReportDigestTest(IntegrationTestCase):
 
 		real_get_report = crm_report_digest_get_report()
 
-		def explode_for_the_first(report, from_date, to_date):
+		def explode_for_the_first(report, from_date, to_date, **kwargs):
 			if frappe.session.user == RECIPIENT:
 				raise ValueError("no rows for this one")
-			return real_get_report(report, from_date, to_date)
+			return real_get_report(report, from_date, to_date, **kwargs)
 
 		with (
 			patch("crm.api.reports.get_report", side_effect=explode_for_the_first),

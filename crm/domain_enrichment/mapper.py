@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 
 import frappe
 from frappe import _
+from frappe.utils import cint, cstr
 
 from .crawler import registrable_domain
 
@@ -180,6 +181,19 @@ def _overridable_defaults(mapping) -> set:
 	return defaults
 
 
+def column_limit(meta, fieldname: str) -> int | None:
+	"""The most characters ``fieldname``'s column holds; None when it is not a varchar.
+
+	A Data or Link field is varchar(140) unless its ``length`` says otherwise -- the
+	rule frappe's ``_validate_length`` applies, refusing the whole save over one value
+	that does not fit."""
+	df = meta.get_field(fieldname)
+	column = frappe.db.type_map.get(df.fieldtype) if df else None
+	if not column or column[0] != "varchar":
+		return None
+	return cint(df.get("length")) or cint(column[1]) or None
+
+
 def apply_to_document(doc, result, cfg, fill_empty_only: bool = False) -> list[str]:
 	"""Populate mappable fields on a Lead / Deal / Organization from ``result``.
 
@@ -210,6 +224,15 @@ def apply_to_document(doc, result, cfg, fill_empty_only: bool = False) -> list[s
 		if not doc.meta.has_field(fieldname):
 			continue
 		value = get_value_for_source_key(result, mapping.source_key)
+		limit = column_limit(doc.meta, fieldname)
+		if value and limit and len(cstr(value)) > limit:
+			# One value over its column fails the save, and with it every other field --
+			# on each retry and sweep, since the site does not change. Skipped, not cut:
+			# half a URL or half a name is not the value.
+			frappe.logger("crm.enrichment").info(
+				f"skipped {doc.doctype}.{fieldname}: {len(cstr(value))} characters, the field holds {limit}"
+			)
+			continue
 		label = _label_for(doc, mapping.source_key, fieldname)
 		current = doc.get(fieldname)
 		policy = POLICY_FILL_IF_EMPTY if fill_empty_only else (mapping.write_policy or POLICY_FILL_IF_EMPTY)

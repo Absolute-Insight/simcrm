@@ -585,12 +585,13 @@ input[type='checkbox']:checked {
    signature on every Save button would leave the rail saying nothing.
 
    The ink is --cta-ink, a deep navy, because white cannot sit on a light blue:
-   brand-sky against white is 2.54:1. The generator asserts both ramp stops
+   the dark theme's sky against white is 2.54:1. The generator asserts both ramp stops
    against this ink at AA, so the pairing cannot quietly drift apart.
 
    The edge is an inset shadow rather than a border so the button does not grow
-   by 2px. It is not decoration: the fill alone is 1.59:1 against the light
-   canvas, which leaves the control's own boundary short of SC 1.4.11 there.
+   by 2px. It is not decoration: the pale top of the light theme's sky-to-steel
+   ramp is far under 3:1 against its canvas, which leaves the control's own
+   boundary short of SC 1.4.11 there.
 
    Hover and active repeat the element in the selector on purpose. Tailwind's
    `hover:bg-surface-gray-9` is specificity (0,2,0); a bare class rule would
