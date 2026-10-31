@@ -64,6 +64,19 @@
               <div class="truncate text-lg-medium text-ink-gray-9">
                 {{ organization.doc.name }}
               </div>
+              <div
+                v-if="organization.doc.acumatica_id"
+                class="flex items-center gap-1.5 text-base text-ink-gray-8"
+              >
+                <span
+                  class="lucide-id-card size-4 shrink-0"
+                  aria-hidden="true"
+                />
+                <span class="sr-only">{{ __('Customer code') }}</span>
+                <span class="tabular-nums">{{
+                  organization.doc.acumatica_id
+                }}</span>
+              </div>
               <div class="flex items-center gap-1.5">
                 <Button @click="openWebsite">
                   <span class="lucide-link h-4 w-4" aria-hidden="true" />
