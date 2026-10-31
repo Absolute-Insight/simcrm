@@ -152,6 +152,14 @@ class CustomerCodeShownTest(IntegrationTestCase):
 		)
 		self.assertIn("acumatica_id", json.loads(saved.rows))
 
+	def test_a_malformed_saved_view_does_not_stop_the_migrate(self):
+		from frappe import _dict
+
+		from crm.patches.v1_0.add_customer_code_to_saved_views import add_customer_code
+
+		for columns, rows in (('["x"]', "[]"), ("5", "[]"), ("[]", "5")):
+			add_customer_code(_dict(name="not-saved", columns=columns, rows=rows))
+
 	def test_setting_up_the_search_twice_keeps_an_admins_own_search_fields(self):
 		from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 

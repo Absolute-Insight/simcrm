@@ -30,6 +30,11 @@ def add_customer_code(view) -> None:
 		rows = json.loads(view.rows or "[]")
 	except (TypeError, ValueError):
 		return
+	# saved views hold whatever the client sent, and a bad one must not stop a migrate
+	if not isinstance(columns, list) or not isinstance(rows, list):
+		return
+	if not all(isinstance(column, dict) for column in columns):
+		return
 	if not columns or any(column.get("key") == "acumatica_id" for column in columns):
 		return
 	after = next((i for i, c in enumerate(columns) if c.get("key") == "organization_name"), -1)
