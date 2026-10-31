@@ -300,7 +300,11 @@ describe.each([
     expect(deals.rows).toHaveLength(20)
     // a page length is what makes the list view draw its Load More footer
     expect(deals.modelValue).toBe(20)
-    expect(deals.options).toMatchObject({ rowCount: 20, totalCount: 25 })
+    expect(deals.options).toMatchObject({
+      rowCount: 20,
+      totalCount: 25,
+      scrollKey: '', // keeps out of the Deals list's saved scroll position
+    })
 
     deals.onLoadMore()
     await flush()
