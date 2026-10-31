@@ -83,6 +83,7 @@ describe('EventModal dates', () => {
     m.updateTime('09:00', true) // the end follows to 10:00
     m._event.title = 'Site visit'
     m.update()
+    await flush() // the insert waits for the attendees' contacts
     expect(m.error).toBe(null)
     expect(S.insert).toHaveLength(1)
     expect(S.insert[0]).toMatchObject({
@@ -95,6 +96,7 @@ describe('EventModal dates', () => {
     const m = await open()
     m._event.title = 'Late call'
     m.update()
+    await flush()
     expect(m.error).toBe(null)
     expect(S.insert[0]).toMatchObject({
       starts_on: '2026-10-30 23:10',
