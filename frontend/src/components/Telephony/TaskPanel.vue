@@ -85,7 +85,7 @@ import { taskStatusOptions, taskPriorityOptions, getFormat } from '@/utils'
 import { Dropdown, Tooltip, DateTimePicker } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
 import { TextEditor } from 'frappe-ui/experimental'
-import { reactive } from 'vue'
+import { toRef } from 'vue'
 
 const props = defineProps({
   task: {
@@ -101,16 +101,19 @@ const props = defineProps({
   },
 })
 
-const task = reactive(props.task)
+// The parent's task, followed rather than copied: it hands over a fresh object
+// for every call, and a copy taken at setup kept editing the first call's task
+// while the parent saved the new, empty one.
+const task = toRef(props, 'task')
 
 const { users, getUser } = usersStore()
 
 function updateTaskStatus(status) {
-  task.status = status
+  task.value.status = status
 }
 
 function updateTaskPriority(priority) {
-  task.priority = priority
+  task.value.priority = priority
 }
 </script>
 <style scoped>

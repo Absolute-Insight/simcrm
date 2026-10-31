@@ -1,4 +1,5 @@
 import re
+from datetime import timezone
 from urllib.parse import urlparse
 
 import frappe
@@ -78,6 +79,41 @@ def graph_get(url: str, params: dict | None = None) -> dict:
 		raise
 
 
+def fetch_graph_page(url: str, params: dict | None = None) -> dict:
+	"""One Graph request, refusing any URL that is not Graph's own.
+
+	Every paging cursor goes through here: it is a URL out of a response body,
+	and the access token is sent along with it."""
+	host = (urlparse(url).hostname or "").lower()
+	if host not in ALLOWED_GRAPH_HOSTS:
+		frappe.throw(frappe._("Refusing to follow a Graph paging URL pointing at {0}").format(host or url))
+	return graph_get(url, params=params) or {}
+
+
+def graph_get_all(url: str, params: dict) -> list[dict]:
+	"""Every row of a paged Graph list, following the cursor the way
+	:meth:`FacebookSyncSource.fetch_leads` does, with the same page cap.
+
+	``/me/accounts`` and ``leadgen_forms`` page like leads do. Read from the first
+	page only, a page or form further down could never be picked for a source."""
+	access_token = params.get("access_token")
+	rows = []
+	for _page in range(MAX_LEAD_PAGES):
+		response = fetch_graph_page(url, params=params)
+		rows.extend(response.get("data") or [])
+		# the cursor carries the query; the token is sent again, as in fetch_leads
+		url = (response.get("paging") or {}).get("next")
+		params = {"access_token": access_token}
+		if not url:
+			return rows
+
+	frappe.log_error(
+		title="Facebook Graph paging did not terminate",
+		message=redact_token(f"Stopped after {MAX_LEAD_PAGES} pages; the next cursor was {url}"),
+	)
+	return rows
+
+
 def get_fb_graph_api_url(endpoint: str) -> str:
 	if endpoint.startswith("/"):
 		endpoint = endpoint[1:]
@@ -115,7 +151,8 @@ class FacebookSyncSource:
 		handled_through = None
 		try:
 			for lead in self.fetch_leads():
-				self.sync_single_lead(lead)
+				if not self.already_logged(lead.get("id")):
+					self.sync_single_lead(lead)
 				# "Handled" covers a lead written to Failed Lead Sync Log as well
 				# as one imported: it is recorded either way, so re-asking for it
 				# would only produce the same log line again. A lead that raised
@@ -126,10 +163,7 @@ class FacebookSyncSource:
 
 	def fetch_page(self, url: str, params: dict | None = None) -> dict:
 		"""One Graph request, refusing any URL that is not Graph's own."""
-		host = (urlparse(url).hostname or "").lower()
-		if host not in ALLOWED_GRAPH_HOSTS:
-			frappe.throw(frappe._("Refusing to follow a lead-paging URL pointing at {0}").format(host or url))
-		return graph_get(url, params=params) or {}
+		return fetch_graph_page(url, params=params)
 
 	def already_imported(self, lead_id: str) -> bool:
 		"""This exact Facebook lead is already a CRM Lead.
@@ -142,6 +176,18 @@ class FacebookSyncSource:
 		run would bury the real duplicates.
 		"""
 		return bool(lead_id) and frappe.db.exists("CRM Lead", {"facebook_lead_id": lead_id})
+
+	def already_logged(self, lead_id: str) -> bool:
+		"""This exact Facebook lead already has a Failed Lead Sync Log.
+
+		The watermark's overlap re-offers the newest lead every run. When that
+		lead was logged rather than imported, :meth:`already_imported` cannot see
+		it, and it was logged again on every scheduled run -- 288 rows a day at
+		five minutes. The log is the record; Retry Sync on it is how it is tried
+		again, which is why this is checked by :meth:`sync` and not by
+		:meth:`sync_single_lead`, the path that retry takes.
+		"""
+		return bool(lead_id) and frappe.db.exists("Failed Lead Sync Log", {"facebook_lead_id": lead_id})
 
 	def sync_single_lead(self, lead, raise_exception=False):
 		if self.already_imported(lead.get("id")):
@@ -189,7 +235,12 @@ class FacebookSyncSource:
 		}
 
 		if self.last_synced_at:
-			timestamp = frappe.utils.data.get_timestamp(self.last_synced_at)
+			# The mark is UTC wall time to the second (update_last_synced_at).
+			# frappe's get_timestamp is a *date* in the worker's OS zone: every run
+			# re-read the whole day, and west of UTC the floor landed after the
+			# mark, so a lead created in between was never asked for.
+			marked = frappe.utils.get_datetime(self.last_synced_at)
+			timestamp = int(marked.replace(tzinfo=timezone.utc).timestamp())
 			params["filtering"] = frappe.as_json(
 				[{"field": "time_created", "operator": "GREATER_THAN", "value": timestamp}]
 			)
@@ -246,6 +297,7 @@ class FacebookSyncSource:
 			{
 				"doctype": "Failed Lead Sync Log",
 				"type": type,
+				"facebook_lead_id": (lead_data or {}).get("id"),
 				"lead_data": frappe.as_json(lead_data),
 				"source": self.get_source_name(),
 				"traceback": traceback,
@@ -272,7 +324,11 @@ class FacebookSyncSource:
 		if not handled_through:
 			return
 
+		# Stored as UTC wall time, which is how fetch_leads reads it back. Graph
+		# sends an offset; a Datetime column would drop it rather than apply it.
 		newest = frappe.utils.get_datetime(handled_through)
+		if newest.tzinfo:
+			newest = newest.astimezone(timezone.utc).replace(tzinfo=None)
 		frappe.db.set_value(
 			"Lead Sync Source",
 			self.source_name or {"facebook_lead_form": self.form_id},
@@ -304,7 +360,7 @@ def fetch_and_store_pages_from_facebook(access_token: str) -> list[dict]:
 		frappe.throw(frappe._("Invalid access token provided for Facebook."))
 
 	url = get_fb_graph_api_url("/me/accounts")
-	pages = graph_get(url, params={"access_token": access_token}).get("data", [])
+	pages = graph_get_all(url, params={"access_token": access_token})
 	for page in pages:
 		page_id = page["id"]
 		already_synced = frappe.db.exists("Facebook Page", page_id)
@@ -341,14 +397,14 @@ def create_facebook_page_in_db(page: dict, account_details: dict) -> None:
 def fetch_and_store_leadgen_forms_from_facebook(page_id: str, page_access_token: str) -> list[dict]:
 	fields = "id,name,questions"
 	url = get_fb_graph_api_url(f"/{page_id}/leadgen_forms")
-	forms = graph_get(
+	forms = graph_get_all(
 		url,
 		params={
 			"access_token": page_access_token,
 			"fields": fields,
 			"limit": 15000,
 		},
-	).get("data", [])
+	)
 	for form in forms:
 		form_id = form["id"]
 		already_synced = frappe.db.exists("Facebook Lead Form", form_id)

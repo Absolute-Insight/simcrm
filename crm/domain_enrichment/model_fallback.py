@@ -43,6 +43,7 @@ from crm.agent.api import _budget_spent, _model_call_slot, _refund_budget
 from crm.agent.config import get_config
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
 from crm.agent.schemas import SiteFacts
+from crm.domain_enrichment.http import JobTimeout
 from crm.domain_enrichment.result import Field, Method
 
 # Its own fence markers rather than the thread summariser's: the two prompts quote
@@ -141,6 +142,8 @@ def fill_gaps(result, pages, cfg) -> list[str]:
 			message=f"{result.website}: {exc}",
 		)
 		return []
+	except JobTimeout:
+		raise  # the job's deadline, not a model failure (see http.JobTimeout)
 	except Exception as exc:
 		frappe.log_error(
 			title="Domain Enrichment: model fallback failed",

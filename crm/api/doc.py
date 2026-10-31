@@ -1002,9 +1002,11 @@ def _has_reference_fields(doctype: str) -> bool:
 	return bool(meta.has_field("reference_doctype") and meta.has_field("reference_docname"))
 
 
-def remove_doc_link(doctype, docname):
+def remove_doc_link(doctype, docname) -> bool:
+	"""Clear ``docname``'s reference to the record being deleted. Returns whether a
+	link was actually removed."""
 	if not doctype or not docname:
-		return
+		return False
 	if doctype != "CRM Notification" and not _has_reference_fields(doctype):
 		# Nothing to unlink here: this document has no reference_doctype /
 		# reference_docname pair, so its link to the target is one of its own
@@ -1020,7 +1022,7 @@ def remove_doc_link(doctype, docname):
 		# never reaches here. The throw's only live effect was to block deleting a
 		# converted lead's deal, and the bulk path discards `skipped`, so the UI
 		# reported success while the lead and its deal both stayed.
-		return
+		return False
 
 	try:
 		linked_doc_data = frappe.get_doc(doctype, docname)
@@ -1046,8 +1048,11 @@ def remove_doc_link(doctype, docname):
 				}
 			)
 		linked_doc_data.save(ignore_permissions=True)
-	except (frappe.DoesNotExistError, frappe.ValidationError):
-		pass
+	except frappe.DoesNotExistError:
+		pass  # gone already: nothing links the record any more
+	except frappe.ValidationError:
+		return False
+	return True
 
 
 def remove_contact_link(doctype, docname, contact):
@@ -1097,20 +1102,27 @@ def remove_linked_doc_reference(
 			skipped.append({"docname": item.get("docname"), "reason": "invalid"})
 			continue
 
-		if not frappe.has_permission(item["doctype"], "write", item["docname"]):
+		# deleting is its own permission: a role may hold it without write, and
+		# delete_doc's own PermissionError is not one of the errors caught below
+		if not frappe.has_permission(item["doctype"], "delete" if delete else "write", item["docname"]):
 			skipped.append({"docname": item["docname"], "reason": "no_permission"})
 			continue
 
 		try:
 			if remove_contact:
 				remove_contact_link(item["doctype"], item["docname"], contact)
+				unlinked_here = True
 			else:
-				remove_doc_link(item["doctype"], item["docname"])
+				unlinked_here = remove_doc_link(item["doctype"], item["docname"])
 
 			if delete:
-				# only reached when the unlink above succeeded, so a parent that is
-				# linked through a child row (refused there) is never deleted
 				frappe.delete_doc(item["doctype"], item["docname"])
+			elif not unlinked_here:
+				# Nothing was cleared -- the document links the record through a field
+				# of its own -- so "unlinked" would be the false success that left the
+				# modal closed over a link that is still there.
+				skipped.append({"docname": item["docname"], "reason": "not_unlinkable"})
+				continue
 		except (frappe.DoesNotExistError, frappe.ValidationError) as exc:
 			skipped.append({"docname": item["docname"], "reason": str(exc)[:200]})
 			continue

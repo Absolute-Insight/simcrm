@@ -1192,8 +1192,7 @@ def pipeline_by_stage(
 	The single source for every by-stage number: the dashboard's stage chart and
 	the pipeline report both call this, so they cannot drift apart. ``date_field``
 	names the column a period applies to (``creation`` for "deals opened in the
-	period"); left out, the answer is the pipeline as it stands right now, which
-	is what a pipeline report means.
+	period"); left out, the answer is the pipeline as it stands right now.
 
 	Money is ``expected_deal_value``, the forward-looking basis — realised
 	revenue lives in :func:`won_value_in_period` and is measured on

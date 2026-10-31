@@ -7,7 +7,7 @@ from frappe.integrations.utils import create_request_log
 from frappe.rate_limiter import rate_limit
 
 from crm.integrations.api import lookup_contact_by_phone_number
-from crm.utils import user_rate_limited
+from crm.utils import sales_user_only, user_rate_limited
 
 # Per user and per minute. Every call here is a real outbound call billed to the
 # Exotel account, and a rep dials a handful an hour; 10 is generous for a person
@@ -106,9 +106,15 @@ def handle_request(**kwargs):
 
 
 # Outgoing Call
+#
+# Exotel rings ``From`` first and bridges it to ``To`` under the company's caller
+# ID, billed to the company. So only a sales user may place a call, and ``From``
+# is always their own phone from their Telephony Agent: taken from the request,
+# it let anyone signed in connect any two numbers. The UI never sent it.
 @frappe.whitelist(methods=["POST"])
 @rate_limit(limit=MAKE_CALL_RATE_LIMIT, seconds=60)
-def make_a_call(to_number: str, from_number: str | None = None, caller_id: str | None = None):
+@sales_user_only
+def make_a_call(to_number: str, caller_id: str | None = None):
 	if user_rate_limited(MAKE_CALL_RATE_SCOPE, MAKE_CALL_RATE_LIMIT):
 		frappe.throw(_("Too many call requests. Try again shortly."), frappe.ValidationError)
 
@@ -117,8 +123,7 @@ def make_a_call(to_number: str, from_number: str | None = None, caller_id: str |
 
 	endpoint = get_exotel_endpoint("Calls/connect.json?details=true")
 
-	if not from_number:
-		from_number = frappe.get_value("CRM Telephony Agent", {"user": frappe.session.user}, "mobile_no")
+	from_number = frappe.get_value("CRM Telephony Agent", {"user": frappe.session.user}, "mobile_no")
 
 	if not caller_id:
 		caller_id = frappe.get_value("CRM Telephony Agent", {"user": frappe.session.user}, "exotel_number")

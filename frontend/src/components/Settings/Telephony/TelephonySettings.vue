@@ -215,7 +215,7 @@
 <script setup>
 import ToneBadge from '@/components/ui/ToneBadge.vue'
 import { FormControl, ErrorMessage, createResource, toast } from 'frappe-ui'
-import { useTelephony } from '@/composables/telephony'
+import { defaultCallingMedium, useTelephony } from '@/composables/telephony'
 import { usersStore } from '@/stores/users'
 import { validatePhone } from '@/utils'
 import { computed, reactive, ref } from 'vue'
@@ -261,6 +261,14 @@ createResource({
   onError: (err) => err.messages?.forEach((msg) => toast.error(msg)),
 })
 
+// The call UI reads the default medium from the telephony composable, which
+// loads it once at boot; a saved change has to reach it too, or calls keep
+// going out through the old medium until a reload.
+function applySaved(data) {
+  applyDoc(data)
+  defaultCallingMedium.value = data?.default_medium || ''
+}
+
 // Keep the editable document to the fields this pane owns, so `isDirty`
 // compares like with like and a save sends only what the form can change.
 function applyDoc(data) {
@@ -277,7 +285,7 @@ function applyDoc(data) {
 const insertResource = createResource({
   url: 'frappe.client.insert',
   onSuccess: (data) => {
-    applyDoc(data)
+    applySaved(data)
     toast.success(__('Document created successfully'))
   },
   onError: (err) => {
@@ -288,7 +296,7 @@ const insertResource = createResource({
 const saveResource = createResource({
   url: 'frappe.client.set_value',
   onSuccess: (data) => {
-    applyDoc(data)
+    applySaved(data)
     toast.success(__('Document updated successfully'))
   },
   onError: (err) => {

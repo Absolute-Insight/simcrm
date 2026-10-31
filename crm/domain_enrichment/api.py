@@ -19,7 +19,7 @@ from frappe.rate_limiter import rate_limit
 
 from crm.utils import user_rate_limited
 
-from .config import ENABLE_FLAG_BY_DOCTYPE, EnrichmentConfig, get_config
+from .config import ENABLE_FLAG_BY_DOCTYPE, EnrichmentConfig, enrichment_enabled_for, get_config
 from .mapper import get_value_for_source_key
 from .pipeline import preview as run_preview
 from .tasks import enqueue_enrichment
@@ -49,15 +49,17 @@ def _enabled_doctypes(cfg: EnrichmentConfig) -> list[str]:
 	return [dt for dt, flag in ENABLE_FLAG_BY_DOCTYPE.items() if cfg.setting(flag)]
 
 
-def _enqueue_run(cfg, reference_doctype: str, reference_name: str, website: str) -> dict:
+def _enqueue_run(reference_doctype: str, reference_name: str, website: str) -> dict:
 	"""Validate + enqueue one enrichment run for a target record. Shared by
 	``enrich`` (initial trigger from the record) and ``retry`` (re-run from a Run).
 
 	Caller must have already resolved the website. Enforces the Settings allow-list
 	and ``write`` permission on the target. Uses the per-doc ``job_id`` +
-	``deduplicate`` so a second trigger while one is in-flight is a no-op.
+	``deduplicate`` so a second trigger while one is in-flight is a no-op. The
+	allow-list is read from Settings alone: the rules and mappings are the worker's
+	business, and building them here cost a query per rule on every click.
 	"""
-	if reference_doctype not in _enabled_doctypes(cfg):
+	if not enrichment_enabled_for(reference_doctype):
 		frappe.throw(
 			_("Enrichment is not enabled for {0}.").format(reference_doctype),
 			frappe.ValidationError,
@@ -79,22 +81,23 @@ def enrich(reference_doctype: str, reference_name: str) -> dict:
 	"""Enqueue a full enrichment run for one CRM record, using the record's own
 	``website`` field. The initial trigger (the "Enrich from Website" button).
 
-	Returns ``{queued: bool, job_id: str, website: str}``.
+	Returns ``{queued: bool, job_id: str, website: str}``, plus ``timeout`` (the job's,
+	in seconds) when queued, or ``already_running: True`` when a run for the record
+	was already queued or running and nothing new was enqueued.
 	"""
 	_check_user_rate_limit()
-	cfg = get_config()
 	# The allow-list gates the lookup, not just the enqueue. Loading the document
 	# first made "no such record" and "not enabled for X" two distinguishable
 	# answers for any doctype/name pair a caller cared to try, which is an
 	# existence oracle for records they cannot read.
-	if reference_doctype not in _enabled_doctypes(cfg):
+	if not enrichment_enabled_for(reference_doctype):
 		frappe.throw(
 			_("Enrichment is not enabled for {0}.").format(reference_doctype),
 			frappe.ValidationError,
 		)
 	doc = frappe.get_doc(reference_doctype, reference_name)
 	website = (doc.get("website") or "").strip()
-	return _enqueue_run(cfg, reference_doctype, reference_name, website)
+	return _enqueue_run(reference_doctype, reference_name, website)
 
 
 @frappe.whitelist()
@@ -114,10 +117,9 @@ def retry(run: str) -> dict:
 	if not run_doc.reference_doctype or not run_doc.reference_name:
 		frappe.throw(_("This run has no linked record to re-enrich."), frappe.ValidationError)
 
-	cfg = get_config()
 	target = frappe.get_doc(run_doc.reference_doctype, run_doc.reference_name)
 	website = (target.get("website") or "").strip() or (run_doc.source_website or "").strip()
-	return _enqueue_run(cfg, run_doc.reference_doctype, run_doc.reference_name, website)
+	return _enqueue_run(run_doc.reference_doctype, run_doc.reference_name, website)
 
 
 @frappe.whitelist()
