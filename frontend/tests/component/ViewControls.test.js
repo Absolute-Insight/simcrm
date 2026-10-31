@@ -401,20 +401,62 @@ describe('a list reached through a dashboard tile', () => {
   })
 
   // ViewControls keeps a cached list's params as an unsaved change. A tile
-  // rewrites the saved view while no list is mounted, so the second drill-down
-  // opened on the first one's period under a Save Changes nobody had earned.
+  // rewrites the saved view while no list is mounted, so each cached entry for
+  // the doctype, whichever default filters it was opened under, is out of date.
+  async function rewrite(filters) {
+    savedStandard(filters)
+    markListRewritten('CRM Lead')
+  }
+  const july = { creation: ['between', ['2026-07-01', '2026-07-31']] }
+  const august = { creation: ['between', ['2026-08-01', '2026-08-31']] }
+
   it('opens on the filters the tile just wrote, not the last ones', async () => {
     setRoute({})
-    savedStandard({ creation: ['between', ['2026-07-01', '2026-07-31']] })
-    const first = await mountVC({ doctype: 'CRM Deal', filters: { a: 1 } })
-    first.unmount()
+    await rewrite(july)
+    ;(await mountVC({ filters: { a: 1 } })).unmount()
 
-    const second = { creation: ['between', ['2026-08-01', '2026-08-31']] }
-    savedStandard(second)
-    markListRewritten('CRM Deal')
-    const back = await mountVC({ doctype: 'CRM Deal', filters: { a: 1 } })
-    expect(vc.fetches.at(-1).filters).toEqual(second)
-    expect(back.button('Save Changes')).toBeNull()
+    await rewrite(august)
+    await mountVC({ filters: { a: 1 } })
+    expect(vc.fetches.at(-1).filters).toEqual(august)
+    // the next edit builds on the params held, so old ones would come back here
+    vc.children.SortBy.onUpdate('creation desc')
+    await settle()
+    expect(vc.fetches.at(-1).filters).toEqual(august)
+    expect(vc.fetches.at(-1).order_by).toBe('creation desc')
+  })
+
+  it('leaves no entry stale under the other default filters', async () => {
+    setRoute({})
+    savedStandard({})
+    ;(await mountVC({ filters: { converted: 0 } })).unmount()
+
+    await rewrite(july) // the tile, which opens the list without the default
+    ;(await mountVC({ filters: {} })).unmount()
+
+    await mountVC({ filters: { converted: 0 } }) // the sidebar's list
+    expect(vc.fetches.at(-1).filters).toEqual(july)
+    expect(vc.fetches.at(-1).default_filters).toEqual({ converted: 0 })
+    vc.children.SortBy.onUpdate('creation desc')
+    await settle()
+    expect(vc.fetches.at(-1).filters).toEqual(july)
+  })
+
+  it('keeps an unsaved change on a saved view through a rewrite', async () => {
+    savedView(70)
+    setRoute({ view: 70 })
+    const first = await mountVC()
+    first.vc().applyFilter({
+      event: click(),
+      idx: 1,
+      column: { key: 'status', type: 'Select' },
+      item: 'Open',
+      firstColumn: { key: 'lead_name' },
+    })
+    await settle()
+    first.unmount()
+    markListRewritten('CRM Lead')
+    await mountVC()
+    expect(vc.fetches.at(-1).filters).toEqual({ status: 'Open' })
   })
 })
 

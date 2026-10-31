@@ -15,17 +15,18 @@ export function nextPageLength(current, step, max) {
   return Math.min(length + (Number(step) || 0), limit)
 }
 
-/* Lists whose saved filters were rewritten while no list was on screen.
-   ViewControls reads cached params that differ from the saved view as an
-   unsaved change and keeps them; for a rewrite that is exactly wrong. */
-const rewrittenLists = new Set()
+/* How many times each doctype's saved list was rewritten while no list was on
+   screen. ViewControls reads cached params that differ from the saved view as an
+   unsaved change and keeps them, which for a rewrite is exactly wrong, for every
+   list cached under that view. A new generation is a new cache key for all of
+   them at once. */
+const listGenerations = new Map()
 
-/** The next list opened for `doctype` starts from its saved view. */
+/** Every list of `doctype` opened from now on starts from its saved view. */
 export function markListRewritten(doctype) {
-  rewrittenLists.add(doctype)
+  listGenerations.set(doctype, listGeneration(doctype) + 1)
 }
 
-/** Whether `doctype`'s list was rewritten since one last opened. Reading clears it. */
-export function takeListRewritten(doctype) {
-  return rewrittenLists.delete(doctype)
+export function listGeneration(doctype) {
+  return listGenerations.get(doctype) || 0
 }

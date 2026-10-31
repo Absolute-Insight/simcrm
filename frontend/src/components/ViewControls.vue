@@ -393,7 +393,7 @@ import Draggable from 'vuedraggable'
 import isEqual from 'lodash/isEqual'
 import { PhTrayArrowDown as ImportIcon } from '@phosphor-icons/vue'
 import { reportActionError } from '@/utils/reportActionError'
-import { nextPageLength, takeListRewritten } from '@/utils/listPaging'
+import { listGeneration, nextPageLength } from '@/utils/listPaging'
 import { collectClosingValues, needsClosingNote } from '@/utils/taskClosing'
 
 const props = defineProps({
@@ -585,6 +585,8 @@ const resource = createResource({
     route.query.view,
     route.params.viewType,
     JSON.stringify(props.filters),
+    // A tile rewrites the standard view, never a saved one.
+    route.query.view ? 0 : listGeneration(props.doctype),
   ],
   auto: true,
   onSuccess(data) {
@@ -639,16 +641,8 @@ const dirtySignature = (p) =>
     parseFields(p.kanban_fields) || [],
   ])
 const initialParams = getParams()
-const rewritten = takeListRewritten(props.doctype)
 if (!resource.params) {
   resource.params = initialParams
-} else if (rewritten) {
-  // A dashboard tile replaced the saved filters: what the cache holds is the
-  // previous set, not somebody's unsaved change.
-  resource.params = initialParams
-  defaultParams.value = initialParams
-  resource.abort?.()
-  resource.reload()
 } else {
   // The cached resource's onSuccess belongs to the instance that created it,
   // so it never sets this one's defaultParams: seed them from what is on
