@@ -267,6 +267,7 @@ import { getMeta } from '@/stores/meta'
 import { globalStore } from '@/stores/global'
 import { usersStore } from '@/stores/users'
 import { organizationsStore } from '@/stores/organizations'
+import { dealLabel } from '@/utils/dealLabel'
 import { statusesStore } from '@/stores/statuses'
 import { callEnabled } from '@/composables/telephony'
 import { formatDate, timeAgo, website, formatTime } from '@/utils'
@@ -436,7 +437,7 @@ function parseRows(rows, columns = []) {
 
       if (row == 'organization') {
         _rows[row] = {
-          label: deal.organization,
+          label: dealLabel(deal),
           logo: getOrganization(deal.organization)?.organization_logo,
         }
       } else if (row === 'website') {

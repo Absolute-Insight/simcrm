@@ -289,6 +289,7 @@ import { globalStore } from '@/stores/global'
 import { statusesStore } from '@/stores/statuses'
 import { getMeta } from '@/stores/meta'
 import { useDocument } from '@/data/document'
+import { useDocumentError } from '@/composables/useDocumentError'
 import { whatsappEnabled } from '@/composables/whatsapp'
 import { callEnabled } from '@/composables/telephony'
 import {
@@ -323,8 +324,6 @@ const props = defineProps({
 
 const reload = ref(false)
 const activities = ref(null)
-const errorTitle = ref('')
-const errorMessage = ref('')
 const showDeleteLinkedDocModal = ref(false)
 const showConvertToDealModal = ref(false)
 const showFilesUploader = ref(false)
@@ -339,6 +338,8 @@ const {
   error,
 } = useDocument('CRM Lead', props.leadId)
 
+const { errorTitle, errorMessage } = useDocumentError(error)
+
 const canDelete = computed(() => permissions.data?.permissions?.delete || false)
 
 const doc = computed(() => document.doc || {})
@@ -351,20 +352,6 @@ useUnsavedChangesWarning(() => document.isDirty)
 
 onMounted(async () => {
   if (document.doc) await triggerOnRender()
-})
-
-watch(error, (err) => {
-  if (err) {
-    errorTitle.value = __(
-      err.exc_type == 'DoesNotExistError'
-        ? 'Document not found'
-        : 'Error occurred',
-    )
-    errorMessage.value = __(err.messages?.[0] || 'An error occurred')
-  } else {
-    errorTitle.value = ''
-    errorMessage.value = ''
-  }
 })
 
 watch(

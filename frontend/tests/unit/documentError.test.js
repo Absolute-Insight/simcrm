@@ -15,8 +15,14 @@ describe('documentErrorCopy', () => {
   })
 
   it('names anything else generically', () => {
-    expect(documentErrorCopy({ exc_type: 'PermissionError' }).title).toBe(
+    expect(documentErrorCopy({ exc_type: 'ValidationError' }).title).toBe(
       'Error occurred',
+    )
+  })
+
+  it('calls any refusal what it is', () => {
+    expect(documentErrorCopy({ exc_type: 'PermissionError' }).title).toBe(
+      'No access',
     )
   })
 

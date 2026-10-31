@@ -37,11 +37,12 @@ const { created } = vi.hoisted(() => ({ created: {} }))
 vi.mock('frappe-ui', () => ({
   call: vi.fn(),
   toast: { error: vi.fn(), success: vi.fn() },
-  createResource: () => ({}),
+  createResource: () => ({ fetch: async () => {} }),
   createDocumentResource: (options) => {
     const resource = {
       doc: null,
       options,
+      get: { fetch: async () => {} },
       reload: vi.fn(async () => {}),
       save: { submit: vi.fn() },
     }

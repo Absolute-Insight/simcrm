@@ -42,7 +42,8 @@ export function documentErrorCopy(err) {
     title:
       err.exc_type === 'DoesNotExistError'
         ? __('Document not found')
-        : err.messages?.[0] === FRAMEWORK_REFUSAL
+        : err.exc_type === 'PermissionError' ||
+            err.messages?.[0] === FRAMEWORK_REFUSAL
           ? __('No access')
           : __('Error occurred'),
     // A PermissionError's own message says the record is out of reach, which

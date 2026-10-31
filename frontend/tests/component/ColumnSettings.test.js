@@ -88,4 +88,47 @@ describe('ColumnSettings', () => {
     expect(w.emitted.update.at(-1)[0].columns[0].width).toBe('18rem')
     expect(list.data.columns[0].width).toBe('18rem')
   })
+  /* Reset Changes handed over the pre-edit isDefault, which on a list that had
+     never been customised is true: Reset to Default then hid itself, and the
+     parent read it as "go back to the defaults" and dropped the columns. */
+  it('Reset Changes restores the columns and keeps Reset to Default', async () => {
+    const list = reactive({
+      data: {
+        columns: [
+          { label: 'Organization', key: 'organization', width: '10rem' },
+          { label: 'Status', key: 'status', width: '10rem' },
+        ],
+        rows: ['name', 'organization', 'status'],
+        is_default: true,
+      },
+    })
+    const original = JSON.parse(JSON.stringify(list.data))
+    const w = mount(ColumnSettings, {
+      props: { modelValue: list, doctype: 'CRM Deal' },
+      stubs: { Button, FormControl },
+    })
+    await w.nextTick()
+    const button = (label) =>
+      [...w.el.querySelectorAll('button')].find((b) => b.textContent === label)
+
+    // a column removed: the x beside the pencil on its row
+    ;[...w.el.querySelectorAll('button')]
+      .filter((b) => !b.textContent.trim())[1]
+      .click()
+    await w.nextTick()
+    expect(list.data.columns).toHaveLength(1)
+
+    button('Reset Changes').click()
+    await w.nextTick()
+    const update = w.emitted.update.at(-1)[0]
+    expect(update.columns).toEqual(original.columns)
+    expect(update.rows).toEqual(original.rows)
+    expect(update.isDefault).toBe(false)
+    expect(update.reset).toBe(true)
+
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    await w.nextTick()
+    expect(button('Reset to Default')).toBeTruthy()
+    expect(button('Reset Changes')).toBeFalsy()
+  })
 })

@@ -186,8 +186,10 @@
           </Button>
           <Button
             v-for="att in displayedPeoples"
-            :key="att.email"
-            :label="att.email"
+            :key="
+              att.email || `${att.reference_doctype}:${att.reference_docname}`
+            "
+            :label="att.email || att.reference_docname"
             variant="ghost"
             theme="gray"
             class="rounded-full w-fit !text-sm"
@@ -195,7 +197,11 @@
           >
             <template #prefix>
               <div class="relative">
-                <UserAvatar :user="att.email" class="-ml-1 !size-5" />
+                <UserAvatar
+                  :user="att.email"
+                  :label="att.reference_docname"
+                  class="-ml-1 !size-5"
+                />
                 <div
                   v-if="att.attending"
                   class="flex items-center justify-center absolute -bottom-[2px] -right-[2px] ring-1 ring-outline-base size-2.5 rounded-full"

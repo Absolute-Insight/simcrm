@@ -18,6 +18,7 @@ import { mount } from './mount.js'
  */
 
 const S = vi.hoisted(() => ({
+  refused: null,
   docs: {},
   calls: [],
   dialled: [],
@@ -78,7 +79,6 @@ const slotted = (name) => ({
 })
 for (const name of [
   'DeleteLinkedDocModal',
-  'ErrorPage',
   'Icon',
   'AssignTo',
   'SLASection',
@@ -114,6 +114,18 @@ for (const name of [
 for (const name of ['LayoutHeader', 'Resizer', 'FadedScrollableDiv']) {
   vi.doMock(`@/components/${name}.vue`, () => slotted(name))
 }
+vi.mock('@/components/ErrorPage.vue', () => ({
+  default: defineComponent({
+    name: 'ErrorPage',
+    inheritAttrs: false,
+    setup(_, { attrs }) {
+      return () => {
+        ;(S.children.ErrorPage ||= []).push({ ...attrs })
+        return null
+      }
+    },
+  }),
+}))
 vi.mock('@/components/FilesUploader/FilesUploader.vue', () => ({
   default: defineComponent({
     name: 'FilesUploader',
@@ -144,7 +156,7 @@ vi.mock('@/components/CommunicationArea.vue', () => ({
 vi.mock('@/data/document', () => ({
   useDocument: (doctype, name) => {
     S.docs[name] ||= reactive({
-      doc: { name, doctype, ...seed(doctype, name) },
+      doc: S.refused ? null : { name, doctype, ...seed(doctype, name) },
       save: { submit: vi.fn() },
       reload: vi.fn(),
     })
@@ -153,7 +165,7 @@ vi.mock('@/data/document', () => ({
       assignees: { data: [], reload() {} },
       permissions: { data: {} },
       scripts: { data: [] },
-      error: ref(''),
+      error: ref(S.refused || ''),
       triggerOnChange: async () => {},
       triggerOnRender: async () => {},
     }
@@ -237,6 +249,7 @@ const Lead = (await import('@/pages/Lead.vue')).default
 
 setConfig('resourceFetcher', async ({ url, params }) => {
   S.fetches[url] = (S.fetches[url] || 0) + 1
+  if (url.endsWith('get_deal_contacts') && S.refused) throw S.refused
   if (url.endsWith('get_deal_contacts'))
     return structuredClone(S.server.contacts[params.name] || [])
   if (url.endsWith('get_activities')) return [[], [], [], [], []]
@@ -313,12 +326,24 @@ afterEach(() => {
   S.composers.length = 0
   S.route.hash = ''
   S.router = null
+  S.refused = null
 })
 
 describe.each([
   ['Deal', Deal, { dealId: 'CRM-DEAL-1' }, '/deals/CRM-DEAL-1'],
   ['Lead', Lead, { leadId: 'CRM-LEAD-1' }, '/leads/CRM-LEAD-1'],
 ])('%s', (name, Page, props, path) => {
+  it('tells a refused rep so, in words', async () => {
+    S.refused = {
+      exc_type: 'PermissionError',
+      messages: ['Not allowed via controller permission check'],
+    }
+    await visit(Page, props)
+    const shown = S.children.ErrorPage.at(-1)
+    expect(shown.errorTitle).toBe('No access')
+    expect(shown.errorMessage).toMatch(/do not have access to this record/)
+  })
+
   it('offers the status dropdown without a form script', async () => {
     await visit(Page, props)
     const header = S.children.Dropdown?.find((d) => d.align === 'end')
@@ -388,6 +413,19 @@ describe.each([
 })
 
 describe('Deal', () => {
+  it('leaves no rejection unhandled when its contacts are refused', async () => {
+    const rejections = []
+    const onRejection = (reason) => rejections.push(reason)
+    process.on('unhandledRejection', onRejection)
+    S.refused = Object.assign(new Error('refused'), {
+      exc_type: 'PermissionError',
+    })
+    await visit(Deal, { dealId: 'CRM-DEAL-REFUSED' })
+    await new Promise((r) => setTimeout(r, 20))
+    process.off('unhandledRejection', onRejection)
+    expect(rejections).toEqual([])
+  })
+
   it("dials the contact's current number after a revisit", async () => {
     const contact = (mobile_no) => [
       { name: 'CONT-1', full_name: 'Thabo M', is_primary: 1, mobile_no },

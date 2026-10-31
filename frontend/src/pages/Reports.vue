@@ -197,7 +197,11 @@
         </Link>
 
         <div v-if="showing" class="ml-auto text-sm text-ink-gray-5">
-          {{ __('{0} rows', [showing.rows.length]) }}
+          {{
+            showing.rows.length === 1
+              ? __('1 row')
+              : __('{0} rows', [showing.rows.length])
+          }}
         </div>
       </div>
 
@@ -385,6 +389,7 @@ import {
   usePageMeta,
 } from 'frappe-ui'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { afterMenuFocusReturn } from '@/utils/afterMenuFocusReturn'
 import { useRoute, useRouter } from 'vue-router'
 
 const route = useRoute()
@@ -433,7 +438,7 @@ const presetOptions = computed(() => [
   {
     label: __('Custom Range'),
     onClick: () => {
-      nextTick(() => datePickerRef.value?.open())
+      afterMenuFocusReturn(() => datePickerRef.value?.open())
     },
   },
 ])

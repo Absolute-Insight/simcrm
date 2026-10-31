@@ -1,7 +1,7 @@
 <template>
   <Dialog v-model:open="show" :size="'xl'">
     <template #title>
-      <div class="mb-6 flex items-center justify-between">
+      <div class="flex items-center justify-between">
         <div class="flex items-center space-x-2">
           <h3 class="text-3xl-semibold leading-6 text-ink-gray-9">
             {{
@@ -26,11 +26,6 @@
           >
             <template #icon>
               <LucideCopy class="h-4 w-4 text-ink-gray-9" />
-            </template>
-          </Button>
-          <Button variant="ghost" @click="show = false">
-            <template #icon>
-              <LucideX class="h-4 w-4 text-ink-gray-9" />
             </template>
           </Button>
         </div>

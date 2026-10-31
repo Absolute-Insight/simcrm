@@ -22,6 +22,12 @@
           <div
             class="w-full min-h-12 flex flex-wrap items-center gap-1.5 p-1.5 pb-5 rounded-[var(--v-radius-control)] bg-surface-gray-2 cursor-text"
           >
+            <span
+              v-if="!assignees.length"
+              class="px-1 pt-3.5 text-base text-ink-gray-6"
+            >
+              {{ __('Search people to assign') }}
+            </span>
             <Tooltip
               v-for="assignee in assignees"
               :key="assignee.name"
@@ -81,6 +87,7 @@
           <Button
             variant="solid"
             :label="__('Update')"
+            :loading="saving"
             @click="updateAssignees()"
           />
         </div>
@@ -111,6 +118,7 @@ const assignees = defineModel('assignees', { type: Array, default: () => [] })
 const oldAssignees = ref([])
 
 const error = ref('')
+const saving = ref(false)
 
 const { users, getUser } = usersStore()
 const { capture } = useTelemetry()
@@ -137,6 +145,7 @@ const addValue = (value) => {
 }
 
 async function updateAssignees() {
+  if (saving.value) return
   // Bulk mode has no record to diff against: every rep shown is assigned to
   // every selected record, and nothing is removed (that call is per record).
   const bulk = props.docs.size > 0
@@ -166,19 +175,24 @@ async function updateAssignees() {
   if (addedAssignees.length) {
     if (bulk) {
       capture('bulk_assign_to', { doctype: props.doctype })
-      call('frappe.desk.form.assign_to.add_multiple', {
-        doctype: props.doctype,
-        name: JSON.stringify(Array.from(props.docs)),
-        assign_to: addedAssignees,
-        bulk_assign: true,
-        re_assign: true,
-      })
-        .then(() => {
-          emit('reload')
+      // Awaited before the close below: an unmounted component's emit goes
+      // nowhere, so `reload` never reached the list, which kept its selection
+      // for the next bulk action to hit.
+      saving.value = true
+      try {
+        await call('frappe.desk.form.assign_to.add_multiple', {
+          doctype: props.doctype,
+          name: JSON.stringify(Array.from(props.docs)),
+          assign_to: addedAssignees,
+          bulk_assign: true,
+          re_assign: true,
         })
-        .catch((error) =>
-          reportActionError(error, __('Could not update the assignment.')),
-        )
+        emit('reload')
+      } catch (error) {
+        reportActionError(error, __('Could not update the assignment.'))
+      } finally {
+        saving.value = false
+      }
     } else {
       capture('assign_to', { doctype: props.doctype })
       // No .then at all on this one: the single-record assign was fire and

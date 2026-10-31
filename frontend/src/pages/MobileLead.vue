@@ -160,6 +160,7 @@ import { globalStore } from '@/stores/global'
 import { statusesStore } from '@/stores/statuses'
 import { getMeta } from '@/stores/meta'
 import { useDocument } from '@/data/document'
+import { useDocumentError } from '@/composables/useDocumentError'
 import { whatsappEnabled } from '@/composables/whatsapp'
 import { useActiveTabManager } from '@/composables/useActiveTabManager'
 import {
@@ -188,8 +189,6 @@ const props = defineProps({
   leadId: { type: String, required: true },
 })
 
-const errorTitle = ref('')
-const errorMessage = ref('')
 const showDeleteLinkedDocModal = ref(false)
 
 const {
@@ -201,6 +200,8 @@ const {
   error,
 } = useDocument('CRM Lead', props.leadId)
 
+const { errorTitle, errorMessage } = useDocumentError(error)
+
 const doc = computed(() => document.doc || {})
 // The server refuses Lost-type statuses (Junk, Unqualified, ...); say so up front.
 const isLeadConversionDisabled = computed(
@@ -209,20 +210,6 @@ const isLeadConversionDisabled = computed(
 
 onMounted(async () => {
   if (document.doc) await triggerOnRender()
-})
-
-watch(error, (err) => {
-  if (err) {
-    errorTitle.value = __(
-      err.exc_type == 'DoesNotExistError'
-        ? __('Document Not Found')
-        : __('Error Occurred'),
-    )
-    errorMessage.value = __(err.messages?.[0] || 'An Error Occurred')
-  } else {
-    errorTitle.value = ''
-    errorMessage.value = ''
-  }
 })
 
 watch(

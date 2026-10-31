@@ -71,7 +71,10 @@
       </div>
     </div>
 
-    <div v-else class="min-h-0 flex-1 overflow-auto">
+    <div
+      v-else
+      class="min-h-0 flex-1 snap-x snap-proximity scroll-pr-28 overflow-auto"
+    >
       <!-- min-w-full, not w-full: with twelve months plus two sticky columns
            a settings pane is narrower than the content. w-full made the table
            fit anyway, so month cells shrank below their figures ("1.5M" read
@@ -91,12 +94,12 @@
             <th
               v-for="(month, i) in shown.months"
               :key="month"
-              class="sticky top-0 z-10 min-w-[4rem] border-b border-outline-gray-1 bg-surface-elevation-2 px-1 py-2 text-right text-xs font-medium uppercase tracking-wider text-ink-gray-5"
+              class="sticky top-0 z-10 min-w-[4rem] snap-end border-b border-outline-gray-1 bg-surface-elevation-2 px-1 py-2 text-right text-xs font-medium uppercase tracking-wider text-ink-gray-5"
             >
               {{ monthLabels[i] }}
             </th>
             <th
-              class="sticky right-0 top-0 z-20 whitespace-nowrap border-b border-l border-outline-gray-1 bg-surface-elevation-2 px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-ink-gray-5"
+              class="v-sticky-end sticky right-0 top-0 z-20 whitespace-nowrap border-b border-l border-outline-gray-1 bg-surface-elevation-2 px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-ink-gray-5"
             >
               {{ __('Year') }}
             </th>
@@ -155,7 +158,7 @@
               </div>
             </td>
             <td
-              class="sticky right-0 z-10 whitespace-nowrap border-b border-l border-outline-gray-1 bg-surface-elevation-2 px-3 py-1.5 text-right text-sm font-medium tabular-nums text-ink-gray-8"
+              class="v-sticky-end sticky right-0 z-10 whitespace-nowrap border-b border-l border-outline-gray-1 bg-surface-elevation-2 px-3 py-1.5 text-right text-sm font-medium tabular-nums text-ink-gray-8"
             >
               {{ exactMoney(rowTotal(row)) }}
             </td>
@@ -175,7 +178,7 @@
               {{ money(columnTotal(month)) }}
             </td>
             <td
-              class="sticky right-0 z-10 whitespace-nowrap border-l border-outline-gray-1 bg-surface-elevation-2 px-3 py-2 text-right text-sm font-semibold tabular-nums text-ink-gray-8"
+              class="v-sticky-end sticky right-0 z-10 whitespace-nowrap border-l border-outline-gray-1 bg-surface-elevation-2 px-3 py-2 text-right text-sm font-semibold tabular-nums text-ink-gray-8"
             >
               {{ exactMoney(grandTotal) }}
             </td>

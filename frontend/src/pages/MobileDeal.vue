@@ -300,6 +300,8 @@ import { globalStore } from '@/stores/global'
 import { statusesStore } from '@/stores/statuses'
 import { getMeta } from '@/stores/meta'
 import { useDocument } from '@/data/document'
+import { quiet } from '@/utils/quiet'
+import { useDocumentError } from '@/composables/useDocumentError'
 import { whatsappEnabled } from '@/composables/whatsapp'
 import { callEnabled } from '@/composables/telephony'
 import { useActiveTabManager } from '@/composables/useActiveTabManager'
@@ -328,8 +330,6 @@ const props = defineProps({
   dealId: { type: String, required: true },
 })
 
-const errorTitle = ref('')
-const errorMessage = ref('')
 const showDeleteLinkedDocModal = ref(false)
 
 const {
@@ -341,24 +341,12 @@ const {
   error,
 } = useDocument('CRM Deal', props.dealId)
 
+const { errorTitle, errorMessage } = useDocumentError(error)
+
 const doc = computed(() => document.doc || {})
 
 onMounted(async () => {
   if (document.doc) await triggerOnRender()
-})
-
-watch(error, (err) => {
-  if (err) {
-    errorTitle.value = __(
-      err.exc_type == 'DoesNotExistError'
-        ? __('Document not found')
-        : __('Error occurred'),
-    )
-    errorMessage.value = __(err.messages?.[0] || 'An error occurred')
-  } else {
-    errorTitle.value = ''
-    errorMessage.value = ''
-  }
 })
 
 watch(
@@ -608,11 +596,12 @@ async function setPrimaryContact(contact) {
 // Rendered straight from this deal's own resource, as Deal.vue does. Written
 // onto the session-wide layout, one deal's contacts showed on the next deal
 // while it loaded, and a layout reload that landed last wiped them out.
+// `quiet`, not `auto`: a refused deal says so on the page, and auto's fetch
+// cannot be caught.
 const dealContacts = createResource({
   url: 'crm.fcrm.doctype.crm_deal.api.get_deal_contacts',
   params: { name: props.dealId },
   cache: ['deal_contacts', props.dealId],
-  auto: true,
   transform: (data) => {
     // get_deal_contacts orders primary first, so expanding the first contact
     // surfaces the most relevant email and phone without a click.
@@ -622,6 +611,7 @@ const dealContacts = createResource({
     return data
   },
 })
+quiet(dealContacts.fetch())
 
 function updateField(name, value) {
   value = Array.isArray(name) ? '' : value
