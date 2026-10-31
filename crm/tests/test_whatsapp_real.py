@@ -96,6 +96,7 @@ class WhatsAppCase(IntegrationTestCase):
 		self.addCleanup(frappe.db.rollback)
 		self.addCleanup(frappe.set_user, "Administrator")
 		self.addCleanup(frappe.flags.pop, "whatsapp_webhook_verified", None)
+		self.logs_before = self.webhook_logs()
 
 	def make_rep(self, email):
 		if not frappe.db.exists("User", email):
@@ -141,13 +142,18 @@ class WhatsAppCase(IntegrationTestCase):
 		return guard.webhook()
 
 	def rows(self, **filters):
+		"""This test's messages: a site may hold other rows, this suite must not read them."""
+		filters["whatsapp_account"] = ("in", ("Line A", "Line B"))
 		return frappe.get_all("WhatsApp Message", filters=filters, fields=["*"])
+
+	def webhook_logs(self):
+		return frappe.db.count("WhatsApp Notification Log", {"template": "Webhook"})
 
 
 class TestSignature(WhatsAppCase):
 	def assert_refused(self, response):
 		self.assertEqual(response.status_code, 403)
-		self.assertFalse(frappe.db.exists("WhatsApp Notification Log", {"template": "Webhook"}))
+		self.assertEqual(self.webhook_logs(), self.logs_before)
 		self.assertFalse(self.rows(type="Incoming"))
 
 	def test_no_signature_is_refused_with_no_row(self):
@@ -237,7 +243,7 @@ class TestInbound(WhatsAppCase):
 		self.post(inbound())
 		told = frappe.get_all(
 			"CRM Notification",
-			filters={"type": "WhatsApp"},
+			filters={"type": "WhatsApp", "to_user": ("in", self.reps)},
 			fields=["to_user", "reference_name", "notification_text"],
 		)
 		by_user = {row.to_user: row for row in told}

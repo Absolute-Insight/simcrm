@@ -61,7 +61,7 @@ def _deny() -> Response:
 	return Response(status=403)
 
 
-@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])  # nosemgrep: guest-whitelisted-method
 def webhook():
 	if "frappe_whatsapp" not in frappe.get_installed_apps():
 		return Response(status=404)
@@ -81,7 +81,7 @@ def webhook():
 	return Response(status=200)
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist(allow_guest=True)  # nosemgrep: guest-whitelisted-method
 def flows_not_in_use():
 	"""frappe_whatsapp's WhatsApp Flows endpoint is a second unauthenticated
 	route, which writes an Error Log row per request. Flows are not used here."""
