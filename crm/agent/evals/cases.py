@@ -393,3 +393,18 @@ def case_by_name(name: str) -> EvalCase:
 		if case.name == name:
 			return case
 	raise KeyError(name)
+
+
+# --- which table answers which question --------------------------------------
+#
+# Not injection cases: no payload, no model. ``analyst.normalise_plan`` holds these
+# whatever the planner picks, so each one names the wrong pick that really happened
+# or would. ``(question, what the planner picked, the metrics that must come out)``.
+ROUTING_CASES: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
+	("Who are our best salespeople this quarter?", ("deals_by_salesperson",), ("won_by_rep",)),
+	("Who are our best salespeople this quarter?", ("quota_attainment_by_rep",), ("won_by_rep",)),
+	("Who is our top performer?", ("deals_by_salesperson",), ("won_by_rep",)),
+	("Rank the reps by sales", ("deals_by_salesperson",), ("won_by_rep",)),
+	("Which rep has the biggest pipeline?", ("deals_by_salesperson",), ("deals_by_salesperson",)),
+	("How many deals does each rep have?", ("deals_by_salesperson",), ("deals_by_salesperson",)),
+)

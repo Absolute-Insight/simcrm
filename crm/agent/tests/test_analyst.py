@@ -7,6 +7,7 @@ arithmetic and what the prompts carry. No site, no model."""
 from __future__ import annotations
 
 from datetime import date
+from types import SimpleNamespace
 
 from frappe.tests import UnitTestCase
 
@@ -111,8 +112,84 @@ class FallbackPlanTest(UnitTestCase):
 			analyst.fallback_plan("I wonder how our pipeline looks", CRM_KEYS), ["pipeline_by_stage"]
 		)
 		self.assertEqual(
-			analyst.fallback_plan("how is the salesperson Kevin doing?", CRM_KEYS), ["deals_by_salesperson"]
+			analyst.fallback_plan("how is the salesperson Kevin doing?", CRM_KEYS), ["won_by_rep"]
 		)
+
+	def test_a_ranking_of_people_is_measured_on_won_value_whatever_the_model_picked(self):
+		"""Prod: "best salespeople this quarter" got Deals by rep, 258m of every deal
+		created, beside 18.5m actually won. Either rep table the model likes is replaced."""
+		for question in (
+			"Who are our best salespeople this quarter?",
+			"Who is our top performer?",
+			"Rank the reps",
+			"Which sales rep sold the most last month?",
+			"who closed the most business?",
+			"How is the team performing?",
+		):
+			for picked in (["deals_by_salesperson"], ["quota_attainment_by_rep"], []):
+				with self.subTest(question=question, picked=picked):
+					plan = analyst.normalise_plan(
+						SimpleNamespace(metrics=picked, from_date="", to_date=""),
+						CRM_KEYS,
+						TODAY,
+						question=question,
+					)
+					self.assertEqual(plan["metrics"], ["won_by_rep"])
+
+	def test_a_ranking_keeps_what_else_the_model_asked_for(self):
+		plan = analyst.normalise_plan(
+			SimpleNamespace(
+				metrics=["deals_by_salesperson", "won_revenue_by_month"], from_date="", to_date=""
+			),
+			CRM_KEYS,
+			TODAY,
+			question="Who are our best salespeople?",
+		)
+		self.assertEqual(plan["metrics"], ["won_by_rep", "won_revenue_by_month"])
+
+	def test_a_ranking_against_quota_keeps_the_quota_table(self):
+		plan = analyst.normalise_plan(
+			SimpleNamespace(metrics=["quota_attainment_by_rep"], from_date="", to_date=""),
+			CRM_KEYS,
+			TODAY,
+			question="Who is the best rep against quota?",
+		)
+		self.assertEqual(plan["metrics"], ["won_by_rep", "quota_attainment_by_rep"])
+
+	def test_pipeline_and_workload_questions_keep_the_deals_table(self):
+		for question in (
+			"Which rep has the biggest pipeline?",
+			"How many deals does each rep have?",
+			"Show deals by rep",
+		):
+			with self.subTest(question=question):
+				plan = analyst.normalise_plan(
+					SimpleNamespace(metrics=["deals_by_salesperson"], from_date="", to_date=""),
+					CRM_KEYS,
+					TODAY,
+					question=question,
+				)
+				self.assertEqual(plan["metrics"], ["deals_by_salesperson"])
+				self.assertIn("deals_by_salesperson", analyst.fallback_plan(question, CRM_KEYS))
+				self.assertNotIn("won_by_rep", analyst.fallback_plan(question, CRM_KEYS))
+
+	def test_best_of_something_other_than_people_is_no_rep_ranking(self):
+		for question in (
+			"Who are our best customers?",
+			"What was our best month?",
+			"Which is the top performing region?",
+		):
+			with self.subTest(question=question):
+				self.assertFalse(analyst.ranks_reps(question))
+
+	def test_the_planner_is_told_which_rep_table_is_which(self):
+		system = analyst.build_plan_messages(
+			"who is best?", analyst.catalogue_entries(["won_by_rep", "deals_by_salesperson"]), TODAY
+		)[0]["content"]
+		self.assertIn("best", analyst.CATALOGUE["won_by_rep"]["description"])
+		self.assertIn("not revenue", analyst.CATALOGUE["deals_by_salesperson"]["description"])
+		self.assertIn("not revenue", system)
+		self.assertNotEqual(analyst.CATALOGUE["deals_by_salesperson"]["title"], "Deals by rep")
 
 	def test_the_inflections_a_question_uses_still_match(self):
 		for question, metric in (

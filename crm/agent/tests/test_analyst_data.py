@@ -297,6 +297,130 @@ class RunPlanTest(IntegrationTestCase):
 			self.assertIsNone(analyst_data.enabled_erp())
 
 
+WON_BY_REP_PLAN = {"metrics": ["won_by_rep"], "from_date": "2019-04-01", "to_date": "2019-06-30"}
+
+
+class WonByRepTest(IntegrationTestCase):
+	"""Prod: "best salespeople" reported 258m by rep beside 18.5m won that quarter."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.db.savepoint("won_by_rep")
+		self.addCleanup(frappe.db.rollback, save_point="won_by_rep")
+		self.org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Won By Rep Org"})
+			.insert()
+			.name
+		)
+		self.lost_status = frappe.get_all("CRM Deal Status", filters={"type": "Lost"}, pluck="name")[0]
+
+	def _won(self, owner, value, closed_on):
+		name = make_won_deal(self.org, value, closed_on)
+		frappe.db.set_value("CRM Deal", name, "deal_owner", owner)
+		return name
+
+	def _lost(self, owner, value, closed_on=None):
+		name = make_won_deal(self.org, value, closed_on or "2019-05-01")
+		frappe.db.set_value(
+			"CRM Deal",
+			name,
+			{"status": self.lost_status, "deal_owner": owner, "closed_date": closed_on},
+		)
+		return name
+
+	def _rows(self, **plan):
+		with mock.patch.object(analyst_data, "data_start", return_value="2019-01"):
+			return analyst_data.run_plan({**WON_BY_REP_PLAN, **plan}, None)[0]["rows"]
+
+	def test_it_counts_won_value_in_the_period_and_nothing_else(self):
+		self._won("a@example.com", 100, "2019-05-01")
+		self._won("b@example.com", 500, "2019-05-02")
+		self._won("b@example.com", 900, "2019-07-01")  # after the period
+		self._lost("a@example.com", 800, "2019-05-03")  # lost, however large
+		rows = self._rows()
+		self.assertEqual(
+			rows,
+			[
+				{
+					"rep": "b@example.com",
+					"won": 500.0,
+					"won_deals": 1,
+					"closed_deals": 1,
+					"win_rate_pct": 100,
+				},
+				{
+					"rep": "a@example.com",
+					"won": 100.0,
+					"won_deals": 1,
+					"closed_deals": 2,
+					"win_rate_pct": 50,
+				},
+			],
+		)
+
+	def test_the_reps_add_up_to_the_periods_won_revenue(self):
+		"""The two tables of one answer cannot disagree about what was won."""
+		self._won("a@example.com", 100, "2019-05-01")
+		self._won(None, 40, "2019-05-02")  # nobody's, and still revenue
+		self._won("", 2, "2019-05-03")
+		with mock.patch.object(analyst_data, "data_start", return_value="2019-01"):
+			reps, months = analyst_data.run_plan(
+				{**WON_BY_REP_PLAN, "metrics": ["won_by_rep", "won_revenue_by_month"]}, None
+			)
+		self.assertEqual(sum(row["won"] for row in reps["rows"]), sum(row["value"] for row in months["rows"]))
+		self.assertEqual(len(reps["rows"]), 2, "NULL and '' are one nobody")
+
+	def test_a_deal_lost_in_the_app_is_dated_by_its_status_log(self):
+		"""Only Won stamps closed_date: a win rate over closed_date alone read 100%
+		for every deal lost by hand."""
+		lost = self._lost("a@example.com", 800)
+		log = frappe.get_doc(
+			{
+				"doctype": "CRM Status Change Log",
+				"name": frappe.generate_hash(length=10),
+				"parent": lost,
+				"parenttype": "CRM Deal",
+				"parentfield": "status_change_log",
+				"to_type": "Lost",
+				"to": self.lost_status,
+				"to_date": "2019-05-10 10:00:00",
+			}
+		)
+		log.db_insert()
+		self._won("a@example.com", 100, "2019-05-01")
+		self.assertEqual(self._rows()[0]["closed_deals"], 2)
+		self.assertEqual(self._rows(from_date="2019-06-01"), [])
+
+	def test_a_rep_who_only_lost_still_appears_at_zero(self):
+		self._won("a@example.com", 100, "2019-05-01")
+		self._lost("b@example.com", 800, "2019-05-03")
+		self.assertEqual(
+			self._rows()[1],
+			{"rep": "b@example.com", "won": 0.0, "won_deals": 0, "closed_deals": 1, "win_rate_pct": 0},
+		)
+
+	def test_the_ranking_states_the_measure_and_the_note_defines_it(self):
+		self._won("a@example.com", 100, "2019-05-01")
+		with mock.patch.object(analyst_data, "data_start", return_value="2019-01"):
+			table = analyst_data.run_plan(WON_BY_REP_PLAN, None)[0]
+		self.assertTrue(table["facts"][0].startswith("Ranked by won value in the period:"))
+		self.assertIn("Win rate", table["note"])
+
+	def test_a_ranked_table_runs_in_the_order_its_ranking_reads(self):
+		"""Prod's rows ran by deal count while its text ranked by value."""
+		rows = [
+			{"salesperson": "Many Small", "deals": 9, "value": 10},
+			{"salesperson": "Few Big", "deals": 1, "value": 1000},
+		]
+		with (
+			mock.patch("crm.api.dashboard.get_deals_by_salesperson", return_value={"data": rows}),
+			mock.patch.object(analyst_data, "data_start", return_value="2019-01"),
+		):
+			table = analyst_data.run_plan({**WON_BY_REP_PLAN, "metrics": ["deals_by_salesperson"]}, None)[0]
+		self.assertEqual([row["salesperson"] for row in table["rows"]], ["Few Big", "Many Small"])
+		self.assertIn("any outcome", table["note"])
+
+
 class AcumaticaDocumentsTest(IntegrationTestCase):
 	"""Which Acumatica documents are money invoiced or received, and on which days."""
 

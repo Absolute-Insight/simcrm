@@ -69,6 +69,14 @@ OWNERS = table(
 		{"salesperson": "Lilly de Villiers", "deals": 43, "value": 1920789.0},
 	],
 )
+WON_BY_REP = table(
+	"won_by_rep",
+	[
+		{"rep": "Ann-Mari Prins", "won": 9000000.0, "won_deals": 12, "closed_deals": 20, "win_rate_pct": 60},
+		{"rep": "Janca Meiring", "won": 7000000.0, "won_deals": 30, "closed_deals": 40, "win_rate_pct": 75},
+		{"rep": "Kevin Purdon", "won": 0.0, "won_deals": 0, "closed_deals": 5, "win_rate_pct": 0},
+	],
+)
 
 
 def with_facts(*tables):
@@ -142,9 +150,10 @@ class RankingFactsTest(UnitTestCase):
 		facts = analyst_facts.table_facts(OWNERS, TODAY)
 		self.assertEqual(
 			facts[0],
-			"Ranked by deal value: 1. Ann-Mari Prins 28,946,452; 2. Janca Meiring 13,320,006; 3. Lilly de Villiers 1,920,789",
+			"Ranked by value of deals created, any outcome, not revenue: 1. Ann-Mari Prins 28,946,452; "
+			"2. Janca Meiring 13,320,006; 3. Lilly de Villiers 1,920,789",
 		)
-		self.assertIn("Total deal value: 44,187,247", facts)
+		self.assertIn("Total value of deals created, any outcome, not revenue: 44,187,247", facts)
 
 	def test_the_open_pipeline_says_what_weighting_did(self):
 		pipeline = table(
@@ -373,3 +382,47 @@ class CoverageTest(UnitTestCase):
 			{"from_date": "2024-01-01", "to_date": "2024-12-31", "data_from": "2025-12"},
 		)
 		self.assertIn("December 2025", messages[0]["content"])
+
+
+class RankedByWonValueTest(UnitTestCase):
+	def test_the_ranking_states_its_measure_and_carries_the_win_rate(self):
+		facts = analyst_facts.table_facts(WON_BY_REP, TODAY)
+		self.assertEqual(
+			facts[0],
+			"Ranked by won value in the period: 1. Ann-Mari Prins 9,000,000 (60% win rate, 12 of 20 closed); "
+			"2. Janca Meiring 7,000,000 (75% win rate, 30 of 40 closed); "
+			"3. Kevin Purdon 0 (0% win rate, 0 of 5 closed)",
+		)
+		self.assertIn("Total won value in the period: 16,000,000", facts)
+		self.assertIn("Overall win rate: 65% (42 won of 65 closed)", facts)
+
+	def test_the_measure_is_among_the_lines_on_screen(self):
+		self.assertIn("won value", analyst_facts.highlights(with_facts(WON_BY_REP))[0])
+
+	def test_a_rep_with_no_closed_deals_has_no_win_rate(self):
+		rows = [{"rep": "New Rep", "won": 0.0, "won_deals": 0, "closed_deals": 0, "win_rate_pct": None}]
+		facts = analyst_facts.table_facts(table("won_by_rep", rows), TODAY)
+		self.assertIn("1. New Rep 0 (no closed deals)", facts[0])
+		self.assertFalse([line for line in facts if line.startswith("Overall win rate")])
+
+	def test_ranked_rows_sort_the_way_the_ranking_reads(self):
+		"""Prod's table ran by deal count under a ranking by value."""
+		self.assertEqual(
+			[row["salesperson"] for row in analyst_facts.rank_rows("deals_by_salesperson", OWNERS["rows"])],
+			["Ann-Mari Prins", "Janca Meiring", "Lilly de Villiers"],
+		)
+		rows = [{"rep": "A", "actual": None}, {"rep": "B", "actual": 5.0}]
+		self.assertEqual(
+			[row["rep"] for row in analyst_facts.rank_rows("quota_attainment_by_rep", rows)], ["B", "A"]
+		)
+		unranked = [{"stage": "b"}, {"stage": "a"}]
+		self.assertEqual(analyst_facts.rank_rows("pipeline_by_stage", unranked), unranked)
+
+	def test_the_narrative_may_not_crown_someone_the_ranking_does_not(self):
+		self.assertEqual(ground("Janca Meiring is your best salesperson.", WON_BY_REP)["dropped"], 1)
+		self.assertEqual(ground("Ann-Mari Prins is your top rep.", WON_BY_REP)["dropped"], 0)
+		self.assertEqual(ground("Ann-Mari Prins leads, ahead of Janca Meiring.", WON_BY_REP)["dropped"], 0)
+
+	def test_the_best_win_rate_is_a_different_claim_from_the_best_rep(self):
+		text = "Janca Meiring has the highest win rate, at 75%."
+		self.assertEqual(ground(text, WON_BY_REP)["answer"], text)

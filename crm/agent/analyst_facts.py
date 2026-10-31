@@ -55,7 +55,13 @@ _FORWARD = {"forecast_by_month"}
 # Rankings: catalogue key -> (label field, value field, what the value is, money?).
 _RANKED = {
 	"quota_attainment_by_rep": ("rep", "actual", "won value", True),
-	"deals_by_salesperson": ("salesperson", "value", "deal value", True),
+	"won_by_rep": ("rep", "won", "won value in the period", True),
+	"deals_by_salesperson": (
+		"salesperson",
+		"value",
+		"value of deals created, any outcome, not revenue",
+		True,
+	),
 	"deals_by_industry": ("industry", "value", "deal value", True),
 	"deals_by_territory": ("territory", "value", "deal value", True),
 	"leads_by_source": ("source", "count", "leads", False),
@@ -182,17 +188,25 @@ def _quarters(series, current, forward) -> list[tuple[str, float, int, bool]]:
 	return out
 
 
+def rank_rows(key, rows: list[dict]) -> list[dict]:
+	"""``rows`` best first on the measure :func:`table_facts` ranks them by, so the
+	table on screen and the ranking in the words run in one order. Stable, and a row
+	with no value goes last. A table that is not a ranking comes back as it was."""
+	if key not in _RANKED:
+		return rows
+	field = _RANKED[key][1]
+	return sorted(rows, key=lambda row: (row.get(field) is None, -float(row.get(field) or 0)))
+
+
 def _ranked_facts(key, rows) -> list[str]:
 	label_field, value_field, what, money = _RANKED[key]
-	ranked = sorted(
-		(row for row in rows if row.get(value_field) is not None),
-		key=lambda row: -float(row.get(value_field) or 0),
-	)
+	ranked = [row for row in rank_rows(key, rows) if row.get(value_field) is not None]
 	if not ranked:
 		return []
 	show = _money if money else (lambda value: f"{int(value):,}")
+	detail = _win_rate if key == "won_by_rep" else (lambda _row: "")
 	entries = "; ".join(
-		f"{place}. {row.get(label_field)} {show(float(row[value_field]))}"
+		f"{place}. {row.get(label_field)} {show(float(row[value_field]))}{detail(row)}"
 		for place, row in enumerate(ranked[:RANK_TOP], 1)
 	)
 	lines = [f"Ranked by {what}: {entries}"]
@@ -201,7 +215,19 @@ def _ranked_facts(key, rows) -> list[str]:
 	lines.append(f"Total {what}: {show(sum(float(row[value_field]) for row in ranked))}")
 	if key == "quota_attainment_by_rep" and not any(float(row.get("quota") or 0) for row in rows):
 		lines.append("No rep has a target set for this period, so attainment cannot be measured.")
+	if key == "won_by_rep":
+		won = sum(int(row.get("won_deals") or 0) for row in rows)
+		closed = sum(int(row.get("closed_deals") or 0) for row in rows)
+		if closed:
+			lines.append(f"Overall win rate: {round(won / closed * 100)}% ({won:,} won of {closed:,} closed)")
 	return lines
+
+
+def _win_rate(row: dict) -> str:
+	closed = int(row.get("closed_deals") or 0)
+	if not closed:
+		return " (no closed deals)"
+	return f" ({row.get('win_rate_pct')}% win rate, {int(row.get('won_deals') or 0):,} of {closed:,} closed)"
 
 
 def _pipeline_facts(rows) -> list[str]:
@@ -287,6 +313,9 @@ _CHANGE = re.compile(
 )
 # "no data before December 2025" names a covered month to say what is *not* covered
 _BEFORE = re.compile(r"\b(?:before|prior to|earlier than)\b", re.IGNORECASE)
+# Crowning a rep. The best win rate is another claim, and may be someone else's.
+_TOP_REP = re.compile(r"\b(?:best|top|leads?|leading|leader|highest|strongest|number one)\b", re.IGNORECASE)
+_WIN_RATE = re.compile(r"win rate|%|per\s?cent", re.IGNORECASE)
 _ERP_WORDS = re.compile(r"invoice|payment|cash|receivable|\berp\b|acumatica|erpnext", re.IGNORECASE)
 # The prompt's own vocabulary and raw field names: never for an admin's eyes. The
 # fence's name is matched in capitals only -- "the figures show" is plain English.
@@ -344,10 +373,17 @@ class _Index:
 		# the months a "best"/"worst" claim may name, one per monthly series
 		self.best: set[str] = set()
 		self.worst: set[str] = set()
+		# who a ranking of reps puts first, and who else it holds
+		self.top_rep: set[str] = set()
+		self.ranked_reps: set[str] = set()
 		for table in tables:
 			if table.get("error"):
 				self.erp_unavailable = self.erp_unavailable or str(table.get("key", "")).startswith("erp_")
 				continue
+			if table.get("key") == "won_by_rep" and table.get("rows"):
+				ranked = rank_rows("won_by_rep", table["rows"])
+				self.ranked_reps.update(str(row.get("rep")).lower() for row in ranked)
+				self.top_rep.add(str(ranked[0].get("rep")).lower())
 			for field, _label in _MONTHLY.get(table.get("key"), []):
 				series = [
 					(row["month"], float(row.get(field) or 0))
@@ -405,6 +441,14 @@ class _Index:
 		if periods and _BEST.search(sentence) and self.best and not periods & self.best:
 			return False
 		if periods and _WORST.search(sentence) and self.worst and not periods & self.worst:
+			return False
+		named_reps = mentioned & self.ranked_reps
+		if (
+			named_reps
+			and not named_reps & self.top_rep
+			and _TOP_REP.search(sentence)
+			and not _WIN_RATE.search(sentence)
+		):
 			return False
 		# a change measured against a month that is days old is not a change
 		if self.current in periods & self.covered and _CHANGE.search(sentence):
