@@ -136,7 +136,9 @@ const inviteeExistMessage = computed(() => {
   if (!inviteesSet.size) return null
 
   if (!pendingInvitations.data?.length) return null
-  const existingEmails = pendingInvitations.data.map((user) => user.email)
+  const existingEmails = pendingInvitations.data.map((user) =>
+    user.email.toLowerCase(),
+  )
   const existingUsersSet = new Set(existingEmails)
 
   const existingInvitees = inviteesSet.intersection(existingUsersSet)
@@ -233,10 +235,12 @@ const pendingInvitations = createListResource({
   auto: true,
 })
 
+// Lower-cased as the account will be named, so an existing member or a live
+// invitation typed with different capitals is caught here too.
 function updateInvitees(value) {
   const emails = value
     .split(',')
-    .map((email) => email.trim())
+    .map((email) => email.trim().toLowerCase())
     .filter((email) => validateEmail(email))
   invitees.value = emails
 }

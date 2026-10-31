@@ -292,4 +292,84 @@ describe('Activities scroll position', () => {
     await settle(200)
     expect(scrolled.at(-1)).toBe('newest')
   })
+
+  describe('with older history to load', () => {
+    const pages = []
+    const loadOlder = (w) =>
+      [...w.el.querySelectorAll('button')]
+        .find((b) => b.textContent.trim() === 'Load older activity')
+        .click()
+
+    // Opens the record on a tab, then moves to another: the timeline on screen
+    // belongs to an Activities that did not create the cached resource.
+    async function openOnSecondTab() {
+      pages.length = 0
+      S.timeline = (params) => {
+        pages.push(params.page_length)
+        return [...comments(), true]
+      }
+      const name = newDeal()
+      S.server = { doctype: 'CRM Deal', name }
+      open(name, 'comments').unmount()
+      await settle()
+      const w = open(name, 'activity')
+      await settle(200) // past this mount's own scroll
+      scrolled.length = 0
+      return { w, name }
+    }
+
+    it('leaves the reader where they are when it lands', async () => {
+      const { w } = await openOnSecondTab()
+      loadOlder(w)
+      await settle(200)
+      expect(pages.at(-1)).toBe(200)
+      expect(scrolled).toEqual([])
+    })
+
+    it('still scrolls for the next refresh', async () => {
+      const { w, name } = await openOnSecondTab()
+      loadOlder(w)
+      await settle(200)
+      S.socket.docinfo_update({
+        doc: { reference_doctype: 'CRM Deal', reference_name: name },
+        key: 'comments',
+      })
+      await settle(200)
+      expect(scrolled.at(-1)).toBe('newest')
+    })
+
+    it('scrolls again after a load that failed', async () => {
+      const { w, name } = await openOnSecondTab()
+      const timeline = S.timeline
+      S.timeline = () => {
+        throw new Error('timed out')
+      }
+      loadOlder(w)
+      await settle()
+      expect(scrolled).toEqual([])
+
+      S.timeline = timeline
+      S.socket.docinfo_update({
+        doc: { reference_doctype: 'CRM Deal', reference_name: name },
+        key: 'comments',
+      })
+      await settle(200)
+      expect(scrolled.at(-1)).toBe('newest')
+    })
+
+    it('carries on from the loaded page on the next tab', async () => {
+      const { w, name } = await openOnSecondTab()
+      loadOlder(w)
+      await settle()
+      expect(pages.at(-1)).toBe(200)
+      w.unmount()
+
+      const next = open(name, 'activity')
+      await settle()
+      expect(pages.at(-1)).toBe(200) // its first load keeps what was loaded
+      loadOlder(next)
+      await settle()
+      expect(pages.at(-1)).toBe(300)
+    })
+  })
 })

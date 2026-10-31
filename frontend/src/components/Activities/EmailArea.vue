@@ -18,7 +18,7 @@
         />
       </div>
       <div class="flex items-center gap-2 shrink-0">
-        <Badge
+        <ToneBadge
           v-if="status.label"
           :label="__(status.label)"
           variant="subtle"
@@ -79,6 +79,7 @@ import AttachmentItem from '@/components/AttachmentItem.vue'
 import EmailContent from '@/components/Activities/EmailContent.vue'
 import { Badge } from 'frappe-ui'
 import TimelineTimestamp from '@/components/Activities/TimelineTimestamp.vue'
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import { reactive, computed } from 'vue'
 
 const props = defineProps({

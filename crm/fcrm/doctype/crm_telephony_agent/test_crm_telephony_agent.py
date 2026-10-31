@@ -12,6 +12,7 @@ are what stop a rep from re-routing or deleting a colleague's agent.
 from __future__ import annotations
 
 import frappe
+from frappe.model.rename_doc import update_document_title
 from frappe.tests import IntegrationTestCase
 
 ALICE = "telagent-alice@crmtest.test"
@@ -70,6 +71,50 @@ class IntegrationTestCRMTelephonyAgent(IntegrationTestCase):
 			frappe.client.delete("CRM Telephony Agent", BOB)
 		frappe.set_user("Administrator")
 		self.assertEqual(frappe.db.get_value("CRM Telephony Agent", BOB, "twilio_number"), "+15550000002")
+
+	def test_a_rep_cannot_reroute_another_reps_agent_by_rewriting_its_user(self):
+		"""frappe asks for write on the document *after* set_value has applied the
+		caller's values: with ``user`` rewritten to the caller, the colleague's row
+		looked like the caller's own, and their calls went to the caller's number."""
+		frappe.set_user(ALICE)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value(
+				"CRM Telephony Agent", BOB, {"user": ALICE, "twilio_number": "+15550000001"}
+			)
+		frappe.set_user("Administrator")
+		self.assertEqual(
+			frappe.db.get_value("CRM Telephony Agent", BOB, ["user", "twilio_number"]),
+			(BOB, "+15550000002"),
+		)
+
+	def test_an_agent_is_never_moved_to_another_user(self):
+		"""Not even by a manager: the row is named by its user, and frappe would put
+		``user`` back before the write while keeping the rest of the change."""
+		frappe.set_user(MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value(
+				"CRM Telephony Agent", BOB, {"user": ALICE, "twilio_number": "+15550000001"}
+			)
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("CRM Telephony Agent", BOB, "twilio_number"), "+15550000002")
+
+	def test_a_rep_cannot_move_their_agent_to_another_user_by_renaming_it(self):
+		"""A rename never saves, so ``keep_user`` does not see it, and frappe then
+		rewrites ``user`` to the new name: the rep's numbers would route the
+		colleague's calls."""
+		frappe.set_user("Administrator")
+		frappe.get_doc(
+			{"doctype": "CRM Telephony Agent", "user": ALICE, "twilio_number": "+15550000001"}
+		).insert(ignore_permissions=True)
+		frappe.set_user(ALICE)
+		with self.assertRaises(frappe.PermissionError):
+			update_document_title(doctype="CRM Telephony Agent", docname=ALICE, name=MANAGER)
+		frappe.set_user("Administrator")
+		self.assertFalse(frappe.db.exists("CRM Telephony Agent", MANAGER))
+		self.assertEqual(
+			frappe.db.get_value("CRM Telephony Agent", ALICE, ["user", "twilio_number"]),
+			(ALICE, "+15550000001"),
+		)
 
 	def test_a_rep_cannot_plant_an_agent_under_another_users_name(self):
 		frappe.set_user(ALICE)

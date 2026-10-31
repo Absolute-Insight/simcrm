@@ -32,6 +32,10 @@ class CRMVisitTarget(Document):
 	# end: auto-generated types
 
 	def validate(self):
+		# one row per rep, named by them: a target is changed or cleared, never
+		# handed to somebody else (see _stored_user)
+		if not self.is_new() and self.has_value_changed("user"):
+			frappe.throw(_("A visit target cannot be moved to another user."), frappe.PermissionError)
 		if (self.visits_per_week or 0) < 0:
 			frappe.throw(_("A visit target cannot be negative."))
 
@@ -52,21 +56,36 @@ def has_permission(doc, ptype="read", user=None):
 	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
 
 	user = user or frappe.session.user
+	target_user = _stored_user(doc)
 	# Nobody writes their own target -- checked before the see-everyone shortcut,
 	# because visible_users() is None for an out-of-tree Sales Manager on the
 	# see-all setting too, not only for a System Manager, and that let such a
 	# manager set their own target through the document API.
-	if doc.user == user and ptype != "read" and not _sets_any_target(user):
+	if target_user == user and ptype != "read" and not _sets_any_target(user):
 		return False
 	users = visible_users(user)
 	if users is None:
 		return True
-	if doc.user not in users:
+	if target_user not in users:
 		return False
 	# the person measured is not the person who types the number -- quota's rule
-	if doc.user == user:
+	if target_user == user:
 		return ptype == "read"
 	return True
+
+
+def _stored_user(doc) -> str | None:
+	"""Whose target this is as saved, not as the caller has rewritten it.
+
+	frappe checks write on the document *after* ``set_value`` has applied the
+	caller's values, so an in-tree manager who set ``user`` to one of their own
+	reps on another team's target passed the subtree check and zeroed it.
+	"""
+	if doc.name and not doc.get("__islocal"):
+		stored = frappe.db.get_value("CRM Visit Target", doc.name, "user")
+		if stored:
+			return stored
+	return doc.user
 
 
 def _sets_any_target(user: str) -> bool:

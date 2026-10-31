@@ -54,7 +54,8 @@
 // beta.53 deleted the GridLayout export as a thin passthrough over
 // grid-layout-plus and told consumers to depend on the library directly
 // (docs/components/legacy.md); this is that wrapper, kept verbatim minus the
-// TS-only type imports, because DashboardGrid uses its slot contract.
+// TS-only type imports, because DashboardGrid uses its slot contract -- and
+// with `responsive` turned off (see below).
 import { GridLayout, GridItem } from 'grid-layout-plus'
 import { computed, reactive, ref } from 'vue'
 
@@ -77,17 +78,17 @@ const options = reactive({
   rowHeight: props.rowHeight || 52,
   isDraggable: computed(() => !props.disabled),
   isResizable: computed(() => !props.disabled),
-  responsive: true,
   verticalCompact: true,
   preventCollision: false,
   useCssTransforms: true,
-  cols: {
-    lg: props.cols || 12,
-    md: props.cols || 12,
-    sm: props.cols || 12,
-    xs: 1,
-    xxs: 1,
-  },
+  /* Not responsive. grid-layout-plus picks a breakpoint from the grid's own
+     width, and below 768px its xs layout is one column wide: it emits that
+     re-layout on mount, DashboardGrid writes it into each item, and Save then
+     stored every panel 1/20 wide for the whole site. A 1024px window with the
+     sidebar open has a ~720px grid. Narrow screens are DashboardGrid's job
+     (isNarrowGrid stacks the panels without touching their layout), so this
+     grid always lays out in its own `cols`. */
+  responsive: false,
 })
 </script>
 

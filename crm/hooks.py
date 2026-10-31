@@ -174,6 +174,7 @@ permission_query_conditions = {
 	"CRM Task": "crm.permissions.linked_records.get_task_permission_query_conditions",
 	"CRM Call Log": "crm.permissions.linked_records.get_call_log_permission_query_conditions",
 	"CRM Enrichment Run": "crm.permissions.linked_records.get_enrichment_run_permission_query_conditions",
+	"WhatsApp Message": "crm.permissions.linked_records.get_whatsapp_message_permission_query_conditions",
 	"CRM Notification": "crm.fcrm.doctype.crm_notification.crm_notification.get_permission_query_conditions",
 	"CRM Quota": "crm.fcrm.doctype.crm_quota.crm_quota.get_permission_query_conditions",
 	"CRM Visit Target": "crm.fcrm.doctype.crm_visit_target.crm_visit_target.get_permission_query_conditions",
@@ -192,6 +193,7 @@ has_permission = {
 	"CRM Task": "crm.permissions.linked_records.has_task_permission",
 	"CRM Call Log": "crm.permissions.linked_records.has_call_log_permission",
 	"CRM Enrichment Run": "crm.permissions.linked_records.has_enrichment_run_permission",
+	"WhatsApp Message": "crm.permissions.linked_records.has_whatsapp_message_permission",
 	"CRM Notification": "crm.fcrm.doctype.crm_notification.crm_notification.has_permission",
 	"CRM Quota": "crm.fcrm.doctype.crm_quota.crm_quota.has_permission",
 	"CRM Visit Target": "crm.fcrm.doctype.crm_visit_target.crm_visit_target.has_permission",
@@ -212,9 +214,11 @@ has_permission = {
 # override_doctype_class, which *replaces* the framework controller: only one
 # app can hold that per DocType, so installing anything else that overrides
 # Contact would have silently taken the CRM's columns away. Mixins stack.
+# The Assignment Rule one marks the rule that is running, for crm.api.todo.
 extend_doctype_class = {
 	"Contact": ["crm.overrides.contact.ContactListView"],
 	"Email Template": ["crm.overrides.email_template.EmailTemplateListView"],
+	"Assignment Rule": ["crm.overrides.assignment_rule.AssignmentRuleRun"],
 }
 
 # Document Events
@@ -237,6 +241,7 @@ doc_events = {
 	},
 	"ToDo": {
 		"before_insert": ["crm.api.todo.before_insert"],
+		"validate": ["crm.api.todo.validate"],
 		"after_insert": ["crm.api.todo.after_insert"],
 		"on_update": ["crm.api.todo.on_update"],
 	},
@@ -253,18 +258,18 @@ doc_events = {
 		"on_update": ["crm.api.whatsapp.on_update"],
 	},
 	"CRM Deal": {
-		"after_insert": ["crm.automation.run_automations"],
 		"on_update": [
 			"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.create_customer_in_erpnext",
 			"crm.integrations.acumatica.outbound.queue_customer_push",
 			"crm.automation.run_automations",
 		],
-		"on_trash": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
+		"on_change": ["crm.automation.run_automations"],
+		"after_delete": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
 	},
 	"CRM Lead": {
-		"after_insert": ["crm.automation.run_automations"],
 		"on_update": ["crm.automation.run_automations"],
-		"on_trash": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
+		"on_change": ["crm.automation.run_automations"],
+		"after_delete": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
 	},
 	"ERPNext CRM Settings": {
 		"validate": ["crm.integrations.acumatica.install.block_dual_erp"],
@@ -296,6 +301,7 @@ doc_events = {
 	"User": {
 		"before_validate": ["crm.api.live_demo.validate_user"],
 		"validate_reset_password": ["crm.api.live_demo.validate_reset_password"],
+		"after_rename": ["crm.api.user.rename_user_keyed_rows"],
 	},
 }
 
@@ -303,13 +309,12 @@ doc_events = {
 # ---------------
 
 scheduler_events = {
+	# every event reminder, whatever its interval: see crm.api.event
 	"all": ["crm.api.event.trigger_offset_event_notifications"],
 	"hourly": [
-		"crm.api.event.trigger_hourly_event_notifications",
 		"crm.agent.signals.run_signals",
 	],
 	"daily": [
-		"crm.api.event.trigger_daily_event_notifications",
 		"crm.rep_planning.match_actuals",
 		"crm.fcrm.doctype.crm_report_digest.crm_report_digest.send_due_digests",
 		"crm.fcrm.doctype.crm_invitation.crm_invitation.expire_invitations",
@@ -318,7 +323,6 @@ scheduler_events = {
 		"crm.telemetry.capture_feature_state",
 	],
 	"weekly": [
-		"crm.api.event.trigger_weekly_event_notifications",
 		"crm.api.dashboard.take_forecast_snapshot",
 	],
 	"daily_long": [
@@ -374,10 +378,10 @@ before_tests = "crm.tests.before_tests"
 # -----------------------------------------------------------
 
 # CRM Suggestion holds a Dynamic Link to the deal or lead it is about. Without this
-# an open suggestion makes its own record undeletable; the on_trash handler above
-# clears the rows so nothing orphaned survives the delete.
+# an open suggestion makes its own record undeletable; the after_delete handler
+# above clears the rows so nothing orphaned survives the delete.
 # CRM Rep Plan Item's reference is a Dynamic Link too, and a rep's planned week
-# must never make a deal undeletable nor be deleted to free one; the on_trash
+# must never make a deal undeletable nor be deleted to free one; the after_delete
 # handler above unlinks the items and keeps them.
 ignore_links_on_delete = ["Failed Lead Sync Log", "CRM Suggestion", "CRM Rep Plan Item", "CRM Rep Plan"]
 
@@ -451,8 +455,19 @@ after_migrate = [
 	# gets them without a patch
 	"crm.fcrm.doctype.crm_task.crm_task.on_doctype_update",
 	"crm.fcrm.doctype.crm_call_log.crm_call_log.on_doctype_update",
+	"crm.fcrm.doctype.fcrm_note.fcrm_note.on_doctype_update",
 	"crm.fcrm.doctype.crm_status_change_log.crm_status_change_log.on_doctype_update",
 	"crm.fcrm.doctype.crm_forecast_snapshot.crm_forecast_snapshot.on_doctype_update",
+]
+
+# frappe.clear_cache() deletes every other key on the site -- and frappe.rename_doc
+# calls it, so the Acumatica sync renaming an organization ran it mid-sync. These are
+# state, not caches: dropping the shared API token leaves its login holding one of
+# the API user's concurrent-login slots until it expires (a logout needs the token),
+# and dropping an in-flight marker lets the next click send a second order.
+persistent_cache_keys = [
+	"acumatica_token::*",
+	"acumatica_inflight::*",
 ]
 
 standard_dropdown_items = [

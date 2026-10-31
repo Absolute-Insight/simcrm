@@ -12,7 +12,7 @@
         variant="solid"
         :label="__('Create')"
         iconLeft="lucide-plus"
-        @click="showLeadModal = true"
+        @click="openLeadModal()"
       />
     </template>
   </LayoutHeader>
@@ -118,7 +118,7 @@
           </Tooltip>
         </div>
         <div v-else-if="titleField === 'sla_status'" class="truncate text-base">
-          <Badge
+          <ToneBadge
             v-if="getRow(itemName, titleField).value"
             :variant="'subtle'"
             :theme="getRow(itemName, titleField).color"
@@ -190,7 +190,7 @@
           </Tooltip>
         </div>
         <div v-else-if="fieldName === 'sla_status'" class="truncate text-base">
-          <Badge
+          <ToneBadge
             v-if="getRow(itemName, fieldName).value"
             :variant="'subtle'"
             :theme="getRow(itemName, fieldName).color"
@@ -284,6 +284,7 @@ import EmptyState from '@/components/ListViews/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import KanbanView from '@/components/Kanban/KanbanView.vue'
+import ToneBadge from '@/components/ui/ToneBadge.vue'
 import KanbanActivityCounts from '@/components/Kanban/KanbanActivityCounts.vue'
 import LeadModal from '@/components/Modals/LeadModal.vue'
 import ViewControls from '@/components/ViewControls.vue'
@@ -300,7 +301,7 @@ import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { Avatar, Tooltip, Dropdown } from 'frappe-ui'
 import { useRoute } from 'vue-router'
-import { ref, computed, reactive, h } from 'vue'
+import { ref, computed, h } from 'vue'
 
 const { getFormattedPercent, getFormattedFloat, getFormattedCurrency } =
   getMeta('CRM Lead')
@@ -326,10 +327,19 @@ const leadsListView = ref(null)
 const showLeadModal = ref(false)
 
 on('trigger_lead_create', (data) => {
-  showLeadModal.value = Boolean(data)
+  if (data) openLeadModal()
+  else showLeadModal.value = false
 })
 
-const defaults = reactive({})
+// Set for each opening: one page-lifetime object kept a kanban column's
+// value, so after a "+" on Qualified the header's Create opened a lead already
+// Qualified.
+const defaults = ref({})
+
+function openLeadModal(values = {}) {
+  defaults.value = values
+  showLeadModal.value = true
+}
 
 // leads data is loaded in the ViewControls component
 const leads = ref({})
@@ -534,11 +544,7 @@ function parseRows(rows, columns = []) {
 function onNewClick(column) {
   let column_field = leads.value.params.column_field
 
-  if (column_field) {
-    defaults[column_field] = column.column.name
-  }
-
-  showLeadModal.value = true
+  openLeadModal(column_field ? { [column_field]: column.column.name } : {})
 }
 
 function actions(itemName) {

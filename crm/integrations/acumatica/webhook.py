@@ -26,7 +26,9 @@ def handle_notification():
 		key = frappe.request.headers.get("X-Vectora-Key") or frappe.request.args.get("key")
 	settings = frappe.get_cached_doc("CRM Acumatica Settings")
 	stored = settings.get_password("webhook_verify_token", raise_exception=False)
-	if not (key and stored and hmac.compare_digest(key, stored)):
+	# Bytes, not str: compare_digest refuses a str holding anything outside ASCII with a
+	# TypeError, so `X-Vectora-Key: é` answered every guest with a 500 and an Error Log row.
+	if not (key and stored and hmac.compare_digest(key.encode(), stored.encode())):
 		frappe.throw(_("Invalid webhook key"), frappe.PermissionError)
 
 	if frappe.db.get_single_value("CRM Acumatica Settings", "enabled"):

@@ -7,6 +7,7 @@ import {
   deltaTone,
   drilldownFor,
   groupRisksByRecord,
+  isOpenStatusType,
   mondayOf,
   movePanel,
   reorderVisiblePanel,
@@ -14,6 +15,7 @@ import {
   riskReason,
   standardViewPayload,
   toISODate,
+  withFreshFigures,
 } from '@/utils/dashboardHome'
 
 describe('toISODate', () => {
@@ -295,11 +297,17 @@ describe('drilldownFor', () => {
     toDate: '2026-07-31',
   }
 
-  it('sends open-deal tiles to the deals list filtered to open statuses', () => {
+  /* get_ongoing_deals counts open deals *created* in the period; the list
+     showed every open deal ever made, so a 7-day tile reading 3 opened onto
+     the whole pipeline. */
+  it('sends open-deal tiles to the open deals created in the period', () => {
     expect(drilldownFor('ongoing_deals', context)).toEqual({
       doctype: 'CRM Deal',
       routeName: 'Deals',
-      filters: { status: ['in', ['Qualification', 'Negotiation']] },
+      filters: {
+        status: ['in', ['Qualification', 'Negotiation']],
+        creation: ['between', ['2026-07-01', '2026-07-31']],
+      },
     })
   })
 
@@ -315,11 +323,36 @@ describe('drilldownFor', () => {
     })
   })
 
-  it('filters leads to the unconverted ones the tile counted', () => {
+  // The Leads list itself always adds converted = 0 (Leads.vue default
+  // filters), so the drill can only ever show the unconverted ones.
+  it('filters leads to the unconverted ones created in the period', () => {
     expect(drilldownFor('total_leads', context).filters).toMatchObject({
       converted: 0,
       creation: ['between', ['2026-07-01', '2026-07-31']],
     })
+  })
+
+  /* The tiles narrow to a chosen territory; their lists used to list every
+     territory. */
+  it('narrows the lead and deal lists to the chosen territory', () => {
+    const scoped = { ...context, territory: 'Gauteng' }
+    for (const tile of ['total_leads', 'ongoing_deals', 'won_deals']) {
+      expect(drilldownFor(tile, scoped).filters.territory).toBe('Gauteng')
+    }
+    expect(drilldownFor('ongoing_deals', context).filters).not.toHaveProperty(
+      'territory',
+    )
+  })
+
+  // quota attainment is per rep and says it ignores a territory; its list
+  // must not quietly narrow below the figure it explains
+  it('leaves the quota list unnarrowed by a territory the tile ignores', () => {
+    const out = drilldownFor('quota_attainment', {
+      ...context,
+      territory: 'Gauteng',
+    })
+    expect(out.filters).not.toHaveProperty('territory')
+    expect(out.filters.status).toEqual(['in', ['Won']])
   })
 
   it('sends plan adherence to the planner rather than a list', () => {
@@ -336,6 +369,66 @@ describe('drilldownFor', () => {
   it('returns null for a tile with no list behind it', () => {
     expect(drilldownFor('average_deal_value', context)).toBeNull()
     expect(drilldownFor('sales_trend', context)).toBeNull()
+  })
+})
+
+describe('isOpenStatusType', () => {
+  // the open-deal tiles count Status.type NOT IN ('Won', 'Lost')
+  it('takes in every type the open-deal tiles count, On Hold included', () => {
+    expect(['Open', 'Ongoing', 'On Hold'].map(isOpenStatusType)).toEqual([
+      true,
+      true,
+      true,
+    ])
+  })
+
+  it('leaves out closed statuses and untyped ones (NULL in SQL)', () => {
+    expect(['Won', 'Lost', '', null].map(isOpenStatusType)).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ])
+  })
+})
+
+describe('withFreshFigures', () => {
+  const chart = (i, x, data) => ({
+    name: i.split('_')[0],
+    type: 'axis_chart',
+    layout: { i, x, y: 0, w: 10, h: 9 },
+    data,
+  })
+
+  it("takes each chart's new figures and keeps the arrangement", () => {
+    const arranged = [chart('trend_1', 10, 'old'), chart('funnel_1', 0, 'old')]
+    const fresh = [chart('funnel_1', 0, 'new f'), chart('trend_1', 0, 'new t')]
+    expect(withFreshFigures(arranged, fresh)).toEqual([
+      chart('trend_1', 10, 'new t'),
+      chart('funnel_1', 0, 'new f'),
+    ])
+  })
+
+  it('matches on the layout id, not the chart name, which can repeat', () => {
+    const arranged = [chart('trend_a', 0, 'a'), chart('trend_b', 10, 'b')]
+    const fresh = [chart('trend_b', 10, 'B'), chart('trend_a', 0, 'A')]
+    expect(withFreshFigures(arranged, fresh).map((c) => c.data)).toEqual([
+      'A',
+      'B',
+    ])
+  })
+
+  it('keeps a chart added since Edit, and drops nothing that was removed', () => {
+    const added = chart('donut_new', 0, 'added')
+    const out = withFreshFigures([added], [chart('trend_1', 0, 'x')])
+    expect(out).toEqual([added])
+  })
+
+  it('copes with nothing loaded yet', () => {
+    expect(withFreshFigures(null, [chart('trend_1', 0, 'x')])).toEqual([])
+    expect(withFreshFigures([chart('t_1', 0, 'x')], null)).toEqual([
+      chart('t_1', 0, 'x'),
+    ])
   })
 })
 

@@ -57,6 +57,11 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 const props = defineProps({
   rows: { type: Array, required: true },
   doctype: { type: String, default: 'CRM Lead' },
+  // Where the scroll offset is kept between visits; '' keeps none. Left
+  // unset, it is the doctype's main list. A list embedded in a record page or
+  // a dialog passes '', or it reopened at the main list's offset and moved
+  // where the main list came back to.
+  scrollKey: { type: String, default: undefined },
 })
 
 const reactivieRows = ref(props.rows)
@@ -72,7 +77,8 @@ let showGroupedRows = computed(() => {
   )
 })
 
-const scrollPosition = useStorage(`scrollPosition${props.doctype}`, 0)
+const scrollKey = props.scrollKey ?? `scrollPosition${props.doctype}`
+const scrollPosition = scrollKey ? useStorage(scrollKey, 0) : ref(0)
 const scrollContainer = ref(null)
 const groupedScrollContainer = ref(null)
 

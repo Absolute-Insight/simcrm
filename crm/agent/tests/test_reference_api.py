@@ -228,6 +228,33 @@ class ReferenceApiTest(IntegrationTestCase):
 		self.assertNotIn("36.0", json.dumps(result))
 		self.assertEqual(cell["note"], "")
 
+	def test_a_questioned_value_in_a_label_never_leaves_the_server(self):
+		"""Audit M-20: the label '1/4" = 6 mm' carried the questioned 6 mm out."""
+		line = {
+			"page": 1,
+			"section": "Line sizes",
+			"label": '1/4" = 6 mm',
+			"search": '1/4" 6 mm line size nominal bore inch to mm',
+			"bbox": None,
+			"cells": [
+				{"label": "Inches", "value": '1/4"', "unit": "", "status": "ok"},
+				{"label": "Millimetres", "value": "6", "unit": "mm", "status": "questioned"},
+			],
+		}
+		self.load(rows=[line])
+		for reply, side_effect in (
+			(ReferenceAnswer(answer='A 1/4" line is 6 mm.', cited_rows=["R1"]), None),
+			(ReferenceAnswer(answer='A 1/4" line is 6 mm.'), None),
+			(ReferenceAnswer(answer='The 1/4" size is awaiting confirmation.', cited_rows=["R1"]), None),
+			(None, AgentUnavailable("down")),
+		):
+			with self.subTest(reply=reply):
+				result, complete = self.ask("what is 1/4 inch in mm?", reply, side_effect=side_effect)
+				self.assertEqual(result["status"], "ok")
+				self.assertEqual(result["references"][0]["label"], '1/4" = (awaiting confirmation)')
+				self.assertNotIn("6 mm", json.dumps(result))
+				self.assertNotIn("6 mm", complete.call_args.args[2][0]["content"])
+
 	def test_a_figure_not_on_the_rows_is_replaced_by_the_rows(self):
 		self.load()
 		for answer in ("The PCD is 241.3 mm.", "The hole is 36.0 mm."):

@@ -84,8 +84,8 @@ def ensure_layout_fields() -> None:
 	The custom fields exist on every site but a page layout is a saved record,
 	so a site that enabled the integration after install showed none of them --
 	a rep whose deal has a quote in Acumatica had no way to read its number.
-	Adds an "Acumatica" section to each layout, once, and leaves a layout alone
-	when an admin has already placed any of the fields."""
+	Adds an "Acumatica" section to each layout when the integration is turned on,
+	and leaves a layout alone when an admin has already placed any of the fields."""
 	if not frappe.db.get_single_value("CRM Acumatica Settings", "enabled"):
 		return
 	for name, wanted in LAYOUT_FIELDS.items():
@@ -114,12 +114,17 @@ def ensure_layout_fields() -> None:
 
 
 def refresh_integration() -> None:
-	"""after_migrate: the form script and the layouts ship with the app, not with
-	the site, so an upgrade re-applies both on a site that has the integration on."""
+	"""after_migrate: the form script ships with the app, not with the site, so an
+	upgrade brings its text up to date on a site that has the integration on.
+
+	Only its text. Whether the script is enabled, and whether the Acumatica
+	section is on a layout, are the admin's from the moment the integration is
+	turned on (CRMAcumaticaSettings.on_update); re-applying either here undid a
+	deliberate removal or disable on every migrate.
+	"""
 	if not frappe.db.get_single_value("CRM Acumatica Settings", "enabled"):
 		return
 	frappe.get_doc("CRM Acumatica Settings").create_crm_form_script()
-	ensure_layout_fields()
 
 
 def block_dual_erp(doc, method=None) -> None:

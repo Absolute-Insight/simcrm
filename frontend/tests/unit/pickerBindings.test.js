@@ -25,13 +25,27 @@ function vueFiles(dir) {
   return out
 }
 
-/** Every opening tag of a picker component, with its attribute block. */
+// An attribute block up to the tag's closing `>`, skipping any `>` inside a
+// quoted value such as an `@change="(v) => ..."` arrow.
+const ATTRS = `((?:[^>"']|"[^"]*"|'[^']*')*)`
+
+/**
+ * Every opening tag of a picker component, with its attribute block --
+ * including `<component :is="...">` when the `:is` expression names a
+ * picker, which QuickFilterField uses to pick Date or Datetime.
+ */
 function pickerTags(source) {
   const tags = []
-  const re = new RegExp(`<(${PICKERS.join('|')})\\b([^>]*)>`, 'g')
+  const re = new RegExp(`<(${PICKERS.join('|')}|component)\\b${ATTRS}>`, 'g')
   let match
-  while ((match = re.exec(source)))
-    tags.push({ component: match[1], attrs: match[2] })
+  while ((match = re.exec(source))) {
+    const [, component, attrs] = match
+    if (component === 'component') {
+      const is = attrs.match(/:is="([^"]*)"/)?.[1] || ''
+      if (!PICKERS.some((p) => is.includes(p))) continue
+    }
+    tags.push({ component, attrs })
+  }
   return tags
 }
 
