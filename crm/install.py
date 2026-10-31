@@ -299,6 +299,12 @@ def add_default_deal_statuses():
 		doc.position = statuses[status]["position"]
 		doc.insert()
 
+	# after the loop, because it slots itself in before Won and moves the closed
+	# statuses down; a fixed position here would collide on a site that has them
+	from crm.fcrm.doctype.crm_deal_status.crm_deal_status import ensure_expired_status
+
+	ensure_expired_status()
+
 
 def add_default_communication_statuses():
 	statuses = ["Open", "Replied"]
