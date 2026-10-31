@@ -126,27 +126,18 @@
       :tabs="tabs"
       class="v-lux-stage flex flex-1 overflow-hidden flex-col [&_[role='tab']]:px-0 [&_[role='tab']]:shrink-0 [&_[role='tablist']]:px-5 [&_[role='tablist']::-webkit-scrollbar]:h-0 [&_[role='tablist']]:overflow-x-auto [&_[role='tablist']]:min-h-[45px] [&_[role='tablist']]:gap-7.5 [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:flex-col [&_[role='tabpanel']:not([hidden])]:grow [&_[role='tabpanel']:not([hidden])]:overflow-hidden"
     >
-      <template #tab-item="{ tab, active }">
-        <button
-          class="group flex items-center gap-2 border-b border-transparent py-2.5 text-base text-ink-gray-5 duration-300 ease-in-out hover:text-ink-gray-9"
-          :class="{ 'text-ink-gray-9': active }"
-        >
-          <component :is="tab.icon" v-if="tab.icon" class="h-5" />
-          {{ __(tab.label) }}
-          <Badge
-            class="group-hover:bg-surface-gray-10"
-            :class="[active ? 'bg-surface-gray-10' : 'bg-gray-600']"
-            variant="solid"
-            theme="gray"
-            size="sm"
-          >
-            {{ tab.count }}
-          </Badge>
-        </button>
+      <template #tab-suffix="{ tab, active }">
+        <Badge
+          v-if="tab.data?.count != null"
+          :label="tab.data.count"
+          theme="gray"
+          :variant="active ? 'solid' : 'subtle'"
+          size="sm"
+        />
       </template>
       <template #tab-panel="{ tab }">
         <DealsListView
-          v-if="tab.label === 'Deals' && rows.length"
+          v-if="tab.value === 'Deals' && rows.length"
           class="mt-4"
           :rows="rows"
           :columns="columns"
@@ -314,14 +305,16 @@ function changeContactImage(file) {
 }
 
 const tabIndex = ref('Deals')
-const tabs = [
+// A computed rather than a fixed array: v1 Tabs hands `tab.data` to its slots
+// as given, so the count has to be a plain number by the time it gets there.
+const tabs = computed(() => [
   {
     value: 'Deals',
-    label: 'Deals',
+    label: __('Deals'),
     iconLeft: DealsIcon,
-    count: computed(() => deals.data?.length),
+    data: { count: deals.data?.length },
   },
-]
+])
 
 const deals = createResource({
   url: 'crm.api.contact.get_linked_deals',
