@@ -61,6 +61,13 @@ _RANKED = {
 	"leads_by_source": ("source", "count", "leads", False),
 }
 
+# Fact lines that quote one row's own figure -- a best or worst month, a ranking,
+# the largest deals at risk, the busiest month -- rather than a sum over the
+# table. Grounding leaves their numbers to the row that owns them: read as totals,
+# which may stand beside any name, they let one rep's value through under another
+# rep's name -- the very misattribution the check exists to catch.
+_ROW_FACTS = ("Highest month:", "Lowest month:", "Ranked by ", "Largest at risk:", "Most new deals:")
+
 
 # --- facts -------------------------------------------------------------------
 
@@ -263,6 +270,7 @@ _NUMBER = re.compile(
 	re.IGNORECASE,
 )
 _SCALE = {"million": 1e6, "mn": 1e6, "m": 1e6, "billion": 1e9, "bn": 1e9, "thousand": 1e3, "k": 1e3}
+_PERCENT_AFTER = re.compile(r"\s*(?:%|per\s?cent\b)", re.IGNORECASE)
 # Things with digits in them that are names, not figures.
 _MASKED = re.compile(r"\b[A-Z]+(?:-[A-Z]+)*-\d{4}-\d+\b|\b\d{4}-\d{2}(?:-\d{2})?\b|\bQ[1-4]\b")
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
@@ -373,7 +381,9 @@ class _Index:
 				if owner:
 					name = owner.group(1).strip().lower()
 					self.owned.setdefault(name, []).extend(value for value, _tol in numbers)
-				elif line in (table.get("facts") or []) or line == (table.get("summary") or [None])[0]:
+				elif (line in (table.get("facts") or []) and not line.startswith(_ROW_FACTS)) or line == (
+					table.get("summary") or [None]
+				)[0]:
 					# a total belongs to no one row, so it may stand beside any name
 					self.totals.extend(value for value, _tol in numbers)
 		# longest first, so "impala - shaft 12" is matched before "impala - shaft 1"
@@ -399,8 +409,8 @@ class _Index:
 		# a change measured against a month that is days old is not a change
 		if self.current in periods & self.covered and _CHANGE.search(sentence):
 			return False
-		for value, tolerance in _parse_numbers(_MASKED.sub(" ", masked)):
-			if _exempt(value, tolerance):
+		for value, tolerance, percent in _figures(_MASKED.sub(" ", masked)):
+			if _exempt(value, tolerance, percent):
 				continue
 			if not any(_close(value, tolerance, known, slack) for known, slack in self.known):
 				return False
@@ -485,6 +495,12 @@ def _row_numbers(row: dict) -> list[float]:
 
 def _parse_numbers(text: str) -> list[tuple[float, float]]:
 	"""``(value, tolerance)`` for each number in ``text``: the half-unit of its last digit."""
+	return [(value, tolerance) for value, tolerance, _percent in _figures(text)]
+
+
+def _figures(text: str) -> list[tuple[float, float, bool]]:
+	"""``(value, tolerance, percent)`` for each number in ``text``; ``percent`` when a
+	``%`` or "percent" follows it."""
 	out = []
 	for match in _NUMBER.finditer(text or ""):
 		whole, fraction, scale = match.group(1), match.group(2) or "", match.group(3)
@@ -494,7 +510,7 @@ def _parse_numbers(text: str) -> list[tuple[float, float]]:
 		if scale:
 			factor = _SCALE[scale.lower()]
 			value, tolerance = value * factor, tolerance * factor
-		out.append((value, tolerance))
+		out.append((value, tolerance, bool(_PERCENT_AFTER.match(text, match.end()))))
 	return out
 
 
@@ -503,8 +519,12 @@ def _close(value: float, tolerance: float, known: float, slack: float) -> bool:
 	return abs(abs(value) - abs(known)) <= max(tolerance, slack) + 1e-9
 
 
-def _exempt(value: float, tolerance: float) -> bool:
-	"""Years, days, months, quarters and small counts are not figures worth checking."""
-	if tolerance < 0.5:
+def _exempt(value: float, tolerance: float, percent: bool = False) -> bool:
+	"""Years, days, months, quarters and small counts are not figures worth checking.
+
+	A percentage is none of those, whatever its size: growth, attainment and
+	adherence are written "25%", and a wrong one is as wrong as a wrong total.
+	"""
+	if tolerance < 0.5 or percent:
 		return False
 	return value <= 31 or (1900 <= value <= 2100 and value == int(value))

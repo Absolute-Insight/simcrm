@@ -1,10 +1,16 @@
 # Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and Contributors
 # See license.txt
 
+import json
+import os
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
 from crm.api import form as F
+
+with open(os.path.join(os.path.dirname(__file__), "public_form_conditions.json")) as f:
+	CONDITIONS = json.load(f)
 
 
 def make_form(route, document_type="CRM Lead", **kw):
@@ -288,6 +294,154 @@ class TestFormAPI(IntegrationTestCase):
 		self.assertEqual(stored.fieldname, "first_name")
 		self.assertEqual(stored.fieldtype, "Data")
 		self.assertFalse(stored.options)
+
+	# ---- hidden required fields ----
+
+	def test_a_required_field_taken_off_the_form_is_kept_as_a_hidden_default(self):
+		"""The builder moves a required field the author removes into the hidden section
+		and asks for a default (FormBuilderPanel.removeField). The save must take it, or
+		every later save of the form fails, and a submission must get the default."""
+		name = make_form("hidden-required")
+		seeded = F.get_form_config(name)["hidden_fields"]
+		F.save_form(
+			name=name,
+			form={
+				"title": "H",
+				"route": "hidden-required",
+				"document_type": "CRM Lead",
+				"fields": [{"fieldname": "email", "fieldtype": "Data"}],
+				"hidden_fields": [
+					*seeded,
+					{"fieldname": "first_name", "fieldtype": "Attach", "default": "Web visitor"},
+				],
+			},
+		)
+		hidden = {h["fieldname"]: h for h in F.get_form_config(name)["hidden_fields"]}
+		self.assertEqual(hidden["first_name"]["default"], "Web visitor")
+		self.assertEqual(hidden["first_name"]["fieldtype"], "Data")  # from the doctype
+
+		frappe.flags.in_web_form = True
+		frappe.form_dict["web_form"] = name
+		lead = frappe.get_doc({"doctype": "CRM Lead", "email": "wf-test-hidden@test.invalid"}).insert(
+			ignore_permissions=True
+		)
+		self.assertEqual(lead.first_name, "Web visitor")
+
+	def test_only_a_required_field_off_the_form_may_be_hidden(self):
+		name = make_form("hidden-scope")
+		seeded = F.get_form_config(name)["hidden_fields"]
+		on_form = [{"fieldname": "first_name", "fieldtype": "Data"}]
+		for hidden in (
+			# optional: there is no missing answer for a default to stand in for
+			{"fieldname": "website", "fieldtype": "Data", "default": "https://x.example"},
+			# still on the form: the visitor answers it
+			{"fieldname": "first_name", "fieldtype": "Data", "default": "Web visitor"},
+		):
+			with self.assertRaises(frappe.ValidationError, msg=hidden["fieldname"]):
+				F.save_form(
+					name=name,
+					form={
+						"title": "H",
+						"route": "hidden-scope",
+						"document_type": "CRM Lead",
+						"fields": on_form,
+						"hidden_fields": [*seeded, hidden],
+					},
+				)
+
+	# ---- what a public page will act on ----
+
+	def test_save_form_refuses_a_redirect_that_is_not_http_or_a_site_path(self):
+		"""Both public pages navigate to success_url after a submission, and frappe's own
+		at /<route> puts it in an href unescaped: a javascript: URL, or a quote, is
+		script a Sales Manager could plant on the site's origin."""
+		name = make_form("redirect-guard")
+
+		def save(url):
+			F.save_form(
+				name=name,
+				form={
+					"title": "R",
+					"route": "redirect-guard",
+					"document_type": "CRM Lead",
+					"redirect_url": url,
+				},
+			)
+
+		for url in (
+			"javascript:alert(document.domain)",
+			" JavaScript:alert(1)",
+			"java\tscript:alert(1)",
+			"data:text/html,<script>alert(1)</script>",
+			"javascript&#58;alert(1)",
+			'https://example.com/" onmouseover="alert(1)',
+			"www.example.com/thanks",
+		):
+			with self.assertRaises(frappe.ValidationError, msg=url):
+				save(url)
+		self.assertFalse(frappe.db.get_value("Web Form", name, "success_url"))
+
+		for url in ("https://example.com/thanks?a=1&b=2", "HTTP://example.com", "/thank-you", ""):
+			save(url)
+			self.assertEqual(F.get_form_config(name)["redirect_url"], url)
+
+	def test_save_form_stores_only_conditions_the_public_page_can_parse(self):
+		"""frappe's own page at /<route> and the builder preview run an `eval:` condition
+		with `new Function`; only the branded page parses it. Storing one outside that
+		parser's grammar would be script a Sales Manager could plant for an admin."""
+		name = make_form("condition-guard")
+
+		def save(**row):
+			F.save_form(
+				name=name,
+				form={"title": "C", "route": "condition-guard", "document_type": "CRM Lead", "fields": [row]},
+			)
+			return frappe.get_doc("Web Form", name).web_form_fields[0]
+
+		for expression in CONDITIONS["rejected"]:
+			for key in ("depends_on", "mandatory_depends_on", "read_only_depends_on"):
+				with self.assertRaises(frappe.ValidationError, msg=f"{key}: {expression!r}"):
+					save(fieldname="first_name", fieldtype="Data", **{key: expression})
+		# frappe's page evaluates a section's depends_on too
+		with self.assertRaises(frappe.ValidationError):
+			save(fieldname="section_break_x", fieldtype="Section Break", depends_on="eval:alert(1)")
+
+		for expression in [*CONDITIONS["accepted"], "", "organization", "fn:on_change"]:
+			stored = save(fieldname="first_name", fieldtype="Data", depends_on=expression)
+			self.assertEqual(stored.depends_on or "", expression)
+
+	def test_patch_clears_unsafe_redirects_and_conditions_already_stored(self):
+		from unittest.mock import patch
+
+		from crm.patches.v1_0 import clear_unsafe_public_form_scripts
+
+		planted = make_form("planted", title="Planted", redirect_url="https://example.com/thanks")
+		safe = make_form(
+			"untouched",
+			title="Untouched",
+			redirect_url="/thank-you",
+			fields=[{"fieldname": "first_name", "fieldtype": "Data", "depends_on": "eval:doc.email"}],
+		)
+		# written past save_form, as a form saved before it checked these would be
+		frappe.db.set_value("Web Form", planted, "success_url", "javascript:alert(document.domain)")
+		rows = frappe.get_doc("Web Form", planted).web_form_fields
+		frappe.db.set_value("Web Form Field", rows[1].name, "depends_on", "eval:alert(document.domain)")
+		frappe.db.set_value("Web Form Field", rows[2].name, "read_only_depends_on", "eval:doc.first_name")
+
+		with patch.object(frappe, "log_error") as log_error:
+			clear_unsafe_public_form_scripts.execute()
+
+		doc = frappe.get_doc("Web Form", planted)
+		self.assertEqual(doc.success_url, "")
+		self.assertEqual(doc.web_form_fields[1].depends_on, "")
+		self.assertEqual(doc.web_form_fields[2].read_only_depends_on, "eval:doc.first_name")
+		self.assertEqual(len(doc.web_form_fields), len(rows))
+		other = frappe.get_doc("Web Form", safe)
+		self.assertEqual(other.success_url, "/thank-you")
+		self.assertEqual(other.web_form_fields[0].depends_on, "eval:doc.email")
+		log_error.assert_called_once()
+		self.assertIn(planted, log_error.call_args.kwargs["message"])
+		self.assertNotIn(safe, log_error.call_args.kwargs["message"])
 
 	# ---- draft dry-run ----
 
