@@ -12,7 +12,7 @@ the number on a tile are the same number for the same period.
 
 | Report | What it answers |
 |---|---|
-| **Pipeline by stage** | What is open right now, per stage — a snapshot, so it has no date picker |
+| **Pipeline by stage** | Open deals created in the chosen period, per stage — count, expected value and weighted value |
 | **Funnel conversion** | How records move through the funnel in a period |
 | **Plan adherence by rep** | Of the activities each rep planned, how many landed |
 | **Forecast vs actual** | Forecasted revenue per month against what actually closed |
