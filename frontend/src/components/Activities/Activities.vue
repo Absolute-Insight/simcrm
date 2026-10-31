@@ -687,6 +687,7 @@ function handleWhatsappMessage(data) {
 }
 
 onBeforeUnmount(() => {
+  clearTimeout(scrollTimer)
   $socket.off('whatsapp_message', handleWhatsappMessage)
   $socket.off('docinfo_update', handleDocinfoUpdate)
   $socket.emit('doc_unsubscribe', props.doctype, props.docname)
@@ -996,9 +997,13 @@ watch([reload, reload_email], ([reload_value, reload_email_value]) => {
   }
 })
 
+// Pending scroll, so it does not run on a page that has gone or fight a newer one.
+let scrollTimer = null
+
 function scroll(hash) {
   if (['tasks', 'notes', 'events'].includes(route.hash?.slice(1))) return
-  setTimeout(() => {
+  clearTimeout(scrollTimer)
+  scrollTimer = setTimeout(() => {
     let el
     if (!hash) {
       let e = document.getElementsByClassName('activity')
