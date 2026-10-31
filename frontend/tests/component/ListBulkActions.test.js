@@ -64,8 +64,9 @@ vi.mock('@/components/Controls/Link.vue', () => ({
 const errors = []
 
 async function listPage() {
+  const reload = vi.fn()
   const w = mount(ListBulkActions, {
-    props: { modelValue: { data: null, reload() {} }, doctype: 'CRM Lead' },
+    props: { modelValue: { data: null, reload }, doctype: 'CRM Lead' },
     stubs: {
       ...modalStubs,
       DeleteLinkedDocModal: { render: () => null },
@@ -79,8 +80,9 @@ async function listPage() {
   await flush()
   return {
     ...w,
-    async assignTo(names) {
-      const actions = w.vm.bulkActions(new Set(names), () => {})
+    reload,
+    async assignTo(names, unselectAll = () => {}) {
+      const actions = w.vm.bulkActions(new Set(names), unselectAll)
       actions.find((a) => a.label === 'Assign To').onClick()
       await flush()
     },
@@ -131,6 +133,41 @@ describe('bulk Assign To, twice in one list visit', () => {
       ['["LEAD-1"]', ['rep.a@example.com']],
       ['["LEAD-2"]', ['rep.a@example.com']],
     ])
+    page.unmount()
+  })
+
+  /* The modal closed itself before the assign answered, and a component
+     emits nothing once it is unmounted, so the page never heard: the rows
+     stayed selected for the next bulk action to hit, and the list unrefreshed. */
+  it('clears the selection and refreshes the list once assigned', async () => {
+    const page = await listPage()
+    const unselectAll = vi.fn()
+    S.held = []
+    await page.assignTo(['LEAD-1'], unselectAll)
+    await page.pick('rep.a@example.com')
+    await page.update()
+    S.held[0].resolve({})
+    await flush()
+
+    expect(unselectAll).toHaveBeenCalledTimes(1)
+    expect(page.reload).toHaveBeenCalledTimes(1)
+    page.unmount()
+  })
+
+  it('stays open until the assign answers, and keeps the selection if it fails', async () => {
+    const page = await listPage()
+    const unselectAll = vi.fn()
+    S.held = []
+    await page.assignTo(['LEAD-1'], unselectAll)
+    await page.pick('rep.a@example.com')
+    await page.update()
+    expect(unselectAll).not.toHaveBeenCalled()
+    await page.update() // a second click while it is on its way
+    expect(addMultiple()).toHaveLength(1)
+
+    S.held[0].reject(new Error('nope'))
+    await flush()
+    expect(unselectAll).not.toHaveBeenCalled()
     page.unmount()
   })
 
