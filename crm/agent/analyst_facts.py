@@ -478,17 +478,20 @@ _FALL_VERB = re.compile(
 	re.IGNORECASE,
 )
 _SUBJECT = r"(?:total )?(?:revenue|sales|the business)(?: from won deals)?"
-_AUXILIARY = r"(?: has| have| had| is| are| was| were)?(?: been)?"
+_AUXILIARY = r"(?: has| have| is| are)?(?: been)?"
 _FIGURE = r"(?:[a-z]{3} |r ?|\$)?\d[\d,]*(?:\.\d+)?(?: ?(?:million|m|billion|bn|thousand|k))?(?: [a-z]{3})?"
-# an adverb of manner, not of when: "grew early" says when
-_MANNER = r"(?: (?!early|initially|recently|lately|briefly|monthly|quarterly|yearly)\w+ly)?"
+# only adverbs that keep the claim about the whole window: "rose temporarily" does not
+_MANNER = r"(?: (?:steadily|strongly|sharply|significantly|nicely|consistently|slightly))?"
 _PLAIN_CLAIM = re.compile(
 	rf"(?:overall,? )?(?:{_SUBJECT}{_AUXILIARY} (?P<verb>\w+)|"
 	rf"we{_AUXILIARY} (?P<we>grew|grown|growing|shrank|shrunk|shrinking))"
-	rf"{_MANNER}(?: from {_FIGURE})?(?: to (?:a total of )?{_FIGURE})?(?: over the period)?\.?",
+	rf"{_MANNER}(?: to a total of {_FIGURE})?(?: over the period)?\.?",
 	re.IGNORECASE,
 )
-_WINDOW = (
+_WINDOW = r"(?: this year| this quarter| over the period)?"
+# a how-question only earns the computed line first; a "yes" to "over the last two
+# months" may be true of a series that is down overall, so that form is not judged
+_HOW_WINDOW = (
 	r"(?: this year| this quarter| over the period| over the (?:last|past) \w+ (?:months|quarters|years))?"
 )
 _ASKED_SUBJECT = rf"(?:{_SUBJECT}|we)(?: been)?"
@@ -497,7 +500,7 @@ _YES_NO_QUESTION = re.compile(
 	re.IGNORECASE,
 )
 _HOW_QUESTION = re.compile(
-	rf"how (?:did|has|have|is|are|was|were) {_ASKED_SUBJECT} (?P<verb>\w+){_WINDOW}\??", re.IGNORECASE
+	rf"how (?:did|has|have|is|are|was|were) {_ASKED_SUBJECT} (?P<verb>\w+){_HOW_WINDOW}\??", re.IGNORECASE
 )
 _AFFIRMS = re.compile(r"^\s*(?:yes|yep|correct|indeed)\b", re.IGNORECASE)
 # "no data before December 2025" names a covered month to say what is *not* covered

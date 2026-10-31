@@ -585,9 +585,6 @@ class TrendClaimTest(UnitTestCase):
 		"""Prod's sentence: the total was true, the verb was not."""
 		for text in (
 			"Revenue grew to a total of 42,198,807.",
-			"Revenue grew to 34,638,115.",
-			"Revenue grew from 16,103,594 to 34,638,115.",
-			"Revenue grew to R 34.6 million.",
 		):
 			with self.subTest(text=text):
 				reply = ground_at(text, FALLING)
@@ -614,6 +611,14 @@ class TrendClaimTest(UnitTestCase):
 			"Revenue rose early in the period, then cooled.",
 			"Revenue climbed to a peak, then eased.",
 			"Revenue increased at first.",
+			"Revenue rose to 16,103,594.",
+			"Revenue had grown to 16,103,594.",
+			"Revenue rose temporarily.",
+			"Revenue rose occasionally.",
+			"Sales rose seasonally.",
+			"Revenue grew mostly.",
+			"Revenue was rising.",
+			"Revenue had grown.",
 			"Revenue grew early.",
 			"Revenue grew recently.",
 			"Revenue grew to a peak.",
