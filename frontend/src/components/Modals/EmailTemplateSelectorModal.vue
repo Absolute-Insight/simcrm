@@ -16,7 +16,15 @@
             />
           </template>
         </TextInput>
-        <Button :label="__('Create')" icon-left="lucide-plus" @click="create" />
+        <!-- Creating one happens in Settings → Templates, which is shown to
+             administrators only: offered to anyone else, Create opened their
+             Profile with no word of why. -->
+        <Button
+          v-if="isAdmin()"
+          :label="__('Create')"
+          icon-left="lucide-plus"
+          @click="create"
+        />
       </div>
       <div
         v-if="filteredTemplates.length"
@@ -55,7 +63,15 @@
           <div class="text-lg text-ink-gray-4">
             {{ __('No Templates Found') }}
           </div>
-          <Button :label="__('Create New')" class="mt-4" @click="create" />
+          <Button
+            v-if="isAdmin()"
+            :label="__('Create New')"
+            class="mt-4"
+            @click="create"
+          />
+          <p v-else class="mt-2 text-p-sm text-ink-gray-5">
+            {{ __('An administrator can add templates in Settings.') }}
+          </p>
         </div>
       </div>
     </template>
@@ -64,6 +80,7 @@
 
 <script setup>
 import { showSettings, activeSettingsPage } from '@/composables/settings'
+import { usersStore } from '@/stores/users'
 import { useBroadcast } from '@/composables/useBroadcast'
 import { createListResource } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
@@ -75,6 +92,7 @@ const props = defineProps({
 })
 
 const show = defineModel({ type: Boolean })
+const { isAdmin } = usersStore()
 const searchInput = ref('')
 
 const emit = defineEmits(['apply'])
