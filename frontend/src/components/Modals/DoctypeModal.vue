@@ -94,7 +94,7 @@
           <Button
             variant="solid"
             :label="editMode ? __('Update') : __('Create')"
-            :loading="editMode ? document.save.loading : create.loading"
+            :loading="editMode ? document.save.loading : creating"
             @click="editMode ? update() : create()"
           />
         </div>
@@ -114,6 +114,7 @@ import { usersStore } from '@/stores/users'
 import { showQuickEntryModal, quickEntryProps } from '@/composables/modals'
 import { isMobileView } from '@/composables/settings'
 import { setupCustomizations, formatDate } from '@/utils'
+import { resetNewDocument } from '@/utils/newDocument'
 import { call, createResource, toast } from 'frappe-ui'
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
@@ -158,7 +159,7 @@ const editMode = computed(() => Boolean(document.doc?.name))
 const _create = createResource({
   url: 'frappe.client.insert',
   onSuccess: (d) => {
-    document.doc = {}
+    resetNewDocument(document, props.doctype)
     emit('afterInsert', d)
     show.value = false
   },
@@ -177,15 +178,27 @@ const _create = createResource({
   },
 })
 
-async function create() {
-  await triggerOnBeforeCreate?.()
+// Set before the first await, so a second click that lands while the Form
+// Script's onBeforeCreate or the insert is still running sends nothing.
+const creating = ref(false)
 
-  _create.submit({
-    doc: {
-      doctype: props.doctype,
-      ...document.doc,
-    },
-  })
+async function create() {
+  if (creating.value) return
+  creating.value = true
+  try {
+    await triggerOnBeforeCreate?.()
+    await _create
+      .submit({
+        doc: {
+          doctype: props.doctype,
+          ...document.doc,
+        },
+      })
+      // _create's onError has already shown the failure
+      .catch(() => {})
+  } finally {
+    creating.value = false
+  }
 }
 
 function update() {
@@ -230,6 +243,10 @@ watch(
 )
 
 onMounted(async () => {
+  // Create mode shares one buffer per doctype for the session, so it still
+  // holds whatever a form closed unsaved left in it -- such as the deal a
+  // New Task was opened from. Start from an empty record.
+  if (!props.docname) resetNewDocument(document, props.doctype)
   document.doc = {
     ...document.doc,
     ...props.defaults,

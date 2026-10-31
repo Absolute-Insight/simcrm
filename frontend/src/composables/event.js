@@ -236,13 +236,22 @@ export function computeAutoToTime(fromTime) {
   return `${String(nh).padStart(2, '0')}:${String(nm).padStart(2, '0')}`
 }
 
-export function validateTimeRange({ fromDate, fromTime, toTime, isFullDay }) {
+// `toDate` is the date the event ends on, when the caller saves one that can
+// differ from `fromDate` (an event that runs past midnight); without it the end
+// is taken to fall on the start date.
+export function validateTimeRange({
+  fromDate,
+  toDate,
+  fromTime,
+  toTime,
+  isFullDay,
+}) {
   if (isFullDay) return { valid: true, error: null }
   if (!fromTime || !toTime) {
     return { valid: false, error: __('Start & End Time Are Required') }
   }
   const start = dayjs(fromDate + ' ' + fromTime)
-  const end = dayjs(fromDate + ' ' + toTime)
+  const end = dayjs((toDate || fromDate) + ' ' + toTime)
   if (!start.isValid() || !end.isValid()) {
     return { valid: false, error: __('Invalid Start Or End Time') }
   }

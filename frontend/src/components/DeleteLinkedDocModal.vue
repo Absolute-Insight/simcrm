@@ -98,7 +98,7 @@
             variant="solid"
             icon-left="lucide-trash-2"
             :label="__('Delete')"
-            :loading="isDealCreating"
+            :loading="deleting"
             theme="red"
             @click="deleteDoc()"
           />
@@ -140,6 +140,7 @@
 <script setup>
 import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
 import { describeError } from '@/utils/describeError'
+import { reportActionError } from '@/utils/reportActionError'
 import {
   markDocumentAsDeleted,
   unmarkDocumentAsDeleted,
@@ -285,7 +286,13 @@ const removeDocLinks = () => {
   viewControls.value.updateSelections([])
 }
 
+// Guards re-entry: a second click used to send a second delete, whose
+// failure cleared the deletion marker the first one still needed.
+const deleting = ref(false)
+
 const deleteDoc = async () => {
+  if (deleting.value) return
+  deleting.value = true
   // Mark before the request starts: the backend's delete_doc fires a realtime
   // doc_update that can reach the still-mounted document resource before this
   // awaited call resolves here.
@@ -297,7 +304,12 @@ const deleteDoc = async () => {
     })
   } catch (err) {
     unmarkDocumentAsDeleted(props.doctype, props.docname)
-    throw err
+    // `call` never toasts, so a refusal (a LinkExistsError on a linked row
+    // the user cannot read) used to fail with nothing on screen.
+    reportActionError(err, __('Could not delete.'))
+    return
+  } finally {
+    deleting.value = false
   }
   expireDeletionMarker(props.doctype, props.docname)
   router.push({ name: props.name })
