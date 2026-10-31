@@ -238,6 +238,9 @@ doc_events = {
 	"Contact": {
 		"validate": ["crm.api.contact.validate"],
 	},
+	"Event": {
+		"validate": ["crm.permissions.customers.validate_event_participants"],
+	},
 	"Notification Log": {
 		"before_insert": ["crm.extends.notification_log.before_insert"],
 	},

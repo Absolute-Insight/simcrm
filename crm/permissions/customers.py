@@ -109,27 +109,21 @@ def _hidden_organizations(org_cond, column="name"):
 	return frappe.qb.from_(Org).select(Org[column]).where(Org[column].isnotnull()).where(~org_cond)
 
 
-def visible_contact_condition(user: str | None = None):
+def visible_contact_condition(user: str | None = None, for_write: bool = False):
 	"""Contacts at a customer the user cannot see are hidden with it.
 
 	``company_name`` is free text, so it is matched on the display name as well as
 	the docname, which differ for a customer named after its code. A contact whose
 	company names no organization stays visible, as does one the user created or
-	one on a deal they can read.
+	one on a deal they can read. ``for_write`` holds the contact to the customer
+	being theirs, as for the customer itself: a deal there gives read only.
 	"""
 	user = user or frappe.session.user
-	org_cond = visible_organization_condition(user)
+	org_cond = visible_organization_condition(user, for_write)
 	if org_cond is None:
 		return None
 	Contact = frappe.qb.DocType("Contact")
-	Row = frappe.qb.DocType("CRM Contacts").as_("_cust_row")
-	Deal = frappe.qb.DocType("CRM Deal")
-	on_my_deal = (
-		frappe.qb.from_(Row)
-		.select(Row.contact)
-		.where((Row.parenttype == "CRM Deal") & Row.parent.isin(_readable_deals(user, Deal.name)))
-	)
-	return (
+	cond = (
 		(Contact.owner == user)
 		| Contact.company_name.isnull()
 		| (Contact.company_name == "")
@@ -137,14 +131,29 @@ def visible_contact_condition(user: str | None = None):
 			Contact.company_name.notin(_hidden_organizations(org_cond))
 			& Contact.company_name.notin(_hidden_organizations(org_cond, "organization_name"))
 		)
-		| Contact.name.isin(on_my_deal)
 	)
+	if for_write:
+		return cond
+	Row = frappe.qb.DocType("CRM Contacts").as_("_cust_row")
+	Deal = frappe.qb.DocType("CRM Deal")
+	on_my_deal = (
+		frappe.qb.from_(Row)
+		.select(Row.contact)
+		# isnotnull: this is negated for events, and one blank row in a NOT over an IN
+		# would make every contact look visible there
+		.where(
+			Row.contact.isnotnull()
+			& (Row.parenttype == "CRM Deal")
+			& Row.parent.isin(_readable_deals(user, Deal.name))
+		)
+	)
+	return cond | Contact.name.isin(on_my_deal)
 
 
-def visible_address_condition(user: str | None = None):
+def visible_address_condition(user: str | None = None, for_write: bool = False):
 	"""An address names its customer, and the import titles it with the name."""
 	user = user or frappe.session.user
-	org_cond = visible_organization_condition(user)
+	org_cond = visible_organization_condition(user, for_write)
 	if org_cond is None:
 		return None
 	Address = frappe.qb.DocType("Address")
@@ -164,34 +173,49 @@ def visible_address_condition(user: str | None = None):
 
 
 def visible_event_condition(user: str | None = None):
-	"""Calendar events are Public by default, and their participants name the
-	customer and the people at it. A rep keeps their own, and those they attend."""
+	"""Calendar events are Public by default, and they name the customer: by a
+	participant, or by the record they were added from, which is where a subject and
+	a location come along. A rep keeps their own, and those they attend."""
 	user = user or frappe.session.user
 	org_cond = visible_organization_condition(user)
 	if org_cond is None:
 		return None
 	Event = frappe.qb.DocType("Event")
 	Part = frappe.qb.DocType("Event Participants").as_("_cust_part")
+	Other = frappe.qb.DocType("Event").as_("_cust_event")
 	Contact = frappe.qb.DocType("Contact")
+	Deal = frappe.qb.DocType("CRM Deal")
+	hidden_orgs = _hidden_organizations(org_cond)
 	hidden_contacts = frappe.qb.from_(Contact).select(Contact.name).where(~visible_contact_condition(user))
-	at_hidden = (
+	deals_there = frappe.qb.from_(Deal).select(Deal.name).where(Deal.organization.isin(hidden_orgs))
+
+	def names_hidden(doctype_field, name_field):
+		return ((doctype_field == "CRM Organization") & name_field.isin(hidden_orgs)) | (
+			(doctype_field == "Contact") & name_field.isin(hidden_contacts)
+		)
+
+	by_participant = (
 		frappe.qb.from_(Part)
 		.select(Part.parent)
+		.where((Part.parenttype == "Event") & names_hidden(Part.reference_doctype, Part.reference_docname))
+	)
+	# a subquery, not a bare NOT: most events have no reference, and NOT NULL is NULL
+	by_reference = (
+		frappe.qb.from_(Other)
+		.select(Other.name)
 		.where(
-			(Part.parenttype == "Event")
-			& (
-				(
-					(Part.reference_doctype == "CRM Organization")
-					& Part.reference_docname.isin(_hidden_organizations(org_cond))
-				)
-				| ((Part.reference_doctype == "Contact") & Part.reference_docname.isin(hidden_contacts))
-			)
+			names_hidden(Other.reference_doctype, Other.reference_docname)
+			| ((Other.reference_doctype == "CRM Deal") & Other.reference_docname.isin(deals_there))
 		)
 	)
 	attending = (
 		frappe.qb.from_(Part).select(Part.parent).where((Part.parenttype == "Event") & (Part.email == user))
 	)
-	return (Event.owner == user) | Event.name.notin(at_hidden) | Event.name.isin(attending)
+	return (
+		(Event.owner == user)
+		| (Event.name.notin(by_participant) & Event.name.notin(by_reference))
+		| Event.name.isin(attending)
+	)
 
 
 def _sql(cond) -> str:
@@ -226,19 +250,23 @@ def has_organization_permission(doc, ptype=None, user=None, debug=False):
 	return True if cond is None else _row_visible("CRM Organization", doc.name, cond)
 
 
-def _has_row_permission(doc, ptype, doctype, condition, user) -> bool:
+def _has_row_permission(doc, ptype, doctype, condition, user, **kwargs) -> bool:
 	if ptype == "create" or not doc.name or doc.is_new():
 		return True
-	cond = condition(user)
+	cond = condition(user, **kwargs)
 	return True if cond is None else _row_visible(doctype, doc.name, cond)
 
 
 def has_contact_permission(doc, ptype=None, user=None, debug=False):
-	return _has_row_permission(doc, ptype, "Contact", visible_contact_condition, user)
+	return _has_row_permission(
+		doc, ptype, "Contact", visible_contact_condition, user, for_write=ptype not in READ_PTYPES
+	)
 
 
 def has_address_permission(doc, ptype=None, user=None, debug=False):
-	return _has_row_permission(doc, ptype, "Address", visible_address_condition, user)
+	return _has_row_permission(
+		doc, ptype, "Address", visible_address_condition, user, for_write=ptype not in READ_PTYPES
+	)
 
 
 def has_event_permission(doc, ptype=None, user=None, debug=False):
@@ -284,6 +312,29 @@ def assert_contact_allowed(contact: str | None, user: str | None = None) -> None
 		_("This contact is at another rep's customer. Ask a manager to reassign it to you."),
 		frappe.PermissionError,
 	)
+
+
+def validate_event_participants(doc, method=None) -> None:
+	"""An Event's save fills a participant's email in with no permission check, so
+	naming a hidden contact, or a hidden customer's default one, was a way to read it.
+	Only rows that are new here are checked: an old event stays editable after its
+	customer moves. Server code that books on a rep's behalf is trusted, as it is
+	past a higher permlevel."""
+	if doc.flags.ignore_permissions or not scope_applies():
+		return
+	before = doc.get_doc_before_save()
+	stored = (
+		{(row.reference_doctype, row.reference_docname) for row in before.event_participants}
+		if before
+		else set()
+	)
+	for row in doc.event_participants:
+		if (row.reference_doctype, row.reference_docname) in stored:
+			continue
+		if row.reference_doctype == "Contact":
+			assert_contact_allowed(row.reference_docname)
+		elif row.reference_doctype == "CRM Organization":
+			assert_customer_allowed(row.reference_docname)
 
 
 def is_manager(user: str | None = None) -> bool:

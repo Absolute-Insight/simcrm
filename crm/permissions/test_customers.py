@@ -306,6 +306,91 @@ class TestCustomerScope(IntegrationTestCase):
 		self.assertNotIn(at_b, listed)
 		self.assertIn(at_a, listed)
 
+	def _event(self, owner, **fields):
+		doc = frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "Site visit",
+				"starts_on": frappe.utils.now_datetime(),
+				"event_type": "Public",
+				**fields,
+			}
+		)
+		doc.flags.ignore_permissions = True
+		doc.insert()
+		frappe.db.set_value("Event", doc.name, "owner", owner)
+		return doc.name
+
+	def events_for(self, user):
+		frappe.set_user(user)
+		try:
+			return set(frappe.get_list("Event", pluck="name", limit_page_length=0))
+		finally:
+			frappe.set_user("Administrator")
+
+	def test_saving_a_deal_contact_row_on_its_own_is_refused(self):
+		"""A row saved directly skips the deal's validate, and the response carries
+		the fetched name, email and mobile."""
+		hidden = self._contact(self.org_b)
+		deal = self.deal(self.org_a, REP_A)
+		frappe.set_user(REP_A)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.get_doc(
+				{
+					"doctype": "CRM Contacts",
+					"parent": deal,
+					"parenttype": "CRM Deal",
+					"parentfield": "contacts",
+					"contact": hidden.name,
+				}
+			).insert()
+
+	def test_a_rep_cannot_read_a_hidden_contact_through_an_event(self):
+		"""An Event's save fills a participant's email in unchecked."""
+		for doctype, name in (("Contact", self._contact(self.org_b).name), ("CRM Organization", self.org_b)):
+			with self.subTest(doctype=doctype):
+				frappe.set_user(REP_A)
+				with self.assertRaises(frappe.PermissionError):
+					frappe.get_doc(
+						{
+							"doctype": "Event",
+							"subject": "Peek",
+							"starts_on": frappe.utils.now_datetime(),
+							"event_participants": [{"reference_doctype": doctype, "reference_docname": name}],
+						}
+					).insert()
+				frappe.set_user("Administrator")
+
+	def test_a_deal_at_a_customer_gives_read_on_its_contacts_and_addresses_only(self):
+		contact = self._contact(self.org_shared)
+		self.assertTrue(has_contact_permission(contact, "read", REP_A))
+		for ptype in ("write", "share", "delete"):
+			with self.subTest(ptype=ptype):
+				self.assertFalse(has_contact_permission(contact, ptype, REP_A))
+		self.assertTrue(has_contact_permission(self._contact(self.org_a), "write", REP_A))
+
+	def test_a_blank_contact_row_does_not_unhide_the_events_contacts(self):
+		"""One NULL in the NOT over an IN would make every contact look visible."""
+		hidden = self._contact(self.org_b)
+		event = self._event(
+			REP_B, event_participants=[{"reference_doctype": "Contact", "reference_docname": hidden.name}]
+		)
+		self.assertNotIn(event, self.events_for(REP_A))
+		doc = frappe.get_doc("CRM Deal", self.deal(self.org_a, REP_A))
+		doc.append("contacts", {"contact": None})
+		doc.save(ignore_permissions=True)
+		self.assertNotIn(event, self.events_for(REP_A))
+
+	def test_an_event_added_from_a_hidden_customers_deal_is_hidden_too(self):
+		deal = self.deal(self.org_b, REP_B)
+		from_deal = self._event(REP_B, reference_doctype="CRM Deal", reference_docname=deal)
+		on_org = self._event(REP_B, reference_doctype="CRM Organization", reference_docname=self.org_b)
+		plain = self._event(REP_B)
+		seen = self.events_for(REP_A)
+		self.assertNotIn(from_deal, seen)
+		self.assertNotIn(on_org, seen)
+		self.assertIn(plain, seen, "an event naming no customer stays public")
+
 	# --- reading a customer is not holding it ---------------------------------
 
 	def test_a_deal_at_a_customer_lets_a_rep_read_it_but_not_edit_or_share_it(self):
@@ -326,12 +411,12 @@ class TestCustomerScope(IntegrationTestCase):
 	# --- managers and the switch ---------------------------------------------
 
 	def _in_tree_manager(self):
-		manager = frappe.get_doc(
-			{"doctype": "CRM Sales Hierarchy", "user": MANAGER, "is_group": 1}
-		).insert(ignore_permissions=True)
-		frappe.get_doc(
-			{"doctype": "CRM Sales Hierarchy", "user": REP_A, "reports_to": manager.name}
-		).insert(ignore_permissions=True)
+		manager = frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": MANAGER, "is_group": 1}).insert(
+			ignore_permissions=True
+		)
+		frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": REP_A, "reports_to": manager.name}).insert(
+			ignore_permissions=True
+		)
 		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
 
 	def test_a_team_manager_can_only_move_a_customer_within_the_team(self):
@@ -350,6 +435,12 @@ class TestCustomerScope(IntegrationTestCase):
 		doc.account_owner = REP_A
 		with self.assertRaises(frappe.PermissionError):
 			doc.save()
+
+	def test_a_manager_scoped_to_their_own_records_sees_what_a_rep_sees(self):
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		seen = self.visible_to(MANAGER)
+		self.assertIn(self.org_free, seen)
+		self.assertNotIn(self.org_b, seen)
 
 	def test_a_guest_is_not_narrowed(self):
 		from crm.permissions.customers import scope_applies
