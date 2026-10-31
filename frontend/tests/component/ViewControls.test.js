@@ -39,7 +39,7 @@ vi.mock('@/stores/views', () => ({
   viewsStore: () => ({
     reload: () => Promise.resolve(),
     getDefaultView: () => null,
-    getView: (view) => (view ? vc.views[view] : null),
+    getView: (view) => (view ? vc.views[view] : vc.standard ?? null),
   }),
 }))
 vi.mock('@/stores/users', () => ({
@@ -95,6 +95,7 @@ for (const child of [
 
 const { setConfig } = await import('frappe-ui')
 const { default: ViewControls } = await import('@/components/ViewControls.vue')
+const { markListRewritten } = await import('@/utils/listPaging')
 
 // Resolves after a macrotask, like a network round-trip.
 const later = (value, ms = 1) =>
@@ -132,6 +133,7 @@ setConfig('resourceFetcher', (options) => {
 beforeEach(() => {
   Object.assign(vc, {
     views: {},
+    standard: null,
     fetches: [],
     calls: [],
     children: {},
@@ -208,6 +210,14 @@ const Dialog = defineComponent({
           ])
         : null,
 })
+
+function savedStandard(filters) {
+  vc.standard = {
+    name: 'standard',
+    filters: JSON.stringify(filters),
+    is_standard: 1,
+  }
+}
 
 async function mountVC({
   doctype = 'CRM Lead',
@@ -376,6 +386,35 @@ describe('coming back to a saved view with an unsaved change', () => {
     expect(vc.fetches.at(-1).filters).toEqual({
       lead_name: ['LIKE', '%smith%'],
     })
+  })
+})
+
+describe('a list reached through a dashboard tile', () => {
+  it('does not reuse the list held under other default filters', async () => {
+    setRoute({})
+    const normal = await mountVC({ filters: { converted: 0 } })
+    expect(normal.list().params.default_filters).toEqual({ converted: 0 })
+    normal.unmount()
+    const drilled = await mountVC({ filters: {} })
+    expect(vc.fetches.at(-1).default_filters).toEqual({})
+    expect(drilled.list().params.default_filters).toEqual({})
+  })
+
+  // ViewControls keeps a cached list's params as an unsaved change. A tile
+  // rewrites the saved view while no list is mounted, so the second drill-down
+  // opened on the first one's period under a Save Changes nobody had earned.
+  it('opens on the filters the tile just wrote, not the last ones', async () => {
+    setRoute({})
+    savedStandard({ creation: ['between', ['2026-07-01', '2026-07-31']] })
+    const first = await mountVC({ doctype: 'CRM Deal', filters: { a: 1 } })
+    first.unmount()
+
+    const second = { creation: ['between', ['2026-08-01', '2026-08-31']] }
+    savedStandard(second)
+    markListRewritten('CRM Deal')
+    const back = await mountVC({ doctype: 'CRM Deal', filters: { a: 1 } })
+    expect(vc.fetches.at(-1).filters).toEqual(second)
+    expect(back.button('Save Changes')).toBeNull()
   })
 })
 

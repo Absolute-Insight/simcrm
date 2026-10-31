@@ -14,3 +14,18 @@ export function nextPageLength(current, step, max) {
   if (length >= limit) return null
   return Math.min(length + (Number(step) || 0), limit)
 }
+
+/* Lists whose saved filters were rewritten while no list was on screen.
+   ViewControls reads cached params that differ from the saved view as an
+   unsaved change and keeps them; for a rewrite that is exactly wrong. */
+const rewrittenLists = new Set()
+
+/** The next list opened for `doctype` starts from its saved view. */
+export function markListRewritten(doctype) {
+  rewrittenLists.add(doctype)
+}
+
+/** Whether `doctype`'s list was rewritten since one last opened. Reading clears it. */
+export function takeListRewritten(doctype) {
+  return rewrittenLists.delete(doctype)
+}

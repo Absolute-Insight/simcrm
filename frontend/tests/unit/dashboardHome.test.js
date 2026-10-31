@@ -6,6 +6,8 @@ import {
   applyPanelPreference,
   deltaTone,
   drilldownFor,
+  leadsDefaultFilters,
+  showsConvertedLeads,
   groupRisksByRecord,
   isOpenStatusType,
   mondayOf,
@@ -323,13 +325,23 @@ describe('drilldownFor', () => {
     })
   })
 
-  // The Leads list itself always adds converted = 0 (Leads.vue default
-  // filters), so the drill can only ever show the unconverted ones.
-  it('filters leads to the unconverted ones created in the period', () => {
-    expect(drilldownFor('total_leads', context).filters).toMatchObject({
-      converted: 0,
+  /* L-64: the tile counts every lead created in the period, so its list has to
+     be those leads, converted ones included. */
+  it('sends total leads to every lead created in the period', () => {
+    const out = drilldownFor('total_leads', context)
+    expect(out.filters).toEqual({
       creation: ['between', ['2026-07-01', '2026-07-31']],
     })
+    expect(leadsDefaultFilters(out.query)).toEqual({})
+  })
+
+  it('keeps hiding converted leads on the list the tile does not open', () => {
+    expect(leadsDefaultFilters({})).toEqual({ converted: 0 })
+    expect(leadsDefaultFilters({ view: 'x' })).toEqual({ converted: 0 })
+    expect(showsConvertedLeads({})).toBe(false)
+    expect(
+      showsConvertedLeads(drilldownFor('total_leads', context).query),
+    ).toBe(true)
   })
 
   /* The tiles narrow to a chosen territory; their lists used to list every

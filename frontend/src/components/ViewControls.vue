@@ -393,7 +393,7 @@ import Draggable from 'vuedraggable'
 import isEqual from 'lodash/isEqual'
 import { PhTrayArrowDown as ImportIcon } from '@phosphor-icons/vue'
 import { reportActionError } from '@/utils/reportActionError'
-import { nextPageLength } from '@/utils/listPaging'
+import { nextPageLength, takeListRewritten } from '@/utils/listPaging'
 import { collectClosingValues, needsClosingNote } from '@/utils/taskClosing'
 
 const props = defineProps({
@@ -578,7 +578,14 @@ function getParams() {
 const resource = createResource({
   url: 'crm.api.doc.get_data',
   params: getParams(),
-  cache: [props.doctype, route.query.view, route.params.viewType],
+  // The default filters are part of what this list is: a page can open it
+  // under different ones, and the two must not share rows or params.
+  cache: [
+    props.doctype,
+    route.query.view,
+    route.params.viewType,
+    JSON.stringify(props.filters),
+  ],
   auto: true,
   onSuccess(data) {
     let cv = getView(route.query.view, route.params.viewType, props.doctype)
@@ -632,8 +639,16 @@ const dirtySignature = (p) =>
     parseFields(p.kanban_fields) || [],
   ])
 const initialParams = getParams()
+const rewritten = takeListRewritten(props.doctype)
 if (!resource.params) {
   resource.params = initialParams
+} else if (rewritten) {
+  // A dashboard tile replaced the saved filters: what the cache holds is the
+  // previous set, not somebody's unsaved change.
+  resource.params = initialParams
+  defaultParams.value = initialParams
+  resource.abort?.()
+  resource.reload()
 } else {
   // The cached resource's onSuccess belongs to the instance that created it,
   // so it never sets this one's defaultParams: seed them from what is on

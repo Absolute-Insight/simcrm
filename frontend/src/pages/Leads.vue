@@ -23,10 +23,20 @@
     v-model:resizeColumn="triggerResize"
     v-model:updatedPageCount="updatedPageCount"
     doctype="CRM Lead"
-    :filters="{ converted: 0 }"
+    :filters="leadsDefaultFilters(route.query)"
     :options="{
       allowedViews: ['list', 'group_by', 'kanban'],
     }"
+  />
+  <DrillNotice
+    v-if="showsConvertedLeads(route.query)"
+    :message="
+      __(
+        'Showing every lead created in the dashboard period, including converted ones.',
+      )
+    "
+    :action-label="__('Back to active leads')"
+    @clear="backToActiveLeads"
   />
   <!-- Loading and failure had no branch at all: the chain went straight from
        "has data" to EmptyState, so a list still fetching and a list whose
@@ -288,6 +298,8 @@ import ToneBadge from '@/components/ui/ToneBadge.vue'
 import KanbanActivityCounts from '@/components/Kanban/KanbanActivityCounts.vue'
 import LeadModal from '@/components/Modals/LeadModal.vue'
 import ViewControls from '@/components/ViewControls.vue'
+import DrillNotice from '@/components/DrillNotice.vue'
+import { useDrilldown } from '@/components/Dashboard/drilldown'
 import { useDoctypeModal } from '@/composables/doctypeModal'
 import { getMeta } from '@/stores/meta'
 import { globalStore } from '@/stores/global'
@@ -296,6 +308,7 @@ import { statusesStore } from '@/stores/statuses'
 import { callEnabled } from '@/composables/telephony'
 import { useBroadcast } from '@/composables/useBroadcast'
 import { formatDate, timeAgo, website, formatTime } from '@/utils'
+import { leadsDefaultFilters, showsConvertedLeads } from '@/utils/dashboardHome'
 import { timestampCell } from '@/composables/useTimelinePreferences'
 import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
 import { useTelemetry } from '@framework/ui/telemetry'
@@ -314,6 +327,12 @@ const { capture } = useTelemetry()
 const { showModal } = useDoctypeModal()
 
 const route = useRoute()
+const { openList } = useDrilldown()
+
+// The tile's period goes with it: the normal list is the whole list.
+function backToActiveLeads() {
+  openList({ doctype: 'CRM Lead', routeName: 'Leads', filters: {} })
+}
 
 function getRoute(name) {
   return {

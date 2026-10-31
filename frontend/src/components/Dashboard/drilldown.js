@@ -22,6 +22,7 @@ import {
   standardViewPayload,
 } from '@/utils/dashboardHome'
 import { describeError } from '@/utils/describeError'
+import { markListRewritten } from '@/utils/listPaging'
 import { call, toast } from 'frappe-ui'
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
@@ -47,7 +48,7 @@ export function useDrilldown() {
   )
 
   /** Navigate to `doctype`'s list showing exactly `filters`. */
-  async function openList({ doctype, routeName, filters }) {
+  async function openList({ doctype, routeName, filters, query = {} }) {
     try {
       await call(STANDARD_VIEW_ENDPOINT, {
         view: standardViewPayload(views.getView(null, 'list', doctype), {
@@ -58,13 +59,14 @@ export function useDrilldown() {
       // ViewControls reads the store, not the server, when it mounts — without
       // this the list would open on the filter set from the *previous* visit.
       await views.reload()
+      markListRewritten(doctype)
     } catch (error) {
       toast.error(
         describeError(error).message || __('Could not open that list'),
       )
       return
     }
-    router.push({ name: routeName, params: { viewType: 'list' } })
+    router.push({ name: routeName, params: { viewType: 'list' }, query })
   }
 
   /**
@@ -102,5 +104,5 @@ export function useDrilldown() {
     )
   }
 
-  return { drillInto, canDrillInto, openStatuses, wonStatuses }
+  return { drillInto, canDrillInto, openList, openStatuses, wonStatuses }
 }
