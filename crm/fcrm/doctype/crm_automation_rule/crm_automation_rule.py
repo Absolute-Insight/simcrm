@@ -7,6 +7,8 @@ from frappe.model.document import Document
 
 from crm.automation import render_rule_template
 
+STATUS_DOCTYPES = {"CRM Lead": "CRM Lead Status", "CRM Deal": "CRM Deal Status"}
+
 
 class CRMAutomationRule(Document):
 	# begin: auto-generated types
@@ -37,6 +39,7 @@ class CRMAutomationRule(Document):
 	def validate(self):
 		if self.document_type not in self.SUPPORTED_DOCTYPES:
 			frappe.throw(_("Automation rules support {0} only.").format(", ".join(self.SUPPORTED_DOCTYPES)))
+		self.validate_to_status()
 		if self.condition:
 			# surface syntax errors at save time, not at run time
 			try:
@@ -47,6 +50,40 @@ class CRMAutomationRule(Document):
 				# evaluation errors against the empty doc are fine; syntax is what we check
 				pass
 		self.validate_templates()
+
+	def validate_to_status(self):
+		"""The status filter belongs to a Status Changed rule of this doctype.
+
+		The engine applies ``to_status`` whatever the trigger, while the editor and
+		the desk form show the field only for Status Changed. A value left there
+		when the author switched to Created became a hidden filter -- the rule fired
+		only for records created in that status -- and one left there across a
+		switch of document type named a status the record can never have, so the
+		rule never fired at all. Neither says anything at save.
+
+		Only a status the author is choosing is checked. A saved rule whose status
+		was later renamed or deleted (``to_status`` is Data, nothing follows it), or
+		one saved before this check, must still be pausable from the list switch.
+		"""
+		if self.trigger != "Status Changed":
+			self.to_status = None
+			return
+		if not self.to_status:
+			return
+		if not (
+			self.is_new()
+			or self.has_value_changed("to_status")
+			or self.has_value_changed("document_type")
+			or self.has_value_changed("trigger")
+		):
+			return
+		if not frappe.db.exists(STATUS_DOCTYPES[self.document_type], self.to_status):
+			message = (
+				_("{0} is not a lead status.")
+				if self.document_type == "CRM Lead"
+				else _("{0} is not a deal status.")
+			)
+			frappe.throw(message.format(self.to_status))
 
 	def after_rename(self, old_name, new_name, merge=False):
 		"""Carry the rule's dedupe keys across a rename.
