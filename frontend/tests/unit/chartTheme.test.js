@@ -46,12 +46,13 @@ describe('applyLuxChartTheme', () => {
     expect(applyLuxChartTheme(config, true)).toBe(config)
   })
 
-  it('applies one brand series to both themes so colors follow the entity', () => {
+  it('gives each theme its own eight-colour series', () => {
     const config = { title: 'Sources', data: [] }
     const dark = applyLuxChartTheme(config, true)
     const light = applyLuxChartTheme(config, false)
     expect(dark.colors).toHaveLength(8)
-    expect(light.colors).toEqual(dark.colors)
+    expect(light.colors).toHaveLength(8)
+    expect(light.colors.slice(0, 2)).toEqual(['#2f7ab8', '#d0625a'])
   })
 
   it('anchors the palette on the validated brand set', () => {
