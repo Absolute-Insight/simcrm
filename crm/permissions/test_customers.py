@@ -402,8 +402,11 @@ class TestCustomerScope(IntegrationTestCase):
 		doc.update({"_action": "x"})
 		self.assertNotEqual(doc.get("_action"), "x")
 
-	def test_the_action_is_reserved_on_every_request(self):
-		self.assertIn("crm.permissions.document_guard.reserve_action", frappe.get_hooks("before_request"))
+	def test_the_action_is_reserved_in_every_process(self):
+		"""Web and worker both: frappe's bulk routes apply client dicts in a job, and
+		a worker never runs before_request."""
+		for hook in ("before_request", "before_job"):
+			self.assertIn("crm.permissions.document_guard.reserve_action", frappe.get_hooks(hook))
 
 	def test_frappes_event_digest_is_stopped(self):
 		from crm.permissions.customers import stop_frappe_event_digest

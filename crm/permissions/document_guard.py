@@ -11,9 +11,11 @@ swallows the exception and commits. So it never reaches the document: both
 ``BaseDocument.update`` and ``set`` read this set at call time and drop what is in
 it, and frappe itself only ever assigns the attribute.
 
-Runs as ``before_request`` rather than at import, because hooks are served from
-cache and ``hooks.py`` is not imported in every worker. Client input only arrives
-in a request. Remove this once the frappe pin reserves ``_action``.
+Runs as ``before_request`` and ``before_job`` rather than at import, because hooks
+are served from cache and ``hooks.py`` is not imported in every process. Both,
+because client data reaches workers too: frappe's bulk routes enqueue a large
+request and apply it to documents there, as the user who sent it. Remove this once
+the frappe pin reserves ``_action``.
 """
 
 from frappe.model import base_document

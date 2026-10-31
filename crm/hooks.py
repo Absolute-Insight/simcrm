@@ -421,7 +421,7 @@ before_request = ["crm.permissions.document_guard.reserve_action"]
 
 # Job Events
 # ----------
-# before_job = ["crm.utils.before_job"]
+before_job = ["crm.permissions.document_guard.reserve_action"]
 # after_job = ["crm.utils.after_job"]
 
 # User Data Protection
