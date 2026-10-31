@@ -194,6 +194,16 @@ class FallbackPlanTest(UnitTestCase):
 			"Who is the top competitor?",
 			"Which lead source performs best for the team?",
 			"What was the best month for the team?",
+			"Who do we sell the most to?",
+			"Who did we sell the most to?",
+			"Who did we close the most deals with?",
+			"Who have we won the most business from?",
+			"Who sold us the most?",
+			"Who are the customers we sold the most to?",
+			"Who is our best partner?",
+			"Who is our top distributor?",
+			"Who is the top reseller?",
+			"Which dealers sold the most for the team?",
 		):
 			with self.subTest(question=question):
 				self.assertFalse(analyst.ranks_reps(question))
@@ -206,6 +216,8 @@ class FallbackPlanTest(UnitTestCase):
 			"Rank deals by rep",
 			"Who are the best reps for our largest customers?",
 			"Who were our best people this month?",
+			"Who has sold the most?",
+			"Who won the most business?",
 		):
 			with self.subTest(question=question):
 				self.assertTrue(analyst.ranks_reps(question))

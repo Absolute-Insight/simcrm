@@ -463,58 +463,43 @@ _WORST = re.compile(r"\b(?:lowest|worst|weakest|slowest|smallest)\b", re.IGNOREC
 _CHANGE = re.compile(
 	r"%|\b(?:decrease|decline|drop|dropped|fell|fall|collapse|plunge)\b|(?<!break )\bdown\b", re.IGNORECASE
 )
-# What a rise or a fall is claimed in. Nouns only where they cannot be a table's name:
-# "the growth rates are below" says nothing about which way anything went.
-_RISES = (
-	r"grew|grow|grows|grown|growing|rose|rise|rises|risen|rising|increas(?:e|es|ed|ing)|"
-	r"climb(?:s|ed|ing)?|improv(?:e|es|ed|ing)|gain(?:s|ed|ing)?|surg(?:e|es|ed|ing)|"
-	r"jump(?:s|ed|ing)?|soar(?:s|ed|ing)?|expand(?:s|ed|ing)?|upward|went up|trending up|"
-	r"(?:strong|steady|solid|positive|healthy|significant|continued|good|this|that) growth"
+# The direction check reads an allow-list, not a deny-list: replacing a true sentence
+# is worse than missing a false one, and a sentence has too many ways of being about
+# something else. Whatever does not fully match these shapes is left alone.
+_RISE_VERB = re.compile(
+	r"grow|grows|grown|growing|grew|rise|rises|risen|rising|rose|"
+	r"increas(?:e|es|ed|ing)|climb(?:s|ed|ing)?|improv(?:e|es|ed|ing)",
+	re.IGNORECASE,
 )
-_FALLS = (
-	r"fell|fall|falls|fallen|falling|drop(?:s|ped|ping)?|declin(?:e|es|ed|ing)|"
+_FALL_VERB = re.compile(
+	r"fall|falls|fallen|falling|fell|drop(?:s|ped|ping)?|declin(?:e|es|ed|ing)|"
 	r"decreas(?:e|es|ed|ing)|shrink|shrinks|shrinking|shrank|shrunk|slump(?:s|ed|ing)?|"
-	r"slide|slides|slid|sliding|sink|sinks|sinking|sank|collaps(?:e|es|ed|ing)|"
-	r"plung(?:e|es|ed|ing)|tumbl(?:e|es|ed|ing)|weaken(?:s|ed|ing)?|downward|went down|trending down"
+	r"slid|sliding|collaps(?:e|es|ed|ing)|plung(?:e|es|ed|ing)",
+	re.IGNORECASE,
 )
-_RISE_CLAIM = re.compile(rf"\b(?:{_RISES})\b", re.IGNORECASE)
-_FALL_CLAIM = re.compile(rf"\b(?:{_FALLS})\b", re.IGNORECASE)
-_DENIED = re.compile(r"\b(?:not|never|no|without|neither|nor|failed|stopped)\b|n't", re.IGNORECASE)
+_SUBJECT = r"(?:total )?(?:revenue|sales|the business)(?: from won deals)?"
+_AUXILIARY = r"(?: has| have| had| is| are| was| were)?(?: been)?"
+_FIGURE = r"(?:[a-z]{3} |r ?|\$)?\d[\d,]*(?:\.\d+)?(?: ?(?:million|m|billion|bn|thousand|k))?(?: [a-z]{3})?"
+# an adverb of manner, not of when: "grew early" says when
+_MANNER = r"(?: (?!early|initially|recently|lately|briefly|monthly|quarterly|yearly)\w+ly)?"
+_PLAIN_CLAIM = re.compile(
+	rf"(?:overall,? )?(?:{_SUBJECT}{_AUXILIARY} (?P<verb>\w+)|"
+	rf"we{_AUXILIARY} (?P<we>grew|grown|growing|shrank|shrunk|shrinking))"
+	rf"{_MANNER}(?: from {_FIGURE})?(?: to (?:a total of )?{_FIGURE})?(?: over the period)?\.?",
+	re.IGNORECASE,
+)
+_WINDOW = (
+	r"(?: this year| this quarter| over the period| over the (?:last|past) \w+ (?:months|quarters|years))?"
+)
+_ASKED_SUBJECT = rf"(?:{_SUBJECT}|we)(?: been)?"
+_YES_NO_QUESTION = re.compile(
+	rf"(?:did|has|have|had|is|are|was|were) {_ASKED_SUBJECT} (?P<verb>\w+)(?P<either> or \w+)?{_WINDOW}\??",
+	re.IGNORECASE,
+)
+_HOW_QUESTION = re.compile(
+	rf"how (?:did|has|have|is|are|was|were) {_ASKED_SUBJECT} (?P<verb>\w+){_WINDOW}\??", re.IGNORECASE
+)
 _AFFIRMS = re.compile(r"^\s*(?:yes|yep|correct|indeed)\b", re.IGNORECASE)
-_ASKS_DIRECTION = re.compile(
-	r"\b(?:grow|grows|grew|grown|growing|growth|trend\w*|increas\w*|declin\w*|rising|falling|"
-	r"improv\w*|up or down|better or worse|getting better|getting worse)\b",
-	re.IGNORECASE,
-)
-# The direction check is deliberately narrow: replacing a true sentence is worse than
-# missing a false one. It reads only a plain claim about the revenue series over the
-# whole window, so anything below takes a sentence out of its reach.
-# Case-sensitive: "May 2026" and "June" are months, "may" is a modal.
-_NAMED_PERIOD = re.compile(
-	rf"\b(?:{'|'.join(calendar.month_name[1:])}|{'|'.join(calendar.month_abbr[1:])})\b|"
-	r"\bQ[1-4]\b|\b(?:19|20)\d{2}\b"
-)
-_RELATIVE_PERIOD = re.compile(
-	r"\b(?:last|past|next|this|previous|recent|coming|first|second|third|fourth|every|each|final)\s+"
-	r"(?:\w+\s+)?(?:days?|weeks?|months?|quarters?|years?)\b|"
-	r"\b(?:since|after|before|until|between|during|recently|lately|yesterday|today|tomorrow|ago)\b",
-	re.IGNORECASE,
-)
-_NOT_YET = re.compile(
-	r"\b(?:will|would|could|should|might|must|can|may|likely|expected|expect|projected|projection|"
-	r"forecast\w*|if|once|when|unless|hope|hoping|aim|need|needs|want|wants|could|focus)\b|"
-	r"\bto\s+(?:grow|rise|increase|improve|fall|drop|decline)\b"
-)
-_REVENUE = re.compile(r"\b(?:revenue|sales|won value|income|turnover)\b", re.IGNORECASE)
-_BARE_SUBJECT = re.compile(r"\b(?:we|business|overall)\b", re.IGNORECASE)
-# Things that rise and fall by themselves, including the ones "sales" and "revenue" start.
-_OTHER_SUBJECT = re.compile(
-	r"\b(?:leads?|deals?|pipeline|conversions?|win rates?|time to close|customers?|clients?|accounts?|"
-	r"organi[sz]ations?|contacts?|invoic\w*|cash|payments?|receivables?|quotas?|targets?|"
-	r"attainment|adherence|averages?|margins?|costs?|prices?|products?|territor(?:y|ies)|regions?|"
-	r"(?:sales|revenue) (?:cycle|team|reps?|people|velocity|activity|forecast|target)s?)\b",
-	re.IGNORECASE,
-)
 # "no data before December 2025" names a covered month to say what is *not* covered
 _BEFORE = re.compile(r"\b(?:before|prior to|earlier than)\b", re.IGNORECASE)
 # Crowning a rep. The best win rate is another claim, and may be someone else's.
@@ -585,32 +570,29 @@ def _keep(text: str, index: _Index, polarity: str | None = None, replace: bool =
 	return " ".join(kept), len(sentences) - held
 
 
-def _claimed_direction(sentence: str) -> str | None:
-	"""``up``, ``down`` or ``None``: denied, or both, is no direction."""
-	if _DENIED.search(sentence):
-		return None
-	rises, falls = bool(_RISE_CLAIM.search(sentence)), bool(_FALL_CLAIM.search(sentence))
-	if rises == falls:
-		return None
-	return "up" if rises else "down"
+def _verb_direction(verb: str | None) -> str | None:
+	if verb and _RISE_VERB.fullmatch(verb):
+		return "up"
+	return "down" if verb and _FALL_VERB.fullmatch(verb) else None
 
 
-def _about_revenue(text: str) -> bool:
-	return bool(_REVENUE.search(text) or _BARE_SUBJECT.search(text)) and not _OTHER_SUBJECT.search(text)
+def _plain_claim(sentence: str) -> str | None:
+	"""``up`` or ``down`` when ``sentence`` is a plain claim about the whole window."""
+	match = _PLAIN_CLAIM.fullmatch(sentence.strip())
+	return _verb_direction(match["verb"] or match["we"]) if match else None
 
 
 def _is_trend_question(question: str) -> bool:
-	"""Whether ``question`` asks which way revenue went over the window. "This year"
-	is the window; a named month or quarter is a question about that period."""
-	question = question or ""
-	return bool(
-		_ASKS_DIRECTION.search(question) and _about_revenue(question) and not _NAMED_PERIOD.search(question)
-	)
+	"""Whether ``question`` plainly asks which way revenue went over the window."""
+	question = (question or "").strip()
+	asked = _YES_NO_QUESTION.fullmatch(question) or _HOW_QUESTION.fullmatch(question)
+	return bool(asked and (asked["verb"].lower() == "trending" or _verb_direction(asked["verb"])))
 
 
 def _asked_direction(question: str) -> str | None:
 	"""The direction "yes" agrees with, when ``question`` asks about exactly one."""
-	return _claimed_direction(question) if _is_trend_question(question) else None
+	asked = _YES_NO_QUESTION.fullmatch((question or "").strip())
+	return _verb_direction(asked["verb"]) if asked and not asked["either"] else None
 
 
 def _leading_with(sentence: str, answer: str) -> str:
@@ -653,7 +635,8 @@ class _Index:
 				self.ranked_reps.update(str(row.get("rep")).lower() for row in ranked)
 				for row in reps:
 					rep = str(row.get("rep"))
-					self.first_names.setdefault(rep.split()[0], set()).add(rep.lower())
+					for first in rep.split()[:1]:  # a full name can be blank
+						self.first_names.setdefault(first, set()).add(rep.lower())
 				if reps and reps[0].get("won"):
 					self.top_rep.add(str(reps[0].get("rep")).lower())
 			for field, _label in _MONTHLY.get(table.get("key"), []):
@@ -699,24 +682,11 @@ class _Index:
 
 	def wrong_direction(self, sentence: str, polarity: str | None = None) -> str | None:
 		"""The computed sentence, when ``sentence`` plainly claims revenue went the other
-		way over the window. Anything less plain is not judged."""
-		if not self.trend:
+		way over the window. Only up against down: flat, mixed and unclear contradict nothing."""
+		if not self.trend or self.trend["direction"] not in ("up", "down"):
 			return None
-		claim = polarity if polarity and _AFFIRMS.search(sentence) else None
-		if not claim:
-			claim = self._plain_claim(sentence)
+		claim = polarity if polarity and _AFFIRMS.search(sentence) else _plain_claim(sentence)
 		return self.trend["sentence"] if claim and claim != self.trend["direction"] else None
-
-	def _plain_claim(self, sentence: str) -> str | None:
-		if (
-			not _about_revenue(sentence)
-			or _NAMED_PERIOD.search(sentence)
-			or _RELATIVE_PERIOD.search(sentence)
-			or _NOT_YET.search(sentence)
-			or self._mentions(sentence)[0]
-		):
-			return None
-		return _claimed_direction(sentence)
 
 	def supports(self, sentence: str) -> bool:
 		if _JARGON.search(sentence) or _FENCE_WORD.search(sentence):

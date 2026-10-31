@@ -476,11 +476,17 @@ _REP_NOUNS = re.compile(r"\b(?:reps?|salespersons?|salespeople|sales people|sale
 # Only people, not necessarily reps: these lose to anything else worth being best at.
 _MAYBE_REPS = re.compile(r"\b(?:who|teams?|staff)\b")
 # Selling is what only a rep does, whatever was sold, to whomever, wherever.
-_WHO_SOLD = re.compile(r"\bwho\b.*\b(?:sold|sells|closed|closes|won|wins)\b.*\b(?:most|more|best)\b")
+# "who" has to be the seller: "who did we sell the most to?" asks about customers.
+_WHO_SOLD = re.compile(
+	r"\bwho (?:has |have |had )?(?:sold|sells|closed|closes|won|wins)\b"
+	r"(?!.*\b(?:we|us)\b).*\b(?:most|more|best)\b"
+)
+_WE_AFTER_WHO = re.compile(r"\bwho\b.*\b(?:we|us)\b")
 _NOT_REPS = re.compile(
 	r"\b(?:customers?|clients?|accounts?|organi[sz]ations?|compan(?:y|ies)|contacts?|leads?|"
 	r"sources?|campaigns?|industr(?:y|ies)|sectors?|territor(?:y|ies)|regions?|products?|"
-	r"debtors?|payers?|suppliers?|vendors?|competitors?|owes?|owed|spends?|buys?|pays?|"
+	r"debtors?|payers?|suppliers?|vendors?|competitors?|partners?|distributors?|resellers?|dealers?|"
+	r"owes?|owed|spends?|buys?|pays?|"
 	r"(?<!this )(?<!last )(?<!next )(?:months?|quarters?|years?))\b"
 )
 # Reps compared on what they hold rather than what they brought in.
@@ -501,7 +507,9 @@ def ranks_reps(question: str) -> bool:
 	ranking = bool(_RANKING_WORDS.search(text) or _MOST_SOLD.search(text))
 	if _REP_NOUNS.search(text):
 		return ranking
-	return ranking and bool(_MAYBE_REPS.search(text)) and not _NOT_REPS.search(text)
+	if _NOT_REPS.search(text) or _WE_AFTER_WHO.search(text):
+		return False
+	return ranking and bool(_MAYBE_REPS.search(text))
 
 
 def fallback_plan(question: str, available: list[str]) -> list[str]:
@@ -538,7 +546,8 @@ def normalise_plan(plan, available: list[str], today: date, question: str = "") 
 	Unknown or unavailable metrics are dropped, duplicates collapse, the list is
 	capped at :data:`MAX_METRICS`; an empty selection falls back to keywords, and a
 	question that ranks reps is held to :data:`won_by_rep <CATALOGUE>` whatever was
-	selected.
+	selected. The cap excludes that forced table, so it costs no chosen metric and a
+	plan can run ``MAX_METRICS + 1`` tables.
 	Dates default to the last :data:`DEFAULT_PERIOD_MONTHS` months ending today,
 	a reversed pair is swapped, an unparseable one takes the default, and both
 	are clamped between :data:`EARLIEST_PLAN_DATE` and :data:`PLAN_MONTHS_AHEAD`
