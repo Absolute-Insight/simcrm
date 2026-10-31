@@ -329,12 +329,52 @@ def validate_event_participants(doc, method=None) -> None:
 		else set()
 	)
 	for row in doc.event_participants:
-		if (row.reference_doctype, row.reference_docname) in stored:
+		# a stored row with no email yet is still to be filled in, so it is no
+		# evidence the rep could already read that person's address
+		if row.email and (row.reference_doctype, row.reference_docname) in stored:
 			continue
 		if row.reference_doctype == "Contact":
 			assert_contact_allowed(row.reference_docname)
 		elif row.reference_doctype == "CRM Organization":
 			assert_customer_allowed(row.reference_docname)
+
+
+def refuse_direct_participant_save(doc, method=None) -> None:
+	"""A participant is saved with its event, never on its own.
+
+	frappe runs this only when the row itself is saved, so a row written directly
+	was in the database, and so looked stored, by the time the event's own check
+	came to it. The CRM never writes a participant this way."""
+	if doc.flags.ignore_permissions or not scope_applies():
+		return
+	frappe.throw(_("A participant is saved with their event, not on their own."), frappe.PermissionError)
+
+
+@frappe.whitelist()
+def get_events(
+	start: str,
+	end: str,
+	user: str | None = None,
+	for_reminder: bool = False,
+	filters: str | list | dict | None = None,
+):
+	"""frappe's calendar feed, less the events a rep may not see.
+
+	It is raw SQL behind its own whitelist, so neither hook reaches it. Stands in for
+	``frappe.desk.doctype.event.event.get_events``. The daily event digest reads the
+	same query from the scheduler and is not covered: it mails only Public events
+	with Send Reminder set, which CRM events do not set.
+	"""
+	from frappe.desk.doctype.event.event import get_events as frappe_get_events
+
+	events = frappe_get_events(start, end, user=user, for_reminder=for_reminder, filters=filters)
+	if not events or not scope_applies():
+		return events
+	names = list({event.name for event in events})
+	allowed = set(
+		frappe.get_list("Event", filters={"name": ["in", names]}, pluck="name", limit_page_length=0)
+	)
+	return [event for event in events if event.name in allowed]
 
 
 def is_manager(user: str | None = None) -> bool:

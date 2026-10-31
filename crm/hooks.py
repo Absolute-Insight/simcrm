@@ -241,6 +241,9 @@ doc_events = {
 	"Event": {
 		"validate": ["crm.permissions.customers.validate_event_participants"],
 	},
+	"Event Participants": {
+		"validate": ["crm.permissions.customers.refuse_direct_participant_save"],
+	},
 	"Notification Log": {
 		"before_insert": ["crm.extends.notification_log.before_insert"],
 	},
@@ -375,9 +378,10 @@ before_tests = "crm.tests.before_tests"
 # Overriding Methods
 # ------------------------------
 #
-# override_whitelisted_methods = {
-# "frappe.desk.doctype.event.event.get_events": "crm.event.get_events"
-# }
+override_whitelisted_methods = {
+	# raw SQL behind its own whitelist: the row rules on Event never reach it
+	"frappe.desk.doctype.event.event.get_events": "crm.permissions.customers.get_events",
+}
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,

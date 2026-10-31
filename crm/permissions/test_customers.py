@@ -361,6 +361,56 @@ class TestCustomerScope(IntegrationTestCase):
 					).insert()
 				frappe.set_user("Administrator")
 
+	def test_saving_a_participant_row_on_its_own_is_refused(self):
+		"""Written directly, the row looks stored when the event's own check runs."""
+		hidden = self._contact(self.org_b)
+		event = self._event(REP_A)
+		frappe.set_user(REP_A)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.get_doc(
+				{
+					"doctype": "Event Participants",
+					"parent": event,
+					"parenttype": "Event",
+					"parentfield": "event_participants",
+					"reference_doctype": "Contact",
+					"reference_docname": hidden.name,
+				}
+			).insert()
+
+	def test_a_stored_participant_with_no_email_is_still_checked(self):
+		from unittest.mock import MagicMock
+
+		from crm.permissions.customers import validate_event_participants
+
+		hidden = self._contact(self.org_b)
+		row = frappe._dict(reference_doctype="Contact", reference_docname=hidden.name, email=None)
+		doc = MagicMock(event_participants=[row], flags=frappe._dict())
+		doc.get_doc_before_save.return_value = frappe._dict(event_participants=[row])
+		frappe.set_user(REP_A)
+		with self.assertRaises(frappe.PermissionError):
+			validate_event_participants(doc)
+
+	def test_the_calendar_feed_leaves_out_a_hidden_customers_events(self):
+		"""frappe's get_events is raw SQL, so the row rules never reach it."""
+		from crm.permissions.customers import get_events
+
+		now = frappe.utils.now_datetime()
+		fields = {"reference_doctype": "CRM Organization"}
+		at_b = self._event(REP_B, starts_on=now, reference_docname=self.org_b, **fields)
+		at_a = self._event(REP_A, starts_on=now, reference_docname=self.org_a, **fields)
+		today = str(frappe.utils.getdate())
+		frappe.set_user(REP_A)
+		seen = {event.name for event in get_events(today, today)}
+		self.assertNotIn(at_b, seen)
+		self.assertIn(at_a, seen)
+
+	def test_the_calendar_feed_is_overridden(self):
+		self.assertEqual(
+			frappe.get_hooks("override_whitelisted_methods")["frappe.desk.doctype.event.event.get_events"],
+			["crm.permissions.customers.get_events"],
+		)
+
 	def test_a_deal_at_a_customer_gives_read_on_its_contacts_and_addresses_only(self):
 		contact = self._contact(self.org_shared)
 		self.assertTrue(has_contact_permission(contact, "read", REP_A))
