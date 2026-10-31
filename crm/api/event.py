@@ -202,12 +202,16 @@ def _claim_reminder(notification) -> bool:
 	running at once cannot both send it.
 	"""
 
+	# make_key prefixes the site's db_name, exactly as set_value would, so one
+	# site's ledger never answers for another's. set_value cannot be used: it
+	# has no NX, and a get-then-set pair would let two sweeps both send.
 	key = frappe.cache.make_key(
 		f"{SENT_REMINDER_KEY}{notification.event_name}:{notification.notification_type}:"
 		f"{notification.trigger_datetime.isoformat()}"
 	)
 	# kept past the end of the catch-up window, after which it cannot fire again
 	expires = int(REMINDER_CATCH_UP.total_seconds()) + 600
+	# nosemgrep: frappe-semgrep-rules.rules.frappe-cache-breaks-multitenancy -- key is site-prefixed by make_key above
 	return bool(frappe.cache.set(key, 1, ex=expires, nx=True))
 
 
