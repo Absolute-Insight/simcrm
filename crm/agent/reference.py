@@ -87,12 +87,13 @@ _QUOTES = re.compile(r"[“”″ʺ]|''")
 _THOUSANDS = re.compile(r"(\d),(\d{3})\b")
 
 # An inch size in any of the ways a rep types one: 6", 6 inch, 1 1/2", 1-1/2in.
-# A bare "in" is the word, not the mark, before a unit ("class 600 in bar",
-# "150 in inches") and after a rating or bore keyword ("PN 16 in mm"): that
-# number is the rating or the bore, never a 16" flange.
+# A bare "in" is the word, not the mark, before a unit no inch converts to
+# ("600 in bar", "150 in inches") and after a rating or bore keyword ("PN 16
+# in mm"): that number is the rating or the bore, never a 16" flange. Before
+# a length it stays the mark: "1/2 in mm" asks for 1/2" in millimetres.
 _INCH = re.compile(
 	r"(?<![\w./])(\d+[ -]+\d+/\d+|\d+/\d+|\d+)\s*-?\s*"
-	r"(?:\"|inches\b|inch\b|in\b(?!\s*(?:mm\b|cm\b|millimet|met(?:er|re)s?\b|bar\b|kpa\b|mpa\b|psi\b|inch)))"
+	r"(?:\"|inches\b|inch\b|in\b(?!\s*(?:bar\b|kpa\b|mpa\b|psi\b|inch)))"
 )
 _RATED = re.compile(r"\b(?:class|pn|dn|nb)\s*$")
 _MM = re.compile(r"(?<![\w.])(\d+)\s*mm\b")

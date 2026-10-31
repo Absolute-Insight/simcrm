@@ -211,6 +211,30 @@ class SelectEntriesTest(UnitTestCase):
 		picked = reference.select_entries("what is 2 1/2 inch in mm", ROWS)
 		self.assertEqual(labels(picked)[:1], ['2 1/2" = 65 mm'])
 
+	def test_a_bare_in_before_mm_still_asks_for_an_inch_size(self):
+		# "1/2 in mm" is "1/2 inch, in mm": the H-05 fix must not read it as the word
+		rows = [
+			*ROWS,
+			{
+				**ROWS[6],
+				"name": "line-15",
+				"label": '1/2" = 15 mm',
+				"search": '1/2" 15 mm line size inch to mm',
+				"cells": [
+					{"label": "Inches", "value": '1/2"', "status": "ok"},
+					{"label": "Millimetres", "value": "15", "unit": "mm", "status": "ok"},
+				],
+			},
+		]
+		for question, label in (
+			("what is 1/2 in mm", '1/2" = 15 mm'),
+			("1/2 in mm", '1/2" = 15 mm'),
+			("2 1/2 in mm", '2 1/2" = 65 mm'),
+			("convert 2 1/2 in cm", '2 1/2" = 65 mm'),
+		):
+			with self.subTest(question=question):
+				self.assertEqual(labels(reference.select_entries(question, rows))[:1], [label])
+
 	def test_one_rare_word_is_enough(self):
 		picked = reference.select_entries("what is Millimetres for that?", ROWS)
 		self.assertEqual(labels(picked), ['2 1/2" = 65 mm'])
