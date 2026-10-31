@@ -576,6 +576,10 @@ const resource = createResource({
   onSuccess(data) {
     let cv = getView(route.query.view, route.params.viewType, props.doctype)
     let params = resource.params ? resource.params : getParams()
+    // The first load is asked for before there is an answer to read the page
+    // length from, so take the server's: Load More added to undefined.
+    params.page_length ??= data.page_length
+    params.page_length_count ??= data.page_length_count
     resource.params = params
     defaultParams.value = {
       doctype: props.doctype,

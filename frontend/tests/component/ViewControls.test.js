@@ -210,6 +210,7 @@ async function mountVC({
 } = {}) {
   const list = ref({})
   const resize = ref(1)
+  const more = ref(1)
   const vm = ref(null)
   const errors = []
   const Page = defineComponent({
@@ -220,6 +221,8 @@ async function mountVC({
         'onUpdate:modelValue': (v) => (list.value = v),
         resizeColumn: resize.value,
         'onUpdate:resizeColumn': (v) => (resize.value = v),
+        loadMore: more.value,
+        'onUpdate:loadMore': (v) => (more.value = v),
         doctype,
         filters,
         options,
@@ -241,6 +244,7 @@ async function mountVC({
     vc: () => vm.value,
     list: () => list.value,
     resize: () => resize.value++,
+    loadMore: () => more.value++,
     button: (label) => w.el.querySelector(`button[data-label="${label}"]`),
   }
 }
@@ -312,6 +316,8 @@ describe('export', () => {
     expect(query.get('doctype')).toBe('CRM Organization (export)')
     expect(JSON.parse(query.get('fields'))).toEqual(['name'])
     expect(query.get('order_by')).toBe('modified desc')
+    // the page on screen, read back from the first answer
+    expect(query.get('page_length')).toBe('20')
   })
 })
 
@@ -364,6 +370,17 @@ describe('coming back to a saved view with an unsaved change', () => {
     expect(vc.fetches.at(-1).filters).toEqual({
       lead_name: ['LIKE', '%smith%'],
     })
+  })
+})
+
+describe('Load More', () => {
+  it('asks for the next page on the first visit to a view', async () => {
+    savedView(17)
+    setRoute({ view: 17 })
+    const m = await mountVC()
+    m.loadMore()
+    await settle()
+    expect(vc.fetches.at(-1).page_length).toBe(40)
   })
 })
 
