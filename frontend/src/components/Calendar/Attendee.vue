@@ -85,7 +85,11 @@
         :tooltip="getTooltip(att)"
       >
         <template #prefix>
-          <UserAvatar :user="att.email" class="-ml-1 !size-5.5" />
+          <UserAvatar
+            :user="att.email"
+            :label="att.reference_docname"
+            class="-ml-1 !size-5.5"
+          />
         </template>
         <template #suffix>
           <span

@@ -185,6 +185,29 @@ beforeEach(() => {
   state.titles.length = 0
 })
 
+describe('CalendarEventPanel: a participant with no email', () => {
+  it("names a visit's organization rather than a blank avatar", async () => {
+    state.server['EV-ORG'] = doc('EV-ORG', {
+      event_participants: [
+        {
+          name: 'p-org',
+          reference_doctype: 'CRM Organization',
+          reference_docname: 'Impala Springs',
+          email: null,
+          attending: '',
+        },
+      ],
+    })
+    const p = panel({ event: { id: 'EV-ORG' }, mode: 'details' })
+    await flush()
+    const row = [...p.el.querySelectorAll('[data-stub="Button"]')].find((b) =>
+      b.textContent.includes('Impala Springs'),
+    )
+    expect(row).toBeTruthy()
+    expect(row.querySelector('[data-stub="UserAvatar"]')).toBeTruthy()
+  })
+})
+
 describe('CalendarEventPanel: editing attendees (FE-02)', () => {
   it("keeps a visit's CRM Organization row and everyone's RSVP", async () => {
     state.server['EV-VISIT'] = doc('EV-VISIT', {
