@@ -144,6 +144,9 @@ def add_to_saved_boards(expired: str) -> None:
 			columns = json.loads(view.kanban_columns or "[]")
 		except (TypeError, ValueError):
 			continue
+		# saved views hold whatever the client sent, and a bad one must not stop a migrate
+		if not isinstance(columns, list) or not all(isinstance(column, dict) for column in columns):
+			continue
 		if not columns or any(column.get("name") == expired for column in columns):
 			continue
 		closed = [i for i, column in enumerate(columns) if column.get("name") in ("Won", "Lost")]

@@ -25,7 +25,11 @@ import frappe
 from frappe.utils import add_days, getdate, nowdate
 
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import record_sync_issue
-from crm.fcrm.doctype.crm_deal_status.crm_deal_status import ensure_expired_status, expired_status_is_usable
+from crm.fcrm.doctype.crm_deal_status.crm_deal_status import (
+	EXPIRED,
+	ensure_expired_status,
+	expired_status_is_usable,
+)
 from crm.integrations.acumatica.client import v
 
 try:
@@ -143,9 +147,23 @@ def pull_quote_outcomes(client, modified_since: str | None) -> dict:
 	by_quote = _open_deals_by_quote()
 	if not by_quote:
 		return counts
-	reread = frappe.db.get_default(REREAD_ALL_QUOTES)
-	if reread:
-		modified_since = None
+	_apply_outcomes(client, by_quote, modified_since, counts)
+	if frappe.db.get_default(REREAD_ALL_QUOTES):
+		# Expired deals only: a deal a rep reopened after the sync closed it would
+		# otherwise be closed again by the same old quote.
+		expired = {quote: name for quote, name in _open_deals_by_quote().items() if _is_expired(name)}
+		if expired:
+			_apply_outcomes(client, expired, None, counts)
+		# only once every page has been read: a failed run asks again next time
+		frappe.defaults.clear_default(REREAD_ALL_QUOTES)
+	return counts
+
+
+def _is_expired(deal: str) -> bool:
+	return frappe.db.get_value("CRM Deal", deal, "status") == EXPIRED
+
+
+def _apply_outcomes(client, by_quote: dict[str, str], modified_since: str | None, counts: dict) -> None:
 	order_type = getattr(client.settings, "quote_order_type", None) or "QT"
 	filter_ = f"OrderType eq '{order_type}'"
 	if modified_since:
@@ -175,10 +193,6 @@ def pull_quote_outcomes(client, modified_since: str | None) -> dict:
 		skip += len(page)
 		if pause:
 			time.sleep(pause)
-	if reread:
-		# only once every page has been read: a failed run asks again next time
-		frappe.defaults.clear_default(REREAD_ALL_QUOTES)
-	return counts
 
 
 def expire_stale_quotes(grace_days: int) -> dict:

@@ -220,6 +220,29 @@ class ExpireStaleQuotesTest(OutcomesTestCase):
 			frappe.db.get_value("CRM Deal", lost, ["status", "lost_reason"]), ("Lost", outcomes.LOST_REJECTED)
 		)
 
+	def test_the_once_only_reread_closes_expired_deals_and_no_others(self):
+		"""A rep reopened the second deal after the sync lost it; its old quote must
+		not close it again."""
+		expired = self._deal("QT000017", status="Proposal/Quotation", closes_in=-45, modified_days_ago=40)
+		outcomes.expire_stale_quotes(grace_days=30)
+		reopened = self._deal("QT000018")
+		frappe.db.set_default(outcomes.REREAD_ALL_QUOTES, 1)
+		self.addCleanup(frappe.defaults.clear_default, outcomes.REREAD_ALL_QUOTES)
+		client = self._client(
+			[Q(OrderNbr="QT000017", Status="Completed"), Q(OrderNbr="QT000018", Status="Canceled")]
+		)
+		client.get_page.side_effect = lambda entity, top=100, skip=0, **kw: (
+			[]
+			if skip or "LastModified gt" in (kw.get("filter") or "")
+			else [Q(OrderNbr="QT000017", Status="Completed"), Q(OrderNbr="QT000018", Status="Canceled")]
+		)
+
+		outcomes.pull_quote_outcomes(client, "2030-01-01 00:00:00")
+
+		self.assertEqual(frappe.db.get_value("CRM Deal", expired, "status"), "Won")
+		self.assertEqual(frappe.db.get_value("CRM Deal", reopened, "status"), "Proposal/Quotation")
+		self.assertFalse(frappe.db.get_default(outcomes.REREAD_ALL_QUOTES))
+
 	def test_inside_the_grace_period_nothing_happens(self):
 		fresh = self._deal("QT000011", closes_in=-10, modified_days_ago=5)
 		outcomes.expire_stale_quotes(grace_days=30)

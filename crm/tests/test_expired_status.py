@@ -173,6 +173,24 @@ class ExpiredStatusTest(IntegrationTestCase):
 		columns = json.loads(frappe.db.get_value("CRM View Settings", view.name, "kanban_columns"))
 		self.assertEqual([c["name"] for c in columns], ["Negotiation", EXPIRED, "Won", "Lost"])
 
+	def test_a_malformed_saved_board_does_not_stop_the_migrate(self):
+		view = frappe.get_doc(
+			{
+				"doctype": "CRM View Settings",
+				"dt": "CRM Deal",
+				"type": "kanban",
+				"column_field": "status",
+				"label": "Bad",
+				"user": "Administrator",
+				"kanban_columns": '["x"]',
+			}
+		).insert(ignore_permissions=True)
+		self._drop_expired()
+
+		convert_expired()
+
+		self.assertEqual(frappe.db.get_value("CRM View Settings", view.name, "kanban_columns"), '["x"]')
+
 	def test_a_site_whose_expired_status_closes_deals_is_not_touched(self):
 		self._reason(LOST_EXPIRED)
 		swept = self._lost_by("Administrator", LOST_EXPIRED)
