@@ -79,6 +79,9 @@ def notify_user(notification):
 		reference_name=notification.redirect_to_docname,
 	)
 
-	if frappe.db.exists("CRM Notification", values):
+	# the dict form: exists() pops "doctype" off it. Passed as the filter beside
+	# the doctype it became a WHERE on a column the table does not have, the
+	# error was swallowed as "not found", and every repeat was inserted.
+	if frappe.db.exists(values):
 		return
 	frappe.get_doc(values).insert(ignore_permissions=True)

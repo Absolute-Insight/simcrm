@@ -1,7 +1,10 @@
 import { ref } from 'vue'
 import { validateConditions } from '../../../utils'
 
-const working_hours = [
+// The defaults a new SLA starts from. Hand each draft its own copy: the day
+// rows are edited in place (SlaHolidays' Day select, Add Row, Delete), and a
+// shared array turned one discarded draft's days into every later draft's.
+const defaultWorkingHours = () => [
   {
     workday: 'Monday',
     start_time: '09:00:00',
@@ -42,7 +45,7 @@ export const slaData = ref({
   condition_json: [],
   priorities: [],
   holiday_list: '',
-  working_hours: working_hours,
+  working_hours: defaultWorkingHours(),
 })
 
 export const resetSlaData = () => {
@@ -59,7 +62,7 @@ export const resetSlaData = () => {
     condition_json: [],
     priorities: [],
     holiday_list: '',
-    working_hours: working_hours,
+    working_hours: defaultWorkingHours(),
   }
 }
 
