@@ -217,9 +217,14 @@ const unlinkLinkedDoc = (doc) => {
   // The endpoint skips items the user cannot write and items that fail
   // validation, and used to report that identically to having done the work --
   // so the modal closed over records that are all still linked.
+  // A deal lists its contacts in a child table, and the deal is what comes back
+  // as linked: without the contact's name the endpoint has no way to tell which
+  // row is going, and it used to clear the deal's contacts altogether.
+  const isContact = props.doctype == 'Contact'
   call('crm.api.doc.remove_linked_doc_reference', {
     items: selectedDocs,
-    remove_contact: props.doctype == 'Contact',
+    remove_contact: isContact,
+    contact: isContact ? props.docname : null,
     delete: doc.delete,
   })
     .then((result) => {

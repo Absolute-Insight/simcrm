@@ -206,3 +206,47 @@ class TestCreateEmailAccountPermission(IntegrationTestCase):
 		):
 			create_email_account({"service": "GMail", "email_id": "nope@example.com"})
 		log_error.assert_not_called()
+
+
+class TestOutgoingOnlyServices(IntegrationTestCase):
+	"""Sendgrid and SparkPost only send mail, so they have no IMAP server.
+
+	The endpoint checked an IMAP login for every service but Frappe Mail, frappe
+	refused it with "Email Server is required", and the blanket except turned
+	that into "could not connect to the mail server" -- so neither tile could
+	ever create an account, and the message sent the admin after their API key.
+	"""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def data(self, service: str, **overrides) -> dict:
+		return {
+			"service": service,
+			"email_account_name": f"{service} Check",
+			"email_id": f"{service.lower()}-check@example.com",
+			"password": "api-key",
+			"enable_outgoing": 1,
+			**overrides,
+		}
+
+	def test_an_outgoing_only_account_is_created(self):
+		for service, smtp_server in (
+			("Sendgrid", "smtp.sendgrid.net"),
+			("SparkPost", "smtp.sparkpostmail.com"),
+		):
+			with self.subTest(service=service):
+				with patch.object(EmailAccount, "validate_smtp_conn", return_value=True):
+					create_email_account(self.data(service))
+
+				doc = frappe.get_doc("Email Account", f"{service} Check")
+				self.assertEqual(doc.smtp_server, smtp_server)
+				self.assertFalse(doc.enable_incoming)
+				self.assertTrue(doc.enable_outgoing)
+
+	def test_incoming_on_an_outgoing_only_service_is_refused_for_what_it_is(self):
+		with self.assertRaises(frappe.ValidationError) as refused:
+			create_email_account(self.data("Sendgrid", enable_incoming=1))
+
+		self.assertIn("only sends", str(refused.exception))
+		self.assertFalse(frappe.db.exists("Email Account", "Sendgrid Check"))

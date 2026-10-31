@@ -1,4 +1,5 @@
 import json
+from copy import copy
 
 import frappe
 from frappe import _
@@ -7,7 +8,7 @@ from frappe.desk.form.assign_to import set_status
 from frappe.model import no_value_fields
 from frappe.model.delete_doc import get_dynamic_linked_docs, get_linked_docs
 from frappe.model.document import get_controller
-from frappe.utils import cint, make_filter_tuple
+from frappe.utils import cint, cstr, make_filter_tuple, strip_html
 from pypika import Criterion
 
 from crm.api.views import get_views
@@ -18,6 +19,9 @@ from crm.utils import is_frappe_version
 # "load more" steps below these, and a crafted page_length no longer does.
 MAX_PAGE_LENGTH = 1000
 MAX_KANBAN_COLUMN_PAGE_LENGTH = 500
+# Every column a board draws is a page query of its own, and past this many a
+# board is no longer something anyone reads.
+MAX_KANBAN_COLUMNS = 50
 
 COUNT_NAME = (
 	{"COUNT": "name", "as": "total_count"}
@@ -263,7 +267,12 @@ def update_in_standard_filter(fieldname, doctype, value):
 		)
 
 
-def kanban_link_columns(target: str) -> list[dict]:
+def kanban_link_columns(
+	target: str,
+	doctype: str | None = None,
+	column_field: str | None = None,
+	filters: dict | None = None,
+) -> list[dict]:
 	"""The rows of a kanban's Link column field, read with the caller's own rights.
 
 	``frappe.get_all`` here ignored permissions altogether, so a rep asking for
@@ -274,23 +283,65 @@ def kanban_link_columns(target: str) -> list[dict]:
 	exception -- frappe gives every desk user ``select`` on it and it carries no
 	conditions -- so that one is narrowed to the CRM's own users, which is the
 	only population an owner field can hold anyway.
+
+	Given the board it is for, a target with more rows than a board can draw
+	(organizations, contacts, leads) yields the values the board's own records
+	use instead, busiest first. Every row of the table used to become a column
+	with a page query and a count of its own: a deal board grouped by
+	organization ran two queries per organization on the site.
 	"""
+	limit = MAX_KANBAN_COLUMNS + 1 if doctype and column_field else None
 	if target == "User":
 		from crm.api.session import crm_user_names
 
-		return frappe.get_all(
+		readable = list(crm_user_names())
+		columns = frappe.get_all(
 			"User",
-			filters={"name": ["in", list(crm_user_names())]},
+			filters={"name": ["in", readable]},
 			fields=["name"],
 			order_by="full_name asc",
+			limit=limit,
 		)
+	else:
+		try:
+			columns = frappe.get_list(target, fields=["name"], order_by="modified asc", limit=limit)
+		except frappe.PermissionError:
+			# Grouped by a doctype the caller may not read at all: no columns, rather
+			# than a 403 that takes the whole list request down with it.
+			return []
 
-	try:
-		return frappe.get_list(target, fields=["name"], order_by="modified asc")
-	except frappe.PermissionError:
-		# Grouped by a doctype the caller may not read at all: no columns, rather
-		# than a 403 that takes the whole list request down with it.
+	if not limit or len(columns) < limit:
+		return columns
+
+	used = [
+		row
+		for row in frappe.get_list(
+			doctype, filters=filters, fields=[column_field, COUNT_NAME], group_by=column_field
+		)
+		if row.get(column_field)
+	]
+	used.sort(key=lambda row: row.total_count, reverse=True)
+	names = [row.get(column_field) for row in used[:MAX_KANBAN_COLUMNS]]
+	if not names:
 		return []
+	if target != "User":
+		readable = frappe.get_list(target, filters={"name": ("in", names)}, pluck="name", limit=len(names))
+	readable = set(readable)
+	return [{"name": name} for name in names if name in readable]
+
+
+def kanban_column_counts(doctype: str, column_field: str, filters: dict) -> dict[str, int]:
+	"""How many records each column holds: one grouped query, not a COUNT per column.
+
+	A blank value, stored as NULL or as "", is the blank column's.
+	"""
+	counts: dict[str, int] = {}
+	for row in frappe.get_list(
+		doctype, filters=filters, fields=[column_field, COUNT_NAME], group_by=column_field
+	):
+		key = cstr(row.get(column_field))
+		counts[key] = counts.get(key, 0) + row.total_count
+	return counts
 
 
 def apply_comments_filter(doctype, filters):
@@ -474,7 +525,7 @@ def get_data(
 		if not kanban_columns and column_field:
 			field_meta = frappe.get_meta(doctype).get_field(column_field)
 			if field_meta.fieldtype == "Link":
-				kanban_columns = kanban_link_columns(field_meta.options)
+				kanban_columns = kanban_link_columns(field_meta.options, doctype, column_field, filters)
 			elif field_meta.fieldtype == "Select":
 				kanban_columns = [{"name": option} for option in field_meta.options.split("\n")]
 
@@ -495,6 +546,19 @@ def get_data(
 			if field not in rows:
 				rows.append(field)
 
+		# A saved view or a request can carry more columns than a board draws; past
+		# the cap the rest are left off. Hidden ones are kept: they cost nothing.
+		drawn = 0
+		capped_columns = []
+		for kc in kanban_columns:
+			if not kc.get("delete"):
+				drawn += 1
+				if drawn > MAX_KANBAN_COLUMNS:
+					continue
+			capped_columns.append(kc)
+		kanban_columns = capped_columns
+		all_counts = kanban_column_counts(doctype, column_field, filters) if column_field else None
+
 		for kc in kanban_columns:
 			# Start with base filters
 			column_filters = []
@@ -504,9 +568,13 @@ def get_data(
 				base_filters = convert_filter_to_tuple(doctype, filters)
 				column_filters.extend(base_filters)
 
-			# Add the column-specific filter
+			# Add the column-specific filter. A Select field's blank first option is
+			# a column too, the records with no value; giving it no filter at all
+			# listed every record on the board in it.
 			if column_field and kc.get("name"):
 				column_filters.append([doctype, column_field, "=", kc.get("name")])
+			elif column_field:
+				column_filters.append([doctype, column_field, "is", "not set"])
 
 			order = kc.get("order")
 			if kc.get("delete"):
@@ -533,11 +601,14 @@ def get_data(
 
 				column_data = parse_list_data(column_data, doctype)
 
-				all_count = frappe.get_list(
-					doctype,
-					filters=column_filters,
-					fields=[COUNT_NAME],
-				)[0].total_count
+				if all_counts is not None:
+					all_count = all_counts.get(cstr(kc.get("name")), 0)
+				else:
+					all_count = frappe.get_list(
+						doctype,
+						filters=column_filters,
+						fields=[COUNT_NAME],
+					)[0].total_count
 
 				kc["all_count"] = all_count
 				kc["count"] = len(column_data)
@@ -600,20 +671,18 @@ def get_data(
 				has_empty_values = any([not d.get(group_by_field) for d in data])
 				options = list(set([d.get(group_by_field) for d in data]))
 				options = [u for u in options if u]
-				if has_empty_values:
-					options.append("")
 
-				if order_by and group_by_field in order_by:
-					order_by_fields = order_by.split(",")
-					order_by_fields = [
-						(field.split(" ")[0], field.split(" ")[1]) for field in order_by_fields
-					]
-					if (group_by_field, "asc") in order_by_fields:
-						options.sort()
-					elif (group_by_field, "desc") in order_by_fields:
-						options.sort(reverse=True)
-				else:
-					options.sort()
+				# The groups follow the grouped field's own direction in the sort, and
+				# run ascending otherwise. SortBy joins its terms with ", ", and
+				# splitting on the comma alone parsed " first_name asc" as
+				# ("", "first_name"): a grouped field sorted second never matched, so
+				# the groups came back in set order -- a different one per worker.
+				descending = (group_by_field, "desc") in _sort_terms(order_by)
+				options.sort(reverse=descending)
+				# the blank group sorts first ascending and last descending, as ""
+				# did when it was sorted in with the rest
+				if has_empty_values:
+					options.insert(len(options) if descending else 0, "")
 				return options
 
 		for field in fields:
@@ -637,6 +706,9 @@ def get_data(
 		"group_by_field": group_by_field,
 		"page_length": page_length,
 		"page_length_count": page_length_count,
+		# The client grows its own page length on "load more"; past this the
+		# server stops following, and the client has to know to stop asking.
+		"max_page_length": MAX_PAGE_LENGTH,
 		"is_default": is_default,
 		"views": get_views(doctype),
 		"total_count": frappe.get_list(doctype, filters=filters, fields=[COUNT_NAME])[0].total_count,
@@ -650,6 +722,16 @@ def get_data(
 # Only these boards draw the counts. A task board would pay four queries for
 # numbers nothing shows.
 KANBAN_COUNTED_DOCTYPES = ("CRM Lead", "CRM Deal")
+
+
+def _sort_terms(order_by: str | None) -> list[tuple[str, str]]:
+	"""``"modified desc, first_name"`` as ``[("modified", "desc"), ("first_name", "asc")]``."""
+	terms = []
+	for term in (order_by or "").split(","):
+		parts = term.split()
+		if parts:
+			terms.append((parts[0].strip("`"), parts[1].lower() if len(parts) > 1 else "asc"))
+	return terms
 
 
 def parse_list_data(data, doctype):
@@ -963,27 +1045,40 @@ def remove_doc_link(doctype, docname):
 		pass
 
 
-def remove_contact_link(doctype, docname):
-	if not doctype or not docname:
+def remove_contact_link(doctype, docname, contact):
+	"""Take one contact off a document that lists it.
+
+	frappe's get_linked_docs reports a CRM Contacts child row as its parent deal,
+	so this is handed the deal and only ``contact`` says which row is going. It
+	used to clear the whole table and the ``contact`` field, so deleting one of a
+	deal's three contacts stripped all three -- and with no primary contact left,
+	the deal's email, mobile and phone too.
+	"""
+	if not doctype or not docname or not contact:
 		return
 
 	try:
 		linked_doc_data = frappe.get_doc(doctype, docname)
-		linked_doc_data.update(
-			{
-				"contact": None,
-				"contacts": [],
-			}
-		)
+		if linked_doc_data.get("contact") == contact:
+			linked_doc_data.contact = None
+		if linked_doc_data.meta.has_field("contacts"):
+			linked_doc_data.contacts = [row for row in linked_doc_data.contacts if row.contact != contact]
 		linked_doc_data.save(ignore_permissions=True)
 	except (frappe.DoesNotExistError, frappe.ValidationError):
 		pass
 
 
 @frappe.whitelist()
-def remove_linked_doc_reference(items: str | list, remove_contact: bool = False, delete: bool = False):
+def remove_linked_doc_reference(
+	items: str | list, remove_contact: bool = False, delete: bool = False, contact: str | None = None
+):
 	if isinstance(items, str):
 		items = frappe.parse_json(items)
+
+	# Unlinking a contact means taking *that* contact off each listed document;
+	# without its name the only thing left to do is clear every contact there.
+	if remove_contact and not contact:
+		frappe.throw(_("The contact being removed is required"))
 
 	# Report what happened rather than "success". Items are skipped for three
 	# ordinary reasons -- malformed entry, no write permission, gone or invalid --
@@ -1003,7 +1098,7 @@ def remove_linked_doc_reference(items: str | list, remove_contact: bool = False,
 
 		try:
 			if remove_contact:
-				remove_contact_link(item["doctype"], item["docname"])
+				remove_contact_link(item["doctype"], item["docname"], contact)
 			else:
 				remove_doc_link(item["doctype"], item["docname"])
 
@@ -1021,6 +1116,10 @@ def remove_linked_doc_reference(items: str | list, remove_contact: bool = False,
 
 
 BULK_DELETE_LIMIT = 500
+BULK_DELETE_SAVEPOINT = "crm_bulk_delete_item"
+# What frappe.publish_realtime, run_webhooks and notify_link_count collect on
+# frappe.local until the after-commit flush each queues when it first makes one.
+_COMMIT_BUFFERS = ("_realtime_log", "_webhook_queue", "_link_count")
 
 
 def _unlink_linked_docs(doctype: str, items: list, delete_linked: bool = False):
@@ -1044,23 +1143,84 @@ def _unlink_linked_docs(doctype: str, items: list, delete_linked: bool = False):
 					],
 					remove_contact=doctype == "Contact",
 					delete=delete_linked,
+					contact=doc if doctype == "Contact" else None,
 				)
 		except Exception as e:
 			frappe.log_error(f"Error processing linked docs for {doctype} {doc}: {e!s}", "Bulk Delete Error")
 
 
+def _delete_each(doctype: str, items: list, delete_linked: bool = False, commit: bool = False) -> list[dict]:
+	"""Unlink and delete each record as one unit; return the ones still standing.
+
+	This used to unlink every record's linked documents first and then hand the
+	names to frappe's ``delete_bulk``, which commits after each success and rolls
+	back after each failure. So a record that would not delete kept its life but
+	lost its notes and tasks -- the next success committed that -- and one that
+	failed first rolled every other record's unlinking back, failing those too.
+
+	A savepoint per record makes the two steps succeed or fail together. The
+	background job also commits per record, as ``delete_bulk`` did, so five
+	hundred deletes do not hold their row locks until the last one.
+
+	Rolling back to a savepoint leaves frappe's commit callbacks queued, and
+	every linked doc deleted on the way queued one that strips its comments,
+	assignments and versions. Those are cut back with the rows, or the next
+	commit runs them on a linked doc the rollback has just restored. Some of
+	those are flushes frappe queues once, when it first makes a buffer on
+	frappe.local, so the buffers go back too; left behind, they would keep every
+	later record's realtime updates and webhooks from ever being flushed.
+	"""
+	callbacks = (frappe.db.before_commit._functions, frappe.db.after_commit._functions)
+	pending = list(items)
+	while True:
+		failed = []
+		for name in pending:
+			frappe.db.savepoint(BULK_DELETE_SAVEPOINT)
+			queued = [len(queue) for queue in callbacks]
+			buffers = {
+				attr: copy(getattr(frappe.local, attr))
+				for attr in _COMMIT_BUFFERS
+				if hasattr(frappe.local, attr)
+			}
+			try:
+				_unlink_linked_docs(doctype, [name], delete_linked)
+				frappe.delete_doc(doctype, name)
+			except Exception as exc:
+				frappe.db.rollback(save_point=BULK_DELETE_SAVEPOINT)
+				for queue, keep in zip(callbacks, queued, strict=True):
+					while len(queue) > keep:
+						queue.pop()
+				for attr in _COMMIT_BUFFERS:
+					if attr in buffers:
+						setattr(frappe.local, attr, buffers[attr])
+					elif hasattr(frappe.local, attr):
+						delattr(frappe.local, attr)
+				failed.append({"docname": name, "reason": strip_html(str(exc)).strip()[:200]})
+				continue
+
+			frappe.db.release_savepoint(BULK_DELETE_SAVEPOINT)
+			if commit:
+				# one record per transaction in the worker, as delete_bulk did
+				frappe.db.commit()  # nosemgrep: frappe-manual-commit
+
+		# As delete_bulk does: one record can stand in the way of another in the
+		# same batch, so go round again while each pass still gets somewhere.
+		if not failed or len(failed) == len(pending):
+			return failed
+		pending = [row["docname"] for row in failed]
+
+
 def delete_bulk_docs_job(doctype: str, items: list, delete_linked: bool = False):
 	"""The background half of delete_bulk_docs: unlink, then delete, as the enqueuing user."""
-	from frappe.desk.reportview import delete_bulk
-
-	_unlink_linked_docs(doctype, items, delete_linked)
-	delete_bulk(doctype, items)
+	failed = _delete_each(doctype, items, delete_linked, commit=True)
+	if failed:
+		frappe.log_error(
+			f"{len(failed)} of {len(items)} {doctype} records were not deleted: {failed}", "Bulk Delete Error"
+		)
 
 
 @frappe.whitelist(methods=["POST"])
 def delete_bulk_docs(doctype: str, items: str | list, delete_linked: bool = False):
-	from frappe.desk.reportview import delete_bulk
-
 	if not doctype:
 		frappe.throw(_("Doctype is required"))
 
@@ -1092,6 +1252,8 @@ def delete_bulk_docs(doctype: str, items: str | list, delete_linked: bool = Fals
 		)
 		return {"queued": True, "count": len(items)}
 
-	_unlink_linked_docs(doctype, items, delete_linked)
-	delete_bulk(doctype, items)
-	return {"queued": False, "count": len(items)}
+	# `count` is what was deleted, not what was asked for: a record that would
+	# not go used to be counted anyway, and the "Deleted 3" toast sat over a
+	# list that reloaded with one of them still on it and no reason given.
+	failed = _delete_each(doctype, items, delete_linked)
+	return {"queued": False, "count": len(items) - len(failed), "failed": failed}
