@@ -76,6 +76,23 @@ function literalThemes() {
   })
 }
 
+/**
+ * Every bound `:theme` on a `<Badge>` that takes its value from a colour map or
+ * a record's `.color` -- the call-status map, an SLA cell, an email's delivery
+ * status. Those maps carry `orange` for the warning tier, which Badge drops to
+ * grey just as it does a literal; ToneBadge is the drop-in that draws it.
+ */
+function boundColourThemes() {
+  return vueFiles(SRC).flatMap((file) => {
+    const source = readFileSync(file, 'utf8')
+    return [...source.matchAll(/<Badge\b[^>]*>/g)].flatMap((tag) =>
+      [...tag[0].matchAll(/:theme="([^"]+)"/g)]
+        .filter((m) => /\.color\b|ColorMap\[/.test(m[1]))
+        .map((m) => `${file.slice(SRC.length + 1)}: :theme="${m[1]}"`),
+    )
+  })
+}
+
 describe('Badge themes', () => {
   it('reads a real enum out of Badge.vue', () => {
     // Guards the guard: an empty enum would make every assertion below vacuous.
@@ -95,6 +112,13 @@ describe('Badge themes', () => {
     expect(
       unknown.map((u) => `${u.file}: theme="${u.theme}"`),
       'these render as neutral grey instead of the tier they name',
+    ).toEqual([])
+  })
+
+  it('renders a colour-map theme through ToneBadge, which can draw orange', () => {
+    expect(
+      boundColourThemes(),
+      'a colour map can hand these "orange", which Badge renders grey',
     ).toEqual([])
   })
 
