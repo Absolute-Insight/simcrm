@@ -586,7 +586,7 @@ already and are not touched by this. -#} {% autoescape true %}
         var FIELDS = {{ fields | tojson }};
         var CSRF = {{ csrf_token | tojson }};
         var DRAFT = {{ draft_preview | tojson }};
-        var SUCCESS_URL = {{ success_url | tojson }};
+        var SUCCESS_URL = safeRedirectUrl({{ success_url | tojson }});
         var EMBED = {{ embed | tojson }};
         var form = document.getElementById("web-form");
         var errBox = document.getElementById("form-error");
@@ -802,6 +802,17 @@ already and are not touched by this. -#} {% autoescape true %}
           [].forEach.call(form.querySelectorAll(".has-error"), function (el) {
             el.classList.remove("has-error");
           });
+        }
+        // success_url is author-entered: follow only an http(s) target, resolved the
+        // way the browser will, never a javascript: or data: URL that would run here
+        function safeRedirectUrl(url) {
+          if (!url) return "";
+          try {
+            var target = new URL(url, window.location.href);
+            return target.protocol === "http:" || target.protocol === "https:" ? target.href : "";
+          } catch (e) {
+            return "";
+          }
         }
         function redirectWithCountdown(url) {
           var note = document.getElementById("redirect-note");

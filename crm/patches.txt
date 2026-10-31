@@ -61,6 +61,7 @@ crm.patches.v1_0.add_lost_reason_section_to_side_panels
 crm.patches.v1_0.fix_notes_view_route_name
 crm.patches.v1_0.rename_user_keyed_rows_after_user_renames
 crm.patches.v1_0.narrow_whatsapp_role_permissions
+crm.patches.v1_0.clear_unsafe_public_form_scripts
 crm.patches.v1_0.add_expired_deal_status
 crm.patches.v1_0.add_customer_code_to_saved_views
 crm.patches.v1_0.anchor_seeded_twitter_rule
