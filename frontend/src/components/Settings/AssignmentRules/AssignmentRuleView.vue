@@ -404,6 +404,7 @@ const assignmentRuleData = ref({
   assignmentRuleName: '',
   assignmentDays: defaultAssignmentDays,
   documentType: 'CRM Lead',
+  lastUser: '',
 })
 
 const validateAssignmentRule = (key, skipConditionCheck = false) => {
@@ -498,6 +499,7 @@ const resetAssignmentRuleData = () => {
     assignmentRuleName: '',
     assignmentDays: defaultAssignmentDays,
     documentType: 'CRM Lead',
+    lastUser: '',
   }
 }
 
@@ -545,6 +547,8 @@ const getAssignmentRuleData = createResource({
       assignmentRuleName: data.name,
       assignmentDays: data.assignment_days.map((day) => day.day),
       documentType: data.document_type,
+      // Round Robin's pointer: AssigneeRules badges this assignee "Last"
+      lastUser: data.last_user || '',
     }
 
     initialData.value = JSON.stringify(assignmentRuleData.value)
