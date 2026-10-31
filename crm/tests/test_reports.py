@@ -114,6 +114,15 @@ class ReportsTest(IntegrationTestCase):
 			rows = get_report("pipeline_by_stage", from_date, to_date, USER)["rows"]
 			return next((r["deals"] for r in rows if r["stage"] == open_status[0]), 0)
 
+		def snapshot(from_date, to_date):
+			report = get_report("pipeline_by_stage", from_date, to_date, USER, snapshot=True)
+			self.assertFalse(report["period"])
+			return next(r["deals"] for r in report["rows"] if r["stage"] == open_status[0])
+
+		# the dashboard's "right now" panel and digests: the old deal counts in any period
+		self.assertEqual(snapshot("2030-01-01", "2030-01-31"), snapshot("2025-01-01", "2025-01-31"))
+		self.assertGreaterEqual(snapshot("2030-01-01", "2030-01-31"), 2)
+
 		today = str(frappe.utils.nowdate())
 		self.assertGreaterEqual(deals_in(today, today), 1, "the deal opened today is missing")
 		# the back-dated deal is the only difference between these two windows

@@ -21,8 +21,7 @@ the number on a tile are the same number for the same period.
 
 ## Working with a report
 
-- **Period** — most reports take a date range; snapshot reports hide the
-  picker because the range would change nothing.
+- **Period** — pick the date range the report covers.
 - **Export CSV** — download the rows exactly as shown.
 - **Print** — a print-friendly view for sharing.
 - Manager scoping follows the sales hierarchy: you see the reps you manage.

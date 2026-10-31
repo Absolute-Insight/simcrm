@@ -97,12 +97,6 @@ class ReportDigestTest(IntegrationTestCase):
 		self.digests.append(doc.name)
 		return doc
 
-	def open_yesterday(self, deal: str) -> None:
-		"""Pipeline by stage counts deals created in the window, and a daily
-		digest's window is yesterday -- a deal inserted now is outside it."""
-		yesterday = frappe.utils.add_days(frappe.utils.now_datetime(), -1)
-		frappe.db.set_value("CRM Deal", deal, "creation", yesterday, update_modified=False)
-
 	def queued_messages(self):
 		"""The HTML body of every queued digest, decoded out of the MIME envelope."""
 		messages = []
@@ -136,7 +130,6 @@ class ReportDigestTest(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 		self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True)
-		self.open_yesterday(deal.name)
 
 		self.make_digest()
 		self.assertEqual(send_due_digests(), 1)
@@ -338,10 +331,10 @@ class ReportDigestTest(IntegrationTestCase):
 
 		real_get_report = crm_report_digest_get_report()
 
-		def explode_for_the_first(report, from_date, to_date):
+		def explode_for_the_first(report, from_date, to_date, **kwargs):
 			if frappe.session.user == RECIPIENT:
 				raise ValueError("no rows for this one")
-			return real_get_report(report, from_date, to_date)
+			return real_get_report(report, from_date, to_date, **kwargs)
 
 		with (
 			patch("crm.api.reports.get_report", side_effect=explode_for_the_first),
@@ -399,7 +392,6 @@ class ReportDigestTest(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 		self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True)
-		self.open_yesterday(deal.name)
 
 		self.make_digest()
 		send_due_digests()

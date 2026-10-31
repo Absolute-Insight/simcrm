@@ -37,6 +37,21 @@ def _pipeline_by_stage(from_date, to_date, user, territory=None):
 	return rows
 
 
+def _open_pipeline(from_date, to_date, user, territory=None):
+	"""The same rows for the pipeline as it stands, whatever the period.
+
+	What the dashboard's "open deals right now" panel and a digest ask for: a digest
+	cannot choose its window, and a daily one would otherwise read "no data" on any
+	day nobody opened a deal.
+	"""
+	from crm.api.dashboard import pipeline_by_stage
+
+	rows = pipeline_by_stage(user=user, territory=territory)
+	for row in rows:
+		row.pop("status_type", None)
+	return rows
+
+
 def _funnel_conversion(from_date, to_date, user, territory=None):
 	from crm.api.dashboard import get_funnel_conversion
 
@@ -268,6 +283,7 @@ REPORTS = {
 			},
 		],
 		"get_rows": _pipeline_by_stage,
+		"get_snapshot_rows": _open_pipeline,
 		"get_notice": _forecast_notice,
 	},
 	"funnel_conversion": {
@@ -505,7 +521,10 @@ def get_report(
 	to_date: str | None = None,
 	user: str | None = None,
 	territory: str | None = None,
+	snapshot: bool = False,
 ):
+	"""``snapshot`` asks a report that has one for its state right now rather than
+	over the period; it means nothing to a report that does not."""
 	from crm.api.dashboard import check_user_rate
 
 	# per-account on top of the per-IP decorator; a report is a full aggregate
@@ -526,13 +545,14 @@ def get_report(
 	user = pin_user(user)
 
 	report = REPORTS[name]
+	get_rows = (snapshot and report.get("get_snapshot_rows")) or report["get_rows"]
 	return {
 		"name": name,
 		"title": _(report["title"]),
 		"description": _(report["description"]),
-		"period": report.get("period", True),
+		"period": False if get_rows is report.get("get_snapshot_rows") else report.get("period", True),
 		"columns": _translated_columns(report),
-		"rows": report["get_rows"](str(from_date), str(to_date), user, territory),
+		"rows": get_rows(str(from_date), str(to_date), user, territory),
 		# Optional, and None for most reports: a line explaining why the numbers
 		# below are the shape they are, when we know. Already-translated, since
 		# the producer builds it per request.
