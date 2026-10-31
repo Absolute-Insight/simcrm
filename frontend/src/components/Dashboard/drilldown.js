@@ -17,6 +17,7 @@ import { statusesStore } from '@/stores/statuses'
 import { viewsStore } from '@/stores/views'
 import {
   drilldownFor,
+  EXPIRED_STATUS,
   isOpenStatusType,
   standardViewPayload,
 } from '@/utils/dashboardHome'
@@ -35,7 +36,7 @@ export function useDrilldown() {
 
   const openStatuses = computed(() =>
     (dealStatuses.data || [])
-      .filter((s) => isOpenStatusType(s.type))
+      .filter((s) => isOpenStatusType(s.type) && s.name !== EXPIRED_STATUS)
       .map((s) => s.name),
   )
 

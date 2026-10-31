@@ -265,7 +265,11 @@ def sync_default_columns(view):
 			columns = frappe.get_list(
 				field_meta.options,
 				fields=["name"],
-				order_by="modified asc",
+				order_by=(
+					"position asc"
+					if frappe.get_meta(field_meta.options).has_field("position")
+					else "modified asc"
+				),
 			)
 		elif field_meta.fieldtype == "Select":
 			columns = [{"name": option} for option in field_meta.options.split("\n")]

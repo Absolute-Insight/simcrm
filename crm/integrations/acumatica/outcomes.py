@@ -25,7 +25,7 @@ import frappe
 from frappe.utils import add_days, getdate, nowdate
 
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import record_sync_issue
-from crm.fcrm.doctype.crm_deal_status.crm_deal_status import ensure_expired_status
+from crm.fcrm.doctype.crm_deal_status.crm_deal_status import ensure_expired_status, expired_status_is_usable
 from crm.integrations.acumatica.client import v
 
 try:
@@ -48,6 +48,12 @@ LOST_STATUSES = {"Canceled": LOST_CANCELLED, "Rejected": LOST_REJECTED}
 PAGE = 500
 # A rep who edited the deal this recently is working it; the expiry rule waits.
 RECENT_TOUCH_DAYS = 14
+
+
+# Set by the patch that reopened Lost deals as Expired: the high-water mark moved
+# past whatever happened to their quotes while they were closed, so the next pull
+# reads every quote, once.
+REREAD_ALL_QUOTES = "acumatica_reread_all_quotes"
 
 
 def _ensure_lost_reason(reason: str) -> None:
@@ -137,6 +143,9 @@ def pull_quote_outcomes(client, modified_since: str | None) -> dict:
 	by_quote = _open_deals_by_quote()
 	if not by_quote:
 		return counts
+	reread = frappe.db.get_default(REREAD_ALL_QUOTES)
+	if reread:
+		modified_since = None
 	order_type = getattr(client.settings, "quote_order_type", None) or "QT"
 	filter_ = f"OrderType eq '{order_type}'"
 	if modified_since:
@@ -166,6 +175,9 @@ def pull_quote_outcomes(client, modified_since: str | None) -> dict:
 		skip += len(page)
 		if pause:
 			time.sleep(pause)
+	if reread:
+		# only once every page has been read: a failed run asks again next time
+		frappe.defaults.clear_default(REREAD_ALL_QUOTES)
 	return counts
 
 
@@ -180,6 +192,12 @@ def expire_stale_quotes(grace_days: int) -> dict:
 	if not grace_days or int(grace_days) <= 0:
 		return {"expired": 0}
 	expired_status = ensure_expired_status()
+	if not expired_status_is_usable():
+		frappe.log_error(
+			f"The deal status {expired_status} is a Won or Lost status, so stale quotes were left as they are.",
+			"Acumatica quote expiry",
+		)
+		return {"expired": 0}
 	cutoff = add_days(nowdate(), -int(grace_days))
 	touched_after = add_days(nowdate(), -RECENT_TOUCH_DAYS)
 	stale = frappe.get_all(

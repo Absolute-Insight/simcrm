@@ -10,6 +10,7 @@ from frappe.utils import add_days, date_diff, flt, get_first_day, get_last_day, 
 from pypika.functions import Function
 
 from crm.fcrm.doctype.crm_dashboard.crm_dashboard import create_default_manager_dashboard
+from crm.fcrm.doctype.crm_deal_status.crm_deal_status import EXPIRED
 from crm.utils import sales_user_only, user_rate_limited
 
 # Rate limits, expressed as "how many times may someone open or re-filter the
@@ -115,6 +116,16 @@ def in_territory(table, territory: str | None):
 	either table.
 	"""
 	return table.territory == territory if territory else None
+
+
+def still_open(deal, status):
+	"""A deal the open tiles and the forecast count: neither closed nor Expired.
+
+	Named rather than by type, because Expired shares On Hold with any status a
+	site made for a deal that is merely paused, which these figures have always
+	included. A quote that ran out is not expected revenue until someone revives it.
+	"""
+	return status.type.notin(["Won", "Lost"]) & (deal.status != EXPIRED)
 
 
 def apply_territory(query, table, territory: str | None):
@@ -395,17 +406,13 @@ def get_ongoing_deals(
 
 	# Build conditions for current period
 	current_cond = (
-		(Deal.creation >= from_date)
-		& (Deal.creation < to_date_plus_one)
-		& (Status.type.notin(["Won", "Lost"]))
+		(Deal.creation >= from_date) & (Deal.creation < to_date_plus_one) & still_open(Deal, Status)
 	)
 	if user:
 		current_cond = current_cond & belongs_to(Deal, user, "CRM Deal")
 
 	# Build conditions for previous period
-	prev_cond = (
-		(Deal.creation >= prev_from_date) & (Deal.creation < from_date) & (Status.type.notin(["Won", "Lost"]))
-	)
+	prev_cond = (Deal.creation >= prev_from_date) & (Deal.creation < from_date) & still_open(Deal, Status)
 	if user:
 		prev_cond = prev_cond & belongs_to(Deal, user, "CRM Deal")
 
@@ -457,17 +464,13 @@ def get_average_ongoing_deal_value(
 
 	# Build conditions for current period
 	current_cond = (
-		(Deal.creation >= from_date)
-		& (Deal.creation < to_date_plus_one)
-		& (Status.type.notin(["Won", "Lost"]))
+		(Deal.creation >= from_date) & (Deal.creation < to_date_plus_one) & still_open(Deal, Status)
 	)
 	if user:
 		current_cond = current_cond & belongs_to(Deal, user, "CRM Deal")
 
 	# Build conditions for previous period
-	prev_cond = (
-		(Deal.creation >= prev_from_date) & (Deal.creation < from_date) & (Status.type.notin(["Won", "Lost"]))
-	)
+	prev_cond = (Deal.creation >= prev_from_date) & (Deal.creation < from_date) & still_open(Deal, Status)
 	if user:
 		prev_cond = prev_cond & belongs_to(Deal, user, "CRM Deal")
 
@@ -980,7 +983,7 @@ def forecast_by_month(
 		.where(
 			(Deal.expected_closure_date >= from_date)
 			& (Deal.expected_closure_date <= to_date)
-			& (Status.type.notin(["Won", "Lost"]))
+			& still_open(Deal, Status)
 		)
 		.groupby(month)
 	)
