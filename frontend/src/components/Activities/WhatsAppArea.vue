@@ -107,7 +107,7 @@
               @click="() => openFileInAnotherTab(whatsapp.attach)"
             />
             <div
-              v-if="!whatsapp.message.startsWith('/files/')"
+              v-if="whatsapp.message && !whatsapp.message.startsWith('/files/')"
               class="mt-1.5"
               v-html="formatWhatsAppMessage(whatsapp.message)"
             />
@@ -138,7 +138,7 @@
               class="h-40 cursor-pointer rounded-[var(--v-radius-card)]"
             />
             <div
-              v-if="!whatsapp.message.startsWith('/files/')"
+              v-if="whatsapp.message && !whatsapp.message.startsWith('/files/')"
               class="mt-1.5"
               v-html="formatWhatsAppMessage(whatsapp.message)"
             />
@@ -189,7 +189,8 @@ import CheckIcon from '@/components/Icons/CheckIcon.vue'
 import DoubleCheckIcon from '@/components/Icons/DoubleCheckIcon.vue'
 import DocumentIcon from '@/components/Icons/DocumentIcon.vue'
 import ReactIcon from '@/components/Icons/ReactIcon.vue'
-import { formatDate, sanitizeHTML } from '@/utils'
+import { formatDate } from '@/utils'
+import { formatWhatsAppMessage } from '@/utils/whatsappMessage'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { Tooltip, Dropdown, createResource, toast } from 'frappe-ui'
 import { ref } from 'vue'
@@ -204,29 +205,6 @@ const { capture } = useTelemetry()
 
 function openFileInAnotherTab(url) {
   window.open(url, '_blank', 'noopener')
-}
-
-function formatWhatsAppMessage(message) {
-  // if message contains _text_, make it italic
-  message = message.replace(/_(.*?)_/g, '<i>$1</i>')
-  // if message contains *text*, make it bold
-  message = message.replace(/\*(.*?)\*/g, '<b>$1</b>')
-  // if message contains ~text~, make it strikethrough
-  message = message.replace(/~(.*?)~/g, '<s>$1</s>')
-  // if message contains ```text```, make it monospace
-  message = message.replace(/```(.*?)```/g, '<code>$1</code>')
-  // if message contains `text`, make it inline code
-  message = message.replace(/`(.*?)`/g, '<code>$1</code>')
-  // if message contains > text, make it a blockquote
-  message = message.replace(/^> (.*)$/gm, '<blockquote>$1</blockquote>')
-  // if contain /n, make it a new line
-  message = message.replace(/\n/g, '<br>')
-  // if contains *<space>text, make it a bullet point
-  message = message.replace(/\* (.*?)(?=\s*\*|$)/g, '<li>$1</li>')
-  message = message.replace(/- (.*?)(?=\s*-|$)/g, '<li>$1</li>')
-  message = message.replace(/(\d+)\. (.*?)(?=\s*(\d+)\.|$)/g, '<li>$2</li>')
-
-  return sanitizeHTML(message)
 }
 
 const emoji = ref('')
