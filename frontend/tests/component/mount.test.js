@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { h } from 'vue'
 import { mount } from './mount.js'
 import StatTile from '@/components/Dashboard/StatTile.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -25,6 +26,33 @@ describe('component test harness', () => {
     const w = mount(ErrorState, { props: { title: 'Nothing here' } })
     await w.nextTick()
     expect(w.el.textContent).toContain('Nothing here')
+  })
+
+  it('captures a kebab-case emit and runs array handlers from props', () => {
+    const one = vi.fn()
+    const two = vi.fn()
+    const Probe = {
+      emits: ['update-value'],
+      setup:
+        (_, { emit }) =>
+        () =>
+          h('button', { onClick: () => emit('update-value', 1) }),
+    }
+    const w = mount(Probe, { props: { onUpdateValue: [one, two] } })
+    w.el.querySelector('button').click()
+    expect(w.emitted['update-value']).toEqual([[1]])
+    expect(one).toHaveBeenCalledOnce()
+    expect(two).toHaveBeenCalledOnce()
+  })
+
+  it('removes its container when the component throws on mount', () => {
+    const Broken = {
+      setup() {
+        throw new Error('boom')
+      },
+    }
+    expect(() => mount(Broken)).toThrow('boom')
+    expect(document.body.children).toHaveLength(0)
   })
 
   it('cleans up after a test that did not unmount', () => {
