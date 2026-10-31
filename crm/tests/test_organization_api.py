@@ -1,5 +1,6 @@
 """Customer-code search. Reps know their accounts as C-IMP003E, not by name."""
 
+import json
 from unittest.mock import patch
 
 import frappe
@@ -121,6 +122,35 @@ class CustomerCodeShownTest(IntegrationTestCase):
 		match = next((o for o in options if o["value"] == "Karee Merensky"), None)
 		self.assertIsNotNone(match, "searching by customer code found nothing")
 		self.assertIn("C-LON001J", match.get("description") or "")
+
+	def test_a_saved_standard_view_gains_the_column_once(self):
+		from crm.patches.v1_0.add_customer_code_to_saved_views import execute
+
+		columns = [
+			{"key": "organization_name", "label": "Organization"},
+			{"key": "website", "label": "Website"},
+		]
+		view = frappe.get_doc(
+			{
+				"doctype": "CRM View Settings",
+				"dt": "CRM Organization",
+				"type": "list",
+				"is_standard": 1,
+				"label": "Saved",
+				"user": "Administrator",
+				"columns": json.dumps(columns),
+				"rows": json.dumps(["name", "organization_name", "website"]),
+			}
+		).insert(ignore_permissions=True)
+
+		execute()
+		execute()
+
+		saved = frappe.db.get_value("CRM View Settings", view.name, ["columns", "rows"], as_dict=True)
+		self.assertEqual(
+			[c["key"] for c in json.loads(saved.columns)], ["organization_name", "acumatica_id", "website"]
+		)
+		self.assertIn("acumatica_id", json.loads(saved.rows))
 
 	def test_setting_up_the_search_twice_keeps_an_admins_own_search_fields(self):
 		from frappe.custom.doctype.property_setter.property_setter import make_property_setter
