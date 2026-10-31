@@ -109,9 +109,7 @@ describe('ColumnSettings', () => {
     })
     await w.nextTick()
     const button = (label) =>
-      [...w.el.querySelectorAll('button')].find(
-        (b) => b.textContent === label,
-      )
+      [...w.el.querySelectorAll('button')].find((b) => b.textContent === label)
 
     // a column removed: the x beside the pencil on its row
     ;[...w.el.querySelectorAll('button')]
