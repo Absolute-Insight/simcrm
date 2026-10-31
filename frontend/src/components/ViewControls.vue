@@ -393,7 +393,7 @@ import Draggable from 'vuedraggable'
 import isEqual from 'lodash/isEqual'
 import { PhTrayArrowDown as ImportIcon } from '@phosphor-icons/vue'
 import { reportActionError } from '@/utils/reportActionError'
-import { nextPageLength } from '@/utils/listPaging'
+import { listGeneration, nextPageLength } from '@/utils/listPaging'
 import { collectClosingValues, needsClosingNote } from '@/utils/taskClosing'
 
 const props = defineProps({
@@ -578,7 +578,16 @@ function getParams() {
 const resource = createResource({
   url: 'crm.api.doc.get_data',
   params: getParams(),
-  cache: [props.doctype, route.query.view, route.params.viewType],
+  // The default filters are part of what this list is: a page can open it
+  // under different ones, and the two must not share rows or params.
+  cache: [
+    props.doctype,
+    route.query.view,
+    route.params.viewType,
+    JSON.stringify(props.filters),
+    // A tile rewrites the standard view, never a saved one.
+    route.query.view ? 0 : listGeneration(props.doctype),
+  ],
   auto: true,
   onSuccess(data) {
     let cv = getView(route.query.view, route.params.viewType, props.doctype)

@@ -1734,6 +1734,90 @@ def get_deals_by_salesperson(
 	}
 
 
+def won_by_salesperson(
+	from_date: str,
+	to_date: str,
+	user: str | None = None,
+	territory: str | None = None,
+) -> list[dict]:
+	"""What each rep closed in the period: won value and deals, lost deals, win rate.
+
+	``[{owner, salesperson, won_value, won_deals, lost_deals, win_rate}]``, best
+	first. ``owner`` is ``None`` on the unowned row.
+
+	Per deal owner, so every deal counts once and the reps add up to
+	:func:`actual_by_month` over the same period -- unlike
+	:func:`won_value_by_user`, which credits a deal to each rep it belongs to.
+	Unowned deals are one :func:`blank_label` row: they are still revenue.
+
+	Only a move into Won stamps ``closed_date``, so a lost deal is dated by that
+	when an import set it, else by the status change that lost it, else by when it
+	was last touched. ``win_rate`` is a whole percentage of won + lost, or ``None``
+	with neither. On Hold, which holds Expired, is not closed.
+	"""
+	Deal = DocType("CRM Deal")
+	Status = DocType("CRM Deal Status")
+	User = DocType("User")
+	Log = DocType("CRM Status Change Log")
+
+	owner = NullIf(Deal.deal_owner, "")
+	label = Coalesce(NullIf(User.full_name, ""), blank_bucket(Deal.deal_owner))
+
+	won_query = (
+		_won_deals_query(from_date, to_date)
+		.left_join(User)
+		.on(User.name == Deal.deal_owner)
+		.select(
+			owner.as_("owner"),
+			label.as_("salesperson"),
+			Count("*").as_("deals"),
+			Sum(Coalesce(Deal.deal_value, 0) * IfNull(Deal.exchange_rate, 1)).as_("value"),
+		)
+		.groupby(owner)
+	)
+	lost_on = Coalesce(Deal.closed_date, Date(Log.to_date), Date(Deal.modified))
+	lost_query = (
+		frappe.qb.from_(Deal)
+		.join(Status)
+		.on(Deal.status == Status.name)
+		.left_join(User)
+		.on(User.name == Deal.deal_owner)
+		.left_join(Log)
+		.on((Log.parent == Deal.name) & (Log.parenttype == "CRM Deal") & (Log.to_type == "Lost"))
+		.select(
+			owner.as_("owner"),
+			label.as_("salesperson"),
+			Count(Deal.name).distinct().as_("deals"),
+		)
+		.where((Status.type == "Lost") & lost_on.between(from_date, to_date))
+		.groupby(owner)
+	)
+
+	rows: dict[str | None, dict] = {}
+	for query, field in ((won_query, "won_deals"), (lost_query, "lost_deals")):
+		if user:
+			query = query.where(belongs_to(Deal, user, "CRM Deal"))
+		query = apply_territory(query, Deal, territory)
+		for row in scope_deals(query).run(as_dict=True):
+			entry = rows.setdefault(
+				row.owner,
+				{
+					"owner": row.owner,
+					"salesperson": row.salesperson,
+					"won_value": 0.0,
+					"won_deals": 0,
+					"lost_deals": 0,
+				},
+			)
+			entry[field] = row.deals
+			entry["won_value"] = flt(row.get("value")) or entry["won_value"]
+
+	for entry in rows.values():
+		closed = entry["won_deals"] + entry["lost_deals"]
+		entry["win_rate"] = round(entry["won_deals"] / closed * 100) if closed else None
+	return sorted(rows.values(), key=lambda entry: -entry["won_value"])
+
+
 def get_base_currency():
 	"""
 	The currency every monetary aggregate is expressed in. Deal values are

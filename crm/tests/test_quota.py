@@ -372,6 +372,68 @@ class QuotaScopeTest(IntegrationTestCase):
 			)
 		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
 
+	def won_reps(self) -> set[str | None]:
+		"""Who ``won_by_salesperson`` names to the session user: the Analyst's ranking."""
+		from crm.api.dashboard import won_by_salesperson
+
+		return {row["owner"] for row in won_by_salesperson("2019-03-01", "2019-03-31")}
+
+	def make_won_deals(self, *owners: str) -> None:
+		won = frappe.get_all("CRM Deal Status", filters={"type": "Won"}, pluck="name", limit=1)[0]
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Quota Scope Org"})
+			.insert(ignore_if_duplicate=True, ignore_permissions=True)
+			.name
+		)
+		for owner in owners:
+			deal = frappe.get_doc(
+				{
+					"doctype": "CRM Deal",
+					"organization": org,
+					"deal_owner": owner,
+					"status": won,
+					"deal_value": 100,
+					"exchange_rate": 1,
+				}
+			).insert(ignore_permissions=True)
+			# the session is still the test's user when cleanups run
+			self.addCleanup(frappe.db.delete, "CRM Deal", {"name": deal.name})
+			frappe.db.set_value("CRM Deal", deal.name, "closed_date", "2019-03-15", update_modified=False)
+
+	def test_the_won_ranking_shows_a_rep_their_own_row(self):
+		self.make_won_deals(USER, OTHER)
+		frappe.set_user(USER)
+		self.assertEqual(self.won_reps(), {USER})
+
+	def test_the_won_ranking_stops_at_an_in_tree_managers_subtree(self):
+		self.make_won_deals(USER, OTHER)
+		frappe.set_user(self.MANAGER)
+		self.assertEqual(self.won_reps(), {USER})
+
+	def _out_of_tree(self, scope: str) -> None:
+		saved = frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy")
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", scope)
+		self.addCleanup(
+			frappe.db.set_single_value,
+			"CRM Access Settings",
+			"manager_outside_hierarchy",
+			saved or "All records",
+		)
+		frappe.db.delete("CRM Sales Hierarchy", {"user": self.MANAGER})
+		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
+
+	def test_the_won_ranking_follows_an_out_of_tree_managers_setting(self):
+		self.make_won_deals(USER, OTHER)
+		self._out_of_tree("All records")
+		frappe.set_user(self.MANAGER)
+		self.assertEqual(self.won_reps(), {USER, OTHER})
+
+	def test_the_won_ranking_shows_an_own_records_manager_nobody_elses(self):
+		self.make_won_deals(USER, OTHER)
+		self._out_of_tree("Own records only")
+		frappe.set_user(self.MANAGER)
+		self.assertEqual(self.won_reps(), set())
+
 	def test_an_in_tree_manager_cannot_set_a_target_outside_their_subtree(self):
 		frappe.set_user(self.MANAGER)
 		with self.assertRaises(frappe.PermissionError):

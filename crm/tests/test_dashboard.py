@@ -152,6 +152,27 @@ class TestDashboard(IntegrationTestCase):
 		frappe.db.rollback()
 		super().tearDownClass()
 
+	def test_the_total_leads_tile_equals_the_rows_it_drills_into(self):
+		"""L-64: the tile counts every lead created in the period; the list always
+		added converted = 0, so a tile reading 12 opened on 9 rows. The drill-down
+		sends no default filters, as frontend/src/utils/dashboardHome.js does."""
+		from crm.api.doc import get_data
+
+		period = {"creation": ["between", [str(self.from_date), str(self.to_date)]]}
+		lead = frappe.get_all("CRM Lead", filters={**period, "converted": 0}, pluck="name", limit=1)[0]
+		frappe.db.savepoint("converted_lead")
+		self.addCleanup(frappe.db.rollback, save_point="converted_lead")
+		frappe.db.set_value("CRM Lead", lead, "converted", 1, update_modified=False)
+
+		def rows(default_filters):
+			return get_data("CRM Lead", dict(period), "modified desc", default_filters=default_filters)
+
+		tile = get_total_leads(self.from_date, self.to_date)["value"]
+		self.assertEqual(rows({})["total_count"], tile)
+		converted = frappe.db.count("CRM Lead", {**period, "converted": 1})
+		self.assertGreaterEqual(converted, 1)
+		self.assertEqual(rows({"converted": 0})["total_count"], tile - converted)
+
 	def test_get_total_leads(self):
 		"""Test get_total_leads returns correct lead count and delta calculation"""
 		result = get_total_leads(self.from_date, self.to_date)

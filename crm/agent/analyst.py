@@ -167,9 +167,23 @@ CATALOGUE: dict[str, dict] = {
 			_col("value", "Value", "currency"),
 		],
 	},
+	"won_by_rep": {
+		"title": "Won value and win rate by rep",
+		"description": "Value of the deals each rep closed as won in the period, with deals won and "
+		"win rate (won / closed). Use this for who is best, top performers and any ranking of reps.",
+		"source": CRM,
+		"columns": [
+			_col("rep", "Rep", "text"),
+			_col("won", "Won value", "currency"),
+			_col("won_deals", "Won deals", "int"),
+			_col("closed_deals", "Closed deals", "int"),
+			_col("win_rate_pct", "Win rate", "percent"),
+		],
+	},
 	"deals_by_salesperson": {
-		"title": "Deals by rep",
-		"description": "Deal count and value per rep for the period.",
+		"title": "Deals created by rep (any outcome)",
+		"description": "Every deal created in the period per rep, whether open, won, lost or expired: "
+		"workload and pipeline created, not revenue. Never use it to say who is best.",
 		"source": CRM,
 		"columns": [
 			_col("salesperson", "Rep", "text"),
@@ -431,7 +445,7 @@ _KEYWORD_PLANS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
 	),
 	(("industry", "industries", "sector", "sectors"), ("deals_by_industry",)),
 	(("territory", "territories", "region", "regions", "regional"), ("deals_by_territory",)),
-	(("rep", "reps", "salesperson", "salespeople", "team", "teams"), ("deals_by_salesperson",)),
+	(("rep", "reps", "salesperson", "salespeople", "team", "teams"), ("won_by_rep",)),
 	(("source", "sources", "campaign", "campaigns"), ("leads_by_source",)),
 	(("plan", "plans", "adherence", "planned"), ("plan_adherence_by_rep",)),
 	(
@@ -443,6 +457,59 @@ _KEYWORD_PLANS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
 ]
 
 _DEFAULT_PLAN = ("won_revenue_by_month", "pipeline_by_stage")
+
+# Prod, asked for its best salespeople, ranked them on every deal they had created
+# -- 258m, lost and expired included, beside 18.5m actually won. Which table answers
+# that is not a judgement for a 2.6B model: these questions are recognised here and
+# held to won value whatever the plan says.
+_RANKING_WORDS = re.compile(
+	r"\b(?:best|top|worst|weakest|strongest|leading|lowest|highest|bottom|leaderboard|"
+	r"rank|ranks|ranked|ranking|rankings|performers?|performing|performance|"
+	r"underperform\w*|outperform\w*)\b|\bhow (?:is|are|was|were)\b.*\bdoing\b"
+)
+_MOST_SOLD = re.compile(
+	r"\b(?:most|more)\b.*\b(?:business|sales|revenue|money)\b|"
+	r"\b(?:sold|sell|sells|closed|close|closes|won|win|wins)\b.*\b(?:most|more)\b"
+)
+# Says reps outright, so nothing else in the question can make it about something else.
+_REP_NOUNS = re.compile(r"\b(?:reps?|salespersons?|salespeople|sales people|salesman|salesmen)\b")
+# Only people, not necessarily reps: these lose to anything else worth being best at.
+_MAYBE_REPS = re.compile(r"\b(?:who|teams?|staff)\b")
+# Selling is what only a rep does, whatever was sold, to whomever, wherever.
+# "who" has to be the seller: "who did we sell the most to?" asks about customers.
+_WHO_SOLD = re.compile(
+	r"\bwho (?:has |have |had )?(?:sold|sells|closed|closes|won|wins)\b"
+	r"(?!.*\b(?:we|us)\b).*\b(?:most|more|best)\b"
+)
+_WE_AFTER_WHO = re.compile(r"\bwho\b.*\b(?:we|us)\b")
+_NOT_REPS = re.compile(
+	r"\b(?:customers?|clients?|accounts?|organi[sz]ations?|compan(?:y|ies)|contacts?|leads?|"
+	r"sources?|campaigns?|industr(?:y|ies)|sectors?|territor(?:y|ies)|regions?|products?|"
+	r"debtors?|payers?|suppliers?|vendors?|competitors?|partners?|distributors?|resellers?|dealers?|"
+	r"owes?|owed|spends?|buys?|pays?|"
+	r"(?<!this )(?<!last )(?<!next )(?:months?|quarters?|years?))\b"
+)
+# Reps compared on what they hold rather than what they brought in.
+_HOLDINGS = r"\bpipeline\b|\bopen deals?\b|\bworkload\b|\bhow many deals\b|\bnew deals\b|\bdeals created\b"
+_DEALS_BY = r"\bdeals (?:by|per)\b"
+_PIPELINE_ASK = re.compile(f"{_HOLDINGS}|{_DEALS_BY}")
+_ASKS_RANK = re.compile(r"\brank\w*")
+_QUOTA_ASK = re.compile(r"\b(?:quotas?|targets?|attainment)\b")
+
+
+def ranks_reps(question: str) -> bool:
+	"""Whether ``question`` asks who sells best, as opposed to who holds the most."""
+	text = (question or "").lower()
+	if re.search(_HOLDINGS, text) or (re.search(_DEALS_BY, text) and not _ASKS_RANK.search(text)):
+		return False
+	if _WHO_SOLD.search(text):
+		return True
+	ranking = bool(_RANKING_WORDS.search(text) or _MOST_SOLD.search(text))
+	if _REP_NOUNS.search(text):
+		return ranking
+	if _NOT_REPS.search(text) or _WE_AFTER_WHO.search(text):
+		return False
+	return ranking and bool(_MAYBE_REPS.search(text))
 
 
 def fallback_plan(question: str, available: list[str]) -> list[str]:
@@ -456,14 +523,31 @@ def fallback_plan(question: str, available: list[str]) -> list[str]:
 					chosen.append(metric)
 	if not chosen:
 		chosen = [metric for metric in _DEFAULT_PLAN if metric in available]
+	if _PIPELINE_ASK.search(text):
+		chosen = ["deals_by_salesperson" if metric == "won_by_rep" else metric for metric in chosen]
 	return chosen[:MAX_METRICS]
+
+
+def _hold_ranking_to_won_value(question: str, metrics: list[str]) -> list[str]:
+	"""A ranking of reps, on won value: the other rep tables measure something else.
+
+	Quota attainment stays when the question asks about quota, and everything else
+	the plan chose stays beside the ranking.
+	"""
+	replaced = {"won_by_rep", "deals_by_salesperson"}
+	if not _QUOTA_ASK.search(question.lower()):
+		replaced.add("quota_attainment_by_rep")
+	return ["won_by_rep", *(metric for metric in metrics if metric not in replaced)]
 
 
 def normalise_plan(plan, available: list[str], today: date, question: str = "") -> dict:
 	"""A model's ``AnalystPlan`` (or ``None``) into something the data layer can run.
 
 	Unknown or unavailable metrics are dropped, duplicates collapse, the list is
-	capped at :data:`MAX_METRICS`; an empty selection falls back to keywords.
+	capped at :data:`MAX_METRICS`; an empty selection falls back to keywords, and a
+	question that ranks reps is held to :data:`won_by_rep <CATALOGUE>` whatever was
+	selected. The cap excludes that forced table, so it costs no chosen metric and a
+	plan can run ``MAX_METRICS + 1`` tables.
 	Dates default to the last :data:`DEFAULT_PERIOD_MONTHS` months ending today,
 	a reversed pair is swapped, an unparseable one takes the default, and both
 	are clamped between :data:`EARLIEST_PLAN_DATE` and :data:`PLAN_MONTHS_AHEAD`
@@ -474,9 +558,12 @@ def normalise_plan(plan, available: list[str], today: date, question: str = "") 
 	for key in requested:
 		if key in available and key not in metrics:
 			metrics.append(key)
-	if not metrics:
+	if not metrics and not ranks_reps(question):
 		metrics = fallback_plan(question, available)
 	metrics = metrics[:MAX_METRICS]
+	# after the cap: the table the code insists on does not cost one the plan chose
+	if ranks_reps(question) and "won_by_rep" in available:
+		metrics = _hold_ranking_to_won_value(question, metrics)
 
 	default_to = today
 	default_from = add_months(today, -DEFAULT_PERIOD_MONTHS)
@@ -654,7 +741,10 @@ ANSWER_SYSTEM_PROMPT = (
 	"question, then one or two sentences of context. Every number in your answer must appear "
 	f"in the figures. Totals, quarters, best and worst months and rankings are already worked "
 	f"out under '{FACTS_HEADING}': quote those, and never add up, average or compare rows "
-	"yourself. Read a ranking from its order; read a best or worst month only from those lines. "
+	"yourself. Read a ranking from its order, and say what it is ranked by; read a best or worst "
+	"month only from those lines. Whether a figure rose or fell comes only from its 'Direction:' "
+	"line, whatever the question assumes: asked 'did we grow?' when that line says it fell, say "
+	"it fell. "
 	"Keep each figure with the name or month it belongs to. Do not estimate, and do not "
 	"describe data that is not there. If the figures do not answer the question, say 'The data "
 	"does not cover that.' and say what they do show. Every table below is part of the "

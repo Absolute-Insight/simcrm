@@ -219,6 +219,21 @@ export function isOpenStatusType(type) {
   return Boolean(type) && !['Won', 'Lost'].includes(type)
 }
 
+/* The Leads list hides converted leads; the total leads tile counts them. The
+   difference lives in the URL rather than on the saved view, so it lasts as
+   long as the page the tile opened and the normal list never inherits it. */
+const ALL_LEADS_QUERY = { converted: 'all' }
+
+/** Whether the Leads page at this route query includes converted leads. */
+export function showsConvertedLeads(query) {
+  return query?.converted === ALL_LEADS_QUERY.converted
+}
+
+/** The filters the Leads page applies under the saved view's own. */
+export function leadsDefaultFilters(query) {
+  return showsConvertedLeads(query) ? {} : { converted: 0 }
+}
+
 /**
  * Where a dashboard tile drills through to, keyed by its widget name.
  *
@@ -260,7 +275,8 @@ export function drilldownFor(name, context = {}) {
       return {
         doctype: 'CRM Lead',
         routeName: 'Leads',
-        filters: { converted: 0, ...leadOwner, ...inTerritory, ...created },
+        query: ALL_LEADS_QUERY,
+        filters: { ...leadOwner, ...inTerritory, ...created },
       }
     case 'ongoing_deals':
     case 'average_ongoing_deal_value':

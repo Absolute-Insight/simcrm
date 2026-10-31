@@ -101,8 +101,10 @@ vi.mock('@/composables/telephony', async () => ({
 vi.mock('@/composables/useTimelinePreferences', () => ({
   timestampCell: (v) => v,
 }))
+vi.mock('@/stores/views', () => ({ viewsStore: () => ({}) }))
 vi.mock('vue-router', () => ({
   useRoute: () => ({ params: { viewType: 'kanban' }, query: {} }),
+  useRouter: () => ({ push() {} }),
 }))
 
 const pages = {

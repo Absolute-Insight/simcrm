@@ -768,7 +768,9 @@ def ask_analyst(question: str, history: str | list | None = None) -> dict:
 			sources.append(table["source"])
 	# The words are the model's; a sentence the tables do not bear out is dropped
 	# before an admin reads it, and the bullets are the computed lines themselves.
-	grounded = analyst_facts.ground_reply(reply.answer, reply.caveats, tables, today, turns)
+	grounded = analyst_facts.ground_reply(
+		reply.answer, reply.caveats, tables, today, turns, question=question
+	)
 	return {
 		"status": "ok",
 		"answer": grounded["answer"],

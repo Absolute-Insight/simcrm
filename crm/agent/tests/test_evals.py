@@ -17,6 +17,8 @@ here.
 
 from __future__ import annotations
 
+from datetime import date
+from types import SimpleNamespace
 from unittest import mock
 
 from frappe.tests import UnitTestCase
@@ -93,6 +95,19 @@ class CorpusTest(UnitTestCase):
 			if case.capability == "analyst":
 				with self.subTest(case=case.name):
 					self.assertTrue(case.question.strip())
+
+	def test_a_question_reaches_the_right_table_whatever_the_planner_picked(self):
+		"""Deterministic, so it runs here rather than against a model."""
+		available = analyst_mod.available_keys(False)
+		for question, picked, wanted in cases.ROUTING_CASES:
+			with self.subTest(question=question, picked=picked):
+				plan = analyst_mod.normalise_plan(
+					SimpleNamespace(metrics=list(picked), from_date="", to_date=""),
+					available,
+					date(2026, 10, 15),
+					question=question,
+				)
+				self.assertEqual(tuple(plan["metrics"]), wanted)
 
 	def test_a_bare_override_case_exists(self):
 		"""The finding that the fence is not what is being defeated rests on a

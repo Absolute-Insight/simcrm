@@ -144,10 +144,12 @@ def _run_tables(plan: dict, erp: str | None, deadline: float | None, today: date
 			rows, note = runner(from_date, to_date, scores=reads.get(("scores",), _pipeline_scores))
 		else:
 			rows, note = runner(from_date, to_date)
+		rows = analyst_facts.rank_rows(key, rows)
 		if key in _HISTORY_TABLES:
 			rows, coverage = analyst_facts.trim_to_coverage(rows, starts)
 			note = f"{note} {coverage}".strip()
-		table = _table(key, metric, "CRM", rows, from_date, to_date, note)
+		window = _history(from_date, to_date) if key == "growth_rates" else (from_date, to_date)
+		table = _table(key, metric, "CRM", rows, *window, note)
 		if key in _ROW_LISTS:
 			# the model gets the counting done for it and the head of the list; the
 			# screen gets every row (#237)
@@ -331,6 +333,31 @@ def _quota_attainment_by_rep(from_date, to_date):
 		for row in report(from_date, to_date, None)
 	]
 	return rows, "Only reps with a target in the period appear."
+
+
+def _won_by_rep(from_date, to_date):
+	from crm.api.dashboard import won_by_salesperson
+
+	rows = [
+		{
+			"rep": row["salesperson"],
+			"won": float(row["won_value"]),
+			"won_deals": row["won_deals"],
+			"closed_deals": row["won_deals"] + row["lost_deals"],
+			"win_rate_pct": row["win_rate"],
+			"unassigned": not row["owner"],
+		}
+		for row in won_by_salesperson(from_date, to_date)
+	]
+	return rows, (
+		"Won value is the deals closed as won in the period, by deal owner. Win rate is won deals as "
+		"a share of deals closed in the period, won or lost; open and expired deals are not counted."
+	)
+
+
+def _deals_by_salesperson(from_date, to_date):
+	rows, _note = _breakdown("get_deals_by_salesperson", "salesperson")(from_date, to_date)
+	return rows, "Every deal created in the period, any outcome: open, won, lost or expired. Not revenue."
 
 
 def _plan_adherence_by_rep(from_date, to_date):
@@ -553,7 +580,8 @@ _CRM_RUNNERS = {
 	"leads_by_source": _breakdown("get_leads_by_source", "source"),
 	"deals_by_industry": _breakdown("get_deals_by_industry", "industry"),
 	"deals_by_territory": _breakdown("get_deals_by_territory", "territory"),
-	"deals_by_salesperson": _breakdown("get_deals_by_salesperson", "salesperson"),
+	"won_by_rep": _won_by_rep,
+	"deals_by_salesperson": _deals_by_salesperson,
 	"plan_adherence_by_rep": _plan_adherence_by_rep,
 	"average_deal_value": _tile("get_average_deal_value", "Average deal value", "value", compare=True),
 	"time_to_close": _tile("get_average_time_to_close_a_deal", "Average days to close", "days"),
