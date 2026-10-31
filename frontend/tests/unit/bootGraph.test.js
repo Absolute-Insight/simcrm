@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'node:fs'
 import { dirname, join, normalize } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { parse as parseSFC } from 'vue/compiler-sfc'
 
 /**
  * What every cold start parses and evaluates: the modules main.js reaches
@@ -39,8 +40,12 @@ function resolve(spec, from) {
 function codeOf(file) {
   const text = readFileSync(file, 'utf8')
   if (!file.endsWith('.vue')) return text
-  return [...text.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)]
-    .map((m) => m[1])
+  // Vue's own SFC parser, not a regex over the markup: it finds both blocks
+  // whatever their case, attributes or closing-tag spacing.
+  const { descriptor } = parseSFC(text, { filename: file })
+  return [descriptor.script, descriptor.scriptSetup]
+    .filter(Boolean)
+    .map((block) => block.content)
     .join('\n')
 }
 
