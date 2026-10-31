@@ -407,6 +407,13 @@ class TestCustomerScope(IntegrationTestCase):
 		a worker never runs before_request."""
 		for hook in ("before_request", "before_job"):
 			self.assertIn("crm.permissions.document_guard.reserve_action", frappe.get_hooks(hook))
+		# called as execute_job calls it: if this raised, every background job would fail
+		frappe.call(
+			frappe.get_attr("crm.permissions.document_guard.reserve_action"),
+			method="a.job",
+			kwargs={},
+			transaction_type="job",
+		)
 
 	def test_frappes_event_digest_is_stopped(self):
 		from crm.permissions.customers import stop_frappe_event_digest
