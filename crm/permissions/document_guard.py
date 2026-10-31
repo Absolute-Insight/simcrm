@@ -18,6 +18,7 @@ request and apply it to documents there, as the user who sent it. Remove this on
 the frappe pin reserves ``_action``.
 """
 
+# nosemgrep: frappe-semgrep-rules.rules.frappe-monkey-patching-not-allowed
 from frappe.model import base_document
 
 
@@ -25,5 +26,4 @@ def reserve_action() -> None:
 	if "_action" not in base_document.RESERVED_KEYWORDS:
 		# No hook reaches this set, and the alternative is leaving every validate
 		# skippable. Adding a key narrows what a document accepts; nothing else changes.
-		# nosemgrep: frappe-semgrep-rules.rules.frappe-monkey-patching-not-allowed
 		base_document.RESERVED_KEYWORDS = base_document.RESERVED_KEYWORDS | {"_action"}
