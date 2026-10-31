@@ -18,6 +18,7 @@ from bs4 import BeautifulSoup
 
 from crm.domain_enrichment.config import EnrichmentConfig, Mapping, Rule
 from crm.domain_enrichment.crawler import extract_content
+from crm.domain_enrichment.install import SOCIAL_PATTERNS
 from crm.domain_enrichment.result import CrawledPage
 
 # --------------------------------------------------------------------------- #
@@ -293,7 +294,7 @@ def industry_rules():
 def social_rules():
 	return [
 		regex_rule("Social", [r"linkedin\.com/(company|in|school)/"], target_value="linkedin"),
-		regex_rule("Social", [r"(twitter\.com|x\.com)/[A-Za-z0-9_]+"], target_value="twitter"),
+		regex_rule("Social", SOCIAL_PATTERNS["twitter"], target_value="twitter"),
 		regex_rule("Social", [r"github\.com/[A-Za-z0-9_.-]+"], target_value="github"),
 		regex_rule("Social", [r"facebook\.com/[A-Za-z0-9_.\-/]+"], target_value="facebook"),
 		regex_rule("Social", [r"instagram\.com/[A-Za-z0-9_.]+"], target_value="instagram"),

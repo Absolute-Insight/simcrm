@@ -16,17 +16,22 @@ reported over realtime.
 from __future__ import annotations
 
 import frappe
+from frappe.utils.background_jobs import is_job_enqueued
 from frappe.utils.telemetry import capture
 
 from .config import (
+	DEFAULT_SETTINGS,
 	ENABLE_FLAG_BY_DOCTYPE,
+	EnrichmentConfig,
 	_setting,
 	auto_enrich_enabled_for,
 	enrichment_enabled_for,
 	get_config,
 	get_settings,
 )
-from .mapper import apply_to_document
+from .crawler import max_fetches
+from .http import JobTimeout, _fetch_budget
+from .mapper import apply_to_document, column_limit
 from .pipeline import PROGRESS_STEPS
 from .pipeline import run as run_pipeline
 
@@ -35,6 +40,10 @@ PROGRESS_EVENT = "domain_enrichment_progress"
 
 # Total number of pipeline progress steps (mirrors pipeline.PROGRESS_STEPS).
 TOTAL_STEPS = len(PROGRESS_STEPS)
+
+# On top of the fetches and the model call: DNS lookups (outside the fetch budget),
+# the Settings and document reads, the mapper, the save and the Run insert.
+JOB_TIMEOUT_SLACK = 60
 
 
 def _publish(reference_doctype, reference_name, status, message="", step=0, payload=None, user=None):
@@ -56,6 +65,8 @@ def _publish(reference_doctype, reference_name, status, message="", step=0, payl
 			},
 			user=user,
 		)
+	except JobTimeout:
+		raise
 	except Exception:
 		pass
 
@@ -90,8 +101,10 @@ def write_run(
 		# extract_social_profiles pre-seeds an empty entry per configured rule; only
 		# summarise the networks that were actually found.
 		social = ", ".join(sorted(k for k, v in result.social_profiles.items() if v.value))
-		doc.company_name = result.company_name.value or ""
-		doc.industry = result.industry.value or ""
+		# Summary columns, cut to fit: an over-long scraped name must not fail the
+		# insert, and the whole value is kept in raw_json.
+		doc.company_name = (result.company_name.value or "")[: column_limit(doc.meta, "company_name")]
+		doc.industry = (result.industry.value or "")[: column_limit(doc.meta, "industry")]
 		doc.industry_confidence = result.industry_confidence or 0
 		doc.emails_found = len(result.emails)
 		doc.phones_found = len(result.phones)
@@ -104,6 +117,43 @@ def write_run(
 	return doc.name
 
 
+def job_timeout(s) -> int:
+	"""Seconds the ``run_enrichment`` job may run: the run's own bounded worst case.
+
+	Every fetch is held to the fetch budget and a run makes at most
+	``crawler.max_fetches`` of them; with the model tier on, one completion adds up to
+	the agent's ``timeout x MAX_ATTEMPTS``. The old ``request_timeout x max_pages + 60``
+	(160 s by default) ignored the budget's multiple, the robots/sitemap/About fetches
+	and the model, so rq's deadline landed mid-crawl on a site that was merely slow.
+	"""
+	cfg = EnrichmentConfig(settings={key: _setting(s, key) for key in DEFAULT_SETTINGS})
+	per_fetch = _fetch_budget(cfg, int(cfg.setting("request_timeout")))
+	seconds = max_fetches(int(cfg.setting("max_pages"))) * per_fetch + JOB_TIMEOUT_SLACK
+	if int(cfg.setting("model_fallback") or 0):
+		from crm.agent import client
+		from crm.agent.config import DEFAULT_SETTINGS as AGENT_DEFAULTS
+		from crm.agent.config import get_config as get_agent_config
+
+		try:
+			agent_timeout = get_agent_config().timeout
+		except Exception:
+			agent_timeout = AGENT_DEFAULTS["timeout"]
+		seconds += agent_timeout * client.MAX_ATTEMPTS
+	return int(seconds)
+
+
+def clear_runs(doc, method=None) -> None:
+	"""after_delete for CRM Lead, Deal and Organization: a deleted record takes its
+	enrichment history with it.
+
+	A Run's ``reference_name`` is a Dynamic Link, so left in place it made every
+	record ever enriched undeletable for Sales roles: they cannot write a Run, and the
+	delete modal's "unlink" only knows ``reference_docname``. The runs are this
+	record's history; once it is gone nothing reads them.
+	"""
+	frappe.db.delete("CRM Enrichment Run", {"reference_doctype": doc.doctype, "reference_name": doc.name})
+
+
 def enqueue_enrichment(
 	reference_doctype: str, reference_name: str, website: str, user: str, trigger: str = "manual"
 ) -> dict:
@@ -114,12 +164,18 @@ def enqueue_enrichment(
 	one spot. ``enqueue_after_commit`` matters for the ``after_insert`` caller, whose
 	transaction has not committed yet; it is harmless for the already-saved paths.
 
-	Reads only the Settings Single for the timeout bound (cheap, framework-cached) --
-	it never assembles the full config.
+	Reads only the Settings Single for the timeout bound (cheap, framework-cached),
+	plus the agent's timeout when the model fallback is on -- it never assembles the
+	full config.
 	"""
-	s = get_settings()
-	timeout = int(_setting(s, "request_timeout")) * int(_setting(s, "max_pages")) + 60
+	timeout = job_timeout(get_settings())
 	job_id = f"domain-enrich-{reference_doctype}-{reference_name}"
+	if is_job_enqueued(job_id):
+		# frappe.enqueue would fold this into the job already queued or running, and
+		# say nothing: that job reports to whoever enqueued it -- nobody, for the
+		# nightly sweep -- so a caller told "queued" waited for an event that never
+		# came. Say it is already running instead.
+		return {"queued": False, "already_running": True, "job_id": job_id, "website": website}
 	frappe.enqueue(
 		"crm.domain_enrichment.tasks.run_enrichment",
 		queue="long",
@@ -133,7 +189,7 @@ def enqueue_enrichment(
 		user=user,
 		trigger=trigger,
 	)
-	return {"queued": True, "job_id": job_id, "website": website}
+	return {"queued": True, "job_id": job_id, "website": website, "timeout": timeout}
 
 
 def auto_enrich_on_create(doc, method=None):
@@ -163,8 +219,9 @@ def auto_enrich_on_create(doc, method=None):
 		frappe.log_error(title="Domain Enrichment: auto_enrich_on_create failed")
 
 
-def stale_records(doctype: str, cutoff, limit: int) -> list[str]:
-	"""Records of ``doctype`` whose most recent run started before ``cutoff``.
+def stale_records(doctype: str, cutoff, limit: int) -> list[tuple[str, str]]:
+	"""``(name, website)`` of the records of ``doctype`` whose most recent run started
+	before ``cutoff``.
 
 	Oldest first, so a backlog is worked through in order instead of the sweep
 	re-picking the same records every night.
@@ -175,23 +232,32 @@ def stale_records(doctype: str, cutoff, limit: int) -> list[str]:
 	CRM that night. Never-enriched records are what the Enrich button and
 	``auto_enrich`` are for.
 
+	Only records that still exist and still have a website are returned. The sweep
+	cannot enrich anything else, and skipping one writes no run that would age it
+	out -- so, picked oldest first, a few deleted or website-less records took the
+	whole batch every night and nothing behind them was ever reached.
+
 	The latest run counts whatever its status -- a site that fails to crawl is
 	retried on the same cadence as everything else, not every single night.
 	"""
 	from frappe.query_builder.functions import Max
 
 	Run = frappe.qb.DocType("CRM Enrichment Run")
+	Record = frappe.qb.DocType(doctype)
 	last_started = Max(Run.started_on)
 	rows = (
 		frappe.qb.from_(Run)
-		.select(Run.reference_name)
+		.join(Record)
+		.on(Record.name == Run.reference_name)
+		.select(Run.reference_name, Record.website)
 		.where(Run.reference_doctype == doctype)
-		.groupby(Run.reference_name)
+		.where(Record.website.isnotnull() & (Record.website != ""))
+		.groupby(Run.reference_name, Record.website)
 		.having(last_started < cutoff)
 		.orderby(last_started)
 		.limit(limit)
 	).run()
-	return [row[0] for row in rows]
+	return [(name, website) for name, website in rows]
 
 
 def reenrich_stale_records() -> int:
@@ -218,13 +284,9 @@ def reenrich_stale_records() -> int:
 		if queued >= batch or not enrichment_enabled_for(doctype):
 			continue
 
-		for name in stale_records(doctype, cutoff, batch - queued):
-			website = (frappe.db.get_value(doctype, name, "website") or "").strip()
-			if not website:
-				# deleted, or its website has been cleared since the last run
-				continue
+		for name, website in stale_records(doctype, cutoff, batch - queued):
 			try:
-				enqueue_enrichment(doctype, name, website, user="Administrator", trigger="scheduled")
+				enqueue_enrichment(doctype, name, website.strip(), user="Administrator", trigger="scheduled")
 				queued += 1
 			except Exception:
 				# one unqueueable record must not cost the rest of the sweep
