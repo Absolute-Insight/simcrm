@@ -731,32 +731,48 @@ docker compose exec backend bench --site <site> install-app frappe_whatsapp
 docker compose exec backend bench --site <site> migrate
 ```
 
-**This changes what a rollback means.** Once it is installed the site's database
-names an app that older images do not contain, so `bench` fails on them with an
-import error for every command, `migrate` included. The only way back past this
-point is the database backup from step 0, restored as in **Rolling back**.
+**Take this `docker-compose.yml` with the image.** The `apps.txt` rewrite and the
+new-site install live in it, so an upgrade that replaces only the image fails step
+2 with "not in apps.txt". `upgrade-prod-to.sh` needs this compose file in place
+before it runs.
+
+**This changes what a rollback means, and reverses its order.** Once installed,
+the site's database names an app older images do not contain, so `bench` fails on
+them for every command, `restore` included. **Restore the backup from step 0 while
+still on the new image, then put the old tag back in `.env` and `up -d`.** That is
+the opposite of the order in **Rolling back**, which is for upgrades that add no
+app.
 
 Then configure it:
 
-1. **System Settings:** Country must be South Africa. Numbers stored as `082…`
-   are read in that country when sending.
+Do these in this order. Meta delivers as soon as a number is subscribed, and a
+number with no line has every delivery refused.
+
+1. **System Settings:** Country **must** be South Africa. A stored `082…` means
+   the site's country, both when sending and when matching what arrives.
 2. **`host_name`:** the public HTTPS URL, or media links sent to Meta point at an
    internal name: `bench --site <site> set-config host_name https://crm.example.com`
-3. **Meta:** in the app, point the WhatsApp webhook at
+3. **WhatsApp Account** in Desk, one per number: token, phone number id, business
+   id, `https://graph.facebook.com`, API version, verify token, status Active.
+4. **CRM WhatsApp Line** in Desk, one per number: the account, the rep (required)
+   and the App Secret. **A number with no App Secret has every webhook refused
+   with a 403**, on purpose. A rep with no line reads threads but cannot send,
+   unless WhatsApp Settings names a default outgoing account that is nobody's line.
+5. **Meta, last:** point the app's WhatsApp webhook at
    `https://<host>/api/method/frappe_whatsapp.utils.webhook.webhook`, with the
    account's verify token, subscribed to `messages`. Meta's delivery addresses
    are not a stable published list, so **put no IP allowlist or login in front of
    this path**: every message and status would be dropped. The App Secret check
    is what protects it.
-4. **WhatsApp Account** in Desk, one per number: token, phone number id, business
-   id, `https://graph.facebook.com`, API version, verify token, status Active.
-5. **CRM WhatsApp Line** in Desk, one per number: the account, the rep, and the
-   App Secret. **A number with no App Secret has every webhook refused with a
-   403**, on purpose. A rep with no line reads threads but cannot send, unless
-   a default outgoing account is set in WhatsApp Settings that is nobody's line.
+
+Inbound media is downloaded by a background job, so a queue worker must be
+running, and is stored as a private file only people who can see the record can
+open. A file that cannot be fetched leaves a note in the thread.
 
 A message from a number the CRM has never seen creates a lead owned by the rep
-whose number received it. Tokens and App Secrets are Password fields,
+whose number received it. If the number is a Contact on no deal, as imported
+contacts usually are, an open deal of their organization takes the message;
+failing that, the lead carries the Contact's name and organization. Tokens and App Secrets are Password fields,
 System Manager only.
 
 ## site_config keys
