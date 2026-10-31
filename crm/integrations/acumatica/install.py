@@ -5,7 +5,7 @@ from frappe import _
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 
-def _identity_fields(insert_after):
+def _identity_fields(insert_after, **id_field):
 	return [
 		{
 			"fieldname": "acumatica_noteid",
@@ -21,24 +21,39 @@ def _identity_fields(insert_after):
 			"label": "Acumatica ID",
 			"read_only": 1,
 			"insert_after": "acumatica_noteid",
+			**id_field,
 		},
 	]
 
 
+# An organization's Acumatica ID is the customer code the sales team knows the
+# account by (C-SIB001F), so on organizations and deals it carries that name and
+# is a list column and a search key. Read-only still: the sync
+# matches organizations on it, so a hand-edited code would split one customer
+# in two at the next pull.
+CUSTOMER_CODE = "Customer Code"
+
+
 def ensure_custom_fields() -> None:
 	"""Identity fields the sync keys on. NoteID is Acumatica's rename-stable GUID;
-	the human-readable ID is display only. Idempotent -- create_custom_fields
-	skips fields that already exist."""
+	the human-readable ID is the customer code. Idempotent, and an existing field
+	is updated to the properties below (create_custom_fields' ``update``), so a
+	relabel reaches existing sites at their next migrate."""
 	create_custom_fields(
 		{
-			"CRM Organization": _identity_fields("organization_name"),
+			"CRM Organization": _identity_fields(
+				"organization_name",
+				label=CUSTOMER_CODE,
+				in_list_view=1,
+				search_index=1,
+			),
 			"Contact": _identity_fields("company_name"),
 			"CRM Product": _identity_fields("product_code"),
 			"CRM Deal": [
 				{
 					"fieldname": "acumatica_customer",
 					"fieldtype": "Data",
-					"label": "Customer in Acumatica",
+					"label": CUSTOMER_CODE,
 					"read_only": 1,
 					"insert_after": "organization",
 				},
@@ -55,6 +70,33 @@ def ensure_custom_fields() -> None:
 			],
 		},
 		ignore_validate=True,
+	)
+	ensure_customer_code_search()
+
+
+def ensure_customer_code_search() -> None:
+	"""Make the customer code a search field of CRM Organization.
+
+	A link search then matches "C-SIB" as well as the name, and returns the code
+	as the option's description, so every organization picker shows it under the
+	name. A Property Setter rather than the doctype JSON: the field is custom,
+	and the doctype syncs before after_migrate creates it. Any search field an
+	admin already set is kept.
+	"""
+	from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+	current = frappe.get_meta("CRM Organization").search_fields or ""
+	fields = [f.strip() for f in current.split(",") if f.strip()]
+	if "acumatica_id" in fields:
+		return
+	make_property_setter(
+		"CRM Organization",
+		None,
+		"search_fields",
+		",".join(["acumatica_id", *fields]),
+		"Data",
+		for_doctype=True,
+		validate_fields_for_doctype=False,
 	)
 
 

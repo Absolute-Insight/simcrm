@@ -64,6 +64,19 @@
               <div class="truncate text-lg-medium text-ink-gray-9">
                 {{ organization.doc.name }}
               </div>
+              <div
+                v-if="organization.doc.acumatica_id"
+                class="flex items-center gap-1.5 text-base text-ink-gray-8"
+              >
+                <span
+                  class="lucide-id-card size-4 shrink-0"
+                  aria-hidden="true"
+                />
+                <span class="sr-only">{{ __('Customer code') }}</span>
+                <span class="tabular-nums">{{
+                  organization.doc.acumatica_id
+                }}</span>
+              </div>
               <div class="flex items-center gap-1.5">
                 <Button @click="openWebsite">
                   <span class="lucide-link h-4 w-4" aria-hidden="true" />
@@ -88,24 +101,14 @@
       :tabs="tabs"
       class="flex flex-1 overflow-auto flex-col [&_[role='tablist']]:gap-7.5 [&_[role='tablist']]:px-4 [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:flex-col [&_[role='tabpanel']:not([hidden])]:grow [&_[role='tabpanel']:not([hidden])]:overflow-hidden"
     >
-      <template #tab-item="{ tab, active }">
-        <button
-          v-if="tab.name !== 'Details'"
-          class="group flex items-center gap-2 border-b border-transparent py-2.5 text-base text-ink-gray-5 duration-300 ease-in-out hover:text-ink-gray-9"
-          :class="{ 'text-ink-gray-9': active }"
-        >
-          <component :is="tab.icon" v-if="tab.icon" class="h-5" />
-          {{ __(tab.label) }}
-          <Badge
-            class="group-hover:bg-surface-gray-10"
-            :class="[active ? 'bg-surface-gray-10' : 'bg-gray-600']"
-            variant="solid"
-            theme="gray"
-            size="sm"
-          >
-            {{ tab.count }}
-          </Badge>
-        </button>
+      <template #tab-suffix="{ tab, active }">
+        <Badge
+          v-if="tab.data?.count != null"
+          :label="tab.data.count"
+          theme="gray"
+          :variant="active ? 'solid' : 'subtle'"
+          size="sm"
+        />
       </template>
       <template #tab-panel="{ tab }">
         <div v-if="tab.name == 'Details'">
@@ -114,26 +117,33 @@
             class="flex flex-1 flex-col justify-between overflow-hidden"
           >
             <SidePanelLayout
-              :sections="sections.data"
+              :sections="parsedSections"
               doctype="CRM Organization"
               :docname="organization.doc.name"
               @reload="sections.reload"
+              @beforeFieldChange="beforeFieldChange"
             />
           </div>
         </div>
         <DealsListView
-          v-if="tab.label === 'Deals' && rows.length"
+          v-if="tab.name === 'Deals' && rows.length"
           class="mt-4"
           :rows="rows"
           :columns="columns"
-          :options="{ selectable: false, showTooltip: false, scrollKey: '' }"
+          :modelValue="footerPageLength(deals, dealsCount)"
+          :options="listOptions(deals, dealsCount)"
+          @update:modelValue="(n) => changePageLength(deals, n)"
+          @loadMore="deals.next()"
         />
         <ContactsListView
-          v-if="tab.label === 'Contacts' && rows.length"
+          v-if="tab.name === 'Contacts' && rows.length"
           class="mt-4"
           :rows="rows"
           :columns="columns"
-          :options="{ selectable: false, showTooltip: false, scrollKey: '' }"
+          :modelValue="footerPageLength(contacts, contactsCount)"
+          :options="listOptions(contacts, contactsCount)"
+          @update:modelValue="(n) => changePageLength(contacts, n)"
+          @loadMore="contacts.next()"
         />
         <div
           v-if="!rows.length && tab.name !== 'Details'"
@@ -175,6 +185,7 @@ import {
   expireDeletionMarker,
 } from '@/data/document'
 import { useDocumentError } from '@/composables/useDocumentError'
+import { useOrganizationFieldChange } from '@/composables/useOrganizationFieldChange'
 import { getSettings } from '@/stores/settings'
 import { getMeta } from '@/stores/meta'
 import { globalStore } from '@/stores/global'
@@ -319,6 +330,11 @@ async function deleteOrganization() {
   })
 }
 
+const beforeFieldChange = useOrganizationFieldChange(
+  organization,
+  props.organizationId,
+)
+
 function openWebsite() {
   if (!organization.doc.website) {
     toast.error(__('No Website Found'))
@@ -328,63 +344,67 @@ function openWebsite() {
   openExternalWebsite(organization.doc.website)
 }
 
+// The layout is cached per doctype for the session, and a cached resource
+// runs the transform of whichever page created it -- so an address handler
+// built there saved every new address onto the first organization opened.
+// Handlers that close over this page's record are attached here instead.
 const sections = createResource({
   url: 'crm.fcrm.doctype.crm_fields_layout.crm_fields_layout.get_sidepanel_sections',
   cache: ['sidePanelSections', 'CRM Organization'],
   params: { doctype: 'CRM Organization' },
   auto: true,
-  transform: (data) => getParsedSections(data),
 })
 
-function getParsedSections(_sections) {
-  return _sections.map((section) => {
-    section.columns = section.columns.map((column) => {
-      column.fields = column.fields.map((field) => {
-        if (field.fieldname === 'address') {
-          return {
-            ...field,
-            create: (value, close) => {
-              showAddressModal()
-              close()
-            },
-            edit: (address) => showAddressModal(address),
-          }
-        } else {
-          return field
+const parsedSections = computed(() => {
+  if (!sections.data) return []
+  return sections.data.map((section) => ({
+    ...section,
+    columns: section.columns.map((column) => ({
+      ...column,
+      fields: column.fields.map((field) => {
+        if (field.fieldname !== 'address') return field
+        return {
+          ...field,
+          create: (value, close) => {
+            showAddressModal()
+            close()
+          },
+          edit: (address) => showAddressModal(address),
         }
-      })
-      return column
-    })
-    return section
-  })
-}
+      }),
+    })),
+  }))
+})
 
 const tabIndex = ref('Details')
-const _rawTabs = [
-  {
-    name: 'Details',
-    label: __('Details'),
-    icon: DetailsIcon,
-  },
-  {
-    name: 'Deals',
-    label: __('Deals'),
-    icon: h(DealsIcon, { class: 'h-4 w-4' }),
-    count: computed(() => deals.data?.length),
-  },
-  {
-    name: 'Contacts',
-    label: __('Contacts'),
-    icon: h(ContactsIcon, { class: 'h-4 w-4' }),
-    count: computed(() => contacts.data?.length),
-  },
-]
-const tabs = _rawTabs.map((tab) => ({
-  value: tab.name,
-  ...tab,
-  iconLeft: tab.icon,
-  icon: undefined,
-}))
+// A computed rather than a fixed array: v1 Tabs hands `tab.data` to its slots
+// as given, so the count has to be a plain number by the time it gets there.
+const tabs = computed(() =>
+  [
+    {
+      name: 'Details',
+      label: __('Details'),
+      icon: DetailsIcon,
+    },
+    {
+      name: 'Deals',
+      label: __('Deals'),
+      icon: h(DealsIcon, { class: 'h-4 w-4' }),
+      data: { count: dealsCount.data },
+    },
+    {
+      name: 'Contacts',
+      label: __('Contacts'),
+      icon: h(ContactsIcon, { class: 'h-4 w-4' }),
+      data: { count: contactsCount.data },
+    },
+  ].map((tab) => ({
+    value: tab.name,
+    ...tab,
+    iconLeft: tab.icon,
+    icon: undefined,
+  })),
+)
 
 const deals = createListResource({
   type: 'list',
@@ -429,6 +449,50 @@ const contacts = createListResource({
   pageLength: 20,
   auto: true,
 })
+
+// The tabs list a page at a time, and nothing ever asked for the next one: a
+// large account stopped at its 20 most recently modified deals and contacts.
+// The totals feed the tab badges and the list footer's Load More.
+const dealsCount = createResource({
+  url: 'frappe.client.get_count',
+  cache: ['deals_count', props.organizationId],
+  params: {
+    doctype: 'CRM Deal',
+    filters: { organization: props.organizationId },
+  },
+  auto: true,
+})
+
+const contactsCount = createResource({
+  url: 'frappe.client.get_count',
+  cache: ['contacts_count', props.organizationId],
+  params: {
+    doctype: 'Contact',
+    filters: { company_name: props.organizationId },
+  },
+  auto: true,
+})
+
+// The list views draw their footer only when handed a page length, so hand
+// one over only when there is more than the first page of 20 to page through.
+function footerPageLength(list, count) {
+  return count.data > 20 ? list.pageLength : undefined
+}
+
+function listOptions(list, count) {
+  return {
+    selectable: false,
+    showTooltip: false,
+    scrollKey: '',
+    rowCount: list.data?.length,
+    totalCount: count.data,
+  }
+}
+
+function changePageLength(list, pageLength) {
+  list.update({ start: 0, pageLength })
+  list.reload()
+}
 
 const rows = computed(() => {
   // `tabIndex` holds the tab's name ('Deals' / 'Contacts'), not an index, so it
