@@ -22,6 +22,12 @@
           <div
             class="w-full min-h-12 flex flex-wrap items-center gap-1.5 p-1.5 pb-5 rounded-[var(--v-radius-control)] bg-surface-gray-2 cursor-text"
           >
+            <span
+              v-if="!assignees.length"
+              class="px-1 pt-3.5 text-base text-ink-gray-6"
+            >
+              {{ __('Search people to assign') }}
+            </span>
             <Tooltip
               v-for="assignee in assignees"
               :key="assignee.name"

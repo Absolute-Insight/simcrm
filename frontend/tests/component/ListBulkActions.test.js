@@ -136,6 +136,15 @@ describe('bulk Assign To, twice in one list visit', () => {
     page.unmount()
   })
 
+  it('prompts in the empty box, and not once someone is in it', async () => {
+    const page = await listPage()
+    await page.assignTo(['LEAD-1'])
+    expect(page.el.textContent).toContain('Search people to assign')
+    await page.pick('rep.a@example.com')
+    expect(page.el.textContent).not.toContain('Search people to assign')
+    page.unmount()
+  })
+
   /* The modal closed itself before the assign answered, and a component
      emits nothing once it is unmounted, so the page never heard: the rows
      stayed selected for the next bulk action to hit, and the list unrefreshed. */
