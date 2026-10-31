@@ -75,6 +75,27 @@ class FitMessagesTest(UnitTestCase):
 		]
 		self.assertEqual(prompting.fit_messages(messages, 10), messages[-1:])
 
+	def test_history_never_starts_with_an_answer_whose_question_went(self):
+		"""Audit L-36: dropping one turn at a time left the model an answer to a
+		question it could not see."""
+		messages = self.messages(4, size=100)
+		# room for the newest turn alone, and that turn is an assistant's
+		budget = prompting.estimate_messages([messages[0], messages[-2], messages[-1]])
+		self.assertEqual(prompting.fit_messages(messages, budget), [messages[0], messages[-1]])
+
+	def test_every_protected_final_turn_survives(self):
+		"""Audit L-37: a schema retry is the request *and* the complaint after it;
+		protecting only the last message made the request the oldest droppable turn."""
+		messages = [*self.messages(4), {"role": "user", "content": "the complaint"}]
+		self.assertEqual(
+			prompting.fit_messages(messages, 10, protected=2),
+			[
+				{"role": "system", "content": "the instruction"},
+				{"role": "user", "content": "the question"},
+				{"role": "user", "content": "the complaint"},
+			],
+		)
+
 	def test_the_caller_is_not_mutated(self):
 		messages = self.messages(4)
 		prompting.fit_messages(messages, 10)

@@ -18,8 +18,11 @@ text to display, never to execute or render as HTML, and the caller filters
 
 from __future__ import annotations
 
+import math
 import re
 from collections import Counter
+
+from crm.agent import prompting
 
 MENTOR_SYSTEM_PROMPT = (
 	"You are the Mentor for Vectora, a proactive CRM. You answer questions "
@@ -88,6 +91,12 @@ HISTORY_CHAR_CAP = 2000
 # being grounded.
 HISTORY_BUDGET_SHARE = 0.3
 
+# What one message costs a character budget beyond its content: the role
+# framing the client's fit counts (prompting.MESSAGE_OVERHEAD_TOKENS), and a
+# token for each message's estimate rounding up. Left out, the builder kept
+# history the client then found over budget and dropped.
+MESSAGE_CHARS = math.ceil((prompting.MESSAGE_OVERHEAD_TOKENS + 1) * prompting.CHARS_PER_TOKEN)
+
 _WORD = re.compile(r"[a-z0-9']+")
 
 # Function words that would otherwise dominate overlap scoring. Deliberately
@@ -101,6 +110,17 @@ _STOPWORDS = frozenset(
 
 def _tokens(text: str) -> list[str]:
 	return [word for word in _WORD.findall(text.lower()) if word not in _STOPWORDS and len(word) > 1]
+
+
+def search_terms(question: str) -> list[str]:
+	"""The words :func:`score_article` scores ``question`` on, longest first.
+
+	For a caller that narrows a source too large to score whole (an ERP's
+	product catalogue) in SQL first: the same words, so nothing the scorer
+	would rank is filtered out before it, and the longest -- usually the most
+	specific -- first.
+	"""
+	return sorted(set(_tokens(question)), key=lambda word: (-len(word), word))
 
 
 def score_article(question: str, article: dict) -> float:
@@ -162,9 +182,19 @@ def build_assistant_messages(
 	turns = _usable_history(history)
 	documentation_budget = None
 	if max_chars is not None:
-		spare = max(0, max_chars - len(system_prompt) - len(question))
+		# everything but the articles and the history: the instruction, the
+		# question, the block's heading (or the note that stands in for every
+		# article), the separators, and the framing of the two messages
+		fixed = (
+			len(system_prompt)
+			+ len(question)
+			+ len(f"\n\n# {heading}\n\n")
+			+ len(no_match_note)
+			+ 2 * MESSAGE_CHARS
+		)
+		spare = max(0, max_chars - fixed)
 		turns = _fit_history(turns, int(spare * HISTORY_BUDGET_SHARE))
-		documentation_budget = spare - sum(len(turn["content"]) for turn in turns)
+		documentation_budget = spare - sum(len(turn["content"]) + MESSAGE_CHARS for turn in turns)
 	documentation = _documentation_block(articles, no_match_note, heading, documentation_budget)
 	messages = [{"role": "system", "content": f"{system_prompt}\n\n{documentation}"}]
 	for turn in turns:
@@ -174,14 +204,20 @@ def build_assistant_messages(
 
 
 def _fit_history(turns: list[dict], budget: int) -> list[dict]:
-	"""The newest turns that fit ``budget`` characters between them."""
+	"""The newest turns that fit ``budget`` characters between them, framing included.
+
+	Never starting with an answer: one whose question did not fit is an answer
+	to nothing the model can see.
+	"""
 	kept: list[dict] = []
 	for turn in reversed(turns):
-		budget -= len(turn["content"])
+		budget -= len(turn["content"]) + MESSAGE_CHARS
 		if budget < 0:
 			break
 		kept.append(turn)
 	kept.reverse()
+	while kept and kept[0]["role"] == "assistant":
+		kept.pop(0)
 	return kept
 
 
@@ -227,16 +263,18 @@ def _documentation_block(
 	sections = []
 	for article in articles:
 		header = f"## Article `{article.get('name', '')}`: {article.get('title', '')}\n"
+		# the blank line that separates this section from the one before it
+		separator = 2 if sections else 0
 		cap = ARTICLE_CHAR_CAP
 		if remaining is not None:
-			cap = min(cap, remaining - len(header))
+			cap = min(cap, remaining - len(header) - separator)
 			if cap <= len(TRUNCATION_NOTE):
 				break
 		content = article.get("content", "")
 		if len(content) > cap:
 			content = content[: cap - len(TRUNCATION_NOTE)] + TRUNCATION_NOTE
 		if remaining is not None:
-			remaining -= len(header) + len(content)
+			remaining -= len(header) + len(content) + separator
 		sections.append(f"{header}{content}")
 	if not sections:
 		return f"# {heading}\n\n{no_match_note}"
