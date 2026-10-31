@@ -61,6 +61,9 @@ def queue_customer_push(doc, method):
 	fires once when the deal reaches the configured status. Cheap checks only --
 	the HTTP PUT itself runs off-thread in push_customer_for_deal so a slow or
 	down Acumatica never holds up the user's save."""
+	if frappe.flags.in_demo_seed:
+		# demo data's Won deals must not become customers in a real ERP
+		return
 	settings = get_settings()
 	if (
 		not settings.enabled

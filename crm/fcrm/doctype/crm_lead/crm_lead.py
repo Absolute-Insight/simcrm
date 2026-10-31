@@ -13,7 +13,6 @@ from crm.fcrm.doctype.crm_service_level_agreement.utils import get_sla
 from crm.fcrm.doctype.crm_status_change_log.crm_status_change_log import (
 	add_status_change_log,
 )
-from crm.fcrm.doctype.utils import add_or_remove_lost_reason_section_in_sidepanel
 
 LEAD_DEAL_FIELD_MAP = {"lead_owner": "deal_owner"}
 
@@ -183,8 +182,6 @@ class CRMLead(Document):
 				frappe.throw(_("Please specify a reason for losing the lead."), frappe.ValidationError)
 			elif self.lost_reason == "Other" and not self.lost_notes:
 				frappe.throw(_("Please specify the reason for losing the lead."), frappe.ValidationError)
-		if self.has_value_changed("status"):
-			add_or_remove_lost_reason_section_in_sidepanel(self)
 
 	def assign_agent(self, agent):
 		if not agent:
@@ -331,18 +328,45 @@ class CRMLead(Document):
 		return filled
 
 	def update_lead_contact(self, contact):
-		contact = frappe.get_cached_doc("Contact", contact)
-		frappe.db.set_value(
-			"CRM Lead",
-			self.name,
-			{
-				"salutation": contact.salutation,
-				"first_name": contact.first_name,
-				"last_name": contact.last_name,
-				"email": contact.email_id,
-				"mobile_no": contact.mobile_no,
-			},
-		)
+		contact = frappe.get_doc("Contact", contact)
+		self.add_numbers_to_contact(contact)
+		# Mirror the contact onto the lead only where it has a value. Contacts
+		# the Acumatica importer writes carry no mobile, and copying their blanks
+		# wiped the number the rep typed, with no Version row to get it back.
+		values = {
+			"salutation": contact.salutation,
+			"first_name": contact.first_name,
+			"last_name": contact.last_name,
+			"email": contact.email_id,
+			"mobile_no": contact.mobile_no,
+		}
+		values = {field: value for field, value in values.items() if value}
+		if values:
+			frappe.db.set_value("CRM Lead", self.name, values)
+
+	def add_numbers_to_contact(self, contact):
+		"""Give the matched contact the lead's numbers it does not have yet.
+
+		The deal reads its numbers off its contact, so a number left only on the
+		lead does not reach the deal. A number becomes the contact's primary only
+		where the contact has none of that kind.
+		"""
+		if not frappe.has_permission("Contact", "write", contact):
+			return
+		known = {row.phone for row in contact.phone_nos}
+		added = False
+		for number, primary_flag in (
+			(self.mobile_no, "is_primary_mobile_no"),
+			(self.phone, "is_primary_phone"),
+		):
+			if not number or number in known:
+				continue
+			has_primary = any(row.get(primary_flag) for row in contact.phone_nos)
+			contact.append("phone_nos", {"phone": number, primary_flag: 0 if has_primary else 1})
+			known.add(number)
+			added = True
+		if added:
+			contact.save(ignore_permissions=True)
 
 	def contact_exists(self, throw=True):
 		# Match only on email which uniquely identifies a person
@@ -580,7 +604,14 @@ def convert_to_deal(
 	if frappe.get_cached_value("CRM Lead Status", lead.status, "type") == "Lost":
 		frappe.throw(_("Cannot convert a lead with status {0}").format(lead.status))
 	if frappe.db.exists("CRM Lead Status", "Qualified"):
+		# db_set skips on_update, which is where the rule engine listens; hand it
+		# the before/after a save would have, or "Status Changed -> Qualified"
+		# rules miss the commonest way a lead gets there
+		from crm.automation import run_automations
+
+		lead.load_doc_before_save()
 		lead.db_set("status", "Qualified")
+		run_automations(lead, "on_update")
 	lead.db_set("converted", 1)
 	if lead.sla and frappe.db.exists("CRM Communication Status", "Replied"):
 		lead.db_set("communication_status", "Replied")

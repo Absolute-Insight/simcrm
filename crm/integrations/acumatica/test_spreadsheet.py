@@ -588,6 +588,34 @@ class ImportSalesOrdersTest(SpreadsheetImportTestCase):
 		)
 		self.assertEqual((counts["left_alone"], counts["deals"]), (1, 0))
 
+	def test_a_rerun_leaves_an_expired_deal_expired(self):
+		from crm.fcrm.doctype.crm_deal_status.crm_deal_status import EXPIRED, ensure_expired_status
+		from crm.integrations.acumatica import outcomes
+
+		path = self.rows(order())
+		ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+		deal_name = frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": "QT103012"}, "name")
+		outcomes._close(deal_name, ensure_expired_status())
+
+		counts = ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal_name, "status"), EXPIRED)
+		self.assertEqual((counts["left_alone"], counts["deals"]), (1, 0))
+
+	def test_a_rerun_still_closes_an_expired_deal_the_export_decides(self):
+		"""Expired is not a close: the export's outcome still applies."""
+		from crm.fcrm.doctype.crm_deal_status.crm_deal_status import ensure_expired_status
+		from crm.integrations.acumatica import outcomes
+
+		ss.import_sales_orders(self.rows(order()), ss.Rejects(), owners=OWNERS, rates=RATES)
+		deal_name = frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": "QT103012"}, "name")
+		outcomes._close(deal_name, ensure_expired_status())
+
+		path = self.rows(order(**{"Status": "Completed"}))
+		ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal_name, "status"), "Won")
+
 	def test_a_rerun_keeps_the_date_the_live_sync_won_a_deal_on(self):
 		from crm.integrations.acumatica import outcomes
 
