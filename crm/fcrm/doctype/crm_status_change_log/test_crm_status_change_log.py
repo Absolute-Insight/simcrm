@@ -1,17 +1,24 @@
 # Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import frappe
 from frappe.tests import IntegrationTestCase
 
-# Fourteen hours east of UTC: the OS clock in the container is UTC, so a stamp
-# read off it lands a whole working day away from the site clock and the two
-# cannot agree by luck. CI and test_site both run UTC, which is why the bug
-# never showed there; production runs +02:00.
-FAR_ZONE = "Pacific/Kiritimati"
+
+def _a_zone_far_from_the_os_clock() -> str:
+	"""A site time zone at least ten hours away from the container's own clock, so
+	a stamp read off the OS clock cannot agree with the site clock by luck. CI and
+	test_site both run UTC, which is why the bug never showed there; production
+	runs +02:00."""
+	os_offset = datetime.now().astimezone().utcoffset()
+	for zone in ("Pacific/Kiritimati", "Etc/GMT+12"):
+		if abs(datetime.now(ZoneInfo(zone)).utcoffset() - os_offset) >= timedelta(hours=10):
+			return zone
+	raise AssertionError("no candidate time zone is far enough from the OS clock")
 
 
 class TestCRMStatusChangeLog(IntegrationTestCase):
@@ -35,7 +42,7 @@ class TestCRMStatusChangeLog(IntegrationTestCase):
 	def test_stage_change_stamps_are_on_the_site_clock(self):
 		"""days_in_stage subtracts a stamp from now_datetime(), so the stamp has
 		to be on that clock too or the count ticks over hours early."""
-		with patch("frappe.utils.data.get_system_timezone", return_value=FAR_ZONE):
+		with patch("frappe.utils.data.get_system_timezone", return_value=_a_zone_far_from_the_os_clock()):
 			site_now = frappe.utils.now_datetime()
 			deal = frappe.get_doc(
 				{"doctype": "CRM Deal", "organization": self.org, "status": self.first}

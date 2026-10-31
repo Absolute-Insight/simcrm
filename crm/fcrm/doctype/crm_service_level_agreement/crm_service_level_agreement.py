@@ -1,12 +1,13 @@
 # Copyright (c) 2023, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 import frappe
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import (
+	add_days,
 	add_to_date,
 	get_datetime,
 	get_weekdays,
@@ -238,7 +239,9 @@ class CRMServiceLevelAgreement(Document):
 			is_workday = today_weekday in workdays
 			is_holiday = today_day in holidays
 			if is_holiday or not is_workday:
-				res = add_to_date(res, days=1, as_datetime=True)
+				# the next day starts at midnight: keeping the time of day here
+				# entered Monday at whatever hour a weekend arrival came in
+				res = self._start_of_next_day(res)
 				continue
 			today_workday = workdays[today_weekday]
 			now_in_seconds = time_diff_in_seconds(today, today_day)
@@ -252,7 +255,7 @@ class CRMServiceLevelAgreement(Document):
 			end_time = max(end_time_seconds, now_in_seconds)
 			time_left = max(end_time - start_time, 0)
 			if not time_left:
-				res = getdate(add_to_date(res, days=1, as_datetime=True))
+				res = self._start_of_next_day(res)
 				continue
 			time_taken = min(time_needed, time_left)
 			time_needed -= time_taken
@@ -260,9 +263,17 @@ class CRMServiceLevelAgreement(Document):
 			res = add_to_date(res, seconds=time_required, as_datetime=True)
 		return res
 
+	@staticmethod
+	def _start_of_next_day(moment) -> datetime:
+		return datetime.combine(add_days(getdate(moment), 1), time.min)
+
 	def calc_elapsed_time(self, start_time, end_time) -> float:
 		"""
 		Get took from start to end, excluding non-working hours
+
+		Walks the span a day at a time and adds each working day's overlap with
+		its working window. It used to step a second at a time -- 86,400 turns a
+		day, inside the save that records a reply.
 
 		:param start_at: Date at which calculation starts
 		:param end_at: Date at which calculation ends
@@ -271,24 +282,20 @@ class CRMServiceLevelAgreement(Document):
 		start_time = get_datetime(start_time)
 		end_time = get_datetime(end_time)
 		holiday_list = self.get_holidays()
-		working_day_list = self.get_working_days()
 		working_hours = self.get_working_hours()
+		weekdays = get_weekdays()
 
 		total_seconds = 0
-		current_time = start_time
-
-		while current_time < end_time:
-			in_holiday_list = current_time.date() in holiday_list
-			not_in_working_day_list = get_weekdays()[current_time.weekday()] not in working_day_list
-			if (
-				in_holiday_list
-				or not_in_working_day_list
-				or not self.is_working_time(current_time, working_hours)
-			):
-				current_time += timedelta(seconds=1)
-				continue
-			total_seconds += 1
-			current_time += timedelta(seconds=1)
+		day = start_time.date()
+		while day <= end_time.date():
+			hours = working_hours.get(weekdays[day.weekday()])
+			if hours and day not in holiday_list:
+				midnight = datetime.combine(day, time.min)
+				window_start = midnight + timedelta(seconds=self._time_to_seconds(hours[0]))
+				window_end = midnight + timedelta(seconds=self._time_to_seconds(hours[1]))
+				overlap = min(end_time, window_end) - max(start_time, window_start)
+				total_seconds += max(overlap.total_seconds(), 0)
+			day += timedelta(days=1)
 
 		return total_seconds
 

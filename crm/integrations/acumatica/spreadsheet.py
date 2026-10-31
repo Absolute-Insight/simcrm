@@ -24,6 +24,7 @@ import frappe
 from frappe.utils import getdate
 from openpyxl import load_workbook
 
+from crm.fcrm.doctype.crm_deal_status.crm_deal_status import EXPIRED
 from crm.integrations.acumatica.importer import COMMIT_EVERY, upsert_organization
 from crm.integrations.acumatica.names import normalise_account_name
 
@@ -373,7 +374,12 @@ def _closed_since(current, deal: dict) -> bool:
 	"""Closed, and not the way this row closes it: the live sync won, lost or expired the
 	deal after the import wrote it. The sync runs as Administrator -- the user an
 	operator runs the import as -- so ``modified_by`` cannot tell the two apart, and a
-	re-run reopened the deal or re-closed it under the workbook's date."""
+	re-run reopened the deal or re-closed it under the workbook's date.
+
+	Expired counts only until the workbook has an outcome: it is not a close, so a
+	quote the export shows Completed or Canceled still decides the deal."""
+	if current.status == EXPIRED:
+		return deal["status"] not in ("Won", "Lost")
 	if current.status not in ("Won", "Lost"):
 		return False
 	closed_on = getdate(current.closed_date) if current.closed_date else None
