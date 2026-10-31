@@ -302,13 +302,12 @@ doc_events = {
 # ---------------
 
 scheduler_events = {
+	# every event reminder, whatever its interval: see crm.api.event
 	"all": ["crm.api.event.trigger_offset_event_notifications"],
 	"hourly": [
-		"crm.api.event.trigger_hourly_event_notifications",
 		"crm.agent.signals.run_signals",
 	],
 	"daily": [
-		"crm.api.event.trigger_daily_event_notifications",
 		"crm.rep_planning.match_actuals",
 		"crm.fcrm.doctype.crm_report_digest.crm_report_digest.send_due_digests",
 		"crm.fcrm.doctype.crm_invitation.crm_invitation.expire_invitations",
@@ -317,7 +316,6 @@ scheduler_events = {
 		"crm.telemetry.capture_feature_state",
 	],
 	"weekly": [
-		"crm.api.event.trigger_weekly_event_notifications",
 		"crm.api.dashboard.take_forecast_snapshot",
 	],
 	"daily_long": [
