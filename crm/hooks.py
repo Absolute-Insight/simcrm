@@ -217,6 +217,12 @@ extend_doctype_class = {
 	"Email Template": ["crm.overrides.email_template.EmailTemplateListView"],
 }
 
+# Outgoing email
+# ---------------
+# Send the private images a rep places in an email as inline cid: parts, so
+# the recipient sees them without the files being made public.
+make_email_body_message = ["crm.extends.email_inline_images.embed_private_images"]
+
 # Document Events
 # ---------------
 # Hook on document methods and events
