@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import frappe
+from frappe.client import set_value
 from frappe.tests import IntegrationTestCase
 
 LEAD_OWNER = "automation-owner@crmtest.test"
@@ -274,6 +275,50 @@ class AutomationRuleTest(IntegrationTestCase):
 		execute()
 		self.assertFalse(frappe.db.get_value("CRM Automation Rule", created.name, "to_status"))
 		self.assertEqual(frappe.db.get_value("CRM Automation Rule", changed.name, "to_status"), status)
+
+	def test_a_saved_rule_on_a_status_it_cannot_reach_can_still_be_paused(self):
+		"""``to_status`` is Data, so a status renamed after the rule was saved, or one
+		kept across a switch of "Applies to" before the save check, stays on the row.
+		The list's switch saves through ``set_value``, which runs ``validate``; a
+		check on every save would leave the admin unable to pause the rule."""
+		status = frappe.get_all("CRM Deal Status", pluck="name", limit=1)[0]
+		rule = make_rule(title="Stale status", trigger="Status Changed", to_status=status)
+		frappe.db.set_value(
+			"CRM Automation Rule", rule.name, "to_status", "Renamed Away", update_modified=False
+		)
+		set_value("CRM Automation Rule", rule.name, "enabled", 0)
+		self.assertEqual(frappe.db.get_value("CRM Automation Rule", rule.name, "enabled"), 0)
+		# choosing that status again is still refused
+		doc = frappe.get_doc("CRM Automation Rule", rule.name)
+		doc.document_type = "CRM Lead"
+		with self.assertRaises(frappe.ValidationError):
+			doc.save(ignore_permissions=True)
+
+	def test_the_patch_disables_a_rule_waiting_on_a_foreign_status(self):
+		"""Clearing the status would widen the rule to every status change, so the
+		patch turns it off instead and leaves the status for the admin to fix."""
+		from crm.patches.v1_0.disable_rules_waiting_on_a_foreign_status import execute
+
+		lead_statuses = set(frappe.get_all("CRM Lead Status", pluck="name"))
+		deal_only = next(s for s in frappe.get_all("CRM Deal Status", pluck="name") if s not in lead_statuses)
+		foreign = make_rule(title="Lead rule", document_type="CRM Lead", trigger="Status Changed")
+		renamed = make_rule(title="Renamed status", trigger="Status Changed", to_status=deal_only)
+		valid = make_rule(title="Valid status", trigger="Status Changed", to_status=deal_only)
+		any_status = make_rule(title="Any status", trigger="Status Changed")
+		# what the old editor, and a later status rename, left behind
+		frappe.db.set_value(
+			"CRM Automation Rule", foreign.name, "to_status", deal_only, update_modified=False
+		)
+		frappe.db.set_value(
+			"CRM Automation Rule", renamed.name, "to_status", "Renamed Away", update_modified=False
+		)
+		execute()
+		enabled = dict(frappe.get_all("CRM Automation Rule", fields=["name", "enabled"], as_list=True))
+		self.assertEqual(enabled[foreign.name], 0)
+		self.assertEqual(enabled[renamed.name], 0)
+		self.assertEqual(enabled[valid.name], 1)
+		self.assertEqual(enabled[any_status.name], 1)
+		self.assertEqual(frappe.db.get_value("CRM Automation Rule", foreign.name, "to_status"), deal_only)
 
 	def test_an_invalid_condition_is_rejected_at_save(self):
 		with self.assertRaises(frappe.ValidationError):

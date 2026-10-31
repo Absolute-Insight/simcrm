@@ -60,11 +60,24 @@ class CRMAutomationRule(Document):
 		only for records created in that status -- and one left there across a
 		switch of document type named a status the record can never have, so the
 		rule never fired at all. Neither says anything at save.
+
+		Only a status the author is choosing is checked. A saved rule whose status
+		was later renamed or deleted (``to_status`` is Data, nothing follows it), or
+		one saved before this check, must still be pausable from the list switch.
 		"""
 		if self.trigger != "Status Changed":
 			self.to_status = None
 			return
-		if self.to_status and not frappe.db.exists(STATUS_DOCTYPES[self.document_type], self.to_status):
+		if not self.to_status:
+			return
+		if not (
+			self.is_new()
+			or self.has_value_changed("to_status")
+			or self.has_value_changed("document_type")
+			or self.has_value_changed("trigger")
+		):
+			return
+		if not frappe.db.exists(STATUS_DOCTYPES[self.document_type], self.to_status):
 			message = (
 				_("{0} is not a lead status.")
 				if self.document_type == "CRM Lead"
