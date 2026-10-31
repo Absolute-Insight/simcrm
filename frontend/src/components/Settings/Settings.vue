@@ -139,7 +139,7 @@ import {
 } from '@/composables/settings'
 import { isWhatsappInstalled } from '@/composables/whatsapp'
 import { leadSyncingEnabled } from '@/composables/leadSyncing'
-import { Dialog, Avatar, SidebarItem, Button } from 'frappe-ui'
+import { Dialog, Avatar, SidebarItem, Button, toast } from 'frappe-ui'
 import { ref, markRaw, computed, watch, h } from 'vue'
 import AssignmentRulePage from './AssignmentRules/AssignmentRulePage.vue'
 import { PhShieldCheck as ShieldCheck } from '@phosphor-icons/vue'
@@ -436,24 +436,40 @@ const tabs = computed(() => {
 const activeTab = ref(tabs.value[0]?.items?.[0])
 
 function setActiveTab(tabName) {
-  activeTab.value =
-    (tabName &&
-      tabs.value
-        .map((tab) => tab.items)
-        .flat()
-        .find((tab) => tab.label === tabName)) ||
-    tabs.value[0]?.items?.[0]
+  const page =
+    tabName &&
+    tabs.value
+      .map((tab) => tab.items)
+      .flat()
+      .find((tab) => tab.label === tabName)
+  // A link to a page this user is not shown -- one gated to administrators,
+  // or hidden in Access Control -- still opens the first page, but says why
+  // rather than leaving them on Profile wondering what happened.
+  if (tabName && !page) {
+    toast.warning(__('You do not have access to {0}.', [__(tabName)]))
+  }
+  activeTab.value = page || tabs.value[0]?.items?.[0]
 }
 
-watch(activeSettingsPage, (activePage) => setActiveTab(activePage))
+// Immediate: each layout mounts its own <Settings/>, so a phone rotated across
+// the md breakpoint with Settings open remounts it while activeSettingsPage
+// still names the open page. Seeded only by a later change, the new instance
+// showed Profile, and clicking the page again assigned the same value and so
+// changed nothing.
+watch(activeSettingsPage, (activePage) => setActiveTab(activePage), {
+  immediate: true,
+})
 
 // Which pane a phone shows. A deep link (`activeSettingsPage` set before the
 // dialog opens, e.g. the Invite User row) lands on the page; a plain open
-// lands on the list.
-const mobilePane = ref('nav')
+// lands on the list. Seeded the same way, so a remount keeps the page.
+const mobilePane = ref(
+  showSettings.value && activeSettingsPage.value ? 'page' : 'nav',
+)
 
 function openPage(label) {
   activeSettingsPage.value = label
+  setActiveTab(label)
   mobilePane.value = 'page'
 }
 

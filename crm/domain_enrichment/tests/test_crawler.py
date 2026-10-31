@@ -13,6 +13,7 @@ from __future__ import annotations
 from unittest import mock
 
 from frappe.tests import UnitTestCase
+from rq.timeouts import JobTimeoutException
 
 from crm.domain_enrichment import crawler
 from crm.domain_enrichment.crawler import (
@@ -480,3 +481,65 @@ class ProbeAboutPagesTest(UnitTestCase):
 		):
 			results = crawler.probe_about_pages("https://acme-test.com", make_config())
 		self.assertEqual(results, [])
+
+
+class ErrorPageLinksTest(UnitTestCase):
+	"""fetch hands back the last answer once its retries run out, so a site that is
+	rate-limiting us or down returns a 429 or 5xx page with a body. That page's links
+	are not the site's, and following them only asks a host that just told us to back
+	off for more pages."""
+
+	HOMEPAGE_HTML = '<html><body><a href="/about">About</a><a href="/contact">Contact</a></body></html>'
+
+	def _crawl(self, status):
+		responses = {
+			"https://busy.example": (status, self.HOMEPAGE_HTML),
+			"https://busy.example/about": (200, "<html><body>About</body></html>"),
+			"https://busy.example/contact": (200, "<html><body>Contact</body></html>"),
+		}
+		cfg = make_config(settings={"max_pages": 10, "max_depth": 1, "use_sitemap": 0}, skip_patterns=[])
+		with mock.patch.object(crawler, "fetch", side_effect=fixtures.fake_fetch(responses)) as fetch:
+			results = crawler.crawl("https://busy.example", cfg)
+		return [page.url for page, _soup in results], [c.args[0] for c in fetch.call_args_list]
+
+	def test_a_429_homepage_is_not_crawled_past(self):
+		urls, fetched = self._crawl(429)
+		self.assertEqual(urls, ["https://busy.example"])
+		self.assertNotIn("https://busy.example/about", fetched)
+
+	def test_a_5xx_homepage_is_not_crawled_past(self):
+		urls, _fetched = self._crawl(503)
+		self.assertEqual(urls, ["https://busy.example"])
+
+	def test_a_good_homepage_still_is(self):
+		urls, _fetched = self._crawl(200)
+		self.assertIn("https://busy.example/about", urls)
+
+
+class JobDeadlineTest(UnitTestCase):
+	"""robots.txt and sitemap discovery are best-effort and swallow their failures --
+	but rq's job deadline is not their failure, and swallowed it let the crawl run on
+	until the worker was killed outright (see ``http.JobTimeout``)."""
+
+	def _alarm(self, *_a, **_k):
+		raise JobTimeoutException("Task exceeded maximum timeout value (160 seconds)")
+
+	def test_load_robots_lets_the_job_deadline_through(self):
+		with mock.patch.object(crawler, "fetch", side_effect=self._alarm):
+			with self.assertRaises(JobTimeoutException):
+				crawler.load_robots("https://acme.example", make_config(), session=mock.MagicMock())
+
+	def test_sitemap_discovery_lets_the_job_deadline_through(self):
+		with mock.patch.object(crawler, "fetch", side_effect=self._alarm):
+			with self.assertRaises(JobTimeoutException):
+				crawler.discover_sitemap_urls("https://acme.example", make_config(), mock.MagicMock(), None)
+
+	def test_an_ordinary_failure_is_still_swallowed(self):
+		with mock.patch.object(crawler, "fetch", side_effect=RuntimeError("boom")):
+			self.assertIsNone(
+				crawler.load_robots("https://acme.example", make_config(), session=mock.MagicMock())
+			)
+			self.assertEqual(
+				crawler.discover_sitemap_urls("https://acme.example", make_config(), mock.MagicMock(), None),
+				[],
+			)

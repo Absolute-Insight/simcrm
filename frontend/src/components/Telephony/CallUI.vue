@@ -69,17 +69,24 @@ const enabledIntegrations = computed(() =>
   ].filter(({ key }) => isEnabled(key)),
 )
 
+// The rep's saved default counts only while that integration is still on: an
+// admin can switch it off after it was chosen, and its component never set up.
+const usableDefaultMedium = computed(
+  () =>
+    enabledIntegrations.value.find(
+      ({ label }) => label === defaultCallingMedium.value,
+    )?.label,
+)
+
 function makeCall(number) {
-  if (enabledIntegrations.value.length > 1 && !defaultCallingMedium.value) {
+  if (enabledIntegrations.value.length > 1 && !usableDefaultMedium.value) {
     mobileNumber.value = number
     show.value = true
     return
   }
 
-  callMedium.value = enabledIntegrations.value[0]?.label ?? 'Twilio'
-  if (defaultCallingMedium.value) {
-    callMedium.value = defaultCallingMedium.value
-  }
+  callMedium.value =
+    usableDefaultMedium.value ?? enabledIntegrations.value[0]?.label ?? 'Twilio'
 
   mobileNumber.value = number
   makeCallUsing()

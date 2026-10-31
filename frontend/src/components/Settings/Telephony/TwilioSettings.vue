@@ -186,12 +186,20 @@ function disable() {
   update()
 }
 
-function update() {
-  twilio.save.submit(null, {
-    onSuccess: () => twilio.reload(),
-  })
-
-  setEnabled('twilio', twilio.doc.enabled)
+// The app-wide flag follows what was stored, not the toggle: a save the server
+// refuses (bad credentials, a missing field) must not turn calling on or off.
+// The refusal itself is toasted by the document's save handler.
+async function update() {
+  try {
+    await twilio.save.submit(null, {
+      onSuccess: (saved) => {
+        setEnabled('twilio', Boolean(saved?.enabled))
+        twilio.reload()
+      },
+    })
+  } catch {
+    // already reported
+  }
 }
 
 const isDirty = computed(() => {

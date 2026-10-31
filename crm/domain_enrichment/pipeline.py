@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from . import extractors, model_fallback
 from .config import EnrichmentConfig, get_config
 from .crawler import crawl, probe_about_pages
-from .http import build_session
+from .http import JobTimeout, build_session
 from .result import EnrichmentResult, Field, Method
 
 # Said on the run rather than left to the provenance labels alone. A reviewer
@@ -96,6 +96,14 @@ def preview(website: str, cfg: EnrichmentConfig = None) -> EnrichmentResult:
 		)
 		return result
 
+	# The verdict run() short-circuits on. A bot challenge (401/403/429, or a 200 with
+	# a WAF's markers) or an error page parses like any other HTML, and its <title> --
+	# "Just a moment..." -- would otherwise prefill the form as the company.
+	reason = extractors.diagnose_readability([homepage])
+	if reason in ("blocked", "unreachable"):
+		result.notes.append(extractors.READABILITY_MESSAGES[reason])
+		return result
+
 	# Metadata only: name / description / logo / sameAs social links from the <head>.
 	company = extractors.extract_company_info(homepage, home_soup)
 	result.company_name = company.get("company_name") or Field()
@@ -124,6 +132,8 @@ def run(website: str, cfg: EnrichmentConfig = None, progress=None) -> Enrichment
 		if progress:
 			try:
 				progress(step_index, message or PROGRESS_STEPS[step_index])
+			except JobTimeout:
+				raise
 			except Exception:
 				pass  # progress reporting must never break enrichment
 
