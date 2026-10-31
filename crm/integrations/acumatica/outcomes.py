@@ -10,8 +10,10 @@ pipeline never shrank.
 
 Acumatica never expires a quote (2,144 sat Open on MBP's tenant regardless of
 age), so the validity rule is applied here: a deal whose quote is still open past
-its validity date plus a grace period is Lost as expired, unless a rep touched
-it recently -- somebody working it is the one who decides.
+its validity date plus a grace period is marked Expired, unless a rep touched it
+recently -- somebody working it is the one who decides. Expired is not a close:
+the deal can still be won or lost, by a rep or by its quote's outcome here. Lost
+is only ever Acumatica's word (Canceled, Rejected) or a person's.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import frappe
 from frappe.utils import add_days, getdate, nowdate
 
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import record_sync_issue
+from crm.fcrm.doctype.crm_deal_status.crm_deal_status import ensure_expired_status
 from crm.integrations.acumatica.client import v
 
 try:
@@ -35,6 +38,8 @@ except ImportError:  # pragma: no cover - rq is a frappe dependency; guard for b
 
 LOST_CANCELLED = "Quote cancelled in Acumatica"
 LOST_REJECTED = "Quote rejected in Acumatica"
+# The lost reason the sweep used before Expired was a status of its own; kept so
+# the patch that converts those deals can find them.
 LOST_EXPIRED = "Quote expired"
 
 WON_STATUSES = ("Completed",)
@@ -165,21 +170,23 @@ def pull_quote_outcomes(client, modified_since: str | None) -> dict:
 
 
 def expire_stale_quotes(grace_days: int) -> dict:
-	"""Lose, as expired, every open deal whose quote is past validity plus grace.
+	"""Mark Expired every open deal whose quote is past validity plus grace.
 
 	``expected_closure_date`` is the quote's validity date (the import set it to the
 	quote date plus the validity period). Zero grace switches the rule off. A deal a
-	rep edited within :data:`RECENT_TOUCH_DAYS` is left to them.
+	rep edited within :data:`RECENT_TOUCH_DAYS` is left to them, and one already
+	Expired is not expired again.
 	"""
 	if not grace_days or int(grace_days) <= 0:
 		return {"expired": 0}
+	expired_status = ensure_expired_status()
 	cutoff = add_days(nowdate(), -int(grace_days))
 	touched_after = add_days(nowdate(), -RECENT_TOUCH_DAYS)
 	stale = frappe.get_all(
 		"CRM Deal",
 		filters={
 			"acumatica_sales_quote": ["is", "set"],
-			"status": ["not in", ["Won", "Lost"]],
+			"status": ["not in", ["Won", "Lost", expired_status]],
 			"expected_closure_date": ["<", cutoff],
 			"modified": ["<", touched_after],
 		},
@@ -188,6 +195,6 @@ def expire_stale_quotes(grace_days: int) -> dict:
 	)
 	expired = 0
 	for name in stale:
-		if _try_close(name, "Lost", lost_reason=LOST_EXPIRED):
+		if _try_close(name, expired_status):
 			expired += 1
 	return {"expired": expired}

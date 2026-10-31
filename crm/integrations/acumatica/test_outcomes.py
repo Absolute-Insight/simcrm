@@ -188,12 +188,36 @@ class ExpireStaleQuotesTest(OutcomesTestCase):
 	Open regardless of age. The CRM applies the rule, with a grace period so a deal a
 	rep is still working is not cut off on day 31."""
 
-	def test_a_quote_past_validity_plus_grace_is_lost_as_expired(self):
+	def test_a_quote_past_validity_plus_grace_is_marked_expired_not_lost(self):
 		stale = self._deal("QT000010", closes_in=-45, modified_days_ago=40)
 		counts = outcomes.expire_stale_quotes(grace_days=30)
 		self.assertEqual(counts["expired"], 1)
+		status, lost_reason = frappe.db.get_value("CRM Deal", stale, ["status", "lost_reason"])
+		self.assertEqual(status, "Expired")
+		self.assertFalse(lost_reason, "an expired quote is not a lost deal")
+		self.assertEqual(frappe.db.get_value("CRM Deal Status", "Expired", "type"), "On Hold")
+
+	def test_an_expired_deal_is_not_expired_again(self):
+		stale = self._deal("QT000014", closes_in=-45, modified_days_ago=40)
+		outcomes.expire_stale_quotes(grace_days=30)
+		frappe.db.set_value(
+			"CRM Deal", stale, "modified", frappe.utils.add_days(frappe.utils.now_datetime(), -40)
+		)
+		self.assertEqual(outcomes.expire_stale_quotes(grace_days=30)["expired"], 0)
+
+	def test_the_quote_outcome_still_closes_an_expired_deal(self):
+		"""Expired only says the first quote ran out; the customer can still accept
+		or decline it, and Acumatica's answer decides the deal."""
+		won = self._deal("QT000015", status="Proposal/Quotation", closes_in=-45, modified_days_ago=40)
+		lost = self._deal("QT000016", status="Proposal/Quotation", closes_in=-45, modified_days_ago=40)
+		outcomes.expire_stale_quotes(grace_days=30)
+		client = self._client(
+			[Q(OrderNbr="QT000015", Status="Completed"), Q(OrderNbr="QT000016", Status="Rejected")]
+		)
+		outcomes.pull_quote_outcomes(client, None)
+		self.assertEqual(frappe.db.get_value("CRM Deal", won, "status"), "Won")
 		self.assertEqual(
-			frappe.db.get_value("CRM Deal", stale, ["status", "lost_reason"]), ("Lost", outcomes.LOST_EXPIRED)
+			frappe.db.get_value("CRM Deal", lost, ["status", "lost_reason"]), ("Lost", outcomes.LOST_REJECTED)
 		)
 
 	def test_inside_the_grace_period_nothing_happens(self):
