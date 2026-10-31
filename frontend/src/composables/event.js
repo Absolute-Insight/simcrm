@@ -18,6 +18,7 @@ export function useEvent({
   filters = null,
   participants = true,
   notifications = true,
+  auto = true,
   orderBy = 'creation desc',
 }) {
   const { getUser } = usersStore()
@@ -54,7 +55,7 @@ export function useEvent({
       'creation',
     ],
     filters: filters,
-    auto: true,
+    auto,
     // `pageLength`, not `limit`: createListResource never reads `limit`, so
     // this list stopped at its default of 20.
     pageLength: 50,

@@ -58,6 +58,31 @@ describe('notificationRoute', () => {
     expect(notificationRoute(row({ hash: '#whatsapp' })).hash).toBe('#whatsapp')
     expect(notificationRoute(row({ hash: '#tasks' })).hash).toBe('#tasks')
   })
+
+  it('sends a task with no lead or deal to the Tasks list', () => {
+    // `{ name: 'Lead', params: { leadId: null } }` made vue-router throw while
+    // the row rendered, so the notification never appeared.
+    const task = row({
+      type: 'Assignment',
+      hash: '#tasks',
+      notification_type_doctype: 'CRM Task',
+      notification_type_doc: 'TASK-2026-00009',
+      reference_doctype: 'lead',
+      reference_name: null,
+      route_name: null,
+    })
+    expect(notificationRoute(task)).toEqual({ name: 'Tasks' })
+    // what a server that predates route_name: null sends
+    expect(notificationRoute({ ...task, route_name: 'Lead' })).toEqual({
+      name: 'Tasks',
+    })
+  })
+
+  it('gives a notification that names no record no route', () => {
+    expect(
+      notificationRoute(row({ reference_name: null, route_name: null })),
+    ).toBeNull()
+  })
 })
 
 describe('notificationKey', () => {
