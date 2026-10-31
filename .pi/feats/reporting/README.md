@@ -144,8 +144,11 @@ a module is imported once per worker, so translating at import time would freeze
 every label to the language of whoever made the first request.
 
 A report declares `period: false` when it is a snapshot of this moment rather
-than a window (the open pipeline); the UI hides the date picker for those rather
-than showing a control that changes nothing.
+than a window; the UI hides the date picker for those rather than showing a
+control that changes nothing. None does today. Pipeline by stage takes the period
+as "created in", and keeps a `get_snapshot_rows` for callers that mean the
+pipeline right now: `get_report(..., snapshot=True)`, as digests and the
+dashboard's panel do.
 
 ## Reading many reps at once
 

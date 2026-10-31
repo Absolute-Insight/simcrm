@@ -3,9 +3,8 @@ import { test, expect } from '@playwright/test'
 /**
  * The reports page is the "clean, informative reporting" surface. What matters
  * is that the registry drives it (switching a report re-renders the columns the
- * backend declared), that a period-independent report does not show a date
- * picker that changes nothing, and that the CSV a user downloads is the report
- * they are looking at.
+ * backend declared), that the date range is on offer, and that the CSV a user
+ * downloads is the report they are looking at.
  */
 test.describe('Reports', () => {
 	test.beforeEach(async ({ page }) => {
@@ -44,13 +43,12 @@ test.describe('Reports', () => {
 		).toHaveAttribute('aria-selected', 'true')
 	})
 
-	test('a period-independent report hides the date picker', async ({
-		page,
-	}) => {
-		// pipeline_by_stage is a snapshot of the open pipeline right now, so a
-		// range picker on it would be a control that changes nothing
+	test('reports offer the date range', async ({ page }) => {
+		// pipeline_by_stage counts deals created in the period, so it has the
+		// picker too; it used to be a snapshot without one
 		await page.getByRole('tab', { name: 'Pipeline by stage' }).click()
-		await expect(page.getByPlaceholder('Period')).toHaveCount(0)
+		await expect(page.getByText(/open deals created in the period/i)).toBeVisible()
+		await expect(page.getByPlaceholder('Period')).toHaveValue(/ to /)
 
 		await page.getByRole('tab', { name: 'Funnel conversion' }).click()
 		await expect(page.getByRole('button', { name: /last .* days/i })).toBeVisible()
