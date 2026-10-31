@@ -83,6 +83,20 @@
                     <span>{{ organization.doc.name }}</span>
                   </div>
                   <div
+                    v-if="organization.doc.acumatica_id"
+                    class="flex items-center gap-1.5 text-base text-ink-gray-8"
+                    :title="__('Customer code')"
+                  >
+                    <span
+                      class="lucide-id-card size-4 shrink-0"
+                      aria-hidden="true"
+                    />
+                    <span class="sr-only">{{ __('Customer code') }}</span>
+                    <span class="tabular-nums">{{
+                      organization.doc.acumatica_id
+                    }}</span>
+                  </div>
+                  <div
                     v-if="organization.doc.website"
                     class="flex items-center gap-1.5 text-base text-ink-gray-8"
                   >
