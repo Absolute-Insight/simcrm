@@ -693,6 +693,99 @@ describe('the view dialog is handed a copy', () => {
   })
 })
 
+describe('a rename saved from the view dialog', () => {
+  // ViewModal's Save Changes: the server stores the draft, then afterUpdate
+  // gets it. The views store re-read lands while get_data is still out, so
+  // the getView watcher's reload() stands down and rebuilds nothing.
+  function saveDialog(changes) {
+    const draft = { ...vc.children.ViewModal.view, ...changes }
+    Object.assign(vc.views[draft.name], {
+      label: draft.label,
+      icon: draft.icon,
+    })
+    vc.children.ViewModal.options.afterUpdate(draft)
+  }
+  const filterOpen = (m) =>
+    m.vc().applyFilter({
+      event: click(),
+      idx: 1,
+      column: { key: 'status', type: 'Select' },
+      item: 'Open',
+      firstColumn: { key: 'lead_name' },
+    })
+  const editFromMenu = (m, name, label) =>
+    m
+      .vc()
+      .viewActions({ name, label }, () => {})[0]
+      .options.find((o) => o.label === 'Edit')
+      .onClick()
+
+  it('the next Save Changes keeps the new name and icon', async () => {
+    savedView(71, { label: 'Hot leads', icon: 'flame' })
+    setRoute({ view: 71 })
+    const m = await mountVC()
+    filterOpen(m)
+    await settle()
+    m.button('Save Changes').click()
+    await settle()
+    saveDialog({ label: 'Warm leads', icon: 'sun' })
+    await settle()
+
+    vc.children.SortBy.onUpdate('creation desc')
+    await settle()
+    m.button('Save Changes').click()
+    await settle()
+    expect(vc.children.ViewModal.view).toMatchObject({
+      name: 71,
+      label: 'Warm leads',
+      icon: 'sun',
+      filters: { status: 'Open' },
+      order_by: 'creation desc',
+    })
+  })
+
+  it('so does an Edit from the views menu of the view on screen', async () => {
+    savedView(72, { label: 'Hot leads', icon: 'flame' })
+    setRoute({ view: 72 })
+    const m = await mountVC()
+    editFromMenu(m, 72, 'Hot leads')
+    await settle()
+    saveDialog({ label: 'Warm leads', icon: 'sun' })
+    await settle()
+
+    filterOpen(m)
+    await settle()
+    m.button('Save Changes').click()
+    await settle()
+    expect(vc.children.ViewModal.view).toMatchObject({
+      name: 72,
+      label: 'Warm leads',
+      icon: 'sun',
+    })
+  })
+
+  it('renaming another view leaves the one on screen as it was', async () => {
+    savedView(73, { label: 'Mine', icon: 'star' })
+    savedView(74, { label: 'Theirs' })
+    setRoute({ view: 73 })
+    const m = await mountVC()
+    editFromMenu(m, 74, 'Theirs')
+    await settle()
+    saveDialog({ label: 'Renamed' })
+    await settle()
+
+    filterOpen(m)
+    await settle()
+    m.button('Save Changes').click()
+    await settle()
+    expect(vc.children.ViewModal.view).toMatchObject({
+      name: 73,
+      label: 'Mine',
+      icon: 'star',
+    })
+  })
+})
+
 describe('clicking a cell filters on the stored value', () => {
   async function clickCell(doctype, doc, column, item) {
     setRoute({ name: doctype })

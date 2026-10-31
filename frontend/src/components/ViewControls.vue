@@ -280,7 +280,13 @@
           query: { view: v.name },
         })
       },
-      afterUpdate: () => {
+      afterUpdate: (v) => {
+        // The dialog edits a copy. The views store re-read below usually lands
+        // while the list is still loading, so the getView watcher's reload()
+        // stands down and would not rebuild the view on screen from it.
+        if (v?.name && v.name === view.name) {
+          Object.assign(view, { label: v.label, icon: v.icon })
+        }
         viewUpdated = false
         reloadView()
         list.reload()
