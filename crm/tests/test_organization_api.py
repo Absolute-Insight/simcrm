@@ -77,3 +77,57 @@ class OrganizationLogoLookupTest(IntegrationTestCase):
 		)
 		self.assertNotIn(self.without_logo.name, rows)
 		self.assertTrue(all(set(row) == {"name", "organization_logo"} for row in rows.values()))
+class CustomerCodeShownTest(IntegrationTestCase):
+	"""The code is how the sales team names an account, so it is on the list,
+	in every organization picker, and labelled as what it is."""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		ensure_custom_fields()
+
+	def tearDown(self):
+		frappe.db.rollback()
+		# a rolled-back Property Setter must not outlive the test in the meta cache
+		frappe.clear_cache(doctype="CRM Organization")
+
+	def test_the_field_is_called_customer_code_and_is_a_list_column(self):
+		field = frappe.get_meta("CRM Organization").get_field("acumatica_id")
+		self.assertEqual(field.label, "Customer Code")
+		self.assertTrue(field.in_list_view)
+		self.assertTrue(field.read_only, "the sync matches on the code; it must not be hand-edited")
+		self.assertEqual(frappe.get_meta("CRM Deal").get_field("acumatica_customer").label, "Customer Code")
+
+	def test_the_default_list_shows_the_code(self):
+		from crm.fcrm.doctype.crm_organization.crm_organization import CRMOrganization
+
+		data = CRMOrganization.default_list_data()
+		self.assertIn("acumatica_id", [c["key"] for c in data["columns"]])
+		self.assertIn("acumatica_id", data["rows"])
+
+	def test_a_link_search_matches_the_code_and_describes_the_option_with_it(self):
+		from frappe.desk.search import search_link
+
+		frappe.get_doc(
+			{
+				"doctype": "CRM Organization",
+				"organization_name": "Karee Merensky",
+				"acumatica_id": "C-LON001J",
+			}
+		).insert()
+		options = search_link("CRM Organization", "C-LON001")
+		match = next((o for o in options if o["value"] == "Karee Merensky"), None)
+		self.assertIsNotNone(match, "searching by customer code found nothing")
+		self.assertIn("C-LON001J", match.get("description") or "")
+
+	def test_setting_up_the_search_twice_keeps_an_admins_own_search_fields(self):
+		from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+		from crm.integrations.acumatica.install import ensure_customer_code_search
+
+		make_property_setter("CRM Organization", None, "search_fields", "website", "Data", for_doctype=True)
+		frappe.clear_cache(doctype="CRM Organization")
+		ensure_customer_code_search()
+		ensure_customer_code_search()
+		frappe.clear_cache(doctype="CRM Organization")
+		self.assertEqual(frappe.get_meta("CRM Organization").search_fields, "acumatica_id,website")

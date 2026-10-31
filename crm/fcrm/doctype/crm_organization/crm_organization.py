@@ -80,6 +80,12 @@ class CRMOrganization(Document):
 				"width": "16rem",
 			},
 			{
+				"label": "Customer Code",
+				"type": "Data",
+				"key": "acumatica_id",
+				"width": "10rem",
+			},
+			{
 				"label": "Website",
 				"type": "Data",
 				"key": "website",
@@ -108,6 +114,7 @@ class CRMOrganization(Document):
 		rows = [
 			"name",
 			"organization_name",
+			"acumatica_id",
 			"organization_logo",
 			"website",
 			"industry",
@@ -115,4 +122,9 @@ class CRMOrganization(Document):
 			"annual_revenue",
 			"modified",
 		]
+		if not frappe.get_meta("CRM Organization").has_field("acumatica_id"):
+			# the customer code is a custom field created on install and migrate; a
+			# site caught between the two must still list its organizations
+			columns = [c for c in columns if c["key"] != "acumatica_id"]
+			rows.remove("acumatica_id")
 		return {"columns": columns, "rows": rows}
