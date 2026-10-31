@@ -23,3 +23,17 @@ export function bulkUpdateOutcome(result) {
   if (result.length) return { status: 'failed', failed: result }
   return { status: 'done', failed: [] }
 }
+
+/**
+ * Whether a side-panel field is held back because the record is not lost.
+ * Lost Reason and Lost Notes sit in every deal and lead side panel, but they
+ * mean something only on a record whose status is Lost-type. `statusType` is
+ * the type of the record's status ('Lost', 'Won', 'Open', ...).
+ */
+export function hiddenUntilLost(doctype, fieldname, statusType) {
+  return (
+    ['CRM Deal', 'CRM Lead'].includes(doctype) &&
+    ['lost_reason', 'lost_notes'].includes(fieldname) &&
+    statusType !== 'Lost'
+  )
+}

@@ -328,7 +328,7 @@ router.beforeEach(async (to, from, next) => {
     const { views, getDefaultView } = viewsStore()
     await viewsLoaded(views)
 
-    let defaultView = getDefaultView()
+    let defaultView = getDefaultView(null, (name) => router.hasRoute(name))
     if (!defaultView) {
       next({ name: 'Leads' })
       return

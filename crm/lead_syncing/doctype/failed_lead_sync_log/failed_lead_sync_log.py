@@ -16,6 +16,7 @@ class FailedLeadSyncLog(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		facebook_lead_id: DF.Data | None
 		lead_data: DF.Code | None
 		source: DF.Link | None
 		traceback: DF.Code | None

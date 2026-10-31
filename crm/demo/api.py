@@ -4,6 +4,7 @@ import frappe
 from frappe.utils.telemetry import capture
 
 from crm.agent.signals import unlink_from_plans
+from crm.demo.utils import seeds_demo_data
 
 DEMO_STATE_KEY = "crm_demo_data_created"
 DEMO_CREATED_AT_KEY = "crm_demo_data_created_at"
@@ -37,6 +38,7 @@ def seed_demo_data_if_enabled(_args: dict | None = None):
 	create_demo_data(_args)
 
 
+@seeds_demo_data
 def create_demo_data(_args: dict | None = None):
 	if frappe.db.get_default(DEMO_STATE_KEY):
 		return

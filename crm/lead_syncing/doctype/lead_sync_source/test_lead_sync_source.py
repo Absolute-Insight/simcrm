@@ -282,6 +282,134 @@ class TestFacebookPagination(IntegrationTestCase):
 		self.assertEqual(frappe.db.count("Failed Lead Sync Log", {"source": self.source_name}), before)
 		self.assertEqual(frappe.db.count("CRM Lead", {"facebook_lead_id": "dup-1"}), 1)
 
+	def test_a_lead_logged_as_a_duplicate_is_not_logged_again_on_every_run(self):
+		"""The overlap re-offers the newest lead every run. When that lead was
+		logged instead of imported, matching on CRM Lead alone cannot see it, so it
+		was logged again on every scheduled run -- 288 rows a day at five minutes."""
+		from crm.lead_syncing.doctype.lead_sync_source.facebook import FacebookSyncSource
+
+		# the same person fills the form twice: the second is a real duplicate
+		leads = [
+			self.lead("fb-1", "2026-08-01T10:00:00+0000"),
+			self.lead("fb-2", "2026-08-01T12:00:00+0000"),
+		]
+		for _run in range(3):
+			src = FacebookSyncSource("token", self.form_id, source_name=self.source_name)
+			src.get_form_questions_mapping = lambda: {"full_name": "first_name"}
+			src.fetch_leads = lambda: iter(leads)
+			src.update_last_synced_at = lambda handled_through=None: None
+			src.sync()
+
+		logs = frappe.get_all("Failed Lead Sync Log", filters={"source": self.source_name}, pluck="name")
+		self.assertEqual(len(logs), 1, "the same Facebook lead was logged once per run")
+		self.assertEqual(
+			frappe.db.get_value("Failed Lead Sync Log", logs[0], ["type", "facebook_lead_id"]),
+			("Duplicate", "fb-2"),
+		)
+
+	def test_a_logged_lead_can_still_be_retried(self):
+		"""Retry Sync on the log goes through sync_single_lead; the log row it
+		starts from must not be what stops it."""
+		from crm.lead_syncing.doctype.lead_sync_source.facebook import FacebookSyncSource
+
+		src = FacebookSyncSource("token", self.form_id, source_name=self.source_name)
+		src.get_form_questions_mapping = lambda: {"full_name": "first_name"}
+		lead = self.lead("fb-retry", "2026-08-01T10:00:00+0000")
+		src.create_failure_log(lead)
+
+		self.assertIsNotNone(src.sync_single_lead(lead, raise_exception=True))
+		self.assertEqual(frappe.db.count("CRM Lead", {"facebook_lead_id": "fb-retry"}), 1)
+
+	def test_the_watermark_reaches_graph_to_the_second_in_utc(self):
+		"""The mark is UTC wall time to the second. Sent as midnight in the worker's
+		OS zone, every run re-read the whole day, and west of UTC the floor landed
+		after the mark, so a lead in between was never asked for."""
+		from datetime import datetime, timezone
+
+		src = self.source([], last_synced_at=datetime(2026, 8, 1, 0, 59, 59))
+		sent = []
+		src.fetch_page = lambda url, params=None: sent.append(params) or self.page([])
+		list(src.fetch_leads())
+
+		floor = frappe.parse_json(sent[0]["filtering"])[0]["value"]
+		self.assertEqual(floor, int(datetime(2026, 8, 1, 0, 59, 59, tzinfo=timezone.utc).timestamp()))
+
+	def test_the_watermark_is_stored_as_utc_wall_time(self):
+		"""Read back as UTC, so it has to be written as UTC: Graph's offset is
+		applied, not kept on a value the Datetime column would drop it from."""
+		from crm.lead_syncing.doctype.lead_sync_source.facebook import FacebookSyncSource
+
+		src = FacebookSyncSource("token", self.form_id, source_name=self.source_name)
+		with patch.object(frappe.db, "set_value") as set_value:
+			src.update_last_synced_at("2026-08-01T14:00:00+0200")
+		written = set_value.call_args.args[3]
+		self.assertIsNone(written.tzinfo)
+		self.assertEqual(written.strftime("%Y-%m-%d %H:%M:%S"), "2026-08-01 11:59:59")
+
+
+class TestFacebookPagesAndFormsPaging(IntegrationTestCase):
+	"""Graph pages ``/me/accounts`` and ``leadgen_forms`` the same way it pages
+	leads. Read from the first page only, a form further down could never be
+	picked as a Lead Sync Source."""
+
+	NEXT = "https://graph.facebook.com/v23.0/page-1/leadgen_forms?after=CURSOR"
+
+	def graph(self, pages):
+		from crm.lead_syncing.doctype.lead_sync_source import facebook
+
+		self.requests = []
+
+		def fake(url, params=None):
+			self.requests.append((url, params))
+			return pages[url] if url in pages else pages["first"]
+
+		return patch.object(facebook, "graph_get", side_effect=fake)
+
+	def test_every_page_of_lead_forms_is_stored(self):
+		from crm.lead_syncing.doctype.lead_sync_source import facebook
+
+		pages = {
+			"first": {
+				"data": [{"id": "form-a", "name": "Spring", "questions": []}],
+				"paging": {"next": self.NEXT},
+			},
+			self.NEXT: {"data": [{"id": "form-b", "name": "Autumn", "questions": []}]},
+		}
+		with self.graph(pages), patch.object(facebook, "create_facebook_lead_form_in_db") as create:
+			forms = facebook.fetch_and_store_leadgen_forms_from_facebook("page-1", "page-token")
+
+		self.assertEqual([form["id"] for form in forms], ["form-a", "form-b"])
+		self.assertEqual([c.args[0]["id"] for c in create.call_args_list], ["form-a", "form-b"])
+		# the cursor carries the query, not the credential: that goes again explicitly
+		self.assertEqual(self.requests[1], (self.NEXT, {"access_token": "page-token"}))
+
+	def test_every_page_of_accounts_is_read(self):
+		from crm.lead_syncing.doctype.lead_sync_source import facebook
+
+		next_url = "https://graph.facebook.com/v23.0/me/accounts?after=CURSOR"
+		pages = {
+			"first": {"data": [{"id": "page-1", "access_token": "p1"}], "paging": {"next": next_url}},
+			next_url: {"data": [{"id": "page-2", "access_token": "p2"}]},
+		}
+		with (
+			self.graph(pages),
+			patch.object(facebook, "get_fb_account_details", return_value={"id": "acct-1"}),
+			patch.object(facebook, "create_facebook_page_in_db"),
+			patch.object(facebook, "fetch_and_store_leadgen_forms_from_facebook", return_value=[]),
+		):
+			pages_read = facebook.fetch_and_store_pages_from_facebook("user-token")
+
+		self.assertEqual([page["id"] for page in pages_read], ["page-1", "page-2"])
+
+	def test_a_forms_cursor_pointing_off_facebook_is_refused(self):
+		"""The cursor is a URL out of a response body and the page token goes with it."""
+		from crm.lead_syncing.doctype.lead_sync_source import facebook
+
+		pages = {"first": {"data": [], "paging": {"next": "https://evil.test/forms"}}}
+		with self.graph(pages), self.assertRaises(frappe.ValidationError):
+			facebook.fetch_and_store_leadgen_forms_from_facebook("page-1", "page-token")
+		self.assertEqual(len(self.requests), 1)
+
 
 class GraphTokenHandlingTest(IntegrationTestCase):
 	"""The page access token must reach Graph and nowhere else."""

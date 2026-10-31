@@ -30,8 +30,8 @@
     <svg v-else-if="!error" width="104" height="104" viewBox="0 0 140 140">
       <defs>
         <linearGradient :id="gradientId" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#21abfb" />
-          <stop offset="1" stop-color="#5b5fe8" />
+          <stop offset="0" style="stop-color: var(--brand-start)" />
+          <stop offset="1" style="stop-color: var(--brand-500)" />
         </linearGradient>
       </defs>
       <circle

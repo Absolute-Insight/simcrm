@@ -98,6 +98,30 @@ class ScoredFieldsTest(UnitTestCase):
 		self.assertEqual(runner.scored_fields(case), ["description"])
 
 
+class ScoresWhatProductionWritesTest(UnitTestCase):
+	"""The eval exists to choose a model for production, so it scores what
+	``model_fallback`` would write onto the record, not the raw reply: production
+	keeps an industry only when it is exactly one of the offered names."""
+
+	CASE = case_data.by_name("clinic_saas_says_everything")  # expects "Healthcare"
+
+	def _industry_outcome(self, answer):
+		facts = SiteFacts(company_name="VitalLedger", industry=answer)
+		with mock.patch.object(runner.client, "complete", return_value=facts):
+			return runner.run_case(self.CASE, CFG).outcomes["industry"]
+
+	def test_the_offered_name_is_correct(self):
+		self.assertEqual(self._industry_outcome("Healthcare"), runner.CORRECT)
+
+	def test_a_lower_cased_industry_is_not_credited(self):
+		"""Production discards it and writes nothing; the eval scored it correct."""
+		self.assertEqual(self._industry_outcome("healthcare"), runner.MISSED)
+
+	def test_an_industry_off_the_list_is_a_miss_not_a_harmful_write(self):
+		"""Production discards it; the eval scored it a wrong value on the record."""
+		self.assertEqual(self._industry_outcome("Medical Billing"), runner.MISSED)
+
+
 class HarmfulOutcomesTest(UnitTestCase):
 	def test_only_wrong_and_hallucinated_are_harmful(self):
 		"""`missed` must never be averaged in with them: a cautious model would look

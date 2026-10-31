@@ -40,13 +40,14 @@ DEFAULT_SETTINGS = {
 	"max_depth": 2,
 	"use_sitemap": 1,
 	"request_timeout": 10,
+	# 0: the fetch budget follows request_timeout (see http._fetch_budget)
+	"max_fetch_seconds": 0,
 	"max_download_bytes": 3_000_000,
 	"retry_count": 2,
 	"user_agent": (
 		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 		"(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 	),
-	"preview_max_pages": 1,
 	"preview_timeout": 8,
 	# Off by default and separately from the agent tier's own switch. Enabling the
 	# model tier for summaries must not silently start sending crawled third-party
@@ -195,7 +196,8 @@ def _compile_pattern(pattern: str, is_regex: int):
 
 def _build_rules() -> dict:
 	rules_by_type: dict = {}
-	names = frappe.get_all("CRM Enrichment Rule", filters={"enabled": 1}, pluck="name")
+	# a stable order, so nothing that iterates the rules depends on the database's whim
+	names = frappe.get_all("CRM Enrichment Rule", filters={"enabled": 1}, pluck="name", order_by="name asc")
 	for name in names:
 		doc = frappe.get_doc("CRM Enrichment Rule", name)
 		compiled = []
@@ -273,6 +275,16 @@ def _build_config() -> EnrichmentConfig:
 		skip_patterns=skip_patterns,
 		allowed_domains=allowed_domains,
 		blocked_domains=blocked_domains,
+	)
+
+
+def get_mapping_config() -> EnrichmentConfig:
+	"""Settings and Field Mappings only, for callers that write fields and never match
+	a rule. The Organization -> Lead/Deal copy runs on every save of a linked record,
+	and assembling the rules there cost a ``get_doc`` per rule for nothing."""
+	return EnrichmentConfig(
+		settings=_build_settings(frappe.get_cached_doc("CRM Enrichment Settings")),
+		mappings_by_doctype=_build_mappings(),
 	)
 
 

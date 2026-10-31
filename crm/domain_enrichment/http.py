@@ -25,12 +25,16 @@ from __future__ import annotations
 import ipaddress
 import re
 import socket
+import threading
 import time
 from urllib.parse import urlparse
 
 import frappe
 from frappe.utils import get_request_session
 from requests.adapters import HTTPAdapter, Retry
+from rq.timeouts import BaseTimeoutException as JobTimeout
+from urllib3.connection import HTTPConnection, HTTPSConnection
+from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 
 HTML_CONTENT_TYPES = ("text/html", "application/xhtml")
 RETRY_STATUS_FORCELIST = (429, 500, 502, 503, 504)
@@ -38,10 +42,11 @@ RETRY_STATUS_FORCELIST = (429, 500, 502, 503, 504)
 MAX_REDIRECTS = 5
 # Total wall-clock seconds one fetch() may spend, redirects and body read included.
 # `request_timeout` is per socket read and restarts on every byte, so it bounds
-# nothing against a host that trickles; this does. Derived from the configured
-# per-read timeout so the preview path (which lowers it) gets a tighter budget than
-# a background crawl, and capped so no setting can hand a web worker away for long.
-# Override with the `max_fetch_seconds` setting for an absolute value.
+# nothing against a host that trickles; this does, at the socket (``_Deadline``).
+# Derived from the configured per-read timeout so the preview path (which lowers it)
+# gets a tighter budget than a background crawl, and capped so no setting can hand a
+# web worker away for long. The `max_fetch_seconds` setting sets it outright, under
+# the same cap.
 FETCH_BUDGET_FACTOR = 3
 MAX_FETCH_SECONDS = 30
 # Default crawler UA: a current desktop-Chrome string so bot walls that reject bare
@@ -50,6 +55,11 @@ DEFAULT_USER_AGENT = (
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 	"(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 )
+
+# ``JobTimeout`` is rq's job deadline. It is an ordinary ``Exception`` subclass raised
+# wherever the job happens to be -- usually inside a fetch -- so every catch-all on the
+# crawl path re-raises it. Swallowed as a page error, the crawl ran on until rq killed
+# the worker outright: no Run written, no terminal event for the waiting button.
 
 
 class SSRFError(Exception):
@@ -138,20 +148,32 @@ def _validated_ips(url: str, cfg) -> list:
 	if allowed and not _domain_in_list(host, allowed):
 		raise SSRFError(f"host is not on the allowed-domains list: {host}")
 
+	# One answer for "no such name" and "an internal name", and never the address:
+	# this text reaches whoever typed the URL, and telling them which internal IP a
+	# compose service sits on -- or that the name exists at all -- maps the network
+	# for them. The specifics go to the server log.
+	not_public = f"host {host} does not resolve to a public address"
 	try:
 		ips = _resolve_ips(host)
 	except socket.gaierror as exc:
-		raise SSRFError(f"could not resolve host {host}: {exc}") from exc
+		_log_rejection(host, f"could not resolve: {exc}")
+		raise SSRFError(not_public) from exc
 	if not ips:
-		raise SSRFError(f"could not resolve host {host}")
+		_log_rejection(host, "resolved to nothing")
+		raise SSRFError(not_public)
 	for ip in ips:
 		if _is_blocked_ip(ip):
-			raise SSRFError(f"host {host} resolves to a non-public address: {ip}")
+			_log_rejection(host, f"resolves to a non-public address: {ip}")
+			raise SSRFError(not_public)
 
 	# Deterministic order, IPv4 first: the caller pins the first entry, and unlike
 	# requests' resolver it won't fall back across address families, so an IPv6
 	# answer must not shadow a reachable IPv4 one on v4-only networks.
 	return sorted(ips, key=lambda ip: (":" in ip, ip))
+
+
+def _log_rejection(host: str, detail: str) -> None:
+	frappe.logger("crm.enrichment").info(f"SSRF guard rejected {host}: {detail}")
 
 
 # --------------------------------------------------------------------------- #
@@ -200,12 +222,36 @@ def build_session(cfg=None):
 	return session
 
 
+class _BudgetedRetry(Retry):
+	"""urllib3's Retry, never sleeping past the running fetch's deadline.
+
+	Retries sleep inside ``adapter.send``, below every check ``fetch`` makes, and with
+	no socket open for ``_Deadline`` to shut -- so the backoff is cut to whatever the
+	budget has left. (``Retry.new`` rebuilds with ``type(self)``, so this survives
+	every retry.)"""
+
+	def get_backoff_time(self) -> float:
+		backoff = super().get_backoff_time()
+		deadline = _active_deadline()
+		if deadline is None:
+			return backoff
+		return max(0.0, min(backoff, deadline.remaining()))
+
+
 def _retry_policy(retries: int) -> Retry:
-	return Retry(
+	return _BudgetedRetry(
 		total=retries,
 		backoff_factor=0.3,
 		status_forcelist=RETRY_STATUS_FORCELIST,
 		allowed_methods=frozenset(["GET", "HEAD"]),
+		# A Retry-After is the server's schedule, not our budget: honoured, one site in
+		# maintenance mode (503, Retry-After: 600) held a preview's web worker for
+		# twenty minutes, and urllib3 only caps the wait at six hours.
+		respect_retry_after_header=False,
+		# Once the retries run out, hand back the last answer instead of raising: a
+		# persistent 429 is a bot wall, and only its status says so (raised, it came
+		# back as status 0 -- "couldn't reach this website").
+		raise_on_status=False,
 	)
 
 
@@ -229,6 +275,130 @@ class _PinnedIPAdapter(HTTPAdapter):
 	def init_poolmanager(self, *args, **kwargs):
 		kwargs["server_hostname"] = self._server_hostname
 		super().init_poolmanager(*args, **kwargs)
+		# Every connection this adapter opens or reuses reports its socket to the
+		# running fetch's deadline (see ``_Deadline``).
+		self.poolmanager.pool_classes_by_scheme = {"http": _WatchedHTTPPool, "https": _WatchedHTTPSPool}
+
+
+# --------------------------------------------------------------------------- #
+# The fetch deadline, enforced at the socket
+# --------------------------------------------------------------------------- #
+_local = threading.local()
+
+
+def _active_deadline():
+	"""The ``_Deadline`` of the fetch running on this thread, if any."""
+	return getattr(_local, "deadline", None)
+
+
+def _shutdown(handle) -> None:
+	try:
+		handle.shutdown(socket.SHUT_RDWR)
+	except OSError:
+		pass  # already closed, or never connected
+
+
+class _Deadline:
+	"""One fetch's wall-clock budget, enforced on its sockets rather than between reads.
+
+	A deadline checked between reads does nothing while a read is in progress, and a
+	read is where a hostile host keeps us: ``requests``' timeout is per ``recv()`` and
+	restarts on every byte, ``iter_content`` blocks until a whole chunk has arrived,
+	and the TLS handshake, status line and headers are all read before any of our
+	code runs. So a timer shuts down every socket the fetch has touched when the
+	budget runs out, which wakes whichever ``recv()`` is blocked, wherever it is.
+
+	Sockets are reported by the watched connection classes below through a
+	thread-local, because nothing between ``fetch`` and urllib3's connection is ours
+	to pass an argument through. Each is held as a duplicate descriptor:
+	``shutdown()`` acts on the socket rather than the descriptor, so it still reaches
+	a connection whose original object the TLS wrapper has since taken over, and
+	closing our copy closes nothing that urllib3 owns.
+	"""
+
+	def __init__(self, seconds: float):
+		self.at = time.monotonic() + seconds
+		self.expired = False
+		self._handles = []
+		self._lock = threading.Lock()
+		self._timer = threading.Timer(max(seconds, 0), self._expire)
+		self._timer.daemon = True
+
+	def remaining(self) -> float:
+		return self.at - time.monotonic()
+
+	def watch(self, sock) -> None:
+		try:
+			handle = socket.fromfd(sock.fileno(), sock.family, sock.type)
+		except (OSError, ValueError):
+			return  # closed already: nothing left to wait on
+		with self._lock:
+			self._handles.append(handle)
+			expired = self.expired
+		if expired:
+			# a connection opened after the budget ran out (a retry) gets no grace
+			_shutdown(handle)
+
+	def _expire(self) -> None:
+		with self._lock:
+			self.expired = True
+			handles = list(self._handles)
+		for handle in handles:
+			_shutdown(handle)
+
+	def __enter__(self):
+		self._outer = _active_deadline()
+		_local.deadline = self
+		self._timer.start()
+		return self
+
+	def __exit__(self, *exc_info):
+		self._timer.cancel()
+		# a shutdown already under way finishes before its handles are closed
+		self._timer.join()
+		_local.deadline = self._outer
+		with self._lock:
+			handles, self._handles = self._handles, []
+		for handle in handles:
+			handle.close()
+
+
+def _watch(sock) -> None:
+	deadline = _active_deadline()
+	if deadline is not None:
+		deadline.watch(sock)
+
+
+class _WatchedSocketMixin:
+	"""Report each socket a connection uses to the running fetch's deadline: a new
+	one as soon as it connects (before the TLS handshake, which a host can trickle
+	too), and a pooled keep-alive one when a fetch reuses it."""
+
+	def _new_conn(self):
+		sock = super()._new_conn()
+		_watch(sock)
+		return sock
+
+	def request(self, *args, **kwargs):
+		if self.sock is not None:
+			_watch(self.sock)
+		return super().request(*args, **kwargs)
+
+
+class _WatchedHTTPConnection(_WatchedSocketMixin, HTTPConnection):
+	pass
+
+
+class _WatchedHTTPSConnection(_WatchedSocketMixin, HTTPSConnection):
+	pass
+
+
+class _WatchedHTTPPool(HTTPConnectionPool):
+	ConnectionCls = _WatchedHTTPConnection
+
+
+class _WatchedHTTPSPool(HTTPSConnectionPool):
+	ConnectionCls = _WatchedHTTPSConnection
 
 
 def _pinned_adapter(session, hostname: str, retries: int) -> _PinnedIPAdapter:
@@ -304,19 +474,31 @@ def _read_capped(resp, max_bytes: int, deadline: float | None = None) -> str:
 	monotonic deadline is the bound that a cooperative-looking server cannot reset.
 	Whatever arrived before it is kept and parsed, exactly as for the byte cap: a
 	truncated page is still worth extracting from, and the point is to let go of the
-	worker."""
+	worker.
+
+	Checking the clock between chunks only helps while chunks keep arriving; a read
+	blocked mid-chunk is ended by the fetch's ``_Deadline`` shutting the socket. The
+	error that read then raises means "out of time", so it ends the read the same way,
+	keeping the chunks that completed (the one in flight is lost with the read)."""
 	chunks = []
 	total = 0
-	for chunk in resp.iter_content(chunk_size=16_384, decode_unicode=False):
-		if chunk:
-			total += len(chunk)
-			chunks.append(chunk)
-			if total >= max_bytes:
+	try:
+		for chunk in resp.iter_content(chunk_size=16_384, decode_unicode=False):
+			if chunk:
+				total += len(chunk)
+				chunks.append(chunk)
+				if total >= max_bytes:
+					break
+			# checked on empty chunks too: keep-alive dribble is exactly the shape of
+			# traffic that keeps the per-read timeout from ever firing
+			if deadline is not None and time.monotonic() >= deadline:
 				break
-		# checked on empty chunks too: keep-alive dribble is exactly the shape of
-		# traffic that keeps the per-read timeout from ever firing
-		if deadline is not None and time.monotonic() >= deadline:
-			break
+	except JobTimeout:
+		raise
+	except Exception:
+		guard = _active_deadline()
+		if not (guard and guard.expired):
+			raise
 	raw = b"".join(chunks)
 	# requests defaults text/* without an explicit charset to ISO-8859-1, which
 	# mojibakes UTF-8 pages that only declare their charset in a <meta> tag. When the
@@ -338,11 +520,28 @@ def _fetch_budget(cfg, timeout: int) -> float:
 	a short one (the preview path lowers ``request_timeout`` to ``preview_timeout``)
 	gets a proportionally short budget, capped by ``MAX_FETCH_SECONDS`` so no setting
 	can hand a web worker over for minutes. The ``max_fetch_seconds`` setting
-	overrides it outright."""
+	replaces the multiple, but not the cap."""
 	configured = cfg.setting("max_fetch_seconds", None) if cfg else None
 	if configured:
-		return float(configured)
+		return float(min(float(configured), MAX_FETCH_SECONDS))
 	return float(min(timeout * FETCH_BUDGET_FACTOR, MAX_FETCH_SECONDS))
+
+
+def _failure(exc: Exception, timeout: int) -> str:
+	"""The error text ``fetch`` reports for an exception (it never raises one)."""
+	import requests
+
+	if isinstance(exc, requests.exceptions.Timeout):
+		return f"timeout after {timeout}s"
+	if isinstance(exc, requests.exceptions.TooManyRedirects):
+		return "too many redirects"
+	if isinstance(exc, requests.exceptions.SSLError):
+		return f"ssl error: {exc}"
+	if isinstance(exc, requests.exceptions.ConnectionError):
+		return f"connection error: {exc}"
+	if isinstance(exc, requests.exceptions.RequestException):
+		return f"request error: {exc}"
+	return f"unexpected error: {exc}"
 
 
 def fetch(url: str, cfg, session=None, html_only: bool = True):
@@ -367,59 +566,62 @@ def fetch(url: str, cfg, session=None, html_only: bool = True):
 	max_bytes = int(cfg.setting("max_download_bytes")) if cfg else 3_000_000
 	retries = int(cfg.setting("retry_count")) if cfg else 2
 	budget = _fetch_budget(cfg, timeout)
-	deadline = time.monotonic() + budget
+	over_budget = f"exceeded the {budget:g}s fetch budget"
+	deadline = _Deadline(budget)
 
 	own_session = session is None
 	session = session or build_session(cfg)
 	current = url
 	try:
-		for _hop in range(MAX_REDIRECTS + 1):
-			remaining = deadline - time.monotonic()
-			if remaining <= 0:
-				# A redirect chain of slow hops spends the budget just as effectively
-				# as one slow body, so the deadline is checked per hop as well.
-				return 0, "", f"exceeded the {budget:g}s fetch budget", current
-			try:
-				ips = _validated_ips(current, cfg)
-			except SSRFError as exc:
-				return 0, "", f"blocked by SSRF guard: {exc}", current
+		with deadline:
+			for _hop in range(MAX_REDIRECTS + 1):
+				remaining = deadline.remaining()
+				if remaining <= 0:
+					# A redirect chain of slow hops spends the budget just as effectively
+					# as one slow body, so the deadline is checked per hop as well.
+					return 0, "", over_budget, current
+				try:
+					ips = _validated_ips(current, cfg)
+				except SSRFError as exc:
+					return 0, "", f"blocked by SSRF guard: {exc}", current
 
-			# Redirects are followed manually (each hop re-validated and re-pinned).
-			# No single hop may outlast the budget the whole fetch has left.
-			resp = _pinned_get(session, current, ips[0], min(timeout, remaining), retries)
+				# Redirects are followed manually (each hop re-validated and re-pinned).
+				# No single hop may outlast the budget the whole fetch has left.
+				resp = _pinned_get(session, current, ips[0], min(timeout, remaining), retries)
 
-			if resp.is_redirect or resp.is_permanent_redirect:
-				location = resp.headers.get("Location")
-				resp.close()
-				if not location:
-					return resp.status_code, "", "redirect without Location header", current
-				current = requests.compat.urljoin(current, location)
-				continue
+				if resp.is_redirect or resp.is_permanent_redirect:
+					location = resp.headers.get("Location")
+					resp.close()
+					if not location:
+						return resp.status_code, "", "redirect without Location header", current
+					current = requests.compat.urljoin(current, location)
+					continue
 
-			content_type = resp.headers.get("Content-Type", "").lower()
-			if html_only and content_type and not any(ct in content_type for ct in HTML_CONTENT_TYPES):
+				content_type = resp.headers.get("Content-Type", "").lower()
+				if html_only and content_type and not any(ct in content_type for ct in HTML_CONTENT_TYPES):
+					status = resp.status_code
+					resp.close()
+					return status, "", f"skipped non-HTML content-type: {content_type}", current
+
+				html = _read_capped(resp, max_bytes, deadline.at)
 				status = resp.status_code
 				resp.close()
-				return status, "", f"skipped non-HTML content-type: {content_type}", current
+				if deadline.expired and not html:
+					# Cut off before a whole chunk arrived -- or mid-headers, which
+					# http.client takes for a complete, empty response. Either way the
+					# host was too slow, not empty, and a blank 200 would be read as a
+					# JavaScript-only page.
+					return 0, "", over_budget, current
+				return status, html, "", current
 
-			html = _read_capped(resp, max_bytes, deadline)
-			status = resp.status_code
-			resp.close()
-			return status, html, "", current
-
-		return 0, "", "too many redirects", current
-	except requests.exceptions.Timeout:
-		return 0, "", f"timeout after {timeout}s", current
-	except requests.exceptions.TooManyRedirects:
-		return 0, "", "too many redirects", current
-	except requests.exceptions.SSLError as exc:
-		return 0, "", f"ssl error: {exc}", current
-	except requests.exceptions.ConnectionError as exc:
-		return 0, "", f"connection error: {exc}", current
-	except requests.exceptions.RequestException as exc:
-		return 0, "", f"request error: {exc}", current
-	except Exception as exc:  # pragma: no cover - last-resort guard
-		return 0, "", f"unexpected error: {exc}", current
+			return 0, "", "too many redirects", current
+	except JobTimeout:
+		raise
+	except Exception as exc:
+		if deadline.expired:
+			# whatever broke, it broke because the deadline shut the socket under it
+			return 0, "", over_budget, current
+		return 0, "", _failure(exc, timeout), current
 	finally:
 		if own_session:
 			session.close()

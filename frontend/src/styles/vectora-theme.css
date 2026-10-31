@@ -1,14 +1,14 @@
 /* Vectora theme — generated, do not hand-edit values.
  *
  * Regenerate with: python3 frontend/scripts/generate_vectora_theme.py
- * It reads frappe-ui/tailwind/generated/colors.json and re-emits
- * every gray-family semantic token against Vectora's indigo-tinted neutral ramps,
+ * It reads frontend/scripts/frappe-ui-colors.json and re-emits
+ * every gray-family semantic token against Vectora's tinted neutral ramps,
  * so this file survives frappe-ui token syncs by construction.
  *
- * Design system: indigo-tinted neutrals (OKLCH hue 278, the brand indigo's own
- * hue), brand colour reserved for focus/selection/active states, gradient
- * reserved for the mark and the position rail, elevation cast in the same
- * indigo-black the neutrals are mixed from.
+ * Design system: tinted neutrals (OKLCH hue 278, the brand indigo's own hue, in
+ * dark; hue 243.8, the steel blue's, in light), brand colour reserved for
+ * focus/selection/active states, gradient reserved for the mark and the position
+ * rail, elevation cast in the indigo-black the dark neutrals are mixed from.
  *
  * Contrast: lightness tracks the stock frappe-ui ramps, so frappe-ui's relative
  * contrast relationships are preserved; on top of that the text-bearing steps
@@ -19,30 +19,30 @@
 
 :root {
   /* Vectora brand */
-  --brand-sky: #21abfb;
-  --brand-magenta: #df5feb;
-  --brand-100: #e0e2fb;
-  --brand-300: #a5a8f2;
-  --brand-500: #5b5fe8;
-  --brand-600: #4a4bd1;
-  --brand-700: #3c3caf;
-  --brand-900: #282870;
+  --brand-start: #efa29c;
+  --brand-end: #6097c3;
+  --brand-100: #fad8d6;
+  --brand-300: #b7cee1;
+  --brand-500: #4282b3;
+  --brand-600: #3070a0;
+  --brand-700: #1f547b;
+  --brand-900: #082b44;
   --brand-gradient: linear-gradient(
     135deg,
-    var(--brand-sky) 0%,
+    var(--brand-start) 0%,
     var(--brand-500) 55%,
-    var(--brand-magenta) 100%
+    var(--brand-end) 100%
   );
   --brand-gradient-y: linear-gradient(
     180deg,
-    var(--brand-sky) 0%,
+    var(--brand-start) 0%,
     var(--brand-500) 55%,
-    var(--brand-magenta) 100%
+    var(--brand-end) 100%
   );
-  --cta-from: #7fd4ff;
-  --cta-to: #21abfb;
+  --cta-from: #b7cee1;
+  --cta-to: #6097c3;
   --cta-ink: #0e1830;
-  --cta-edge: #1a86c9;
+  --cta-edge: #4282b3;
   --cta-gradient: linear-gradient(
     180deg,
     var(--cta-from) 0%,
@@ -55,17 +55,17 @@
   --motion-slow: 260ms;
   --motion-ease: cubic-bezier(0.2, 0, 0, 1);
   --motion-ease-out: cubic-bezier(0.05, 0.7, 0.1, 1);
-  --gray-50: #f4f6ff;
-  --gray-100: #eef1fd;
-  --gray-200: #e7e9f9;
-  --gray-300: #daddf1;
-  --gray-400: #bfc3dc;
-  --gray-500: #63677f;
-  --gray-600: #51546c;
-  --gray-700: #3e4259;
-  --gray-800: #26283b;
-  --gray-900: #141623;
-  --gray-950: #0c0e18;
+  --gray-50: #f0f8fe;
+  --gray-100: #e9f3fc;
+  --gray-200: #dfecf8;
+  --gray-300: #d0e1f0;
+  --gray-400: #b3c8db;
+  --gray-500: #566b7d;
+  --gray-600: #43586a;
+  --gray-700: #304557;
+  --gray-800: #1a2c3a;
+  --gray-900: #0c1822;
+  --gray-950: #071017;
   --gray-alpha-50: #0e0e1f08;
   --gray-alpha-100: #0e0e1f0b;
   --gray-alpha-200: #0e0e1f12;
@@ -77,17 +77,17 @@
   --gray-alpha-800: #0e0e1fc7;
   --gray-alpha-900: #0e0e1fe8;
   --gray-alpha-950: #0e0e1ff0;
-  --surface-gray-1: #f4f6ff;
-  --surface-gray-2: #eef1fd;
-  --surface-gray-3: #e7e9f9;
-  --surface-gray-4: #daddf1;
-  --surface-gray-5: #bfc3dc;
-  --surface-gray-6: #63677f;
-  --surface-gray-7: #51546c;
-  --surface-gray-8: #3e4259;
-  --surface-gray-9: #26283b;
-  --surface-gray-10: #141623;
-  --surface-sidebar: #f4f6ff;
+  --surface-gray-1: #f0f8fe;
+  --surface-gray-2: #e9f3fc;
+  --surface-gray-3: #dfecf8;
+  --surface-gray-4: #d0e1f0;
+  --surface-gray-5: #b3c8db;
+  --surface-gray-6: #566b7d;
+  --surface-gray-7: #43586a;
+  --surface-gray-8: #304557;
+  --surface-gray-9: #1a2c3a;
+  --surface-gray-10: #0c1822;
+  --surface-sidebar: #f0f8fe;
   --surface-alpha-gray-1: #0e0e1f08;
   --surface-alpha-gray-2: #0e0e1f0b;
   --surface-alpha-gray-3: #0e0e1f12;
@@ -98,27 +98,27 @@
   --surface-alpha-gray-8: #0e0e1fad;
   --surface-alpha-gray-9: #0e0e1fc7;
   --surface-alpha-gray-10: #0e0e1fe8;
-  --surface-alpha-sidebar: #f4f6ff;
-  --ink-gray-1: #e7e9f9;
-  --ink-gray-2: #daddf1;
-  --ink-gray-3: #bfc3dc;
-  --ink-gray-4: #63677f;
-  --ink-gray-5: #51546c;
-  --ink-gray-6: #3e4259;
-  --ink-gray-7: #26283b;
-  --ink-gray-8: #141623;
-  --ink-gray-9: #0c0e18;
-  --outline-gray-1: #e7e9f9;
-  --outline-gray-2: #daddf1;
-  --outline-gray-3: #bfc3dc;
-  --outline-gray-4: #63677f;
-  --outline-gray-5: #51546c;
-  --outline-gray-6: #3e4259;
-  --outline-gray-7: #26283b;
-  --outline-gray-8: #141623;
-  --outline-gray-9: #0c0e18;
-  --outline-elevation-1: #e7e9f9;
-  --outline-elevation-2: #e7e9f9;
+  --surface-alpha-sidebar: #f0f8fe;
+  --ink-gray-1: #dfecf8;
+  --ink-gray-2: #d0e1f0;
+  --ink-gray-3: #b3c8db;
+  --ink-gray-4: #566b7d;
+  --ink-gray-5: #43586a;
+  --ink-gray-6: #304557;
+  --ink-gray-7: #1a2c3a;
+  --ink-gray-8: #0c1822;
+  --ink-gray-9: #071017;
+  --outline-gray-1: #dfecf8;
+  --outline-gray-2: #d0e1f0;
+  --outline-gray-3: #b3c8db;
+  --outline-gray-4: #566b7d;
+  --outline-gray-5: #43586a;
+  --outline-gray-6: #304557;
+  --outline-gray-7: #1a2c3a;
+  --outline-gray-8: #0c1822;
+  --outline-gray-9: #071017;
+  --outline-elevation-1: #dfecf8;
+  --outline-elevation-2: #dfecf8;
   --outline-alpha-gray-1: #0e0e1f12;
   --outline-alpha-gray-2: #0e0e1f1d;
   --outline-alpha-gray-3: #0e0e1f38;
@@ -130,11 +130,11 @@
   --outline-alpha-gray-9: #0e0e1ff0;
   --outline-alpha-elevation-1: #0e0e1f12;
   --outline-alpha-elevation-2: #0e0e1f12;
-  --surface-base: #fafbff;
+  --surface-base: #f8fcff;
   --surface-elevation-1: oklch(1 0 0);
   --surface-elevation-2: oklch(1 0 0);
   --surface-elevation-3: oklch(1 0 0);
-  --surface-alpha-base: #fafbff;
+  --surface-alpha-base: #f8fcff;
   --surface-alpha-elevation-1: oklch(1 0 0);
   --surface-alpha-elevation-2: oklch(1 0 0);
   --surface-alpha-elevation-3: oklch(1 0 0);
@@ -159,8 +159,8 @@
 
 [data-theme='dark'] {
   /* Vectora brand */
-  --brand-sky: #21abfb;
-  --brand-magenta: #df5feb;
+  --brand-start: #21abfb;
+  --brand-end: #df5feb;
   --brand-100: #e0e2fb;
   --brand-300: #a5a8f2;
   --brand-500: #5b5fe8;
@@ -169,15 +169,15 @@
   --brand-900: #282870;
   --brand-gradient: linear-gradient(
     135deg,
-    var(--brand-sky) 0%,
+    var(--brand-start) 0%,
     var(--brand-500) 55%,
-    var(--brand-magenta) 100%
+    var(--brand-end) 100%
   );
   --brand-gradient-y: linear-gradient(
     180deg,
-    var(--brand-sky) 0%,
+    var(--brand-start) 0%,
     var(--brand-500) 55%,
-    var(--brand-magenta) 100%
+    var(--brand-end) 100%
   );
   --cta-from: #7fd4ff;
   --cta-to: #21abfb;

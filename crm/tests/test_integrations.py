@@ -17,6 +17,7 @@ from crm.integrations.api import (
 	get_recording_url,
 	get_user_default_calling_medium,
 	is_call_integration_enabled,
+	lookup_contact_by_phone_number,
 	set_default_calling_medium,
 )
 from crm.integrations.exotel.handler import (
@@ -645,6 +646,49 @@ class TestRecordingProxyCredentials(IntegrationTestCase):
 				get_recording_url(log.name)
 		safe_get.assert_not_called()
 
+	def _served(self, content_type, medium="Manual"):
+		"""The response the proxy hands the browser for an upstream of this type."""
+		resp = MagicMock()
+		resp.is_redirect = False
+		resp.status_code = 200
+		resp.headers = {"Content-Type": content_type} if content_type else {}
+		resp.iter_content.return_value = iter([b"<script>alert(document.domain)</script>"])
+		log = create_test_call_log(recording_url="https://rep-host.example/rec", telephony_medium=medium)
+		with (
+			patch.object(integrations_api, "_safe_get", return_value=(resp, MagicMock())),
+			patch.object(integrations_api, "user_rate_limited", return_value=False),
+			patch.object(frappe, "get_request_header", return_value=None),
+		):
+			response = get_recording_url(log.name)
+			b"".join(response.response)
+		return response
+
+	def test_a_host_answering_html_is_not_served_as_html_from_the_crm_origin(self):
+		"""``recording_url`` is any call-log writer's to choose, and the proxy answers
+		from the CRM's own origin. A host that answers text/html with a script must
+		not get that script run in the session of whoever opens the link."""
+		for upstream in ("text/html; charset=utf-8", "image/svg+xml", "application/xhtml+xml", "text/xml"):
+			with self.subTest(upstream=upstream):
+				response = self._served(upstream)
+				self.assertEqual(response.mimetype, "application/octet-stream")
+				self.assertEqual(response.headers["Content-Security-Policy"], "sandbox")
+				self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+
+	def test_audio_keeps_its_type_so_the_player_still_works(self):
+		for upstream, served in (
+			("audio/mpeg", "audio/mpeg"),
+			("audio/x-wav", "audio/x-wav"),
+			("Audio/MPEG; charset=binary", "audio/mpeg"),
+			# the proxy's default before this, kept for a host that sends no type
+			(None, "audio/mpeg"),
+		):
+			with self.subTest(upstream=upstream):
+				response = self._served(upstream)
+				self.assertEqual(response.mimetype, served)
+				# sandboxed either way: nothing an audio player needs is lost to it
+				self.assertEqual(response.headers["Content-Security-Policy"], "sandbox")
+				self.assertTrue(response.headers["Content-Disposition"].startswith("inline"))
+
 
 def create_test_call_log(**kwargs):
 	"""Helper function to create a CRM Call Log for testing"""
@@ -804,3 +848,134 @@ class TestExotelCallStatus(IntegrationTestCase):
 					status = get_call_log_status(payload, direction=direction)
 					if status is not None:
 						self.assertIn(status, options)
+
+
+class TestPhoneLookupRegion(IntegrationTestCase):
+	"""Numbers come in from a dialler, a webhook or a person typing, often without
+	the "+": the region they are read in has to be the site's, not upstream's India."""
+
+	def setUp(self):
+		super().setUp()
+		if not frappe.db.exists("Country", "South Africa"):
+			frappe.get_doc({"doctype": "Country", "country_name": "South Africa", "code": "za"}).insert(
+				ignore_permissions=True
+			)
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def site_country(self, country):
+		real = frappe.db.get_single_value
+
+		def get_single_value(doctype, fieldname, *args, **kwargs):
+			if (doctype, fieldname) == ("System Settings", "country"):
+				return country
+			return real(doctype, fieldname, *args, **kwargs)
+
+		return patch.object(frappe.db, "get_single_value", side_effect=get_single_value)
+
+	def contact(self, name, phone, modified=None):
+		doc = frappe.get_doc(
+			{
+				"doctype": "Contact",
+				"first_name": name,
+				"phone_nos": [{"phone": phone, "is_primary_mobile_no": 1}],
+			}
+		).insert(ignore_permissions=True)
+		if modified:
+			doc.db_set("modified", modified, update_modified=False)
+		return doc
+
+	def test_the_region_is_the_sites_country(self):
+		from crm.utils import default_phone_region
+
+		with self.site_country("South Africa"):
+			self.assertEqual(default_phone_region(), "ZA")
+		# no country set: upstream's default, so a site that never chose one is unchanged
+		with self.site_country(None):
+			self.assertEqual(default_phone_region(), "IN")
+
+	def test_a_local_number_without_plus_finds_the_contact(self):
+		contact = self.contact("Johan", "+27 82 555 0148")
+		with self.site_country("South Africa"):
+			for incoming in ("+27825550148", "0825550148", "082 555 0148", "27825550148"):
+				with self.subTest(incoming=incoming):
+					self.assertEqual(lookup_contact_by_phone_number(incoming).get("name"), contact.name)
+
+	def test_an_exact_match_further_down_the_list_is_found(self):
+		"""The LIKE pre-filter also catches a newer contact whose number merely
+		contains the same digits; the match below it must still be returned."""
+		caller = self.contact("Caller", "+27 82 555 0147", modified="2026-01-01 00:00:00")
+		self.contact("UK Supplier", "+44 7825 550147", modified="2026-06-01 00:00:00")
+
+		self.assertEqual(lookup_contact_by_phone_number("+27825550147").get("name"), caller.name)
+
+
+EXOTEL_REP = "exotel-rep@crmtest.test"
+NOT_A_REP = "exotel-outsider@crmtest.test"
+
+
+class TestExotelMakeACall(IntegrationTestCase):
+	"""Every call placed here is billed to the company's Exotel account and shows the
+	company's number, so it is for sales users, from their own phone."""
+
+	def setUp(self):
+		super().setUp()
+		for email, role in ((EXOTEL_REP, "Sales User"), (NOT_A_REP, None)):
+			if not frappe.db.exists("User", email):
+				user = frappe.get_doc(
+					{"doctype": "User", "email": email, "first_name": "Exotel", "send_welcome_email": 0}
+				).insert(ignore_permissions=True)
+				if role:
+					user.add_roles(role)
+		# the outsider has an agent row too, so the role is all that stands in the way
+		for email, mobile in ((EXOTEL_REP, "+27825550101"), (NOT_A_REP, "+27825550102")):
+			if not frappe.db.exists("CRM Telephony Agent", email):
+				frappe.get_doc(
+					{
+						"doctype": "CRM Telephony Agent",
+						"user": email,
+						"mobile_no": mobile,
+						"exotel_number": "+27105550100",
+					}
+				).insert(ignore_permissions=True)
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def place_call(self, **form):
+		from crm.integrations.exotel import handler
+
+		response = MagicMock()
+		response.json.return_value = {"Call": {"Sid": "EX-1"}}
+		with (
+			patch.object(handler, "user_rate_limited", return_value=False),
+			patch.object(handler, "is_integration_enabled", return_value=True),
+			patch.object(handler, "get_exotel_endpoint", return_value="https://exotel.invalid/connect"),
+			patch.object(handler, "get_exotel_auth", return_value=("key", "token")),
+			patch.object(handler, "get_all_exophones", return_value=["+27105550100"]),
+			patch.object(handler, "get_status_updater_url", return_value="https://crm.invalid/cb"),
+			patch.object(handler, "create_call_log"),
+			patch.object(handler.requests, "post", return_value=response) as post,
+		):
+			self.post = post
+			# frappe.call is what the HTTP handler runs: it drops form keys the method
+			# does not take, exactly as a request would see them dropped
+			frappe.call("crm.integrations.exotel.handler.make_a_call", **form)
+		return post
+
+	def test_a_user_without_a_sales_role_cannot_place_a_call(self):
+		frappe.set_user(NOT_A_REP)
+		with self.assertRaises(frappe.PermissionError):
+			self.place_call(to_number="+27825550199")
+		self.post.assert_not_called()
+
+	def test_the_call_rings_the_reps_own_phone_whatever_the_request_says(self):
+		"""``From`` is the leg Exotel rings first and bridges to ``To``. Taken from
+		the request, any two numbers could be connected under the company's caller ID."""
+		frappe.set_user(EXOTEL_REP)
+		post = self.place_call(to_number="+27825550199", from_number="+27825550666")
+
+		self.assertEqual(post.call_args.kwargs["data"]["From"], "+27825550101")
+		self.assertEqual(post.call_args.kwargs["data"]["To"], "+27825550199")

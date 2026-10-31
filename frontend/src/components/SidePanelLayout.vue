@@ -439,6 +439,8 @@ import SidePanelModal from '@/components/Modals/SidePanelModal.vue'
 import { getMeta } from '@/stores/meta'
 import { parseLinkFilters } from '@/utils/fieldTransforms'
 import { usersStore } from '@/stores/users'
+import { statusesStore } from '@/stores/statuses'
+import { hiddenUntilLost } from '@/utils/lostReason'
 import { isMobileView } from '@/composables/settings'
 import { createDocument } from '@/composables/document'
 import {
@@ -493,6 +495,15 @@ if (props.docname) {
 }
 
 const doc = computed(() => document.doc || {})
+
+const { getLeadStatus, getDealStatus } = statusesStore()
+const statusType = computed(() => {
+  const status = doc.value.status
+  if (!status) return null
+  if (props.doctype === 'CRM Deal') return getDealStatus(status)?.type
+  if (props.doctype === 'CRM Lead') return getLeadStatus(status)?.type
+  return null
+})
 
 const _sections = computed(() => {
   if (!props.sections?.length) return []
@@ -641,6 +652,11 @@ function isFieldVisible(field, scriptHidden) {
 
   // Script override for hidden wins over everything
   if (scriptHidden !== undefined) return !scriptHidden
+
+  // The layout is one per doctype; whether a record is lost is not
+  if (hiddenUntilLost(props.doctype, field.fieldname, statusType.value)) {
+    return false
+  }
 
   let readOnlyField =
     field.read_only || field.fieldtype === 'Read Only' ? true : false
