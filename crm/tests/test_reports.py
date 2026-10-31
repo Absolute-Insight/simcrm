@@ -73,11 +73,51 @@ class ReportsTest(IntegrationTestCase):
 	def test_list_reports_matches_the_registry(self):
 		self.assertEqual({r["name"] for r in list_reports()}, set(REPORTS))
 
-	def test_a_period_independent_report_says_so(self):
-		"""The open pipeline is a snapshot of now — the UI needs to know not to
-		offer a date range that would do nothing."""
-		self.assertFalse(get_report("pipeline_by_stage")["period"])
+	def test_the_pipeline_report_offers_a_period(self):
+		"""Every report takes the date range now; the UI shows the picker for any
+		report whose ``period`` is not False."""
+		self.assertTrue(get_report("pipeline_by_stage")["period"])
 		self.assertTrue(get_report("funnel_conversion")["period"])
+
+	def test_the_pipeline_report_counts_deals_created_in_the_period(self):
+		"""The period is the deal's creation date -- the dashboard's by-stage chart's
+		basis -- so a deal opened before the window is not in it."""
+		open_status = frappe.get_all("CRM Deal Status", filters={"type": "Open"}, pluck="name", limit=1)
+		if not open_status:
+			self.skipTest("no Open deal status on this site")
+		org = frappe.get_doc(
+			{
+				"doctype": "CRM Organization",
+				"organization_name": f"Period org {frappe.generate_hash(length=6)}",
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Organization", org.name, force=True)
+		names = []
+		for _ in range(2):
+			deal = frappe.get_doc(
+				{
+					"doctype": "CRM Deal",
+					"organization": org.name,
+					"deal_owner": USER,
+					"status": open_status[0],
+					"expected_deal_value": 1_000,
+					"probability": 50,
+					"exchange_rate": 1,
+				}
+			).insert(ignore_permissions=True)
+			self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True)
+			names.append(deal.name)
+		# one of the two was opened last year
+		frappe.db.set_value("CRM Deal", names[0], "creation", "2025-01-15 10:00:00", update_modified=False)
+
+		def deals_in(from_date, to_date):
+			rows = get_report("pipeline_by_stage", from_date, to_date, USER)["rows"]
+			return next((r["deals"] for r in rows if r["stage"] == open_status[0]), 0)
+
+		today = str(frappe.utils.nowdate())
+		self.assertGreaterEqual(deals_in(today, today), 1, "the deal opened today is missing")
+		# the back-dated deal is the only difference between these two windows
+		self.assertEqual(deals_in("2025-01-01", today) - deals_in("2025-01-16", today), 1)
 
 	def test_plan_adherence_report_agrees_with_the_metric(self):
 		from crm.api.dashboard import get_plan_adherence

@@ -29,7 +29,9 @@ from crm.utils import sales_user_only
 def _pipeline_by_stage(from_date, to_date, user, territory=None):
 	from crm.api.dashboard import pipeline_by_stage
 
-	rows = pipeline_by_stage(user=user, territory=territory)
+	# Deals created in the period, the same basis the dashboard's by-stage chart
+	# uses -- the report and the chart answer one question, not two.
+	rows = pipeline_by_stage(from_date, to_date, user, date_field="creation", territory=territory)
 	for row in rows:
 		row.pop("status_type", None)
 	return rows
@@ -248,10 +250,7 @@ def _customers_without_interaction(from_date, to_date, user, territory=None):
 REPORTS = {
 	"pipeline_by_stage": {
 		"title": "Pipeline by stage",
-		"description": "Open pipeline as it stands now: deal count, expected value and probability-weighted expected value per stage",
-		# the open pipeline is a snapshot of this moment, not of a window — the
-		# UI hides the date picker rather than showing one that does nothing
-		"period": False,
+		"description": "Open deals created in the period: deal count, expected value and probability-weighted expected value per stage",
 		"columns": [
 			{"key": "stage", "label": "Stage", "type": "text"},
 			{"key": "deals", "label": "Deals", "type": "number"},

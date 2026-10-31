@@ -572,9 +572,10 @@ const activeReport = computed(() =>
   (reports.data || []).find((r) => r.name === active.value),
 )
 
-/* pipeline_by_stage is a snapshot of the pipeline as it stands, not of a
-   window, so the registry marks it period:false and the picker goes away
-   rather than offering a control that changes nothing. */
+/* A report that is a snapshot of this moment rather than of a window is
+   marked period:false in the registry, and the picker goes away rather than
+   offering a control that changes nothing. None is today: pipeline_by_stage
+   was one until it took the period as "created in". */
 const showPeriodFilter = computed(() =>
   isBuilder.value
     ? dateBasis.value !== 'none'

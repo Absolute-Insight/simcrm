@@ -97,6 +97,12 @@ class ReportDigestTest(IntegrationTestCase):
 		self.digests.append(doc.name)
 		return doc
 
+	def open_yesterday(self, deal: str) -> None:
+		"""Pipeline by stage counts deals created in the window, and a daily
+		digest's window is yesterday -- a deal inserted now is outside it."""
+		yesterday = frappe.utils.add_days(frappe.utils.now_datetime(), -1)
+		frappe.db.set_value("CRM Deal", deal, "creation", yesterday, update_modified=False)
+
 	def queued_messages(self):
 		"""The HTML body of every queued digest, decoded out of the MIME envelope."""
 		messages = []
@@ -130,6 +136,7 @@ class ReportDigestTest(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 		self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True)
+		self.open_yesterday(deal.name)
 
 		self.make_digest()
 		self.assertEqual(send_due_digests(), 1)
@@ -392,6 +399,7 @@ class ReportDigestTest(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 		self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True)
+		self.open_yesterday(deal.name)
 
 		self.make_digest()
 		send_due_digests()
