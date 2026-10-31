@@ -158,8 +158,9 @@ class ForwardLookingFactorTest(UnitTestCase):
 class GetDealHealthTest(IntegrationTestCase):
 	"""Feature extraction against real documents.
 
-	Regression: a status_change_log row can carry a null to_date (seen on real
-	site data) — extraction must treat it as unknown, not crash.
+	A status_change_log row with a null to_date is not an oddity: it is the open
+	row add_status_change_log keeps for the stage the deal is in now, the last row
+	of every log. Extraction must not crash on it, nor read it as the stage's start.
 	"""
 
 	def make_deal(self, **fields):
@@ -180,6 +181,25 @@ class GetDealHealthTest(IntegrationTestCase):
 		out = get_deal_health(deal.name)
 		self.assertIn("score", out)
 		self.assertIsInstance(out["factors"], list)
+
+	def test_time_in_stage_counts_once_the_deal_has_moved_stage(self):
+		"""The page read the log's last row for when the deal entered its stage. That
+		row is always the open one, so a deal that had ever moved scored on its page
+		as if it had no time in stage, while the tile docked it for forty days."""
+		stages = frappe.get_all(
+			"CRM Deal Status", filters={"type": ("in", ("Open", "Ongoing"))}, pluck="name", limit=2
+		)
+		if len(stages) < 2:
+			self.skipTest("site has fewer than two open deal stages")
+		deal = self.make_deal(status=stages[0])
+		deal.status = stages[1]
+		deal.save()
+		self.assertFalse(deal.status_change_log[-1].to_date)
+		left = [row.name for row in deal.status_change_log if row.to_date]
+		forty_days_ago = frappe.utils.add_days(frappe.utils.now_datetime(), -40)
+		frappe.db.set_value("CRM Status Change Log", left[-1], "to_date", forty_days_ago)
+		labels = {f["key"]: f["label"] for f in get_deal_health(deal.name)["factors"]}
+		self.assertEqual(labels.get("stage_stagnation"), "In the same stage for 40 days")
 
 	def test_an_overdue_expected_close_on_an_open_deal_is_reported(self):
 		"""The only forward-looking factor used to read closed_date, which is written

@@ -462,12 +462,12 @@ class SuggestionOwnershipTest(IntegrationTestCase):
 		self.addCleanup(frappe.delete_doc, "CRM Deal", self.deal.name, force=True, ignore_missing=True)
 		self.addCleanup(frappe.db.delete, "CRM Suggestion", {"reference_docname": self.deal.name})
 
-	def make_suggestion(self, status="Open"):
+	def make_suggestion(self, status="Open", signal="idle_deal"):
 		return (
 			frappe.get_doc(
 				{
 					"doctype": "CRM Suggestion",
-					"signal": "idle_deal",
+					"signal": signal,
 					"title": "Re-engage",
 					"reference_doctype": "CRM Deal",
 					"reference_docname": self.deal.name,
@@ -484,6 +484,17 @@ class SuggestionOwnershipTest(IntegrationTestCase):
 		self.deal.deal_owner = self.second
 		self.deal.save()
 		self.assertEqual(frappe.db.get_value("CRM Suggestion", name, "user"), self.second)
+
+	def test_a_planners_suggestion_stays_with_the_planner(self):
+		"""stale_plan is addressed to the rep whose plan item it is, not to the deal's
+		owner: moved with the deal, the new owner was told "You planned this..." about a
+		plan they never made, and the planner's own came back the next hour."""
+		planned = self.make_suggestion(signal="stale_plan")
+		owners = self.make_suggestion()
+		self.deal.deal_owner = self.second
+		self.deal.save()
+		self.assertEqual(frappe.db.get_value("CRM Suggestion", planned, "user"), self.first)
+		self.assertEqual(frappe.db.get_value("CRM Suggestion", owners, "user"), self.second)
 
 	def test_assigning_the_deal_to_someone_else_moves_its_open_suggestions(self):
 		""" "Assign to" writes the owner from the ToDo with db.set_value, which runs
