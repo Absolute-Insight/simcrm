@@ -114,7 +114,6 @@
                     'Width can be in number, pixel or rem (eg. 3, 30px, 10rem)',
                   )
                 "
-                :debounce="500"
               />
             </div>
             <div class="flex w-full gap-2 border-t pt-2">

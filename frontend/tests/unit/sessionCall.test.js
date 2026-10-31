@@ -59,7 +59,7 @@ describe('call() on a lapsed session', () => {
       call('frappe.core.doctype.communication.email.make', {}),
     ).rejects.toMatchObject({ exc_type: 'PermissionError' })
 
-    expect(assign).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledOnce())
     expect(assign).toHaveBeenCalledWith(
       '/login?redirect-to=' +
         encodeURIComponent('/crm/deals/CRM-DEAL-2026-00001#emails'),
@@ -72,7 +72,31 @@ describe('call() on a lapsed session', () => {
     const { call } = await import('frappe-ui')
 
     await Promise.allSettled([call('a.b.c'), call('d.e.f')])
+    await vi.waitFor(() => expect(assign).toHaveBeenCalled())
     expect(assign).toHaveBeenCalledOnce()
+  })
+
+  it('clears the offline cache, and only then leaves the page', async () => {
+    // whoever logs in next may not be this person, and a navigation abandons
+    // an IndexedDB clear still in progress
+    let finishClearing
+    const clearOfflineCache = vi.fn(
+      () => new Promise((resolve) => (finishClearing = resolve)),
+    )
+    vi.doMock('@/utils/offlineCache', () => ({ clearOfflineCache }))
+    sessionCookie('user_id=Guest')
+    answer(403, { exc_type: 'PermissionError', session_expired: 1 })
+    const { call } = await import('frappe-ui')
+
+    await expect(call('a.b.c')).rejects.toMatchObject({
+      exc_type: 'PermissionError',
+    })
+    vi.doUnmock('@/utils/offlineCache')
+
+    expect(clearOfflineCache).toHaveBeenCalledOnce()
+    expect(assign).not.toHaveBeenCalled()
+    finishClearing()
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledOnce())
   })
 
   it('leaves a real permission refusal on a live session alone', async () => {

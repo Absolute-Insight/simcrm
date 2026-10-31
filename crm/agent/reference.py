@@ -87,7 +87,15 @@ _QUOTES = re.compile(r"[“”″ʺ]|''")
 _THOUSANDS = re.compile(r"(\d),(\d{3})\b")
 
 # An inch size in any of the ways a rep types one: 6", 6 inch, 1 1/2", 1-1/2in.
-_INCH = re.compile(r"(?<![\w./])(\d+[ -]+\d+/\d+|\d+/\d+|\d+)\s*-?\s*(?:\"|inches\b|inch\b|in\b)")
+# A bare "in" is the word, not the mark, before a unit no inch converts to
+# ("600 in bar", "150 in inches") and after a rating or bore keyword ("PN 16
+# in mm"): that number is the rating or the bore, never a 16" flange. Before
+# a length it stays the mark: "1/2 in mm" asks for 1/2" in millimetres.
+_INCH = re.compile(
+	r"(?<![\w./])(\d+[ -]+\d+/\d+|\d+/\d+|\d+)\s*-?\s*"
+	r"(?:\"|inches\b|inch\b|in\b(?!\s*(?:bar\b|kpa\b|mpa\b|psi\b|inch)))"
+)
+_RATED = re.compile(r"\b(?:class|pn|dn|nb)\s*$")
 _MM = re.compile(r"(?<![\w.])(\d+)\s*mm\b")
 _BORE = re.compile(r"\b(?:dn|nb)\s*(\d+)\b|(?<![\w.])(\d+)\s*(?:nb|dn)\b")
 _KPA = re.compile(r"(?<![\w.])(\d+)\s*kpa\b")
@@ -110,19 +118,27 @@ _STOPWORDS = frozenset(
 )
 
 
+def _inch(match: re.Match) -> str:
+	# a rating's number is never a size, however it is followed
+	if _RATED.search(match.string, max(0, match.start() - 12), match.start()):
+		return match.group(0)
+	return " " + re.sub(r"[ -]+", "-", match.group(1)) + "in "
+
+
 def normalise(text: str) -> str:
 	"""Lower-case text with sizes, ratings and standards spelled one way.
 
 	Questions and rows go through the same function, so "6 inch", '6"' and
 	"6in" meet as ``6in``; "DN150" and "150 mm" as ``150mm``; "PN 16" as
-	``pn16``; "class 150" and "150 lb" as ``class150``.
+	``pn16``; "class 150" and "150 lb" as ``class150`` -- also when "in" and a
+	unit follow ("PN 16 in mm" asks for PN16 in millimetres, not a 16" size).
 	"""
 	text = (text or "").lower()
 	for glyph, spelled in _FRACTIONS.items():
 		text = text.replace(glyph, spelled)
 	text = _QUOTES.sub('"', text)
 	text = _THOUSANDS.sub(r"\1\2", text)
-	text = _INCH.sub(lambda m: " " + re.sub(r"[ -]+", "-", m.group(1)) + "in ", text)
+	text = _INCH.sub(_inch, text)
 	# the tagged token and the bare number both: "SABS 1600" must still find
 	# the row a sheet labels "1600 kPa"
 	text = _MM.sub(r" \1mm \1 ", text)
@@ -272,13 +288,41 @@ def _cell_line(cell: dict) -> str:
 	return f"- {cell.get('label', '')}: {value}{' ' + unit if unit and value else ''}"
 
 
+def withhold(text: str, entry: dict) -> str:
+	"""``text`` -- a row's label or section -- without the row's questioned values.
+
+	A pack may spell a cell's figure into the label ('1/4" = 6 mm') or name a
+	questioned standard there ("ASME B16.5"): withholding the cell alone
+	still printed it. A value is cut where the text spells it with its unit,
+	or where it is more than a bare number. A bare number is left -- the 12
+	of a 12" flange's label is its size, not its questioned bolt count -- and
+	:func:`_supported_values` keeps it from vouching for the questioned one.
+	"""
+	text = text or ""
+	for cell in entry.get("cells") or []:
+		value = str(cell.get("value", "")).strip()
+		if cell.get("status") != QUESTIONED or not re.search(r"\d", value):
+			continue
+		unit = (cell.get("unit") or "").strip()
+		spelled = [re.escape(value) + r"\s*" + re.escape(unit)] if unit else []
+		if not re.fullmatch(r"[\d.,]+", value):
+			spelled.append(re.escape(value))
+		for pattern in spelled:
+			text = re.sub(rf"(?<![\w./]){pattern}(?!\w)", f"({AWAITING})", text, flags=re.I)
+	return text
+
+
+def public_label(entry: dict) -> str:
+	"""The row's label as a rep or the model may read it."""
+	return withhold(entry.get("label", ""), entry)
+
+
 def describe(entry: dict) -> str:
 	"""Where a row lives, in the words a rep would use to find it on paper."""
 	place = f"{entry.get('sheet_title', '')}, page {entry.get('page', '')}"
-	section = entry.get("section")
-	return (
-		f"{place} — {section}: {entry.get('label', '')}" if section else f"{place} — {entry.get('label', '')}"
-	)
+	section = withhold(entry.get("section", ""), entry)
+	label = public_label(entry)
+	return f"{place} — {section}: {label}" if section else f"{place} — {label}"
 
 
 def reference_block(entries: list[dict], company: str = "the company") -> str:
@@ -331,9 +375,10 @@ def _canonical(atom: str) -> str:
 		fraction = f"{top.lstrip('0') or '0'}/{bottom.lstrip('0') or '0'}"
 		return f"{whole.lstrip('0') or '0'} {fraction}" if whole else fraction
 	if "," in atom:
-		# "1,000" and "12,500.5" are thousands; "51,33" is a decimal comma
+		# "1,000" and "12,500.5" are thousands; "51,33" is a decimal comma. The
+		# last group is three digits before any decimal point of its own.
 		groups = atom.split(",")
-		if "." not in groups[-1] and all(len(group) == 3 for group in groups[1:]):
+		if all(len(group) == 3 for group in [*groups[1:-1], groups[-1].split(".")[0]]):
 			atom = "".join(groups)
 		elif len(groups) == 2:
 			atom = ".".join(groups)
@@ -368,14 +413,20 @@ def numbers(text: str) -> list[set[str]]:
 
 def _supported_values(entries: list[dict], extra_texts: list[str]) -> set[str]:
 	texts = list(extra_texts)
+	confirmed = []
 	for entry in entries:
-		texts.extend([entry.get("label", ""), entry.get("section", ""), str(entry.get("page", ""))])
+		texts.extend(
+			[public_label(entry), withhold(entry.get("section", ""), entry), str(entry.get("page", ""))]
+		)
 		texts.append(entry.get("sheet_title", ""))
 		for cell in entry.get("cells") or []:
 			texts.append(cell.get("label", ""))
 			if cell.get("status") != QUESTIONED:
-				texts.append(str(cell.get("value", "")))
-	return _values(texts)
+				confirmed.append(str(cell.get("value", "")))
+	confirmed_values = _values(confirmed)
+	# a figure the row questions is support only where a confirmed cell holds
+	# it: the label's own 12" does not vouch for a questioned count of 12
+	return (_values(texts) | confirmed_values) - (_withheld_values(entries) - confirmed_values)
 
 
 def _withheld_values(rows: list[dict]) -> set[str]:
@@ -426,7 +477,7 @@ def trim_comparisons(answer: str, rows: list[dict]) -> str:
 	of an answer, never put one in. A claim with any figure that is not a row
 	label (a value, or a label number no prompt row has) stays, and is checked.
 	"""
-	labels = [_values([row.get("label", "")]) for row in rows]
+	labels = [_values([public_label(row)]) for row in rows]
 	every_label = set().union(*labels) if labels else set()
 	supports = [_supported_values([row], []) for row in rows]
 	pieces = re.split(f"({_CLAIM.pattern})", answer or "")
@@ -472,7 +523,7 @@ def verify(
 	withheld = _withheld_values(rows)
 	order = list(cited or []) + [row for row in rows if row not in (cited or [])]
 	supports = [_supported_values([row], []) for row in order]
-	labels = [_values([row.get("label", "")]) for row in order]
+	labels = [_values([public_label(row)]) for row in order]
 	used: list[dict] = []
 	# The rows the previous claim resolved to. Prose carries its subject on:
 	# after "6\" Class 300:" (or "### 6\" Class 300", or "The Class 300
@@ -550,7 +601,7 @@ def fallback_answer(entries: list[dict]) -> str:
 	"""The rows themselves, as plain text: always exactly what the sheet says."""
 	blocks = []
 	for entry in entries[:FALLBACK_ROWS]:
-		lines = [f"{entry.get('label', '')} ({entry.get('sheet_title', '')}, page {entry.get('page', '')})"]
+		lines = [f"{public_label(entry)} ({entry.get('sheet_title', '')}, page {entry.get('page', '')})"]
 		lines.extend(_cell_line(cell) for cell in entry.get("cells") or [])
 		blocks.append("\n".join(lines))
 	heading = "Here is what the sheet says:" if len(blocks) == 1 else "These rows on the sheets match:"

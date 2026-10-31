@@ -28,7 +28,11 @@ export function formatter(range: DashboardDateRange) {
 }
 
 export function formatRange(date: string) {
-  const dateObj = new Date(date)
+  /* A `YYYY-MM-DD` is a calendar day, so it is read as local midnight.
+     `new Date('2026-10-01')` is UTC midnight, which west of Greenwich is still
+     30 September -- the label named the day before the figures' range. */
+  const [y, m, d] = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date || '')?.slice(1) || []
+  const dateObj = y ? new Date(+y, +m - 1, +d) : new Date(date)
   /* The reader's locale, not the author's. Hardcoding en-US put "Aug 17" in
      front of every user on earth, including the ones whose month and day run
      the other way round. `undefined` is the same choice reportExport.js makes

@@ -121,6 +121,11 @@
         />
       </div>
       <template v-else>
+        <TimelineLoadOlder
+          v-if="!isNewestFirst"
+          :state="olderHistory"
+          @load="loadOlderActivities"
+        />
         <div
           v-for="(activity, i) in activities"
           :key="activity.name"
@@ -380,6 +385,11 @@
             </div>
           </div>
         </div>
+        <TimelineLoadOlder
+          v-if="isNewestFirst"
+          :state="olderHistory"
+          @load="loadOlderActivities"
+        />
       </template>
     </div>
     <div
@@ -483,7 +493,9 @@ import WhatsappTemplateSelectorModal from '@/components/Modals/WhatsappTemplateS
 import AllModals from '@/components/Activities/AllModals.vue'
 import FilesUploader from '@/components/FilesUploader/FilesUploader.vue'
 import TimelineTimestamp from '@/components/Activities/TimelineTimestamp.vue'
+import TimelineLoadOlder from '@/components/Activities/TimelineLoadOlder.vue'
 import { startCase } from '@/utils'
+import { nextPageLength } from '@/utils/listPaging'
 import { globalStore } from '@/stores/global'
 import { usersStore } from '@/stores/users'
 import { useTimelinePreferences } from '@/composables/useTimelinePreferences'
@@ -548,19 +560,55 @@ const changeTabTo = (tabName) => {
   tabIndex.value = tab.value ?? tab.name
 }
 
+// Saves and emails come a page at a time, as crm.api.activities pages them.
+// The timeline used to be desk's first screen -- ten saves, 21 emails -- with
+// nothing to say the rest of a long-lived record's history was missing.
+const TIMELINE_PAGE_LENGTH = 100
+const MAX_TIMELINE_PAGE_LENGTH = 1000
+const timelinePageLength = ref(TIMELINE_PAGE_LENGTH)
+let loadingOlder = false
+
 const all_activities = createResource({
   url: 'crm.api.activities.get_activities',
   params: { name: props.docname },
   cache: ['activity', props.docname],
   auto: true,
-  transform: ([versions, calls, notes, tasks, attachments]) => {
-    return { versions, calls, notes, tasks, attachments }
+  transform: ([versions, calls, notes, tasks, attachments, hasMore]) => {
+    return { versions, calls, notes, tasks, attachments, hasMore }
   },
-  onSuccess: () => nextTick(() => scroll()),
+  onSuccess: () => {
+    // older history lands where the reader already is; don't jump to the latest
+    if (loadingOlder) {
+      loadingOlder = false
+      return
+    }
+    nextTick(() => scroll())
+  },
   onError: (error) => {
+    loadingOlder = false
     toast.error(error.messages?.[0] || __('Failed to load activities'))
   },
 })
+
+// 'more' offers the next page, 'capped' says the timeline stops here, null hides both
+const olderHistory = computed(() => {
+  if (!['Activity', 'Emails'].includes(title.value)) return null
+  if (!all_activities.data?.hasMore) return null
+  return timelinePageLength.value < MAX_TIMELINE_PAGE_LENGTH ? 'more' : 'capped'
+})
+
+function loadOlderActivities() {
+  const next = nextPageLength(
+    timelinePageLength.value,
+    TIMELINE_PAGE_LENGTH,
+    MAX_TIMELINE_PAGE_LENGTH,
+  )
+  if (next === null || all_activities.loading) return
+  timelinePageLength.value = next
+  loadingOlder = true
+  all_activities.update({ params: { name: props.docname, page_length: next } })
+  all_activities.reload()
+}
 
 const showWhatsappTemplates = ref(false)
 

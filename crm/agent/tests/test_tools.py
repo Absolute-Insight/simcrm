@@ -192,6 +192,8 @@ class ThreadIsVisibleToOrdinarySalesUsersTest(IntegrationTestCase):
 		rows = tools.read_thread("CRM Deal", self.deal.name)
 		self.assertEqual([row["name"] for row in rows], [self.communication.name])
 		self.assertEqual(rows[0]["sender"], "buyer@acme.test")
+		# which way a mail went: a reply goes to the newest inbound sender (audit L-59)
+		self.assertEqual(rows[0]["sent_or_received"], "Received")
 
 
 class MailBodyReachesThePromptBuilderDecodedTest(IntegrationTestCase):

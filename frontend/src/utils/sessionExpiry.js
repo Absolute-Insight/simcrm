@@ -10,6 +10,8 @@
  * cookie after boot.
  */
 
+import { clearOfflineCache } from './offlineCache'
+
 export function currentUserCookie(cookieString) {
   const cookies = new URLSearchParams(
     String(cookieString ?? '')
@@ -49,9 +51,10 @@ let redirectingToLogin = false
  * Shared by the two ways a request leaves the app: the resources' fetcher
  * (main.js) and `call()` (lib/frappe-ui-compat/call.js), which frappe-ui sends
  * straight to frappeRequest, past any fetcher. Once per page load, so a burst
- * of failing requests does not queue a navigation each. The caller still
- * rethrows: whatever was waiting on the request must not carry on as if it
- * had succeeded.
+ * of failing requests does not queue a navigation each. The offline cache is
+ * cleared first, and finishes before the page goes: whoever logs in next may
+ * not be this person. The caller still rethrows: whatever was waiting on the
+ * request must not carry on as if it had succeeded.
  *
  * @returns {boolean} true when it started the redirect
  */
@@ -60,6 +63,8 @@ export function redirectIfSessionGone(error) {
     return false
   }
   redirectingToLogin = true
-  window.location.assign(loginUrlFor(window.location))
+  clearOfflineCache().then(() =>
+    window.location.assign(loginUrlFor(window.location)),
+  )
   return true
 }

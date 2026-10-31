@@ -87,7 +87,9 @@ const search = ref('')
 const templates = createListResource({
   type: 'list',
   doctype: 'WhatsApp Templates',
-  cache: ['whatsappTemplates'],
+  // Keyed by doctype: a cached list resource keeps the options it was first
+  // created with, so one key gave every doctype the first one's filter.
+  cache: ['whatsappTemplates', props.doctype],
   fields: ['name', 'template', 'footer'],
   filters: { status: 'APPROVED', for_doctype: ['in', [props.doctype, '']] },
   orderBy: 'modified desc',

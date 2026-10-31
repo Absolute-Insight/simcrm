@@ -5,8 +5,13 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import frappe
+from frappe.desk.form.assign_to import add as assign_to_add
 from frappe.tests import IntegrationTestCase
+
+from crm.api.doc import remove_assignments
 
 LEAD_OWNER = "automation-owner@crmtest.test"
 
@@ -263,6 +268,97 @@ class AutomationRuleTest(IntegrationTestCase):
 		self.assertEqual(self.tasks_for(deal), [])
 
 
+class CreatedRuleAfterRoutingTest(IntegrationTestCase):
+	"""A "Created" rule reads the owner an Assignment Rule gives the new record.
+
+	frappe applies Assignment Rules from its ``*`` on_update hook, after
+	after_insert, so a lead from the web form, an import or the API had no owner
+	yet when the rule ran: the owner's task went out unassigned and the
+	suggestion to nobody, and nothing moved them once the owner landed.
+	"""
+
+	ROUTED = "automation-routed@crmtest.test"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		frappe.db.delete("CRM Automation Rule")
+		frappe.db.delete("CRM Suggestion", {"signal": ("like", "rule:%")})
+		self.addCleanup(frappe.db.delete, "CRM Automation Rule")
+		self.addCleanup(frappe.db.delete, "CRM Suggestion", {"signal": ("like", "rule:%")})
+		ensure_user(self.ROUTED, "Routed Rep")
+		rule = frappe.get_doc(
+			{
+				"doctype": "Assignment Rule",
+				"name": "automation lead routing",
+				"description": "Created-rule routing test",
+				"document_type": "CRM Lead",
+				"priority": 999,
+				"assign_condition": 'first_name == "Routed"',
+				"rule": "Round Robin",
+				"assignment_days": [
+					{"day": day}
+					for day in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+				],
+				"users": [{"user": self.ROUTED}],
+			}
+		).insert(ignore_permissions=True)
+		# through the document, so the rule's cached doctype map is cleared with it
+		self.addCleanup(frappe.delete_doc, "Assignment Rule", rule.name, force=True, ignore_permissions=True)
+
+	def test_the_rules_task_and_suggestion_go_to_the_routed_owner(self):
+		make_rule(
+			title="Call the new lead", document_type="CRM Lead", title_template="Call {{ doc.first_name }}"
+		)
+		make_rule(
+			title="Nudge the new lead",
+			document_type="CRM Lead",
+			action="Create Suggestion",
+			title_template="Nudge {{ doc.first_name }}",
+		)
+		lead = frappe.get_doc({"doctype": "CRM Lead", "first_name": "Routed", "last_name": "Lead"}).insert(
+			ignore_permissions=True
+		)
+		self.addCleanup(frappe.delete_doc, "CRM Lead", lead.name, force=True, ignore_missing=True)
+
+		self.assertEqual(frappe.db.get_value("CRM Lead", lead.name, "lead_owner"), self.ROUTED)
+		task = frappe.db.get_value(
+			"CRM Task", {"reference_doctype": "CRM Lead", "reference_docname": lead.name}, "assigned_to"
+		)
+		self.assertEqual(task, self.ROUTED)
+		suggestion = frappe.db.get_value(
+			"CRM Suggestion", {"reference_docname": lead.name, "signal": ("like", "rule:%")}, "user"
+		)
+		self.assertEqual(suggestion, self.ROUTED)
+
+	def test_a_created_rule_runs_once_and_only_after_the_insert(self):
+		"""on_change also fires from a ``db_set`` inside the insert -- CRM Deal's
+		validate sets its exchange rate that way, before the row exists. The rules
+		wait for the mark the insert's on_update leaves, and run exactly once."""
+		make_rule(title="Deal created")
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Routing Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		seen = []
+
+		def record(rule, doc):
+			seen.append((rule.name, bool(frappe.db.exists(doc.doctype, doc.name))))
+
+		with patch("crm.automation._apply", side_effect=record):
+			deal = frappe.get_doc({"doctype": "CRM Deal", "organization": org}).insert(
+				ignore_permissions=True
+			)
+			self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True, ignore_missing=True)
+			deal.reload()
+			deal.next_step = "Call back"
+			deal.save(ignore_permissions=True)
+
+		self.assertEqual(len(seen), 1)
+		self.assertTrue(seen[0][1], "the rule ran before the deal was written")
+
+
 class SuggestionOwnershipTest(IntegrationTestCase):
 	"""Reassignment moves the record's open suggestions with it."""
 
@@ -303,6 +399,21 @@ class SuggestionOwnershipTest(IntegrationTestCase):
 		self.deal.deal_owner = self.second
 		self.deal.save()
 		self.assertEqual(frappe.db.get_value("CRM Suggestion", name, "user"), self.second)
+
+	def test_assigning_the_deal_to_someone_else_moves_its_open_suggestions(self):
+		""" "Assign to" writes the owner from the ToDo with db.set_value, which runs
+		no on_update, so the resync above never followed that path."""
+		name = self.make_suggestion()
+		assign_to_add({"assign_to": [self.second], "doctype": "CRM Deal", "name": self.deal.name})
+		self.assertEqual(frappe.db.get_value("CRM Deal", self.deal.name, "deal_owner"), self.second)
+		self.assertEqual(frappe.db.get_value("CRM Suggestion", name, "user"), self.second)
+
+	def test_unassigning_the_owner_takes_the_open_suggestions_with_the_deal(self):
+		"""The same as clearing the owner on the deal and saving it."""
+		name = self.make_suggestion()
+		remove_assignments("CRM Deal", self.deal.name, [self.first])
+		self.assertIsNone(frappe.db.get_value("CRM Deal", self.deal.name, "deal_owner"))
+		self.assertIsNone(frappe.db.get_value("CRM Suggestion", name, "user"))
 
 	def test_a_settled_suggestion_stays_with_whoever_settled_it(self):
 		name = self.make_suggestion(status="Dismissed")

@@ -1,4 +1,7 @@
 import './index.css'
+// First, before any import below creates a cached resource that replays the
+// last user's IndexedDB copy into the page.
+import './offlineCacheGuard'
 
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'

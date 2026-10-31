@@ -56,3 +56,5 @@ crm.patches.v1_0.reset_erpnext_form_script #10-09-2026
 crm.patches.v1_0.drop_crm_territory_tree_fields
 crm.patches.v1_0.backfill_plan_item_customer
 crm.patches.v1_0.drop_enrichment_headers_scope
+crm.patches.v1_0.rename_user_keyed_rows_after_user_renames
+crm.patches.v1_0.narrow_whatsapp_role_permissions

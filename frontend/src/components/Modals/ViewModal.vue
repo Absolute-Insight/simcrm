@@ -16,7 +16,7 @@
             {{ __('View Name') }}
           </div>
           <FormControl
-            v-model="view.label"
+            v-model="draft.label"
             size="md"
             type="text"
             :placeholder="__('My Open Deals')"
@@ -34,7 +34,7 @@
               class="grid size-8 shrink-0 place-items-center rounded-[var(--v-radius-control)] bg-surface-gray-3 text-lg leading-none"
               :title="__('Current icon')"
             >
-              {{ view.icon }}
+              {{ draft.icon }}
             </div>
             <!-- the picker lists the sprite's symbols when it mounts -->
             <IconPicker
@@ -57,7 +57,7 @@
       <div class="flex justify-end">
         <Button
           variant="solid"
-          :disabled="!view.label?.trim()"
+          :disabled="!draft.label?.trim()"
           :label="
             editMode
               ? __('Save Changes')
@@ -78,7 +78,7 @@ import { IconPicker } from 'frappe-ui/experimental'
 import { isEmoji } from '@/utils'
 import { ensureLucideSprite, lucideSpriteReady } from '@/utils/lucideSprite'
 import { call } from 'frappe-ui'
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 const props = defineProps({
   doctype: { type: String, required: true },
@@ -93,65 +93,55 @@ const view = defineModel('view', { type: Object, default: () => ({}) })
 
 ensureLucideSprite().catch(() => {})
 
+// The form edits a copy taken when the dialog opens; only Create or Save
+// Changes sends it. Bound to `view` itself, a dismissed rename stayed on the
+// caller's object -- the views store's own, which the sidebar renders.
+const draft = ref({})
+
 // frappe-ui's IconPicker is lucide-only. Legacy views may store an emoji, which
 // the picker can't render — hide non-lucide values from it (showing the
 // placeholder) while keeping the stored icon, so a no-op edit preserves the
 // emoji and picking a lucide icon migrates it.
-const currentIsEmoji = computed(() => isEmoji(view.value?.icon || ''))
+const currentIsEmoji = computed(() => isEmoji(draft.value?.icon || ''))
 const pickerIcon = computed({
   get: () => {
-    const icon = view.value?.icon
+    const icon = draft.value?.icon
     return !icon || isEmoji(icon) ? '' : icon
   },
   set: (value) => {
-    view.value.icon = value || ''
+    draft.value.icon = value || ''
   },
 })
 
-const editMode = ref(false)
-const duplicateMode = ref(false)
-
-const _view = ref({
-  name: '',
-  label: '',
-  type: 'list',
-  icon: '',
-  filters: {},
-  order_by: 'modified desc',
-  columns: '',
-  rows: '',
-})
+const editMode = computed(() => draft.value.mode === 'edit')
+const duplicateMode = computed(() => draft.value.mode === 'duplicate')
 
 async function create() {
-  view.value.doctype = props.doctype
+  draft.value.doctype = props.doctype
   let v = await call(
     'crm.fcrm.doctype.crm_view_settings.crm_view_settings.create',
-    { view: view.value },
+    { view: draft.value },
   )
   show.value = false
   props.options.afterCreate?.(v)
 }
 
 async function update() {
-  view.value.doctype = props.doctype
+  draft.value.doctype = props.doctype
   await call('crm.fcrm.doctype.crm_view_settings.crm_view_settings.update', {
-    view: view.value,
+    view: draft.value,
   })
   show.value = false
-  props.options.afterUpdate?.(view.value)
+  props.options.afterUpdate?.(draft.value)
 }
 
-watch(show, (value) => {
-  if (!value) return
-  editMode.value = false
-  duplicateMode.value = false
-  nextTick(() => {
-    _view.value = { ...view.value }
-    if (_view.value.mode === 'edit') {
-      editMode.value = true
-    } else if (_view.value.mode === 'duplicate') {
-      duplicateMode.value = true
-    }
-  })
-})
+// The caller sets the view and opens the dialog in the same tick, so `view`
+// already holds the one to edit when this runs.
+watch(
+  show,
+  (value) => {
+    if (value) draft.value = { ...view.value }
+  },
+  { immediate: true },
+)
 </script>
