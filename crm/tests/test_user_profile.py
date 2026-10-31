@@ -193,6 +193,7 @@ class OwnProfileEmailTest(IntegrationTestCase):
 		frappe.set_user(REP)
 		self.assertEqual(get_profile()["user_emails"][0]["enable_outgoing"], 0)
 
+
 class ChangePasswordTest(IntegrationTestCase):
 	"""Settings -> Change Password, against the site's password policy.
 
