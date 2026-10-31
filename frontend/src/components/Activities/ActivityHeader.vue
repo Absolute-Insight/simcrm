@@ -59,12 +59,14 @@
     <div v-else-if="title == 'WhatsApp'" class="flex gap-2 shrink-0">
       <Button
         :label="__('Send Template')"
+        :disabled="!whatsappCanSend"
         @click="showWhatsappTemplates = true"
       />
       <Button
         variant="solid"
         :label="__('New Message')"
         iconLeft="lucide-plus"
+        :disabled="!whatsappCanSend"
         @click="whatsappBox.show()"
       />
     </div>
@@ -92,7 +94,7 @@ import TaskIcon from '@/components/Icons/TaskIcon.vue'
 import AttachmentIcon from '@/components/Icons/AttachmentIcon.vue'
 import WhatsAppIcon from '@/components/Icons/WhatsAppIcon.vue'
 import { globalStore } from '@/stores/global'
-import { whatsappEnabled } from '@/composables/whatsapp'
+import { whatsappCanSend, whatsappEnabled } from '@/composables/whatsapp'
 import { callEnabled } from '@/composables/telephony'
 import { Dropdown } from 'frappe-ui'
 import { computed, h } from 'vue'

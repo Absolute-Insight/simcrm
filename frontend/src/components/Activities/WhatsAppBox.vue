@@ -24,7 +24,17 @@
 
     <Button variant="ghost" icon="lucide-x" @click="reply = {}" />
   </div>
-  <div class="flex items-end gap-2 px-3 py-2.5 sm:px-10" v-bind="$attrs">
+  <div
+    v-if="!whatsappCanSend"
+    class="px-3 py-2.5 text-p-sm text-ink-gray-5 sm:px-10"
+    role="status"
+    v-bind="$attrs"
+  >
+    {{
+      __('You have no WhatsApp number yet. Ask your administrator to add one.')
+    }}
+  </div>
+  <div v-else class="flex items-end gap-2 px-3 py-2.5 sm:px-10" v-bind="$attrs">
     <div class="flex h-8 items-center gap-2">
       <FileUploader @success="(file) => uploadFile(file)">
         <template #default="{ openFileSelector }">
@@ -62,7 +72,7 @@
       :placeholder="placeholder"
       @focus="rows = 6"
       @blur="rows = 1"
-      @keydown.enter.stop="(e) => sendTextMessage(e)"
+      @keydown.enter.exact.stop.prevent="sendTextMessage"
     />
   </div>
 </template>
@@ -70,7 +80,9 @@
 <script setup>
 import IconPicker from '@/components/IconPicker.vue'
 import SmileIcon from '@/components/Icons/SmileIcon.vue'
+import { whatsappCanSend } from '@/composables/whatsapp'
 import { sanitizeHTML } from '@/utils'
+import { canSendMessage } from '@/utils/whatsappMessage'
 import { useTelemetry } from '@framework/ui/telemetry'
 import {
   createResource,
@@ -98,9 +110,10 @@ const emoji = ref('')
 const content = ref('')
 const placeholder = ref(__('Type your message here...'))
 const fileType = ref('')
+const sending = ref(false)
 
 function show() {
-  nextTick(() => textareaRef.value.el.focus())
+  nextTick(() => textareaRef.value?.el?.focus())
 }
 
 function uploadFile(file) {
@@ -110,35 +123,41 @@ function uploadFile(file) {
   capture('whatsapp_upload_file')
 }
 
-function sendTextMessage(event) {
-  if (event.shiftKey) return
+function sendTextMessage() {
+  if (sending.value || !canSendMessage(content.value)) return
   sendWhatsAppMessage()
-  textareaRef.value.el?.blur()
-  content.value = ''
   capture('whatsapp_send_message')
 }
 
-async function sendWhatsAppMessage() {
-  let args = {
-    reference_doctype: props.doctype,
-    reference_name: doc.value.name,
-    message: content.value,
-    to: doc.value.mobile_no,
-    attach: whatsapp.value.attach || '',
-    reply_to: reply.value?.name || '',
-    content_type: whatsapp.value.content_type,
-  }
-  content.value = ''
-  fileType.value = ''
-  whatsapp.value.attach = ''
-  whatsapp.value.content_type = 'text'
-  reply.value = {}
+function sendWhatsAppMessage() {
+  sending.value = true
   createResource({
     url: 'crm.api.whatsapp.create_whatsapp_message',
-    params: args,
+    params: {
+      reference_doctype: props.doctype,
+      reference_name: doc.value.name,
+      message: content.value,
+      to: doc.value.mobile_no,
+      attach: whatsapp.value.attach || '',
+      reply_to: reply.value?.name || '',
+      content_type: whatsapp.value.content_type,
+    },
     auto: true,
-    onSuccess: () => whatsapp.value.reload(),
+    // Cleared only here: a send that fails keeps what the rep typed, and the
+    // reply they were answering, so they can try again.
+    onSuccess: () => {
+      sending.value = false
+      content.value = ''
+      fileType.value = ''
+      reply.value = {}
+      whatsapp.value.attach = ''
+      whatsapp.value.content_type = 'text'
+      whatsapp.value.reload()
+    },
     onError: (error) => {
+      sending.value = false
+      whatsapp.value.attach = ''
+      whatsapp.value.content_type = 'text'
       toast.error(error.messages?.[0] || __('Failed to send WhatsApp message'))
     },
   })

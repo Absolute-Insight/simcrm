@@ -627,6 +627,7 @@ def add_default_lead_sources():
 		"Facebook",
 		"Website",
 		"Web Form",
+		"WhatsApp",
 	]
 
 	for source in lead_sources:
@@ -636,6 +637,16 @@ def add_default_lead_sources():
 		doc = frappe.new_doc("CRM Lead Source")
 		doc.source_name = source
 		doc.insert()
+
+
+def add_whatsapp_lead_source():
+	"""after_migrate rather than a patch, for the reason ensure_app_logo gives in
+	hooks.py. An unknown number's lead links to this row, so an upgraded site
+	needs it before the first message arrives."""
+	if not frappe.db.exists("CRM Lead Source", "WhatsApp"):
+		doc = frappe.new_doc("CRM Lead Source")
+		doc.source_name = "WhatsApp"
+		doc.insert(ignore_permissions=True)
 
 
 def add_default_lost_reasons():

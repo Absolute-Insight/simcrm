@@ -18,6 +18,8 @@ on:
       - ".github/workflows/image-build-inputs.yml"
       - "scripts/frappe-pin.env"
       - "scripts/fetch-frappe.sh"
+      - "scripts/frappe-whatsapp-pin.env"
+      - "scripts/fetch-frappe-whatsapp.sh"
       - "deploy/docker-compose.yml"
       - "deploy/docker-compose.override.yml"
       - ".github/helper/promote-image.sh"
@@ -63,6 +65,9 @@ jobs:
         # pyproject requires-python), but it is the same fetch builds.yml
         # does, so a broken pin fails here too.
         run: bash scripts/fetch-frappe.sh builds/frappe-src
+
+      - name: Fetch the pinned frappe_whatsapp
+        run: bash scripts/fetch-frappe-whatsapp.sh builds/app-src/frappe_whatsapp
 
       - name: Check the builder image can build the pinned frappe
         run: bash .github/helper/check-build-toolchain.sh builds/frappe-src

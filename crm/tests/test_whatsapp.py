@@ -28,6 +28,8 @@ class TestWhatsAppHooks(FrappeTestCase):
 		doc = MagicMock()
 		doc.type = "Incoming"
 		doc.get.return_value = "+15551234567"
+		doc.reference_doctype = None
+		doc.reference_name = None
 
 		with patch(
 			"crm.api.whatsapp.lookup_contact_lead_or_deal_from_number",
@@ -93,6 +95,8 @@ class TestWhatsAppHooks(FrappeTestCase):
 		doc = MagicMock()
 		doc.type = "Incoming"
 		doc.get.return_value = "invalid-number"
+		doc.reference_doctype = None
+		doc.reference_name = None
 
 		with (
 			patch(
@@ -136,9 +140,11 @@ class TestWhatsAppHooks(FrappeTestCase):
 		doc.type = "Incoming"
 		doc.reference_doctype = doctype
 		doc.reference_name = name
+		doc.get.return_value = None
 		with (
 			patch("crm.api.whatsapp.assigned_users", return_value=["rep@example.com"]),
 			patch("crm.api.whatsapp.notify_user") as mock_notify,
+			patch("frappe.has_permission", return_value=True),
 		):
 			notify_agent(doc)
 		return mock_notify.call_args[0][0]["notification_text"]

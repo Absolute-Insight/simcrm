@@ -211,7 +211,11 @@ jobs:
         # pinned commit is cloned into the build context below and copied in,
         # parked on a local branch bench can name.
         run: |
-          export APPS_JSON='[{"url": "https://github.com/'"$GITHUB_REPOSITORY"'","branch": "'"$GITHUB_REF_NAME"'"}]'
+          # frappe_whatsapp by path, at the commit in scripts/frappe-whatsapp-pin.env,
+          # for the reason given above: no tag holds what we need, and bench
+          # cannot be handed a commit. prepare-containerfile.sh copies it in.
+          source scripts/frappe-whatsapp-pin.env
+          export APPS_JSON='[{"url": "https://github.com/'"$GITHUB_REPOSITORY"'","branch": "'"$GITHUB_REF_NAME"'"},{"url": "/home/frappe/app-src/frappe_whatsapp","branch": "'"$FRAPPE_WHATSAPP_PIN_BRANCH"'"}]'
           # Passed to the build as a secret, not a build-arg -- see the
           # `secrets:` block below for why that distinction was load-bearing.
           echo "APPS_JSON=$APPS_JSON" >> $GITHUB_ENV
@@ -285,6 +289,7 @@ jobs:
           set -euo pipefail
           bash scripts/fetch-frappe.sh builds/frappe-src
           git -C builds/frappe-src log -1 --format='context frappe: %H'
+          bash scripts/fetch-frappe-whatsapp.sh builds/app-src/frappe_whatsapp
 
       - name: Check the builder image can build the pinned frappe
         # The two pins move independently -- frappe by commit, the builder image
@@ -358,6 +363,25 @@ jobs:
             exit 1
           fi
           echo "$ref contains the crm app."
+          if ! echo "$apps" | grep -qx frappe_whatsapp; then
+            echo "::error::$ref contains no 'frappe_whatsapp' app."
+            exit 1
+          fi
+          # .git does not survive the build, so the pin is proved on content:
+          # the file whose behaviour crm/integrations/whatsapp/webhook.py relies on.
+          webhook=frappe_whatsapp/utils/webhook.py
+          built=$(docker run --rm --entrypoint sh "$ref" -c "sha256sum apps/frappe_whatsapp/$webhook" | cut -d' ' -f1)
+          pinned=$(sha256sum "builds/app-src/frappe_whatsapp/$webhook" | cut -d' ' -f1)
+          if [ "$built" != "$pinned" ]; then
+            echo "::error::frappe_whatsapp in $ref is not the pinned commit."
+            exit 1
+          fi
+          # python-magic is a binding: it imports only if libmagic is in the
+          # runtime image, and whatsapp_templates.py imports it at module level.
+          docker run --rm --entrypoint sh "$ref" -c \
+            "env/bin/python -c \"import magic; print(magic.from_buffer(b'%PDF-1.4', mime=True))\"" \
+            | grep -qx application/pdf
+          echo "$ref contains frappe_whatsapp at the pin, and libmagic works."
 
       # And then boot it. "Contains the app" is a weaker claim than it sounds:
       # the historical failure was an image with no app, but an image whose

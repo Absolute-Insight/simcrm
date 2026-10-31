@@ -14,8 +14,10 @@ from werkzeug.wrappers import Response
 from crm.utils import (
 	are_same_phone_number,
 	default_phone_region,
+	is_same_whatsapp_number,
 	parse_phone_number,
 	sales_user_only,
+	split_international_number,
 	user_rate_limited,
 )
 
@@ -206,9 +208,159 @@ def get_contact_lead_or_deal_from_number(number: str):
 	return _contact_lead_or_deal(get_contact_by_phone_number(number))
 
 
-def lookup_contact_lead_or_deal_from_number(number: str):
-	"""Unrestricted lookup for server-side callers (inbound webhooks run without a sales user)."""
-	return _contact_lead_or_deal(lookup_contact_by_phone_number(number))
+def lookup_contact_lead_or_deal_from_number(number: str, prefer_user: str | None = None):
+	"""The record a message from ``number`` belongs on, as (name, doctype).
+
+	Unrestricted, for server-side callers: an inbound webhook has no sales user.
+	Only leads and deals count. A thread filed on a bare Contact appears nowhere
+	in the app, so a number with no record is (None, None) and the caller decides.
+
+	Order: open deal, open lead, closed deal, closed lead, then an open deal of the
+	organization of a contact who is on no record themselves. Within that the
+	receiving rep's own record (``prefer_user``), then the newest, then the name,
+	so the same rows always give the same answer.
+	"""
+	parts = split_international_number(number)
+	if not parts:
+		return None, None
+	candidates = _lead_candidates(number, parts[1]) + _deal_candidates(number, parts[1])
+	if not candidates:
+		return None, None
+
+	def rank(row):
+		return (row.tier, row.owner != prefer_user, -row.modified.timestamp(), row.name)
+
+	best = min(candidates, key=rank)
+	return best.name, best.doctype
+
+
+#: At most this many rows per table are examined for one number. A shared
+#: switchboard number can sit on many records; the newest are the ones that matter.
+NUMBER_MATCH_LIMIT = 200
+
+CLOSED_STATUS_TYPES = ("Won", "Lost")
+
+
+def _digits_only(column):
+	for character in (" ", "\u00a0", "-", "(", ")", "+", ".", "/"):
+		column = Replace(column, character, "")
+	return column
+
+
+def _closed_statuses(doctype: str) -> set[str]:
+	return set(frappe.get_all(doctype, filters={"type": ("in", CLOSED_STATUS_TYPES)}, pluck="name"))
+
+
+def _lead_candidates(number: str, national: str) -> list:
+	Lead = frappe.qb.DocType("CRM Lead")
+	suffix = f"%{national}"
+	rows = (
+		frappe.qb.from_(Lead)
+		.select(Lead.name, Lead.status, Lead.mobile_no, Lead.phone, Lead.lead_owner, Lead.modified)
+		.where(Lead.converted == 0)
+		.where(_digits_only(Lead.mobile_no).like(suffix) | _digits_only(Lead.phone).like(suffix))
+		.orderby(Lead.modified, order=Order.desc)
+		.limit(NUMBER_MATCH_LIMIT)
+	).run(as_dict=True)
+
+	closed = _closed_statuses("CRM Lead Status")
+	return [
+		frappe._dict(
+			doctype="CRM Lead",
+			name=row.name,
+			owner=row.lead_owner,
+			modified=row.modified,
+			tier=3 if row.status in closed else 1,
+		)
+		for row in rows
+		if is_same_whatsapp_number(row.mobile_no, number) or is_same_whatsapp_number(row.phone, number)
+	]
+
+
+def _deal_candidates(number: str, national: str) -> list:
+	Deal = frappe.qb.DocType("CRM Deal")
+	suffix = f"%{national}"
+	rows = (
+		frappe.qb.from_(Deal)
+		.select(Deal.name, Deal.mobile_no, Deal.phone)
+		.where(_digits_only(Deal.mobile_no).like(suffix) | _digits_only(Deal.phone).like(suffix))
+		.orderby(Deal.modified, order=Order.desc)
+		.limit(NUMBER_MATCH_LIMIT)
+	).run(as_dict=True)
+	names = {
+		row.name
+		for row in rows
+		if is_same_whatsapp_number(row.mobile_no, number) or is_same_whatsapp_number(row.phone, number)
+	}
+
+	# Every contact on a deal, not only the primary: the buyer on a deal whose
+	# primary is their boss is a person the rep is talking to.
+	contacts = _matching_contacts(number, national)
+	if contacts:
+		names.update(
+			frappe.get_all(
+				"CRM Contacts",
+				filters={"parenttype": "CRM Deal", "contact": ("in", contacts)},
+				pluck="parent",
+				limit=NUMBER_MATCH_LIMIT,
+			)
+		)
+
+	closed = _closed_statuses("CRM Deal Status")
+	candidates = []
+	if names:
+		deals = frappe.get_all(
+			"CRM Deal",
+			filters={"name": ("in", list(names))},
+			fields=["name", "status", "deal_owner", "modified"],
+		)
+		candidates = [_deal_candidate(row, 2 if row.status in closed else 0) for row in deals]
+	if candidates or not contacts:
+		return candidates
+
+	# On no deal themselves, as an imported contact usually is. Their company's
+	# open deal is where a rep would look for the conversation.
+	companies = frappe.get_all(
+		"Contact", filters={"name": ("in", contacts), "company_name": ("is", "set")}, pluck="company_name"
+	)
+	if not companies:
+		return []
+	deals = frappe.get_all(
+		"CRM Deal",
+		filters={"organization": ("in", companies), "status": ("not in", list(closed) or [""])},
+		fields=["name", "status", "deal_owner", "modified"],
+		limit=NUMBER_MATCH_LIMIT,
+	)
+	return [_deal_candidate(row, 4) for row in deals]
+
+
+def _deal_candidate(row, tier: int):
+	return frappe._dict(
+		doctype="CRM Deal", name=row.name, owner=row.deal_owner, modified=row.modified, tier=tier
+	)
+
+
+def _matching_contacts(number: str, national: str) -> list[str]:
+	ContactPhone = frappe.qb.DocType("Contact Phone")
+	phones = (
+		frappe.qb.from_(ContactPhone)
+		.select(ContactPhone.parent, ContactPhone.phone)
+		.where(ContactPhone.parenttype == "Contact")
+		.where(_digits_only(ContactPhone.phone).like(f"%{national}"))
+		.limit(NUMBER_MATCH_LIMIT)
+	).run(as_dict=True)
+	return list({row.parent for row in phones if is_same_whatsapp_number(row.phone, number)})
+
+
+def lookup_contact_for_number(number: str):
+	"""The Contact a number belongs to, if any, for naming a new lead after them."""
+	parts = split_international_number(number)
+	contacts = _matching_contacts(number, parts[1]) if parts else []
+	if not contacts:
+		return None
+	return frappe.db.get_value(
+		"Contact", sorted(contacts)[0], ["first_name", "last_name", "company_name"], as_dict=True
+	)
 
 
 def _contact_lead_or_deal(contact: dict):

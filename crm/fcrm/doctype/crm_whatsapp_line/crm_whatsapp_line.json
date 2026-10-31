@@ -1,0 +1,75 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:whatsapp_account",
+ "creation": "2026-10-31 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "account_doctype",
+  "whatsapp_account",
+  "user",
+  "app_secret"
+ ],
+ "fields": [
+  {
+   "default": "WhatsApp Account",
+   "fieldname": "account_doctype",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Account DocType",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "description": "The WhatsApp number this line is.",
+   "fieldname": "whatsapp_account",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "WhatsApp Account",
+   "options": "account_doctype",
+   "reqd": 1,
+   "set_only_once": 1,
+   "unique": 1
+  },
+  {
+   "description": "The rep whose number this is. They send from it, own the leads it creates and are told what arrives on it.",
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Rep",
+   "options": "User",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "description": "The Meta app's App Secret (App settings, Basic). Webhooks for this number are refused until it is set.",
+   "fieldname": "app_secret",
+   "fieldtype": "Password",
+   "label": "App Secret"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-31 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FCRM",
+ "name": "CRM WhatsApp Line",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

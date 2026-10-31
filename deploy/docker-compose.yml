@@ -153,6 +153,10 @@ services:
       redis-queue:
         condition: service_healthy
     entrypoint: ["bash", "-c"]
+    # apps.txt lives on the sites volume, which docker seeds from the image once
+    # and never again, so a new app in a new image stays unknown to frappe and
+    # `install-app` refuses it as "not in apps.txt". Rewritten on every boot,
+    # the way frappe_docker's own configurator does it.
     command:
       - >
         bench set-config -g db_host db;
@@ -161,6 +165,7 @@ services:
         bench set-config -g redis_queue "redis://redis-queue:6379";
         bench set-config -g redis_socketio "redis://redis-queue:6379";
         bench set-config -gp socketio_port 9000;
+        ls -1 apps > sites/apps.txt;
     deploy:
       resources:
         limits:
@@ -211,11 +216,16 @@ services:
         if [ -d "sites/${SITE_NAME}" ]; then
           echo "Site ${SITE_NAME} already exists — skipping create"
         else
+          # frappe_whatsapp is inert until a WhatsApp Account is set Active.
+          # Tested for so that this file still boots an older image, which
+          # does not contain it.
+          whatsapp=""
+          if [ -d apps/frappe_whatsapp ]; then whatsapp="--install-app frappe_whatsapp"; fi
           bench new-site "${SITE_NAME}" \
             --mariadb-user-host-login-scope='%' \
             --db-root-password="$$DB_ROOT_PASSWORD" \
             --admin-password="$$ADMIN_PASSWORD" \
-            --install-app crm
+            --install-app crm $$whatsapp
         fi
         bench --site "${SITE_NAME}" enable-scheduler
         # Frappe deletes backups older than keep_backups_for_hours on every

@@ -50,6 +50,59 @@ def parse_phone_number(phone_number: str, default_country: str = "IN"):
 		return {"success": False, "error": str(e)}
 
 
+def canonical_whatsapp_number(number: str | None) -> str | None:
+	"""``number`` the way Meta spells it: country code and digits, no "+".
+
+	The CRM holds whatever a rep typed -- 082 555 0148, 27825550148, +27 82 ...
+	-- and Meta takes each digit literally, so a local spelling is either
+	refused or dialled in the wrong country. Read in the site's country first,
+	then as already international. None when neither gives a real number.
+	"""
+	if not number or not number.strip():
+		return None
+	digits = re.sub(r"\D", "", number)
+	if not digits:
+		return None
+	for spelling, region in ((number, default_phone_region()), (f"+{digits}", None)):
+		try:
+			parsed = phonenumbers.parse(spelling, region)
+		except NumberParseException:
+			continue
+		if phonenumbers.is_valid_number(parsed):
+			return phonenumbers.format_number(parsed, PNF.E164).removeprefix("+")
+	return None
+
+
+def split_international_number(number: str) -> tuple[str, str] | None:
+	"""(country code, national digits) of a number Meta sent, valid or not: a
+	number on the network is real whatever phonenumbers' tables say."""
+	try:
+		parsed = phonenumbers.parse("+" + re.sub(r"\D", "", number or ""), None)
+	except NumberParseException:
+		return None
+	return str(parsed.country_code), phonenumbers.national_significant_number(parsed)
+
+
+def is_same_whatsapp_number(stored: str | None, international: str) -> bool:
+	"""Whether a number as typed into the CRM is ``international``.
+
+	Compared on digits, because a rep's spelling need not be one phonenumbers
+	accepts. An international spelling can be matched for any country, with or
+	without the bracketed trunk zero of +27 (0)82. A bare 082... carries no country
+	of its own: it means the site's, so it matches only a number from there, or a
+	French 06 on a South African site would collect a Dublin mobile's messages.
+	"""
+	parts = split_international_number(international)
+	if not stored or not parts:
+		return False
+	code, national = parts
+	digits = re.sub(r"\D", "", stored)
+	if digits in {code + national, f"00{code}{national}", f"{code}0{national}"}:
+		return True
+	site_code = str(phonenumbers.country_code_for_region(default_phone_region()))
+	return code == site_code and digits in {f"0{national}", national}
+
+
 def are_same_phone_number(number1: str, number2: str, default_region: str = "IN", validate: bool = True):
 	"""
 	Check if two phone numbers are the same, regardless of their format.

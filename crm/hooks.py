@@ -134,6 +134,9 @@ setup_wizard_complete = "crm.demo.api.seed_demo_data_if_enabled"
 
 before_install = "crm.install.before_install"
 after_install = "crm.install.after_install"
+# frappe_whatsapp arrives after the CRM on an existing site and on a new one
+# alike, so its roles cannot wait for the next migrate.
+after_app_install = "crm.api.whatsapp.after_app_install"
 
 # Uninstallation
 # ------------
@@ -180,6 +183,7 @@ permission_query_conditions = {
 	"CRM Call Log": "crm.permissions.linked_records.get_call_log_permission_query_conditions",
 	"CRM Enrichment Run": "crm.permissions.linked_records.get_enrichment_run_permission_query_conditions",
 	"WhatsApp Message": "crm.permissions.linked_records.get_whatsapp_message_permission_query_conditions",
+	"File": "crm.permissions.linked_records.get_file_permission_query_conditions",
 	"CRM Notification": "crm.fcrm.doctype.crm_notification.crm_notification.get_permission_query_conditions",
 	"CRM Quota": "crm.fcrm.doctype.crm_quota.crm_quota.get_permission_query_conditions",
 	"CRM Visit Target": "crm.fcrm.doctype.crm_visit_target.crm_visit_target.get_permission_query_conditions",
@@ -271,6 +275,9 @@ doc_events = {
 	"WhatsApp Message": {
 		"validate": ["crm.api.whatsapp.validate"],
 		"on_update": ["crm.api.whatsapp.on_update"],
+	},
+	"WhatsApp Notification Log": {
+		"before_insert": ["crm.integrations.whatsapp.webhook.refuse_unverified_log"],
 	},
 	"CRM Deal": {
 		"on_update": [
@@ -388,6 +395,21 @@ before_tests = "crm.tests.before_tests"
 override_whitelisted_methods = {
 	# raw SQL behind its own whitelist: the row rules on Event never reach it
 	"frappe.desk.doctype.event.event.get_events": "crm.permissions.customers.get_events",
+	# Guest endpoints of frappe_whatsapp. Upstream's webhook does not check Meta's
+	# signature; see crm/integrations/whatsapp/webhook.py for why this alone is
+	# not enough, and for the second lock in doc_events.
+	"frappe_whatsapp.utils.webhook.webhook": "crm.integrations.whatsapp.webhook.webhook",
+	"frappe_whatsapp.frappe_whatsapp.api.flow_endpoint.handle_flow_request": "crm.integrations.whatsapp.webhook.flows_not_in_use",
+	# Logged-in upstream functions with no permission check of their own.
+	"frappe_whatsapp.utils.bulk_messaging.get_progress": "crm.integrations.whatsapp.guards.get_progress",
+	"frappe_whatsapp.utils.bulk_messaging.retry_failed": "crm.integrations.whatsapp.guards.retry_failed",
+	"frappe_whatsapp.utils.bulk_messaging.import_recipients": "crm.integrations.whatsapp.guards.import_recipients",
+	"frappe_whatsapp.utils.bulk_messaging.schedule_bulk_messages": "crm.integrations.whatsapp.guards.schedule_bulk_messages",
+	"frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates.fetch": "crm.integrations.whatsapp.guards.fetch",
+	"frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_flow.whatsapp_flow.get_whatsapp_flows": "crm.integrations.whatsapp.guards.get_whatsapp_flows",
+	"frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_flow.whatsapp_flow.sync_all_flows": "crm.integrations.whatsapp.guards.sync_all_flows",
+	"frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_flow.whatsapp_flow.import_flow_from_whatsapp": "crm.integrations.whatsapp.guards.import_flow_from_whatsapp",
+	"frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.call_trigger_notifications": "crm.integrations.whatsapp.guards.call_trigger_notifications",
 }
 #
 # each overriding function accepts a `data` argument;
@@ -423,7 +445,10 @@ ignore_links_on_delete = [
 
 # Request Events
 # ----------------
-before_request = ["crm.permissions.document_guard.reserve_action"]
+before_request = [
+	"crm.permissions.document_guard.reserve_action",
+	"crm.integrations.whatsapp.guards.refuse_upstream_methods_via_upload",
+]
 # after_request = ["crm.utils.after_request"]
 
 # Job Events
@@ -483,6 +508,7 @@ after_migrate = [
 	# never reached a site that had enabled the integration before the fix.
 	"crm.integrations.acumatica.install.refresh_integration",
 	"crm.api.whatsapp.add_roles",
+	"crm.install.add_whatsapp_lead_source",
 	"crm.domain_enrichment.install.seed_default_rules_and_mappings",
 	"crm.agent.install.ensure_agent_role",
 	"crm.install.add_default_scripts",

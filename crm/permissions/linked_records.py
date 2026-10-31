@@ -175,3 +175,22 @@ def get_whatsapp_message_permission_query_conditions(user=None):
 
 def has_whatsapp_message_permission(doc, ptype, user):
 	return has_permission(doc, ptype, user, "WhatsApp Message")
+
+
+def get_file_permission_query_conditions(user=None):
+	"""A customer's WhatsApp file is listed only to those who can see its message.
+
+	Frappe's own rule lists a private file to anyone with read on the doctype it is
+	attached to, and every rep has read on WhatsApp Message: opening the file was
+	scoped, finding out it exists and what it is called was not.
+	"""
+	if not frappe.db.exists("DocType", "WhatsApp Message"):
+		return ""
+	conditions = get_whatsapp_message_permission_query_conditions(user)
+	if not conditions:
+		return ""
+	return (
+		"(ifnull(`tabFile`.`attached_to_doctype`, '') != 'WhatsApp Message'"
+		" or `tabFile`.`attached_to_name` in"
+		f" (select `tabWhatsApp Message`.`name` from `tabWhatsApp Message` where {conditions}))"
+	)
