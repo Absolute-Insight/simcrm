@@ -71,7 +71,7 @@
             class="flex flex-1 flex-col justify-between overflow-hidden"
           >
             <SidePanelLayout
-              :sections="sections.data"
+              :sections="parsedSections"
               doctype="CRM Deal"
               :docname="dealId"
               @reload="sections.reload"
@@ -120,8 +120,8 @@
                     <span>{{ __('Loading...') }}</span>
                   </div>
                   <div
-                    v-for="(contact, i) in section.contacts"
-                    v-else-if="section.contacts.length"
+                    v-for="(contact, i) in dealContacts.data"
+                    v-else-if="dealContacts?.data?.length"
                     :key="contact.name"
                   >
                     <div
@@ -154,7 +154,7 @@
                               />
                             </div>
                             <div class="flex items-center">
-                              <Dropdown :options="contactOptions(contact.name)">
+                              <Dropdown :options="contactOptions(contact)">
                                 <Button
                                   icon="lucide-more-horizontal"
                                   class="text-ink-gray-5"
@@ -197,7 +197,7 @@
                       </CollapsibleSection>
                     </div>
                     <div
-                      v-if="i != section.contacts.length - 1"
+                      v-if="i != dealContacts.data.length - 1"
                       class="mx-2 h-px border-t border-outline-elevation-2"
                     />
                   </div>
@@ -300,7 +300,6 @@ import { globalStore } from '@/stores/global'
 import { statusesStore } from '@/stores/statuses'
 import { getMeta } from '@/stores/meta'
 import { useDocument } from '@/data/document'
-import { isMobileView } from '@/composables/settings'
 import { whatsappEnabled } from '@/composables/whatsapp'
 import { callEnabled } from '@/composables/telephony'
 import { useActiveTabManager } from '@/composables/useActiveTabManager'
@@ -435,7 +434,6 @@ const tabs = computed(() => {
       name: 'Details',
       label: __('Details'),
       icon: DetailsIcon,
-      condition: () => isMobileView.value,
     },
     {
       name: 'Activity',
@@ -505,34 +503,46 @@ const tabs = computed(() => {
 })
 const { tabIndex } = useActiveTabManager(tabs, 'lastDealTab')
 
+// The layout is cached per doctype for the session, so nothing that belongs to
+// this page may live on it: a transform runs with the options of whichever page
+// created the resource, which would have left the organization field opening
+// the first deal page's modal. The field is wired here, per page, instead.
 const sections = createResource({
   url: 'crm.fcrm.doctype.crm_fields_layout.crm_fields_layout.get_sidepanel_sections',
   cache: ['sidePanelSections', 'CRM Deal'],
   params: { doctype: 'CRM Deal' },
   auto: true,
-  transform: (data) => getParsedFields(data),
 })
 
-function getParsedFields(sections) {
-  sections.forEach((section) => {
-    if (section.name == 'contacts_section') return
-    section.columns[0].fields.forEach((field) => {
-      if (field.name == 'organization') {
-        field.create = (value, close) => {
-          _organization.value.organization_name = value
-          showOrganizationModal.value = true
-          close()
-        }
-        field.link = (org) =>
-          router.push({
-            name: 'Organization',
-            params: { organizationId: org },
-          })
-      }
-    })
+const parsedSections = computed(() => {
+  if (!sections.data) return []
+  return sections.data.map((section) => {
+    if (section.name == 'contacts_section') return section
+    return {
+      ...section,
+      columns: section.columns.map((column) => ({
+        ...column,
+        fields: column.fields.map((field) => {
+          // `fieldname`: a layout field's `name` is its DocField row id
+          if (field.fieldname != 'organization') return field
+          return {
+            ...field,
+            create: (value, close) => {
+              _organization.value.organization_name = value
+              showOrganizationModal.value = true
+              close()
+            },
+            link: (org) =>
+              router.push({
+                name: 'Organization',
+                params: { organizationId: org },
+              }),
+          }
+        }),
+      })),
+    }
   })
-  return sections
-}
+})
 
 const showContactModal = ref(false)
 const _contact = ref({})
@@ -542,7 +552,7 @@ function contactOptions(contact) {
     {
       label: __('Delete'),
       icon: 'lucide-trash-2',
-      onClick: () => removeContact(contact),
+      onClick: () => removeContact(contact.name),
     },
   ]
 
@@ -595,29 +605,21 @@ async function setPrimaryContact(contact) {
   }
 }
 
+// Rendered straight from this deal's own resource, as Deal.vue does. Written
+// onto the session-wide layout, one deal's contacts showed on the next deal
+// while it loaded, and a layout reload that landed last wiped them out.
 const dealContacts = createResource({
   url: 'crm.fcrm.doctype.crm_deal.api.get_deal_contacts',
   params: { name: props.dealId },
   cache: ['deal_contacts', props.dealId],
   auto: true,
-  onSuccess: (data) => {
-    let contactSection = sections.data?.find(
-      (section) => section.name == 'contacts_section',
-    )
-    if (!contactSection) return
+  transform: (data) => {
     // get_deal_contacts orders primary first, so expanding the first contact
     // surfaces the most relevant email and phone without a click.
-    contactSection.contacts = data.map((contact, index) => {
-      return {
-        name: contact.name,
-        full_name: contact.full_name,
-        email: contact.email,
-        mobile_no: contact.mobile_no,
-        image: contact.image,
-        is_primary: contact.is_primary,
-        opened: index === 0,
-      }
+    data.forEach((contact, index) => {
+      contact.opened = index === 0
     })
+    return data
   },
 })
 

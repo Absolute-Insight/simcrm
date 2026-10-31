@@ -103,24 +103,14 @@
       :tabs="tabs"
       class="flex flex-1 overflow-auto flex-col [&_[role='tablist']]:gap-3 [&_[role='tablist']]:px-4 [&_[role='tabpanel']:not([hidden])]:flex [&_[role='tabpanel']:not([hidden])]:flex-col [&_[role='tabpanel']:not([hidden])]:grow [&_[role='tabpanel']:not([hidden])]:overflow-hidden"
     >
-      <template #tab-item="{ tab, active }">
-        <button
-          v-if="tab.name == 'Deals'"
-          class="group flex items-center gap-2 border-b border-transparent py-2.5 text-base text-ink-gray-5 duration-300 ease-in-out hover:text-ink-gray-9 !px-4"
-          :class="{ 'text-ink-gray-9': active }"
-        >
-          <component :is="tab.icon" v-if="tab.icon" class="h-5" />
-          {{ __(tab.label) }}
-          <Badge
-            class="group-hover:bg-surface-gray-10"
-            :class="[active ? 'bg-surface-gray-10' : 'bg-gray-600']"
-            variant="solid"
-            theme="gray"
-            size="sm"
-          >
-            {{ tab.count }}
-          </Badge>
-        </button>
+      <template #tab-suffix="{ tab, active }">
+        <Badge
+          v-if="tab.data?.count != null"
+          :label="tab.data.count"
+          theme="gray"
+          :variant="active ? 'solid' : 'subtle'"
+          size="sm"
+        />
       </template>
       <template #tab-panel="{ tab }">
         <div v-if="tab.name == 'Details'">
@@ -129,7 +119,7 @@
             class="flex flex-1 flex-col justify-between overflow-hidden"
           >
             <SidePanelLayout
-              :sections="sections.data"
+              :sections="parsedSections"
               doctype="Contact"
               :docname="contact.doc.name"
               @reload="sections.reload"
@@ -137,14 +127,14 @@
           </div>
         </div>
         <DealsListView
-          v-else-if="tab.label === 'Deals' && rows.length"
+          v-else-if="tab.name === 'Deals' && rows.length"
           class="mt-4"
           :rows="rows"
           :columns="columns"
           :options="{ selectable: false, showTooltip: false, scrollKey: '' }"
         />
         <div
-          v-if="tab.label === 'Deals' && !rows.length"
+          v-if="tab.name === 'Deals' && !rows.length"
           class="grid flex-1 place-items-center text-2xl-medium text-ink-gray-4"
         >
           <div class="flex flex-col items-center justify-center space-y-3">
@@ -325,25 +315,28 @@ async function deleteContact() {
 }
 
 const tabIndex = ref('Details')
-const _rawTabs = [
-  {
-    name: 'Details',
-    label: __('Details'),
-    icon: DetailsIcon,
-  },
-  {
-    name: 'Deals',
-    label: __('Deals'),
-    icon: h(DealsIcon, { class: 'h-4 w-4' }),
-    count: computed(() => deals.data?.length),
-  },
-]
-const tabs = _rawTabs.map((tab) => ({
-  value: tab.name,
-  ...tab,
-  iconLeft: tab.icon,
-  icon: undefined,
-}))
+// A computed rather than a fixed array: v1 Tabs hands `tab.data` to its slots
+// as given, so the count has to be a plain number by the time it gets there.
+const tabs = computed(() =>
+  [
+    {
+      name: 'Details',
+      label: __('Details'),
+      icon: DetailsIcon,
+    },
+    {
+      name: 'Deals',
+      label: __('Deals'),
+      icon: h(DealsIcon, { class: 'h-4 w-4' }),
+      data: { count: deals.data?.length },
+    },
+  ].map((tab) => ({
+    value: tab.name,
+    ...tab,
+    iconLeft: tab.icon,
+    icon: undefined,
+  })),
+)
 
 const deals = createResource({
   url: 'crm.api.contact.get_linked_deals',
@@ -358,25 +351,30 @@ const rows = computed(() => {
   return deals.data.map((row) => getDealRowObject(row))
 })
 
+// The layout is cached per doctype for the session, so nothing that belongs to
+// this contact may live on it: a transform runs with the options of whichever
+// page created the resource, which put the first contact's emails, phones and
+// address handlers on every contact opened after it. The fields are mapped
+// here, per page, instead -- as Contact.vue does.
 const sections = createResource({
   url: 'crm.fcrm.doctype.crm_fields_layout.crm_fields_layout.get_sidepanel_sections',
   cache: ['sidePanelSections', 'Contact'],
   params: { doctype: 'Contact' },
   auto: true,
-  transform: (data) => computed(() => getParsedSections(data)),
 })
 
-function getParsedSections(_sections) {
-  return _sections.map((section) => {
-    section.columns = section.columns.map((column) => {
-      column.fields = column.fields.map((field) =>
+const parsedSections = computed(() => {
+  if (!sections.data) return []
+  return sections.data.map((section) => ({
+    ...section,
+    columns: section.columns.map((column) => ({
+      ...column,
+      fields: column.fields.map((field) =>
         transformField(field, { showAddressModal }),
-      )
-      return column
-    })
-    return section
-  })
-}
+      ),
+    })),
+  }))
+})
 
 const { getFormattedCurrency } = getMeta('CRM Deal')
 
