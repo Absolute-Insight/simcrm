@@ -63,7 +63,28 @@ vi.mock('@/components/Controls/Link.vue', async () => {
     },
   }
 })
-vi.mock('@/components/ui/CheckSwitch.vue', () => stub)
+// The toggle: a click flips it, as the real one emits on a change.
+vi.mock('@/components/ui/CheckSwitch.vue', async () => {
+  const { h } = await import('vue')
+  return {
+    default: {
+      props: ['modelValue'],
+      emits: ['update:modelValue'],
+      setup:
+        (props, { emit }) =>
+        () =>
+          h('button', {
+            class: 'check-switch',
+            onClick: () => emit('update:modelValue', !props.modelValue),
+          }),
+    },
+  }
+})
+// VisitTargets' gate on who may flip its lock
+vi.mock('@/stores/session', () => ({ sessionStore: () => ({ user: 'm@x' }) }))
+vi.mock('@/stores/users', () => ({
+  usersStore: () => ({ isManager: () => true, isAdmin: () => false }),
+}))
 vi.mock('vue-router', () => ({ useRoute: () => ({ name: 'Dashboard' }) }))
 vi.mock('@/stores/global', () => ({
   globalStore: () => ({ $dialog: (options) => dialogs.push(options) }),
@@ -144,6 +165,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   toast.error.mockClear()
+  toast.success.mockClear()
   vi.spyOn(console, 'error').mockImplementation(() => {})
   dialogs.length = 0
   await settings.reload()
@@ -195,6 +217,24 @@ describe('a refused FCRM Settings save', () => {
     expect(toast.error).toHaveBeenCalledWith(
       'Only a System Manager can change this',
     )
+  })
+
+  it('Visit Targets lock: says why, once', async () => {
+    // setLock awaits the store's setValue, whose onError already toasts;
+    // a second toast of its own read the refusal out twice.
+    setValue = refuse('Insufficient Permission for FCRM Settings')
+    const VisitTargets = (
+      await import('@/components/Settings/VisitTargets.vue')
+    ).default
+    const { el } = mount(VisitTargets)
+    await flush()
+    el.querySelector('.check-switch').click()
+    await flush()
+    expect(toast.error).toHaveBeenCalledOnce()
+    expect(toast.error).toHaveBeenCalledWith(
+      'Insufficient Permission for FCRM Settings',
+    )
+    expect(toast.success).not.toHaveBeenCalled()
   })
 
   it('falls back to a sentence of its own when the server wrote none', async () => {
