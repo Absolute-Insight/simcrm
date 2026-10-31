@@ -197,7 +197,11 @@
         </Link>
 
         <div v-if="showing" class="ml-auto text-sm text-ink-gray-5">
-          {{ __('{0} rows', [showing.rows.length]) }}
+          {{
+            showing.rows.length === 1
+              ? __('1 row')
+              : __('{0} rows', [showing.rows.length])
+          }}
         </div>
       </div>
 

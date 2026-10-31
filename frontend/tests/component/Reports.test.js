@@ -305,4 +305,15 @@ describe('Reports', () => {
     menu.remove()
     trigger.remove()
   })
+
+  it('says one row, not one rows', async () => {
+    const el = await openReports()
+    answer(
+      pending('crm.api.reports.get_report')[0],
+      payload('Visits by rep', [{ rep: 'Alice', visits: 4 }]),
+    )
+    await flush()
+    expect(el.textContent).toContain('1 row')
+    expect(el.textContent).not.toContain('1 rows')
+  })
 })
