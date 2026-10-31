@@ -25,6 +25,9 @@ CRM Enrichment Run hangs off a record the same way but belongs to no user: it
 is what a crawl found for that lead or deal -- emails, phones, the raw
 extraction -- so it follows the record alone, and a run on a doctype with no row
 scoping of its own (an organization) stays as visible as that doctype.
+frappe_whatsapp's WhatsApp Message follows its record alone too: it is the
+record's conversation, and a message matched to no lead or deal is nobody's to
+read but a manager who sees everything.
 
 The document check reads the *stored* row, not the in-memory document: frappe
 checks write on the mutated document, so a check against ``doc.reference_docname``
@@ -44,10 +47,11 @@ OWN_FIELDS = {
 	"CRM Task": ("owner", "assigned_to"),
 	"CRM Call Log": ("owner", "caller", "receiver"),
 	"CRM Enrichment Run": (),
+	"WhatsApp Message": (),
 }
 
 #: Per doctype, the Dynamic Link field naming the referenced record.
-REFERENCE_FIELD = {"CRM Enrichment Run": "reference_name"}
+REFERENCE_FIELD = {"CRM Enrichment Run": "reference_name", "WhatsApp Message": "reference_name"}
 
 #: Doctypes whose rows on an unscoped (or no) reference are visible to anyone
 #: holding the role permission, rather than only to the row's own users.
@@ -151,3 +155,11 @@ def get_enrichment_run_permission_query_conditions(user=None):
 
 def has_enrichment_run_permission(doc, ptype, user):
 	return has_permission(doc, ptype, user, "CRM Enrichment Run")
+
+
+def get_whatsapp_message_permission_query_conditions(user=None):
+	return get_permission_query_conditions("WhatsApp Message", user)
+
+
+def has_whatsapp_message_permission(doc, ptype, user):
+	return has_permission(doc, ptype, user, "WhatsApp Message")

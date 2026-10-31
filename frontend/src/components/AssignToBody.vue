@@ -107,6 +107,9 @@ const removeValue = (value) => {
 }
 
 const addValue = (value) => {
+  // Link's Clear footer emits change(''): that picks nobody. Pushed as is, it
+  // showed as the session user and was sent as a blank assignee.
+  if (!value) return
   if (value === getUser('').name) {
     assignToMe.value = true
   }

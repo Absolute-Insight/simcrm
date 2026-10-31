@@ -74,14 +74,15 @@
       ref="optionsRef"
       class="flex flex-col gap-2 mt-2 max-h-[165px] overflow-y-auto"
     >
+      <!-- A visit's CRM Organization row has no email: named by its reference -->
       <Button
         v-for="att in values"
         ref="emails"
-        :key="att.email"
-        :label="att.email"
+        :key="att.email || `${att.reference_doctype}:${att.reference_docname}`"
+        :label="att.email || att.reference_docname"
         theme="gray"
         class="rounded-full w-fit"
-        :tooltip="getTooltip(att.email)"
+        :tooltip="getTooltip(att)"
       >
         <template #prefix>
           <UserAvatar :user="att.email" class="-ml-1 !size-5.5" />
@@ -90,12 +91,14 @@
           <span
             class="lucide-x h-3.5"
             aria-hidden="true"
-            @click.stop="removeValue(att.email)"
+            @click.stop="removeValue(att)"
           />
         </template>
       </Button>
-      <ErrorMessage v-if="error" class="mt-2 pl-2" :message="error" />
     </div>
+    <!-- Outside the list, which renders only once there is an attendee: the
+         first address typed, if invalid, was refused without a word. -->
+    <ErrorMessage v-if="error" class="mt-2 pl-2" :message="error" />
   </div>
 </template>
 
@@ -136,45 +139,42 @@ const search = ref(null)
 const error = ref(null)
 const info = ref(null)
 const query = ref('')
-const text = ref('')
 const showOptions = ref(false)
 const optionsRef = ref(null)
 const tempSelection = ref(null)
 
-const metaByEmail = computed(() => {
-  const out = {}
-  const source = values.value || []
-  for (const a of source) {
-    if (a?.email) out[a.email] = a
-  }
-  return out
-})
-
-function getTooltip(email) {
-  const m = metaByEmail.value[email]
-  if (!m) return email
+function getTooltip(m) {
   const parts = []
   if (m.reference_doctype) parts.push(m.reference_doctype)
   if (m.reference_docname) parts.push(m.reference_docname)
-  return parts.length ? parts.join(': ') : email
+  return parts.length ? parts.join(': ') : m.email
 }
+
+// The contacts found and the query they answer. The search is debounced and
+// goes to the server, so it lags the input; reka highlights the first option
+// on every keystroke and selects it on Enter. Offered while the answer was
+// still for an older query, that option was a stale suggestion, and Enter
+// right after typing or pasting an address added it in place of the address.
+const results = ref({ txt: null, rows: [] })
+let searching = null
 
 watchDebounced(
   query,
   (val) => {
     val = val || ''
-    if (text.value === val && options.value?.length) return
-    text.value = val
+    if (results.value.txt === val) return
     reload(val)
   },
   { debounce: 300, immediate: true },
 )
 
+// Not cached: a cache key is shared by every picker, and this one was the
+// first query's, so a picker opened later started from the previous one's
+// search results and never ran its own.
 const filterOptions = createResource({
   url: 'crm.api.contact.search_emails',
   method: 'POST',
-  cache: [text.value, 'Contact'],
-  params: { txt: text.value },
+  params: { txt: '' },
   transform: (data) => {
     let allData = data.map((option) => {
       let fullName = option[0]
@@ -199,15 +199,19 @@ const filterOptions = createResource({
 })
 
 const options = computed(() => {
-  let searchedContacts = props.fetchContacts ? filterOptions.data : []
-  if (!searchedContacts?.length && query.value) {
-    searchedContacts.push({
-      name: 'new',
-      label: query.value,
-      value: query.value,
-    })
+  const typed = query.value
+    ? [{ name: 'new', label: query.value, value: query.value }]
+    : []
+  if (!props.fetchContacts || results.value.txt !== (query.value || '')) {
+    return typed
   }
-  return searchedContacts || []
+  const rows = results.value.rows
+  // a complete address goes first, as its own Contact if it has one, so
+  // Enter adds what was typed rather than a partial match listed above it
+  const exact = rows.find((o) => o.value === query.value)
+  if (exact) return [exact, ...rows.filter((o) => o !== exact)]
+  if (query.value && props.validate?.(query.value)) return [...typed, ...rows]
+  return rows.length ? rows : typed
 })
 
 const emptyStateText = computed(() =>
@@ -219,10 +223,17 @@ const emptyStateText = computed(() =>
 function reload(val) {
   if (!props.fetchContacts) return
 
-  filterOptions.update({
-    params: { txt: val },
-  })
-  filterOptions.reload()
+  searching = val
+  filterOptions.fetch(
+    { txt: val },
+    {
+      onSuccess: () => {
+        // an older search answering after a newer one is not its answer
+        if (searching !== val) return
+        results.value = { txt: val, rows: filterOptions.data || [] }
+      },
+    },
+  )
 }
 
 function onSelect(val, fullOption = null) {
@@ -305,8 +316,8 @@ const addValue = (option) => {
   })
 }
 
-const removeValue = (email) => {
-  values.value = (values.value || []).filter((a) => a.email !== email)
+const removeValue = (att) => {
+  values.value = (values.value || []).filter((a) => a !== att)
 }
 
 function setFocus() {

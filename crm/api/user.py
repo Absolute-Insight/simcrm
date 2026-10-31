@@ -193,6 +193,9 @@ def change_password(old_password: str, new_password: str):
 	if not tracker.is_user_allowed():
 		frappe.throw(_("Too many failed attempts. Please try again after some time."))
 
+	if not new_password:
+		frappe.throw(_("Please enter a new password."))
+
 	if old_password == new_password:
 		frappe.throw(
 			_("New password cannot be the same as current password. Please choose a different password.")
@@ -209,9 +212,11 @@ def change_password(old_password: str, new_password: str):
 	# Validate new password strength (server-side enforcement)
 	from frappe.core.doctype.user.user import test_password_strength
 
-	result = test_password_strength(new_password)
-	feedback = result.get("feedback", {})
-	if not feedback.get("password_policy_validation_passed", False):
+	# With the password policy off frappe answers ``{}`` -- no verdict, not a
+	# failed one -- so only a verdict that says "failed" refuses the password.
+	result = test_password_strength(new_password) or {}
+	feedback = result.get("feedback") or {}
+	if feedback and not feedback.get("password_policy_validation_passed"):
 		suggestions = feedback.get("suggestions", [])
 		frappe.throw(_("Password is too weak. {0}").format(" ".join(suggestions) if suggestions else ""))
 
@@ -274,6 +279,14 @@ def update_user_role(user: str, new_role: str):
 	if new_role == "Sales Manager" and not is_system_manager:
 		frappe.throw(_("Only System Managers can assign the Sales Manager role"), frappe.PermissionError)
 
+	# Somebody already in the CRM is somebody's rep: a scoped manager changes
+	# their own team's, not another manager's. Bringing in an account with no
+	# CRM role yet is onboarding -- it is on no team to be outside of.
+	if not is_system_manager and set(target_roles) & {"Sales User", "Sales Manager"}:
+		from crm.api.quota import _only_own_team
+
+		_only_own_team(user)
+
 	# After the permission checks, as in remove_crm_roles_from_user: a caller
 	# who may not touch this user should not learn how their roles are managed.
 	validate_no_role_profile(user_doc)
@@ -323,6 +336,14 @@ def remove_crm_roles_from_user(user: str):
 	if "Sales Manager" in roles and not current_user_is_system_manager:
 		frappe.throw(_("Only System Managers can modify other Sales Managers"), frappe.PermissionError)
 
+	# A manager offboards their own reps. Without this an in-tree manager could
+	# strip another team's rep of their CRM role and delete their place in the
+	# hierarchy -- a node Sales Manager may otherwise only read.
+	if not current_user_is_system_manager:
+		from crm.api.quota import _only_own_team
+
+		_only_own_team(user)
+
 	validate_no_role_profile(user_doc)
 
 	# Refuse before touching anything. The node delete at the end of this
@@ -353,6 +374,47 @@ def remove_crm_roles_from_user(user: str):
 		frappe.delete_doc("CRM Sales Hierarchy", node_name, ignore_permissions=True)
 
 	frappe.msgprint(_("User {0} has been removed from CRM roles.").format(user))
+
+
+# One row per user, named by that user (autoname ``field:user``).
+USER_KEYED_DOCTYPES = ("CRM Visit Target", "CRM Telephony Agent")
+
+
+def rename_user_keyed_rows(doc, method=None, old=None, new=None, merge=False):
+	"""User after_rename: rename the rows that are named after the user, too.
+
+	``rename_doc("User")`` rewrites every Link to the user, so a visit target or a
+	telephony agent was left named after the old address while its ``user`` held
+	the new one. Everything looks those rows up by name -- ``set_visit_target``
+	then inserted a second row and collided on the unique ``user``, a clear
+	reported success and left the old target counting, and Twilio no longer found
+	the agent's number. And a save of such a row would have written the old
+	address back into ``user`` (frappe keeps a ``field:`` autoname field in step
+	with the name).
+	"""
+	if merge:
+		return
+	for doctype in USER_KEYED_DOCTYPES:
+		rename_user_keyed_row(doctype, old, new)
+
+
+def rename_user_keyed_row(doctype: str, old: str, new: str) -> None:
+	# the model function, not frappe.rename_doc: this follows a rename somebody
+	# was already allowed to make, and only the model one takes ignore_permissions
+	from frappe.model.rename_doc import rename_doc
+
+	if frappe.db.exists(doctype, old) and not frappe.db.exists(doctype, new):
+		doc = frappe.get_doc(doctype, old)
+		# what the rows' before_rename lets through (CRM Telephony Agent)
+		doc.flags.following_user_rename = True
+		rename_doc(
+			doc=doc,
+			new=new,
+			force=True,
+			ignore_permissions=True,
+			show_alert=False,
+			rebuild_search=False,
+		)
 
 
 def validate_no_role_profile(user_doc):

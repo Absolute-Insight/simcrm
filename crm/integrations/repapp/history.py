@@ -247,9 +247,15 @@ def _write_manifest(path: Path, manifest: dict[str, dict]) -> None:
 	path.write_text(json.dumps({"rows": manifest}, indent=1))
 
 
-def _commit_every(done: int) -> None:
+def _commit_every(done: int, manifest_path: Path, manifest: dict[str, dict]) -> None:
 	# never under test (one rolled-back transaction) and never on a dry run
 	if done % COMMIT_EVERY == 0 and not (frappe.flags.in_test or frappe.flags.repapp_import_dry_run):
+		# The ids go to disk before the plans they name are made durable. Written only
+		# in the finally, a run killed outright -- SIGKILL, a dropped SSH session --
+		# left committed plans no manifest named, and the re-run appended every one of
+		# them again. An id whose commit then never happened costs nothing: the next
+		# run checks that its item exists before it skips the row.
+		_write_manifest(manifest_path, manifest)
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 
@@ -356,6 +362,28 @@ def _catch_up(shaped: dict, landed: dict, organization, contacts) -> bool | str:
 	return True
 
 
+def _latest_per_id(rows: list[dict], summary: dict) -> list[dict]:
+	"""One row per Firestore id, from the latest export that carries it.
+
+	A rep's exports are cumulative, so two of them side by side in the folder carry
+	the same visits twice. Checked only against earlier runs, each copy landed: two
+	plan items and two events for one visit, or a catch-up that ran twice and left
+	an orphaned event behind. ``report_<First>_<Last>_<yyyy-mm-dd>.csv`` sorts by
+	date, so the last copy read is the newest word on the row."""
+	latest: dict[str, dict] = {}
+	without_id: list[dict] = []
+	for row in rows:
+		summary["rows"] += 1
+		key = (row.get("id") or "").strip()
+		if not key:
+			without_id.append(row)  # rejected below, each with its file
+			continue
+		if key in latest:
+			summary["duplicates"] += 1
+		latest[key] = row
+	return [*latest.values(), *without_id]
+
+
 def _plan_for(user: str, week_start):
 	name = frappe.db.exists("CRM Rep Plan", {"user": user, "week_start": week_start})
 	if name:
@@ -405,8 +433,8 @@ def import_history(
 	catch_up: list[tuple[dict, dict]] = []
 	summary["updated"] = 0
 	summary["not_updated"] = []
-	for row in read_reports(reports_dir):
-		summary["rows"] += 1
+	summary["duplicates"] = 0
+	for row in _latest_per_id(read_reports(reports_dir), summary):
 		try:
 			shaped = shape_row(row, owners_map, source_tz, site_tz)
 		except ValueError as exc:
@@ -478,7 +506,7 @@ def import_history(
 			summary["imported"] += len(pending)
 			summary["plans"] += 1
 			done += 1
-			_commit_every(done)
+			_commit_every(done, manifest_path, manifest)
 		for shaped, landed in catch_up:
 			organization = companies.get(shaped["company"]) if shaped["company"] else None
 			outcome = _catch_up(shaped, landed, organization, contacts)
@@ -490,6 +518,9 @@ def import_history(
 		if dry_run:
 			frappe.db.rollback()
 		elif not frappe.flags.in_test:
+			# ahead of the commit, as in _commit_every: the finally below is not reached
+			# by a run killed in between
+			_write_manifest(manifest_path, manifest)
 			frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	finally:
 		frappe.flags.repapp_import_dry_run = False

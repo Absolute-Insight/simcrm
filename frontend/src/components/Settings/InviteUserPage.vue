@@ -117,9 +117,10 @@ const error = ref(null)
 
 // Not Set.prototype.intersection: it is ES2025 (Safari 17), nothing in the
 // build polyfills it, and on Safari/iPadOS 16 the first valid address typed
-// threw during render and blanked the pane.
+// threw during render and blanked the pane. Lower-cased because the invitees
+// are: a member or a live invitation stored with capitals is the same address.
 function alreadyIn(emails) {
-  const existing = new Set(emails)
+  const existing = new Set(emails.map((email) => email.toLowerCase()))
   return [...new Set(invitees.value)].filter((email) => existing.has(email))
 }
 
@@ -235,10 +236,12 @@ const pendingInvitations = createListResource({
   auto: true,
 })
 
+// Lower-cased as the account will be named, so an existing member or a live
+// invitation typed with different capitals is caught here too.
 function updateInvitees(value) {
   const emails = value
     .split(',')
-    .map((email) => email.trim())
+    .map((email) => email.trim().toLowerCase())
     .filter((email) => validateEmail(email))
   invitees.value = emails
 }

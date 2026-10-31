@@ -92,17 +92,22 @@ function convertToDeal(selections, unselectAll) {
         // a failed conversion was an unhandled rejection the rep never saw. A
         // bulk convert of 30 qualified leads could silently drop some and still
         // look like it worked. Settle them all, then report once, honestly.
+        // One at a time, not all at once: two leads naming the same new
+        // organization both passed create_organization's exists() check before
+        // either inserted it, and the second failed on the duplicate name.
         onClick: async ({ close }) => {
           capture('bulk_convert_to_deal')
           const names = Array.from(selections)
-          const results = await Promise.allSettled(
-            names.map((name) =>
-              call('crm.fcrm.doctype.crm_lead.crm_lead.convert_to_deal', {
+          let failed = 0
+          for (const name of names) {
+            try {
+              await call('crm.fcrm.doctype.crm_lead.crm_lead.convert_to_deal', {
                 lead: name,
-              }),
-            ),
-          )
-          const failed = results.filter((r) => r.status === 'rejected').length
+              })
+            } catch {
+              failed++
+            }
+          }
 
           list.value.reload()
           unselectAll()
@@ -148,6 +153,10 @@ const showAssignmentModal = ref(false)
 const bulkAssignees = ref([])
 
 function assignValues(selections, unselectAll) {
+  // A bulk assign starts from nobody: the last batch's reps are not this
+  // selection's, and AssignmentModal's Update closes it without the @close
+  // that would have reset them.
+  bulkAssignees.value = []
   showAssignmentModal.value = true
   selectedValues.value = selections
   unselectAllAction.value = unselectAll

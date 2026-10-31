@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -163,20 +163,37 @@ class TestConnection(FrappeTestCase):
 		test_connection()
 		self.assertEqual(MockClient.return_value.logout.call_count, 2)
 
-	@patch("crm.integrations.acumatica.api.AcumaticaClient")
-	def test_forces_a_fresh_token_before_pinging(self, MockClient):
-		"""The operator just saved new credentials -- a cached token from the old
-		ones would make the test pass or fail on stale creds instead of the new ones."""
+	@patch("crm.integrations.acumatica.client.requests.get")
+	@patch("crm.integrations.acumatica.client.requests.post")
+	def test_pings_on_a_login_of_its_own_and_ends_only_that_one(self, rpost, rget):
+		"""The operator just saved new credentials, so the cached token -- the running
+		sync's -- must not be what gets tested. Deleting it from the cache used to be
+		how: that never ended the sync's login, the sync minted another, and the
+		dropped one held one of the API user's concurrent-login slots for an hour."""
 		from crm.integrations.acumatica.api import test_connection
 
 		frappe.set_user("Administrator")
 		frappe.db.set_single_value("CRM Acumatica Settings", "instance_url", "https://t.acumatica.com")
-		MockClient.return_value._cache_key.return_value = "acumatica_token::https://t.acumatica.com"
-		MockClient.return_value.ping.return_value = {"ok": True, "sample": None}
-		frappe.cache().set_value("acumatica_token::https://t.acumatica.com", "stale")
+		key = "acumatica_token::https://t.acumatica.com"
+		frappe.cache().set_value(key, "T-SYNC")  # a sync is running on this login
+		self.addCleanup(frappe.cache().delete_value, key)
 
-		test_connection()
-		self.assertIsNone(frappe.cache().get_value("acumatica_token::https://t.acumatica.com"))
+		def post(url, data=None, headers=None, timeout=None, **kw):
+			resp = MagicMock(status_code=200)
+			resp.json.return_value = {"access_token": "T-TEST", "expires_in": 3600}
+			return resp
+
+		rpost.side_effect = post
+		rget.return_value = MagicMock(status_code=200)
+		rget.return_value.json.return_value = [{"CustomerID": {"value": "C001"}}]
+
+		self.assertEqual(test_connection(), {"ok": True, "sample": "C001"})
+
+		self.assertEqual(rget.call_args.kwargs["headers"]["Authorization"], "Bearer T-TEST")
+		logouts = [c for c in rpost.call_args_list if c.args[0].endswith("/entity/auth/logout")]
+		self.assertEqual([c.kwargs["headers"]["Authorization"] for c in logouts], ["Bearer T-TEST"])
+		# the sync's login is still the shared one, and still alive
+		self.assertEqual(frappe.cache().get_value(key), "T-SYNC")
 
 
 class TestSyncIssueEndpoints(FrappeTestCase):
@@ -199,10 +216,22 @@ class TestSyncIssueEndpoints(FrappeTestCase):
 		self.assertEqual(len(mine), 1)
 		self.assertEqual(mine[0]["kind"], "Import Failed")
 
-		# the client hands the child-row name back as a string
-		self.assertTrue(dismiss_sync_issue(str(mine[0]["name"])))
+		# exactly what the panel posts back: the int the listing gave it. Frappe checks
+		# whitelisted arguments against their annotations in tests too, so a str() here
+		# would pass while every real Dismiss click answered 417.
+		self.assertIsInstance(mine[0]["name"], int)
+		self.assertTrue(dismiss_sync_issue(mine[0]["name"]))
 
 		self.assertFalse([row for row in get_open_sync_issues() if row["remote_id"] == remote_id])
+
+	def test_a_name_that_was_stringified_on_the_way_still_matches(self):
+		from crm.integrations.acumatica.api import dismiss_sync_issue, get_open_sync_issues
+
+		remote_id = f"ISSUE-{frappe.generate_hash(length=6)}"
+		self._record(remote_id)
+		mine = [row for row in get_open_sync_issues() if row["remote_id"] == remote_id]
+
+		self.assertTrue(dismiss_sync_issue(str(mine[0]["name"])))
 
 	def test_dismiss_unknown_issue_returns_false(self):
 		from crm.integrations.acumatica.api import dismiss_sync_issue
@@ -217,6 +246,42 @@ class TestSyncIssueEndpoints(FrappeTestCase):
 			get_open_sync_issues()
 		with self.assertRaises(frappe.PermissionError):
 			dismiss_sync_issue("1")
+
+
+class TestMutatingEndpointsRefuseGet(FrappeTestCase):
+	"""Frappe checks CSRF on unsafe methods only and rolls a GET's writes back. A
+	mutating endpoint that answers GET can be fired by a link or an <img> on any page
+	the user opens -- for Create Sales Quote, one more order in the client's ERP per
+	visit, with the rollback discarding the OrderNbr that blocks the next one."""
+
+	def _refused_on_get(self, fn):
+		from frappe.handler import is_valid_http_method
+
+		request = MagicMock()
+		request.method = "GET"
+		with patch.object(frappe.local, "request", request, create=True):
+			with self.assertRaises(frappe.PermissionError):
+				is_valid_http_method(fn)
+		request.method = "POST"
+		with patch.object(frappe.local, "request", request, create=True):
+			is_valid_http_method(fn)  # the form script and the panel POST
+
+	def test_create_sales_quote_refuses_get(self):
+		from crm.integrations.acumatica.outbound import create_sales_quote_from_deal
+
+		self._refused_on_get(create_sales_quote_from_deal)
+
+	def test_test_connection_refuses_get(self):
+		from crm.integrations.acumatica.api import test_connection
+
+		self._refused_on_get(test_connection)
+
+	def test_dismissing_a_sync_issue_refuses_get(self):
+		from crm.fcrm.doctype.erpnext_crm_settings import erpnext_crm_settings
+		from crm.integrations.acumatica.api import dismiss_sync_issue
+
+		self._refused_on_get(dismiss_sync_issue)
+		self._refused_on_get(erpnext_crm_settings.dismiss_sync_issue)
 
 
 class TestFormScript(FrappeTestCase):

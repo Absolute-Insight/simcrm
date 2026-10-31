@@ -247,6 +247,7 @@ import { validateEmail } from '@/utils'
 import {
   useEvent,
   normalizeParticipants,
+  ensureParticipantContacts,
   buildEndTimeOptions,
   computeAutoToTime,
   validateTimeRange,
@@ -264,10 +265,19 @@ const { $dialog } = globalStore()
 
 const show = defineModel({ type: Boolean })
 
+// Only the list resource: the Events tab's own useEvent loads the child rows
+// the event arrives with.
 const { eventsResource } = useEvent({
   doctype: props.doctype,
   docname: props.docname,
+  participants: false,
+  notifications: false,
 })
+
+// Which child tables the event arrived with. One that has not loaded is left
+// out of the save rather than sent as the empty list shown in its place:
+// set_value replaces a table with what it is given.
+const loadedTables = ref({ event_participants: true, notifications: true })
 
 const title = ref(null)
 const error = ref(null)
@@ -320,6 +330,13 @@ onMounted(() => {
       end = dayjs().add(1, 'hour')
     }
 
+    if (props.event.name) {
+      loadedTables.value = {
+        event_participants: Array.isArray(props.event.event_participants),
+        notifications: Array.isArray(props.event.notifications),
+      }
+    }
+
     _event.value = {
       id: props.event.name || '',
       title: props.event.subject,
@@ -344,14 +361,28 @@ onMounted(() => {
   }
 })
 
+// The form shows one date. A timed event ends on it, or on the next day when
+// its end time is before its start time (it runs past midnight). Every date or
+// time edit re-derives the end date by this one rule, and validation and save
+// both read the result: a hidden end date left over from the seed (a new event
+// begun after 23:00) or from the date before used to be saved as is, a day
+// after what the form showed.
+function endDate(fromDate, fromTime, toTime) {
+  if (!fromDate || !fromTime || !toTime || toTime >= fromTime) return fromDate
+  return dayjs(fromDate).add(1, 'day').format('YYYY-MM-DD')
+}
+
 function updateDate(d) {
   _event.value.fromDate = d
-  _event.value.toDate = d
+  _event.value.toDate = _event.value.isFullDay
+    ? d
+    : endDate(d, _event.value.fromTime, _event.value.toTime)
 }
 
 function updateTime(t, fromTime = false) {
   error.value = null
   const prevTo = _event.value.toTime
+  const prevToDate = _event.value.toDate
   if (fromTime) {
     _event.value.fromTime = t
     if (!_event.value.toTime || _event.value.toTime <= t) {
@@ -360,8 +391,14 @@ function updateTime(t, fromTime = false) {
   } else {
     _event.value.toTime = t
   }
+  _event.value.toDate = endDate(
+    _event.value.fromDate,
+    _event.value.fromTime,
+    _event.value.toTime,
+  )
   const { valid, error: err } = validateTimeRange({
     fromDate: _event.value.fromDate,
+    toDate: _event.value.toDate,
     fromTime: _event.value.fromTime,
     toTime: _event.value.toTime,
     isFullDay: _event.value.isFullDay,
@@ -369,6 +406,7 @@ function updateTime(t, fromTime = false) {
   if (!valid) {
     error.value = err
     _event.value.toTime = prevTo
+    _event.value.toDate = prevToDate
   }
 }
 
@@ -382,6 +420,7 @@ function update() {
 
   const { valid, error: err } = validateTimeRange({
     fromDate: _event.value.fromDate,
+    toDate: _event.value.toDate,
     fromTime: _event.value.fromTime,
     toTime: _event.value.toTime,
     isFullDay: _event.value.isFullDay,
@@ -398,7 +437,7 @@ function update() {
   }
 }
 
-function createEvent() {
+async function createEvent() {
   eventsResource.insert.submit(
     {
       subject: _event.value.title,
@@ -411,7 +450,9 @@ function createEvent() {
       color: _event.value.color,
       reference_doctype: props.doctype,
       reference_docname: props.docname,
-      event_participants: _event.value.event_participants,
+      event_participants: await ensureParticipantContacts(
+        _event.value.event_participants,
+      ),
       notifications: _event.value.notifications,
     },
     {
@@ -423,7 +464,7 @@ function createEvent() {
   )
 }
 
-function updateEvent() {
+async function updateEvent() {
   if (!_event.value.id) {
     error.value = __('Event ID is required')
     return
@@ -442,8 +483,14 @@ function updateEvent() {
       color: _event.value.color,
       reference_doctype: props.doctype,
       reference_docname: props.docname,
-      event_participants: _event.value.event_participants,
-      notifications: _event.value.notifications,
+      ...(loadedTables.value.event_participants && {
+        event_participants: await ensureParticipantContacts(
+          _event.value.event_participants,
+        ),
+      }),
+      ...(loadedTables.value.notifications && {
+        notifications: _event.value.notifications,
+      }),
     },
     {
       onSuccess: async () => {

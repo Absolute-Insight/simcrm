@@ -11,10 +11,18 @@ caller's own row through a fixed field list, and nothing else.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import frappe
 from frappe.tests import IntegrationTestCase
+from frappe.utils.password import check_password, update_password
 
-from crm.api.user import get_linkable_email_accounts, get_profile, update_profile
+from crm.api.user import (
+	change_password,
+	get_linkable_email_accounts,
+	get_profile,
+	update_profile,
+)
 
 REP = "profile-rep@crmtest.test"
 OTHER = "profile-other@crmtest.test"
@@ -232,3 +240,47 @@ class OwnProfileEmailTest(IntegrationTestCase):
 		frappe.set_user("Guest")
 		with self.assertRaises(frappe.AuthenticationError):
 			get_linkable_email_accounts()
+
+
+class ChangePasswordTest(IntegrationTestCase):
+	"""Settings -> Change Password, against the site's password policy.
+
+	With the policy off frappe's strength check answers ``{}`` -- no verdict --
+	and that was read as a failed one, so every new password was "too weak".
+	"""
+
+	OLD = "Old-pass-for-profile-rep-91"
+	NEW = "Brand-new-profile-rep-pass-47"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		ensure_rep(REP, "Profile Rep")
+		update_password(REP, self.OLD, logout_all_sessions=False)
+		self.addCleanup(frappe.set_user, "Administrator")
+
+	def policy(self, enabled: int, minimum_score: int = 2):
+		real = frappe.get_system_settings
+		settings = {"enable_password_policy": enabled, "minimum_password_score": minimum_score}
+		return patch(
+			"frappe.get_system_settings",
+			side_effect=lambda key: settings[key] if key in settings else real(key),
+		)
+
+	def test_a_password_is_changed_when_the_policy_is_off(self):
+		frappe.set_user(REP)
+		with self.policy(enabled=0):
+			change_password(self.OLD, self.NEW)
+		self.assertEqual(check_password(REP, self.NEW), REP)
+
+	def test_a_blank_password_is_refused_when_the_policy_is_off(self):
+		frappe.set_user(REP)
+		with self.policy(enabled=0), self.assertRaises(frappe.ValidationError):
+			change_password(self.OLD, "")
+		self.assertEqual(check_password(REP, self.OLD), REP)
+
+	def test_a_weak_password_is_still_refused_when_the_policy_is_on(self):
+		frappe.set_user(REP)
+		with self.policy(enabled=1, minimum_score=4), self.assertRaises(frappe.ValidationError):
+			change_password(self.OLD, "abc")
+		self.assertEqual(check_password(REP, self.OLD), REP)

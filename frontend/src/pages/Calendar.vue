@@ -190,12 +190,12 @@ import { globalStore } from '@/stores/global'
 import { getSettings } from '@/stores/settings'
 import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
 import { isMobileView } from '@/composables/settings'
+import { ensureParticipantContacts } from '@/composables/event'
 import {
   createListResource,
   dayjs,
   DatePicker,
   Tooltip,
-  call,
   toast,
   usePageMeta,
 } from 'frappe-ui'
@@ -362,9 +362,15 @@ function buildEventPayload(_event) {
   }
 }
 
-function createEvent(_event) {
+async function createEvent(_event) {
   if (!_event?.title) return
-  events.insert.submit(buildEventPayload(_event), {
+  // Only the update path resolved typed attendees, so creating an event with
+  // one sent reference_docname "new", which the server refuses.
+  const payload = buildEventPayload(_event)
+  payload.event_participants = await ensureParticipantContacts(
+    payload.event_participants,
+  )
+  events.insert.submit(payload, {
     onSuccess: async (e) => {
       await updateUser(user)
       toast.success(__('Event created successfully'))
@@ -625,35 +631,6 @@ function getFromToTime(time) {
     `${pad(fromHour)}:${pad(fromMinute)}`,
     `${pad(toHour)}:${pad(fromMinute)}`,
   ]
-}
-
-async function ensureParticipantContacts(participants) {
-  if (!Array.isArray(participants) || !participants.length) return participants
-  const updated = []
-  for (const part of participants) {
-    const p = { ...part }
-    try {
-      if (
-        p.reference_doctype === 'Contact' &&
-        (!p.reference_docname || p.reference_docname === 'new') &&
-        p.email
-      ) {
-        const firstName = p.email.split('@')[0] || p.email
-        const contactDoc = await call('frappe.client.insert', {
-          doc: {
-            doctype: 'Contact',
-            first_name: firstName,
-            email_ids: [{ email_id: p.email, is_primary: 1 }],
-          },
-        })
-        if (contactDoc?.name) p.reference_docname = contactDoc.name
-      }
-    } catch (e) {
-      console.error('Failed creating contact for participant', p.email, e)
-    }
-    updated.push(p)
-  }
-  return updated
 }
 
 // Every other nav surface titles itself -- list views through ViewControls,

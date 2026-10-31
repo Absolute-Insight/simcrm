@@ -146,8 +146,13 @@ const addEmailRes = createResource({
     toast.success(__('Email account created successfully'))
     emit('update:step', 'email-list')
   },
-  onError: () => {
-    error.value = __('Failed to create email account: invalid credentials')
+  // The server says what is wrong -- an outgoing-only provider asked to read
+  // mail, a login the mail host refused. "Invalid credentials" for every one
+  // sent the admin after an API key that was fine.
+  onError: (err) => {
+    error.value =
+      err?.messages?.[0] ||
+      __('Failed to create email account: invalid credentials')
   },
 })
 

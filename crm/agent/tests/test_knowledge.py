@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from frappe.tests import UnitTestCase
 
-from crm.agent import knowledge
+from crm.agent import knowledge, prompting
 from crm.help import load_articles
 
 PLANNER = {
@@ -145,11 +145,38 @@ class BudgetTest(UnitTestCase):
 
 	def test_history_loses_its_oldest_turns_first(self):
 		messages = knowledge.build_assistant_messages(
-			"q", self.articles(count=1, size=100), self.history(), max_chars=8000
+			"q", self.articles(count=1, size=100), self.history(size=600), max_chars=8000
 		)
 		kept = " ".join(m["content"] for m in messages[1:-1])
 		self.assertNotIn("turn0", kept)
 		self.assertIn("turn5", kept)
+		# whole exchanges: room for three turns keeps two, not an answer whose
+		# question was dropped
+		self.assertEqual(messages[1]["role"], "user")
+
+	def test_what_the_builder_keeps_the_client_sends(self):
+		"""Audit L-36: the builder spent its budget on content alone, so the client's
+		fit_messages -- which also counts each message's role framing -- found the
+		prompt over and dropped the history the builder had kept for the follow-up."""
+		history = [
+			{"role": "user", "content": "What is deal health? " + "u" * 200},
+			{"role": "assistant", "content": "Deal health is a score. " + "a" * 600},
+		]
+		for budget in (600, 1000, 2000, 4096, 6000):
+			with self.subTest(budget=budget):
+				messages = knowledge.build_assistant_messages(
+					"And how is it computed?",
+					self.articles(),
+					history,
+					max_chars=prompting.tokens_to_chars(budget),
+				)
+				self.assertLessEqual(prompting.estimate_messages(messages), budget)
+				self.assertEqual(prompting.fit_messages(messages, budget), messages)
+		# the shipped defaults' window (8192 less 4096 for the reply) has room for both
+		messages = knowledge.build_assistant_messages(
+			"And how is it computed?", self.articles(), history, max_chars=prompting.tokens_to_chars(4096)
+		)
+		self.assertEqual(messages[1:-1], history)
 
 	def test_the_best_scoring_article_survives_and_the_rest_are_dropped(self):
 		"""``articles`` arrives ranked, so spending the budget in order spends it

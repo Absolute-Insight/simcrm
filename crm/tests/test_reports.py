@@ -144,6 +144,33 @@ class ReportsTest(IntegrationTestCase):
 		self.assertEqual(row["deals"], tile["count"])
 		self.assertEqual(row["total_value"], tile["total_value"])
 
+	def test_forecast_vs_actual_leaves_a_month_still_ahead_blank(self):
+		"""The dashboard sends ``actual: None`` for a month that has not happened;
+		the report turned it into 0, which reads as "closed nothing"."""
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Reports Forecast Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		next_month = frappe.utils.add_months(frappe.utils.get_first_day(frappe.utils.nowdate()), 1)
+		deal = frappe.get_doc(
+			{
+				"doctype": "CRM Deal",
+				"organization": org,
+				"deal_owner": USER,
+				"expected_deal_value": 10_000,
+				"probability": 50,
+				"exchange_rate": 1,
+				"expected_closure_date": next_month,
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True)
+
+		rows = get_report(
+			"forecast_vs_actual", str(next_month), str(frappe.utils.get_last_day(next_month)), user=USER
+		)["rows"]
+		self.assertEqual(rows, [{"month": str(next_month)[:7], "forecasted": 5_000, "actual": None}])
+
 	def test_a_sales_user_is_scoped_to_themselves(self):
 		self.addCleanup(frappe.set_user, frappe.session.user)
 		frappe.set_user(USER)

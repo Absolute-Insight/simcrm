@@ -4,7 +4,7 @@ from datetime import timedelta
 import frappe
 from frappe import _
 from frappe.query_builder import Case, DocType
-from frappe.query_builder.functions import Avg, Coalesce, Count, Date, DateFormat, IfNull, Sum
+from frappe.query_builder.functions import Avg, Coalesce, Count, Date, DateFormat, IfNull, NullIf, Sum
 from frappe.rate_limiter import rate_limit
 from frappe.utils import add_days, date_diff, flt, get_first_day, get_last_day, getdate, now_datetime, nowdate
 from pypika.functions import Function
@@ -50,10 +50,13 @@ def check_user_rate(scope: str, limit: int) -> None:
 		frappe.throw(_("Too many requests; try again in a minute."), frappe.TooManyRequestsError)
 
 
-# Custom function for TIMESTAMPDIFF (MySQL/MariaDB)
-class TimestampDiff(Function):
-	def __init__(self, unit, start, end, **kwargs):
-		super().__init__("TIMESTAMPDIFF", unit, start, end, **kwargs)
+# MariaDB's DATEDIFF(end, start): whole calendar days, the time of day ignored.
+# Not TIMESTAMPDIFF(DAY, ...): closed_date is a DATE, read as midnight, so a deal
+# created at 15:00 and won three days later measured 2 days -- every deal not
+# created at midnight read a day short, and a next-day win read as same-day.
+class DateDiff(Function):
+	def __init__(self, end, start, **kwargs):
+		super().__init__("DATEDIFF", end, start, **kwargs)
 
 
 # Charts that cannot honour a territory, and why. A filter that quietly did not
@@ -92,6 +95,17 @@ def blank_label() -> str:
 	the first request.
 	"""
 	return _("Unassigned")
+
+
+def blank_bucket(column):
+	"""``column`` with NULL and ``''`` folded into the one :func:`blank_label` bucket.
+
+	Group on this, not on the raw column. Frappe stores a field that was set and
+	then cleared as ``''`` and one that was never set as NULL; ``IfNull`` only
+	sees the second, so grouping on the column split one blank bucket into an
+	"Unassigned" bar and a nameless one beside it.
+	"""
+	return Coalesce(NullIf(column, ""), blank_label())
 
 
 def in_territory(table, territory: str | None):
@@ -692,9 +706,7 @@ def get_average_time_to_close_a_lead(
 	prev_cond = (Deal.closed_date >= prev_from_date) & (Deal.closed_date < prev_to_date)
 
 	# Calculate time difference from lead/deal creation to deal closure
-	time_diff = TimestampDiff(
-		frappe.qb.terms.LiteralValue("DAY"), Coalesce(Lead.creation, Deal.creation), Deal.closed_date
-	)
+	time_diff = DateDiff(Deal.closed_date, Date(Coalesce(Lead.creation, Deal.creation)))
 
 	# Build query
 	query = (
@@ -758,7 +770,7 @@ def get_average_time_to_close_a_deal(
 	prev_cond = (Deal.closed_date >= prev_from_date) & (Deal.closed_date < prev_to_date)
 
 	# Calculate time difference from deal creation to deal closure
-	time_diff = TimestampDiff(frappe.qb.terms.LiteralValue("DAY"), Deal.creation, Deal.closed_date)
+	time_diff = DateDiff(Deal.closed_date, Date(Deal.creation))
 
 	# Build query
 	query = (
@@ -837,13 +849,11 @@ def get_sales_trend(
 	# Build deals query
 	deals_query = (
 		frappe.qb.from_(Deal)
-		.join(Status)
-		.on(Deal.status == Status.name)
 		.select(
 			Date(Deal.creation).as_("date"),
 			frappe.qb.terms.ValueWrapper(0).as_("leads"),
 			Count("*").as_("deals"),
-			Sum(Case().when(Status.type == "Won", 1).else_(0)).as_("won_deals"),
+			frappe.qb.terms.ValueWrapper(0).as_("won_deals"),
 		)
 		.where(Date(Deal.creation).between(from_date, to_date))
 	)
@@ -854,8 +864,31 @@ def get_sales_trend(
 	deals_query = apply_territory(deals_query, Deal, territory)
 	deals_query = scope_deals(deals_query).groupby(Date(Deal.creation))
 
+	# Wins on the day they were won, which is how the Won deals tile beside this
+	# chart counts them. Summed into the creation-dated arm above, a win landed on
+	# the day the deal was opened: a deal opened last quarter and won today never
+	# reached the chart, and every win rewrote a day already plotted.
+	wins_query = (
+		frappe.qb.from_(Deal)
+		.join(Status)
+		.on(Deal.status == Status.name)
+		.select(
+			Date(Deal.closed_date).as_("date"),
+			frappe.qb.terms.ValueWrapper(0).as_("leads"),
+			frappe.qb.terms.ValueWrapper(0).as_("deals"),
+			Count("*").as_("won_deals"),
+		)
+		.where((Status.type == "Won") & Deal.closed_date.between(from_date, to_date))
+	)
+
+	if user:
+		wins_query = wins_query.where(belongs_to(Deal, user, "CRM Deal"))
+
+	wins_query = apply_territory(wins_query, Deal, territory)
+	wins_query = scope_deals(wins_query).groupby(Date(Deal.closed_date))
+
 	# Combine with UNION ALL and aggregate by date
-	union_query = leads_query.union_all(deals_query)
+	union_query = leads_query.union_all(deals_query).union_all(wins_query)
 
 	# Wrap in outer query to aggregate by date
 	daily = (
@@ -1371,9 +1404,9 @@ def get_leads_by_source(
 
 	query = (
 		frappe.qb.from_(CRMLead)
-		.select(IfNull(CRMLead.source, blank_label()).as_("source"), Count("*").as_("count"))
+		.select(blank_bucket(CRMLead.source).as_("source"), Count("*").as_("count"))
 		.where(Date(CRMLead.creation).between(from_date, to_date))
-		.groupby(CRMLead.source)
+		.groupby(blank_bucket(CRMLead.source))
 		.orderby(Count("*"), order=frappe.qb.desc)
 	)
 
@@ -1417,9 +1450,9 @@ def get_deals_by_source(
 
 	query = (
 		frappe.qb.from_(CRMDeal)
-		.select(IfNull(CRMDeal.source, blank_label()).as_("source"), Count("*").as_("count"))
+		.select(blank_bucket(CRMDeal.source).as_("source"), Count("*").as_("count"))
 		.where(Date(CRMDeal.creation).between(from_date, to_date))
-		.groupby(CRMDeal.source)
+		.groupby(blank_bucket(CRMDeal.source))
 		.orderby(Count("*"), order=frappe.qb.desc)
 	)
 
@@ -1464,12 +1497,12 @@ def get_deals_by_territory(
 	query = (
 		frappe.qb.from_(CRMDeal)
 		.select(
-			IfNull(CRMDeal.territory, blank_label()).as_("territory"),
+			blank_bucket(CRMDeal.territory).as_("territory"),
 			Count("*").as_("deals"),
 			Sum(Coalesce(CRMDeal.deal_value, 0) * IfNull(CRMDeal.exchange_rate, 1)).as_("value"),
 		)
 		.where(Date(CRMDeal.creation).between(from_date, to_date))
-		.groupby(CRMDeal.territory)
+		.groupby(blank_bucket(CRMDeal.territory))
 		.orderby(Count("*"), order=frappe.qb.desc)
 		.orderby(
 			Sum(Coalesce(CRMDeal.deal_value, 0) * IfNull(CRMDeal.exchange_rate, 1)), order=frappe.qb.desc
@@ -1538,12 +1571,12 @@ def get_deals_by_industry(
 	query = (
 		frappe.qb.from_(CRMDeal)
 		.select(
-			IfNull(CRMDeal.industry, blank_label()).as_("industry"),
+			blank_bucket(CRMDeal.industry).as_("industry"),
 			Count("*").as_("deals"),
 			value.as_("value"),
 		)
 		.where(Date(CRMDeal.creation).between(from_date, to_date))
-		.groupby(CRMDeal.industry)
+		.groupby(blank_bucket(CRMDeal.industry))
 		.orderby(Count("*"), order=frappe.qb.desc)
 		.orderby(value, order=frappe.qb.desc)
 	)
@@ -1591,20 +1624,21 @@ def get_deals_by_company_size(
 	# CASE band -> declared position, so the x axis runs small to large. Unset
 	# lands after every real band rather than at the front.
 	bands = company_size_bands()
+	size = blank_bucket(CRMDeal.no_of_employees)
 	rank = Case()
 	for index, band in enumerate(bands):
-		rank = rank.when(CRMDeal.no_of_employees == band, index)
+		rank = rank.when(size == band, index)
 	rank = rank.else_(len(bands))
 
 	query = (
 		frappe.qb.from_(CRMDeal)
 		.select(
-			IfNull(CRMDeal.no_of_employees, blank_label()).as_("company_size"),
+			size.as_("company_size"),
 			Count("*").as_("deals"),
 			value.as_("value"),
 		)
 		.where(Date(CRMDeal.creation).between(from_date, to_date))
-		.groupby(CRMDeal.no_of_employees)
+		.groupby(size)
 		.orderby(rank)
 	)
 
@@ -1614,14 +1648,8 @@ def get_deals_by_company_size(
 	query = apply_territory(query, CRMDeal, territory)
 	query = scope_deals(query)
 
-	rows = query.run(as_dict=True) or []
-	# An empty string is a stored "no answer" and IfNull cannot see it.
-	for row in rows:
-		if not row.get("company_size"):
-			row["company_size"] = blank_label()
-
 	return {
-		"data": rows,
+		"data": query.run(as_dict=True) or [],
 		"title": _("Deals by company size"),
 		"subtitle": _("Where the pipeline sits between SMB and enterprise"),
 		"xAxis": {"title": _("Employees"), "key": "company_size", "type": "category"},
@@ -1661,12 +1689,13 @@ def get_deals_by_salesperson(
 		.left_join(User)
 		.on(User.name == CRMDeal.deal_owner)
 		.select(
-			IfNull(IfNull(User.full_name, CRMDeal.deal_owner), blank_label()).as_("salesperson"),
+			Coalesce(NullIf(User.full_name, ""), blank_bucket(CRMDeal.deal_owner)).as_("salesperson"),
 			Count("*").as_("deals"),
 			Sum(Coalesce(CRMDeal.deal_value, 0) * IfNull(CRMDeal.exchange_rate, 1)).as_("value"),
 		)
 		.where(Date(CRMDeal.creation).between(from_date, to_date))
-		.groupby(CRMDeal.deal_owner)
+		# NULL and '' are both "nobody", and must be one bar rather than two
+		.groupby(NullIf(CRMDeal.deal_owner, ""))
 		.orderby(Count("*"), order=frappe.qb.desc)
 		.orderby(
 			Sum(Coalesce(CRMDeal.deal_value, 0) * IfNull(CRMDeal.exchange_rate, 1)), order=frappe.qb.desc
@@ -1737,6 +1766,14 @@ def get_deal_status_change_counts(
 	deal entered the funnel; the ``Leads`` row above it counts leads created in the
 	same window.
 
+	A stage is reached when a log row names it at either end, ``from`` or ``to``:
+	``add_status_change_log`` writes the status a deal is created in only into
+	its first row's ``from``, so counting ``to`` alone never saw a deal's entry
+	stage -- nor any deal created straight into Won, which is every win the
+	Acumatica import writes. Lost stages are left to the funnel's own terminal
+	row, which counts the deals that leaked out; counting them here as well put
+	two Lost bars on one chart.
+
 	Returns:
 	[
 	  {"stage": "Qualification", "count": 120},
@@ -1754,17 +1791,19 @@ def get_deal_status_change_counts(
 		.join(CRMDeal)
 		.on(CRMStatusChangeLog.parent == CRMDeal.name)
 		.join(TargetStatus)
-		.on(CRMStatusChangeLog.to == TargetStatus.name)
+		# either end of a log row: ``from`` is a reserved word, hence the subscript.
+		# COUNT DISTINCT below keeps a deal at one per stage, however many rows name it.
+		.on((CRMStatusChangeLog["from"] == TargetStatus.name) | (CRMStatusChangeLog.to == TargetStatus.name))
 		.select(
-			CRMStatusChangeLog.to.as_("stage"),
+			TargetStatus.name.as_("stage"),
 			Count(CRMStatusChangeLog.parent).distinct().as_("count"),
 		)
 		.where(
-			(CRMStatusChangeLog.to.isnotnull())
-			& (CRMStatusChangeLog.to != "")
+			(CRMStatusChangeLog.parenttype == "CRM Deal")
+			& (IfNull(TargetStatus.type, "") != "Lost")
 			& (Date(CRMDeal.creation).between(from_date, to_date))
 		)
-		.groupby(CRMStatusChangeLog.to, TargetStatus.position)
+		.groupby(TargetStatus.name, TargetStatus.position)
 		.orderby(TargetStatus.position)
 	)
 
@@ -2032,7 +2071,9 @@ def plan_adherence(
 		row["planned"] = row["planned"] or 0
 		row["done"] = row["done"] or 0
 		row["missed"] = row["missed"] or 0
-		row["adherence"] = round(row["done"] / row["planned"] * 100) if row["planned"] else 0
+		# nothing due is no adherence at all, not 0% of it -- the by-rep rows below
+		# already say so with None, and the tile read 0% for a rep with no plan
+		row["adherence"] = round(row["done"] / row["planned"] * 100) if row["planned"] else None
 
 	# the plan's own cancellations plus the records', minus the calendar event
 	# that records a plan cancellation -- one cancelled visit is one cancellation
@@ -2094,12 +2135,18 @@ def get_plan_adherence(
 	days = date_diff(to_date, from_date) + 1
 	previous = plan_adherence(add_days(from_date, -days), add_days(from_date, -1), user)[0]
 
+	# A period with nothing due has no adherence, the way a rep with no quota has
+	# no attainment: ``None`` draws an empty ring, and there is no movement to
+	# report against a side that has no value.
+	value, before = current["adherence"], previous["adherence"]
 	return {
 		"title": _("Plan adherence"),
-		"tooltip": _("Planned activities completed, out of those already due"),
-		"value": current["adherence"],
+		"tooltip": _("Planned activities completed, out of those already due")
+		if value is not None
+		else _("Nothing planned was due in this period"),
+		"value": value,
 		"suffix": "%",
-		"delta": current["adherence"] - previous["adherence"],
+		"delta": value - before if value is not None and before is not None else 0,
 		"deltaSuffix": "%",
 	}
 
@@ -2833,7 +2880,10 @@ def take_forecast_snapshot():
 	rather than derived. A rerun on the same day updates in place.
 	"""
 	today = nowdate()
-	from_date, to_date = frappe.utils.add_months(today, -1), frappe.utils.add_months(today, 6)
+	# From the first of last month, not a month back from today: a mid-month run
+	# otherwise stored only the tail of the month just closed as its actual.
+	from_date = get_first_day(frappe.utils.add_months(today, -1))
+	to_date = frappe.utils.add_months(today, 6)
 
 	written = 0
 	for scope, who, kwargs in forecast_snapshot_scopes():

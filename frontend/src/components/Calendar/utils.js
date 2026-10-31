@@ -44,3 +44,30 @@ export function handleIntervalChange(notification) {
     if (notification.before > 4) notification.before = 4
   }
 }
+
+const MINUTES_IN = { minutes: 1, hours: 60, days: 1440, weeks: 10080 }
+
+/**
+ * Turn a timed event's reminder into an all-day one, in place, when the event
+ * is switched to All Day. An all-day reminder is "N days (or weeks) before, at
+ * a time of day"; minutes and hours have no meaning there, and the server
+ * honours a time of day only for days and weeks.
+ *
+ * Rounded up to whole days and clamped as handleIntervalChange would: "10
+ * minutes before" is 1 day before at 08:00, not the 10 days the bare relabel
+ * that this replaces made of it.
+ */
+export function toAllDayNotification(notification) {
+  if (
+    notification.interval === 'minutes' ||
+    notification.interval === 'hours'
+  ) {
+    const minutes =
+      (notification.before || 0) * MINUTES_IN[notification.interval]
+    notification.before = Math.ceil(minutes / MINUTES_IN.days)
+    notification.interval = 'days'
+    handleIntervalChange(notification)
+  }
+  if (!notification.time) notification.time = '08:00'
+  return notification
+}

@@ -151,7 +151,9 @@ const props = defineProps({
   doctype: { type: String, default: '' },
 })
 
-const condition = reactive(props.condition)
+// Follows the prop rather than wrapping it once at setup: a row reused for
+// another condition went on showing and editing the one it mounted with.
+const condition = computed(() => reactive(props.condition))
 
 const dropdownOptions = computed(() => {
   const options = []
@@ -208,16 +210,16 @@ function toggleConjunction() {
 }
 
 const updateField = (field) => {
-  condition[0] = field?.fieldname
+  condition.value[0] = field?.fieldname
   resetConditionValue()
 }
 
 const resetConditionValue = () => {
-  condition[2] = ''
+  condition.value[2] = ''
 }
 
 function getValueControl() {
-  const [field, operator] = condition
+  const [field, operator] = condition.value
   if (!field) return null
   const fieldData = filterableFields.data?.find((f) => f.fieldname == field)
   if (!fieldData) return null
@@ -255,20 +257,20 @@ function getValueControl() {
     return h(Link, {
       class: 'form-control',
       doctype: options,
-      value: condition[2],
+      value: condition.value[2],
     })
   } else if (typeNumber.includes(fieldtype)) {
     return h(FormControl, { type: 'number' })
   } else if (typeDate.includes(fieldtype) && operator == 'between') {
-    return h(DateRangePicker, { value: condition[2], iconLeft: '' })
+    return h(DateRangePicker, { value: condition.value[2], iconLeft: '' })
   } else if (typeDate.includes(fieldtype)) {
     return h(fieldtype == 'Date' ? DatePicker : DateTimePicker, {
-      value: condition[2],
+      value: condition.value[2],
       iconLeft: '',
     })
   } else if (typeRating.includes(fieldtype)) {
     return h(Rating, {
-      modelValue: condition[2] || 0,
+      modelValue: condition.value[2] || 0,
       class: 'truncate',
       'update:modelValue': (v) => updateValue(v),
     })
@@ -278,11 +280,15 @@ function getValueControl() {
 }
 
 function updateValue(value) {
-  value = value.target ? value.target.value : value
-  if (condition[1] === 'between') {
-    condition[2] = [value.split(',')[0], value.split(',')[1]]
+  value = value?.target ? value.target.value : value
+  if (condition.value[1] === 'between') {
+    // frappe-ui v1's DateRangePicker emits [from, to], and [] once cleared;
+    // the old one emitted "from,to". An incomplete range is left unset.
+    const range = Array.isArray(value) ? value : String(value ?? '').split(',')
+    condition.value[2] =
+      range.length === 2 && range[0] && range[1] ? [range[0], range[1]] : ''
   } else {
-    condition[2] = isNaN(value) ? value : Number(value)
+    condition.value[2] = isNaN(value) ? value : Number(value)
   }
 }
 
@@ -291,13 +297,13 @@ function getSelectOptions(options) {
 }
 
 function updateOperator() {
-  condition[2] = getDefaultValue(condition[0])
+  condition.value[2] = getDefaultValue(condition.value[0])
   resetConditionValue()
 }
 
 function getOperators() {
   let options = []
-  const field = condition[0]
+  const field = condition.value[0]
   if (!field) return options
   const fieldData = filterableFields.data?.find((f) => f.fieldname == field)
   if (!fieldData) return options
@@ -404,8 +410,8 @@ function getOperators() {
       ],
     )
   }
-  const op = options.find((o) => o.value == condition[1])
-  condition[1] = op?.value || options[0].value
+  const op = options.find((o) => o.value == condition.value[1])
+  condition.value[1] = op?.value || options[0].value
   return options
 }
 

@@ -374,6 +374,7 @@ import { usersStore } from '@/stores/users'
 import { ALL_REPS, useVisibleReps } from '@/composables/visibleReps'
 import { formatRange, getLastXDays, parseDateRange } from '@/utils/dashboard'
 import { csvFileName, formatCell, toCsv } from '@/utils/reportExport'
+import { latestOnly } from '@/utils/latestOnly'
 import { quiet } from '@/utils/quiet'
 import {
   createResource,
@@ -597,6 +598,17 @@ const requestKey = computed(() =>
 )
 const loadedKey = ref('')
 
+/* A payload is stamped with the key it was *requested* for. Stamping it with
+   the key current when it arrived passed a slow earlier answer -- another
+   report, or the all-reps rows -- off as the newly chosen selection's. Each
+   resource answers only its latest request (latestOnly), so the key captured
+   at its latest fetch is the one its answer belongs to. The two resources
+   share loadedKey, so an answer stamps it only while its selection is still
+   the one chosen: a late answer from the resource no longer on screen
+   otherwise unstamped the rows that are, and left a skeleton up for good. */
+let reportKey = ''
+let builtKey = ''
+
 const report = createResource({
   url: 'crm.api.reports.get_report',
   makeParams: () => ({
@@ -606,9 +618,13 @@ const report = createResource({
     user: scopeUser.value || null,
     territory: scopeTerritory.value || null,
   }),
+  resourceFetcher: latestOnly(),
   auto: false,
+  onFetch() {
+    reportKey = requestKey.value
+  },
   onSuccess() {
-    loadedKey.value = requestKey.value
+    if (reportKey === requestKey.value) loadedKey.value = reportKey
   },
 })
 
@@ -627,9 +643,13 @@ const builtReport = createResource({
     user: scopeUser.value || null,
     territory: scopeTerritory.value || null,
   }),
+  resourceFetcher: latestOnly(),
   auto: false,
+  onFetch() {
+    builtKey = requestKey.value
+  },
   onSuccess() {
-    loadedKey.value = requestKey.value
+    if (builtKey === requestKey.value) loadedKey.value = builtKey
   },
 })
 
