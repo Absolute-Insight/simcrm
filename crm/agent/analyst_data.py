@@ -148,7 +148,8 @@ def _run_tables(plan: dict, erp: str | None, deadline: float | None, today: date
 		if key in _HISTORY_TABLES:
 			rows, coverage = analyst_facts.trim_to_coverage(rows, starts)
 			note = f"{note} {coverage}".strip()
-		table = _table(key, metric, "CRM", rows, from_date, to_date, note)
+		window = _history(from_date, to_date) if key == "growth_rates" else (from_date, to_date)
+		table = _table(key, metric, "CRM", rows, *window, note)
 		if key in _ROW_LISTS:
 			# the model gets the counting done for it and the head of the list; the
 			# screen gets every row (#237)
@@ -344,6 +345,7 @@ def _won_by_rep(from_date, to_date):
 			"won_deals": row["won_deals"],
 			"closed_deals": row["won_deals"] + row["lost_deals"],
 			"win_rate_pct": row["win_rate"],
+			"unassigned": not row["owner"],
 		}
 		for row in won_by_salesperson(from_date, to_date)
 	]

@@ -347,6 +347,7 @@ class WonByRepTest(IntegrationTestCase):
 					"won_deals": 1,
 					"closed_deals": 1,
 					"win_rate_pct": 100,
+					"unassigned": False,
 				},
 				{
 					"rep": "a@example.com",
@@ -354,6 +355,7 @@ class WonByRepTest(IntegrationTestCase):
 					"won_deals": 1,
 					"closed_deals": 2,
 					"win_rate_pct": 50,
+					"unassigned": False,
 				},
 			],
 		)
@@ -396,7 +398,14 @@ class WonByRepTest(IntegrationTestCase):
 		self._lost("b@example.com", 800, "2019-05-03")
 		self.assertEqual(
 			self._rows()[1],
-			{"rep": "b@example.com", "won": 0.0, "won_deals": 0, "closed_deals": 1, "win_rate_pct": 0},
+			{
+				"rep": "b@example.com",
+				"won": 0.0,
+				"won_deals": 0,
+				"closed_deals": 1,
+				"win_rate_pct": 0,
+				"unassigned": False,
+			},
 		)
 
 	def test_the_ranking_states_the_measure_and_the_note_defines_it(self):
@@ -405,6 +414,21 @@ class WonByRepTest(IntegrationTestCase):
 			table = analyst_data.run_plan(WON_BY_REP_PLAN, None)[0]
 		self.assertTrue(table["facts"][0].startswith("Ranked by won value in the period:"))
 		self.assertIn("Win rate", table["note"])
+
+	def test_the_nobody_row_is_marked_and_a_growth_table_states_its_real_window(self):
+		self._won("a@example.com", 100, "2019-05-01")
+		self._won(None, 900, "2019-05-02")
+		rows = self._rows()
+		self.assertEqual(rows[0]["rep"], "a@example.com")
+		self.assertTrue(rows[-1]["unassigned"])
+		self.assertFalse(rows[0]["unassigned"])
+		with mock.patch.object(analyst_data, "data_start", return_value="2019-01"):
+			growth = analyst_data.run_plan(
+				{"metrics": ["growth_rates"], "from_date": "2099-01-01", "to_date": "2099-02-01"}, None
+			)[0]
+		self.assertEqual(
+			growth["period"]["to"], frappe.utils.nowdate(), "the window it read, not the one it was asked"
+		)
 
 	def test_a_ranked_table_runs_in_the_order_its_ranking_reads(self):
 		"""Prod's rows ran by deal count while its text ranked by value."""

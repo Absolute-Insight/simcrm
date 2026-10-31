@@ -471,29 +471,37 @@ _MOST_SOLD = re.compile(
 	r"\b(?:most|more)\b.*\b(?:business|sales|revenue|money)\b|"
 	r"\b(?:sold|sell|sells|closed|close|closes|won|win|wins)\b.*\b(?:most|more)\b"
 )
-_REP_WORDS = re.compile(
-	r"\b(?:reps?|salespersons?|salespeople|sales people|salesman|salesmen|sellers?|"
-	r"performers?|teams?|staff)\b"
-)
-# "who" is about people only until the question names something else to be best at
+# Says reps outright, so nothing else in the question can make it about something else.
+_REP_NOUNS = re.compile(r"\b(?:reps?|salespersons?|salespeople|sales people|salesman|salesmen)\b")
+# Only people, not necessarily reps: these lose to anything else worth being best at.
+_MAYBE_REPS = re.compile(r"\b(?:who|teams?|staff)\b")
+# Selling is what only a rep does, whatever was sold, to whomever, wherever.
+_WHO_SOLD = re.compile(r"\bwho\b.*\b(?:sold|sells|closed|closes|won|wins)\b.*\b(?:most|more|best)\b")
 _NOT_REPS = re.compile(
 	r"\b(?:customers?|clients?|accounts?|organi[sz]ations?|compan(?:y|ies)|contacts?|leads?|"
-	r"sources?|campaigns?|industr(?:y|ies)|sectors?|territor(?:y|ies)|regions?|products?)\b"
+	r"sources?|campaigns?|industr(?:y|ies)|sectors?|territor(?:y|ies)|regions?|products?|"
+	r"debtors?|payers?|suppliers?|vendors?|competitors?|owes?|owed|spends?|buys?|pays?|"
+	r"(?<!this )(?<!last )(?<!next )(?:months?|quarters?|years?))\b"
 )
 # Reps compared on what they hold rather than what they brought in.
-_PIPELINE_ASK = re.compile(
-	r"\bpipeline\b|\bopen deals?\b|\bworkload\b|\bdeals (?:by|per)\b|\bhow many deals\b|"
-	r"\bnew deals\b|\bdeals created\b"
-)
+_HOLDINGS = r"\bpipeline\b|\bopen deals?\b|\bworkload\b|\bhow many deals\b|\bnew deals\b|\bdeals created\b"
+_DEALS_BY = r"\bdeals (?:by|per)\b"
+_PIPELINE_ASK = re.compile(f"{_HOLDINGS}|{_DEALS_BY}")
+_ASKS_RANK = re.compile(r"\brank\w*")
 _QUOTA_ASK = re.compile(r"\b(?:quotas?|targets?|attainment)\b")
 
 
 def ranks_reps(question: str) -> bool:
 	"""Whether ``question`` asks who sells best, as opposed to who holds the most."""
 	text = (question or "").lower()
-	if _PIPELINE_ASK.search(text) or not (_RANKING_WORDS.search(text) or _MOST_SOLD.search(text)):
+	if re.search(_HOLDINGS, text) or (re.search(_DEALS_BY, text) and not _ASKS_RANK.search(text)):
 		return False
-	return bool(_REP_WORDS.search(text) or (re.search(r"\bwho\b", text) and not _NOT_REPS.search(text)))
+	if _WHO_SOLD.search(text):
+		return True
+	ranking = bool(_RANKING_WORDS.search(text) or _MOST_SOLD.search(text))
+	if _REP_NOUNS.search(text):
+		return ranking
+	return ranking and bool(_MAYBE_REPS.search(text)) and not _NOT_REPS.search(text)
 
 
 def fallback_plan(question: str, available: list[str]) -> list[str]:
@@ -541,12 +549,12 @@ def normalise_plan(plan, available: list[str], today: date, question: str = "") 
 	for key in requested:
 		if key in available and key not in metrics:
 			metrics.append(key)
-	ranking = ranks_reps(question) and "won_by_rep" in available
-	if ranking:
-		metrics = _hold_ranking_to_won_value(question, metrics)
-	elif not metrics:
+	if not metrics and not ranks_reps(question):
 		metrics = fallback_plan(question, available)
 	metrics = metrics[:MAX_METRICS]
+	# after the cap: the table the code insists on does not cost one the plan chose
+	if ranks_reps(question) and "won_by_rep" in available:
+		metrics = _hold_ranking_to_won_value(question, metrics)
 
 	default_to = today
 	default_from = add_months(today, -DEFAULT_PERIOD_MONTHS)

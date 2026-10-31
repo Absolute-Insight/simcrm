@@ -182,6 +182,44 @@ class FallbackPlanTest(UnitTestCase):
 			with self.subTest(question=question):
 				self.assertFalse(analyst.ranks_reps(question))
 
+	def test_a_question_that_is_not_about_reps_is_not_forced_to_the_rep_table(self):
+		for question in (
+			"Which products are the best sellers?",
+			"What are the top products for the sales team?",
+			"Who are the best performers among our customers?",
+			"Who owes us the most money?",
+			"Who are our top debtors?",
+			"Who spends the most money with us?",
+			"Who is our top supplier?",
+			"Who is the top competitor?",
+			"Which lead source performs best for the team?",
+			"What was the best month for the team?",
+		):
+			with self.subTest(question=question):
+				self.assertFalse(analyst.ranks_reps(question))
+
+	def test_a_question_about_reps_is_recognised_whatever_they_sold(self):
+		for question in (
+			"Who sold the most in each territory?",
+			"Who sold the most products?",
+			"Who closed the most leads?",
+			"Rank deals by rep",
+			"Who are the best reps for our largest customers?",
+			"Who were our best people this month?",
+		):
+			with self.subTest(question=question):
+				self.assertTrue(analyst.ranks_reps(question))
+
+	def test_the_forced_table_does_not_cost_a_chosen_one(self):
+		chosen = ["won_revenue_by_month", "pipeline_by_stage", "sales_trend", "leads_by_source"]
+		plan = analyst.normalise_plan(
+			SimpleNamespace(metrics=chosen, from_date="", to_date=""),
+			CRM_KEYS,
+			TODAY,
+			question="Who are our best salespeople?",
+		)
+		self.assertEqual(plan["metrics"], ["won_by_rep", *chosen])
+
 	def test_the_planner_is_told_which_rep_table_is_which(self):
 		system = analyst.build_plan_messages(
 			"who is best?", analyst.catalogue_entries(["won_by_rep", "deals_by_salesperson"]), TODAY

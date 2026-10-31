@@ -1742,7 +1742,8 @@ def won_by_salesperson(
 ) -> list[dict]:
 	"""What each rep closed in the period: won value and deals, lost deals, win rate.
 
-	``[{salesperson, won_value, won_deals, lost_deals, win_rate}]``, best first.
+	``[{owner, salesperson, won_value, won_deals, lost_deals, win_rate}]``, best
+	first. ``owner`` is ``None`` on the unowned row.
 
 	Per deal owner, so every deal counts once and the reps add up to
 	:func:`actual_by_month` over the same period -- unlike
@@ -1800,7 +1801,13 @@ def won_by_salesperson(
 		for row in scope_deals(query).run(as_dict=True):
 			entry = rows.setdefault(
 				row.owner,
-				{"salesperson": row.salesperson, "won_value": 0.0, "won_deals": 0, "lost_deals": 0},
+				{
+					"owner": row.owner,
+					"salesperson": row.salesperson,
+					"won_value": 0.0,
+					"won_deals": 0,
+					"lost_deals": 0,
+				},
 			)
 			entry[field] = row.deals
 			entry["won_value"] = flt(row.get("value")) or entry["won_value"]
