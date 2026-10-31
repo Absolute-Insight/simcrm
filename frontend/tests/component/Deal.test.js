@@ -212,16 +212,25 @@ vi.mock('@/utils', () => ({
   startCase: (s) => s,
 }))
 vi.mock('@/utils/view', () => ({ getView: () => null }))
+// A stand-in route the page can be mounted over directly, unless a test
+// installs a real router (S.router), which then answers instead.
 vi.mock('vue-router', async (importOriginal) => {
   const { reactive } = await import('vue')
+  const real = await importOriginal()
   S.route = reactive({ hash: '', query: {}, params: {} })
   return {
-    ...(await importOriginal()),
-    useRoute: () => S.route,
-    useRouter: () => ({ push: (to) => (S.route.hash = to.hash || '') }),
+    ...real,
+    useRoute: () => (S.router ? real.useRoute() : S.route),
+    useRouter: () =>
+      S.router
+        ? real.useRouter()
+        : { push: (to) => (S.route.hash = to.hash || '') },
   }
 })
 
+const { createRouter, createMemoryHistory, RouterView } = await import(
+  'vue-router'
+)
 const { setConfig } = await import('frappe-ui')
 const Deal = (await import('@/pages/Deal.vue')).default
 const Lead = (await import('@/pages/Lead.vue')).default
@@ -241,27 +250,45 @@ async function flush() {
   }
 }
 
+const stubs = {
+  Badge: { render: () => null },
+  ErrorMessage: { render: () => null },
+  Button: defineComponent({
+    inheritAttrs: false,
+    setup:
+      (_, { attrs }) =>
+      () =>
+        h('button', {
+          'data-tooltip': attrs.tooltip,
+          'data-label': attrs.label,
+          onClick: attrs.onClick,
+        }),
+  }),
+}
+
 let page
 async function visit(Page, props) {
   S.children = {}
-  page = mount(Page, {
-    props,
-    stubs: {
-      Badge: { render: () => null },
-      ErrorMessage: { render: () => null },
-      Button: defineComponent({
-        inheritAttrs: false,
-        setup:
-          (_, { attrs }) =>
-          () =>
-            h('button', {
-              'data-tooltip': attrs.tooltip,
-              'data-label': attrs.label,
-              onClick: attrs.onClick,
-            }),
-      }),
-    },
+  page = mount(Page, { props, stubs })
+  await flush()
+}
+
+// The app's own wiring: App.vue keys <router-view> on the full path, which
+// carries the tab's hash, so a tab change remounts the whole record page.
+async function visitRouted(path) {
+  S.children = {}
+  S.router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/deals/:dealId', name: 'Deal', component: Deal, props: true },
+      { path: '/leads/:leadId', name: 'Lead', component: Lead, props: true },
+    ],
   })
+  await S.router.push(path)
+  const App = defineComponent({
+    render: () => h(RouterView, { key: S.router.currentRoute.value.fullPath }),
+  })
+  page = mount(App, { stubs, plugins: [S.router] })
   await flush()
 }
 
@@ -285,12 +312,13 @@ afterEach(() => {
   S.dialled.length = 0
   S.composers.length = 0
   S.route.hash = ''
+  S.router = null
 })
 
 describe.each([
-  ['Deal', Deal, { dealId: 'CRM-DEAL-1' }],
-  ['Lead', Lead, { leadId: 'CRM-LEAD-1' }],
-])('%s', (name, Page, props) => {
+  ['Deal', Deal, { dealId: 'CRM-DEAL-1' }, '/deals/CRM-DEAL-1'],
+  ['Lead', Lead, { leadId: 'CRM-LEAD-1' }, '/leads/CRM-LEAD-1'],
+])('%s', (name, Page, props, path) => {
   it('offers the status dropdown without a form script', async () => {
     await visit(Page, props)
     const header = S.children.Dropdown?.find((d) => d.align === 'end')
@@ -299,6 +327,34 @@ describe.each([
 
   it.each(['Data', 'Notes'])(
     '"Send an Email" from the %s tab opens the composer on the Emails tab',
+    async (start) => {
+      await visitRouted(`${path}#${start.toLowerCase()}`)
+      const before = page.el.firstElementChild
+      button('Send an Email').click()
+      await flush()
+      expect(S.router.currentRoute.value.hash).toBe('#emails')
+      expect(page.el.firstElementChild).not.toBe(before) // remounted
+      expect(activeTab()).toBe('Emails')
+      const live = S.composers.filter((c) => c.live)
+      expect(live.map((c) => c.show.value)).toEqual([true])
+    },
+  )
+
+  it('opens the composer for that one tab change, not a later visit', async () => {
+    await visitRouted(`${path}#data`)
+    button('Send an Email').click()
+    await flush()
+    await S.router.push(`${path}#data`)
+    await flush()
+    await S.router.push(`${path}#emails`)
+    await flush()
+    expect(activeTab()).toBe('Emails')
+    const live = S.composers.filter((c) => c.live)
+    expect(live.map((c) => c.show.value)).toEqual([false])
+  })
+
+  it.each(['Data', 'Notes'])(
+    '"Send an Email" from the %s tab still opens it when the page is not remounted',
     async (start) => {
       await visit(Page, props)
       await openTab(start)

@@ -407,6 +407,7 @@ import {
 } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useActiveTabManager } from '@/composables/useActiveTabManager'
+import { useEmailComposeOnTab } from '@/composables/useEmailComposeOnTab'
 import { useUnsavedChangesWarning } from '@/composables/useUnsavedChangesWarning'
 
 const { on } = useBroadcast()
@@ -793,7 +794,10 @@ function deleteDeal() {
 }
 
 const activities = ref(null)
-const openEmailBoxOnMount = ref(false)
+const { openEmailBoxOnMount, openOnNextPanel } = useEmailComposeOnTab(
+  'CRM Deal',
+  props.dealId,
+)
 
 function openEmailBox() {
   let currentTab =
@@ -802,9 +806,10 @@ function openEmailBox() {
     activities.value.emailBox.show = true
     return
   }
-  // Each tab mounts its own Activities, so the composer to open is the one
-  // the Emails panel brings when it mounts, not the one on screen now.
-  openEmailBoxOnMount.value = true
+  // Each tab mounts its own Activities, and the tab change remounts this
+  // page, so the composer to open is the one the Emails panel of the page
+  // the change brings mounts with, not the one on screen now.
+  openOnNextPanel()
   changeTabTo('emails')
 }
 
