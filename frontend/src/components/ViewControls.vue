@@ -546,7 +546,7 @@ function getParams() {
     columns: columns,
     rows: rows,
     route_name: _view?.route_name || route.name,
-    load_default_columns: _view?.row || true,
+    load_default_columns: _view?.load_default_columns ?? true,
     pinned: _view?.pinned || false,
     public: _view?.public || false,
   }
@@ -1101,11 +1101,6 @@ function updateColumns(obj) {
     : obj.columns
   defaultParams.value.rows = view.value.rows = obj.isDefault ? '' : obj.rows
   view.value.load_default_columns = obj.isDefault
-
-  if (obj.reset) {
-    defaultParams.value.columns = getParams().columns
-    defaultParams.value.rows = getParams().rows
-  }
 
   if (obj.reload) {
     list.value.params = defaultParams.value

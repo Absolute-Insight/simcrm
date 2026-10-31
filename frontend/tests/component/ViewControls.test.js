@@ -592,6 +592,81 @@ describe('resizing a column on a private saved view', () => {
   })
 })
 
+describe('Reset Changes in Columns', () => {
+  const ORIGINAL = {
+    columns: [{ key: 'name', label: 'Name', type: 'Data' }],
+    rows: ['name'],
+  }
+  const ADDED = {
+    columns: [...ORIGINAL.columns, { key: 'status', label: 'Status' }],
+    rows: ['name', 'status'],
+  }
+  const standardSaves = () =>
+    vc.calls.filter(([method]) => method.endsWith('standard_view'))
+
+  // getParams() read the saved view back, which by then holds the added column
+  // or nothing, and overwrote both the request and the view about to be saved.
+  it('asks for and saves the columns it restored', async () => {
+    setRoute()
+    const m = await mountVC()
+    vc.children.ColumnSettings.onUpdate({ ...ADDED, reload: true })
+    await settle()
+
+    vc.children.ColumnSettings.onUpdate({
+      ...ORIGINAL,
+      isDefault: false,
+      reload: true,
+      reset: true,
+    })
+    await settle()
+
+    expect(vc.fetches.at(-1).columns).toEqual(ORIGINAL.columns)
+    expect(vc.fetches.at(-1).rows).toEqual(ORIGINAL.rows)
+    const saved = standardSaves().at(-1)[1].view
+    expect(saved.columns).toEqual(ORIGINAL.columns)
+    expect(saved.rows).toEqual(ORIGINAL.rows)
+    expect(saved.load_default_columns).toBe(false)
+    m.unmount()
+  })
+
+  it('Reset to Default still asks for the defaults', async () => {
+    setRoute()
+    const m = await mountVC()
+    vc.children.ColumnSettings.onUpdate({
+      ...ADDED,
+      isDefault: true,
+      reload: true,
+    })
+    await settle()
+
+    const saved = standardSaves().at(-1)[1].view
+    expect(saved.columns).toBe('')
+    expect(saved.load_default_columns).toBe(true)
+    m.unmount()
+  })
+
+  // `_view?.row || true` read a column that does not exist: every view went
+  // back to the server marked as using the default columns.
+  it('a filter saved on a customised view does not mark it default', async () => {
+    vc.isManager = true
+    savedView(31, { public: 1, load_default_columns: 0 })
+    setRoute({ view: 31 })
+    const m = await mountVC()
+    m.vc().applyFilter({
+      event: click(),
+      idx: 1,
+      column: { key: 'status', type: 'Select' },
+      item: 'Open',
+      firstColumn: { key: 'lead_name' },
+    })
+    await settle()
+    m.button('Save Changes').click()
+    await settle()
+    expect(vc.children.ViewModal.view.load_default_columns).toBe(0)
+    m.unmount()
+  })
+})
+
 describe('the view dialog is handed a copy', () => {
   it('a cancelled Duplicate leaves the original view as it was', async () => {
     const original = savedView(51, { label: 'Hot leads' })

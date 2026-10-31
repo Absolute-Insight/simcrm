@@ -146,8 +146,7 @@ import { isTouchScreenDevice } from '@/utils'
 import { getMeta } from '@/stores/meta'
 import { Combobox, Popover } from 'frappe-ui'
 import Draggable from 'vuedraggable'
-import { computed, ref } from 'vue'
-import { watchOnce } from '@vueuse/core'
+import { computed, nextTick, ref, watch } from 'vue'
 
 const props = defineProps({
   doctype: { type: String, required: true },
@@ -160,7 +159,6 @@ const columnsUpdated = ref(false)
 const oldValues = ref({
   columns: [],
   rows: [],
-  isDefault: false,
 })
 
 const list = defineModel({ type: Object, default: () => ({}) })
@@ -284,7 +282,9 @@ function apply(reload = false, isDefault = false, reset = false) {
   let obj = {
     columns: reset ? oldValues.value.columns : columns.value,
     rows: reset ? oldValues.value.rows : rows.value,
-    isDefault: reset ? oldValues.value.isDefault : isDefault,
+    // Reset Changes names its columns outright, whatever the list was before:
+    // true here means "drop them and use the defaults", and hides that button.
+    isDefault,
     reload,
     reset,
   }
@@ -293,19 +293,22 @@ function apply(reload = false, isDefault = false, reset = false) {
   if (reload) {
     // will have think of a better way to do this
     setTimeout(() => {
-      is_default.value = reset ? oldValues.value.isDefault : isDefault
+      is_default.value = isDefault
       columnsUpdated.value = !reset
     }, 100)
   }
 }
 
-watchOnce(
-  () => list.value.data,
+// Immediate: a list whose data was cached, or that arrived before this mounted,
+// never changes for a plain watcher to see, and Reset Changes restored nothing.
+const snapshot = watch(
+  () => list.value?.data,
   (val) => {
-    if (!val) return
+    if (!val?.columns) return
     oldValues.value.columns = JSON.parse(JSON.stringify(val.columns))
     oldValues.value.rows = JSON.parse(JSON.stringify(val.rows))
-    oldValues.value.isDefault = val.is_default
+    nextTick(() => snapshot())
   },
+  { immediate: true },
 )
 </script>
