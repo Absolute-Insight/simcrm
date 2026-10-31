@@ -95,3 +95,65 @@ class TimelineChangedFieldsTest(IntegrationTestCase):
 		fields = _changed_fields(activities)
 		self.assertIn("status", fields)
 		self.assertIn("lead_owner", fields)
+
+
+class TimelineEmailDirectionTest(IntegrationTestCase):
+	"""Reply needs to know which way an email went.
+
+	frappe's docinfo leaves ``sent_or_received`` out, so Reply on mail the rep
+	sent addressed the rep's own mailbox instead of the customer.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+
+	def _email(self, doctype: str, name: str, direction: str, sender: str, recipients: str):
+		communication = frappe.get_doc(
+			{
+				"doctype": "Communication",
+				"communication_type": "Communication",
+				"communication_medium": "Email",
+				"sent_or_received": direction,
+				"subject": f"{direction} quote",
+				"content": "<p>Quote attached</p>",
+				"sender": sender,
+				"recipients": recipients,
+				"reference_doctype": doctype,
+				"reference_name": name,
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(
+			lambda: frappe.delete_doc(
+				"Communication", communication.name, force=True, ignore_permissions=True
+			)
+		)
+
+	def _directions(self, activities: list[dict]) -> dict[str, str]:
+		return {
+			a["data"]["subject"]: a["data"].get("sent_or_received")
+			for a in activities
+			if a.get("activity_type") == "communication"
+		}
+
+	def test_a_deal_timeline_says_which_emails_were_sent_and_which_received(self):
+		deal = frappe.get_doc({"doctype": "CRM Deal"}).insert(ignore_permissions=True)
+		self.addCleanup(lambda: frappe.delete_doc("CRM Deal", deal.name, force=True, ignore_permissions=True))
+		self._email("CRM Deal", deal.name, "Sent", "rep@crmtest.test", "buyer@customer.test")
+		self._email("CRM Deal", deal.name, "Received", "buyer@customer.test", "rep@crmtest.test")
+
+		directions = self._directions(get_deal_activities(deal.name)[0])
+
+		self.assertEqual(directions, {"Sent quote": "Sent", "Received quote": "Received"})
+
+	def test_a_lead_timeline_says_which_emails_were_sent_and_which_received(self):
+		lead = frappe.get_doc({"doctype": "CRM Lead", "first_name": "Direction"}).insert(
+			ignore_permissions=True
+		)
+		self.addCleanup(lambda: frappe.delete_doc("CRM Lead", lead.name, force=True, ignore_permissions=True))
+		self._email("CRM Lead", lead.name, "Sent", "rep@crmtest.test", "buyer@customer.test")
+		self._email("CRM Lead", lead.name, "Received", "buyer@customer.test", "rep@crmtest.test")
+
+		directions = self._directions(get_lead_activities(lead.name)[0])
+
+		self.assertEqual(directions, {"Sent quote": "Sent", "Received quote": "Received"})

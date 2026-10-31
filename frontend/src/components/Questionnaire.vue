@@ -125,6 +125,10 @@ function isSelected(option) {
 
 function select(option) {
   if (completed.value) return
+  // The previous question's buttons stay clickable while they fade out, so
+  // the second click of a double-click lands on an option of a question that
+  // is no longer showing. It is not an answer to the current one.
+  if (!question.value.options.includes(option)) return
   const key = question.value.key
   if (question.value.multiple) {
     const value = Array.isArray(answers[key]) ? [...answers[key]] : []
@@ -179,5 +183,8 @@ function focusQuestion(el) {
 .q-fade-leave-to {
   opacity: 0;
   transform: translateY(-6px);
+}
+.q-fade-leave-active {
+  pointer-events: none;
 }
 </style>

@@ -30,7 +30,7 @@
       ref="newEmailEditor"
       v-model:content="newEmail"
       v-model="doc"
-      v-model:attachments="attachments"
+      v-model:attachments="emailAttachments"
       :submitButtonProps="{
         variant: 'solid',
         onClick: submitEmail,
@@ -38,7 +38,7 @@
       }"
       :discardButtonProps="{
         onClick: async () => {
-          await deleteAttachedFiles()
+          await deleteAttachedFiles('email')
           showEmailBox = false
           newEmailEditor.subject = subject
           newEmailEditor.toEmails = doc.email ? [doc.email] : []
@@ -66,7 +66,7 @@
       ref="newCommentEditor"
       v-model:content="newComment"
       v-model="doc"
-      v-model:attachments="attachments"
+      v-model:attachments="commentAttachments"
       :submitButtonProps="{
         variant: 'solid',
         onClick: submitComment,
@@ -74,7 +74,7 @@
       }"
       :discardButtonProps="{
         onClick: async () => {
-          await deleteAttachedFiles()
+          await deleteAttachedFiles('comment')
           showCommentBox = false
           newComment = ''
         },
@@ -131,17 +131,26 @@ const newComment = useStorage(
 const newEmailEditor = ref(null)
 const newCommentEditor = ref(null)
 
-const attachments = useStorage(
-  `attachments-${getUser().email}-${props.doctype}-${doc.value.name}`,
-  [],
-  localStorage,
-  {
-    serializer: {
-      read: (v) => (v ? JSON.parse(v) : []),
-      write: (v) => JSON.stringify(v),
+// One list per composer. A single shared list put the email draft's files in
+// the comment box too, so discarding a comment deleted them and posting one
+// carried them off. The email keeps the old key, and with it any draft files
+// a rep already has.
+function draftAttachments(key) {
+  return useStorage(
+    `${key}-${getUser().email}-${props.doctype}-${doc.value.name}`,
+    [],
+    localStorage,
+    {
+      serializer: {
+        read: (v) => (v ? JSON.parse(v) : []),
+        write: (v) => JSON.stringify(v),
+      },
     },
-  },
-)
+  )
+}
+const emailAttachments = draftAttachments('attachments')
+const commentAttachments = draftAttachments('commentAttachments')
+const draftFiles = { email: emailAttachments, comment: commentAttachments }
 
 const subject = computed(() => {
   let prefix = ''
@@ -215,12 +224,12 @@ async function sendMail() {
   let cc = newEmailEditor.value.ccEmails || []
   let bcc = newEmailEditor.value.bccEmails || []
 
-  if (attachments.value.length) {
+  if (emailAttachments.value.length) {
     capture('email_attachments_added')
   }
   await call('frappe.core.doctype.communication.email.make', {
     recipients: recipients.join(', '),
-    attachments: attachments.value.map((x) => x.name),
+    attachments: emailAttachments.value.map((x) => x.name),
     cc: cc.join(', '),
     bcc: bcc.join(', '),
     subject: subject,
@@ -234,8 +243,8 @@ async function sendMail() {
 }
 
 async function sendComment() {
-  let _attachments = attachments.value.length
-    ? attachments.value.map((x) => x.name)
+  let _attachments = commentAttachments.value.length
+    ? commentAttachments.value.map((x) => x.name)
     : []
 
   let comment = await call('crm.api.comment.add_comment', {
@@ -245,12 +254,13 @@ async function sendComment() {
     attachments: _attachments,
   })
 
-  if (comment && attachments.value.length) {
+  if (comment && commentAttachments.value.length) {
     capture('comment_attachments_added')
   }
 }
 
-async function deleteAttachedFiles() {
+async function deleteAttachedFiles(composer) {
+  const attachments = draftFiles[composer]
   if (!attachments.value || attachments.value.length === 0) return
 
   const deletePromises = attachments.value.map(async (file) => {
@@ -287,7 +297,7 @@ async function submitEmail() {
     return
   }
   newEmail.value = ''
-  attachments.value = []
+  emailAttachments.value = []
   reload.value = true
   emit('scroll')
   capture('email_sent', { doctype: props.doctype })
@@ -309,7 +319,7 @@ async function submitComment() {
     return
   }
   newComment.value = ''
-  attachments.value = []
+  commentAttachments.value = []
   reload.value = true
   emit('scroll')
   capture('comment_sent', { doctype: props.doctype })

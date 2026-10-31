@@ -142,6 +142,7 @@ describe('Activities timeline paging', () => {
     const button = loadOlderButton(wrapper)
     expect(button, 'a "Load older activity" button').toBeTruthy()
 
+    timeline.reload.mockClear() // the load every timeline tab starts with
     button.click()
     expect(timeline.update).toHaveBeenCalledWith({
       params: { name: 'CRM-DEAL-1', page_length: 200 },

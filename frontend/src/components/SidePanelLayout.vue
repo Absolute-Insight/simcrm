@@ -3,7 +3,7 @@
     <template v-for="(section, i) in _sections" :key="section.name">
       <div v-if="section.visible" class="section flex flex-col">
         <div
-          v-if="i !== firstVisibleIndex()"
+          v-if="i !== firstVisibleIndex"
           class="w-full section-border h-px border-t"
         />
         <div class="p-1 sm:p-3">
@@ -512,14 +512,20 @@ const statusType = computed(() => {
   return null
 })
 
+// Builds new section and column objects rather than writing parsed fields back
+// into props.sections: parsed output stored there was the next pass's input,
+// so a read_only or hidden worked out once stuck after its condition cleared,
+// and the write invalidated this computed again on every read.
 const _sections = computed(() => {
   if (!props.sections?.length) return []
   let editButtonAdded = false
   return props.sections.map((section) => {
     if (section.columns?.length) {
-      section.columns[0].fields = section.columns[0].fields.map((field) => {
-        return parsedField(field)
-      })
+      const [first, ...rest] = section.columns
+      section = {
+        ...section,
+        columns: [{ ...first, fields: first.fields.map(parsedField) }, ...rest],
+      }
     }
     let _section = parsedSection(section, editButtonAdded)
     if (_section.showEditButton) {
@@ -630,9 +636,7 @@ async function fieldChange(value, df) {
 function parsedSection(section, editButtonAdded) {
   // Merge script property overrides for section
   const overrides = document.fieldPropertyOverrides?.[section.name]
-  if (overrides) {
-    section = { ...section, ...overrides }
-  }
+  section = { ...section, ...overrides }
 
   let isContactSection = section.name == 'contacts_section'
   section.showEditButton = !(
@@ -694,9 +698,9 @@ async function handleButtonClick(field) {
   }
 }
 
-function firstVisibleIndex() {
-  return _sections.value.findIndex((section) => section.visible)
-}
+const firstVisibleIndex = computed(() =>
+  _sections.value.findIndex((section) => section.visible),
+)
 
 const textareaFieldtypes = ['Small Text', 'Text', 'Long Text', 'Code']
 function isTextareaField(field) {

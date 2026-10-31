@@ -247,6 +247,13 @@ doc_events = {
 	"Notification Log": {
 		"before_insert": ["crm.extends.notification_log.before_insert"],
 	},
+	# Send the images a rep places in an email as inline cid: parts, so the
+	# recipient sees them without the files being made public. Here rather than
+	# make_email_body_message: only the queued mail knows the deal it is about,
+	# and only that deal's own images may go out.
+	"Email Queue": {
+		"before_insert": ["crm.extends.email_inline_images.embed_private_images"],
+	},
 	"ToDo": {
 		"before_insert": ["crm.api.todo.before_insert"],
 		"validate": ["crm.api.todo.validate"],

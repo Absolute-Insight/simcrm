@@ -16,7 +16,7 @@
           {
             label: __('Delete'),
             icon: 'lucide-trash-2',
-            onClick: () => deleteNote(note.name),
+            onClick: () => confirmDeleteNote(note.name),
           },
         ]"
         class="h-6 w-6"
@@ -61,6 +61,7 @@ import { Dropdown, call, toast } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
 import { TextEditor } from 'frappe-ui/experimental'
 import { usersStore } from '@/stores/users'
+import { globalStore } from '@/stores/global'
 
 defineProps({
   note: { type: Object, default: () => ({}) },
@@ -70,19 +71,45 @@ defineProps({
 const notes = defineModel({ type: Object })
 
 const { getUser } = usersStore()
+const { $dialog } = globalStore()
+
+// One slip on the menu used to delete the note outright; ask first, the way
+// tasks, comments and attachments do.
+function confirmDeleteNote(name) {
+  $dialog({
+    title: __('Delete Note'),
+    message: __('Are you sure you want to delete this note?'),
+    actions: [
+      {
+        label: __('Delete'),
+        theme: 'red',
+        variant: 'solid',
+        onClick({ close }) {
+          deleteNote(name)
+          close()
+        },
+      },
+    ],
+  })
+}
 
 async function deleteNote(name) {
-  await toast.promise(
-    call('frappe.client.delete', {
-      doctype: 'FCRM Note',
-      name,
-    }),
-    {
-      loading: __('Deleting note...'),
-      success: __('Note deleted'),
-      error: __('Failed to delete note'),
-    },
-  )
+  // toast.promise hands back the toast, not the promise: await the delete
+  // itself, or the list reloads before the note is gone.
+  const deleting = call('frappe.client.delete', {
+    doctype: 'FCRM Note',
+    name,
+  })
+  toast.promise(deleting, {
+    loading: __('Deleting note...'),
+    success: __('Note deleted'),
+    error: __('Failed to delete note'),
+  })
+  try {
+    await deleting
+  } catch {
+    return
+  }
   notes.value?.reload()
 }
 </script>

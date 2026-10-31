@@ -81,6 +81,7 @@ import { globalStore } from '@/stores/global'
 import { call } from 'frappe-ui'
 import TimelineTimestamp from '@/components/Activities/TimelineTimestamp.vue'
 import { convertSize, isImage } from '@/utils'
+import { reportActionError } from '@/utils/reportActionError'
 
 defineProps({
   attachments: { type: Array, default: () => [] },
@@ -108,13 +109,18 @@ function togglePrivate(fileName, isPrivate) {
         label: __('Make {0}', [changeTo]),
         variant: 'solid',
         onClick: async ({ close }) => {
-          await call('frappe.client.set_value', {
-            doctype: 'File',
-            name: fileName,
-            fieldname: {
-              is_private: !isPrivate,
-            },
-          })
+          try {
+            await call('frappe.client.set_value', {
+              doctype: 'File',
+              name: fileName,
+              fieldname: {
+                is_private: !isPrivate,
+              },
+            })
+          } catch (error) {
+            reportActionError(error, __('Could not change the attachment.'))
+            return
+          }
           emit('reload')
           close()
         },
@@ -133,10 +139,15 @@ function deleteAttachment(fileName) {
         variant: 'solid',
         theme: 'red',
         onClick: async ({ close }) => {
-          await call('frappe.client.delete', {
-            doctype: 'File',
-            name: fileName,
-          })
+          try {
+            await call('frappe.client.delete', {
+              doctype: 'File',
+              name: fileName,
+            })
+          } catch (error) {
+            reportActionError(error, __('Could not delete the attachment.'))
+            return
+          }
           emit('reload')
           close()
         },

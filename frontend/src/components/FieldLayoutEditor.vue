@@ -4,7 +4,7 @@
       class="flex items-center justify-between gap-2 text-base bg-surface-gray-2 rounded-4 py-2 px-2.5 overflow-x-auto max-w-full"
     >
       <Draggable
-        v-if="tabs.length && tabs[tabIndex].label"
+        v-if="tabs.length && tabs[tabIndex]?.label"
         :list="tabs"
         item-key="name"
         class="flex items-center gap-2 w-full overflow-auto py-1 [&::-webkit-scrollbar]:h-0"
@@ -96,7 +96,7 @@
         @end="isDragging = false"
         @add="(evt) => onFieldDroppedToEmptyTab(tab)"
       >
-        <template #item="{ element: section }">
+        <template #item="{ element: section, index: si }">
           <div
             v-if="Array.isArray(section.columns)"
             class="section flex flex-col gap-1.5 p-2.5 bg-surface-gray-2 rounded-4"
@@ -158,7 +158,7 @@
                       : __('fields')
                   }}
                 </span>
-                <Dropdown :options="getSectionOptions(i, section, tab)">
+                <Dropdown :options="getSectionOptions(si, section, tab)">
                   <template #default>
                     <Button variant="ghost">
                       <span
@@ -292,6 +292,15 @@ const { $dialog } = globalStore()
 const tabIndex = ref(0)
 const isDragging = ref(false)
 const tabItemRefs = ref([])
+
+// Reset swaps in the saved layout, which can have fewer tabs than the one being
+// edited; an index past its end left the editor blank.
+watch(
+  () => tabs.value.length,
+  (length) => {
+    if (tabIndex.value >= length) tabIndex.value = 0
+  },
+)
 
 watch(tabIndex, (idx) => {
   nextTick(() => {
@@ -447,6 +456,7 @@ function getTabOptions(tab) {
   ]
 }
 
+// `i` is the section's index within `tab`, not the tab's index.
 function getSectionOptions(i, section, tab) {
   let column = section.columns[section.columns.length - 1]
   return [
@@ -525,7 +535,10 @@ function getSectionOptions(i, section, tab) {
             }
             tab.sections.splice(tab.sections.indexOf(section), 1)
           },
-          condition: () => section.editable !== false && section.columns.length,
+          condition: () =>
+            section.editable !== false &&
+            section.columns.length &&
+            tab.sections[i == 0 ? i + 1 : i - 1],
         },
         {
           label: __('Move to Previous Tab'),
@@ -620,7 +633,7 @@ function getSectionOptions(i, section, tab) {
             nextSection.columns.push(column)
             section.columns.pop()
           },
-          condition: () => tab.sections[i + 1],
+          condition: () => column && tab.sections[i + 1],
         },
         {
           label: __('Move Last Column to Previous Section'),
@@ -630,7 +643,7 @@ function getSectionOptions(i, section, tab) {
             previousSection.columns.push(column)
             section.columns.pop()
           },
-          condition: () => tab.sections[i - 1],
+          condition: () => column && tab.sections[i - 1],
         },
         {
           label: __('Move Last Column to Previous Tab'),
@@ -650,7 +663,7 @@ function getSectionOptions(i, section, tab) {
             )
             section.columns.pop()
           },
-          condition: () => tabs.value[tabIndex.value - 1],
+          condition: () => column && tabs.value[tabIndex.value - 1],
         },
         {
           label: __('Move Last Column to Next Tab'),
@@ -670,7 +683,7 @@ function getSectionOptions(i, section, tab) {
             )
             section.columns.pop()
           },
-          condition: () => tabs.value[tabIndex.value + 1],
+          condition: () => column && tabs.value[tabIndex.value + 1],
         },
       ],
     },

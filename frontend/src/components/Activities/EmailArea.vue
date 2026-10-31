@@ -104,7 +104,10 @@ function reply(email, reply_all = false) {
     }
   }
   editor.replyAddresses = replyAddresses
-  editor.toEmails = [email.sender]
+  // Mail the rep sent is followed up with whoever it went to: its sender is
+  // the rep's own mailbox. Only received mail is answered to its sender.
+  const sent = email.sent_or_received === 'Sent'
+  editor.toEmails = sent ? recipients.filter(Boolean) : [email.sender]
   editor.cc = editor.bcc = false
   editor.ccEmails = []
   editor.bccEmails = []
@@ -119,18 +122,19 @@ function reply(email, reply_all = false) {
     let cc = email.cc?.split(',').map((r) => r.trim())
     let bcc = email.bcc?.split(',').map((r) => r.trim())
 
-    if (cc?.length) {
+    // On sent mail the recipients are already on To and CC stays as sent.
+    if (!sent && cc?.length) {
       recipients = recipients.filter((r) => !cc?.includes(r))
       cc.push(...recipients)
-    } else {
+    } else if (!sent) {
       cc = recipients
     }
 
     editor.cc = cc ? true : false
     editor.bcc = bcc ? true : false
 
-    editor.ccEmails = cc
-    editor.bccEmails = bcc
+    editor.ccEmails = cc || []
+    editor.bccEmails = bcc || []
   }
 
   let repliedMessage = `<blockquote>${message}</blockquote>`

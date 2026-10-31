@@ -190,6 +190,7 @@ def get_deal_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 
 	communications = docinfo.communications + docinfo.automated_messages
 	communication_attachments = get_attachments_by_name("Communication", [c.name for c in communications])
+	communication_directions = get_communication_directions([c.name for c in communications])
 	for communication in communications:
 		activity = {
 			"activity_type": "communication",
@@ -202,6 +203,7 @@ def get_deal_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 				"sender_full_name": communication.sender_full_name,
 				"sender": communication.sender,
 				"recipients": communication.recipients,
+				"sent_or_received": communication_directions.get(communication.name),
 				"cc": communication.cc,
 				"bcc": communication.bcc,
 				"attachments": communication_attachments.get(communication.name, []),
@@ -338,6 +340,7 @@ def get_lead_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 
 	communications = docinfo.communications + docinfo.automated_messages
 	communication_attachments = get_attachments_by_name("Communication", [c.name for c in communications])
+	communication_directions = get_communication_directions([c.name for c in communications])
 	for communication in communications:
 		activity = {
 			"activity_type": "communication",
@@ -350,6 +353,7 @@ def get_lead_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 				"sender_full_name": communication.sender_full_name,
 				"sender": communication.sender,
 				"recipients": communication.recipients,
+				"sent_or_received": communication_directions.get(communication.name),
 				"cc": communication.cc,
 				"bcc": communication.bcc,
 				"attachments": communication_attachments.get(communication.name, []),
@@ -426,6 +430,25 @@ def get_attachments_by_name(doctype: str, names: list[str]) -> dict[str, list]:
 		attached_to = row.pop("attached_to_name")
 		grouped.setdefault(attached_to, []).append(row)
 	return grouped
+
+
+def get_communication_directions(names: list[str]) -> dict[str, str]:
+	"""Whether each communication was Sent or Received, keyed by name, in one query.
+
+	frappe's docinfo leaves ``sent_or_received`` out, and Reply needs it: mail
+	the rep sent is answered to its recipients, not to its sender (the rep).
+	"""
+	if not names:
+		return {}
+
+	return dict(
+		frappe.db.get_all(
+			"Communication",
+			filters={"name": ("in", names)},
+			fields=["name", "sent_or_received"],
+			as_list=True,
+		)
+	)
 
 
 def handle_multiple_versions(versions: list):

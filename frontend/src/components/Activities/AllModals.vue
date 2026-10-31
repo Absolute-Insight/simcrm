@@ -53,10 +53,17 @@ function showTask(task) {
 }
 
 async function deleteTask(name) {
-  await call('frappe.client.delete', {
-    doctype: 'CRM Task',
-    name,
-  })
+  // TaskArea closes its confirm dialog before this runs, so a refused delete
+  // has nowhere else to show: without the toast the task just stays put.
+  try {
+    await call('frappe.client.delete', {
+      doctype: 'CRM Task',
+      name,
+    })
+  } catch (error) {
+    reportActionError(error, __('Could not delete the task.'))
+    return
+  }
   activities.value.reload()
 }
 

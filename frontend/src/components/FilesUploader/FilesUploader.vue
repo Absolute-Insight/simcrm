@@ -142,11 +142,24 @@ const disableAttachButton = computed(() => {
   return !files.value.length
 })
 
-function attachFiles() {
+// The uploads run in parallel and finish in size order, not list order, so
+// the batch is done when every one of them has settled -- not when whichever
+// file is listed last comes back. A file that failed stays listed with its
+// error; the ones that made it are reported either way.
+async function attachFiles() {
   if (filesUploaderArea.value.showWebLink) {
     return uploadViaWebLink()
   }
-  files.value.forEach((file, i) => attachFile(file, i))
+  const batch = files.value.slice()
+  const results = await Promise.allSettled(batch.map(attachFile))
+  const uploaded = results
+    .filter((r) => r.status === 'fulfilled')
+    .map((r) => r.value)
+  const failed = batch.filter((_, i) => results[i].status === 'rejected')
+  fileUploadStarted.value = false
+  files.value = failed
+  if (!failed.length) show.value = false
+  if (uploaded.length) emit('after', uploaded)
 }
 
 function uploadViaWebLink() {
@@ -156,16 +169,23 @@ function uploadViaWebLink() {
     return
   }
   fileUrl = decodeURI(fileUrl)
-  return attachFile({
-    fileUrl,
-  })
+  return attachFile({ fileUrl })
+    .then((response) => {
+      show.value = false
+      emit('after', [response])
+    })
+    .catch((errorMessage) => {
+      // a web link has no entry in the file list to show the error on
+      toast.error(errorMessage)
+    })
+    .finally(() => (fileUploadStarted.value = false))
 }
 
 const uploader = ref(null)
 const fileUploadStarted = ref(false)
-const uploadedFiles = ref([])
 
-function attachFile(file, i) {
+// Resolves with the uploaded file, or rejects with the message it now shows.
+function attachFile(file) {
   const args = {
     fileObj: file.fileObj || {},
     type: file.type,
@@ -181,6 +201,7 @@ function attachFile(file, i) {
 
   uploader.value.on('start', () => {
     file.uploading = true
+    file.errorMessage = null
     fileUploadStarted.value = true
   })
   uploader.value.on('progress', (data) => {
@@ -195,37 +216,18 @@ function attachFile(file, i) {
     file.uploading = false
   })
 
-  uploader.value
-    .upload(file, args || {})
-    .then((response) => {
-      uploadedFiles.value.push(response)
-      // a web link has no index and no entry in files, so it is always the last upload
-      const isLastUpload = file.fileUrl || i === files.value.length - 1
-      if (isLastUpload) {
-        const uploaded = uploadedFiles.value.slice()
-        uploadedFiles.value = []
-        files.value = []
-        show.value = false
-        fileUploadStarted.value = false
-        emit('after', uploaded)
-      }
-    })
-    .catch((error) => {
-      file.uploading = false
-      let errorMessage = 'Error Uploading File'
-      if (error?._server_messages) {
-        errorMessage = JSON.parse(JSON.parse(error._server_messages)[0]).message
-      } else if (error?.exc) {
-        errorMessage = JSON.parse(error.exc)[0].split('\n').slice(-2, -1)[0]
-      } else if (typeof error === 'string') {
-        errorMessage = error
-      }
-      file.errorMessage = errorMessage
-      // a web link has no entry in the file list to show the error on, so toast it
-      if (file.fileUrl) {
-        fileUploadStarted.value = false
-        toast.error(errorMessage)
-      }
-    })
+  return uploader.value.upload(file, args || {}).catch((error) => {
+    file.uploading = false
+    let errorMessage = 'Error Uploading File'
+    if (error?._server_messages) {
+      errorMessage = JSON.parse(JSON.parse(error._server_messages)[0]).message
+    } else if (error?.exc) {
+      errorMessage = JSON.parse(error.exc)[0].split('\n').slice(-2, -1)[0]
+    } else if (typeof error === 'string') {
+      errorMessage = error
+    }
+    file.errorMessage = errorMessage
+    throw errorMessage
+  })
 }
 </script>

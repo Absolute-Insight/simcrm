@@ -22,7 +22,7 @@
     </div>
     <div
       class="v-glass v-glass-hover flex flex-col gap-2 cursor-pointer rounded-[var(--v-radius-card)] px-3 py-2.5 text-ink-gray-9"
-      @click="showCallLogDetailModal = true"
+      @click="showCallLogDetail"
     >
       <div class="flex items-center justify-between">
         <div class="inline-flex gap-2 items-center text-base-medium">
@@ -65,7 +65,7 @@
           v-if="call.recording_url"
           :label="call.show_recording ? __('Hide Recording') : __('Listen')"
           class="cursor-pointer"
-          @click.stop="call.show_recording = !call.show_recording"
+          @click.stop="toggleRecording"
         >
           <template #prefix>
             <PlayIcon class="size-3" />
@@ -114,11 +114,23 @@ const props = defineProps({
 
 const call = reactive(props.activity)
 
+// The row from get_activities already carries what the card shows. The full
+// log -- recording path, linked records, notes -- is fetched only when the
+// detail modal or the player needs it: fetching it up front was one request
+// per call on every timeline load.
 const callLog = createResource({
   url: 'crm.fcrm.doctype.crm_call_log.crm_call_log.get_call_log',
   params: { name: call.name },
-  cache: ['call_log', call.name],
-  auto: true,
 })
 const showCallLogDetailModal = ref(false)
+
+function showCallLogDetail() {
+  showCallLogDetailModal.value = true
+  callLog.fetch()
+}
+
+function toggleRecording() {
+  call.show_recording = !call.show_recording
+  if (call.show_recording && !callLog.data) callLog.fetch()
+}
 </script>
