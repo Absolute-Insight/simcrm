@@ -26,6 +26,7 @@ from unittest import mock
 
 import frappe
 from frappe.tests import UnitTestCase
+from rq.timeouts import JobTimeoutException
 
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
 from crm.agent.schemas import SiteFacts
@@ -268,6 +269,16 @@ class DegradesQuietlyTest(UnitTestCase):
 		result = EnrichmentResult(website="https://acme.test")
 		with mock.patch.object(model_fallback.client, "complete", side_effect=RuntimeError("boom")):
 			self.assertEqual(model_fallback.fill_gaps(result, [page()], config()), [])
+
+	def test_the_job_deadline_is_not_contained(self):
+		"""rq's deadline is not the model failing. Contained, the run went on until rq
+		killed the worker, with no Run written and no terminal event."""
+		result = EnrichmentResult(website="https://acme.test")
+		with mock.patch.object(
+			model_fallback.client, "complete", side_effect=JobTimeoutException("Task exceeded maximum")
+		):
+			with self.assertRaises(JobTimeoutException):
+				model_fallback.fill_gaps(result, [page()], config())
 
 	def test_an_empty_reply_fills_nothing_and_is_not_an_error(self):
 		"""'I could not tell' has to be cheaper for the model than a guess."""
