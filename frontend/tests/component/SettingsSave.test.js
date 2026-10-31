@@ -151,17 +151,35 @@ const Button = {
 }
 const update = (el) => el.querySelector('button[data-label="Update"]')
 
-let settings
-beforeAll(async () => {
-  setConfig('resourceFetcher', async ({ url, params }) => {
-    if (url === 'frappe.client.get') return structuredClone(SETTINGS)
-    if (url === 'frappe.client.set_value') return setValue(params)
-    return null
-  })
-  // app start: SidebarBrand imports the store before any pane opens
-  ;({ _settings: settings } = (await import('@/stores/settings')).getSettings())
-  await flush()
+setConfig('resourceFetcher', async ({ url, params }) => {
+  if (url === 'frappe.client.get') return structuredClone(SETTINGS)
+  if (url === 'frappe.client.set_value') return setValue(params)
+  return null
 })
+
+// app start: SidebarBrand imports the store before any pane opens
+const { _settings: settings } = (
+  await import('@/stores/settings')
+).getSettings()
+
+// Imported here, once, not in the tests: each pane reaches the whole Phosphor
+// barrel, seconds of cold transform on a CI runner. Inside a test that counts
+// against its 5s limit, and a test that times out keeps running, so its late
+// toast lands in the next test's count.
+const { default: BrandSettings } = await import(
+  '@/components/Settings/BrandSettings.vue'
+)
+const { default: HomeActions } = await import(
+  '@/components/Settings/HomeActions.vue'
+)
+const { default: VisitTargets } = await import(
+  '@/components/Settings/VisitTargets.vue'
+)
+const { default: DashboardSettings } = await import(
+  '@/components/Settings/DashboardSettings.vue'
+)
+
+beforeAll(flush)
 
 beforeEach(async () => {
   toast.error.mockClear()
@@ -174,9 +192,6 @@ beforeEach(async () => {
 describe('a refused FCRM Settings save', () => {
   it('Brand: says why', async () => {
     setValue = refuse('Brand name is too long')
-    const BrandSettings = (
-      await import('@/components/Settings/BrandSettings.vue')
-    ).default
     const { el } = mount(BrandSettings, { stubs: { Button } })
     settings.doc.brand_name = 'Vectora Africa (Pty) Ltd'
     await flush()
@@ -187,8 +202,6 @@ describe('a refused FCRM Settings save', () => {
 
   it('Home Actions: says why, through useDocument', async () => {
     setValue = refuse('Cannot delete standard items kanban_view')
-    const HomeActions = (await import('@/components/Settings/HomeActions.vue'))
-      .default
     const { el } = mount(HomeActions, { stubs: { Button } })
     await flush()
     settings.doc.dropdown_items = []
@@ -223,9 +236,6 @@ describe('a refused FCRM Settings save', () => {
     // setLock awaits the store's setValue, whose onError already toasts;
     // a second toast of its own read the refusal out twice.
     setValue = refuse('Insufficient Permission for FCRM Settings')
-    const VisitTargets = (
-      await import('@/components/Settings/VisitTargets.vue')
-    ).default
     const { el } = mount(VisitTargets)
     await flush()
     el.querySelector('.check-switch').click()
@@ -257,9 +267,6 @@ describe('an FCRM Settings save in flight', () => {
       new Promise(
         (r) => (finish = () => r({ ...SETTINGS, ...params.fieldname })),
       )
-    const BrandSettings = (
-      await import('@/components/Settings/BrandSettings.vue')
-    ).default
     const { el } = mount(BrandSettings, { stubs: { Button } })
     settings.doc.brand_name = 'Vectora Africa'
     await flush()
@@ -272,16 +279,11 @@ describe('an FCRM Settings save in flight', () => {
 })
 
 describe('Dashboard settings', () => {
-  async function mountDashboard() {
-    const DashboardSettings = (
-      await import('@/components/Settings/DashboardSettings.vue')
-    ).default
-    return mount(DashboardSettings, { stubs: { Button } })
-  }
+  const mountDashboard = () => mount(DashboardSettings, { stubs: { Button } })
 
   it('reports a missing currency once, inline, without saving', async () => {
     setValue = vi.fn(() => SETTINGS)
-    const { el } = await mountDashboard()
+    const { el } = mountDashboard()
     settings.doc.enable_forecasting = 1
     await flush()
     update(el).click()
@@ -297,7 +299,7 @@ describe('Dashboard settings', () => {
     // "Once set, cannot be edited": a currency shown as set hides the picker,
     // so a failed save that left it on screen left no way to try again.
     setValue = refuse('Currency cannot be changed')
-    const { el } = await mountDashboard()
+    const { el } = mountDashboard()
     await flush()
     el.querySelector('.pick-currency').click()
     const close = vi.fn()
@@ -311,7 +313,7 @@ describe('Dashboard settings', () => {
 
   it('a currency the server accepts is shown as set', async () => {
     setValue = (params) => ({ ...SETTINGS, ...params.fieldname })
-    const { el } = await mountDashboard()
+    const { el } = mountDashboard()
     await flush()
     el.querySelector('.pick-currency').click()
     const close = vi.fn()

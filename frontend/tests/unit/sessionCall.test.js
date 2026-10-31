@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest'
 
 /**
  * main.js sends a lapsed session to /login from frappe-ui's `resourceFetcher`,
@@ -23,6 +31,10 @@ function answer(status, body) {
     vi.fn(async () => new Response(JSON.stringify(body), { status })),
   )
 }
+
+// Each test re-imports frappe-ui. The first import transforms all of it, which
+// takes seconds on a CI runner and must not count against a test's 5s limit.
+beforeAll(() => import('frappe-ui'), 60_000)
 
 beforeEach(() => {
   // The redirect is once per page load; each test gets a fresh page.

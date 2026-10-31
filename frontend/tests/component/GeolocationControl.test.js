@@ -112,7 +112,8 @@ afterAll(() => {
 beforeEach(() => vi.clearAllMocks())
 
 // initMap() lazy-loads Leaflet and ends by centring the map once.
-const mapBuilt = () => vi.waitFor(() => expect(map.setView).toHaveBeenCalled())
+const mapBuilt = () =>
+  vi.waitFor(() => expect(map.setView).toHaveBeenCalled(), { timeout: 4000 })
 
 describe('GeolocationControl', () => {
   it('Clear clears the value without opening the map dialog', async () => {

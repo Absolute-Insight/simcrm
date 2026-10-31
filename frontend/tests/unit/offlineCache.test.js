@@ -1,4 +1,12 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest'
 
 // frappe-ui keeps every `cache:` resource's last response in IndexedDB
 // (idb-keyval) and replays it into the resource on the next page load, before
@@ -65,6 +73,11 @@ async function openLeads(user, answer) {
 }
 
 const onTheWire = () => new Promise(() => {})
+
+// Each "page load" re-imports frappe-ui. The first import transforms all of it,
+// which takes seconds on a CI runner and must not count against a test's 5s
+// limit.
+beforeAll(() => import('frappe-ui'), 60_000)
 
 beforeEach(() => {
   idb.clear()
