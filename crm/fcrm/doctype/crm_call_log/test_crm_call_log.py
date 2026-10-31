@@ -1130,8 +1130,12 @@ class TestCallLogRowsResolveInBatches(IntegrationTestCase):
 
 		rows = CRMCallLog.parse_list_data(self.list_rows(names))
 		admin = frappe.db.get_value("User", "Administrator", "full_name")
+		# reference_doctype defaults to CRM Lead, so only the name says a call points at a record.
 		labels = {
-			(row.reference_doctype or "", row["from"] if row.type == "Incoming" else row.to): (
+			(
+				row.reference_doctype if row.reference_docname else "",
+				row["from"] if row.type == "Incoming" else row.to,
+			): (
 				row._caller["label"],
 				row._receiver["label"],
 			)
