@@ -851,10 +851,11 @@ const todayBreakdown = computed(() =>
 )
 const todayAdherence = computed(() => adherencePercent(todayBreakdown.value))
 
-function reportResource(name: string) {
+function reportResource(name: string, extra: Record<string, unknown> = {}) {
   return createResource({
     url: 'crm.api.reports.get_report',
     makeParams: () => ({
+      ...extra,
       name,
       from_date: fromDate.value,
       to_date: toDate.value,
@@ -871,7 +872,8 @@ const teamQuota = reportResource('quota_attainment_by_rep')
 const teamVisits = reportResource('visits_by_rep')
 const teamSummary = reportResource('rep_summary')
 const teamActivity = reportResource('activities_by_type')
-const teamPipeline = reportResource('pipeline_by_stage')
+// the panel says "right now", so it asks for that rather than the period's deals
+const teamPipeline = reportResource('pipeline_by_stage', { snapshot: true })
 /* One list, so reloadAll cannot miss one: the Rep summary and Activity summary
    panels were added after reloadAll was written, never joined it, and kept the
    first load's figures under whatever period or rep was chosen next. */
