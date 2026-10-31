@@ -235,6 +235,10 @@ extend_doctype_class = {
 # Hook on document methods and events
 
 doc_events = {
+	"*": {
+		"before_discard": ["crm.permissions.document_guard.mark_real_discard"],
+		"on_change": ["crm.permissions.document_guard.refuse_forged_discard"],
+	},
 	"Contact": {
 		"validate": ["crm.api.contact.validate"],
 	},
@@ -457,6 +461,7 @@ ignore_links_on_delete = [
 
 after_migrate = [
 	"crm.fcrm.doctype.fcrm_settings.fcrm_settings.after_migrate",
+	"crm.permissions.customers.stop_frappe_event_digest",
 	# Navbar Settings' app_logo is site data, so a new image alone does not move
 	# it and an existing site never re-runs after_install -- the login page kept
 	# rendering the Frappe Framework logo. Deliberately a hook rather than a

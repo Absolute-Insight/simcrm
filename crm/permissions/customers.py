@@ -361,9 +361,9 @@ def get_events(
 	"""frappe's calendar feed, less the events a rep may not see.
 
 	It is raw SQL behind its own whitelist, so neither hook reaches it. Stands in for
-	``frappe.desk.doctype.event.event.get_events``. The daily event digest reads the
-	same query from the scheduler and is not covered: it mails only Public events
-	with Send Reminder set, which CRM events do not set.
+	``frappe.desk.doctype.event.event.get_events``. The daily event digest calls the
+	raw function from the scheduler, so it is stopped instead:
+	:func:`stop_frappe_event_digest`.
 	"""
 	from frappe.desk.doctype.event.event import get_events as frappe_get_events
 
@@ -375,6 +375,20 @@ def get_events(
 		frappe.get_list("Event", filters={"name": ["in", names]}, pluck="name", limit_page_length=0)
 	)
 	return [event for event in events if event.name in allowed]
+
+
+def stop_frappe_event_digest() -> None:
+	"""frappe's daily digest mails every system user each Public event with Send
+	Reminder on, which is what the Calendar's default event is, past every rule
+	here. after_migrate, because the job is frappe's. The CRM sends its own
+	reminders to the people on the event (``crm.api.event``)."""
+	frappe.db.set_value(
+		"Scheduled Job Type",
+		{"method": "frappe.desk.doctype.event.event.send_event_digest"},
+		"stopped",
+		1,
+		update_modified=False,
+	)
 
 
 def is_manager(user: str | None = None) -> bool:

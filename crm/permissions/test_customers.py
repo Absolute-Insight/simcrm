@@ -361,6 +361,36 @@ class TestCustomerScope(IntegrationTestCase):
 					).insert()
 				frappe.set_user("Administrator")
 
+	def test_a_client_action_cannot_skip_the_customer_check(self):
+		"""frappe does not reserve ``_action``: a request sending "discard" skips
+		validate, and with it every rule here."""
+		name = self.deal(self.org_a, REP_A)
+		frappe.set_user(REP_A)
+		doc = frappe.get_doc("CRM Deal", name)
+		doc.update({"_action": "discard", "organization": self.org_b})
+		with self.assertRaises(frappe.PermissionError):
+			doc.save()
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def test_a_genuine_discard_still_goes_through(self):
+		from crm.permissions.document_guard import mark_real_discard, refuse_forged_discard
+
+		doc = frappe.new_doc("CRM Deal")
+		doc._action = "discard"
+		with self.assertRaises(frappe.PermissionError):
+			refuse_forged_discard(doc)
+		mark_real_discard(doc)
+		refuse_forged_discard(doc)
+
+	def test_frappes_event_digest_is_stopped(self):
+		from crm.permissions.customers import stop_frappe_event_digest
+
+		method = "frappe.desk.doctype.event.event.send_event_digest"
+		frappe.db.set_value("Scheduled Job Type", {"method": method}, "stopped", 0)
+		stop_frappe_event_digest()
+		self.assertEqual(frappe.db.get_value("Scheduled Job Type", {"method": method}, "stopped"), 1)
+
 	def test_saving_a_participant_row_on_its_own_is_refused(self):
 		"""Written directly, the row looks stored when the event's own check runs."""
 		hidden = self._contact(self.org_b)
