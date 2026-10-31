@@ -173,6 +173,8 @@ permission_query_conditions = {
 	# one rep cannot reach another's customers, or the people at them
 	"CRM Organization": "crm.permissions.customers.get_organization_permission_query_conditions",
 	"Contact": "crm.permissions.customers.get_contact_permission_query_conditions",
+	"Address": "crm.permissions.customers.get_address_permission_query_conditions",
+	"Event": "crm.permissions.customers.get_event_permission_query_conditions",
 	"FCRM Note": "crm.permissions.linked_records.get_note_permission_query_conditions",
 	"CRM Task": "crm.permissions.linked_records.get_task_permission_query_conditions",
 	"CRM Call Log": "crm.permissions.linked_records.get_call_log_permission_query_conditions",
@@ -194,6 +196,8 @@ has_permission = {
 	"CRM Deal": "crm.permissions.org_hierarchy.has_deal_permission",
 	"CRM Organization": "crm.permissions.customers.has_organization_permission",
 	"Contact": "crm.permissions.customers.has_contact_permission",
+	"Address": "crm.permissions.customers.has_address_permission",
+	"Event": "crm.permissions.customers.has_event_permission",
 	"FCRM Note": "crm.permissions.linked_records.has_note_permission",
 	"CRM Task": "crm.permissions.linked_records.has_task_permission",
 	"CRM Call Log": "crm.permissions.linked_records.has_call_log_permission",

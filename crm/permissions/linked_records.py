@@ -77,7 +77,19 @@ def _conditions(user: str, doctype: str):
 	reference_name = DT[REFERENCE_FIELD.get(doctype, "reference_docname")]
 
 	if doctype in OPEN_WHEN_UNSCOPED:
-		clauses.append(DT.reference_doctype.isnull() | DT.reference_doctype.notin(SCOPED_REFERENCES))
+		# An organization's run carries its name and what enrichment found there.
+		# Customer scoping is its own rule, not org_hierarchy's, so it is added here.
+		from crm.permissions.customers import visible_organization_condition
+
+		org_cond = visible_organization_condition(user)
+		scoped = SCOPED_REFERENCES if org_cond is None else (*SCOPED_REFERENCES, "CRM Organization")
+		clauses.append(DT.reference_doctype.isnull() | DT.reference_doctype.notin(scoped))
+		if org_cond is not None:
+			Org = frappe.qb.DocType("CRM Organization")
+			clauses.append(
+				(DT.reference_doctype == "CRM Organization")
+				& reference_name.isin(frappe.qb.from_(Org).select(Org.name).where(org_cond))
+			)
 
 	for reference in SCOPED_REFERENCES:
 		visible = _visible(user, reference)

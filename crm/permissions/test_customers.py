@@ -206,7 +206,155 @@ class TestCustomerScope(IntegrationTestCase):
 		frappe.set_user("Administrator")
 		self.assertEqual(frappe.db.get_value("CRM Organization", doc.name, "account_owner"), REP_A)
 
+	# --- what names a customer from the side ---------------------------------
+
+	def _contact(self, company, first_name="Person"):
+		return frappe.get_doc(
+			{"doctype": "Contact", "first_name": first_name, "company_name": company}
+		).insert(ignore_permissions=True)
+
+	def test_a_contact_named_by_the_customers_display_name_is_hidden_too(self):
+		frappe.db.set_value("CRM Organization", self.org_b, "organization_name", "Display Name B")
+		contact = self._contact("Display Name B")
+		self.assertFalse(has_contact_permission(contact, "read", REP_A))
+
+	def test_a_rep_cannot_read_a_hidden_contact_by_attaching_it_to_a_deal(self):
+		hidden = self._contact(self.org_b)
+		deal = self.deal(self.org_a, REP_A)
+		frappe.set_user(REP_A)
+		doc = frappe.get_doc("CRM Deal", deal)
+		doc.append("contacts", {"contact": hidden.name})
+		with self.assertRaises(frappe.PermissionError):
+			doc.save()
+
+	def test_a_contact_on_a_reps_own_deal_stays_readable(self):
+		"""Put there by a manager, or before the customer was reassigned."""
+		contact = self._contact(self.org_b)
+		doc = frappe.get_doc("CRM Deal", self.deal(self.org_a, REP_A))
+		doc.append("contacts", {"contact": contact.name})
+		doc.save(ignore_permissions=True)
+		self.assertTrue(has_contact_permission(contact, "read", REP_A))
+
+	def test_a_lead_cannot_take_a_hidden_customers_details_or_contact(self):
+		hidden = self._contact(self.org_b)
+		lead = frappe.get_doc(
+			{"doctype": "CRM Lead", "first_name": "Prospect", "lead_owner": REP_A, "status": "New"}
+		).insert(ignore_permissions=True)
+		frappe.set_user(REP_A)
+		with self.assertRaises(frappe.PermissionError):
+			lead.create_organization(self.org_b)
+		with self.assertRaises(frappe.PermissionError):
+			lead.create_contact(hidden.name, False)
+
+	def test_an_address_at_a_hidden_customer_is_hidden_with_it(self):
+		def address(org, title):
+			return frappe.get_doc(
+				{
+					"doctype": "Address",
+					"address_title": title,
+					"address_type": "Office",
+					"address_line1": "1 Road",
+					"city": "Boksburg",
+					"country": "South Africa",
+					"links": [{"link_doctype": "CRM Organization", "link_name": org}],
+				}
+			).insert(ignore_permissions=True)
+
+		hidden, own = address(self.org_b, "B office"), address(self.org_a, "A office")
+		frappe.db.set_value("CRM Organization", self.org_b, "address", None)
+		frappe.set_user(REP_A)
+		listed = set(frappe.get_list("Address", pluck="name", limit_page_length=0))
+		self.assertNotIn(hidden.name, listed)
+		self.assertIn(own.name, listed)
+
+	def test_an_enrichment_run_on_a_hidden_customer_is_hidden_with_it(self):
+		from crm.permissions.linked_records import get_enrichment_run_permission_query_conditions
+
+		frappe.set_user(REP_A)
+		cond = get_enrichment_run_permission_query_conditions(REP_A)
+		frappe.set_user("Administrator")
+
+		def visible(org):
+			return frappe.db.sql(
+				f"""select count(*) from (select 'CRM Organization' reference_doctype, %s reference_name) t
+				where {cond.replace("`tabCRM Enrichment Run`.", "t.")}""",
+				org,
+			)[0][0]
+
+		self.assertEqual(visible(self.org_b), 0)
+		self.assertEqual(visible(self.org_a), 1)
+
+	def test_a_public_event_at_a_hidden_customer_is_hidden_from_other_reps(self):
+		def event(owner, org):
+			doc = frappe.get_doc(
+				{
+					"doctype": "Event",
+					"subject": "Site visit",
+					"starts_on": frappe.utils.now_datetime(),
+					"event_type": "Public",
+					"event_participants": [
+						{"reference_doctype": "CRM Organization", "reference_docname": org}
+					],
+				}
+			).insert(ignore_permissions=True)
+			frappe.db.set_value("Event", doc.name, "owner", owner)
+			return doc.name
+
+		at_b, at_a = event(REP_B, self.org_b), event(REP_A, self.org_a)
+		frappe.set_user(REP_A)
+		listed = set(frappe.get_list("Event", pluck="name", limit_page_length=0))
+		self.assertNotIn(at_b, listed)
+		self.assertIn(at_a, listed)
+
+	# --- reading a customer is not holding it ---------------------------------
+
+	def test_a_deal_at_a_customer_lets_a_rep_read_it_but_not_edit_or_share_it(self):
+		doc = frappe.get_doc("CRM Organization", self.org_shared)
+		self.assertTrue(has_organization_permission(doc, "read", REP_A))
+		for ptype in ("write", "share", "delete"):
+			with self.subTest(ptype=ptype):
+				self.assertFalse(has_organization_permission(doc, ptype, REP_A))
+
+	def test_a_later_save_does_not_reclaim_a_customer_a_manager_cleared(self):
+		name = self.deal(self.org_free, REP_A)
+		frappe.db.set_value("CRM Organization", self.org_free, "account_owner", None)
+		doc = frappe.get_doc("CRM Deal", name)
+		doc.probability = 40
+		doc.save(ignore_permissions=True)
+		self.assertFalse(frappe.db.get_value("CRM Organization", self.org_free, "account_owner"))
+
 	# --- managers and the switch ---------------------------------------------
+
+	def _in_tree_manager(self):
+		manager = frappe.get_doc(
+			{"doctype": "CRM Sales Hierarchy", "user": MANAGER, "is_group": 1}
+		).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{"doctype": "CRM Sales Hierarchy", "user": REP_A, "reports_to": manager.name}
+		).insert(ignore_permissions=True)
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+
+	def test_a_team_manager_can_only_move_a_customer_within_the_team(self):
+		self._in_tree_manager()
+		frappe.set_user(MANAGER)
+		own_team = frappe.get_doc("CRM Organization", self.org_a)
+		own_team.account_owner = REP_B
+		with self.assertRaises(frappe.PermissionError):
+			own_team.save()
+
+	def test_a_manager_scoped_to_their_own_records_cannot_reassign(self):
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		frappe.db.set_value("CRM Organization", self.org_b, "account_owner", MANAGER)
+		frappe.set_user(MANAGER)
+		doc = frappe.get_doc("CRM Organization", self.org_b)
+		doc.account_owner = REP_A
+		with self.assertRaises(frappe.PermissionError):
+			doc.save()
+
+	def test_a_guest_is_not_narrowed(self):
+		from crm.permissions.customers import scope_applies
+
+		self.assertFalse(scope_applies("Guest"))
 
 	def test_a_manager_sees_every_customer_and_can_reassign_one(self):
 		self.assertTrue({self.org_a, self.org_b, self.org_free} <= self.visible_to(MANAGER))
@@ -226,6 +374,36 @@ class TestCustomerScope(IntegrationTestCase):
 		"""The rule is on by default, on an upgraded site as on a new one."""
 		frappe.db.set_single_value("CRM Access Settings", "rep_customer_scope", None)
 		self.assertNotIn(self.org_b, self.visible_to(REP_A))
+
+
+class TestCustomisedPermissions(IntegrationTestCase):
+	def tearDown(self):
+		frappe.db.rollback()
+		frappe.clear_cache(doctype="CRM Organization")
+
+	def test_a_site_with_custom_permissions_gets_the_field_too(self):
+		from crm.patches.v1_0.backfill_organization_account_owner import grant_on_customised_permissions
+
+		frappe.db.delete("Custom DocPerm", {"parent": "CRM Organization"})
+		grant_on_customised_permissions()
+		self.assertFalse(
+			frappe.db.exists("Custom DocPerm", {"parent": "CRM Organization"}),
+			"a clean site must not gain Custom DocPerm: it freezes its permissions",
+		)
+
+		frappe.get_doc(
+			{
+				"doctype": "Custom DocPerm",
+				"parent": "CRM Organization",
+				"parenttype": "DocType",
+				"parentfield": "permissions",
+				"role": "Sales User",
+				"read": 1,
+			}
+		).insert(ignore_permissions=True)
+		grant_on_customised_permissions()
+		grant_on_customised_permissions()
+		self.assertEqual(frappe.db.count("Custom DocPerm", {"parent": "CRM Organization", "permlevel": 1}), 3)
 
 
 class TestAccountOwnerBackfill(IntegrationTestCase):

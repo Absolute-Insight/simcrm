@@ -15,10 +15,39 @@ from frappe.query_builder.functions import Count, Max
 
 from crm.permissions.customers import can_own_customers
 
+DOCTYPE = "CRM Organization"
+
 
 def execute():
+	grant_on_customised_permissions()
 	add_to_side_panel()
 	backfill()
+
+
+def grant_on_customised_permissions():
+	"""Custom DocPerm replaces a doctype's permissions wholesale, so on a site that
+	customised them the doctype's permlevel 1 rows never arrive: nobody could read
+	the field, and no manager could reassign a customer while the rule walled reps
+	off. Only such a site is touched; a Custom DocPerm on a clean one would freeze
+	its permissions against later releases."""
+	if not frappe.db.exists("Custom DocPerm", {"parent": DOCTYPE}):
+		return
+	for role, write in (("System Manager", 1), ("Sales Manager", 1), ("Sales User", 0)):
+		if frappe.db.exists("Custom DocPerm", {"parent": DOCTYPE, "role": role, "permlevel": 1}):
+			continue
+		frappe.get_doc(
+			{
+				"doctype": "Custom DocPerm",
+				"parent": DOCTYPE,
+				"parenttype": "DocType",
+				"parentfield": "permissions",
+				"role": role,
+				"permlevel": 1,
+				"read": 1,
+				"write": write,
+			}
+		).insert(ignore_permissions=True)
+	frappe.clear_cache(doctype=DOCTYPE)
 
 
 def backfill():
