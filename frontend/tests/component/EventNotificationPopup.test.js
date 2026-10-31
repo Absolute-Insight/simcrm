@@ -74,9 +74,23 @@ const reminder = (overrides) => {
 
 const popupText = () => document.body.textContent
 
-// A fresh copy of the composable's module state for each test. (The test
-// environment exposes no localStorage, so useStorage keeps alerts in memory.)
+/* A fresh copy of the composable's module state for each test. The alerts are
+   kept by useStorage, and resetting modules does not reset localStorage: on
+   Node 24 (CI) happy-dom's localStorage works, so an alert one test left
+   behind -- hidden there only because that test had dismissed it -- came back
+   in the next, and showed instead of the case's own. On Node 25+ Node's own
+   global localStorage, undefined without --localstorage-file, shadows
+   happy-dom's, useStorage falls back to memory, and the leak did not show. */
+function clearStoredAlerts() {
+  try {
+    window.localStorage?.clear()
+  } catch {
+    // no usable storage: useStorage keeps the alerts in module memory instead
+  }
+}
+
 beforeEach(() => {
+  clearStoredAlerts()
   vi.resetModules()
   saved.length = 0
   storedSettings = Promise.resolve({ completedEvents: [] })
@@ -128,8 +142,11 @@ describe('event reminder popup', () => {
       starts_on: when,
       ends_on: dayjs(when).add(1, 'hour').format('YYYY-MM-DD HH:mm:ss'),
     })
-    const timeLine = () =>
-      document.body.querySelector('.text-ink-gray-6')?.textContent.trim()
+    // every alert's time line, so one left over from another test fails loudly
+    const timeLines = () =>
+      [...document.body.querySelectorAll('.text-ink-gray-6')].map((el) =>
+        el.textContent.trim(),
+      )
 
     it.each([
       ['later today', at('2026-10-30 15:00:00'), '3:00 pm - 4:00 pm'],
@@ -157,7 +174,7 @@ describe('event reminder popup', () => {
       socketSide.handleEventNotification(reminder(when))
       await flush()
 
-      expect(timeLine()).toBe(expected)
+      expect(timeLines()).toEqual([expected])
     })
   })
 })
