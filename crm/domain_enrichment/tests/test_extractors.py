@@ -12,9 +12,11 @@ standalone.
 
 from __future__ import annotations
 
+import json
+
 from frappe.tests import UnitTestCase
 
-from crm.domain_enrichment import extractors
+from crm.domain_enrichment import extractors, install
 from crm.domain_enrichment.config import Rule, _compile_pattern
 from crm.domain_enrichment.result import CrawledPage, Method
 from crm.domain_enrichment.tests import fixtures
@@ -202,6 +204,20 @@ class CompanyNameCleaningTest(UnitTestCase):
 			"Innovative IT & Software Development Services",
 		)
 
+	def test_brand_matches_under_a_two_label_public_suffix(self):
+		"""The brand was the second-to-last label, which under .co.za is "co" -- so it
+		never matched, and "Home | Acme Engineering" came out as "Home"."""
+		for site in ("https://www.acmeengineering.co.za/", "https://acmeengineering.co.uk/"):
+			with self.subTest(site=site):
+				self.assertEqual(
+					extractors._clean_company_name("Home | Acme Engineering", site), "Acme Engineering"
+				)
+
+	def test_domain_brand_is_the_registrable_label(self):
+		self.assertEqual(extractors._domain_brand("https://www.acme.co.za/about"), "acme")
+		self.assertEqual(extractors._domain_brand("https://shop.acme.com.au"), "acme")
+		self.assertEqual(extractors._domain_brand("https://acme.com:8443/"), "acme")
+
 
 class JsonLdTest(UnitTestCase):
 	def test_parses_graph_blocks(self):
@@ -218,6 +234,44 @@ class JsonLdTest(UnitTestCase):
 	def test_ignores_invalid_json(self):
 		_page, soup = fixtures.make_page("https://x.com", fixtures.BROKEN_JSON_LD)
 		self.assertEqual(extractors.parse_json_ld(soup), [])
+
+
+def _ld_page(block):
+	html = (
+		"<html><head><title>Acme | Industrial pumps</title>"
+		f'<script type="application/ld+json">{json.dumps(block)}</script>'
+		"</head><body><p>x</p></body></html>"
+	)
+	return fixtures.make_page("https://acme.example", html)
+
+
+class JsonLdValueShapesTest(UnitTestCase):
+	"""JSON-LD allows a language-tagged ``{"@value": ...}`` object or an array wherever
+	a string can go. Calling ``.strip()`` on one raised AttributeError: the preview
+	answered 500, and a full run was marked Failed before contacts and industry were
+	even looked at -- on every retry."""
+
+	def test_a_language_tagged_name_is_read(self):
+		page, soup = _ld_page({"@type": "Organization", "name": {"@value": " Acme ", "@language": "en"}})
+		self.assertEqual(extractors.extract_company_info(page, soup)["company_name"].value, "Acme")
+
+	def test_a_list_takes_its_first_string(self):
+		page, soup = _ld_page({"@type": "Organization", "name": "Acme", "description": [{"x": 1}, "Pumps."]})
+		self.assertEqual(extractors.extract_company_info(page, soup)["description"].value, "Pumps.")
+		self.assertEqual(extractors.select_description([page], {page.url: soup}).value, "Pumps.")
+
+	def test_a_logo_url_list_is_read(self):
+		page, soup = _ld_page({"@type": "Organization", "logo": {"@type": "ImageObject", "url": ["/a.png"]}})
+		self.assertEqual(
+			extractors.extract_company_info(page, soup)["image"].value, "https://acme.example/a.png"
+		)
+
+	def test_an_unreadable_value_is_skipped_for_the_next_source(self):
+		page, soup = _ld_page({"@type": "Organization", "name": 42, "description": {"@id": "#d"}})
+		info = extractors.extract_company_info(page, soup)
+		self.assertEqual(info["company_name"].value, "Acme")  # from the <title>
+		self.assertEqual(info["company_name"].method, Method.TITLE_TAG)
+		self.assertEqual(info["description"].value, "")
 
 
 class DescriptionSelectionTest(UnitTestCase):
@@ -522,6 +576,32 @@ class SocialTest(UnitTestCase):
 		# A facebook 'sharer' link must be ignored.
 		self.assertEqual(profiles["facebook"].value, "")
 
+	def test_the_seeded_twitter_rule_needs_twitter_or_x_as_the_host(self):
+		"""Unanchored, ``x\\.com/`` matched inside wix.com, fedex.com and dropbox.com, and
+		every free Wix site's footer link landed in the Twitter field."""
+		rule = fixtures.regex_rule("Social", install.SOCIAL_PATTERNS["twitter"], target_value="twitter")
+		for href in (
+			"https://www.wix.com/lpviral/enviral?utm_campaign=vir_wixad_live",
+			"https://www.fedex.com/en-za/shipping.html",
+			"https://www.dropbox.com/s/abc/brochure.pdf",
+			"https://nottwitter.com/acme",
+		):
+			with self.subTest(href=href):
+				page, soup = fixtures.make_page("https://acme.example", f"<a href='{href}'>x</a>")
+				profiles = extractors.extract_social_profiles([page], {page.url: soup}, [rule])
+				self.assertEqual(profiles["twitter"].value, "")
+		for href in (
+			"https://twitter.com/acme",
+			"https://x.com/acme",
+			"https://www.x.com/acme",
+			"https://mobile.twitter.com/acme",
+			"//twitter.com/acme",
+		):
+			with self.subTest(href=href):
+				page, soup = fixtures.make_page("https://acme.example", f"<a href='{href}'>x</a>")
+				profiles = extractors.extract_social_profiles([page], {page.url: soup}, [rule])
+				self.assertTrue(profiles["twitter"].value)
+
 	def test_protocol_relative_links_made_absolute(self):
 		page, soup = fixtures.make_page(
 			"https://bluedart.com",
@@ -608,6 +688,39 @@ class IndustryTest(UnitTestCase):
 			)[0],
 			"Manufacturing",
 		)
+
+	def test_a_tie_is_not_a_winner(self):
+		"""Two industries with the same score passed the 0.34 confidence floor at 0.5,
+		and max() handed the win to whichever rule the database returned first -- so
+		editing an unrelated rule could flip a record's industry."""
+		mfg = fixtures.keyword_rule(
+			"Industry", ["fabrication"], industry="Manufacturing", match_scope="Headline"
+		)
+		con = fixtures.keyword_rule(
+			"Industry", ["construction"], industry="Construction", match_scope="Headline"
+		)
+		page, _ = fixtures.make_page(
+			"https://acme.test",
+			"<html><head><title>Acme - steel fabrication and construction</title></head>"
+			"<body><h1>Steel fabrication</h1><h2>Construction projects</h2></body></html>",
+		)
+		for rules in ([mfg, con], [con, mfg]):
+			with self.subTest(order=[r.industry for r in rules]):
+				self.assertEqual(extractors.classify_industry([page], {}, rules), ("", 0.0))
+
+	def test_a_clear_lead_still_wins(self):
+		mfg = fixtures.keyword_rule(
+			"Industry", ["fabrication"], industry="Manufacturing", match_scope="Headline"
+		)
+		con = fixtures.keyword_rule(
+			"Industry", ["construction"], industry="Construction", match_scope="Headline"
+		)
+		page, _ = fixtures.make_page(
+			"https://acme.test",
+			"<html><head><title>Acme - steel fabrication</title></head>"
+			"<body><h1>Steel fabrication</h1><h2>Construction projects</h2></body></html>",
+		)
+		self.assertEqual(extractors.classify_industry([page], {}, [con, mfg])[0], "Manufacturing")
 
 	def test_about_page_headline_supplements_thin_homepage(self):
 		# A homepage with no meta description and abstract brand-voice headings

@@ -60,5 +60,6 @@ crm.patches.v1_0.add_lost_reason_section_to_side_panels
 crm.patches.v1_0.fix_notes_view_route_name
 crm.patches.v1_0.rename_user_keyed_rows_after_user_renames
 crm.patches.v1_0.narrow_whatsapp_role_permissions
+crm.patches.v1_0.anchor_seeded_twitter_rule
 crm.patches.v1_0.clear_status_filter_on_created_rules
 crm.patches.v1_0.disable_rules_waiting_on_a_foreign_status

@@ -158,12 +158,20 @@ function disable() {
   update()
 }
 
-function update() {
-  exotel.save.submit(null, {
-    onSuccess: () => exotel.reload(),
-  })
-
-  setEnabled('exotel', exotel.doc.enabled)
+// The app-wide flag follows what was stored, not the toggle: a save the server
+// refuses (bad credentials, a missing field) must not turn calling on or off.
+// The refusal itself is toasted by the document's save handler.
+async function update() {
+  try {
+    await exotel.save.submit(null, {
+      onSuccess: (saved) => {
+        setEnabled('exotel', Boolean(saved?.enabled))
+        exotel.reload()
+      },
+    })
+  } catch {
+    // already reported
+  }
 }
 
 const isDirty = computed(() => {
