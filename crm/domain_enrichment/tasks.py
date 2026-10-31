@@ -143,7 +143,7 @@ def job_timeout(s) -> int:
 
 
 def clear_runs(doc, method=None) -> None:
-	"""on_trash for CRM Lead, Deal and Organization: a deleted record takes its
+	"""after_delete for CRM Lead, Deal and Organization: a deleted record takes its
 	enrichment history with it.
 
 	A Run's ``reference_name`` is a Dynamic Link, so left in place it made every

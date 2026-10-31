@@ -267,6 +267,53 @@ class ViewSettingsRowPermissionTest(IntegrationTestCase):
 		frappe.set_user("Administrator")
 		self.assertEqual(frappe.db.get_value("CRM View Settings", self.bobs_view.name, "user"), BOB)
 
+	def test_a_rep_cannot_hand_their_own_view_to_someone_else(self):
+		"""The stored owner decides who may write; the new ``user`` was never asked,
+		so a rep's own view could be planted as a manager's default list."""
+		frappe.set_user(ALICE)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value(
+				"CRM View Settings", self.alices_view.name, {"user": self.MANAGER, "is_default": 1}
+			)
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("CRM View Settings", self.alices_view.name, "user"), ALICE)
+
+	def test_a_rep_cannot_publish_their_view_by_clearing_its_user(self):
+		"""``get_views`` lists every view with no user to everyone: publishing is the
+		manager-only ``public`` endpoint, not a set_value on ``user``."""
+		frappe.set_user(ALICE)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM View Settings", self.alices_view.name, "user", "")
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("CRM View Settings", self.alices_view.name, "user"), ALICE)
+
+	def test_a_manager_still_publishes_and_unpublishes_their_own_view(self):
+		from crm.fcrm.doctype.crm_view_settings.crm_view_settings import public
+
+		frappe.set_user("Administrator")
+		view = frappe.get_doc(
+			{
+				"doctype": "CRM View Settings",
+				"label": "Manager's view",
+				"dt": "CRM Deal",
+				"type": "list",
+				"user": self.MANAGER,
+			}
+		).insert(ignore_permissions=True)
+		self.addCleanup(
+			frappe.delete_doc, "CRM View Settings", view.name, force=True, ignore_permissions=True
+		)
+
+		def stored():
+			row = frappe.db.get_value("CRM View Settings", view.name, ["user", "public"], as_dict=True)
+			return row.user or "", row.public
+
+		frappe.set_user(self.MANAGER)
+		public(view.name, 1)
+		self.assertEqual(stored(), ("", 1))
+		public(view.name, 0)
+		self.assertEqual(stored(), (self.MANAGER, 0))
+
 	def test_a_rep_cannot_create_a_view_for_someone_else_or_a_public_one(self):
 		frappe.set_user(ALICE)
 		for extra in ({"user": BOB}, {"user": "", "public": 1}):

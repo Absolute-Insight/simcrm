@@ -348,3 +348,61 @@ class TestDealLayoutFields(FrappeTestCase):
 		ensure_layout_fields()
 		layout = json.loads(frappe.db.get_value("CRM Fields Layout", name, "layout"))
 		self.assertFalse([s for s in layout if s.get("name") == "acumatica_section"])
+
+	def test_an_admins_removal_and_disable_survive_a_migrate_and_a_settings_save(self):
+		"""Nothing recorded that the section had been placed, so "absent" read as
+		"never added" and every migrate put it back; the script refresh switched
+		the quote button back on too. Turning the integration on places both --
+		after that they are the admin's."""
+		from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import FORM_SCRIPT_NAME
+		from crm.integrations.acumatica.install import refresh_integration
+
+		self.addCleanup(
+			lambda: frappe.db.exists("CRM Form Script", FORM_SCRIPT_NAME)
+			and frappe.delete_doc("CRM Form Script", FORM_SCRIPT_NAME, force=True, ignore_permissions=True)
+		)
+		name = "CRM Deal-Side Panel"
+		settings = frappe.get_doc("CRM Acumatica Settings")
+		settings.enabled = 1
+		settings.instance_url = "https://x.acumatica.com"
+		settings.save()
+		self.assertIn("acumatica_sales_quote", self._fields(name))
+
+		# the admin takes the section off the side panel and switches the button off
+		layout = [
+			section
+			for section in json.loads(frappe.db.get_value("CRM Fields Layout", name, "layout"))
+			if section.get("name") != "acumatica_section"
+		]
+		frappe.db.set_value("CRM Fields Layout", name, "layout", json.dumps(layout))
+		frappe.db.set_value("CRM Form Script", FORM_SCRIPT_NAME, "enabled", 0)
+
+		refresh_integration()
+		settings.reload()
+		settings.quote_order_type = "SO"
+		settings.save()
+
+		self.assertNotIn("acumatica_sales_quote", self._fields(name))
+		self.assertEqual(frappe.db.get_value("CRM Form Script", FORM_SCRIPT_NAME, "enabled"), 0)
+
+	def test_a_migrate_still_brings_the_script_text_up_to_date(self):
+		from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import FORM_SCRIPT_NAME
+		from crm.integrations.acumatica.api import get_crm_form_script
+		from crm.integrations.acumatica.install import refresh_integration
+
+		self.addCleanup(
+			lambda: frappe.db.exists("CRM Form Script", FORM_SCRIPT_NAME)
+			and frappe.delete_doc("CRM Form Script", FORM_SCRIPT_NAME, force=True, ignore_permissions=True)
+		)
+		settings = frappe.get_doc("CRM Acumatica Settings")
+		settings.enabled = 1
+		settings.instance_url = "https://x.acumatica.com"
+		settings.save()
+		frappe.db.set_value("CRM Form Script", FORM_SCRIPT_NAME, {"script": "class CRMDeal {}", "enabled": 0})
+
+		refresh_integration()
+
+		self.assertEqual(
+			frappe.db.get_value("CRM Form Script", FORM_SCRIPT_NAME, "script"), get_crm_form_script()
+		)
+		self.assertEqual(frappe.db.get_value("CRM Form Script", FORM_SCRIPT_NAME, "enabled"), 0)

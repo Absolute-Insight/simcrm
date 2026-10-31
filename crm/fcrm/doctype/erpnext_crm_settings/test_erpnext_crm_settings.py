@@ -131,6 +131,36 @@ class CustomerPushOffTheSavePathTest(IntegrationTestCase):
 		self.assertFalse(frappe.db.get_single_value("ERPNext CRM Settings", "last_customer_push_error"))
 
 
+class QuotationUrlTest(IntegrationTestCase):
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		_enable(erpnext_company="Smith & Sons #2 Co")
+
+	def tearDown(self):
+		frappe.db.rollback()
+		super().tearDown()
+
+	def test_every_value_reaches_erpnext_whole(self):
+		"""The query string was joined by hand: "Smith & Sons" arrived as "Smith " and a
+		"#" cut off everything after it, prefilling the quotation with half a party."""
+		from urllib.parse import parse_qs, urlsplit
+
+		deal = _won_deal()
+		with patch.object(erp, "create_prospect_in_remote_site", return_value="Smith & Sons #1"):
+			url = erp.get_quotation_url(deal.name)
+
+		parts = urlsplit(url)
+		self.assertEqual(
+			f"{parts.scheme}://{parts.netloc}{parts.path}", "https://erp.invalid/app/quotation/new"
+		)
+		query = parse_qs(parts.query)
+		self.assertEqual(query["party_name"], ["Smith & Sons #1"])
+		self.assertEqual(query["company"], ["Smith & Sons #2 Co"])
+		self.assertEqual(query["crm_deal"], [deal.name])
+		self.assertEqual(query["quotation_to"], ["Prospect"])
+
+
 class SyncIssueDismissalTest(IntegrationTestCase):
 	def tearDown(self):
 		frappe.set_user("Administrator")
@@ -145,12 +175,14 @@ class SyncIssueDismissalTest(IntegrationTestCase):
 		return frappe.get_single("ERPNext CRM Settings").sync_issues[-1]
 
 	def test_an_issue_is_dismissable_by_the_name_the_client_sends(self):
-		"""Child rows autoincrement, so ``issue.name`` is an int here and arrives from
-		the browser as a string: the comparison never matched and no product sync
-		issue could ever be cleared."""
+		"""Child rows autoincrement, so ``issue.name`` is an int, and the Logs tab posts
+		it back as a JSON number. Frappe checks whitelisted arguments against their
+		annotations in tests too: a ``str`` annotation answered every real click with
+		a 417, while a test that str()-ed the name first passed."""
 		issue = self._append_issue()
+		self.assertIsInstance(issue.name, int)
 
-		self.assertTrue(erp.dismiss_sync_issue(str(issue.name)))
+		self.assertTrue(erp.dismiss_sync_issue(issue.name))
 
 		dismissed = {
 			str(row.name): row.dismissed for row in frappe.get_single("ERPNext CRM Settings").sync_issues
