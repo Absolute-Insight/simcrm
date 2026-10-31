@@ -24,10 +24,11 @@ FLOW = "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_flow.whatsapp_flow"
 
 def refuse_upstream_methods_via_upload():
 	method = frappe.form_dict.get("method")
-	if (
-		isinstance(method, str)
-		and method.startswith("frappe_whatsapp.")
-		and frappe.request.path.endswith("upload_file")
+	if not (isinstance(method, str) and method.startswith("frappe_whatsapp.")):
+		return
+	# frappe dispatches on form_dict.cmd from any path, not only /api/method/...
+	if frappe.request.path.endswith("upload_file") or str(frappe.form_dict.get("cmd")).endswith(
+		"upload_file"
 	):
 		raise frappe.PermissionError
 

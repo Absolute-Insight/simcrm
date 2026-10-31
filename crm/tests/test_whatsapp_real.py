@@ -226,6 +226,9 @@ class TestSignature(WhatsAppCase):
 		payload["entry"][0]["changes"][0]["value"].pop("metadata")
 		self.assertEqual(self.post(payload, signature="sha256=x").status_code, 403)
 
+	def test_a_body_nested_past_the_recursion_limit_is_denied_and_not_a_crash(self):
+		self.assertIsNone(guard._parse(b"[" * 500000))
+
 	def test_a_verify_token_must_be_a_string(self):
 		frappe.local.request = Request(EnvironBuilder(method="GET").get_environ())
 		frappe.local.form_dict = frappe._dict({"hub.verify_token": ["like", "v%"], "hub.challenge": "42"})
@@ -250,6 +253,16 @@ class TestSignature(WhatsAppCase):
 			refuse_upstream_methods_via_upload()
 		frappe.local.form_dict = frappe._dict(method="crm.api.something")
 		refuse_upstream_methods_via_upload()
+
+	def test_an_upstream_method_through_cmd_upload_file_is_refused(self):
+		from crm.integrations.whatsapp.guards import refuse_upstream_methods_via_upload
+
+		frappe.local.request = Request(EnvironBuilder(method="POST", path="/").get_environ())
+		frappe.local.form_dict = frappe._dict(
+			cmd="upload_file", method="frappe_whatsapp.utils.bulk_messaging.retry_failed"
+		)
+		with self.assertRaises(frappe.PermissionError):
+			refuse_upstream_methods_via_upload()
 
 	def test_upstreams_open_functions_are_for_system_managers(self):
 		for method in guards_overrides():

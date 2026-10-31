@@ -106,7 +106,7 @@ def refuse_unverified_log(doc, method=None):
 def _parse(raw: bytes) -> dict | None:
 	try:
 		payload = json.loads(raw)
-	except ValueError:
+	except (ValueError, RecursionError):
 		return None
 	return payload if isinstance(payload, dict) else None
 
