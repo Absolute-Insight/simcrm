@@ -30,9 +30,8 @@ function handleFocus() {
   isFocused.value = true
 
   nextTick(() => {
-    if (inputRef.value) {
-      inputRef.value.el?.select()
-    }
+    // frappe-ui v1's TextInput exposes the <input> as `inputElement`.
+    inputRef.value?.inputElement?.select()
   })
 }
 

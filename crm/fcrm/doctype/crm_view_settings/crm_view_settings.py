@@ -214,11 +214,27 @@ def has_permission(doc, ptype="read", user=None):
 		# planted under another user's name
 		return doc.user == user or (bool(doc.public) and is_manager)
 	owner, public = _stored_ownership(doc)
+	if ptype not in READABLE and (doc.user or "") != (owner or "") and not _may_move(doc, user, is_manager):
+		return False
 	if owner == user:
 		return True
 	if public or not owner:
 		return ptype in READABLE or is_manager
 	return False
+
+
+def _may_move(doc, user: str, is_manager: bool) -> bool:
+	"""Whether this write may change whose view it is.
+
+	The stored owner is what decides *who* may write, so ``user`` itself is the
+	one field that check never looked at: a rep could set their own view's
+	``user`` to a manager (with ``is_default``) and plant it as that manager's
+	opening list, or to ``""`` and publish it to the whole team without the
+	manager-only ``public`` endpoint. That endpoint is the one legitimate move:
+	a manager publishing a view (``user`` cleared) or taking a public one as
+	their own (``user`` set to themselves).
+	"""
+	return is_manager and (doc.user or "") in ("", user)
 
 
 def remove_duplicates(l):

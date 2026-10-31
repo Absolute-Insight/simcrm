@@ -149,9 +149,14 @@
 </template>
 <script setup>
 import BellIcon from '@/components/Icons/BellIcon.vue'
-import { min, max, handleIntervalChange } from '@/components/Calendar/utils'
+import {
+  min,
+  max,
+  handleIntervalChange,
+  toAllDayNotification,
+} from '@/components/Calendar/utils'
 import { TimePicker } from 'frappe-ui'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
   isAllDay: { type: Boolean, default: false },
@@ -160,16 +165,19 @@ const props = defineProps({
 const notifications = defineModel({ type: Array, default: () => [] })
 const show = ref(false)
 
+// Converted once, when the event becomes all-day. This used to happen inside
+// intervalOptions(), i.e. while rendering and only for rows on screen: "10
+// minutes before" was relabelled 10 days, and a collapsed list kept its
+// minutes under a summary claiming "at 8:00 am".
+watch(
+  () => props.isAllDay,
+  (isAllDay) => {
+    if (isAllDay) notifications.value?.forEach(toAllDayNotification)
+  },
+)
+
 const intervalOptions = (n) => {
   if (props.isAllDay) {
-    if (n.interval === 'minutes' || n.interval === 'hours') {
-      n.interval = 'days'
-    }
-
-    if (!n.time) {
-      n.time = '08:00'
-    }
-
     return [
       {
         label: n.before == 1 ? __('day before') : __('days before'),
@@ -247,7 +255,8 @@ const notificationSummary = computed(() => {
           intervalLabel = n.before == 1 ? __('week') : __('weeks')
           break
       }
-      if (props.isAllDay) {
+      // the server keeps a time of day only for days and weeks
+      if (props.isAllDay && ['days', 'weeks'].includes(n.interval)) {
         let time = formatTime(n.time)
         return `${n.before} ${intervalLabel} before at ${time}`
       } else {

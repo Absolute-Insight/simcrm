@@ -44,7 +44,9 @@ def get_sync_status() -> dict:
 	}
 
 
-@frappe.whitelist()
+# POST only, like everything here that acts: frappe skips the CSRF check on a GET, so
+# a link or an <img> in a page the admin opens could fire it on their session.
+@frappe.whitelist(methods=["POST"])
 def test_connection() -> dict:
 	"""Never raises: a transport failure is exactly what an admin clicking this button
 	is trying to see, not a stack trace on the panel."""
@@ -52,10 +54,11 @@ def test_connection() -> dict:
 	settings = frappe.get_doc("CRM Acumatica Settings")  # the saved doc -- the operator just saved it
 	if not settings.instance_url:
 		return {"ok": False, "error": _("Instance URL is required")}
-	client = AcumaticaClient(settings)
-	# the operator may have just changed the credentials; a cached token from the old
-	# ones would test those, not the ones on screen
-	frappe.cache().delete_value(client._cache_key())
+	# Its own login, never the shared cached one: the operator may have just changed
+	# the credentials, and a cached token from the old ones would test those. Deleting
+	# the shared key instead did not end that login -- a running sync minted another,
+	# and the one dropped from the cache held an API login slot until it expired.
+	client = AcumaticaClient(settings, shared_session=False)
 	try:
 		return client.ping()
 	except AcumaticaError as e:
@@ -90,12 +93,15 @@ def get_open_sync_issues() -> list[dict]:
 	]
 
 
-@frappe.whitelist()
-def dismiss_sync_issue(issue_name: str) -> bool:
+@frappe.whitelist(methods=["POST"])
+def dismiss_sync_issue(issue_name: str | int) -> bool:
+	"""Child rows autoincrement, so ``get_open_sync_issues`` hands the panel an int and
+	the panel posts it back as a JSON number. A bare ``str`` annotation made Frappe's
+	argument validation answer 417 to every real Dismiss click."""
 	frappe.only_for(["System Manager", "Sales Manager"], True)
 	settings = frappe.get_doc("CRM Acumatica Settings")
 	for issue in settings.sync_issues:
-		# child rows autoincrement, so the name arrives from the client as a string
+		# an int from the panel, a string from anything that stringified it first
 		if str(issue.name) == str(issue_name):
 			issue.dismissed = 1
 			# clearing a log row must not be blocked by the config validations

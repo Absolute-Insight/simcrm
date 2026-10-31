@@ -73,6 +73,7 @@ import { isMobileView } from '@/composables/settings'
 import { showQuickEntryModal, quickEntryProps } from '@/composables/modals'
 import { useDocument } from '@/data/document'
 import { useDoctypeModal } from '@/composables/doctypeModal'
+import { resetNewDocument } from '@/utils/newDocument'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { call, createResource, toast } from 'frappe-ui'
 import { ref, nextTick, onMounted } from 'vue'
@@ -169,7 +170,7 @@ async function createOrganization() {
   if (doc.name) {
     capture('organization_created')
     handleOrganizationUpdate(doc)
-    organization.doc = {}
+    resetNewDocument(organization, 'CRM Organization')
   }
 }
 
@@ -212,6 +213,10 @@ const tabs = createResource({
 })
 
 onMounted(() => {
+  // The buffer behind `useDocument('CRM Organization')` is shared for the
+  // session, so it still holds whatever a form closed unsaved left in it.
+  // Start from an empty record.
+  resetNewDocument(organization, 'CRM Organization')
   organization.doc.no_of_employees = '1-10'
   Object.assign(organization.doc, props.data)
 })

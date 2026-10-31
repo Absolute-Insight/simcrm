@@ -58,3 +58,5 @@ crm.patches.v1_0.backfill_plan_item_customer
 crm.patches.v1_0.drop_enrichment_headers_scope
 crm.patches.v1_0.add_lost_reason_section_to_side_panels
 crm.patches.v1_0.fix_notes_view_route_name
+crm.patches.v1_0.rename_user_keyed_rows_after_user_renames
+crm.patches.v1_0.narrow_whatsapp_role_permissions

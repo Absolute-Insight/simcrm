@@ -54,17 +54,19 @@ def tokens_to_chars(tokens: int) -> int:
 	return max(0, int(tokens * CHARS_PER_TOKEN))
 
 
-def fit_messages(messages: list[dict], budget_tokens: int) -> list[dict]:
+def fit_messages(messages: list[dict], budget_tokens: int, protected: int = 1) -> list[dict]:
 	"""``messages`` with the oldest droppable turns removed until it fits.
 
 	Droppable is everything that is neither the leading system message -- the
-	instruction, and the grounding it carries -- nor the final turn, which is
-	the question being asked. Those two *are* the request; everything between
-	them is history, and history is what a fourth follow-up adds until the
-	window overflows and the endpoint quietly drops the instruction instead.
+	instruction, and the grounding it carries -- nor the final ``protected``
+	turns: the question being asked, and on a schema retry the complaint after
+	it. Those *are* the request; everything between them is history, and
+	history is what a fourth follow-up adds until the window overflows and the
+	endpoint quietly drops the instruction instead. History goes oldest first
+	and never leaves an answer at its head whose question went before it.
 
-	Returns the two undroppable messages even when they do not fit on their
-	own. Trimming the grounding block is the builder's job, because only the
+	Returns the undroppable messages even when they do not fit on their own.
+	Trimming the grounding block is the builder's job, because only the
 	builder knows where the instruction ends and the quoted material begins;
 	if it left something too big, a prompt the endpoint refuses out loud is a
 	better outcome than one it truncates in silence.
@@ -73,12 +75,15 @@ def fit_messages(messages: list[dict], budget_tokens: int) -> list[dict]:
 		return list(messages)
 	head = messages[:1] if messages and messages[0].get("role") == "system" else []
 	tail = list(messages[len(head) :])
-	if len(tail) <= 1:
+	if len(tail) <= protected:
 		return list(messages)
-	question = tail.pop()
-	while tail and estimate_messages([*head, *tail, question]) > budget_tokens:
+	request = tail[-protected:]
+	tail = tail[:-protected]
+	while tail and estimate_messages([*head, *tail, *request]) > budget_tokens:
 		tail.pop(0)
-	return [*head, *tail, question]
+		while tail and tail[0].get("role") == "assistant":
+			tail.pop(0)
+	return [*head, *tail, *request]
 
 
 def neutralise(content, markers) -> str:

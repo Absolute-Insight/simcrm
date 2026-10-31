@@ -15,7 +15,11 @@
  */
 import { statusesStore } from '@/stores/statuses'
 import { viewsStore } from '@/stores/views'
-import { drilldownFor, standardViewPayload } from '@/utils/dashboardHome'
+import {
+  drilldownFor,
+  isOpenStatusType,
+  standardViewPayload,
+} from '@/utils/dashboardHome'
 import { describeError } from '@/utils/describeError'
 import { call, toast } from 'frappe-ui'
 import { computed } from 'vue'
@@ -31,7 +35,7 @@ export function useDrilldown() {
 
   const openStatuses = computed(() =>
     (dealStatuses.data || [])
-      .filter((s) => ['Open', 'Ongoing'].includes(s.type))
+      .filter((s) => isOpenStatusType(s.type))
       .map((s) => s.name),
   )
 

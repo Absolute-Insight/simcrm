@@ -43,6 +43,10 @@ def get_duration(from_date, to_date):
 
 
 def add_status_change_log(doc):
+	# The site's clock, never datetime.now(): the container's OS clock is UTC
+	# while the site runs on its own zone (+02:00 in production), so every stamp
+	# landed two hours early and days_in_stage, read against now_datetime(),
+	# ticked over at 22:00.
 	to_status_type = frappe.db.get_value("CRM Deal Status", doc.status, "type") if doc.status else None
 
 	if not doc.is_new():

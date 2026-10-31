@@ -243,6 +243,18 @@ class GroupingTest(BuilderFixture, IntegrationTestCase):
 		labels = [row["label"] for row in self.rows(dimension="industry", measure="deals")]
 		self.assertIn("Unset", labels)
 
+	def test_a_cleared_field_and_an_unset_one_are_one_row(self):
+		"""The fixture's unanswered deal stores ''; a field that was never set is
+		NULL. Grouped on the raw column they came back as two rows, both
+		relabelled Unset -- two "Unset" lines in the table, the CSV and print."""
+		name = self.make_deal(industry="Software", expected_deal_value=1000)
+		self.addCleanup(frappe.delete_doc, "CRM Deal", name, force=True, ignore_missing=True)
+		frappe.db.set_value("CRM Deal", name, "industry", None, update_modified=False)
+
+		rows = self.rows(dimension="industry", measure="deals", territory=TERRITORY)
+		unset = [row["value"] for row in rows if row["label"] == "Unset"]
+		self.assertEqual(unset, [2])
+
 	def test_company_size_comes_back_in_band_order_not_by_size(self):
 		"""Sorting an ordinal dimension by its measure puts '1000+' between
 		'11-50' and '201-500', which reads as noise."""
@@ -319,7 +331,15 @@ class ScopingTest(IntegrationTestCase):
 
 	def total(self):
 		rows = run(dimension="owner", measure="expected_value", status_scope="all")["rows"]
-		return {row["label"]: row["value"] for row in rows}
+		return {row["user"]: row["value"] for row in rows}
+
+	def test_the_rep_dimension_shows_names_and_keeps_the_login(self):
+		"""The built-in rep reports read "Jane Sales"; the builder printed the
+		login email into the same column, and into every export of it."""
+		rows = run(dimension="owner", measure="expected_value", status_scope="all")["rows"]
+		mine = next(row for row in rows if row["user"] == SCOPED_REP)
+		self.assertEqual(mine["label"], frappe.utils.get_fullname(SCOPED_REP))
+		self.assertNotEqual(mine["label"], SCOPED_REP)
 
 	def test_a_rep_reads_their_own_deals_and_not_another_reps(self):
 		frappe.set_user(SCOPED_REP)
@@ -378,7 +398,7 @@ class ScopingTest(IntegrationTestCase):
 		this asserts the outcome rather than the mechanism."""
 		frappe.set_user(SCOPED_REP)
 		totals = {
-			row["label"]: row["value"]
+			row["user"]: row["value"]
 			for row in run(dimension="owner", measure="expected_value", status_scope="all", user=OTHER_REP)[
 				"rows"
 			]

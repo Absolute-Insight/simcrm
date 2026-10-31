@@ -1,10 +1,14 @@
 import './index.css'
+// First, before any import below creates a cached resource that replays the
+// last user's IndexedDB copy into the page.
+import './offlineCacheGuard'
 
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { createDialog } from './utils/dialogs'
 import { cleanUpSupersededWorkers } from './utils/staleServiceWorkers'
 import { isSessionGone, loginUrlFor } from './utils/sessionExpiry'
+import { clearOfflineCache } from './utils/offlineCache'
 import { initSocket } from './socket'
 import router from './router'
 import translationPlugin from './translation'
@@ -72,7 +76,10 @@ setConfig('resourceFetcher', (options) =>
   frappeRequest(options).catch((error) => {
     if (!redirectingToLogin && isSessionGone(error, document.cookie)) {
       redirectingToLogin = true
-      window.location.assign(loginUrlFor(window.location))
+      // whoever logs in next may not be this person
+      clearOfflineCache().then(() =>
+        window.location.assign(loginUrlFor(window.location)),
+      )
     }
     throw error
   }),

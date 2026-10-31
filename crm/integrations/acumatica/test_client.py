@@ -194,6 +194,25 @@ class TestClient(FrappeTestCase):
 
 	@patch("crm.integrations.acumatica.client.requests.post")
 	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_a_session_of_its_own_never_touches_the_shared_token(self, rget, rpost):
+		"""Test connection runs beside the sync and must neither use nor drop its login."""
+		key = "acumatica_token::https://t.acumatica.com"
+		frappe.cache().set_value(key, "shared")
+		self.addCleanup(frappe.cache().delete_value, key)
+		rpost.return_value = _resp(200, {"access_token": "own", "expires_in": 3600})
+		rget.return_value = _resp(200, [])
+
+		c = AcumaticaClient(_settings(), shared_session=False)
+		c.get_page("Customer")
+		self.assertEqual(rget.call_args.kwargs["headers"]["Authorization"], "Bearer own")
+		self.assertEqual(frappe.cache().get_value(key), "shared")
+
+		c.logout()
+		self.assertEqual(rpost.call_args.kwargs["headers"]["Authorization"], "Bearer own")
+		self.assertEqual(frappe.cache().get_value(key), "shared")
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
 	def test_401_reauthenticates_once_then_raises(self, rget, rpost):
 		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": 3600})
 		rget.return_value = _resp(401, {})

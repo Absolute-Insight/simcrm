@@ -219,6 +219,7 @@ const issues = ref([])
 const backfilling = ref(false)
 const testing = ref(false)
 let pollTimer = null
+let unmounted = false
 
 function save() {
   return settings.save.submit(null, {
@@ -267,6 +268,11 @@ async function loadStatus() {
       'crm.integrations.acumatica.api.get_open_sync_issues',
     )
     statusError.value = ''
+    // Follow any running sync, not just one this tab started: the nightly sweep,
+    // a webhook or another admin's backfill otherwise read "running" once and
+    // kept the button disabled until a reload. Not after unmount -- a read still
+    // in flight then would start a timer nothing ever clears.
+    if (status.value?.running && !pollTimer && !unmounted) pollWhileRunning()
   } catch (e) {
     // the panel is informational; a failed read must not blow up the page,
     // but silently showing nothing read as "no sync has ever run"
@@ -313,5 +319,8 @@ async function runBackfill() {
 }
 
 onMounted(loadStatus)
-onUnmounted(() => clearInterval(pollTimer))
+onUnmounted(() => {
+  unmounted = true
+  clearInterval(pollTimer)
+})
 </script>

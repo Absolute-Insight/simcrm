@@ -6,9 +6,9 @@ from time import monotonic
 
 import frappe
 from frappe.tests import IntegrationTestCase
-from frappe.utils import add_days, add_to_date, get_datetime, now_datetime, nowdate
+from frappe.utils import add_days, add_to_date, get_datetime, getdate, now_datetime, nowdate
 
-from crm.fcrm.doctype.crm_service_level_agreement.utils import get_sla
+from crm.fcrm.doctype.crm_service_level_agreement.utils import get_context, get_sla
 
 
 class TestCRMServiceLevelAgreement(IntegrationTestCase):
@@ -67,6 +67,42 @@ class TestCRMServiceLevelAgreement(IntegrationTestCase):
 
 		with self.assertRaises(frappe.ValidationError):
 			sla.insert()
+
+	def test_builder_date_conditions_evaluate(self):
+		"""The condition builder's date comparisons evaluate in safe_eval.
+
+		These are the strings convertToConditions (frontend/src/utils/index.js)
+		emits for `>` and `between` on a Date field. Unguarded, `doc.date > "..."`
+		raised TypeError on an unset field (so validate_condition refused it) and
+		on a datetime.date loaded from the database (so get_sla failed the save).
+		"""
+		after = '(doc.expected_closure_date and f"{doc.expected_closure_date}"[:10] > "2026-01-01")'
+		between = (
+			'(doc.expected_closure_date and f"{doc.expected_closure_date}"[:10] >= "2026-01-01"'
+			' and f"{doc.expected_closure_date}"[:10] <= "2026-01-31")'
+		)
+
+		# validate_condition runs each against a new, unset doc
+		create_test_sla(sla_name="After SLA", apply_on="CRM Deal", condition=after)
+		create_test_sla(sla_name="Between SLA", apply_on="CRM Deal", condition=between)
+
+		deal = frappe.new_doc("CRM Deal")
+		for value, is_after, is_between in (
+			(None, False, False),
+			(getdate("2026-03-01"), True, False),
+			(getdate("2026-01-31"), True, True),
+			(getdate("2025-12-31"), False, False),
+			("2026-01-15", True, True),
+		):
+			deal.expected_closure_date = value
+			context = get_context(deal)
+			self.assertEqual(bool(frappe.safe_eval(after, None, context)), is_after, value)
+			self.assertEqual(bool(frappe.safe_eval(between, None, context)), is_between, value)
+
+		# An Assignment Rule evaluates with the doc's fields as bare names and no
+		# frappe.utils in scope, which is why the builder cannot use getdate.
+		bare = '(expected_closure_date and f"{expected_closure_date}"[:10] > "2026-01-01")'
+		self.assertTrue(frappe.safe_eval(bare, None, {"expected_closure_date": getdate("2026-03-01")}))
 
 	def test_get_priorities(self):
 		"""Test get_priorities returns dict with priority as key"""

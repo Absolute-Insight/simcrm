@@ -123,7 +123,6 @@ function saveChanges() {
     },
   )
     .then(() => {
-      loading.value = false
       show.value = false
       capture('data_fields_layout_builder', { doctype: _doctype.value })
       emit('reload')
@@ -131,5 +130,6 @@ function saveChanges() {
     .catch((error) =>
       reportActionError(error, __('Could not save the layout.')),
     )
+    .finally(() => (loading.value = false))
 }
 </script>
