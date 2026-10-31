@@ -178,7 +178,7 @@
   },
   {
    "default": "30",
-   "description": "Days past a quote's validity date before an open deal is marked Lost as \"Quote expired\" by the nightly sweep. A deal a rep edited in the last 14 days is left alone. 0 switches this off.",
+   "description": "Days past a quote's validity date before the nightly sweep marks an open deal Expired. Expired is not lost: the deal can still be won or lost. A deal a rep edited in the last 14 days is left alone. 0 switches this off.",
    "fieldname": "quote_expiry_grace_days",
    "fieldtype": "Int",
    "label": "Quote Expiry Grace (days)"
