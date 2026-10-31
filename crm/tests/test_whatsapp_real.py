@@ -11,6 +11,7 @@ import json
 from unittest.mock import patch
 
 import frappe
+import requests
 from frappe.tests import IntegrationTestCase
 from frappe.utils import get_fullname
 from werkzeug.test import EnvironBuilder
@@ -75,6 +76,14 @@ def status(message_id, value="delivered", phone_id=PHONE_A):
 	change["value"].pop("contacts")
 	change["value"]["statuses"] = [{"id": message_id, "status": value, "recipient_id": SENDER}]
 	return payload
+
+
+def guards_overrides():
+	return [
+		method
+		for method in frappe.get_hooks("override_whitelisted_methods")
+		if method.startswith("frappe_whatsapp.") and "webhook" not in method and "flow_endpoint" not in method
+	]
 
 
 class WhatsAppCase(IntegrationTestCase):
@@ -209,8 +218,192 @@ class TestSignature(WhatsAppCase):
 			"crm.integrations.whatsapp.webhook.webhook",
 		)
 
+	def test_a_list_in_place_of_an_id_is_denied_and_not_a_crash(self):
+		payload = inbound(phone_id=["1", "2"])
+		self.assertEqual(self.post(payload, signature="sha256=x").status_code, 403)
+		payload = inbound()
+		payload["entry"][0]["id"] = ["1"]
+		payload["entry"][0]["changes"][0]["value"].pop("metadata")
+		self.assertEqual(self.post(payload, signature="sha256=x").status_code, 403)
+
+	def test_a_verify_token_must_be_a_string(self):
+		frappe.local.request = Request(EnvironBuilder(method="GET").get_environ())
+		frappe.local.form_dict = frappe._dict({"hub.verify_token": ["like", "v%"], "hub.challenge": "42"})
+		self.assertEqual(guard.webhook().status_code, 403)
+
+	def test_a_flow_reply_is_a_note_not_a_stored_flow(self):
+		self.post(
+			inbound(
+				type="interactive", interactive={"type": "nfm_reply", "nfm_reply": {"response_json": "{}"}}
+			)
+		)
+		self.assertEqual(self.rows(type="Incoming")[0].content_type, "text")
+
+	def test_an_upstream_method_through_upload_file_is_refused(self):
+		from crm.integrations.whatsapp.guards import refuse_upstream_methods_via_upload
+
+		frappe.local.request = Request(
+			EnvironBuilder(method="POST", path="/api/method/frappe.handler.upload_file").get_environ()
+		)
+		frappe.local.form_dict = frappe._dict(method="frappe_whatsapp.utils.bulk_messaging.retry_failed")
+		with self.assertRaises(frappe.PermissionError):
+			refuse_upstream_methods_via_upload()
+		frappe.local.form_dict = frappe._dict(method="crm.api.something")
+		refuse_upstream_methods_via_upload()
+
+	def test_upstreams_open_functions_are_for_system_managers(self):
+		for method in guards_overrides():
+			self.assertTrue(
+				frappe.override_whitelisted_method(method).startswith("crm.integrations.whatsapp.guards.")
+			)
+		from crm.integrations.whatsapp import guards
+
+		frappe.set_user(self.reps[0])
+		with self.assertRaises(frappe.PermissionError):
+			guards.retry_failed("x")
+
+
+class FakeResponse:
+	def __init__(self, status=200, payload=None, content=b"data"):
+		self.status_code, self._payload, self.content = status, payload, content
+
+	def __enter__(self):
+		return self
+
+	def __exit__(self, *args):
+		return False
+
+	def json(self):
+		return self._payload
+
+	def raise_for_status(self):
+		if self.status_code >= 400:
+			raise requests.HTTPError(str(self.status_code))
+
+	def iter_content(self, chunk_size=None):
+		yield self.content
+
+
+PNG = bytes.fromhex(
+	"89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+	"1f15c4890000000d49444154789c6360000002000001e221bc330000000049454e44ae426082"
+)
+
+
+def media(kind="image", message_id="wamid.media", mime="image/png", content=PNG, **extra):
+	message = {"id": message_id, "from": SENDER, "type": kind, kind: {"id": "m1", **extra}}
+	responses = [
+		FakeResponse(payload={"url": "https://media.invalid/x", "mime_type": mime}),
+		FakeResponse(content=content),
+	]
+	return message, responses
+
+
+class TestMedia(WhatsAppCase):
+	def store(self, message, responses):
+		with patch.object(guard.requests, "get", side_effect=responses) as get:
+			guard.store_media("Line A", message)
+		frappe.set_user("Administrator")
+		return get
+
+	def stored(self, message_id="wamid.media"):
+		return self.rows(message_id=message_id)[0]
+
+	def test_media_is_private_from_the_start(self):
+		self.post(inbound(text="first"))
+		message, responses = media()
+		get = self.store(message, responses)
+		row = self.stored()
+		self.assertTrue(row.attach.startswith("/private/files/"))
+		self.assertTrue(row.attach.endswith(".png"))
+		self.assertEqual(frappe.db.get_value("File", {"file_url": row.attach}, "is_private"), 1)
+		self.assertEqual(get.call_args_list[0].kwargs["timeout"], guard.MEDIA_TIMEOUT)
+
+	def test_a_rep_cannot_list_or_read_another_reps_media(self):
+		lead = frappe.new_doc("CRM Lead")
+		lead.update({"first_name": "Mine", "mobile_no": "0825550148", "lead_owner": self.reps[0]})
+		lead.insert(ignore_permissions=True)
+		message, responses = media()
+		self.store(message, responses)
+		file = frappe.db.get_value("File", {"file_url": self.stored().attach}, "name")
+		frappe.set_user(self.reps[1])
+		self.assertNotIn(
+			file, frappe.get_list("File", filters={"attached_to_doctype": "WhatsApp Message"}, pluck="name")
+		)
+		self.assertFalse(frappe.get_doc("File", file).is_downloadable())
+		frappe.set_user(self.reps[0])
+		self.assertTrue(frappe.get_doc("File", file).is_downloadable())
+
+	def test_public_upload_restriction_does_not_stop_media(self):
+		frappe.db.set_single_value("System Settings", "only_allow_system_managers_to_upload_public_files", 1)
+		frappe.clear_document_cache("System Settings", "System Settings")
+		frappe.set_user("Guest")
+		message, responses = media()
+		self.store(message, responses)
+		self.assertTrue(self.stored().attach)
+
+	def test_a_codec_parameter_does_not_reach_the_filename(self):
+		message, responses = media("audio", mime="audio/ogg; codecs=opus", content=b"OggS")
+		self.store(message, responses)
+		self.assertTrue(self.stored().attach.endswith(".ogg"))
+
+	def test_a_meta_failure_leaves_a_note(self):
+		message, _responses = media()
+		self.store(message, [FakeResponse(status=500)])
+		row = self.stored()
+		self.assertEqual(row.content_type, "text")
+		self.assertIn("could not be downloaded", row.message)
+
+	def test_a_timeout_leaves_a_note(self):
+		message, _responses = media("document", caption="Invoice")
+		self.store(message, requests.Timeout("slow"))
+		self.assertIn("Invoice", self.stored().message)
+
+	def test_a_file_over_the_limit_leaves_a_note(self):
+		message, responses = media()
+		with patch.object(guard, "max_media_bytes", return_value=2):
+			self.store(message, responses)
+		self.assertIn("could not be downloaded", self.stored().message)
+
+	def test_a_webhook_with_media_queues_it_and_returns_at_once(self):
+		message, _responses = media()
+		payload = inbound()
+		payload["entry"][0]["changes"][0]["value"]["messages"] = [message]
+		with patch.object(guard.frappe, "enqueue") as enqueue:
+			self.assertEqual(self.post(payload).status_code, 200)
+		self.assertEqual(enqueue.call_args.kwargs["job_id"], "whatsapp_media_wamid.media")
+		self.assertFalse(self.rows(type="Incoming"))
+		self.assertTrue(frappe.db.exists("CRM Lead", {"mobile_no": "+" + SENDER}))
+		job = {
+			k: v for k, v in enqueue.call_args.kwargs.items() if k in ("account", "message", "profile_name")
+		}
+		self.assertEqual(enqueue.call_args.args[0], "crm.integrations.whatsapp.webhook.store_media")
+		with patch.object(guard.requests, "get", side_effect=media()[1]):
+			guard.store_media(**job)
+		frappe.set_user("Administrator")
+		self.assertTrue(self.stored().attach)
+
 
 class TestInbound(WhatsAppCase):
+	def test_a_bare_contact_gets_a_lead_in_their_own_name(self):
+		contact = frappe.new_doc("Contact")
+		contact.update({"first_name": "Imported", "last_name": "Buyer", "company_name": "Acumatica Co"})
+		contact.append("phone_nos", {"phone": "0825550148", "is_primary_mobile_no": 1})
+		contact.insert(ignore_permissions=True)
+		self.post(inbound())
+		lead = frappe.get_all(
+			"CRM Lead", filters={"source": "WhatsApp"}, fields=["first_name", "organization", "lead_owner"]
+		)[0]
+		self.assertEqual(
+			(lead.first_name, lead.organization, lead.lead_owner), ("Imported", "Acumatica Co", self.reps[0])
+		)
+
+	def test_a_rep_is_required_on_a_line(self):
+		line = frappe.new_doc("CRM WhatsApp Line")
+		line.whatsapp_account = "Line A"
+		with self.assertRaises(frappe.MandatoryError):
+			line.insert(ignore_permissions=True)
+
 	def test_a_known_number_lands_on_its_record(self):
 		lead = frappe.new_doc("CRM Lead")
 		lead.update({"first_name": "Known", "mobile_no": "082 555 0148"})
@@ -346,7 +539,7 @@ class TestSending(WhatsAppCase):
 	def test_the_default_is_a_fallback_only_when_it_is_nobodys_line(self):
 		frappe.db.set_single_value("WhatsApp Settings", "default_outgoing_account", "Line B")
 		self.assertIsNone(get_sending_account("Administrator"))
-		frappe.db.set_value("CRM WhatsApp Line", "Line B", "user", None)
+		frappe.delete_doc("CRM WhatsApp Line", "Line B", ignore_permissions=True)
 		self.assertEqual(get_sending_account("Administrator"), "Line B")
 
 	def test_an_inactive_number_cannot_send(self):
@@ -367,6 +560,29 @@ class TestSending(WhatsAppCase):
 		frappe.set_user(self.reps[0])
 		with self.assertRaisesRegex(frappe.ValidationError, "Type a message"):
 			self.send(lead, message="   ")
+
+	def test_a_number_that_is_real_to_meta_but_not_to_our_tables_can_be_answered(self):
+		lead = self.record(number="+999 123 45678")
+		frappe.set_user(self.reps[0])
+		doc, _meta = self.send(lead)
+		self.assertEqual(doc.to, "99912345678")
+
+	def test_a_local_spelling_we_cannot_place_is_still_refused(self):
+		lead = self.record(number="123")
+		frappe.set_user(self.reps[0])
+		with self.assertRaisesRegex(frappe.ValidationError, "not a valid phone number"):
+			self.send(lead)
+
+	def test_a_deals_lead_thread_names_the_sender_too(self):
+		lead = self.record()
+		frappe.set_user(self.reps[0])
+		self.send(lead)
+		frappe.set_user("Administrator")
+		deal = frappe.new_doc("CRM Deal")
+		deal.update({"lead": lead.name, "deal_owner": self.reps[0]})
+		deal.insert(ignore_permissions=True, ignore_mandatory=True)
+		messages = get_whatsapp_messages("CRM Deal", deal.name)
+		self.assertEqual(messages[0]["from_name"], get_fullname(self.reps[0]))
 
 	def test_a_reaction_uses_the_reacting_reps_number(self):
 		lead = self.record()

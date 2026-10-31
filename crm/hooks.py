@@ -183,6 +183,7 @@ permission_query_conditions = {
 	"CRM Call Log": "crm.permissions.linked_records.get_call_log_permission_query_conditions",
 	"CRM Enrichment Run": "crm.permissions.linked_records.get_enrichment_run_permission_query_conditions",
 	"WhatsApp Message": "crm.permissions.linked_records.get_whatsapp_message_permission_query_conditions",
+	"File": "crm.permissions.linked_records.get_file_permission_query_conditions",
 	"CRM Notification": "crm.fcrm.doctype.crm_notification.crm_notification.get_permission_query_conditions",
 	"CRM Quota": "crm.fcrm.doctype.crm_quota.crm_quota.get_permission_query_conditions",
 	"CRM Visit Target": "crm.fcrm.doctype.crm_visit_target.crm_visit_target.get_permission_query_conditions",
@@ -399,6 +400,16 @@ override_whitelisted_methods = {
 	# not enough, and for the second lock in doc_events.
 	"frappe_whatsapp.utils.webhook.webhook": "crm.integrations.whatsapp.webhook.webhook",
 	"frappe_whatsapp.frappe_whatsapp.api.flow_endpoint.handle_flow_request": "crm.integrations.whatsapp.webhook.flows_not_in_use",
+	# Logged-in upstream functions with no permission check of their own.
+	"frappe_whatsapp.utils.bulk_messaging.get_progress": "crm.integrations.whatsapp.guards.get_progress",
+	"frappe_whatsapp.utils.bulk_messaging.retry_failed": "crm.integrations.whatsapp.guards.retry_failed",
+	"frappe_whatsapp.utils.bulk_messaging.import_recipients": "crm.integrations.whatsapp.guards.import_recipients",
+	"frappe_whatsapp.utils.bulk_messaging.schedule_bulk_messages": "crm.integrations.whatsapp.guards.schedule_bulk_messages",
+	"frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates.fetch": "crm.integrations.whatsapp.guards.fetch",
+	"frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_flow.whatsapp_flow.get_whatsapp_flows": "crm.integrations.whatsapp.guards.get_whatsapp_flows",
+	"frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_flow.whatsapp_flow.sync_all_flows": "crm.integrations.whatsapp.guards.sync_all_flows",
+	"frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_flow.whatsapp_flow.import_flow_from_whatsapp": "crm.integrations.whatsapp.guards.import_flow_from_whatsapp",
+	"frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.call_trigger_notifications": "crm.integrations.whatsapp.guards.call_trigger_notifications",
 }
 #
 # each overriding function accepts a `data` argument;
@@ -434,7 +445,10 @@ ignore_links_on_delete = [
 
 # Request Events
 # ----------------
-before_request = ["crm.permissions.document_guard.reserve_action"]
+before_request = [
+	"crm.permissions.document_guard.reserve_action",
+	"crm.integrations.whatsapp.guards.refuse_upstream_methods_via_upload",
+]
 # after_request = ["crm.utils.after_request"]
 
 # Job Events

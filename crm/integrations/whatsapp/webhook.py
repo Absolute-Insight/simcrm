@@ -19,19 +19,28 @@ This module also absorbs what upstream assumes away. It reads only
 never stored, raises on message types it has no field for, and stores a retried
 delivery twice. An exception here is a non-200, which Meta retries for days. Each
 change therefore reaches upstream on its own, reduced to what it can handle.
+
+Media never reaches upstream. Its download has no timeout, runs in the web worker,
+loses the message on a Meta error and saves the customer's file as public, which
+any Desk user can list and anyone can fetch. ``store_media`` does the same job in
+a background job, private from the first byte.
 """
 
 import hashlib
 import hmac
 import json
+import mimetypes
+import re
+from urllib.parse import quote
 
 import frappe
+import requests
 from frappe import _
 from frappe.utils.password import get_decrypted_password
 from frappe.utils.synchronization import filelock
 from werkzeug.wrappers import Response
 
-from crm.integrations.api import lookup_contact_lead_or_deal_from_number
+from crm.integrations.api import lookup_contact_for_number, lookup_contact_lead_or_deal_from_number
 from crm.integrations.whatsapp.lines import LINE, get_line_user
 from crm.utils import canonical_whatsapp_number
 
@@ -42,17 +51,13 @@ LEAD_SOURCE = "WhatsApp"
 
 #: The types upstream can store as they arrive. Anything else becomes a text note,
 #: so that the rep learns a message came in rather than the webhook failing.
-SUPPORTED_TYPES = {
-	"text",
-	"reaction",
-	"interactive",
-	"order",
-	"image",
-	"audio",
-	"video",
-	"document",
-	"button",
-}
+SUPPORTED_TYPES = {"text", "reaction", "interactive", "order", "button"}
+
+MEDIA_TYPES = {"image", "audio", "video", "document"}
+#: (connect, read) per request. The job's own timeout bounds the whole download.
+MEDIA_TIMEOUT = (5, 30)
+MEDIA_JOB_TIMEOUT = 300
+DEFAULT_MAX_MEDIA_BYTES = 25 * 1024 * 1024
 
 
 def _deny() -> Response:
@@ -69,6 +74,10 @@ def webhook():
 	from frappe_whatsapp.utils import webhook as upstream
 
 	if frappe.request.method == "GET":
+		# A JSON list here would become a filter on the secret column: upstream
+		# looks the token up by value, so ["like", "a%"] extracts it letter by letter.
+		if not isinstance(frappe.form_dict.get("hub.verify_token"), str):
+			return _deny()
 		return upstream.webhook()
 
 	raw = frappe.request.get_data()
@@ -129,10 +138,11 @@ def _is_signed(raw: bytes, payload: dict) -> bool:
 	if not changes:
 		return False
 
+	for waba, change in changes:
+		if not isinstance(waba, str | None) or not isinstance(_phone_id(change), str | None):
+			return False
 	phone_ids = {_phone_id(change) for _waba, change in changes} - {None}
 	waba_ids = {waba for waba, change in changes if not _phone_id(change)} - {None}
-	if not all(isinstance(value, str) for value in phone_ids | waba_ids):
-		return False
 
 	# One query however many ids a forged body names.
 	accounts = frappe.get_all(
@@ -194,7 +204,11 @@ def _reduce(change: dict) -> list[dict]:
 	messages = _new_messages(value.get("messages"))
 	if messages:
 		_provision_senders(messages, value)
-		reduced.append({**change, "value": {**value, "messages": messages}})
+		for message in (row for row in messages if row["type"] in MEDIA_TYPES):
+			_queue_media(message, value)
+		rest = [row for row in messages if row["type"] not in MEDIA_TYPES]
+		if rest:
+			reduced.append({**change, "value": {**value, "messages": rest}})
 
 	statuses = value.get("statuses")
 	statuses = [row for row in statuses if isinstance(row, dict)] if isinstance(statuses, list) else []
@@ -226,9 +240,10 @@ def _new_messages(messages) -> list[dict]:
 
 def _storable(message: dict) -> dict:
 	kind = message.get("type")
-	if kind in SUPPORTED_TYPES and not (
+	unhandled_interactive = (
 		kind == "interactive" and message.get("interactive", {}).get("type") not in _INTERACTIVE_TYPES
-	):
+	)
+	if kind in MEDIA_TYPES or (kind in SUPPORTED_TYPES and not unhandled_interactive):
 		return message
 	return {
 		"id": message["id"],
@@ -238,7 +253,8 @@ def _storable(message: dict) -> dict:
 	}
 
 
-_INTERACTIVE_TYPES = ("button_reply", "list_reply", "nfm_reply")
+#: nfm_reply is a WhatsApp Flow's answer, and Flows are not in use.
+_INTERACTIVE_TYPES = ("button_reply", "list_reply")
 
 
 def _describe(message: dict) -> str:
@@ -257,17 +273,124 @@ def _describe(message: dict) -> str:
 	return _("Sent a {0} message, which cannot be shown here.").format(kind or "new kind of")
 
 
+def _profiles(value: dict) -> dict:
+	contacts = value.get("contacts")
+	return {
+		contact.get("wa_id"): (contact.get("profile") or {}).get("name")
+		for contact in (contacts if isinstance(contacts, list) else [])
+		if isinstance(contact, dict)
+	}
+
+
 def _provision_senders(messages: list[dict], value: dict):
 	phone_id = _phone_id({"value": value})
 	account = frappe.db.get_value("WhatsApp Account", {"phone_id": phone_id}, "name")
 	rep = get_line_user(account)
-	profiles = {}
-	contacts = value.get("contacts")
-	for contact in contacts if isinstance(contacts, list) else []:
-		if isinstance(contact, dict):
-			profiles[contact.get("wa_id")] = (contact.get("profile") or {}).get("name")
+	profiles = _profiles(value)
 	for number in {message["from"] for message in messages}:
 		ensure_record_for_sender(number, account, rep, profiles.get(number))
+
+
+def _queue_media(message: dict, value: dict):
+	account = frappe.db.get_value("WhatsApp Account", {"phone_id": _phone_id({"value": value})}, "name")
+	frappe.enqueue(
+		"crm.integrations.whatsapp.webhook.store_media",
+		queue="default",
+		timeout=MEDIA_JOB_TIMEOUT,
+		job_id=f"whatsapp_media_{message['id']}",
+		deduplicate=True,
+		enqueue_after_commit=True,
+		account=account,
+		message=message,
+		profile_name=_profiles(value).get(message["from"]),
+	)
+
+
+def max_media_bytes() -> int:
+	return frappe.conf.get("max_file_size") or DEFAULT_MAX_MEDIA_BYTES
+
+
+def store_media(account: str, message: dict, profile_name: str | None = None):
+	"""Fetch an inbound file and file it, or say in the thread why it could not be.
+
+	A failure here must not cost the rep the knowledge that the customer sent
+	something, so anything at all becomes a note in the thread.
+	"""
+	frappe.set_user("Administrator")
+	if _stored_ids([message["id"]]):
+		return
+	caption = (message.get(message["type"]) or {}).get("caption") or ""
+	frappe.db.savepoint("whatsapp_media")
+	try:
+		content, extension = _download(account, message)
+		doc = _insert_incoming(account, message, profile_name, message["type"], caption)
+		file = frappe.get_doc(
+			{
+				"doctype": "File",
+				"file_name": f"{frappe.generate_hash(length=10)}.{extension}",
+				"attached_to_doctype": "WhatsApp Message",
+				"attached_to_name": doc.name,
+				"attached_to_field": "attach",
+				"content": content,
+				"is_private": 1,
+			}
+		).insert(ignore_permissions=True)
+		doc.db_set("attach", file.file_url)
+	except Exception:
+		frappe.db.rollback(save_point="whatsapp_media")
+		frappe.log_error(title="CRM WhatsApp: inbound media not stored")
+		note = _("Sent a {0} that could not be downloaded. Open WhatsApp on your phone to see it.").format(
+			message["type"]
+		)
+		_insert_incoming(account, message, profile_name, "text", f"{note} {caption}".strip())
+
+
+def _insert_incoming(account, message, profile_name, content_type, text):
+	context = message.get("context") or {}
+	is_reply = bool(context) and "forwarded" not in context
+	return frappe.get_doc(
+		{
+			"doctype": "WhatsApp Message",
+			"type": "Incoming",
+			"from": message["from"],
+			"message": text,
+			"message_id": message["id"],
+			"reply_to_message_id": context.get("id") if is_reply else None,
+			"is_reply": is_reply,
+			"content_type": content_type,
+			"profile_name": profile_name,
+			"whatsapp_account": account,
+		}
+	).insert(ignore_permissions=True)
+
+
+def _download(account: str, message: dict) -> tuple[bytes, str]:
+	doc = frappe.get_doc("WhatsApp Account", account)
+	headers = {"Authorization": f"Bearer {doc.get_password('token')}"}
+	media_id = quote(str(message[message["type"]]["id"]), safe="")
+	info = requests.get(f"{doc.url}/{doc.version}/{media_id}/", headers=headers, timeout=MEDIA_TIMEOUT)
+	info.raise_for_status()
+	details = info.json()
+
+	limit = max_media_bytes()
+	content = bytearray()
+	with requests.get(details["url"], headers=headers, timeout=MEDIA_TIMEOUT, stream=True) as response:
+		response.raise_for_status()
+		for chunk in response.iter_content(chunk_size=1024 * 1024):
+			content += chunk
+			if len(content) > limit:
+				raise ValueError(f"media is over the {limit} byte limit")
+	return bytes(content), _extension(details.get("mime_type"))
+
+
+def _extension(mime_type: str | None) -> str:
+	"""audio/ogg; codecs=opus is ogg, and a long vnd.* subtype is what the mime
+	table says it is. Upstream used everything after the slash as the extension."""
+	mime = (mime_type or "").split(";")[0].strip().lower()
+	subtype = mime.rpartition("/")[2]
+	if re.fullmatch(r"[a-z0-9]{1,5}", subtype):
+		return subtype
+	return (mimetypes.guess_extension(mime) or ".bin").lstrip(".")
 
 
 def ensure_record_for_sender(
@@ -315,10 +438,17 @@ def _new_snapshot():
 
 
 def _create_lead(number: str, rep: str | None, profile_name: str | None):
+	"""A sender with a Contact keeps that identity: an imported contact on no deal
+	has no thread anywhere, and a lead is the only place a rep can read it."""
+	contact = lookup_contact_for_number(number) or frappe._dict()
 	lead = frappe.new_doc("CRM Lead")
 	lead.update(
 		{
-			"first_name": frappe.utils.strip_html(profile_name or "").strip()[:140] or number,
+			"first_name": contact.first_name
+			or frappe.utils.strip_html(profile_name or "").strip()[:140]
+			or number,
+			"last_name": contact.last_name,
+			"organization": contact.company_name,
 			"mobile_no": f"+{canonical_whatsapp_number(f'+{number}') or number}",
 			"source": LEAD_SOURCE,
 			"lead_owner": rep,
