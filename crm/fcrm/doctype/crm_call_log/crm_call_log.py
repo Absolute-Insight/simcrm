@@ -196,7 +196,7 @@ class CRMCallLog(Document):
 		if not calls:
 			return []
 		redact_hidden_references(calls)
-		return [parse_call_log(call) for call in calls]
+		return parse_call_logs(calls)
 
 	def has_link(self, doctype, name):
 		for link in self.links:
@@ -263,12 +263,20 @@ def hidden_references(pairs) -> set[tuple[str, str]]:
 
 	Read through frappe.get_list, so it is the same row scoping the Leads and Deals
 	lists apply. A name that no longer exists hides nothing and is left alone."""
+	existing, readable = existing_and_readable_references(pairs)
+	return existing - readable
+
+
+def existing_and_readable_references(pairs) -> tuple[set, set]:
+	"""Of these (doctype, name) pairs, the leads and deals that exist, and those of
+	them the session user can read: one query per doctype for each, however many
+	pairs there are. :func:`hidden_references` is the difference."""
 	by_doctype: dict[str, set] = {}
 	for doctype, name in pairs:
 		if doctype in SCOPED_REFERENCES and name:
 			by_doctype.setdefault(doctype, set()).add(name)
 
-	hidden = set()
+	existing_pairs, readable_pairs = set(), set()
 	for doctype, names in by_doctype.items():
 		existing = set(frappe.get_all(doctype, filters={"name": ("in", list(names))}, pluck="name"))
 		if not existing:
@@ -283,8 +291,9 @@ def hidden_references(pairs) -> set[tuple[str, str]]:
 					limit=len(existing),
 				)
 			)
-		hidden.update((doctype, name) for name in existing - readable)
-	return hidden
+		existing_pairs.update((doctype, name) for name in existing)
+		readable_pairs.update((doctype, name) for name in readable)
+	return existing_pairs, readable_pairs
 
 
 def redact_hidden_references(calls) -> None:
@@ -336,17 +345,21 @@ def is_site_file_path(url: str) -> bool:
 	)
 
 
-def parse_call_log(call):
+def parse_call_logs(calls):
+	""":func:`parse_call_log` for a page of calls, resolving who each was with in a
+	fixed number of queries however many calls there are."""
+	parties = CallParties(calls)
+	return [parse_call_log(call, parties) for call in calls]
+
+
+def parse_call_log(call, parties=None):
+	parties = parties or CallParties([call])
 	call["show_recording"] = False
 	call["_duration"] = seconds_to_duration(call.get("duration"))
 	if call.get("type") == "Incoming":
 		call["activity_type"] = "incoming_call"
-		contact = get_call_contact(call, call.get("from"))
-		receiver = (
-			frappe.db.get_values("User", call.get("receiver"), ["full_name", "user_image"])[0]
-			if call.get("receiver")
-			else [None, None]
-		)
+		contact = parties.contact(call, call.get("from"))
+		receiver = parties.user(call.get("receiver"))
 		call["_caller"] = {
 			"label": contact.get("full_name", "Unknown"),
 			"image": contact.get("image"),
@@ -357,12 +370,8 @@ def parse_call_log(call):
 		}
 	elif call.get("type") == "Outgoing":
 		call["activity_type"] = "outgoing_call"
-		contact = get_call_contact(call, call.get("to"))
-		caller = (
-			frappe.db.get_values("User", call.get("caller"), ["full_name", "user_image"])[0]
-			if call.get("caller")
-			else [None, None]
-		)
+		contact = parties.contact(call, call.get("to"))
+		caller = parties.user(call.get("caller"))
 		call["_caller"] = {
 			"label": caller[0],
 			"image": caller[1],
@@ -375,45 +384,115 @@ def parse_call_log(call):
 	return call
 
 
-def get_call_contact(call, phone_number):
-	"""The lead or deal the call points to, or the best match for the number when it
-	points to neither. Two records can share a number, so once the call points to a
-	record the number is never used to guess who it was."""
-	doctype, name = call.get("reference_doctype"), call.get("reference_docname")
-	if doctype not in ("CRM Lead", "CRM Deal") or not name:
-		# redact_hidden_references has already blanked a record the viewer can't
-		# read; matching the number now would hand them its name after all.
-		if call.get("_has_hidden_reference"):
+class CallParties:
+	"""Who the calls in one batch were with, read once for the whole batch.
+
+	parse_call_log used to resolve every row on its own -- the record's existence,
+	its permission, its contact and the rep, each a query or more -- so a list page
+	or timeline of a hundred calls ran several hundred. This reads each doctype
+	once for every call in the batch, and looks each distinct unlinked number up
+	once."""
+
+	def __init__(self, calls):
+		self.users = self._users(calls)
+		self.records = self._records(calls)
+		self.numbers = {}
+
+	def user(self, name) -> tuple:
+		"""(full_name, user_image) of a caller or receiver."""
+		return self.users.get(name, (None, None)) if name else (None, None)
+
+	def contact(self, call, phone_number) -> dict:
+		"""The lead or deal the call points to, or the best match for the number when
+		it points to neither. Two records can share a number, so once the call points
+		to a record the number is never used to guess who it was."""
+		doctype, name = call.get("reference_doctype"), call.get("reference_docname")
+		if doctype not in SCOPED_REFERENCES or not name:
+			# redact_hidden_references has already blanked a record the viewer can't
+			# read; matching the number now would hand them its name after all.
+			if call.get("_has_hidden_reference"):
+				return {}
+			# A call that points at nothing is named by its number, but only from the
+			# records the viewer may read: the unrestricted lookup is for webhooks.
+			if phone_number not in self.numbers:
+				self.numbers[phone_number] = get_contact_by_phone_number(phone_number)
+			return self.numbers[phone_number]
+
+		# A record that is gone (a forced delete leaves the reference dangling) and
+		# one the viewer can't read answer the same, so this does not tell the
+		# caller whether the record exists.
+		return self.records.get((doctype, name)) or {}
+
+	@staticmethod
+	def _users(calls) -> dict:
+		names = {
+			call.get("receiver") if call.get("type") == "Incoming" else call.get("caller") for call in calls
+		} - {None, ""}
+		if not names:
 			return {}
-		# A call that points at nothing is named by its number, but only from the
-		# records the viewer may read: the unrestricted lookup is for webhooks.
-		return get_contact_by_phone_number(phone_number)
+		rows = frappe.get_all(
+			"User", filters={"name": ("in", list(names))}, fields=["name", "full_name", "user_image"]
+		)
+		return {row.name: (row.full_name, row.user_image) for row in rows}
 
-	# A forced delete leaves the reference dangling, and has_permission on a
-	# missing name raises rather than returning False. Both branches answer
-	# the same, so this does not tell the caller whether the record exists.
-	if not frappe.db.exists(doctype, name) or not frappe.has_permission(doctype, "read", doc=name):
-		return {}
+	@staticmethod
+	def _records(calls) -> dict:
+		"""{(doctype, name): {"full_name", "image"}} for every readable lead and deal
+		the calls point to."""
+		pairs = [(call.get("reference_doctype"), call.get("reference_docname")) for call in calls]
+		_existing, readable = existing_and_readable_references(pairs)
+		leads = [name for doctype, name in readable if doctype == "CRM Lead"]
+		deals = [name for doctype, name in readable if doctype == "CRM Deal"]
 
-	return get_reference_contact(doctype, name) or {}
+		records = {}
+		if leads:
+			for lead in frappe.get_all(
+				"CRM Lead", filters={"name": ("in", leads)}, fields=["name", "lead_name", "image"]
+			):
+				records[("CRM Lead", lead.name)] = {"full_name": lead.lead_name, "image": lead.image}
+		if deals:
+			records.update(_deal_contacts(deals))
+		return records
 
 
-def get_reference_contact(doctype, name):
-	if doctype == "CRM Lead":
-		lead = frappe.db.get_value("CRM Lead", name, ["lead_name", "image"], as_dict=True)
-		return lead and {"full_name": lead.lead_name, "image": lead.image}
+def _deal_contacts(deals) -> dict:
+	"""A deal is labelled by its primary contact, or by its lead or organisation
+	name when it has none."""
+	primary = {}
+	for row in frappe.get_all(
+		"CRM Contacts",
+		filters={"parenttype": "CRM Deal", "parent": ("in", deals), "is_primary": 1},
+		fields=["parent", "contact"],
+		order_by="idx asc",
+	):
+		if row.contact:
+			primary.setdefault(row.parent, row.contact)
 
-	contact = frappe.db.get_value(
-		"CRM Contacts", {"parenttype": "CRM Deal", "parent": name, "is_primary": 1}, "contact"
-	)
-	if contact:
-		return frappe.db.get_value("Contact", contact, ["full_name", "image"], as_dict=True)
+	records = {}
+	if primary:
+		contacts = {
+			row.name: {"full_name": row.full_name, "image": row.image}
+			for row in frappe.get_all(
+				"Contact",
+				filters={"name": ("in", list(set(primary.values())))},
+				fields=["name", "full_name", "image"],
+			)
+		}
+		for deal, contact in primary.items():
+			if contact in contacts:
+				records[("CRM Deal", deal)] = contacts[contact]
 
-	deal = frappe.db.get_value(
-		"CRM Deal", name, ["lead_name", "organization", "organization_name"], as_dict=True
-	)
-	deal_name = deal and (deal.lead_name or deal.organization or deal.organization_name)
-	return deal_name and {"full_name": deal_name}
+	without_contact = [deal for deal in deals if deal not in primary]
+	if without_contact:
+		for deal in frappe.get_all(
+			"CRM Deal",
+			filters={"name": ("in", without_contact)},
+			fields=["name", "lead_name", "organization", "organization_name"],
+		):
+			label = deal.lead_name or deal.organization or deal.organization_name
+			if label:
+				records[("CRM Deal", deal.name)] = {"full_name": label}
+	return records
 
 
 @frappe.whitelist()
@@ -530,7 +609,10 @@ def create_lead_from_call_log(call_log: str | dict, lead_details: str | dict | N
 		sanitized_details["lead_owner"] = frappe.session.user
 
 	if "mobile_no" in valid_fieldnames and not sanitized_details.get("mobile_no"):
-		sanitized_details["mobile_no"] = call_doc.get("from") or ""
+		# The customer's end of the call, read the way parse_call_log reads it: on
+		# an outgoing call ``from`` is the rep's own line.
+		customer_number = call_doc.get("to") if call_doc.type == "Outgoing" else call_doc.get("from")
+		sanitized_details["mobile_no"] = customer_number or ""
 
 	if "first_name" in valid_fieldnames and not sanitized_details.get("first_name"):
 		reference_label = sanitized_details.get("mobile_no") or call_doc.name

@@ -511,6 +511,18 @@ class TestCRMCallLog(IntegrationTestCase):
 		self.assertTrue(lead.first_name.startswith("Lead from call"))
 		self.assertEqual(lead.mobile_no, "+1112223333")
 
+	def test_create_lead_from_an_outgoing_call_takes_the_number_dialled(self):
+		"""On an outgoing call ``from`` is the rep's own line and the customer is ``to``,
+		the same way round parse_call_log reads it."""
+		call = create_test_call_log(type="Outgoing", from_number="+27115550100", to="+27821234567")
+
+		lead = frappe.get_doc(
+			"CRM Lead", create_lead_from_call_log(call_log=frappe.as_json({"name": call.name}))
+		)
+
+		self.assertEqual(lead.mobile_no, "+27821234567")
+		self.assertEqual(lead.first_name, "Lead from call +27821234567")
+
 	def test_create_lead_from_call_log_twice_returns_the_existing_lead(self):
 		"""A second click must return the lead the call already has, not create another."""
 		call = create_test_call_log(type="Incoming", from_number="+1231231234")
@@ -1008,6 +1020,133 @@ class TestCallLogHidesUnreadableReferences(IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			create_lead_from_call_log(call_log=frappe.as_json({"name": call.name}))
 		self.assertEqual(frappe.db.count("CRM Lead"), leads_before)
+
+
+class TestCallLogRowsResolveInBatches(IntegrationTestCase):
+	"""The call-log list and a record's timeline label every call's caller and receiver.
+	That used to cost a handful of queries per row (the record's existence, its
+	permission, its contact, the user), so a page of a hundred calls ran several
+	hundred. The cost must not grow with the number of calls."""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def make_calls(self, per_kind, reference=None):
+		"""``per_kind`` calls on distinct leads, on distinct deals and on no record at all."""
+		org = frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Batch Org"}).insert(
+			ignore_if_duplicate=True
+		)
+		names = []
+		for i in range(per_kind):
+			lead = create_test_lead(f"Batch Lead {i}", None)
+			contact = frappe.get_doc({"doctype": "Contact", "first_name": f"Batch Contact {i}"}).insert()
+			deal = frappe.get_doc(
+				{"doctype": "CRM Deal", "organization": org.name, "deal_owner": "Administrator"}
+			)
+			deal.append("contacts", {"contact": contact.name, "is_primary": 1})
+			deal.insert()
+			for doctype, docname in (("CRM Lead", lead.name), ("CRM Deal", deal.name)):
+				call = create_test_call_log(
+					type="Outgoing",
+					caller="Administrator",
+					to=f"+9198765{i:05d}",
+					reference_doctype=doctype,
+					reference_docname=docname,
+				)
+				if reference:
+					call.link_with_reference_doc(*reference)
+					call.save()
+				names.append(call.name)
+			call = create_test_call_log(
+				type="Incoming", receiver="Administrator", from_number="+919876511111"
+			)
+			if reference:
+				call.link_with_reference_doc(*reference)
+				call.save()
+			names.append(call.name)
+		return names
+
+	def list_rows(self, names):
+		from crm.fcrm.doctype.crm_call_log.crm_call_log import CRMCallLog
+
+		return frappe.get_all(
+			"CRM Call Log",
+			filters={"name": ("in", names)},
+			fields=CRMCallLog.default_list_data()["rows"],
+		)
+
+	def count_queries(self, fn, *args):
+		count = 0
+		real_sql = frappe.db.sql
+
+		def counting(*a, **k):
+			nonlocal count
+			count += 1
+			return real_sql(*a, **k)
+
+		with patch.object(frappe.db, "sql", side_effect=counting):
+			fn(*args)
+		return count
+
+	def test_a_list_page_costs_the_same_queries_however_many_calls_it_holds(self):
+		from crm.fcrm.doctype.crm_call_log.crm_call_log import CRMCallLog
+
+		small, large = self.list_rows(self.make_calls(2)), self.list_rows(self.make_calls(8))
+		# meta, roles and the phone lookup's first hit are cached after one pass
+		CRMCallLog.parse_list_data(self.list_rows(self.make_calls(1)))
+
+		self.assertEqual(
+			self.count_queries(CRMCallLog.parse_list_data, large),
+			self.count_queries(CRMCallLog.parse_list_data, small),
+		)
+
+	def test_a_records_timeline_costs_the_same_queries_however_many_calls_it_has(self):
+		from crm.api.activities import get_linked_calls
+
+		small_lead = create_test_lead("Few Calls", None)
+		large_lead = create_test_lead("Many Calls", None)
+		self.make_calls(2, reference=("CRM Lead", small_lead.name))
+		self.make_calls(8, reference=("CRM Lead", large_lead.name))
+		get_linked_calls(small_lead.name)
+
+		self.assertEqual(
+			self.count_queries(get_linked_calls, large_lead.name),
+			self.count_queries(get_linked_calls, small_lead.name),
+		)
+
+	def test_every_row_is_still_labelled_from_its_own_record(self):
+		from crm.fcrm.doctype.crm_call_log.crm_call_log import CRMCallLog
+
+		create_test_lead("Number Lead", "+919876522222")
+		names = self.make_calls(2)
+		names.append(create_test_call_log(type="Incoming", from_number="+919876522222").name)
+		dangling = create_test_lead("Gone Lead", None)
+		names.append(
+			create_test_call_log(
+				type="Outgoing", reference_doctype="CRM Lead", reference_docname=dangling.name
+			).name
+		)
+		frappe.delete_doc("CRM Lead", dangling.name, force=True, ignore_permissions=True)
+
+		rows = CRMCallLog.parse_list_data(self.list_rows(names))
+		admin = frappe.db.get_value("User", "Administrator", "full_name")
+		# reference_doctype defaults to CRM Lead, so only the name says a call points at a record.
+		labels = {
+			(
+				row.reference_doctype if row.reference_docname else "",
+				row["from"] if row.type == "Incoming" else row.to,
+			): (
+				row._caller["label"],
+				row._receiver["label"],
+			)
+			for row in rows
+		}
+		for i in range(2):
+			self.assertEqual(labels[("CRM Lead", f"+9198765{i:05d}")], (admin, f"Batch Lead {i}"))
+			self.assertEqual(labels[("CRM Deal", f"+9198765{i:05d}")], (admin, f"Batch Contact {i}"))
+		self.assertEqual(labels[("", "+919876511111")], ("Unknown", admin))
+		self.assertEqual(labels[("", "+919876522222")], ("Number Lead", admin))
+		self.assertEqual(labels[("CRM Lead", "+1234567890")][1], "Unknown")
 
 
 def create_test_call_log(**kwargs):

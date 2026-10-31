@@ -12,6 +12,18 @@ from phonenumbers import NumberParseException
 from phonenumbers import PhoneNumberFormat as PNF
 
 
+def default_phone_region() -> str:
+	"""The region a number written without "+" is read in: the site's country.
+
+	Upstream hard-coded India, so on a South African site "082 555 0148" parsed
+	as an Indian number and never matched the contact stored as +27. A site that
+	has not set a country keeps upstream's default rather than guessing.
+	"""
+	country = frappe.db.get_single_value("System Settings", "country")
+	code = country and frappe.get_cached_value("Country", country, "code")
+	return (code or "IN").upper()
+
+
 def parse_phone_number(phone_number: str, default_country: str = "IN"):
 	try:
 		# Parse the number

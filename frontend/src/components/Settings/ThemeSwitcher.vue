@@ -1,13 +1,22 @@
 <template>
-  <div class="flex gap-3">
-    <div
-      class="flex-1 rounded-[var(--v-radius-card)] border cursor-pointer"
+  <!-- A radio group: Tab reaches the chosen theme, the arrow keys move
+       between them, and Enter or Space picks one. The cards were bare
+       <div @click>s, which nothing but a pointer could operate. -->
+  <div
+    ref="group"
+    class="flex gap-3"
+    role="radiogroup"
+    :aria-label="__('Theme')"
+    @keydown="onKeydown"
+  >
+    <button
+      v-bind="option('light')"
+      class="flex-1 rounded-[var(--v-radius-card)] border cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-outline-gray-3"
       :class="
         theme == 'light'
           ? 'border-outline-gray-7'
           : 'border-outline-elevation-2'
       "
-      @click="theme = 'light'"
     >
       <div class="pl-5 pt-3.5 bg-surface-gray-2 rounded-t-[10.5px]">
         <div class="bg-white rounded-tl-1">
@@ -23,6 +32,7 @@
               <img
                 v-if="typeof logo == 'string'"
                 :src="logo"
+                alt=""
                 class="size-5 object-cover"
               />
               <component
@@ -53,13 +63,13 @@
           "
         />
       </div>
-    </div>
-    <div
-      class="flex-1 rounded-[var(--v-radius-card)] border cursor-pointer"
+    </button>
+    <button
+      v-bind="option('dark')"
+      class="flex-1 rounded-[var(--v-radius-card)] border cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-outline-gray-3"
       :class="
         theme == 'dark' ? 'border-outline-gray-7' : 'border-outline-elevation-2'
       "
-      @click="theme = 'dark'"
     >
       <div class="pl-5 pt-3.5 bg-surface-gray-2 rounded-t-[10.5px]">
         <div class="bg-gray-900 rounded-tl-1">
@@ -75,6 +85,7 @@
               <img
                 v-if="typeof logo == 'string'"
                 :src="logo"
+                alt=""
                 class="size-5 object-cover"
               />
               <component
@@ -105,15 +116,15 @@
           "
         />
       </div>
-    </div>
-    <div
-      class="flex-1 rounded-[var(--v-radius-card)] border cursor-pointer"
+    </button>
+    <button
+      v-bind="option('system')"
+      class="flex-1 rounded-[var(--v-radius-card)] border cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-outline-gray-3"
       :class="
         theme == 'system'
           ? 'border-outline-gray-7'
           : 'border-outline-elevation-2'
       "
-      @click="theme = 'system'"
     >
       <div class="flex">
         <div
@@ -132,6 +143,7 @@
                 <img
                   v-if="typeof logo == 'string'"
                   :src="logo"
+                  alt=""
                   class="size-5 object-cover"
                 />
                 <component
@@ -160,6 +172,7 @@
                 <img
                   v-if="typeof logo == 'string'"
                   :src="logo"
+                  alt=""
                   class="size-5 object-cover"
                 />
                 <component
@@ -186,13 +199,13 @@
           "
         ></div>
       </div>
-    </div>
+    </button>
   </div>
 </template>
 
 <script setup>
 import { useColorScheme } from 'frappe-ui'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 defineProps({
   logo: { type: [String, Object], default: '' },
@@ -211,4 +224,37 @@ const theme = computed({
     setTheme(value)
   },
 })
+
+const THEMES = ['light', 'dark', 'system']
+const group = ref(null)
+
+// Built per render, so a language change re-resolves the names
+function option(value) {
+  const checked = theme.value === value
+  return {
+    type: 'button',
+    role: 'radio',
+    'aria-checked': String(checked),
+    'aria-label': {
+      light: __('Light'),
+      dark: __('Dark'),
+      system: __('System'),
+    }[value],
+    // roving: only the chosen theme is a Tab stop, the arrows reach the rest
+    tabindex: checked ? 0 : -1,
+    onClick: () => (theme.value = value),
+  }
+}
+
+function onKeydown(event) {
+  const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[
+    event.key
+  ]
+  if (!step) return
+  event.preventDefault()
+  const index =
+    (THEMES.indexOf(theme.value) + step + THEMES.length) % THEMES.length
+  theme.value = THEMES[index]
+  group.value?.querySelectorAll('[role="radio"]')[index]?.focus()
+}
 </script>
