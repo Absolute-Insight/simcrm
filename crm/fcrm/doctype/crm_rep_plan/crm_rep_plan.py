@@ -177,6 +177,12 @@ class CRMRepPlan(Document):
 		for item in self.items:
 			# frappe loads each stored row before validate; a new row has none
 			stored = item.get_doc_before_save()
+			if stored is None and not item.is_new():
+				# a named row frappe found nowhere in this plan: saving it would
+				# UPDATE that row by name, moving a colleague's item into this week
+				frappe.throw(
+					_("Plan item {0} is not part of this plan.").format(item.name), frappe.PermissionError
+				)
 			for field in SERVER_ITEM_FIELDS:
 				if _server_value(field, item.get(field)) != _server_value(
 					field, stored.get(field) if stored else None

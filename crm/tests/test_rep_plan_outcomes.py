@@ -464,6 +464,53 @@ class ServerOwnedFieldsTest(OutcomeTestCase):
 		self.assertEqual(frappe.db.count("CRM Rep Plan Item", {"parent": row.parent}), 1)
 		self.assertFalse(frappe.db.exists("CRM Rep Plan Item", {"fulfilled_by": victim}))
 
+	def test_a_colleagues_item_is_not_pulled_into_the_reps_plan(self):
+		"""A row that names an item frappe cannot find in this plan has no stored
+		copy, which read as a new row at its defaults; the save then UPDATEd that
+		item by name, moving it out of the colleague's week and wiping its status."""
+		frappe.set_user(OTHER)
+		theirs = save_plan(this_monday(), [{"activity_type": "Visit", "planned_date": today()}])["items"][0]
+		their_plan = frappe.db.get_value("CRM Rep Plan Item", theirs["name"], "parent")
+		frappe.set_user("Administrator")
+		event = self.colleagues_cancelled_visit()
+		frappe.db.set_value(
+			"CRM Rep Plan Item",
+			theirs["name"],
+			{"status": "Done", "manual_override": 1, "fulfilled_by_doctype": "Event", "fulfilled_by": event},
+		)
+		frappe.set_user(REP)
+		self.plan_one()
+		mine = frappe.get_doc("CRM Rep Plan", {"user": REP, "week_start": this_monday()}).as_dict()
+		mine["items"].append({"name": theirs["name"], "activity_type": "Visit", "planned_date": today()})
+
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.save(mine)
+
+		stored = frappe.db.get_value(
+			"CRM Rep Plan Item", theirs["name"], ["parent", "status", "fulfilled_by"], as_dict=True
+		)
+		self.assertEqual((stored.parent, stored.status, stored.fulfilled_by), (their_plan, "Done", event))
+
+	def test_only_the_reps_own_cancellation_is_deleted(self):
+		"""Defence in depth for however an item came to name someone else's event:
+		the planner deletes its events with permissions off, so it checks what it deletes."""
+		victim = self.colleagues_cancelled_visit()
+		item = self.plan_one()
+		frappe.db.set_value(
+			"CRM Rep Plan Item",
+			item,
+			{
+				"status": "Cancelled",
+				"manual_override": 1,
+				"fulfilled_by_doctype": "Event",
+				"fulfilled_by": victim,
+			},
+		)
+
+		clear_override(item)
+
+		self.assertTrue(frappe.db.exists("Event", victim))
+
 
 class CorrectingACompletedVisitTest(OutcomeTestCase):
 	"""One visit, one event. "Log the outcome" puts a Completed Visit event on the
