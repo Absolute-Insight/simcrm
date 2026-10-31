@@ -170,6 +170,11 @@ before_uninstall = "crm.uninstall.before_uninstall"
 permission_query_conditions = {
 	"CRM Lead": "crm.permissions.org_hierarchy.get_lead_permission_query_conditions",
 	"CRM Deal": "crm.permissions.org_hierarchy.get_deal_permission_query_conditions",
+	# one rep cannot reach another's customers, or the people at them
+	"CRM Organization": "crm.permissions.customers.get_organization_permission_query_conditions",
+	"Contact": "crm.permissions.customers.get_contact_permission_query_conditions",
+	"Address": "crm.permissions.customers.get_address_permission_query_conditions",
+	"Event": "crm.permissions.customers.get_event_permission_query_conditions",
 	"FCRM Note": "crm.permissions.linked_records.get_note_permission_query_conditions",
 	"CRM Task": "crm.permissions.linked_records.get_task_permission_query_conditions",
 	"CRM Call Log": "crm.permissions.linked_records.get_call_log_permission_query_conditions",
@@ -189,6 +194,10 @@ permission_query_conditions = {
 has_permission = {
 	"CRM Lead": "crm.permissions.org_hierarchy.has_lead_permission",
 	"CRM Deal": "crm.permissions.org_hierarchy.has_deal_permission",
+	"CRM Organization": "crm.permissions.customers.has_organization_permission",
+	"Contact": "crm.permissions.customers.has_contact_permission",
+	"Address": "crm.permissions.customers.has_address_permission",
+	"Event": "crm.permissions.customers.has_event_permission",
 	"FCRM Note": "crm.permissions.linked_records.has_note_permission",
 	"CRM Task": "crm.permissions.linked_records.has_task_permission",
 	"CRM Call Log": "crm.permissions.linked_records.has_call_log_permission",
@@ -229,6 +238,12 @@ doc_events = {
 	"Contact": {
 		"validate": ["crm.api.contact.validate"],
 	},
+	"Event": {
+		"validate": ["crm.permissions.customers.validate_event_participants"],
+	},
+	"Event Participants": {
+		"validate": ["crm.permissions.customers.refuse_direct_participant_save"],
+	},
 	"Notification Log": {
 		"before_insert": ["crm.extends.notification_log.before_insert"],
 	},
@@ -264,12 +279,23 @@ doc_events = {
 			"crm.automation.run_automations",
 		],
 		"on_change": ["crm.automation.run_automations"],
-		"after_delete": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
+		"after_delete": [
+			"crm.automation.clear_suggestions",
+			"crm.automation.clear_plan_item_references",
+			"crm.domain_enrichment.tasks.clear_runs",
+		],
 	},
 	"CRM Lead": {
 		"on_update": ["crm.automation.run_automations"],
 		"on_change": ["crm.automation.run_automations"],
-		"after_delete": ["crm.automation.clear_suggestions", "crm.automation.clear_plan_item_references"],
+		"after_delete": [
+			"crm.automation.clear_suggestions",
+			"crm.automation.clear_plan_item_references",
+			"crm.domain_enrichment.tasks.clear_runs",
+		],
+	},
+	"CRM Organization": {
+		"after_delete": ["crm.domain_enrichment.tasks.clear_runs"],
 	},
 	"ERPNext CRM Settings": {
 		"validate": ["crm.integrations.acumatica.install.block_dual_erp"],
@@ -359,9 +385,10 @@ before_tests = "crm.tests.before_tests"
 # Overriding Methods
 # ------------------------------
 #
-# override_whitelisted_methods = {
-# "frappe.desk.doctype.event.event.get_events": "crm.event.get_events"
-# }
+override_whitelisted_methods = {
+	# raw SQL behind its own whitelist: the row rules on Event never reach it
+	"frappe.desk.doctype.event.event.get_events": "crm.permissions.customers.get_events",
+}
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
@@ -383,16 +410,25 @@ before_tests = "crm.tests.before_tests"
 # CRM Rep Plan Item's reference is a Dynamic Link too, and a rep's planned week
 # must never make a deal undeletable nor be deleted to free one; the after_delete
 # handler above unlinks the items and keeps them.
-ignore_links_on_delete = ["Failed Lead Sync Log", "CRM Suggestion", "CRM Rep Plan Item", "CRM Rep Plan"]
+# CRM Enrichment Run's reference_name is a Dynamic Link to the record it enriched:
+# without this every enriched record was undeletable for Sales roles; the on_trash
+# handler above deletes the runs with the record.
+ignore_links_on_delete = [
+	"Failed Lead Sync Log",
+	"CRM Suggestion",
+	"CRM Rep Plan Item",
+	"CRM Rep Plan",
+	"CRM Enrichment Run",
+]
 
 # Request Events
 # ----------------
-# before_request = ["crm.utils.before_request"]
+before_request = ["crm.permissions.document_guard.reserve_action"]
 # after_request = ["crm.utils.after_request"]
 
 # Job Events
 # ----------
-# before_job = ["crm.utils.before_job"]
+before_job = ["crm.permissions.document_guard.reserve_action"]
 # after_job = ["crm.utils.after_job"]
 
 # User Data Protection
@@ -428,6 +464,7 @@ ignore_links_on_delete = ["Failed Lead Sync Log", "CRM Suggestion", "CRM Rep Pla
 
 after_migrate = [
 	"crm.fcrm.doctype.fcrm_settings.fcrm_settings.after_migrate",
+	"crm.permissions.customers.stop_frappe_event_digest",
 	# Navbar Settings' app_logo is site data, so a new image alone does not move
 	# it and an existing site never re-runs after_install -- the login page kept
 	# rendering the Frappe Framework logo. Deliberately a hook rather than a

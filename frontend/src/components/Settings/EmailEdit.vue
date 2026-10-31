@@ -88,9 +88,11 @@ import EmailProviderIcon from './EmailProviderIcon.vue'
 import {
   emailIcon,
   fieldsForService,
+  imapSmtpProviderFields,
   validateInputs,
   incomingOutgoingFields,
 } from './emailConfig'
+import { customTransportChanges } from '@/utils/emailAccountTransport'
 import { PhWarningCircle as CircleAlert } from '@phosphor-icons/vue'
 const props = defineProps({
   accountData: { type: Object, default: () => ({}) },
@@ -127,43 +129,44 @@ const fields = computed(() => fieldsForService(props.accountData.service))
 
 const error = ref()
 const loading = ref(false)
+// The account's name on the server. A rename that went through before the
+// field update failed must not be repeated from the old name on the retry.
+const savedName = ref(props.accountData.email_account_name)
+
 async function updateAccount() {
   error.value = validateInputs(state, props.accountData.service)
   if (error.value) return
-  const old = { ...props.accountData }
   const updatedEmailAccount = { ...state }
 
-  const nameChanged =
-    old.email_account_name !== updatedEmailAccount.email_account_name
-  delete old.email_account_name
+  const nameChanged = savedName.value !== updatedEmailAccount.email_account_name
   delete updatedEmailAccount.email_account_name
 
   const otherFieldsChanged = isDirty.value
   const values = updatedEmailAccount
+  if (fields.value === imapSmtpProviderFields) {
+    Object.assign(values, customTransportChanges(state, props.accountData))
+  }
 
   if (!nameChanged && !otherFieldsChanged) {
     toast.info(__('No changes made'))
     return
   }
 
-  if (nameChanged) {
-    try {
-      loading.value = true
+  // One outcome for the whole edit: reporting success after the rename sent
+  // the admin back to the list before the field update had been tried, and
+  // its rejection then landed on a form that was no longer there.
+  loading.value = true
+  try {
+    if (nameChanged) {
       await callRenameDoc()
-      succesHandler()
-    } catch {
-      errorHandler()
+      savedName.value = state.email_account_name
     }
+    if (otherFieldsChanged) await callSetValue(values)
+  } catch {
+    errorHandler()
+    return
   }
-  if (otherFieldsChanged) {
-    try {
-      loading.value = true
-      await callSetValue(values)
-      succesHandler()
-    } catch {
-      errorHandler()
-    }
-  }
+  succesHandler()
 }
 
 const isDirty = computed(() => {
@@ -189,7 +192,7 @@ const isDirty = computed(() => {
 async function callRenameDoc() {
   const d = await call('frappe.client.rename_doc', {
     doctype: 'Email Account',
-    old_name: props.accountData.email_account_name,
+    old_name: savedName.value,
     new_name: state.email_account_name,
   })
   return d

@@ -36,6 +36,12 @@ vi.mock('frappe-ui', () => ({
   TimePicker: stub('TimePicker'),
   Tooltip: stub('Tooltip'),
 }))
+vi.mock('@/stores/statuses', () => ({
+  statusesStore: () => ({
+    getLeadStatus: () => null,
+    getDealStatus: () => null,
+  }),
+}))
 vi.mock('@/components/Controls/FormattedInput.vue', () => ({
   default: stub('FormattedInput'),
 }))

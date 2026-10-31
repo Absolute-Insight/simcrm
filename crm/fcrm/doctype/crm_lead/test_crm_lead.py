@@ -456,6 +456,105 @@ class TestCRMLead(IntegrationTestCase):
 		self.assertEqual(frappe.db.count("CRM Deal", {"lead": lead.name}), 1)
 		self.assertEqual(frappe.db.count("CRM Organization", {"organization_name": "Twice Corp"}), 1)
 
+	def test_converting_onto_a_contact_without_a_mobile_keeps_the_leads_number(self):
+		"""The lead's email matches a contact with no mobile -- every contact the
+		Acumatica importer writes. Its blanks used to be copied over the lead,
+		wiping the number the rep typed, and the deal (which reads its numbers off
+		the contact) came out with none either."""
+		contact = frappe.get_doc(
+			{
+				"doctype": "Contact",
+				"first_name": "Thabo",
+				"email_ids": [{"email_id": "thabo@client.example.com", "is_primary": 1}],
+			}
+		).insert(ignore_permissions=True)
+		lead = create_lead(
+			salutation="Mr",
+			first_name="Thabo",
+			last_name="Nkosi",
+			email="thabo@client.example.com",
+			mobile_no="+27821234567",
+			phone="+27115550100",
+		)
+
+		deal_name = convert_to_deal(lead=lead.name)
+
+		self.assertEqual(
+			frappe.db.get_value(
+				"CRM Lead", lead.name, ["salutation", "first_name", "last_name", "mobile_no"], as_dict=True
+			),
+			{"salutation": "Mr", "first_name": "Thabo", "last_name": "Nkosi", "mobile_no": "+27821234567"},
+		)
+		contact.reload()
+		self.assertEqual(contact.mobile_no, "+27821234567")
+		self.assertEqual(contact.phone, "+27115550100")
+		deal = frappe.get_doc("CRM Deal", deal_name)
+		self.assertEqual(deal.contacts[0].contact, contact.name)
+		self.assertEqual(deal.mobile_no, "+27821234567")
+
+	def test_converting_onto_a_contact_with_a_mobile_keeps_both_numbers(self):
+		"""Where the contact has its own values the lead still mirrors it, but the
+		lead's different number is added to the contact rather than dropped."""
+		contact = frappe.get_doc(
+			{
+				"doctype": "Contact",
+				"first_name": "Lerato",
+				"last_name": "Dlamini",
+				"email_ids": [{"email_id": "lerato@client.example.com", "is_primary": 1}],
+				"phone_nos": [{"phone": "+27830000001", "is_primary_mobile_no": 1}],
+			}
+		).insert(ignore_permissions=True)
+		lead = create_lead(
+			first_name="Lerato",
+			last_name="Mokoena",
+			email="lerato@client.example.com",
+			mobile_no="+27830000002",
+		)
+
+		convert_to_deal(lead=lead.name)
+
+		self.assertEqual(
+			frappe.db.get_value("CRM Lead", lead.name, ["last_name", "mobile_no"], as_dict=True),
+			{"last_name": "Dlamini", "mobile_no": "+27830000001"},
+		)
+		contact.reload()
+		self.assertEqual(contact.mobile_no, "+27830000001")
+		self.assertEqual(sorted(row.phone for row in contact.phone_nos), ["+27830000001", "+27830000002"])
+
+	def test_conversion_fires_status_changed_to_qualified_rules(self):
+		"""Conversion moves the lead to Qualified with db_set, which skips the
+		on_update event the rule engine listens on, so a "Status Changed ->
+		Qualified" rule missed the commonest way a lead gets there."""
+		rule = frappe.get_doc(
+			{
+				"doctype": "CRM Automation Rule",
+				"title": "Qualified lead kick-off",
+				"enabled": 1,
+				"document_type": "CRM Lead",
+				"trigger": "Status Changed",
+				"to_status": "Qualified",
+				"action": "Create Task",
+				"title_template": "Kick-off with {{ doc.lead_name }}",
+			}
+		).insert(ignore_permissions=True)
+		lead = create_lead(first_name="Rule", last_name="Convert", email="rule.convert@example.com")
+		self.assertEqual(lead.status, "New")
+
+		convert_to_deal(lead=lead.name)
+
+		self.assertEqual(frappe.db.get_value("CRM Lead", lead.name, "status"), "Qualified")
+		self.assertEqual(
+			frappe.db.count(
+				"CRM Task",
+				{
+					"automation_rule": rule.name,
+					"reference_doctype": "CRM Lead",
+					"reference_docname": lead.name,
+				},
+			),
+			1,
+		)
+
 	def test_cannot_convert_lost_lead_to_deal(self):
 		"""Leads with a Lost-type status (Junk, Unqualified, ...) cannot be converted."""
 		if not frappe.db.exists("CRM Lost Reason", "Not interested"):

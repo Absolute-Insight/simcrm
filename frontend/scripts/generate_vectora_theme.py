@@ -21,6 +21,7 @@ import json
 import math
 import re
 from itertools import pairwise
+from pathlib import Path
 
 # Was /workspace/frappe-ui/... -- a git submodule that has been removed. Its
 # pinned commit no longer exists on frappe/frappe-ui (upload-pack: not our ref),
@@ -29,7 +30,7 @@ from itertools import pairwise
 # the production build resolves frappe-ui from node_modules, and the dev-only
 # local-checkout override in vite.config.js is guarded by existsSync.
 #
-# This now reads the pinned npm package. A regenerated file is equivalent to
+# This then read the pinned npm package. A regenerated file is equivalent to
 # the committed one: every shared variable is value-identical, and nothing is
 # emitted that was not there before. Two differences are expected and correct:
 #
@@ -45,8 +46,13 @@ from itertools import pairwise
 # So regenerating is safe. Still diff the result -- the contrast assertions
 # below cover the tokens this script solves for, not the ones it passes
 # through, so a genuine upstream token change would not announce itself.
-SRC = "/workspace/frontend/node_modules/frappe-ui/tailwind/generated/colors.json"
-OUT = "/workspace/frontend/src/styles/vectora-theme.css"
+#
+# frappe-ui stopped publishing generated/colors.json after beta.55, so the npm
+# path went the way of the submodule. The token dump it last shipped is vendored
+# beside this script; regenerating from it reproduces the committed file exactly.
+HERE = Path(__file__).resolve().parent
+SRC = HERE / "frappe-ui-colors.json"
+OUT = HERE.parent / "src" / "styles" / "vectora-theme.css"
 
 # ---------------------------------------------------------------------------
 # sRGB <-> OKLab, WCAG contrast. Small enough to inline; no build dependency.
@@ -129,6 +135,11 @@ def solve_lightness(target_ratio, background, chroma, hue, lighter):
 # which is what moves them past the perceptual threshold against stock.
 HUE = 278.0
 
+# The light theme is built from a coral/steel artwork palette rather
+# than from indigo, so its neutrals sit on the steel's hue: lavender surfaces
+# under a steel-blue accent read as two brands. Dark keeps indigo.
+LIGHT_HUE = 243.8
+
 # Text-bearing steps are solved, not authored (see AA_FLOOR below); the rest
 # are (lightness, chroma) pairs. Lightness tracks the stock ramp so frappe-ui's
 # component contrast relationships survive.
@@ -169,16 +180,16 @@ DARK_SPEC = {
 }
 
 
-def build_ramp(spec, anchor_step, lighter):
+def build_ramp(spec, anchor_step, lighter, hue=HUE):
 	"""Resolve a spec to hexes. Solved steps are measured against `anchor_step`,
 	the darkest (light mode) / lightest (dark mode) surface that routinely
 	carries secondary body text — inputs and hover rows, i.e. surface-gray-2."""
-	ramp = {k: oklch(v[0], v[1], HUE) for k, v in spec.items() if v[0] != "solve"}
+	ramp = {k: oklch(v[0], v[1], hue) for k, v in spec.items() if v[0] != "solve"}
 	anchor = ramp[anchor_step]
 	for step, value in spec.items():
 		if value[0] == "solve":
 			_, ratio, chroma = value
-			ramp[step] = oklch(solve_lightness(ratio, anchor, chroma, HUE, lighter), chroma, HUE)
+			ramp[step] = oklch(solve_lightness(ratio, anchor, chroma, hue, lighter), chroma, hue)
 	return {k: ramp[k] for k in spec}
 
 
@@ -186,14 +197,17 @@ def build_ramp(spec, anchor_step, lighter):
 # the selected-row background on the Reports page, so it is the darkest (light)
 # and lightest (dark) ground body text actually lands on. Solving against the
 # easier surface is how ink-gray-4 shipped at 4.27:1 on the harder one.
-LIGHT_GRAY = build_ramp(LIGHT_SPEC, anchor_step="200", lighter=False)
+LIGHT_GRAY = build_ramp(LIGHT_SPEC, anchor_step="200", lighter=False, hue=LIGHT_HUE)
+# frappe-ui maps dark outline-gray-7..9 onto the *light* ramp. Those stay indigo:
+# retinting the light theme must not move a single dark value.
+LIGHT_GRAY_FOR_DARK = build_ramp(LIGHT_SPEC, anchor_step="200", lighter=False)
 DARK_GRAY = build_ramp(DARK_SPEC, anchor_step="600", lighter=True)
 
 # The canvas is no longer stock white. Cards, popovers and modals stay on
 # --surface-elevation-*, which frappe-ui keeps at #ffffff in light mode, so
 # giving the page ground a tint is what creates the elevation hierarchy the
 # shadows then reinforce.
-LIGHT_SURFACE_BASE = oklch(0.9880, 0.0055, HUE)
+LIGHT_SURFACE_BASE = oklch(0.9880, 0.0055, LIGHT_HUE)
 
 # Alpha ramps keep frappe-ui's alpha per shade, over indigo-tinted bases.
 LIGHT_ALPHA_BASE = "#0e0e1f"  # was pure black
@@ -243,14 +257,14 @@ PALETTES = {
 }
 
 
-def resolve(ref):
+def resolve(ref, palettes=PALETTES):
 	"""Return the Vectora value for a token reference, or None to leave stock."""
 	parts = ref.split("/")
 	if len(parts) != 3:
 		return None
 	family = parts[0] + "/" + parts[1]
-	if family in PALETTES:
-		return PALETTES[family].get(parts[2])
+	if family in palettes:
+		return palettes[family].get(parts[2])
 	return None
 
 
@@ -273,9 +287,10 @@ for cat, tokens in tv["light"].items():
 		val = resolve(ref)
 		if val:
 			light_vars[f"--{cat}-{name}"] = val
+DARK_PALETTES = {**PALETTES, "lightMode/gray": LIGHT_GRAY_FOR_DARK}
 for cat, tokens in tv["dark"].items():
 	for name, ref in tokens.items():
-		val = resolve(ref)
+		val = resolve(ref, DARK_PALETTES)
 		if val:
 			dark_vars[f"--{cat}-{name}"] = val
 
@@ -365,13 +380,13 @@ for step, value in DARK_ELEVATION.items():
 light_vars["--elevation-status"] = "0px 0px 0px 1.5px var(--surface-base)"
 dark_vars["--elevation-status"] = "0px 0px 0px 1.5px var(--surface-base)"
 
-# Brand constants. Everything here has a consumer: sky/magenta/500 compose the
+# Brand constants. Everything here has a consumer: start/end/500 compose the
 # gradients, 300/500 are the focus ring, 100/700/900 are the selection colours
 # (index.css). Nothing is declared "for later" — an unused token is a claim the
 # product does not keep.
 BRAND = {
-	"--brand-sky": "#21abfb",
-	"--brand-magenta": "#df5feb",
+	"--brand-start": "#21abfb",  # sky
+	"--brand-end": "#df5feb",  # magenta
 	"--brand-100": "#e0e2fb",
 	"--brand-300": "#a5a8f2",
 	"--brand-500": "#5b5fe8",
@@ -380,8 +395,8 @@ BRAND = {
 	"--brand-900": "#282870",
 	# One gradient, two axes, one stop list. Every other copy of it in the
 	# codebase was deleted in favour of these two.
-	"--brand-gradient": "linear-gradient(135deg, var(--brand-sky) 0%, var(--brand-500) 55%, var(--brand-magenta) 100%)",
-	"--brand-gradient-y": "linear-gradient(180deg, var(--brand-sky) 0%, var(--brand-500) 55%, var(--brand-magenta) 100%)",
+	"--brand-gradient": "linear-gradient(135deg, var(--brand-start) 0%, var(--brand-500) 55%, var(--brand-end) 100%)",
+	"--brand-gradient-y": "linear-gradient(180deg, var(--brand-start) 0%, var(--brand-500) 55%, var(--brand-end) 100%)",
 }
 
 # The primary call-to-action ramp.
@@ -393,16 +408,17 @@ BRAND = {
 # with no magenta stop to confuse the two.
 #
 # It is a *light* blue, and that is what forces the ink choice: white cannot sit
-# on it. brand-sky against white is 2.54:1, and every light-blue candidate tried
+# on it. The dark ramp's sky against white is 2.54:1, and every light-blue candidate tried
 # came in under AA -- the best reached 4.15:1. A deep navy ink clears it at
 # 6.95:1 on the binding stop, so "light blue" and "readable" stop being a
 # trade-off. The assertions below hold that.
 #
-# The edge is not decoration either: the fill is only 1.59:1 against the light
-# canvas, so without a border the control's own boundary fails SC 1.4.11 in
+# The edge is not decoration either: the dark ramp would be 1.59:1 on a light
+# canvas and the light ramp's pale top is no better, so without a border the
+# control's own boundary fails SC 1.4.11 in
 # light mode. CTA_EDGE is solved against both canvases.
 CTA_FROM = "#7fd4ff"
-CTA_TO = BRAND["--brand-sky"]
+CTA_TO = BRAND["--brand-start"]
 CTA_INK = "#0e1830"
 CTA_EDGE = "#1a86c9"
 BRAND.update(
@@ -414,6 +430,43 @@ BRAND.update(
 		"--cta-gradient": "linear-gradient(180deg, var(--cta-from) 0%, var(--cta-to) 100%)",
 	}
 )
+
+# The light theme's palette, sampled from the brand artwork: a coral ramp
+# (#efa29c -> #fad8d6) and a blue one (#b7cee1 -> #6097c3). Pale stops cannot
+# carry a boundary or an ink on a near-white canvas, so each sampled colour goes
+# where it is legible and the accent steps that must clear a floor are solved on
+# the steel's hue instead: 500 is the focus ring and CTA edge (3:1), 600 is
+# `text-brand` (4.5:1).
+CORAL = "#efa29c"
+BLUSH = "#fad8d6"
+SKY = "#b7cee1"
+STEEL = "#6097c3"
+LIGHT_ACCENT_CHROMA = 0.100
+LIGHT_500 = oklch(
+	solve_lightness(3.10, LIGHT_GRAY["300"], LIGHT_ACCENT_CHROMA, LIGHT_HUE, False),
+	LIGHT_ACCENT_CHROMA,
+	LIGHT_HUE,
+)
+LIGHT_600 = oklch(
+	solve_lightness(4.70, LIGHT_GRAY["100"], LIGHT_ACCENT_CHROMA, LIGHT_HUE, False),
+	LIGHT_ACCENT_CHROMA,
+	LIGHT_HUE,
+)
+LIGHT_CTA_EDGE = LIGHT_500
+LIGHT_BRAND = {
+	**BRAND,
+	"--brand-start": CORAL,
+	"--brand-end": STEEL,
+	"--brand-100": BLUSH,  # text selection, the one surface a blush can fill
+	"--brand-300": SKY,
+	"--brand-500": LIGHT_500,
+	"--brand-600": LIGHT_600,
+	"--brand-700": oklch(0.4300, 0.0850, LIGHT_HUE),
+	"--brand-900": oklch(0.2800, 0.0600, LIGHT_HUE),
+	"--cta-from": SKY,
+	"--cta-to": STEEL,
+	"--cta-edge": LIGHT_CTA_EDGE,
+}
 
 # Motion. Three durations and two curves is the whole language: anything that
 # needs a fourth is a bespoke animation and should say so. Mode-invariant, but
@@ -433,22 +486,30 @@ def render_block(pairs, indent="  "):
 	return "\n".join(f"{indent}{k}: {v};" for k, v in pairs.items())
 
 
-EXTRA_LIGHT = (
-	"\n  /* Vectora brand */\n" + render_block(BRAND) + "\n\n  /* Motion */\n" + render_block(MOTION) + "\n"
-)
-EXTRA_DARK = EXTRA_LIGHT
+def extra_block(brand):
+	return (
+		"\n  /* Vectora brand */\n"
+		+ render_block(brand)
+		+ "\n\n  /* Motion */\n"
+		+ render_block(MOTION)
+		+ "\n"
+	)
+
+
+EXTRA_LIGHT = extra_block(LIGHT_BRAND)
+EXTRA_DARK = extra_block(BRAND)
 
 header = """/* Vectora theme — generated, do not hand-edit values.
  *
  * Regenerate with: python3 frontend/scripts/generate_vectora_theme.py
- * It reads frappe-ui/tailwind/generated/colors.json and re-emits
- * every gray-family semantic token against Vectora's indigo-tinted neutral ramps,
+ * It reads frontend/scripts/frappe-ui-colors.json and re-emits
+ * every gray-family semantic token against Vectora's tinted neutral ramps,
  * so this file survives frappe-ui token syncs by construction.
  *
- * Design system: indigo-tinted neutrals (OKLCH hue 278, the brand indigo's own
- * hue), brand colour reserved for focus/selection/active states, gradient
- * reserved for the mark and the position rail, elevation cast in the same
- * indigo-black the neutrals are mixed from.
+ * Design system: tinted neutrals (OKLCH hue 278, the brand indigo's own hue, in
+ * dark; hue 243.8, the steel blue's, in light), brand colour reserved for
+ * focus/selection/active states, gradient reserved for the mark and the position
+ * rail, elevation cast in the indigo-black the dark neutrals are mixed from.
  *
  * Contrast: lightness tracks the stock frappe-ui ramps, so frappe-ui's relative
  * contrast relationships are preserved; on top of that the text-bearing steps
@@ -542,9 +603,9 @@ for mode, emitted in (("light", light_vars), ("dark", dark_vars)):
 		check_distinct(f"{mode} {token_a[2:]} vs {token_b[2:]}", emitted[token_a], emitted[token_b])
 # Focus ring vs every surface it can be drawn against (SC 1.4.11).
 for step in ("50", "100", "200", "300"):
-	check(f"focus ring on gray-{step}", BRAND["--brand-500"], LIGHT_GRAY[step], NON_TEXT_FLOOR)
-check("focus ring on canvas", BRAND["--brand-500"], LIGHT_SURFACE_BASE, NON_TEXT_FLOOR)
-check("focus ring on white", BRAND["--brand-500"], "#ffffff", NON_TEXT_FLOOR)
+	check(f"focus ring on gray-{step}", LIGHT_500, LIGHT_GRAY[step], NON_TEXT_FLOOR)
+check("focus ring on canvas", LIGHT_500, LIGHT_SURFACE_BASE, NON_TEXT_FLOOR)
+check("focus ring on white", LIGHT_500, "#ffffff", NON_TEXT_FLOOR)
 for step in ("950", "900", "800", "700", "600"):
 	check(f"dark focus ring on gray-{step}", BRAND["--brand-300"], DARK_GRAY[step], NON_TEXT_FLOOR)
 # Selection pairs.
@@ -553,16 +614,18 @@ for step in ("950", "900", "800", "700", "600"):
 # not in light mode.
 check("cta ink on ramp top", CTA_INK, CTA_FROM, AA_FLOOR)
 check("cta ink on ramp bottom", CTA_INK, CTA_TO, AA_FLOOR)
-check("cta edge on light canvas", CTA_EDGE, LIGHT_SURFACE_BASE, NON_TEXT_FLOOR)
 check("cta edge on dark canvas", CTA_EDGE, DARK_GRAY["950"], NON_TEXT_FLOOR)
+check("light cta ink on ramp top", CTA_INK, SKY, AA_FLOOR)
+check("light cta ink on ramp bottom", CTA_INK, STEEL, AA_FLOOR)
+check("light cta edge on light canvas", LIGHT_CTA_EDGE, LIGHT_SURFACE_BASE, NON_TEXT_FLOOR)
 
-check("light selection", BRAND["--brand-900"], BRAND["--brand-100"], AA_FLOOR)
+check("light selection", LIGHT_BRAND["--brand-900"], BLUSH, AA_FLOOR)
 check("dark selection", DARK_GRAY["50"], BRAND["--brand-700"], AA_FLOOR)
 # `text-brand` is body-sized text (Planner's today marker), so it takes the
 # full AA floor on every surface it can land on.
 for step in ("100", "50"):
-	check(f"light brand ink on gray-{step}", BRAND["--brand-600"], LIGHT_GRAY[step], AA_FLOOR)
-check("light brand ink on canvas", BRAND["--brand-600"], LIGHT_SURFACE_BASE, AA_FLOOR)
+	check(f"light brand ink on gray-{step}", LIGHT_600, LIGHT_GRAY[step], AA_FLOOR)
+check("light brand ink on canvas", LIGHT_600, LIGHT_SURFACE_BASE, AA_FLOOR)
 for step in ("950", "900", "700"):
 	check(f"dark brand ink on gray-{step}", BRAND["--brand-300"], DARK_GRAY[step], AA_FLOOR)
 

@@ -62,6 +62,12 @@ class NormalisePlanTest(UnitTestCase):
 		self.assertEqual(out["from_date"], "2025-09-01")
 		self.assertEqual(out["to_date"], "2026-03-15")
 
+	def test_a_period_is_clamped_to_a_range_the_month_arithmetic_survives(self):
+		"""A model's 9999-12-31 overflowed months_between into a 500."""
+		out = analyst.normalise_plan(plan(from_date="1066-10-14", to_date="9999-12-31"), CRM_KEYS, TODAY)
+		self.assertEqual((out["from_date"], out["to_date"]), ("2000-01-01", "2028-09-01"))
+		self.assertEqual(len(analyst.months_between(out["from_date"], out["to_date"])), 345)
+
 	def test_empty_selection_falls_back_by_keyword(self):
 		out = analyst.normalise_plan(plan(), CRM_KEYS, TODAY, question="are we behind quota?")
 		self.assertEqual(out["metrics"], ["quota_attainment_by_rep"])
@@ -94,6 +100,32 @@ class FallbackPlanTest(UnitTestCase):
 			analyst.fallback_plan("project revenue for the next quarter", CRM_KEYS),
 			["revenue_projection", "forecast_by_month", "won_revenue_by_month"],
 		)
+
+	def test_a_keyword_matches_a_whole_word_not_the_start_of_one(self):
+		"""A report is not a rep, and to wonder is not to have won."""
+		self.assertEqual(
+			analyst.fallback_plan("Give me a report on revenue this year", CRM_KEYS),
+			["won_revenue_by_month"],
+		)
+		self.assertEqual(
+			analyst.fallback_plan("I wonder how our pipeline looks", CRM_KEYS), ["pipeline_by_stage"]
+		)
+		self.assertEqual(
+			analyst.fallback_plan("how is the salesperson Kevin doing?", CRM_KEYS), ["deals_by_salesperson"]
+		)
+
+	def test_the_inflections_a_question_uses_still_match(self):
+		for question, metric in (
+			("show me our receivables", "erp_receivables"),
+			("how much have we invoiced?", "erp_cashflow_by_month"),
+			("which deals are slipping?", "deals_at_risk"),
+			("are we growing?", "growth_rates"),
+			("how many leads converted?", "funnel_conversion"),
+			("who hit their targets?", "quota_attainment_by_rep"),
+			("what did we forecast?", "revenue_projection"),
+		):
+			with self.subTest(question=question):
+				self.assertIn(metric, analyst.fallback_plan(question, ALL_KEYS))
 
 
 class RowListSummaryTest(UnitTestCase):
@@ -465,6 +497,24 @@ class AnswerBudgetTest(UnitTestCase):
 		self.assertNotIn("D-0005", system)
 		self.assertIn("35 more rows not shown", system)
 		self.assertEqual(len(table["rows"]), 40)  # the caller's table is not cut
+
+	def test_a_long_month_series_keeps_its_newest_months(self):
+		"""A row list runs worst first, so its head is what to keep; a month series runs
+		oldest first, and keeping its head answered "how is this year?" from 2021."""
+		months = analyst.months_between("2021-01-01", "2026-09-30")
+		table = {
+			"key": "erp_cashflow_by_month",
+			"title": "Cashflow by month",
+			"source": "Acumatica",
+			"columns": analyst.CATALOGUE["erp_cashflow_by_month"]["columns"],
+			"rows": [{"month": m, "invoiced": 1.0, "received": 1.0, "net": 0.0} for m in months],
+		}
+		for budget in (None, 14336, 3000):
+			with self.subTest(budget=budget):
+				system = analyst.build_answer_messages("q", [table], {}, max_chars=budget)[0]["content"]
+				self.assertIn('"2026-09"', system)
+				self.assertNotIn('"2021-01"', system)
+				self.assertIn("earlier rows not shown", system)
 
 	def test_history_loses_its_oldest_turns_before_the_figures_do(self):
 		history = [{"role": "user", "content": f"turn{i} " + "y" * 1500} for i in range(6)]

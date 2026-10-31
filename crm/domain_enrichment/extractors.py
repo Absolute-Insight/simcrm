@@ -17,6 +17,7 @@ import re
 from urllib.parse import urljoin, urlparse
 
 from .config import INDUSTRY_MIN_CONFIDENCE, INDUSTRY_MIN_SCORE
+from .crawler import registrable_domain
 from .result import (
 	Email,
 	Field,
@@ -100,6 +101,21 @@ def parse_json_ld(soup):
 		elif isinstance(data, list):
 			blocks.extend([d for d in data if isinstance(d, dict)])
 	return blocks
+
+
+def _ld_text(value) -> str:
+	"""A JSON-LD scalar as text, whatever shape the site gave it: a string, a
+	language-tagged ``{"@value": ...}`` object, or a list (its first readable entry).
+	``""`` for anything else -- the caller moves on to its next source."""
+	if isinstance(value, dict):
+		value = value.get("@value")
+	if isinstance(value, list):
+		for item in value:
+			text = _ld_text(item)
+			if text:
+				return text
+		return ""
+	return value.strip() if isinstance(value, str) else ""
 
 
 def _ld_type_matches(block, wanted):
@@ -186,11 +202,11 @@ _NAME_MAX_WORDS = 6
 
 
 def _domain_brand(url):
-	netloc = (urlparse(url or "").netloc or "").lower().split(":")[0]
-	if netloc.startswith("www."):
-		netloc = netloc[4:]
-	labels = [label for label in netloc.split(".") if label]
-	return labels[-2] if len(labels) >= 2 else (labels[0] if labels else "")
+	"""The registrable label of ``url``'s host: ``acme`` for www.acme.co.za. The
+	second-to-last label is the public suffix's "co" there, which never matched a
+	title chunk."""
+	netloc = urlparse(url or "").netloc or ""
+	return registrable_domain(netloc).split(".")[0] if netloc else ""
 
 
 def _compact(text):
@@ -293,7 +309,7 @@ def extract_image(soup, base_url):
 		if not _ld_type_matches(block, _ORG_TYPES):
 			continue
 		logo = block.get("logo")
-		url = logo.get("url") if isinstance(logo, dict) else (logo if isinstance(logo, str) else "")
+		url = _ld_text(logo.get("url")) if isinstance(logo, dict) else _ld_text(logo)
 		safe = _safe_url(base_url, url)
 		if safe:
 			return Field(safe, base_url, Method.JSON_LD)
@@ -373,10 +389,11 @@ def extract_company_info(homepage, soup):
 	for block in parse_json_ld(soup):
 		if not _ld_type_matches(block, _ORG_TYPES):
 			continue
-		if not info["company_name"].value and block.get("name"):
-			info["company_name"] = Field(block["name"].strip(), url, Method.JSON_LD)
-		if not info["description"].value and block.get("description"):
-			info["description"] = Field(block["description"].strip(), url, Method.JSON_LD)
+		name, description = _ld_text(block.get("name")), _ld_text(block.get("description"))
+		if not info["company_name"].value and name:
+			info["company_name"] = Field(name, url, Method.JSON_LD)
+		if not info["description"].value and description:
+			info["description"] = Field(description, url, Method.JSON_LD)
 		same_as = block.get("sameAs")
 		if isinstance(same_as, list):
 			info["social_links"].extend([s for s in same_as if isinstance(s, str)])
@@ -478,8 +495,9 @@ def select_description(pages, soups_by_url, industry_rules=None, company_name=""
 		is_about = _is_about_page(page.url)
 
 		for block in parse_json_ld(soup):
-			if _ld_type_matches(block, _ORG_TYPES) and block.get("description"):
-				consider(Field(block["description"].strip(), page.url, Method.JSON_LD), 6)
+			description = _ld_text(block.get("description"))
+			if _ld_type_matches(block, _ORG_TYPES) and description:
+				consider(Field(description, page.url, Method.JSON_LD), 6)
 				break
 
 		if is_about:
@@ -635,6 +653,10 @@ def classify_industry(pages, company_info, industry_rules):
 		return "", 0.0
 	best = max(scores, key=scores.get)
 	if scores[best] < INDUSTRY_MIN_SCORE:
+		return "", 0.0
+	# A tie has no winner. A two-way one clears the confidence floor at 0.5, and
+	# max() would hand it to whichever rule happened to load first.
+	if sum(1 for score in scores.values() if score == scores[best]) > 1:
 		return "", 0.0
 	confidence = scores[best] / total
 	if confidence < INDUSTRY_MIN_CONFIDENCE:

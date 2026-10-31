@@ -59,6 +59,49 @@ class CRMSalesHierarchy(NestedSet):
 		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
 
 
+# The roles the Sales Hierarchy pane ranks, most privileged first; the same
+# order crm.api.session.get_users resolves a user's role by.
+NODE_ROLES = ("System Manager", "Sales Manager", "Sales User")
+
+
+@frappe.whitelist()
+def get_node_users() -> list[dict]:
+	"""Whether each user placed in the tree is enabled, and their CRM role.
+
+	The Sales Hierarchy pane classified its rows from crm.api.session.get_users,
+	which lists enabled users only. A rep disabled after being placed was not in
+	it, so they read as an enabled Sales User and the "disabled" badge could
+	never show; and a node whose user held System Manager had no rank, so the
+	pane dropped it and showed its direct reports as top-level rows.
+
+	Managers only, like the pane. ``role`` is None for a user who no longer
+	holds any CRM role.
+	"""
+	frappe.only_for(("System Manager", "Sales Manager"))
+	users = frappe.get_all("CRM Sales Hierarchy", filters={"user": ["is", "set"]}, pluck="user")
+	if not users:
+		return []
+
+	enabled = dict(
+		frappe.get_all("User", filters={"name": ["in", users]}, fields=["name", "enabled"], as_list=True)
+	)
+	held: dict[str, set[str]] = {}
+	for row in frappe.get_all(
+		"Has Role",
+		filters={"parenttype": "User", "parent": ["in", users], "role": ["in", NODE_ROLES]},
+		fields=["parent", "role"],
+	):
+		held.setdefault(row.parent, set()).add(row.role)
+
+	def role_of(user: str) -> str | None:
+		# Administrator's Has Role rows are not guaranteed to list System Manager
+		if user == "Administrator":
+			return "System Manager"
+		return next((role for role in NODE_ROLES if role in held.get(user, ())), None)
+
+	return [{"user": user, "enabled": int(enabled.get(user) or 0), "role": role_of(user)} for user in users]
+
+
 def on_doctype_update():
 	frappe.db.add_index("CRM Sales Hierarchy", ["lft", "rgt"])
 	frappe.db.add_index("CRM Sales Hierarchy", ["user"])

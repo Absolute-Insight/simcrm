@@ -12,6 +12,7 @@ from crm.fcrm.doctype.crm_access_settings.crm_access_settings import MANAGER_SCO
 from crm.fcrm.doctype.crm_dashboard.crm_dashboard import create_default_manager_dashboard
 from crm.fcrm.doctype.crm_products.crm_products import create_product_details_script
 from crm.integrations.acumatica.install import ensure_custom_fields as ensure_acumatica_fields
+from crm.permissions.customers import stop_frappe_event_digest
 
 
 def before_install():
@@ -24,6 +25,8 @@ def after_install(force=False):
 	# may run again from the Restore Defaults button (see ``restore_defaults``).
 	apply_endpoint_defaults()
 	ensure_access_defaults()
+	# after_migrate also does this, but a new site has no migrate until its first upgrade
+	stop_frappe_event_digest()
 	# install/migrate runs outside a request, so nothing else will commit the
 	# fixtures created above.
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
@@ -299,6 +302,12 @@ def add_default_deal_statuses():
 		doc.position = statuses[status]["position"]
 		doc.insert()
 
+	# after the loop, because it slots itself in before Won and moves the closed
+	# statuses down; a fixed position here would collide on a site that has them
+	from crm.fcrm.doctype.crm_deal_status.crm_deal_status import ensure_expired_status
+
+	ensure_expired_status()
+
 
 def add_default_communication_statuses():
 	statuses = ["Open", "Replied"]
@@ -371,11 +380,11 @@ def add_default_fields_layout(force=False):
 	sidebar_fields_layouts = {
 		"CRM Lead-Side Panel": {
 			"doctype": "CRM Lead",
-			"layout": '[{"label": "Details", "name": "details_section", "opened": true, "columns": [{"name": "column_kl92", "fields": ["organization", "company_description", "website", "territory", "industry", "no_of_employees", "job_title", "source", "lead_owner", "linkedin", "twitter", "facebook"]}]}, {"label": "Person", "name": "person_section", "opened": true, "columns": [{"name": "column_XmW2", "fields": ["salutation", "first_name", "last_name", "email", "mobile_no"]}]}]',
+			"layout": '[{"label": "Lost Reason", "name": "lost_reason_section", "opened": true, "columns": [{"name": "lost_reason_column", "fields": ["lost_reason", "lost_notes"]}]}, {"label": "Details", "name": "details_section", "opened": true, "columns": [{"name": "column_kl92", "fields": ["organization", "company_description", "website", "territory", "industry", "no_of_employees", "job_title", "source", "lead_owner", "linkedin", "twitter", "facebook"]}]}, {"label": "Person", "name": "person_section", "opened": true, "columns": [{"name": "column_XmW2", "fields": ["salutation", "first_name", "last_name", "email", "mobile_no"]}]}]',
 		},
 		"CRM Deal-Side Panel": {
 			"doctype": "CRM Deal",
-			"layout": '[{"label": "Contacts", "name": "contacts_section", "opened": true, "editable": false, "contacts": []}, {"label": "Organization Details", "name": "organization_section", "opened": true, "columns": [{"name": "column_na2Q", "fields": ["organization", "company_description", "industry", "no_of_employees", "website", "territory", "annual_revenue", "closed_date", "probability", "next_step", "deal_owner", "linkedin", "twitter", "facebook"]}]}]',
+			"layout": '[{"label": "Contacts", "name": "contacts_section", "opened": true, "editable": false, "contacts": []}, {"label": "Lost Reason", "name": "lost_reason_section", "opened": true, "columns": [{"name": "lost_reason_column", "fields": ["lost_reason", "lost_notes"]}]}, {"label": "Organization Details", "name": "organization_section", "opened": true, "columns": [{"name": "column_na2Q", "fields": ["organization", "company_description", "industry", "no_of_employees", "website", "territory", "annual_revenue", "closed_date", "probability", "next_step", "deal_owner", "linkedin", "twitter", "facebook"]}]}]',
 		},
 		"Contact-Side Panel": {
 			"doctype": "Contact",
@@ -383,7 +392,7 @@ def add_default_fields_layout(force=False):
 		},
 		"CRM Organization-Side Panel": {
 			"doctype": "CRM Organization",
-			"layout": '[{"label": "Details", "name": "details_section", "opened": true, "columns": [{"name": "column_IJOV", "fields": ["organization_name", "company_description", "website", "territory", "industry", "no_of_employees", "address", "linkedin", "twitter", "facebook"]}]}]',
+			"layout": '[{"label": "Details", "name": "details_section", "opened": true, "columns": [{"name": "column_IJOV", "fields": ["organization_name", "company_description", "website", "territory", "account_owner", "industry", "no_of_employees", "address", "linkedin", "twitter", "facebook"]}]}]',
 		},
 	}
 

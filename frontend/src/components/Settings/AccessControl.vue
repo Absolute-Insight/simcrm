@@ -102,6 +102,31 @@
           />
         </div>
 
+        <div
+          class="flex items-start justify-between gap-4 rounded-[var(--v-radius-card)] bg-surface-white p-4"
+        >
+          <div class="flex flex-col gap-0.5">
+            <div class="text-base text-ink-gray-8">
+              {{ __('Customers a rep sees') }}
+            </div>
+            <p class="text-p-sm text-ink-gray-5">
+              {{
+                __(
+                  "With 'Own and unclaimed', a rep cannot see another rep's customers, or the contacts at them, unless they have a deal or a planned visit there, and cannot open a deal or plan a visit on one. A customer's account owner is set on its page; only a manager can change it.",
+                )
+              }}
+            </p>
+          </div>
+          <FormControl
+            type="select"
+            class="w-48 shrink-0"
+            :model-value="dataAccess.data?.rep_customer_scope"
+            :options="customerScopeOptions"
+            :disabled="!isAdmin()"
+            @update:model-value="onCustomerScopeChange"
+          />
+        </div>
+
         <p v-if="!isAdmin()" class="text-p-sm text-ink-orange-9">
           {{ __('Only an administrator can change these.') }}
         </p>
@@ -124,8 +149,11 @@
         </p>
       </div>
 
+      <!-- Only before there is a matrix: gated on loading alone, the re-read
+           after every toggle replaced the table with a skeleton and rebuilt
+           it, a flash that also put the scroll back at the top. -->
       <SkeletonTable
-        v-if="access.visibility.loading"
+        v-if="access.visibility.loading && !access.matrix"
         :columns="CONFIGURABLE_ROLES.length + 1"
         :rows="12"
         density="compact"
@@ -197,7 +225,11 @@
                     v-else
                     :model-value="isVisible(role, surface.key) ? 1 : 0"
                     size="sm"
-                    :disabled="!editableBy(callerRole, role) || saving"
+                    :disabled="
+                      !editableBy(callerRole, role) ||
+                      saving ||
+                      access.visibility.loading
+                    "
                     @update:model-value="
                       (v) => onToggle(role, surface.key, Boolean(v))
                     "
@@ -262,6 +294,14 @@ function roleLabel(role) {
 const managerScopeOptions = [
   { label: __('All records'), value: 'All records' },
   { label: __('Own records only'), value: 'Own records only' },
+]
+
+const customerScopeOptions = [
+  {
+    label: __('Own and unclaimed'),
+    value: 'Own and unclaimed customers',
+  },
+  { label: __('All customers'), value: 'All customers' },
 ]
 
 const dataAccess = createResource({
@@ -364,6 +404,10 @@ function onHierarchyToggle(value) {
 
 function onManagerScopeChange(value) {
   saveDataAccess({ manager_outside_hierarchy: value }, __('Saved'))
+}
+
+function onCustomerScopeChange(value) {
+  saveDataAccess({ rep_customer_scope: value }, __('Saved'))
 }
 
 function hiddenFor(role) {

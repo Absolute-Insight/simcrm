@@ -248,6 +248,10 @@ CATALOGUE: dict[str, dict] = {
 MAX_METRICS = 4
 DEFAULT_PERIOD_MONTHS = 12
 PROJECTION_HORIZON = 3
+# The widest period a plan may name: no CRM or ERP history this app reads starts
+# before 2000, and no forecast it computes reaches past two years out.
+EARLIEST_PLAN_DATE = date(2000, 1, 1)
+PLAN_MONTHS_AHEAD = 24
 
 # How much of a table the answer prompt carries. Enough to narrate a year by
 # month or a team of reps; past this the model is being asked to read a
@@ -363,31 +367,78 @@ def _parse_date(value) -> date | None:
 
 # Keyword -> metrics, first match wins per keyword group, in this order. A
 # question that names nothing gets the two tables anyone asking about "the
-# business" wants: what we won, and what is open.
+# business" wants: what we won, and what is open. Keywords match whole words
+# only -- "report" is not "rep", "wonder" is not "won" -- so each inflection a
+# question is likely to use is listed.
 _KEYWORD_PLANS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
 	(
-		("cash", "cashflow", "receivable", "invoice", "payment", "paid"),
+		(
+			"cash",
+			"cashflow",
+			"receivable",
+			"receivables",
+			"invoice",
+			"invoices",
+			"invoiced",
+			"invoicing",
+			"payment",
+			"payments",
+			"paid",
+		),
 		("erp_cashflow_by_month", "erp_receivables"),
 	),
-	(("quota", "target", "behind", "attainment"), ("quota_attainment_by_rep",)),
+	(("quota", "quotas", "target", "targets", "behind", "attainment"), ("quota_attainment_by_rep",)),
 	(
-		("project", "projection", "next quarter", "next month", "forecast"),
+		(
+			"project",
+			"projected",
+			"projection",
+			"projections",
+			"next quarter",
+			"next month",
+			"forecast",
+			"forecasts",
+			"forecasted",
+			"forecasting",
+		),
 		("revenue_projection", "forecast_by_month"),
 	),
 	(
-		("risk", "slip", "quiet", "maintain", "maintenance", "cold", "cooling"),
+		(
+			"risk",
+			"risks",
+			"risky",
+			"slip",
+			"slips",
+			"slipping",
+			"slipped",
+			"quiet",
+			"maintain",
+			"maintenance",
+			"cold",
+			"cooling",
+		),
 		("deals_at_risk", "accounts_going_quiet"),
 	),
-	(("grow", "growth", "trend"), ("growth_rates", "sales_trend")),
-	(("pipeline", "stage"), ("pipeline_by_stage",)),
-	(("funnel", "conversion", "convert"), ("funnel_conversion",)),
-	(("industry", "industries", "sector"), ("deals_by_industry",)),
-	(("territory", "territories", "region"), ("deals_by_territory",)),
-	(("rep", "reps", "salesperson", "team"), ("deals_by_salesperson",)),
-	(("source", "sources", "campaign"), ("leads_by_source",)),
-	(("plan", "adherence", "planned"), ("plan_adherence_by_rep",)),
-	(("average", "avg", "deal size", "deal value"), ("average_deal_value",)),
-	(("close", "cycle", "how long"), ("time_to_close",)),
+	(
+		("grow", "grows", "growing", "grew", "grown", "growth", "trend", "trends", "trending"),
+		("growth_rates", "sales_trend"),
+	),
+	(("pipeline", "stage", "stages"), ("pipeline_by_stage",)),
+	(
+		("funnel", "conversion", "conversions", "convert", "converted", "converting"),
+		("funnel_conversion",),
+	),
+	(("industry", "industries", "sector", "sectors"), ("deals_by_industry",)),
+	(("territory", "territories", "region", "regions", "regional"), ("deals_by_territory",)),
+	(("rep", "reps", "salesperson", "salespeople", "team", "teams"), ("deals_by_salesperson",)),
+	(("source", "sources", "campaign", "campaigns"), ("leads_by_source",)),
+	(("plan", "plans", "adherence", "planned"), ("plan_adherence_by_rep",)),
+	(
+		("average", "avg", "deal size", "deal sizes", "deal value", "deal values"),
+		("average_deal_value",),
+	),
+	(("close", "closing", "cycle", "how long"), ("time_to_close",)),
 	(("revenue", "sales", "won", "sold"), ("won_revenue_by_month",)),
 ]
 
@@ -399,7 +450,7 @@ def fallback_plan(question: str, available: list[str]) -> list[str]:
 	text = (question or "").lower()
 	chosen: list[str] = []
 	for keywords, metrics in _KEYWORD_PLANS:
-		if any(re.search(rf"\b{re.escape(word)}", text) for word in keywords):
+		if any(re.search(rf"\b{re.escape(word)}\b", text) for word in keywords):
 			for metric in metrics:
 				if metric in available and metric not in chosen:
 					chosen.append(metric)
@@ -414,7 +465,9 @@ def normalise_plan(plan, available: list[str], today: date, question: str = "") 
 	Unknown or unavailable metrics are dropped, duplicates collapse, the list is
 	capped at :data:`MAX_METRICS`; an empty selection falls back to keywords.
 	Dates default to the last :data:`DEFAULT_PERIOD_MONTHS` months ending today,
-	a reversed pair is swapped, and an unparseable one takes the default.
+	a reversed pair is swapped, an unparseable one takes the default, and both
+	are clamped between :data:`EARLIEST_PLAN_DATE` and :data:`PLAN_MONTHS_AHEAD`
+	months from today.
 	"""
 	requested = list(getattr(plan, "metrics", None) or [])
 	metrics: list[str] = []
@@ -431,6 +484,11 @@ def normalise_plan(plan, available: list[str], today: date, question: str = "") 
 	end = _parse_date(getattr(plan, "to_date", "")) or default_to
 	if start > end:
 		start, end = end, start
+	# a date past either bound is a model's or a typo's: 9999-12-31 overflowed the
+	# month arithmetic downstream into a 500
+	latest = add_months(today, PLAN_MONTHS_AHEAD)
+	start = min(max(start, EARLIEST_PLAN_DATE), latest)
+	end = min(max(end, EARLIEST_PLAN_DATE), latest)
 	return {"metrics": metrics, "from_date": start.isoformat(), "to_date": end.isoformat()}
 
 
@@ -719,19 +777,25 @@ def _figures_block(tables: list[dict], period: dict, budget: int | None = None, 
 			if not rows:
 				entry.append("(no rows in the period)")
 		wanted = min(len(rows), FIGURES_ROW_CAP, int(table.get("model_rows") or FIGURES_ROW_CAP))
-		shown = rows[:wanted]
+		# A row list runs worst first, so its head is the part worth keeping. A month
+		# series runs oldest first: keeping its head answered "how is this year?" from
+		# 2021 and left out every month of this one.
+		newest_last = _is_month_series(table)
+		shown = _keep(rows, wanted, newest_last)
 		if remaining is not None:
 			fixed = sum(len(line) + 1 for line in entry)
 			# A table that does not fit whole keeps the rows that do. Dropping it whole
 			# left its heading over nothing, and the model answered from nothing.
-			while shown and fixed + _rows_cost(shown, len(rows)) > remaining:
-				shown = shown[: len(shown) * 3 // 4]
-			if fixed + (_rows_cost(shown, len(rows)) if shown else 0) > remaining or (rows and not shown):
+			while shown and fixed + _rows_cost(shown, len(rows), newest_last) > remaining:
+				shown = _keep(shown, len(shown) * 3 // 4, newest_last)
+			if fixed + (_rows_cost(shown, len(rows), newest_last) if shown else 0) > remaining or (
+				rows and not shown
+			):
 				truncated = True
 				break
 			# a table capped on purpose is not one that was cut to fit
 			truncated = truncated or len(shown) < wanted
-		entry.extend(_row_lines(shown, len(rows)))
+		entry.extend(_row_lines(shown, len(rows), newest_last))
 		if remaining is not None:
 			remaining -= sum(len(line) + 1 for line in entry)
 		lines.extend(entry)
@@ -741,17 +805,26 @@ def _figures_block(tables: list[dict], period: dict, budget: int | None = None, 
 	return "\n".join(lines)
 
 
-def _row_lines(shown: list[dict], total: int) -> list[str]:
+def _is_month_series(table: dict) -> bool:
+	return any(column.get("type") == "month" for column in table.get("columns") or [])
+
+
+def _keep(rows: list[dict], count: int, newest_last: bool) -> list[dict]:
+	"""The ``count`` rows worth keeping: the last ones of a month series, else the first."""
+	return rows[len(rows) - count :] if newest_last else rows[:count]
+
+
+def _row_lines(shown: list[dict], total: int, newest_last: bool = False) -> list[str]:
 	if not shown:
 		return []
 	lines = [_fenced(json.dumps(shown, default=str, ensure_ascii=False))]
 	if total > len(shown):
-		lines.append(f"({total - len(shown)} more rows not shown)")
+		lines.append(f"({total - len(shown)} {'earlier' if newest_last else 'more'} rows not shown)")
 	return lines
 
 
-def _rows_cost(shown: list[dict], total: int) -> int:
-	return sum(len(line) + 1 for line in _row_lines(shown, total))
+def _rows_cost(shown: list[dict], total: int, newest_last: bool = False) -> int:
+	return sum(len(line) + 1 for line in _row_lines(shown, total, newest_last))
 
 
 def _fenced(value) -> str:

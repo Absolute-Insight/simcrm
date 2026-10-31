@@ -190,7 +190,10 @@ import { globalStore } from '@/stores/global'
 import { getSettings } from '@/stores/settings'
 import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
 import { isMobileView } from '@/composables/settings'
-import { ensureParticipantContacts } from '@/composables/event'
+import {
+  computeAutoToTime,
+  ensureParticipantContacts,
+} from '@/composables/event'
 import {
   createListResource,
   dayjs,
@@ -234,7 +237,9 @@ const activeRangeKey = ref('')
 const currentUser = ref(user)
 
 async function updateUser(u) {
-  currentUser.value = u
+  // The picker's Clear sends '': the events asked for owner '' while the
+  // picker, falling back to the session user, still read your own name.
+  currentUser.value = u || user
   events.update({
     orFilters: buildEventOrFilters(),
   })
@@ -285,9 +290,20 @@ const events = createListResource({
   filters: buildEventFilters(),
   orFilters: buildEventOrFilters(),
   pageLength: 9999,
-  auto: true,
-  transform: (data) =>
-    data
+  // The calendar reports its visible range as it sets up, and
+  // handleRangeChange fetches that. Fetching here as well loaded every event
+  // the user ever had, with no date bound, before the ranged fetch replaced it.
+  auto: false,
+  transform: (data) => {
+    // The participants or-filter joins a child table, so an event comes back
+    // once per matching row.
+    const seen = new Set()
+    return data
+      .filter((ev) => {
+        if (seen.has(ev.name)) return false
+        seen.add(ev.name)
+        return true
+      })
       .map((ev) => ({
         id: ev.name,
         title: ev.subject,
@@ -305,9 +321,7 @@ const events = createListResource({
         referenceDoctype: ev.reference_doctype,
         referenceDocname: ev.reference_docname,
       }))
-      .filter(
-        (ev, index, self) => index === self.findIndex((e) => e.id === ev.id),
-      ),
+  },
 })
 
 provide('events', events)
@@ -612,25 +626,24 @@ function getFromToTime(time) {
   let fromHour = h
   let fromMinute = m
   if (time) {
-    if (/am|pm/i.test(time)) {
-      const raw = time.trim().replace(' ', '')
-      const ampm = raw.slice(-2).toLowerCase()
-      let hour = parseInt(raw.slice(0, -2))
-      if (ampm === 'pm' && hour < 12) hour += 12
-      if (ampm === 'am' && hour === 12) hour = 0
-      fromHour = hour
-      fromMinute = 0
+    // The hour grid hands back "7 am", or "6:30 am" for a click near a row's
+    // edge. The minutes were dropped, so that event began half an hour early.
+    const twelveHour = time.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i)
+    if (twelveHour) {
+      const [, hh, mm = '00', ampm] = twelveHour
+      fromHour = (parseInt(hh) % 12) + (ampm.toLowerCase() === 'pm' ? 12 : 0)
+      fromMinute = parseInt(mm)
     } else if (/^\d{1,2}:?\d{0,2}$/.test(time)) {
       const [hh, mm = '00'] = time.split(':')
       fromHour = parseInt(hh)
       fromMinute = parseInt(mm) || 0
     }
   }
-  const toHour = (fromHour + 1) % 24
-  return [
-    `${pad(fromHour)}:${pad(fromMinute)}`,
-    `${pad(toHour)}:${pad(fromMinute)}`,
-  ]
+  const fromTime = `${pad(fromHour)}:${pad(fromMinute)}`
+  // An hour later, as the panel picks when the start changes, so not past
+  // midnight: the panel checks both times against the start date, and the
+  // 11 pm row's old default end of 00:00 could not be saved.
+  return [fromTime, computeAutoToTime(fromTime)]
 }
 
 // Every other nav surface titles itself -- list views through ViewControls,

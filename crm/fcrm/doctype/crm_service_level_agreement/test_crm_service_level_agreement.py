@@ -2,12 +2,13 @@
 # See license.txt
 
 from datetime import datetime, time
+from time import monotonic
 
 import frappe
 from frappe.tests import IntegrationTestCase
-from frappe.utils import add_to_date, get_datetime, getdate, now_datetime
+from frappe.utils import add_days, add_to_date, get_datetime, getdate, now_datetime, nowdate
 
-from crm.fcrm.doctype.crm_service_level_agreement.utils import get_context
+from crm.fcrm.doctype.crm_service_level_agreement.utils import get_context, get_sla
 
 
 class TestCRMServiceLevelAgreement(IntegrationTestCase):
@@ -521,6 +522,79 @@ class TestCRMServiceLevelAgreement(IntegrationTestCase):
 
 		# Should be Tuesday morning
 		self.assertEqual(end_time.day, 2)
+
+	def test_calc_time_weekend_arrival_is_due_an_hour_into_monday(self):
+		"""Skipping a non-working day used to keep the time of day, so a lead that
+		came in on Saturday at 20:00 entered Monday at 20:00 and was due Tuesday."""
+		sla = create_test_sla_with_working_hours()  # Mon-Fri 09:00-17:00
+
+		for start in (
+			"2024-01-05 18:00:00",  # Friday after hours: always worked
+			"2024-01-06 08:00:00",
+			"2024-01-06 14:00:00",
+			"2024-01-06 20:00:00",
+			"2024-01-07 23:30:00",
+		):
+			with self.subTest(start=start):
+				self.assertEqual(
+					get_datetime(sla.calc_time(get_datetime(start), 3600)),
+					get_datetime("2024-01-08 10:00:00"),
+				)
+
+	def test_calc_time_holiday_arrival_is_due_an_hour_into_the_next_working_day(self):
+		holiday_list = create_test_holiday_list()  # Monday 2024-01-15
+		sla = create_test_sla_with_working_hours(holiday_list=holiday_list.name)
+
+		self.assertEqual(
+			get_datetime(sla.calc_time(get_datetime("2024-01-15 16:00:00"), 3600)),
+			get_datetime("2024-01-16 10:00:00"),
+		)
+
+	def test_get_sla_applies_through_its_end_date(self):
+		"""end_date is a DATE column: compared with now_datetime() it read as
+		midnight, so an SLA stopped applying at 00:00 on its own last day."""
+		status = "SLA Last Day Probe"  # a priority no other SLA carries
+		if not frappe.db.exists("CRM Communication Status", status):
+			frappe.get_doc({"doctype": "CRM Communication Status", "status": status}).insert(
+				ignore_permissions=True
+			)
+		sla = create_test_sla(
+			sla_name="Ends Today",
+			start_date=add_days(nowdate(), -30),
+			end_date=nowdate(),
+			priorities=[{"priority": status, "default_priority": 1, "first_response_time": 3600}],
+		)
+
+		found = get_sla(frappe._dict(doctype="CRM Lead", communication_status=status))
+
+		self.assertEqual(found and found.name, sla.name)
+
+	def test_calc_elapsed_time_over_a_month_counts_only_working_hours(self):
+		holiday_list = create_test_holiday_list()  # Monday 2024-01-15
+		sla = create_test_sla_with_working_hours(holiday_list=holiday_list.name)
+
+		elapsed = sla.calc_elapsed_time(
+			get_datetime("2024-01-01 10:00:00"),  # Monday
+			get_datetime("2024-01-31 12:00:00"),  # Wednesday
+		)
+
+		# 23 weekdays in January, less the holiday: 7h on the 1st, 8h on each
+		# of the 20 between, 3h on the 31st
+		self.assertEqual(elapsed, (7 + 20 * 8 + 3) * 3600)
+
+	def test_calc_elapsed_time_does_not_walk_the_gap_a_second_at_a_time(self):
+		"""Recording a reply on a record left unanswered for a year walked 31
+		million seconds inside the save; the cost must not grow by the second."""
+		sla = create_test_sla_with_working_hours()
+
+		started = monotonic()
+		elapsed = sla.calc_elapsed_time(
+			get_datetime("2023-01-02 09:00:00"),  # Monday
+			get_datetime("2024-01-01 09:00:00"),  # Monday, 52 weeks on
+		)
+
+		self.assertLess(monotonic() - started, 1.0)
+		self.assertEqual(elapsed, 52 * 5 * 8 * 3600)
 
 	def test_calc_elapsed_time_same_day(self):
 		"""Test calc_elapsed_time within same working day"""

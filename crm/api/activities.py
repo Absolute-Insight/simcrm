@@ -9,7 +9,7 @@ from frappe.query_builder import JoinType
 from frappe.translate import get_translated_doctypes
 from frappe.utils import cint
 
-from crm.fcrm.doctype.crm_call_log.crm_call_log import parse_call_log, redact_hidden_references
+from crm.fcrm.doctype.crm_call_log.crm_call_log import parse_call_logs, redact_hidden_references
 
 # Saves and emails per record on one page of the timeline; "load older" asks for
 # the next page by asking for a longer one.
@@ -602,7 +602,7 @@ def get_linked_calls(name: str, doctype: str | None = None):
 			],
 		)
 
-	calls = [parse_call_log(call) for call in calls] if calls else []
+	calls = parse_call_logs(calls) if calls else []
 
 	return {"calls": calls, "notes": notes, "tasks": tasks}
 

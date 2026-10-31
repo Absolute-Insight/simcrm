@@ -95,3 +95,27 @@ class TestCRMSalesHierarchy(IntegrationTestCase):
 
 		self.assertIn("Sales Manager", frappe.get_roles(MANAGER))
 		self.assertTrue(frappe.db.exists("CRM Sales Hierarchy", manager))
+
+	def test_node_users_report_disabled_reps_and_admins(self):
+		"""get_users lists enabled users only, which is what the pane classed
+		its rows from: a disabled rep read as enabled, and a System Manager
+		node had no rank and vanished from the tree."""
+		from crm.fcrm.doctype.crm_sales_hierarchy.crm_sales_hierarchy import get_node_users
+
+		manager = self.make_node(MANAGER, "Hierarchy Manager")
+		self.make_node(REP, "Hierarchy Rep", reports_to=manager)
+		frappe.db.set_value("User", REP, "enabled", 0)
+		frappe.get_doc("User", MANAGER).add_roles("System Manager")
+		try:
+			frappe.set_user(MANAGER)
+			by_user = {row["user"]: row for row in get_node_users()}
+			self.assertEqual(by_user[REP], {"user": REP, "enabled": 0, "role": "Sales User"})
+			self.assertEqual(by_user[MANAGER], {"user": MANAGER, "enabled": 1, "role": "System Manager"})
+
+			frappe.set_user(REP)
+			with self.assertRaises(frappe.PermissionError):
+				get_node_users()
+		finally:
+			frappe.set_user("Administrator")
+			frappe.db.set_value("User", REP, "enabled", 1)
+			frappe.get_doc("User", MANAGER).remove_roles("System Manager")

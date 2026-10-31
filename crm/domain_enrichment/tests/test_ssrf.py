@@ -151,6 +151,28 @@ class SSRFGuardTest(UnitTestCase):
 			with self.assertRaises(SSRFError):
 				validate_url("http://other.com/", cfg)
 
+	# -- what a rejection tells the user ----------------------------------- #
+	def test_a_rejection_never_names_the_internal_address(self):
+		"""The message reaches the rep's toast (preview) and the Run's error list. An
+		internal name answered with its compose IP maps the network for whoever
+		typed it."""
+		with _resolves_to({"redis-queue": "172.18.0.7"}):
+			with self.assertRaises(SSRFError) as caught:
+				validate_url("http://redis-queue/", self.cfg)
+		self.assertNotIn("172.18.0.7", str(caught.exception))
+
+	def test_an_internal_name_and_a_missing_one_read_the_same(self):
+		"""Otherwise the message is an oracle for which internal names exist."""
+		with _resolves_to({"redis-queue": "172.18.0.7"}):
+			with self.assertRaises(SSRFError) as internal:
+				validate_url("http://redis-queue/", self.cfg)
+			with self.assertRaises(SSRFError) as missing:
+				validate_url("http://no-such-service/", self.cfg)
+		self.assertEqual(
+			str(internal.exception).replace("redis-queue", "HOST"),
+			str(missing.exception).replace("no-such-service", "HOST"),
+		)
+
 	# -- direct IP-classification unit ------------------------------------- #
 	def test_is_blocked_ip_classification(self):
 		for ip in ("127.0.0.1", "10.0.0.5", "172.16.0.1", "192.168.1.1", "169.254.169.254", "::1", "0.0.0.0"):

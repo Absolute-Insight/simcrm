@@ -16,6 +16,7 @@ class CRMOrganization(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		account_owner: DF.Link | None
 		address: DF.Link | None
 		annual_revenue: DF.Currency
 		currency: DF.Link | None
@@ -29,13 +30,38 @@ class CRMOrganization(Document):
 	# end: auto-generated types
 
 	def validate(self):
+		from crm.permissions.customers import validate_account_owner_change
+
+		validate_account_owner_change(self)
 		self.update_exchange_rate()
 
 	def after_insert(self):
+		# A customer a rep adds is theirs. Written after insert, as the claim is the
+		# system's: a rep has no write access to the (permlevel 1) field.
+		from crm.permissions.customers import claim_if_unowned
+
+		claim_if_unowned(self.name, frappe.session.user)
+
 		# Auto-enrich a new Organization from its website (best-effort, background job).
 		from crm.domain_enrichment.tasks import auto_enrich_on_create
 
 		auto_enrich_on_create(self)
+
+	def after_rename(self, old_name, new_name, merge=False):
+		"""Carry the organization's contacts across a rename or a merge.
+
+		A contact belongs to an organization through core's
+		``Contact.company_name``, which is a Data field rather than a Link, so
+		rename_doc does not rewrite it. Left behind, every contact pointed at a
+		name that no longer exists and the org page's Contacts tab came up empty.
+		"""
+		frappe.db.set_value(
+			"Contact",
+			{"company_name": old_name},
+			"company_name",
+			new_name,
+			update_modified=False,
+		)
 
 	def update_exchange_rate(self):
 		"""Refresh the rate, but never let a third party decide whether the record saves.
@@ -80,6 +106,12 @@ class CRMOrganization(Document):
 				"width": "16rem",
 			},
 			{
+				"label": "Customer Code",
+				"type": "Data",
+				"key": "acumatica_id",
+				"width": "10rem",
+			},
+			{
 				"label": "Website",
 				"type": "Data",
 				"key": "website",
@@ -99,6 +131,13 @@ class CRMOrganization(Document):
 				"width": "14rem",
 			},
 			{
+				"label": "Account Owner",
+				"type": "Link",
+				"key": "account_owner",
+				"options": "User",
+				"width": "12rem",
+			},
+			{
 				"label": "Last Modified",
 				"type": "Datetime",
 				"key": "modified",
@@ -108,11 +147,18 @@ class CRMOrganization(Document):
 		rows = [
 			"name",
 			"organization_name",
+			"acumatica_id",
 			"organization_logo",
 			"website",
 			"industry",
 			"currency",
 			"annual_revenue",
+			"account_owner",
 			"modified",
 		]
+		if not frappe.get_meta("CRM Organization").has_field("acumatica_id"):
+			# the customer code is a custom field created on install and migrate; a
+			# site caught between the two must still list its organizations
+			columns = [c for c in columns if c["key"] != "acumatica_id"]
+			rows.remove("acumatica_id")
 		return {"columns": columns, "rows": rows}

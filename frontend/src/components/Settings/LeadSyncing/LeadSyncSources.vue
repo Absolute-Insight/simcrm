@@ -123,6 +123,7 @@
 <script setup>
 import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import ToneBadge from '@/components/ui/ToneBadge.vue'
+import { describeError } from '@/utils/describeError'
 import { Dropdown, toast } from 'frappe-ui'
 import { ref, computed, inject } from 'vue'
 import EmptyState from '../../ListViews/EmptyState.vue'
@@ -162,7 +163,9 @@ function toggleLeadSyncSourceEnabled(source) {
         )
       },
       onError: (error) => {
-        toast.error(error.messages[0] || __('Failed to update source'))
+        toast.error(
+          describeError(error).message || __('Failed to update source'),
+        )
         // Revert the change if there was an error
         source.enabled = !source.enabled
       },
@@ -177,7 +180,9 @@ function deleteLeadSource(source) {
       toast.success(__('Lead sync source deleted successfully'))
     },
     onError: (error) => {
-      toast.error(error.messages[0] || __('Failed to delete lead sync source'))
+      toast.error(
+        describeError(error).message || __('Failed to delete lead sync source'),
+      )
     },
   })
 }
@@ -187,7 +192,13 @@ function getDropdownOptions(source) {
     {
       label: __('Duplicate'),
       icon: 'lucide-copy',
-      onClick: () => emit('updateStep', 'new-source', { ...source }),
+      // Only what a copy can carry: the row's name would open the original
+      // for editing, and its Lead Form is unique to one source.
+      onClick: () =>
+        emit('updateStep', 'new-source', {
+          type: source.type,
+          enabled: source.enabled,
+        }),
     },
     ...ConfirmDelete({
       onConfirmDelete: () => deleteLeadSource(source),

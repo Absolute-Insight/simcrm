@@ -12,6 +12,25 @@
  */
 import { ref, watch } from 'vue'
 
+/* Frappe's wording for a record a has_permission hook refused. It names the
+   mechanism, not the situation, and a rep following a link to a colleague's
+   customer or deal is the everyday way to reach it. */
+const FRAMEWORK_REFUSAL = 'Not allowed via controller permission check'
+
+/**
+ * The sentence to show for a load failure's first server message.
+ *
+ * @param {string} [message]
+ */
+export function readableLoadError(message) {
+  if (message === FRAMEWORK_REFUSAL) {
+    return __(
+      'You do not have access to this record. Ask a manager if it should be assigned to you.',
+    )
+  }
+  return __(message || 'An error occurred')
+}
+
 /**
  * Title and message for a document load error. Pure, so it can be tested.
  *
@@ -23,11 +42,13 @@ export function documentErrorCopy(err) {
     title:
       err.exc_type === 'DoesNotExistError'
         ? __('Document not found')
-        : __('Error occurred'),
+        : err.messages?.[0] === FRAMEWORK_REFUSAL
+          ? __('No access')
+          : __('Error occurred'),
     // A PermissionError's own message says the record is out of reach, which
     // is more use than the generic sentence; the fallback is for the errors
     // that arrive with nothing to say.
-    message: __(err.messages?.[0] || 'An error occurred'),
+    message: readableLoadError(err.messages?.[0]),
   }
 }
 

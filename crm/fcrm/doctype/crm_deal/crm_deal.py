@@ -10,7 +10,6 @@ from frappe.utils import flt
 from crm.api.exchange_rate import get_exchange_rate
 from crm.fcrm.doctype.crm_service_level_agreement.utils import get_sla
 from crm.fcrm.doctype.crm_status_change_log.crm_status_change_log import add_status_change_log
-from crm.fcrm.doctype.utils import add_or_remove_lost_reason_section_in_sidepanel
 
 
 class CRMDeal(Document):
@@ -89,6 +88,7 @@ class CRMDeal(Document):
 
 	def validate(self):
 		self.validate_status()
+		self.validate_customer_access()
 		self.set_primary_contact()
 		self.set_primary_email_mobile_no()
 		if not self.is_new() and self.has_value_changed("deal_owner") and self.deal_owner:
@@ -106,6 +106,30 @@ class CRMDeal(Document):
 		self.update_exchange_rate()
 		if self.organization and (self.is_new() or self.has_value_changed("organization")):
 			self.copy_enrichment_from_organization()
+
+	def validate_customer_access(self):
+		"""A rep cannot open a deal on another rep's customer, move one there, or
+		attach a contact from one.
+
+		Checked only when the organization is set or changes, so a deal that predates
+		a reassignment of its customer stays editable by the rep who holds it.
+		"""
+		from crm.permissions.customers import assert_contact_allowed, assert_customer_allowed
+
+		if self.organization and (self.is_new() or self.has_value_changed("organization")):
+			assert_customer_allowed(self.organization)
+		for row in self.contacts:
+			stored = row.get_doc_before_save()
+			if row.contact and (stored is None or stored.contact != row.contact):
+				assert_contact_allowed(row.contact)
+
+	def on_update(self):
+		# a rep's first deal on an unowned customer makes the customer theirs; only
+		# then, or a customer a manager deliberately cleared is claimed by the next save
+		if self.organization and self.deal_owner and self.has_value_changed("organization"):
+			from crm.permissions.customers import claim_if_unowned
+
+			claim_if_unowned(self.organization, self.deal_owner)
 
 	def after_insert(self):
 		if self.deal_owner:
@@ -330,8 +354,6 @@ class CRMDeal(Document):
 				frappe.throw(_("Please specify a reason for losing the deal."), frappe.ValidationError)
 			elif self.lost_reason == "Other" and not self.lost_notes:
 				frappe.throw(_("Please specify the reason for losing the deal."), frappe.ValidationError)
-		if self.has_value_changed("status"):
-			add_or_remove_lost_reason_section_in_sidepanel(self)
 
 	def update_exchange_rate(self):
 		"""Refresh the rate, but never let a third party decide whether a deal saves.

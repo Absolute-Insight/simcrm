@@ -7,6 +7,7 @@ from frappe.tests import IntegrationTestCase
 from crm.fcrm.doctype.crm_view_settings.crm_view_settings import (
 	create,
 	create_or_update_standard_view,
+	get_route_name,
 	public,
 	set_as_default,
 )
@@ -110,3 +111,45 @@ class TestCRMViewSettings(IntegrationTestCase):
 
 		self.assertEqual(frappe.db.get_value("CRM View Settings", kanban.name, "is_default"), 1)
 		self.assertEqual(frappe.db.get_value("CRM View Settings", list_view.name, "is_default"), 0)
+
+	def test_every_list_doctype_is_filed_under_the_route_the_spa_has(self):
+		"""Route names were derived by stripping a "CRM " prefix, so FCRM Note
+		came out as "FCRM Notes" -- a route the SPA does not have."""
+		spa_routes = {
+			"CRM Lead": "Leads",
+			"CRM Deal": "Deals",
+			"Contact": "Contacts",
+			"CRM Organization": "Organizations",
+			"FCRM Note": "Notes",
+			"CRM Task": "Tasks",
+			"CRM Call Log": "Call Logs",
+		}
+
+		self.assertEqual({doctype: get_route_name(doctype) for doctype in spa_routes}, spa_routes)
+
+	def test_set_as_default_on_an_untouched_notes_view_files_it_under_notes(self):
+		"""The Home redirect sends a manager to their default's route_name; a
+		Notes default filed under "FCRM Notes" left them on a blank page every login."""
+		frappe.db.delete("CRM View Settings", {"user": "Administrator"})
+
+		set_as_default(type="list", doctype="FCRM Note")
+
+		self.assertEqual(
+			frappe.db.get_value(
+				"CRM View Settings",
+				{"user": "Administrator", "dt": "FCRM Note", "is_default": 1},
+				"route_name",
+			),
+			"Notes",
+		)
+
+	def test_the_patch_refiles_existing_notes_views(self):
+		from crm.patches.v1_0.fix_notes_view_route_name import execute
+
+		frappe.db.delete("CRM View Settings", {"user": "Administrator"})
+		view = create_or_update_standard_view({"type": "list", "doctype": "FCRM Note"})
+		frappe.db.set_value("CRM View Settings", view.name, "route_name", "FCRM Notes")
+
+		execute()
+
+		self.assertEqual(frappe.db.get_value("CRM View Settings", view.name, "route_name"), "Notes")

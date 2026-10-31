@@ -217,6 +217,28 @@ class ReportDigestTest(IntegrationTestCase):
 		self.assertEqual(send_due_digests(), 0)
 		self.assertEqual(self.queued_messages(), [])
 
+	def test_a_digest_can_still_be_paused_after_a_recipient_is_offboarded(self):
+		"""The switch in Settings -> Report Digests saves through set_value, and
+		validate re-checked every recipient's entitlement on that save: once one rep
+		was disabled, the digest could no longer be paused, resumed or edited --
+		while the send loop kept mailing everyone else."""
+		from frappe.client import set_value
+
+		digest = self.make_digest(recipients=f"{RECIPIENT}, {REP}")
+		frappe.db.set_value("User", REP, "enabled", 0)
+		self.addCleanup(frappe.db.set_value, "User", REP, "enabled", 1)
+
+		set_value("CRM Report Digest", digest.name, "enabled", 0)
+		self.assertEqual(frappe.db.get_value("CRM Report Digest", digest.name, "enabled"), 0)
+		set_value("CRM Report Digest", digest.name, "enabled", 1)
+		self.assertEqual(frappe.db.get_value("CRM Report Digest", digest.name, "enabled"), 1)
+
+		# a recipient this save adds is still held to the rule
+		with self.assertRaises(frappe.ValidationError):
+			set_value(
+				"CRM Report Digest", digest.name, "recipients", f"{RECIPIENT}, {REP}, stranger@example.com"
+			)
+
 	def on_day(self, day: str):
 		"""Pin "today" for the scheduler without pinning it for everything else —
 		only the bare ``getdate()`` the weekly check makes is answered."""
@@ -331,10 +353,10 @@ class ReportDigestTest(IntegrationTestCase):
 
 		real_get_report = crm_report_digest_get_report()
 
-		def explode_for_the_first(report, from_date, to_date):
+		def explode_for_the_first(report, from_date, to_date, **kwargs):
 			if frappe.session.user == RECIPIENT:
 				raise ValueError("no rows for this one")
-			return real_get_report(report, from_date, to_date)
+			return real_get_report(report, from_date, to_date, **kwargs)
 
 		with (
 			patch("crm.api.reports.get_report", side_effect=explode_for_the_first),
