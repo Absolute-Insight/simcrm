@@ -387,7 +387,12 @@ class EnrichedRecordDeleteTest(IntegrationTestCase):
 			("CRM Deal", {}),
 		):
 			with self.subTest(doctype=doctype):
-				doc = frappe.get_doc({"doctype": doctype, **fields}).insert(ignore_permissions=True)
+				# A name of its own: a series rolled back by an earlier test hands out a
+				# name that test's committed notifications still point at, and those
+				# are a link this delete would trip over.
+				doc = frappe.get_doc({"doctype": doctype, **fields}).insert(
+					ignore_permissions=True, set_name=frappe.generate_hash(length=10)
+				)
 				run = tasks.write_run(doctype, doc.name, "https://acme.example", "Completed")
 
 				frappe.delete_doc(doctype, doc.name)

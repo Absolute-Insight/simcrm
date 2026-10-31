@@ -130,16 +130,9 @@ class BulkDeleteIsPerRecordTest(IntegrationTestCase):
 		)
 		self.made_one("CRM Deal", self.blocked.name)
 		self.blocked_note = self.note_on(self.blocked.name)
-		# A link the unlink step cannot take away (it is a reference_name, not a
-		# reference_docname), so this deal cannot be deleted.
-		run = frappe.get_doc(
-			{
-				"doctype": "CRM Enrichment Run",
-				"reference_doctype": "CRM Deal",
-				"reference_name": self.blocked.name,
-			}
-		).insert(ignore_permissions=True)
-		self.made_one("CRM Enrichment Run", run.name)
+		# A link the unlink step cannot take away (a Contact's Dynamic Link row, not
+		# a reference_docname), so this deal cannot be deleted.
+		self.made_one("Contact", self.contact_linked_to(self.blocked.name))
 
 	def tearDown(self):
 		frappe.db.rollback()
@@ -157,6 +150,16 @@ class BulkDeleteIsPerRecordTest(IntegrationTestCase):
 			frappe.delete_doc(doctype, name, force=True, ignore_permissions=True)
 		if left:
 			frappe.db.commit()  # nosemgrep: frappe-manual-commit
+
+	def contact_linked_to(self, deal: str) -> str:
+		contact = frappe.get_doc(
+			{
+				"doctype": "Contact",
+				"first_name": f"Blocker {frappe.generate_hash(length=6)}",
+				"links": [{"link_doctype": "CRM Deal", "link_name": deal}],
+			}
+		)
+		return contact.insert(ignore_permissions=True).name
 
 	def note_on(self, deal: str) -> str:
 		return self.made_one(
@@ -186,7 +189,7 @@ class BulkDeleteIsPerRecordTest(IntegrationTestCase):
 
 		self.assertEqual(result["count"], 1, "only one deal was deleted")
 		self.assertEqual([row["docname"] for row in result["failed"]], [self.blocked.name])
-		self.assertIn("CRM Enrichment Run", result["failed"][0]["reason"])
+		self.assertIn("linked with Contact", result["failed"][0]["reason"])
 
 	def test_a_record_that_will_not_delete_keeps_its_links(self):
 		self.assert_outcome(delete_bulk_docs("CRM Deal", [self.plain.name, self.blocked.name]))
