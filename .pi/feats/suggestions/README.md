@@ -60,7 +60,11 @@ key because two reps can both plan the same deal, and a key without it let one
 rep's open row block the other's forever. A dismissed or accepted signal is
 suppressed for a cooldown; **the cooldown stretches for a repeat dismisser**, up
 to `MAX_COOLDOWN_MULTIPLIER`. Expired rows get their own shorter cooldown so the
-job cannot expire and immediately re-create the same row. `purge_old_suggestions`
+job cannot expire and immediately re-create the same row. Each run also retracts
+(expires) the open rows of its own six signals that no detector produced this
+time — the deal was won, a task or note was logged, the lead was answered — so a
+suggestion lasts as long as its premise, not as long as the TTL
+(`retract_resolved`; `rule:` suggestions are left to their TTL). `purge_old_suggestions`
 sweeps daily — expired, dismissed *and accepted* rows past `PURGE_AFTER_DAYS` —
 keeping anything a plan item still links to. Suggestions raised by an automation
 rule carry the same `expires_on` (`suggestion_ttl_days`) and the same 140-char title

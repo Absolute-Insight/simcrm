@@ -1,0 +1,34 @@
+{
+	"_comment": "eval: conditions a public form may and may not store. crm.api.form._is_safe_condition (test_form_api.py) and safeEval in crm_form.html (frontend/tests/unit/webFormConditionalEval.test.js) are both run against this list, so the store never admits what the branded page would refuse to parse.",
+	"accepted": [
+		"eval:doc.organization",
+		"eval:doc.organization == \"Acme\"",
+		"eval:doc.n > 5 && !doc.missing",
+		"eval:(doc.a || doc.organization) && doc.first_name",
+		"eval:doc['first_name'] != null",
+		"eval:parent.status === 'Open'",
+		"eval: doc.items ",
+		"  eval:doc.a == 'it\\'s'",
+		"eval:true",
+		"eval:doc.n >= -1.5",
+		"eval:!(doc.a == 1 || doc.b != 'x')"
+	],
+	"rejected": [
+		"eval:alert(document.domain)",
+		"eval:(alert(document.domain),true)",
+		" eval:window",
+		"eval:document",
+		"eval:globalThis",
+		"eval:this",
+		"eval:fetch(\"/x\")",
+		"eval:doc.constructor.constructor(\"return 1\")()",
+		"eval:(0).constructor.constructor(\"return 1\")()",
+		"eval:doc['constructor']['constructor']('return 1')()",
+		"eval:doc.x = 1",
+		"eval:doc.a; alert(1)",
+		"eval:doc.a == `x`",
+		"eval:doc.a /* x */",
+		"eval:new Date()",
+		"eval:"
+	]
+}

@@ -835,6 +835,47 @@ class ScopedMetricsTest(IntegrationTestCase):
 			[f["key"] for f in page["factors"]],
 		)
 
+	def test_the_tile_and_the_deal_page_score_a_deal_that_changed_stage_alike(self):
+		"""The same, for a deal that has moved stage -- which the deal above never had.
+
+		The page read the status log's last row for when the deal entered its stage,
+		and that row is always the open one, with no to_date: a deal that had sat in
+		its stage for forty days lost the stage factors on its page and kept them in
+		the tile.
+		"""
+		from crm.agent.predict import get_deal_health
+		from crm.api.dashboard import _at_risk_deals
+
+		later = frappe.get_all(
+			"CRM Deal Status",
+			filters={"type": ("in", ("Open", "Ongoing")), "name": ("!=", self.status)},
+			pluck="name",
+			limit=1,
+		)
+		if not later:
+			self.skipTest("site has only one open deal stage")
+		name = self.make_deal(REP, 10_000)
+		deal = frappe.get_doc("CRM Deal", name)
+		deal.status = later[0]
+		deal.save(ignore_permissions=True)
+		left = [row.name for row in deal.status_change_log if row.to_date]
+		frappe.db.set_value(
+			"CRM Status Change Log",
+			left[-1],
+			"to_date",
+			frappe.utils.add_days(frappe.utils.now_datetime(), -40),
+		)
+
+		tile = next(row for row in _at_risk_deals(user=REP) if row["name"] == name)
+		page = get_deal_health(name)
+
+		self.assertIn("stage_stagnation", [f["key"] for f in tile["factors"]])
+		self.assertEqual(tile["score"], page["score"])
+		self.assertEqual(
+			[f["key"] for f in tile["factors"]],
+			[f["key"] for f in page["factors"]],
+		)
+
 	def test_an_in_tree_manager_reads_plan_adherence_for_their_team_only(self):
 		"""Plans are keyed on a user rather than a deal, so they get the subtree
 		from the hierarchy instead of the deal permission condition."""

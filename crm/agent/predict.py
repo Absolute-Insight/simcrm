@@ -228,9 +228,14 @@ def get_deal_health(name: str) -> dict:
 	last = _latest_activity([name]).get(name) or deal.creation
 	idle_days = max(0, (now - last).days)
 
-	days_in_stage = None
-	if deal.status_change_log and deal.status_change_log[-1].to_date:
-		days_in_stage = max(0, (now - deal.status_change_log[-1].to_date).days)
+	# the tile's own reading, not the log's last row: add_status_change_log always
+	# leaves that row open (to_date empty) for the stage the deal is in, so on its
+	# page a deal that had ever changed stage was never docked for time in stage,
+	# while the tile and the stored score were
+	from crm.api.dashboard import _inbound_ratio, _latest_stage_change
+
+	entered_stage = _latest_stage_change([name]).get(name)
+	days_in_stage = max(0, (now - entered_stage).days) if entered_stage else None
 
 	# expected_closure_date, not closed_date: the latter is only written when a
 	# deal is Won, so a risk factor keyed on it can never fire on a live deal
@@ -257,8 +262,6 @@ def get_deal_health(name: str) -> dict:
 	# 200 rows while _at_risk_deals counted them all, so a busy deal scored one
 	# way on its page and another in the tile — the exact drift the shared
 	# feature extraction exists to prevent
-	from crm.api.dashboard import _inbound_ratio
-
 	inbound_ratio = _inbound_ratio([name]).get(name)
 
 	return score_deal(

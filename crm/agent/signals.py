@@ -7,8 +7,9 @@ Detection functions are pure -- plain rows and a ``now`` in, suggestion dicts
 out -- so thresholds live in tests, not in a running site. ``run_signals`` is
 the only frappe-facing entry point: it reads what already exists, expires what
 is stale, runs every detector over batched queries (no per-record queries),
-drops candidates an open or recently-actioned suggestion already covers, and
-inserts the rest one savepoint at a time.
+retracts open suggestions no detector produces any more, drops candidates an
+open or recently-actioned suggestion already covers, and inserts the rest one
+savepoint at a time.
 
 Half the detectors look backwards -- something already went wrong and nobody
 noticed. The other half look forwards: ``close_at_risk`` fires while the close
@@ -584,6 +585,9 @@ ACTIVITY_SOURCES = (
 	("CRM Task", "reference_docname", "modified"),
 	("CRM Call Log", "reference_docname", "modified"),
 	("Comment", "reference_name", "creation"),
+	# the deal page's Notes tab: a rep writing up a conversation is working the
+	# deal, and left out it was told to re-engage one it had touched that day
+	("FCRM Note", "reference_docname", "creation"),
 )
 
 
@@ -813,6 +817,52 @@ def expire_stale(now: datetime) -> int:
 	).run()
 
 
+# The signals the hourly run detects, and so the ones it can retract: each run's
+# candidates are the detectors' whole answer about them. A rule's suggestion
+# ("rule:<name>") is fired once, on save, by the rule engine, and is left to its TTL.
+DETECTED_SIGNALS = ("idle_deal", "no_next_step", "close_at_risk", "deal_cooling", "lead_sla", "stale_plan")
+
+
+def retract_resolved(candidates: list[dict], now: datetime) -> int:
+	"""Expire the open detector suggestions whose premise this run no longer finds.
+
+	A suggestion is a claim about its record -- nothing done for nine days, no
+	next step, a breached SLA -- and the claim can end long before the TTL does:
+	the deal is won, a task is added, the lead is answered. Nothing re-checked it,
+	so "Re-engage Acme" stayed in the rep's inbox and badge for two weeks after
+	Acme signed, held one of their capped slots, and Accept made a task on a closed
+	deal. ``candidates`` are taken before dedupe and the cap, which only decide what
+	is *new*, so an open row with no candidate behind it is one that has lapsed.
+
+	Expired with ``modified`` moved, like ``expire_stale``: the expiry cooldown in
+	``dedupe`` then stops a premise that flickers back from re-creating the row
+	within the hour.
+	"""
+	produced = {(c["signal"], c["reference_docname"], c.get("user") or "") for c in candidates}
+	table = frappe.qb.DocType("CRM Suggestion")
+	rows = (
+		frappe.qb.from_(table)
+		.select(table.name, table.signal, table.reference_docname, table.user)
+		.where(table.status == "Open")
+		.where(table.signal.isin(DETECTED_SIGNALS))
+		.run(as_dict=True)
+	)
+	lapsed = [
+		row["name"]
+		for row in rows
+		if (row["signal"], row["reference_docname"], row["user"] or "") not in produced
+	]
+	for batch in _batched(lapsed):
+		(
+			frappe.qb.update(table)
+			.set(table.status, "Expired")
+			.set(table.modified, now)
+			.where(table.name.isin(batch))
+			.where(table.status == "Open")
+		).run()
+	return len(lapsed)
+
+
 def _open_counts() -> dict[str, int]:
 	"""How many open suggestions each rep is already carrying.
 
@@ -911,6 +961,8 @@ def run_signals() -> int:
 	# run must still block, or the job re-creates what it just expired
 	existing = _existing_suggestions([c["reference_docname"] for c in candidates]) if candidates else []
 	expire_stale(now)
+	# before the trim, so the cap is measured against rows that are still true
+	retract_resolved(candidates, now)
 	trim_open_over_cap(now, cfg.max_open_per_user)
 	if not candidates:
 		return 0
@@ -1048,16 +1100,29 @@ def clear_suggestions_for(doctype: str, docname: str) -> None:
 	frappe.db.delete("CRM Suggestion", {"reference_doctype": doctype, "reference_docname": docname})
 
 
+# Signals addressed to someone other than the record's owner: a stale plan item
+# belongs to the rep whose plan it is (``find_stale_plan_items``), whoever owns the
+# deal it was about.
+NOT_THE_OWNERS = ("stale_plan",)
+
+
 def resync_owner(doctype: str, docname: str, user: str | None) -> None:
 	"""Move a record's open suggestions to whoever owns it now.
 
 	A reassigned deal used to keep nagging the previous rep for the rest of the
 	TTL while being invisible to the one who inherited it -- the opposite of
-	proactive for both of them.
+	proactive for both of them. Only the owner's suggestions move: handed to the
+	new owner, a planner's "You planned this call ..." went to someone who had
+	planned nothing, and the planner's own came back the next hour.
 	"""
 	frappe.db.set_value(
 		"CRM Suggestion",
-		{"reference_doctype": doctype, "reference_docname": docname, "status": "Open"},
+		{
+			"reference_doctype": doctype,
+			"reference_docname": docname,
+			"status": "Open",
+			"signal": ("not in", list(NOT_THE_OWNERS)),
+		},
 		"user",
 		user,
 		update_modified=False,

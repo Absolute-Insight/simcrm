@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { describe, expect, it } from 'vitest'
 
 // Load the inline conditional-logic parser straight out of crm_form.html (the guest
 // page's security boundary) so we test the exact code that ships, not a copy.
@@ -74,5 +75,30 @@ describe('crm_form.html conditional-logic evaluator', () => {
       expect(globalThis.__pwned).toBe(false)
       delete globalThis.__pwned
     })
+  })
+})
+
+// The server stores only what this parser accepts (crm.api.form._is_safe_condition,
+// a port of it), because frappe's own /<route> page runs a stored condition as
+// code. Both are run against the same list so the two cannot drift apart.
+const conditions = JSON.parse(
+  readFileSync(
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../../crm/tests/public_form_conditions.json',
+    ),
+    'utf8',
+  ),
+)
+// a parsed expression ignores the fallback; one it refuses returns it
+const parses = (expr) =>
+  truthy(expr, { a: 1, n: 3 }, true) === truthy(expr, { a: 1, n: 3 }, false)
+
+describe('crm_form.html evaluator agrees with the server-side store check', () => {
+  it.each(conditions.accepted)('parses %j', (expr) => {
+    expect(parses(expr)).toBe(true)
+  })
+  it.each(conditions.rejected)('refuses %j', (expr) => {
+    expect(parses(expr)).toBe(false)
   })
 })

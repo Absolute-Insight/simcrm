@@ -689,6 +689,7 @@ import { PhGear as LucideSettings } from '@phosphor-icons/vue'
 import { globalStore } from '@/stores/global'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { copyToClipboard } from '@/utils'
+import { useUnsavedChangesWarning } from '@/composables/useUnsavedChangesWarning'
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 
 const { $dialog } = globalStore()
@@ -725,7 +726,12 @@ const tabs = [
     label: __('Settings'),
     iconLeft: LucideSettings,
   },
-  { name: 'share', label: __('Share'), icon: LucideShare2 },
+  {
+    value: 'share',
+    name: 'share',
+    label: __('Share'),
+    iconLeft: LucideShare2,
+  },
 ]
 const expanded = ref(null) // fieldname of the expanded field editor
 const descInput = ref(null)
@@ -1019,10 +1025,15 @@ const iframeSnippet = computed(
 )
 
 // every edit funnels through markDirty(), which just flags unsaved changes;
-// the user persists explicitly via the header Save button (saveNow)
+// the user persists explicitly via the header Save button (saveNow). The
+// counter lets save() tell whether an edit landed while its request was out.
+let editCount = 0
 function markDirty() {
+  editCount++
   dirty.value = true
 }
+// a reload or tab close skips goBack's dialog, so ask the browser to confirm
+useUnsavedChangesWarning(() => dirty.value)
 // header Save button: persist and confirm (errors are toasted inside save())
 async function saveNow() {
   if (!dirty.value || saving.value) return
@@ -1154,7 +1165,7 @@ function sectionMenu(sec) {
         },
       ],
     },
-    { group: __('Column'), items: columnOps(sec.columns) },
+    { group: __('Column'), options: columnOps(sec.columns) },
   ]
 }
 function optionList(f) {
@@ -1487,6 +1498,8 @@ async function save({ silent = false } = {}) {
   saving.value = true
   // normalise from the model so every section break (incl. the first) persists
   form.fields = flattenModel()
+  const editsAtSave = editCount
+  const sentRoute = form.route
   try {
     const doc = await call('crm.api.form.save_form', {
       name: form.name,
@@ -1521,7 +1534,8 @@ async function save({ silent = false } = {}) {
         })),
       },
     })
-    form.route = doc.route
+    // a route typed while the request was out is newer than the one it saved
+    if (form.route === sentRoute) form.route = doc.route
     ;(doc.fields || []).forEach((df, i) => {
       if (form.fields[i]) form.fields[i].name = df.name
     })
@@ -1529,7 +1543,8 @@ async function save({ silent = false } = {}) {
       capture('form_published', { source: 'builder' })
     }
     savedPublished.value = !!form.published
-    dirty.value = false
+    // an edit made during the request isn't in what was saved: keep it unsaved
+    if (editCount === editsAtSave) dirty.value = false
     emit('saved')
     return true
   } catch (e) {

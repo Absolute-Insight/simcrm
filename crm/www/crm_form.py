@@ -133,16 +133,17 @@ def _link_field_options(doctype: str) -> list[dict]:
 def set_embedding_headers(doc):
 	"""Allow this page to be embedded as an iframe on the form's allow-listed origins.
 
-	Emits a Content-Security-Policy `frame-ancestors` header. Modern browsers ignore
-	the default `X-Frame-Options: SAMEORIGIN` (set by nginx) whenever `frame-ancestors`
-	is present, so this is what makes cross-origin embedding work — without it a form
-	can only be embedded on its own site.
+	Emits a Content-Security-Policy `frame-ancestors` header, always: nginx sends no
+	framing header for /crm-form/ (deploy/nginx/csp_map.conf) so that this one is the
+	page's whole policy. With no valid domain listed -- none entered, or only typos --
+	that policy is this site alone, plus `X-Frame-Options: SAMEORIGIN` for browsers
+	that predate `frame-ancestors`; failing open would let any site frame the form.
 	"""
 	raw_domains = (doc.allowed_embedding_domains or "").split()
 	domains = [d for d in raw_domains if ALLOWED_EMBEDDING_DOMAIN_RE.match(d)]
+	frappe.local.response_headers["Content-Security-Policy"] = " ".join(["frame-ancestors 'self'", *domains])
 	if not domains:
-		return
-	frappe.local.response_headers["Content-Security-Policy"] = "frame-ancestors 'self' " + " ".join(domains)
+		frappe.local.response_headers["X-Frame-Options"] = "SAMEORIGIN"
 
 
 def build_layout(fields):
