@@ -48,5 +48,5 @@ def require_sending_account() -> str:
 
 
 def get_line_user(account: str | None) -> str | None:
-	"""The rep whose number ``account`` is."""
+	"""The rep whose number ``account`` is. Every line has one."""
 	return frappe.db.get_value(LINE, {"whatsapp_account": account}, "user") if account else None

@@ -25,7 +25,7 @@ class CRMWhatsAppLine(Document):
 
 		account_doctype: DF.Link | None
 		app_secret: DF.Password | None
-		user: DF.Link | None
+		user: DF.Link
 		whatsapp_account: DF.DynamicLink
 	# end: auto-generated types
 

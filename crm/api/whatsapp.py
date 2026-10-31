@@ -61,16 +61,23 @@ def _is_same_number(number: str, other: str) -> bool:
 	return bool(canonical) and is_same_whatsapp_number(number, canonical)
 
 
-def _meta_number(number: str) -> str:
+def _meta_number(number: str, from_meta: bool = False) -> str:
 	"""A record's number the way Meta needs it. A stored 082 number, passed on as
-	it is, would be refused or dialled in another country."""
+	it is, would be refused or dialled in another country.
+
+	phonenumbers' tables lag the network, so a number Meta itself sent us, or one
+	written with its country code, is taken at its word if it is the right length
+	to be real. A local spelling cannot be: there is no country to read it in.
+	"""
 	canonical = canonical_whatsapp_number(number)
-	if not canonical:
-		frappe.throw(
-			_("{0} is not a valid phone number. Add the country code to the record.").format(number),
-			frappe.ValidationError,
-		)
-	return canonical
+	if canonical:
+		return canonical
+	if (from_meta or number.strip().startswith("+")) and 8 <= len(_digits(number)) <= 15:
+		return _digits(number)
+	frappe.throw(
+		_("{0} is not a valid phone number. Add the country code to the record.").format(number),
+		frappe.ValidationError,
+	)
 
 
 def resolve_destination(reference_doc, to: str | None = None) -> str:
@@ -252,6 +259,7 @@ def get_whatsapp_messages(reference_doctype: str, reference_name: str):
 				},
 				fields=[
 					"name",
+					"owner",
 					"type",
 					"to",
 					"from",
@@ -478,7 +486,8 @@ def react_on_whatsapp_message(emoji: str, reply_to_name: str):
 	# record's thread like any other send, not a read of it
 	validate_access(reply_to_doc.reference_doctype, reply_to_doc.reference_name, permtype="write")
 
-	to = _meta_number((reply_to_doc.type == "Incoming" and reply_to_doc.get("from")) or reply_to_doc.to)
+	from_meta = reply_to_doc.type == "Incoming"
+	to = _meta_number((from_meta and reply_to_doc.get("from")) or reply_to_doc.to, from_meta=from_meta)
 	account = require_sending_account()
 	doc = frappe.new_doc("WhatsApp Message")
 	doc.update(
