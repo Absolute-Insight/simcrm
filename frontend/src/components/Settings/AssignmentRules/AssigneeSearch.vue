@@ -118,12 +118,14 @@ const debouncedQuery = useDebounceFn((val) => {
 const usersList = computed(() => {
   let filteredUsers =
     users.data?.crmUsers?.filter((user) => user.name !== 'Administrator') || []
+  // "thabo" finds Thabo Nkosi: names are typed in whatever case comes to hand
+  const search = query.value.trim().toLowerCase()
 
   return filteredUsers
-    .filter(
-      (user) =>
-        user.name?.includes(query.value) ||
-        user.full_name?.includes(query.value),
+    .filter((user) =>
+      [user.name, user.full_name, user.email].some((value) =>
+        value?.toLowerCase().includes(search),
+      ),
     )
     .filter((user) => {
       return !assignmentRuleData.value.users.some((u) => u.user === user.email)

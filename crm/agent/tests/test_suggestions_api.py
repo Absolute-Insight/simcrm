@@ -199,6 +199,38 @@ class SuggestionApiTest(IntegrationTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			get_dismissal_stats(user=INTRUDER)
 
+	def test_without_a_user_the_stats_cover_everyone_the_caller_can_see(self):
+		"""The Assistant settings pane asks with no user under "What reps are
+		rejecting". Read as the session user's own dismissals, an administrator --
+		who rarely dismisses anything -- was shown an empty panel however much the
+		reps had rejected."""
+		signal = "qa_rejected_by_reps"
+		make_suggestion(OWNER, self.deal, signal=signal, status="Dismissed", dismiss_reason="spoke yesterday")
+		make_suggestion(OWNER, self.deal, signal=signal, status="Dismissed", dismiss_reason="on leave")
+		make_suggestion(INTRUDER, self.deal, signal=signal, status="Dismissed", dismiss_reason="not mine")
+
+		def ours():
+			rows = {row["signal"]: row for row in get_dismissal_stats()}
+			return rows.get(signal, {"dismissals": 0, "reasons": []})
+
+		frappe.set_user("Administrator")
+		self.assertEqual(ours()["dismissals"], 3)
+		self.assertCountEqual(ours()["reasons"], ["spoke yesterday", "on leave", "not mine"])
+
+		# the subtree, not the site: an in-tree manager reads their team's
+		manager = "suggestion-manager@crmtest.test"
+		make_sales_user(manager, "Suggestion Manager")
+		frappe.get_doc("User", manager).add_roles("Sales Manager")
+		self.make_hierarchy(manager, OWNER)
+		frappe.set_user(manager)
+		self.assertEqual(ours()["dismissals"], 2)
+		self.assertNotIn("not mine", ours()["reasons"])
+
+		# and a rep still reads only their own
+		frappe.set_user(INTRUDER)
+		self.assertEqual(ours()["dismissals"], 1)
+		self.assertEqual(ours()["reasons"], ["not mine"])
+
 	def test_the_open_count_is_scoped_like_the_list(self):
 		make_suggestion(OWNER, self.deal)
 		make_suggestion(INTRUDER, self.deal, title="Someone else's")

@@ -149,8 +149,11 @@
         </p>
       </div>
 
+      <!-- Only before there is a matrix: gated on loading alone, the re-read
+           after every toggle replaced the table with a skeleton and rebuilt
+           it, a flash that also put the scroll back at the top. -->
       <SkeletonTable
-        v-if="access.visibility.loading"
+        v-if="access.visibility.loading && !access.matrix"
         :columns="CONFIGURABLE_ROLES.length + 1"
         :rows="12"
         density="compact"
@@ -222,7 +225,11 @@
                     v-else
                     :model-value="isVisible(role, surface.key) ? 1 : 0"
                     size="sm"
-                    :disabled="!editableBy(callerRole, role) || saving"
+                    :disabled="
+                      !editableBy(callerRole, role) ||
+                      saving ||
+                      access.visibility.loading
+                    "
                     @update:model-value="
                       (v) => onToggle(role, surface.key, Boolean(v))
                     "
