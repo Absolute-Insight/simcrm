@@ -74,13 +74,25 @@ describe('EmailEditor', () => {
   })
 
   it("hides the FROM picker when the only mailbox is the rep's own address", () => {
-    S.accounts = [{ email_account: 'Rep Mailbox', email_id: 'rep@mbp.example' }]
+    S.accounts = [
+      {
+        email_account: 'Rep Mailbox',
+        email_id: 'rep@mbp.example',
+        enable_outgoing: 1,
+      },
+    ]
     const w = open()
     expect(w.el.textContent).not.toContain('FROM:')
   })
 
   it('offers the FROM picker when the rep has a shared mailbox', () => {
-    S.accounts = [{ email_account: 'Sales', email_id: 'sales@mbp.example' }]
+    S.accounts = [
+      {
+        email_account: 'Sales',
+        email_id: 'sales@mbp.example',
+        enable_outgoing: 1,
+      },
+    ]
     const w = open()
     expect(w.el.textContent).toContain('FROM:')
   })
