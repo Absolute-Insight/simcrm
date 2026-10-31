@@ -39,7 +39,6 @@ def make_deal(contacts=(), status=None, primary=None, **fields):
 
 class TestNumberNormalisation(IntegrationTestCase):
 	def setUp(self):
-		self._country = frappe.db.get_single_value("System Settings", "country")
 		frappe.db.set_single_value("System Settings", "country", "South Africa")
 
 	def tearDown(self):
@@ -69,6 +68,9 @@ class TestNumberNormalisation(IntegrationTestCase):
 
 
 class TestInboundRouting(IntegrationTestCase):
+	def setUp(self):
+		frappe.db.set_single_value("System Settings", "country", "South Africa")
+
 	def tearDown(self):
 		frappe.db.rollback()
 
@@ -137,3 +139,62 @@ class TestInboundRouting(IntegrationTestCase):
 
 	def test_an_unknown_number_finds_nothing(self):
 		self.assertEqual(lookup_contact_lead_or_deal_from_number("27825550999"), (None, None))
+
+
+class TestNumberSpellings(IntegrationTestCase):
+	def setUp(self):
+		frappe.db.set_single_value("System Settings", "country", "South Africa")
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def test_the_bracketed_trunk_zero_is_the_same_number(self):
+		self.assertTrue(is_same_whatsapp_number("+27 (0)82 555 0148", INBOUND))
+
+	def test_dots_slashes_and_nbsp_reach_the_sql_match(self):
+		for stored in ("082.555.0148", "082/555/0148", "082 555 0148", "+27 (0)82 555 0148"):
+			with self.subTest(stored):
+				lead = make_lead()
+				# as an import writes it: the Phone field's own validator is not in the way
+				frappe.db.set_value("CRM Lead", lead.name, "mobile_no", stored)
+				self.assertEqual(lookup_contact_lead_or_deal_from_number(INBOUND), (lead.name, "CRM Lead"))
+				frappe.db.delete("CRM Lead", lead.name)
+
+	def test_a_foreign_number_does_not_match_a_local_looking_one(self):
+		self.assertFalse(is_same_whatsapp_number("0612345678", "33612345678"))
+		self.assertFalse(is_same_whatsapp_number("083 123 4567", "353831234567"))
+
+	def test_on_a_site_in_that_country_the_local_form_matches(self):
+		frappe.db.set_single_value("System Settings", "country", "France")
+		self.assertTrue(is_same_whatsapp_number("0612345678", "33612345678"))
+
+	def test_an_italian_leading_zero_matches_itself(self):
+		self.assertTrue(is_same_whatsapp_number("+390612345678", "390612345678"))
+		self.assertTrue(is_same_whatsapp_number("390612345678", "390612345678"))
+
+
+class TestBareContact(IntegrationTestCase):
+	def setUp(self):
+		frappe.db.set_single_value("System Settings", "country", "South Africa")
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def test_a_contacts_message_lands_on_an_open_deal_of_their_organization(self):
+		org = frappe.new_doc("CRM Organization")
+		org.organization_name = "Acme " + frappe.generate_hash(length=6)
+		org.insert(ignore_permissions=True)
+		contact = make_contact("0825550148")
+		frappe.db.set_value("Contact", contact.name, "company_name", org.name)
+		deal = make_deal(organization=org.name)
+		self.assertEqual(lookup_contact_lead_or_deal_from_number(INBOUND), (deal.name, "CRM Deal"))
+
+	def test_a_contact_with_a_closed_org_deal_stays_recordless(self):
+		org = frappe.new_doc("CRM Organization")
+		org.organization_name = "Acme " + frappe.generate_hash(length=6)
+		org.insert(ignore_permissions=True)
+		contact = make_contact("0825550148")
+		frappe.db.set_value("Contact", contact.name, "company_name", org.name)
+		deal = make_deal(organization=org.name)
+		frappe.db.set_value("CRM Deal", deal.name, "status", "Lost")
+		self.assertEqual(lookup_contact_lead_or_deal_from_number(INBOUND), (None, None))

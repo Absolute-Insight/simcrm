@@ -80,21 +80,27 @@ def split_international_number(number: str) -> tuple[str, str] | None:
 		parsed = phonenumbers.parse("+" + re.sub(r"\D", "", number or ""), None)
 	except NumberParseException:
 		return None
-	return str(parsed.country_code), str(parsed.national_number)
+	return str(parsed.country_code), phonenumbers.national_significant_number(parsed)
 
 
 def is_same_whatsapp_number(stored: str | None, international: str) -> bool:
 	"""Whether a number as typed into the CRM is ``international``.
 
-	Compared on digits rather than parsed, because the question must have the
-	same answer whatever the site's country is set to: a stored 082 number has
-	no country of its own, only the trunk 0 in front of the national digits.
+	Compared on digits, because a rep's spelling need not be one phonenumbers
+	accepts. An international spelling can be matched for any country, with or
+	without the bracketed trunk zero of +27 (0)82. A bare 082... carries no country
+	of its own: it means the site's, so it matches only a number from there, or a
+	French 06 on a South African site would collect a Dublin mobile's messages.
 	"""
 	parts = split_international_number(international)
 	if not stored or not parts:
 		return False
 	code, national = parts
-	return re.sub(r"\D", "", stored) in {code + national, f"00{code}{national}", f"0{national}", national}
+	digits = re.sub(r"\D", "", stored)
+	if digits in {code + national, f"00{code}{national}", f"{code}0{national}"}:
+		return True
+	site_code = str(phonenumbers.country_code_for_region(default_phone_region()))
+	return code == site_code and digits in {f"0{national}", national}
 
 
 def are_same_phone_number(number1: str, number2: str, default_region: str = "IN", validate: bool = True):
