@@ -11,7 +11,13 @@ from frappe.rate_limiter import rate_limit
 from pypika.functions import Replace
 from werkzeug.wrappers import Response
 
-from crm.utils import are_same_phone_number, parse_phone_number, sales_user_only, user_rate_limited
+from crm.utils import (
+	are_same_phone_number,
+	default_phone_region,
+	parse_phone_number,
+	sales_user_only,
+	user_rate_limited,
+)
 
 # Per user and per minute. A recording plays once per click and the browser issues
 # a handful of Range requests per play; 30 is well above that and well below what
@@ -228,12 +234,13 @@ def get_contact_by_phone_number(phone_number: str):
 
 def lookup_contact_by_phone_number(phone_number: str):
 	"""Unrestricted lookup for server-side callers (inbound webhooks run without a sales user)."""
-	number = parse_phone_number(phone_number)
+	region = default_phone_region()
+	number = parse_phone_number(phone_number, region)
 
 	if number.get("is_valid"):
 		return get_contact(number.get("national_number"), number.get("country"))
 	else:
-		return get_contact(phone_number, number.get("country"), exact_match=True)
+		return get_contact(phone_number, number.get("country") or region, exact_match=True)
 
 
 def _restrict_to_readable(contact: dict):
@@ -422,13 +429,32 @@ def get_recording_url(call_log_name: str):
 	response = Response(
 		_stream(),
 		status=upstream.status_code,
-		mimetype=upstream.headers.get("Content-Type") or "audio/mpeg",
+		mimetype=_recording_mimetype(upstream.headers.get("Content-Type")),
 	)
+	# This is served from the CRM's own origin for a URL any call-log writer
+	# chose, so nothing in it may run as a page there: whatever got through as
+	# audio is still sandboxed, never sniffed into something else, and named
+	# as a file rather than a document.
+	response.headers["Content-Security-Policy"] = "sandbox"
+	response.headers["X-Content-Type-Options"] = "nosniff"
+	response.headers["Content-Disposition"] = 'inline; filename="recording"'
 	response.headers["Accept-Ranges"] = "bytes"
 	for header in ("Content-Length", "Content-Range"):
 		if upstream.headers.get(header):
 			response.headers[header] = upstream.headers[header]
 	return response
+
+
+def _recording_mimetype(content_type: str | None) -> str:
+	"""The type the proxy serves a recording as: the upstream's own when it is
+	audio, ``application/octet-stream`` for anything else. A host answering
+	text/html or image/svg+xml must not have that rendered on the CRM origin;
+	frappe's own private-file handler forces those to download for the same
+	reason. No type at all keeps the proxy's long-standing audio/mpeg."""
+	if not content_type:
+		return "audio/mpeg"
+	mimetype = content_type.split(";", 1)[0].strip().lower()
+	return mimetype if mimetype.startswith("audio/") else "application/octet-stream"
 
 
 def get_contact(phone_number: str, country: str = "IN", exact_match: bool = False):
@@ -507,9 +533,18 @@ def get_contact(phone_number: str, country: str = "IN", exact_match: bool = Fals
 				lead["full_name"] = lead.lead_name
 				return lead
 
-	if len(contacts) and are_same_phone_number(
-		contacts[0].matched_phone, phone_number, country, validate=not exact_match
-	):
-		return contacts[0]
+	# The LIKE above also catches numbers that merely contain these digits (a +44
+	# number holding a +27 one's national digits), so the newest row is not
+	# necessarily the match.
+	contact = next(
+		(
+			contact
+			for contact in contacts
+			if are_same_phone_number(contact.matched_phone, phone_number, country, validate=not exact_match)
+		),
+		None,
+	)
+	if contact:
+		return contact
 
 	return {"mobile_no": phone_number}

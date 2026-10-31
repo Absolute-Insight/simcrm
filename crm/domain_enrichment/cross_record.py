@@ -20,7 +20,7 @@ from __future__ import annotations
 import frappe
 
 from crm.domain_enrichment import mapper
-from crm.domain_enrichment.config import get_config
+from crm.domain_enrichment.config import get_mapping_config
 from crm.domain_enrichment.result import (
 	EnrichmentResult,
 	Field,
@@ -97,7 +97,7 @@ def copy_enrichment_from_organization(target_doc) -> list[str]:
 		if not _is_org_enriched(org):
 			return []
 
-		cfg = get_config()
+		cfg = get_mapping_config()
 		result = _result_from_organization(org)
 		# Fill-empty only: force fill-empty semantics for every mapping (even ones
 		# configured "Always refresh") so the link-time copy never

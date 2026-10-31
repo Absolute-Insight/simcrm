@@ -7,12 +7,17 @@ The POC baked its keyword / signature / mapping tables into Python constants.
 This seeder translates them into editable desk records (CRM Enrichment Rule +
 Pattern, CRM Enrichment Field Mapping) so a sales-ops admin owns the knowledge.
 
-Everything here is idempotent (skip-if-exists) and wired into both ``after_install``
-and ``after_migrate`` so a fresh install and every migrate land the defaults
-without clobbering admin edits.
+Wired into both ``after_install`` and ``after_migrate``, and seeded once per
+``SEED_VERSION``: a default an admin deleted or renamed after it was seeded stays
+deleted or renamed.
 """
 
 import frappe
+from frappe.utils import cint
+
+# Bump when a release adds seeded rows, and seed only what that version adds (see
+# ``seed_default_rules_and_mappings``). The marker lives in CRM Enrichment Settings.
+SEED_VERSION = 1
 
 # --------------------------------------------------------------------------- #
 # Rule knowledge (recovered from the POC's extractors.py constant tables)
@@ -230,9 +235,13 @@ INDUSTRY_KEYWORDS = {
 }
 
 # social network -> regex (matched against HTML; stored as regex patterns)
+# The twitter host is anchored: "x.com/" alone is the tail of wix.com, fedex.com and
+# dropbox.com. Earlier sites were seeded with TWITTER_PATTERN_V1, which a patch
+# replaces (crm.patches.v1_0.anchor_seeded_twitter_rule).
+TWITTER_PATTERN_V1 = r"(twitter\.com|x\.com)/[A-Za-z0-9_]+"
 SOCIAL_PATTERNS = {
 	"linkedin": [r"linkedin\.com/(company|in|school)/"],
-	"twitter": [r"(twitter\.com|x\.com)/[A-Za-z0-9_]+"],
+	"twitter": [r"^https?://(www\.|mobile\.)?(twitter|x)\.com/[A-Za-z0-9_]+"],
 	"github": [r"github\.com/[A-Za-z0-9_.-]+"],
 	"facebook": [r"facebook\.com/[A-Za-z0-9_.\-/]+"],
 	"instagram": [r"instagram\.com/[A-Za-z0-9_.]+"],
@@ -273,16 +282,33 @@ FIELD_MAPPINGS = [
 
 
 def seed_default_rules_and_mappings():
-	"""Idempotently create the default enrichment rules + field mappings.
+	"""Create the default enrichment rules, field mappings and industries -- once.
 
-	Safe to run repeatedly (after_install + after_migrate): each record is keyed
-	on a stable name and skipped if it already exists, so admin edits are never
-	clobbered.
+	Runs on every install and migrate, but seeds only what the site has not been
+	seeded with yet, by ``SEED_VERSION``. It used to skip-if-exists on each run, keyed
+	on a name an admin can change, so every upgrade put back the industries, rules and
+	mappings an admin had deleted, and a renamed rule came back as a duplicate whose
+	hits were counted twice.
 	"""
-	_seed_industry_rules()
-	_seed_social_rules()
-	_seed_field_mappings()
-	_seed_settings_defaults()
+	seeded = cint(frappe.db.get_singles_dict("CRM Enrichment Settings").get("seed_version"))
+	if seeded >= SEED_VERSION:
+		return
+
+	if not seeded and _seeded_before_versioning():
+		# Seeded by a release that kept no marker: what version 1 seeds is already
+		# here, or was removed on purpose since.
+		seeded = 1
+	if seeded < 1:
+		_seed_industry_rules()
+		_seed_social_rules()
+		_seed_field_mappings()
+		_seed_settings_defaults()
+
+	frappe.db.set_single_value("CRM Enrichment Settings", "seed_version", SEED_VERSION)
+
+
+def _seeded_before_versioning() -> bool:
+	return bool(frappe.db.count("CRM Enrichment Rule") or frappe.db.count("CRM Enrichment Field Mapping"))
 
 
 def _seed_settings_defaults():
