@@ -396,7 +396,8 @@ class QuotaScopeTest(IntegrationTestCase):
 					"exchange_rate": 1,
 				}
 			).insert(ignore_permissions=True)
-			self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True)
+			# the session is still the test's user when cleanups run
+			self.addCleanup(frappe.db.delete, "CRM Deal", {"name": deal.name})
 			frappe.db.set_value("CRM Deal", deal.name, "closed_date", "2019-03-15", update_modified=False)
 
 	def test_the_won_ranking_shows_a_rep_their_own_row(self):
