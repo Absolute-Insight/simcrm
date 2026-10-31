@@ -242,3 +242,25 @@ class BulkDeleteIsPerRecordTest(IntegrationTestCase):
 		self.assertTrue(
 			frappe.db.exists("Comment", comment.name), "the surviving deal's note lost its comments"
 		)
+
+	def test_a_failure_first_leaves_the_rest_their_realtime_updates(self):
+		"""frappe queues the realtime flush once per transaction, when it first
+		makes the buffer on frappe.local. A failure that made it lost the flush
+		to the rollback but kept the buffer, so nothing deleted after it ever
+		told an open list it had gone. Webhooks and link counts work the same way.
+		"""
+		# The setup's inserts made the buffer already; start the transaction clean.
+		frappe.realtime.clear_realtime_log()
+		frappe.db.after_commit.reset()
+
+		delete_bulk_docs("CRM Deal", [self.blocked.name, self.plain.name])
+
+		sent = []
+		with patch("frappe.realtime.emit_via_redis", lambda *args: sent.append(args)):
+			frappe.db.after_commit.run()
+
+		updated = {(message.get("doctype"), message.get("name")) for event, message, room in sent}
+		self.assertIn(("CRM Deal", self.plain.name), updated, "the deleted deal's update never went out")
+		self.assertNotIn(
+			("FCRM Note", self.blocked_note), updated, "an unlink the rollback undid was still announced"
+		)

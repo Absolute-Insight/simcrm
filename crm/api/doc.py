@@ -1,4 +1,5 @@
 import json
+from copy import copy
 
 import frappe
 from frappe import _
@@ -1114,6 +1115,9 @@ def remove_linked_doc_reference(
 
 BULK_DELETE_LIMIT = 500
 BULK_DELETE_SAVEPOINT = "crm_bulk_delete_item"
+# What frappe.publish_realtime, run_webhooks and notify_link_count collect on
+# frappe.local until the after-commit flush each queues when it first makes one.
+_COMMIT_BUFFERS = ("_realtime_log", "_webhook_queue", "_link_count")
 
 
 def _unlink_linked_docs(doctype: str, items: list, delete_linked: bool = False):
@@ -1159,7 +1163,10 @@ def _delete_each(doctype: str, items: list, delete_linked: bool = False, commit:
 	Rolling back to a savepoint leaves frappe's commit callbacks queued, and
 	every linked doc deleted on the way queued one that strips its comments,
 	assignments and versions. Those are cut back with the rows, or the next
-	commit runs them on a linked doc the rollback has just restored.
+	commit runs them on a linked doc the rollback has just restored. Some of
+	those are flushes frappe queues once, when it first makes a buffer on
+	frappe.local, so the buffers go back too; left behind, they would keep every
+	later record's realtime updates and webhooks from ever being flushed.
 	"""
 	callbacks = (frappe.db.before_commit._functions, frappe.db.after_commit._functions)
 	pending = list(items)
@@ -1168,6 +1175,11 @@ def _delete_each(doctype: str, items: list, delete_linked: bool = False, commit:
 		for name in pending:
 			frappe.db.savepoint(BULK_DELETE_SAVEPOINT)
 			queued = [len(queue) for queue in callbacks]
+			buffers = {
+				attr: copy(getattr(frappe.local, attr))
+				for attr in _COMMIT_BUFFERS
+				if hasattr(frappe.local, attr)
+			}
 			try:
 				_unlink_linked_docs(doctype, [name], delete_linked)
 				frappe.delete_doc(doctype, name)
@@ -1176,6 +1188,11 @@ def _delete_each(doctype: str, items: list, delete_linked: bool = False, commit:
 				for queue, keep in zip(callbacks, queued, strict=True):
 					while len(queue) > keep:
 						queue.pop()
+				for attr in _COMMIT_BUFFERS:
+					if attr in buffers:
+						setattr(frappe.local, attr, buffers[attr])
+					elif hasattr(frappe.local, attr):
+						delattr(frappe.local, attr)
 				failed.append({"docname": name, "reason": strip_html(str(exc)).strip()[:200]})
 				continue
 
