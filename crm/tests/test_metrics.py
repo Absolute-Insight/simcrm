@@ -110,9 +110,43 @@ class MetricsTest(IntegrationTestCase):
 		).insert(ignore_permissions=True)
 
 		out = get_plan_adherence(str(today), str(today), USER)
-		self.assertEqual(out["value"], 0)
+		self.assertIsNone(out["value"])
 
 	def test_plan_adherence_reports_movement_against_the_previous_period(self):
+		today = frappe.utils.getdate()
+		monday = frappe.utils.add_days(today, -today.weekday())
+		last_monday = frappe.utils.add_days(monday, -7)
+		monday_before = frappe.utils.add_days(monday, -14)
+		for week_start, items in (
+			(monday_before, [{"activity_type": "Task", "planned_date": monday_before, "status": "Missed"}]),
+			(
+				last_monday,
+				[
+					{"activity_type": "Task", "planned_date": last_monday, "status": "Done"},
+					{"activity_type": "Call", "planned_date": last_monday, "status": "Missed"},
+				],
+			),
+		):
+			frappe.get_doc(
+				{"doctype": "CRM Rep Plan", "user": USER, "week_start": week_start, "items": items}
+			).insert(ignore_permissions=True)
+
+		# the week before last landed nothing it planned, so last week's 50% is
+		# the whole movement -- an empty week before it would be no movement at all
+		out = get_plan_adherence(str(last_monday), str(frappe.utils.add_days(last_monday, 6)), USER)
+		self.assertEqual(out["value"], 50)
+		self.assertEqual(out["delta"], 50)
+
+	def test_plan_adherence_with_no_plan_has_no_value_not_zero(self):
+		"""Nothing due is not 0% of it: 0% ranked a rep with no plan as the worst
+		on the page, the mistake the quota tile already stopped making."""
+		today = str(frappe.utils.getdate())
+		out = get_plan_adherence(today, today, USER)
+		self.assertIsNone(out["value"])
+		self.assertEqual(out["delta"], 0)
+
+	def test_a_period_with_nothing_due_reports_no_movement(self):
+		"""Last week at 50% and nothing due this week is not a 50-point fall."""
 		today = frappe.utils.getdate()
 		monday = frappe.utils.add_days(today, -today.weekday())
 		last_monday = frappe.utils.add_days(monday, -7)
@@ -128,15 +162,9 @@ class MetricsTest(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 
-		# the week before last is empty, so last week's 50% is the whole movement
-		out = get_plan_adherence(str(last_monday), str(frappe.utils.add_days(last_monday, 6)), USER)
-		self.assertEqual(out["value"], 50)
-		self.assertEqual(out["delta"], 50)
-
-	def test_plan_adherence_with_no_plan_is_zero_not_an_error(self):
-		today = str(frappe.utils.getdate())
-		out = get_plan_adherence(today, today, USER)
-		self.assertEqual(out["value"], 0)
+		out = get_plan_adherence(str(monday), str(frappe.utils.add_days(monday, 6)), USER)
+		self.assertIsNone(out["value"])
+		self.assertEqual(out["delta"], 0)
 
 	# --- deals at risk --------------------------------------------------
 
@@ -271,6 +299,33 @@ class MetricsTest(IntegrationTestCase):
 		self.assertEqual(row["actual"], 0)
 
 	# --- snapshots and accuracy -----------------------------------------
+
+	def test_a_mid_month_snapshot_stores_the_whole_previous_month(self):
+		"""The snapshot window used to open a month before *today*, so a run on
+		the 15th recorded only the second half of last month as its actual."""
+		from unittest.mock import patch
+
+		from crm.api import dashboard
+
+		won = self.make_deal(deal_value=30_000, exchange_rate=1)
+		frappe.db.set_value(
+			"CRM Deal",
+			won.name,
+			{"status": self.status_of_type("Won"), "closed_date": "2026-06-02"},
+			update_modified=False,
+		)
+		with (
+			patch.object(dashboard, "nowdate", return_value="2026-07-15"),
+			patch.object(dashboard, "forecast_snapshot_scopes", return_value=[("Rep", USER, {"user": USER})]),
+		):
+			take_forecast_snapshot()
+
+		stored = frappe.db.get_value(
+			"CRM Forecast Snapshot",
+			{"snapshot_date": "2026-07-15", "month": "2026-06", "scope": "Rep", "user": USER},
+			"actual_at_snapshot",
+		)
+		self.assertEqual(stored, 30_000)
 
 	def test_snapshot_job_is_idempotent_per_day(self):
 		take_forecast_snapshot()
@@ -446,6 +501,33 @@ class MetricsTest(IntegrationTestCase):
 		self.assertEqual(data[-1]["stage"], _("Lost"))
 		self.assertEqual(data[-1]["count"], 1)
 
+	def test_the_funnel_counts_the_stage_a_deal_was_created_in(self):
+		"""The status a deal is created in is written only to its first log row's
+		``from``. Counting ``to`` alone left every deal out of its entry stage --
+		and every deal created straight into Won, which is how the Acumatica
+		import writes its wins -- out of the funnel entirely."""
+		from crm.api.dashboard import get_deal_status_change_counts, get_funnel_conversion
+
+		entry, won, lost = (self.status_of_type(t) for t in ("Open", "Won", "Lost"))
+		reason = "Metrics Funnel Reason"
+		frappe.get_doc({"doctype": "CRM Lost Reason", "lost_reason": reason}).insert(
+			ignore_permissions=True, ignore_if_duplicate=True
+		)
+		self.make_deal(status=entry)  # the new-deal form, or a lead conversion
+		self.make_deal(status=won)  # crm/integrations/acumatica/spreadsheet.py
+		self.make_deal(status=lost, lost_reason=reason)
+
+		today = str(frappe.utils.nowdate())
+		counts = {row["stage"]: row["count"] for row in get_deal_status_change_counts(today, today, USER)}
+		self.assertEqual(counts.get(entry), 1, counts)
+		self.assertEqual(counts.get(won), 1, counts)
+		# Lost is the funnel's own terminal row; a stage row for it as well drew
+		# two Lost bars on one chart
+		self.assertNotIn(lost, counts)
+		funnel = get_funnel_conversion(today, today, USER)["data"]
+		self.assertEqual([row["stage"] for row in funnel].count(_("Lost")), 1, funnel)
+		self.assertEqual(funnel[-1]["count"], 1)
+
 	def test_a_deal_that_re_enters_a_stage_is_still_one_deal(self):
 		from crm.api.dashboard import get_deal_status_change_counts
 
@@ -464,6 +546,93 @@ class MetricsTest(IntegrationTestCase):
 		today = str(frappe.utils.nowdate())
 		rows = get_deal_status_change_counts(today, today, USER)
 		self.assertEqual(next(r for r in rows if r["stage"] == stage)["count"], 1)
+
+	# --- sales trend and time to close ---------------------------------
+
+	def test_the_sales_trend_plots_a_win_on_the_day_it_was_won(self):
+		"""The Won deals tile counts by closed_date; the trend summed wins into the
+		creation-dated arm, so a deal opened last quarter and won today never
+		reached the chart beside the tile."""
+		from crm.api.dashboard import get_sales_trend, get_won_deals
+
+		today = frappe.utils.getdate()
+		deal = self.make_deal()
+		frappe.db.set_value(
+			"CRM Deal",
+			deal.name,
+			{
+				"status": self.status_of_type("Won"),
+				"closed_date": today,
+				"creation": frappe.utils.add_days(frappe.utils.now_datetime(), -45),
+			},
+			update_modified=False,
+		)
+
+		start, end = str(frappe.utils.add_days(today, -29)), str(today)
+		trend = get_sales_trend(start, end, USER)["data"]
+		wins = {row["date"]: row["won_deals"] for row in trend if row["won_deals"]}
+		self.assertEqual(wins, {str(today): 1})
+		self.assertEqual(sum(row["deals"] for row in trend), 0)
+		self.assertEqual(get_won_deals(start, end, USER)["value"], sum(wins.values()))
+
+	def test_time_to_close_counts_whole_calendar_days(self):
+		"""closed_date is a DATE, read as midnight, so TIMESTAMPDIFF floored away
+		the creation day's afternoon: created on the 12th at 15:00 and won on
+		the 15th measured 2 days."""
+		from crm.api.dashboard import get_average_time_to_close_a_deal, get_average_time_to_close_a_lead
+
+		deal = self.make_deal()
+		frappe.db.set_value(
+			"CRM Deal",
+			deal.name,
+			{
+				"status": self.status_of_type("Won"),
+				"closed_date": "2001-03-15",
+				"creation": "2001-03-12 15:00:00",
+			},
+			update_modified=False,
+		)
+
+		for metric in (get_average_time_to_close_a_deal, get_average_time_to_close_a_lead):
+			with self.subTest(metric=metric.__name__):
+				self.assertEqual(metric("2001-03-15", "2001-03-15", USER)["value"], 3)
+
+	# --- blank buckets --------------------------------------------------
+
+	def test_a_cleared_field_and_an_unset_one_are_one_bucket(self):
+		"""Frappe stores a field set then cleared as '' and one never set as NULL.
+		Grouped on the raw column, the two drew an "Unassigned" bar and a
+		nameless one beside it."""
+		from crm.api.dashboard import (
+			blank_label,
+			get_deals_by_industry,
+			get_deals_by_salesperson,
+			get_deals_by_source,
+		)
+
+		territory = "Metrics Blank Bucket Region"
+		if not frappe.db.exists("CRM Territory", territory):
+			frappe.get_doc({"doctype": "CRM Territory", "territory_name": territory}).insert(
+				ignore_permissions=True
+			)
+		for blank in (None, ""):
+			deal = self.make_deal(territory=territory)
+			frappe.db.set_value(
+				"CRM Deal",
+				deal.name,
+				{"industry": blank, "source": blank, "deal_owner": blank},
+				update_modified=False,
+			)
+
+		today = str(frappe.utils.nowdate())
+		for chart, key, count in (
+			(get_deals_by_industry, "industry", "deals"),
+			(get_deals_by_source, "source", "count"),
+			(get_deals_by_salesperson, "salesperson", "deals"),
+		):
+			with self.subTest(chart=chart.__name__):
+				rows = chart(today, today, territory=territory)["data"]
+				self.assertEqual([(row[key], row[count]) for row in rows], [(blank_label(), 2)])
 
 	# --- the chart registry ---------------------------------------------
 

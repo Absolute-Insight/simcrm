@@ -470,6 +470,7 @@ function listOptions(list, count) {
   return {
     selectable: false,
     showTooltip: false,
+    scrollKey: '',
     rowCount: list.data?.length,
     totalCount: count.data,
   }

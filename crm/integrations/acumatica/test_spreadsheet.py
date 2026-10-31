@@ -437,6 +437,10 @@ class ShapeSalesOrderTest(UnitTestCase):
 	def test_an_unknown_status_rejects_with_the_values_seen(self):
 		self.assertEqual(shape(**{"Status": "Shipping"})["reject"], "unknown quote status Shipping / None")
 
+	def test_a_row_with_no_customer_rejects(self):
+		# looked up as {"acumatica_id": None} -- IS NULL, any unlinked organization
+		self.assertEqual(shape(**{"Customer": None}), {"reject": "no customer", "key": "QT103012"})
+
 	def test_a_date_only_cell_is_accepted(self):
 		deal = shape(**{"Date": date(2026, 9, 1)})
 		self.assertEqual(deal["quote_date"], date(2026, 9, 1))
@@ -557,6 +561,57 @@ class ImportSalesOrdersTest(SpreadsheetImportTestCase):
 		self.assertEqual(counts["left_alone"], 1)
 		self.assertEqual(counts["deals"], 0)
 
+	def test_a_blank_customer_puts_no_deal_on_an_unlinked_organization(self):
+		frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Hand Made Ltd"}).insert()
+		path = self.rows(order(**{"Customer": None}))
+		rejects = ss.Rejects()
+		ss.import_sales_orders(path, rejects, owners=OWNERS, rates=RATES)
+		self.assertFalse(frappe.db.exists("CRM Deal", {"acumatica_sales_quote": "QT103012"}))
+		self.assertEqual([r["reason"] for r in rejects.rows], ["no customer"])
+
+	def test_a_rerun_leaves_a_deal_the_live_sync_expired_alone(self):
+		"""The sync closes deals as Administrator -- the user an operator runs the import
+		as -- so modified_by took a deal the sync had expired for one the import last
+		wrote, and a re-run reopened it."""
+		from crm.integrations.acumatica import outcomes
+
+		path = self.rows(order())
+		ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+		deal_name = frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": "QT103012"}, "name")
+		outcomes._close(deal_name, "Lost", lost_reason=outcomes.LOST_EXPIRED)
+
+		counts = ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+
+		self.assertEqual(
+			frappe.db.get_value("CRM Deal", deal_name, ["status", "lost_reason"]),
+			("Lost", outcomes.LOST_EXPIRED),
+		)
+		self.assertEqual((counts["left_alone"], counts["deals"]), (1, 0))
+
+	def test_a_rerun_keeps_the_date_the_live_sync_won_a_deal_on(self):
+		from crm.integrations.acumatica import outcomes
+
+		ss.import_sales_orders(self.rows(order()), ss.Rejects(), owners=OWNERS, rates=RATES)
+		deal_name = frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": "QT103012"}, "name")
+		outcomes._close(deal_name, "Won", closed_on=date(2026, 9, 20))
+
+		# a later export: the quote Completed, still dated the day it was raised
+		path = self.rows(order(**{"Status": "Completed"}))
+		counts = ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+
+		self.assertEqual(str(frappe.db.get_value("CRM Deal", deal_name, "closed_date")), "2026-09-20")
+		self.assertEqual(counts["left_alone"], 1)
+
+	def test_a_rerun_still_rewrites_a_deal_the_import_closed(self):
+		path = self.rows(order(**{"Status": "Completed", "Order Total": 100}))
+		ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+		path = self.rows(order(**{"Status": "Completed", "Order Total": 999}))
+		counts = ss.import_sales_orders(path, ss.Rejects(), owners=OWNERS, rates=RATES)
+		self.assertEqual(
+			frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": "QT103012"}, "deal_value"), 999
+		)
+		self.assertEqual((counts["deals"], counts["left_alone"]), (1, 0))
+
 	def test_every_row_reaches_the_commit_cadence(self):
 		path = self.rows(
 			order(),
@@ -615,6 +670,13 @@ class RevenueTest(UnitTestCase):
 		self.assertEqual(totals["C-SURE01"], Decimal("400") + Decimal("182"))
 		self.assertEqual(rejects, [])
 
+	def test_a_row_with_no_customer_rejects_instead_of_summing_under_none(self):
+		totals, rejects = ss.revenue_by_customer(
+			[invoice(), invoice(**{"Customer": None, "Reference Nbr.": "IN-BLANK"})], RATES, "ZAR"
+		)
+		self.assertEqual(totals, {"C-SURE01": Decimal("430.39")})
+		self.assertEqual(rejects, [("IN-BLANK", "no customer")])
+
 	def test_an_unknown_currency_rejects_that_row_only(self):
 		totals, rejects = ss.revenue_by_customer([invoice(), invoice(**{"Currency": "EUR"})], RATES, "ZAR")
 		self.assertEqual(totals["C-SURE01"], Decimal("430.39"))
@@ -642,6 +704,21 @@ class ImportInvoicesTest(SpreadsheetImportTestCase):
 		self.assertAlmostEqual(
 			frappe.db.get_value("CRM Organization", "Sure Seal SA (Pty) Ltd", "annual_revenue"), 430.39
 		)
+
+	def test_a_blank_customer_books_nothing_to_an_unlinked_organization(self):
+		"""{"acumatica_id": None} is IS NULL: the blank row's revenue landed on whichever
+		organization nobody had linked to Acumatica."""
+		frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Hand Made Ltd"}).insert()
+		path = write_workbook(
+			self.dir / "inv.xlsx",
+			INVOICE_HEADER,
+			[[invoice(**{"Customer": None, "Reference Nbr.": "IN-BLANK"})[h] for h in INVOICE_HEADER]],
+		)
+		rejects = ss.Rejects()
+		counts = ss.import_invoices(path, rejects, rates=RATES)
+		self.assertEqual(counts["organizations"], 0)
+		self.assertFalse(frappe.db.get_value("CRM Organization", "Hand Made Ltd", "annual_revenue"))
+		self.assertEqual(rejects.rows, [{"file": "invoices", "key": "IN-BLANK", "reason": "no customer"}])
 
 	def test_a_customer_with_no_organization_rejects(self):
 		path = write_workbook(self.dir / "inv.xlsx", INVOICE_HEADER, [[invoice()[h] for h in INVOICE_HEADER]])
@@ -774,6 +851,20 @@ class ImportWorkbooksTest(SpreadsheetImportTestCase):
 		self.assertFalse(frappe.db.exists("CRM Organization", "Proserve (Pty) Ltd"))
 		# the manifest is written on the way out of the crash too, but it names only
 		# deals that survived -- this run never got as far as creating one
+		self.assertEqual(json.loads((self.dir / "import-manifest.json").read_text())["deals"], [])
+		self.assertFalse(frappe.flags.spreadsheet_import_dry_run)
+
+	def test_an_interrupted_run_records_no_deal_of_the_batch_it_rolls_back(self):
+		"""Ctrl-C is a KeyboardInterrupt -- a BaseException -- so it skipped the crash
+		branch: nothing rolled back, and the manifest was written as for a clean run,
+		naming deals bench then threw away. Every later run skipped those quotes as
+		"deleted by a rep", for good."""
+		with patch("crm.integrations.acumatica.spreadsheet.import_invoices", side_effect=KeyboardInterrupt):
+			with self.assertRaises(KeyboardInterrupt):
+				ss.import_workbooks(
+					self.customers, self.orders, self.invoices, self.owners, rates={"USD": 18.2}
+				)
+		self.assertFalse(frappe.db.exists("CRM Deal", {"acumatica_sales_quote": "QT103012"}))
 		self.assertEqual(json.loads((self.dir / "import-manifest.json").read_text())["deals"], [])
 		self.assertFalse(frappe.flags.spreadsheet_import_dry_run)
 

@@ -97,7 +97,10 @@ export function formatCell(value, type, currency = '') {
     if (type === 'percent') {
       return `${getFormatter('percent', { maximumFractionDigits: 1 }).format(number)}%`
     }
-    return getFormatter('number', { maximumFractionDigits: 0 }).format(number)
+    /* Counts are whole and print bare; a pro-rated visit target is not, and
+       its Status column is judged against the one decimal the server sends.
+       Rounding 2.4 to 2 read "Target to date 2, Completed 2, Behind". */
+    return getFormatter('measure', { maximumFractionDigits: 1 }).format(number)
   }
 
   return String(value)

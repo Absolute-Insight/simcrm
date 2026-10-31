@@ -141,7 +141,7 @@
           class="mt-4"
           :rows="rows"
           :columns="columns"
-          :options="{ selectable: false, showTooltip: false }"
+          :options="{ selectable: false, showTooltip: false, scrollKey: '' }"
         />
         <!-- `v-if="!rows.length"` is true on a failed fetch too, so a contact
              whose deals did not load looked like a contact with no deals. -->

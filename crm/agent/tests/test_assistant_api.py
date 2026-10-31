@@ -146,6 +146,56 @@ class AssistantApiTest(IntegrationTestCase):
 			result["sources"], [{"name": f"product:{product.name}", "title": "Stainless ball valve"}]
 		)
 
+	def test_any_enabled_product_can_be_found_however_large_the_catalogue(self):
+		"""Audit M-30: the Assistant read the first 500 products by name and scored
+		those, so on an ERP catalogue (~15k rows at MBP) a product named past the
+		500th was never a candidate. The caps are shrunk here so the catalogue need
+		not be: eight fillers sort first and share the question's common words."""
+		for index in range(8):
+			frappe.get_doc(
+				{
+					"doctype": "CRM Product",
+					"product_code": f"QA-AAA-{index}",
+					"product_name": f"AAA filler gate valve {index}",
+				}
+			).insert()
+		target = frappe.get_doc(
+			{
+				"doctype": "CRM Product",
+				"product_code": "QA-ZZ-GATE-150",
+				"product_name": "Zwartkop gate valve DN150",
+				"description": "<p>Cast iron, PN16.</p>",
+				"standard_rate": 12345,
+			}
+		).insert()
+		answer = AssistantAnswer(answer="Yes.", related_articles=[])
+		with (
+			mock.patch.object(api_mod, "KNOWLEDGE_ROW_LIMIT", 5),
+			mock.patch.object(api_mod, "PRODUCT_TERM_LIMIT", 5, create=True),
+			mock.patch.object(api_mod, "get_config", return_value=WITH_PRODUCTS),
+			mock.patch.object(api_mod.client, "complete", return_value=answer) as complete,
+			no_budget_check(),
+		):
+			result = api_mod.ask_assistant("Zwartkop gate valve DN150 price?")
+		self.assertIn("QA-ZZ-GATE-150", complete.call_args[0][2][0]["content"])
+		self.assertEqual(result["sources"][0]["name"], f"product:{target.name}")
+
+	def test_a_catalogue_the_question_does_not_match_is_not_an_empty_knowledge_base(self):
+		"""Products are read by the question's words now; none matching is a
+		question with no material, not a knowledge base with nothing in it."""
+		frappe.get_doc(
+			{"doctype": "CRM Product", "product_code": "QA-BV-1", "product_name": "Ball valve"}
+		).insert()
+		answer = AssistantAnswer(answer="Nothing on that.", related_articles=[])
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=WITH_PRODUCTS),
+			mock.patch.object(api_mod.client, "complete", return_value=answer) as complete,
+			no_budget_check(),
+		):
+			result = api_mod.ask_assistant("what is the warranty on flux capacitors?")
+		self.assertEqual(result["status"], "ok")
+		complete.assert_called_once()
+
 	def test_an_empty_question_is_refused(self):
 		with self.assertRaises(frappe.ValidationError):
 			api_mod.ask_assistant("  ")

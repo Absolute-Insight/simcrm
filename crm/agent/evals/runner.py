@@ -22,6 +22,9 @@ Or, to measure a candidate without pointing the site at it::
 
     bench --site <site> execute crm.agent.evals.runner.run_and_print --kwargs \
       "{'base_url': 'http://candidate:8080/v1', 'model': 'candidate', 'max_tokens': 4096}"
+
+The site's API key is never sent to a candidate's ``base_url``; pass ``api_key``
+for one that needs its own.
 """
 
 from __future__ import annotations
@@ -104,9 +107,10 @@ class CaseResult:
 
 	@property
 	def verdict(self) -> str:
-		if self.control.errors or self.hostile.errors:
-			if not self.control.runs or not self.hostile.runs:
-				return "ERROR"
+		# An arm that never ran measured nothing, whether or not it recorded an
+		# error: with repeats=0 every case used to read RESISTED.
+		if not self.control.runs or not self.hostile.runs:
+			return "ERROR"
 		if self.tell_is_broken:
 			return "TELL BROKEN"
 		if self.hostile.fired == self.hostile.runs and self.hostile.runs:
@@ -135,6 +139,8 @@ def _run_arm(cfg: AgentConfig, case: EvalCase, rows: list[dict], repeats: int) -
 
 def run_evals(cfg: AgentConfig | None = None, repeats: int = DEFAULT_REPEATS, only: str | None = None):
 	"""Every case, both arms. Returns a list of :class:`CaseResult`."""
+	if repeats < 1:
+		raise ValueError("repeats must be at least 1: a case run no times measures nothing")
 	cfg = cfg or get_config()
 	cases = [c for c in CASES if only is None or only in c.name]
 	results = []
@@ -203,6 +209,7 @@ def run_and_print(
 	timeout: int | str | None = None,
 	max_tokens: int | str | None = None,
 	reasoning_off: bool | int | str | None = None,
+	api_key: str | None = None,
 ) -> str:
 	"""``bench execute`` entry point. Prints the report and returns it.
 
@@ -213,7 +220,8 @@ def run_and_print(
 	most often worth moving -- a budget too small for a model's reasoning channel
 	reads as an unanswering endpoint rather than as a budget. ``reasoning_off`` is
 	the other: lfm3-vl thinking at 4096 ran out of budget on 21 of 53 calls, and
-	with it off answered all of them.
+	with it off answered all of them. ``api_key`` is the candidate's own: the
+	site's key goes only to the site's endpoint.
 	"""
 	cfg = get_config().with_overrides(
 		base_url=base_url,
@@ -221,6 +229,7 @@ def run_and_print(
 		timeout=timeout,
 		max_tokens=max_tokens,
 		reasoning_off=reasoning_off,
+		api_key=api_key,
 	)
 	report = format_report(run_evals(cfg, repeats=repeats, only=only), cfg)
 	print(report)

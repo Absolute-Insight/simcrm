@@ -79,6 +79,12 @@ def resolve_destination(reference_doc, to: str | None = None) -> str:
 
 
 def validate(doc, method):
+	# An outgoing message was sent from a record's thread and stays filed there.
+	# Matching its number instead re-filed it -- on every status save, too --
+	# onto whichever lead or deal the lookup found first, so a message sent from
+	# one deal of a contact who is primary on two turned up on the other one.
+	if doc.type == "Outgoing" and doc.reference_doctype and doc.reference_name:
+		return
 	phone_number = doc.get("from") if doc.type == "Incoming" else doc.get("to")
 	if phone_number:
 		try:
@@ -252,24 +258,31 @@ def get_whatsapp_messages(reference_doctype: str, reference_name: str):
 	# Filter messages to get only Template messages
 	template_messages = [message for message in messages if message["message_type"] == "Template"]
 
+	# Each template once per thread, not once per message that uses it. The
+	# parameters are filled into copies of its text, never into the shared doc,
+	# or the second message on a template would read the first one's values.
+	templates = {}
+	for name in {message["template"] for message in template_messages}:
+		if frappe.db.exists("WhatsApp Templates", name):
+			templates[name] = frappe.get_doc("WhatsApp Templates", name)
+
 	# Iterate through template messages
 	for template_message in template_messages:
 		# Find the template that this message is using
-		if not frappe.db.exists("WhatsApp Templates", template_message["template"]):
-			continue
-		template = frappe.get_doc("WhatsApp Templates", template_message["template"])
+		template = templates.get(template_message["template"])
 
 		if template:
+			body, header = template.template, template.header
 			template_message["template_name"] = template.template_name
 			if template_message["template_parameters"]:
 				parameters = json.loads(template_message["template_parameters"])
-				template.template = parse_template_parameters(template.template, parameters)
+				body = parse_template_parameters(body, parameters)
 
-			template_message["template"] = template.template
+			template_message["template"] = body
 			if template_message["template_header_parameters"]:
 				header_parameters = json.loads(template_message["template_header_parameters"])
-				template.header = parse_template_parameters(template.header, header_parameters)
-			template_message["header"] = template.header
+				header = parse_template_parameters(header, header_parameters)
+			template_message["header"] = header
 			template_message["footer"] = template.footer
 
 	# Filter messages to get only reaction messages
@@ -288,8 +301,18 @@ def get_whatsapp_messages(reference_doctype: str, reference_name: str):
 		if reacted_message:
 			reacted_message["reaction"] = reaction_message["message"]
 
+	# A thread is about one record (two, with a deal's lead): load each once,
+	# rather than the whole document again for every message and every reply.
+	names_by_record = {}
+
+	def from_name_of(message):
+		record = (message["reference_doctype"], message["reference_name"])
+		if record not in names_by_record:
+			names_by_record[record] = get_from_name(message)
+		return names_by_record[record]
+
 	for message in messages:
-		from_name = get_from_name(message) if message["from"] else _("You")
+		from_name = from_name_of(message) if message["from"] else _("You")
 		message["from_name"] = from_name
 	# Filter messages to get only replies
 	reply_messages = [message for message in messages if message["is_reply"]]
@@ -304,7 +327,7 @@ def get_whatsapp_messages(reference_doctype: str, reference_name: str):
 
 		# If the replied message is found, add the reply details to the reply message
 		if replied_message:
-			from_name = get_from_name(reply_message) if replied_message["from"] else _("You")
+			from_name = from_name_of(reply_message) if replied_message["from"] else _("You")
 			message = replied_message["message"]
 			if replied_message["message_type"] == "Template":
 				message = replied_message["template"]
@@ -394,7 +417,9 @@ def react_on_whatsapp_message(emoji: str, reply_to_name: str):
 	if not reply_to_doc.has_permission("read"):
 		frappe.throw(_("Not permitted to access the referenced WhatsApp message."), frappe.PermissionError)
 
-	validate_access(reply_to_doc.reference_doctype, reply_to_doc.reference_name)
+	# a reaction is a message sent to the customer, so it is a write to the
+	# record's thread like any other send, not a read of it
+	validate_access(reply_to_doc.reference_doctype, reply_to_doc.reference_name, permtype="write")
 
 	to = (reply_to_doc.type == "Incoming" and reply_to_doc.get("from")) or reply_to_doc.to
 	doc = frappe.new_doc("WhatsApp Message")
@@ -436,21 +461,29 @@ def get_from_name(message):
 	return from_name
 
 
+#: What each CRM role is given on frappe_whatsapp's doctypes: what the CRM's
+#: pages read through the document API, and the settings pane for a manager.
+#: Every send goes through the endpoints above, which ask for write on the record
+#: and take the destination from it, and insert with ignore_permissions. Create,
+#: write and delete here were a REST door around both: a POST to
+#: /api/resource/WhatsApp Message sends to any number, and a list read every
+#: rep's conversations. WhatsApp Message rows are scoped to the record they are
+#: on by crm.permissions.linked_records.
+WHATSAPP_PERMISSIONS = {
+	"WhatsApp Message": {"Sales Manager": ("read",), "Sales User": ("read",)},
+	"WhatsApp Templates": {"Sales Manager": ("read",), "Sales User": ("read",)},
+	"WhatsApp Settings": {"Sales Manager": ("read", "write")},
+}
+
+
 def add_roles():
 	if "frappe_whatsapp" not in frappe.get_installed_apps():
 		return
 
-	role_list = ["Sales Manager", "Sales User"]
-	doctypes = ["WhatsApp Message", "WhatsApp Templates", "WhatsApp Settings"]
-	for doctype in doctypes:
-		for role in role_list:
+	for doctype, roles in WHATSAPP_PERMISSIONS.items():
+		for role, ptypes in roles.items():
 			if frappe.db.exists("Custom DocPerm", {"parent": doctype, "role": role}):
 				continue
-			add_permission(doctype, role, 0, "write")
-			update_permission_property(doctype, role, 0, "create", 1)
-			update_permission_property(doctype, role, 0, "delete", 1)
-			update_permission_property(doctype, role, 0, "share", 1)
-			update_permission_property(doctype, role, 0, "email", 1)
-			update_permission_property(doctype, role, 0, "print", 1)
-			update_permission_property(doctype, role, 0, "report", 1)
-			update_permission_property(doctype, role, 0, "export", 1)
+			add_permission(doctype, role, 0, ptypes[0])
+			for ptype in ptypes[1:]:
+				update_permission_property(doctype, role, 0, ptype, 1)

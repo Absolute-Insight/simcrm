@@ -7,7 +7,7 @@
       <Button
         v-if="isOwnPlan"
         :label="__('Log activity')"
-        :disabled="logging"
+        :disabled="logging || saving"
         :loading="logging"
         @click="logVisit"
       >
@@ -118,7 +118,7 @@
 
   <template v-else>
     <div
-      v-if="!canEdit && isOwnPlan && server.loaded"
+      v-if="beforeHorizon && isOwnPlan && server.loaded"
       class="border-b bg-surface-gray-1 px-5 py-2 text-sm text-ink-gray-6"
     >
       {{
@@ -256,7 +256,9 @@
         </div>
 
         <div class="flex flex-1 flex-col gap-1.5 p-1.5">
-          <template v-if="plan.loading">
+          <!-- until this week has answered: an answer for another week landing
+               first is dropped, and frappe-ui then reports nothing loading -->
+          <template v-if="plan.loading || !server.loaded">
             <Skeleton
               v-for="n in 2"
               :key="n"
@@ -562,6 +564,7 @@ const plan = createResource({
     resetBuffers()
   },
   onSuccess(data) {
+    if (!isOnScreen(data)) return
     today.value = todayInTimeZone(getConfig('systemTimezone'))
     adoptServerPlan(data)
     loadReferenceTitles(data.items)
@@ -579,6 +582,19 @@ function resetBuffers() {
   server.rollup = {}
   server.modified = null
   stale.value = false
+}
+
+/* frappe-ui keeps whichever response lands last, not the last one asked for,
+   and the one-shot calls answer whenever they answer. A payload for a week or
+   a rep no longer on screen is dropped: adopting it put one week's rows under
+   another's heading, or a colleague's item on the manager's own, editable
+   plan. */
+function isOnScreen(data) {
+  return (
+    !!data &&
+    data.week_start === weekStart.value &&
+    data.user === (isTeam.value ? session.user : planUser.value)
+  )
 }
 
 function withUid(item) {
@@ -622,8 +638,17 @@ const isOwnPlan = computed(() => planUser.value === session.user)
 const beforeHorizon = computed(() =>
   isBeforeHorizon(weekStart.value, today.value),
 )
+const editableWeek = computed(() => isOwnPlan.value && !beforeHorizon.value)
+/* Not while a save is in flight: it answers with the week as it was sent and
+   that replaces the buffer, so an edit made meanwhile was silently lost. Nor
+   before this week's own answer has landed. */
 const canEdit = computed(
-  () => isOwnPlan.value && !beforeHorizon.value && !plan.loading && !plan.error,
+  () =>
+    editableWeek.value &&
+    server.loaded &&
+    !saving.value &&
+    !plan.loading &&
+    !plan.error,
 )
 
 const unsaved = computed(() => planDiff(localItems.list, server.items))
@@ -651,8 +676,12 @@ const outside = computed(() => grouped.value.outside)
 const isEmptyWeek = computed(
   () => server.loaded && !plan.loading && localItems.list.length === 0,
 )
-const showReadOnlyEmpty = computed(() => isEmptyWeek.value && !canEdit.value)
-const showEditableEmpty = computed(() => isEmptyWeek.value && canEdit.value)
+const showReadOnlyEmpty = computed(
+  () => isEmptyWeek.value && !editableWeek.value,
+)
+const showEditableEmpty = computed(
+  () => isEmptyWeek.value && editableWeek.value,
+)
 
 /* Only the reps whose plans this user may actually open. Listing every CRM
    user offered rows that 403 on selection. */
@@ -1077,7 +1106,7 @@ const OVERRIDE_DONE = {
 async function overrideItem(method, item) {
   try {
     const data = await call(`crm.api.rep_plan.${method}`, { item: item.name })
-    mergeServerPlan(data)
+    if (isOnScreen(data)) mergeServerPlan(data)
     toast.success(OVERRIDE_DONE[method]())
   } catch (error) {
     toast.error(errorText(error))
@@ -1114,7 +1143,7 @@ async function completeItem(item) {
       outcome: data.outcome,
       when: data.when || undefined,
     })
-    mergeServerPlan(plan)
+    if (isOnScreen(plan)) mergeServerPlan(plan)
     toast.success(__('Marked as done.'))
   } catch (error) {
     toast.error(errorText(error))
@@ -1142,7 +1171,7 @@ async function cancelItem(item) {
       item: item.name,
       reason: data.reason,
     })
-    mergeServerPlan(plan)
+    if (isOnScreen(plan)) mergeServerPlan(plan)
     toast.success(__('Cancelled.'))
   } catch (error) {
     toast.error(errorText(error))
@@ -1230,14 +1259,15 @@ async function logVisit() {
     })
     // The visit may belong to a different week than the one on screen; only
     // adopt the payload when it is this week, otherwise just say where it went.
-    if (plan.week_start === weekStart.value) {
+    if (isOnScreen(plan)) {
       // Logging a visit is not a reason to lose the week the rep is drafting,
       // so the response is merged rather than adopted; the visit itself is a
-      // row the buffer has never seen, which is what the append is for.
+      // row the server did not hold before, which is what the append is for.
+      // Measured against the server's rows, not the buffer: a row the rep has
+      // removed and not yet saved is missing from the buffer too, and came
+      // back.
+      const known = new Set(server.items.map((i) => String(i.name)))
       mergeServerPlan(plan)
-      const known = new Set(
-        localItems.list.filter((i) => i.name).map((i) => String(i.name)),
-      )
       const added = server.items.filter((i) => !known.has(String(i.name)))
       if (added.length) {
         localItems.list = [...localItems.list, ...added.map(withUid)]
@@ -1262,10 +1292,13 @@ async function logVisit() {
 async function proposeWeek() {
   if (proposing.value) return
   proposing.value = true
+  const asked = { week_start: weekStart.value, user: planUser.value }
   try {
     const drafts = await call('crm.api.rep_plan.propose_week', {
-      week_start: weekStart.value,
+      week_start: asked.week_start,
     })
+    // drafts dated in a week that is no longer on screen are not this one's
+    if (!isOnScreen(asked)) return
     if (!drafts?.length) {
       toast(__('No open suggestions to plan from.'))
       return
@@ -1302,8 +1335,10 @@ async function savePlan() {
       // tab, another device) is a conflict too
       modified: server.loaded ? server.modified || '' : undefined,
     })
-    adoptServerPlan(data)
-    loadReferenceTitles(data.items)
+    if (isOnScreen(data)) {
+      adoptServerPlan(data)
+      loadReferenceTitles(data.items)
+    }
     toast.success(__('Plan saved'))
   } catch (error) {
     // The buffer is deliberately left alone on every failure path: a save that

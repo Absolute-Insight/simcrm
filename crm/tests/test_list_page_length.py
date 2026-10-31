@@ -55,3 +55,15 @@ class TestListPageLength(IntegrationTestCase):
 
 		self.assertEqual(result["page_length"], 20)
 		self.assertEqual(result["page_length_count"], 20)
+
+	def test_the_response_says_how_far_load_more_can_go(self):
+		"""The server stops at MAX_PAGE_LENGTH and the client grows its own page
+		length on every "Load More". Without the cap in the response the client
+		kept asking for more and got the same first thousand rows each time, with
+		the button still on screen and nothing said."""
+		from crm.api.doc import MAX_PAGE_LENGTH
+
+		result = lead_list(page_length=MAX_PAGE_LENGTH + 40)
+
+		self.assertEqual(result["page_length"], MAX_PAGE_LENGTH)
+		self.assertEqual(result["max_page_length"], MAX_PAGE_LENGTH)

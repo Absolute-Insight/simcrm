@@ -119,6 +119,26 @@ class NormaliseTest(UnitTestCase):
 		# "SABS 1600" must find the row the sheet labels "1600 kPa"
 		self.assertTrue({"1600kpa", "1600"} <= reference.tokens("1600 kPa"))
 
+	def test_in_before_a_unit_is_a_word_not_an_inch_mark(self):
+		"""Audit H-05: "class 600 in bar" asked for a 600" flange and lost class600."""
+		for question, meant, not_meant in (
+			("rated pressure of class 600 in bar", {"class600"}, {"600in"}),
+			("bolts for DN150 PN 16 in mm", {"pn16", "150mm"}, {"16in"}),
+			("PCD of 6 inch class 150 in mm", {"6in", "class150"}, {"150in"}),
+			("what is 150 in inches", set(), {"150in"}),
+			("1600 in kPa", set(), {"1600in"}),
+			# a rating's number is not a size whatever follows "in"
+			("is class 300 in stock", {"class300"}, {"300in"}),
+			("PN 16 in the catalogue", {"pn16"}, {"16in"}),
+		):
+			with self.subTest(question=question):
+				found = reference.tokens(question)
+				self.assertTrue(meant <= found, sorted(found))
+				self.assertFalse(not_meant & found, sorted(found))
+		# a bare "in" after a size is still the inch mark
+		self.assertIn("6in", reference.tokens("what is 6 in in mm"))
+		self.assertIn("2-1/2in", reference.tokens("2 1/2 in flange"))
+
 
 class NumbersTest(UnitTestCase):
 	def test_a_sign_is_kept_unless_it_is_a_hyphen(self):
@@ -135,6 +155,15 @@ class NumbersTest(UnitTestCase):
 		self.assertEqual(reference.numbers("1,000 kPa"), [{"1000"}])
 		self.assertEqual(reference.numbers("51,33 Bar"), [{"51.33"}])
 		self.assertEqual(reference.numbers("285.0 mm"), [{"285"}])
+
+	def test_a_thousands_comma_before_a_decimal_is_still_thousands(self):
+		"""Audit L-39: "1,270.0" read as 1.270 refused a correct answer."""
+		self.assertEqual(reference.numbers("1,270.0 mm"), [{"1270"}])
+		self.assertEqual(reference.numbers("12,500.5"), [{"12500.5"}])
+		self.assertEqual(reference.numbers("1,234,567.25"), [{"1234567.25"}])
+		self.assertEqual(reference.numbers("51,33 Bar"), [{"51.33"}])
+		used, missing = reference.verify("The OD is 1,270.0 mm.", ROWS, [ROWS[3]])
+		self.assertEqual((used, missing), ([ROWS[3]], []))
 
 	def test_mixed_and_signed_figures_do_not_support_their_parts(self):
 		sheet = [{**ROWS[2], "cells": [{"label": "Bolt size", "value": '1 3/8"', "status": "ok"}]}]
@@ -160,9 +189,51 @@ class SelectEntriesTest(UnitTestCase):
 		picked = reference.select_entries("bolt size for 2 inch class 300", ROWS)
 		self.assertNotIn("d-900-Class 300", [row["name"] for row in picked])
 
+	def test_a_rating_followed_by_in_and_a_unit_selects_that_rating(self):
+		"""Audit H-05: the 16" BS 10 bolt set came back for "DN150 PN 16 in mm"."""
+		rows = [
+			*ROWS,
+			bolt_set(400, 16, "BS 10 Table H", "20 Off M24 x 150", "BS 10 BS10 Table H"),
+			{
+				**ROWS[7],
+				"name": "rating-600",
+				"label": "ANSI CLASS 600",
+				"search": "ANSI CLASS 600 class 600",
+			},
+			{**ROWS[7], "name": "rating-pn16", "label": "PN16", "search": "PN16 PN 16 16 bar"},
+		]
+		picked = reference.select_entries("what is the rated pressure of class 600 in bar", rows)
+		self.assertEqual([row["name"] for row in picked][:1], ["rating-600"])
+		picked = reference.select_entries("bolts for DN150 PN 16 in mm", rows)
+		self.assertTrue(picked and all("150 mm" in row["label"] for row in picked), labels(picked))
+
 	def test_a_short_row_wins_a_conversion_question(self):
 		picked = reference.select_entries("what is 2 1/2 inch in mm", ROWS)
 		self.assertEqual(labels(picked)[:1], ['2 1/2" = 65 mm'])
+
+	def test_a_bare_in_before_mm_still_asks_for_an_inch_size(self):
+		# "1/2 in mm" is "1/2 inch, in mm": the H-05 fix must not read it as the word
+		rows = [
+			*ROWS,
+			{
+				**ROWS[6],
+				"name": "line-15",
+				"label": '1/2" = 15 mm',
+				"search": '1/2" 15 mm line size inch to mm',
+				"cells": [
+					{"label": "Inches", "value": '1/2"', "status": "ok"},
+					{"label": "Millimetres", "value": "15", "unit": "mm", "status": "ok"},
+				],
+			},
+		]
+		for question, label in (
+			("what is 1/2 in mm", '1/2" = 15 mm'),
+			("1/2 in mm", '1/2" = 15 mm'),
+			("2 1/2 in mm", '2 1/2" = 65 mm'),
+			("convert 2 1/2 in cm", '2 1/2" = 65 mm'),
+		):
+			with self.subTest(question=question):
+				self.assertEqual(labels(reference.select_entries(question, rows))[:1], [label])
 
 	def test_one_rare_word_is_enough(self):
 		picked = reference.select_entries("what is Millimetres for that?", ROWS)
@@ -362,6 +433,96 @@ class PromptTest(UnitTestCase):
 		self.assertEqual(reference.strip_row_ids("PCD is 190.5 mm (from R3)."), "PCD is 190.5 mm.")
 		self.assertEqual(reference.strip_row_ids("PCD is 190.5 mm, per R3."), "PCD is 190.5 mm.")
 		self.assertEqual(reference.strip_row_ids("Stellite is UNS R30006."), "Stellite is UNS R30006.")
+
+
+# Rows whose label spells out a value the sheet questions: the MBP pack writes
+# the line size into its label, and names a questioned standard in a flange's.
+LINE_QUESTIONED = {
+	"name": "line-1/4",
+	"sheet_title": "Line Sizes",
+	"page": 1,
+	"section": "Line sizes",
+	"label": '1/4" = 6 mm',
+	"search": '1/4" 6 mm line size nominal bore inch to mm',
+	"cells": [
+		{"label": "Inches", "value": '1/4"', "status": "ok"},
+		{"label": "Millimetres", "value": "6", "unit": "mm", "status": reference.QUESTIONED},
+	],
+}
+LINE_5 = {
+	"name": "line-5",
+	"sheet_title": "Line Sizes",
+	"page": 1,
+	"section": "Line sizes",
+	"label": '5" = 125 mm',
+	"search": '5" 125 mm line size inch to mm',
+	"cells": [
+		{"label": "Inches", "value": '5"', "status": "ok"},
+		{"label": "Millimetres", "value": "125", "unit": "mm", "status": "ok"},
+	],
+}
+STANDARD_QUESTIONED = {
+	**drilling(700, 28, "ASME B16.5", "Class 150", "ASME ANSI class 150", pcd="863.6"),
+	"cells": [
+		{"label": "Standard", "value": "ASME B16.5", "status": reference.QUESTIONED},
+		{"label": "PCD (bolt circle diameter)", "value": "863.6", "unit": "mm", "status": "ok"},
+	],
+}
+# every bolt figure questioned: the 12 of the label is the flange size, and
+# the same 12 is the bolt count engineering has not confirmed
+BOLTS_QUESTIONED = {
+	**bolt_set(300, 12, "BS 10 Table F", "12 Off M20 x 100", "BS 10 BS10 Table F"),
+	"cells": [
+		{"label": "Bolt set", "value": "12 Off M20 x 100", "status": reference.QUESTIONED},
+		{"label": "Number of bolts", "value": "12", "status": reference.QUESTIONED},
+		{"label": "Bolt size", "value": "M20", "status": reference.QUESTIONED},
+	],
+}
+
+
+class QuestionedLabelTest(UnitTestCase):
+	"""Audit M-20: a questioned value written into the row's label still reached
+	the prompt, the fallback answer and the number check."""
+
+	def test_the_prompt_and_the_fallback_do_not_carry_it(self):
+		block = reference.reference_block([LINE_QUESTIONED])
+		self.assertNotIn("6 mm", block)
+		self.assertIn(f'1/4" = ({reference.AWAITING})', block)
+		self.assertNotIn("6 mm", reference.fallback_answer([LINE_QUESTIONED]))
+		self.assertEqual(reference.public_label(LINE_QUESTIONED), f'1/4" = ({reference.AWAITING})')
+
+		block = reference.reference_block([STANDARD_QUESTIONED])
+		self.assertNotIn("B16.5", block)
+		self.assertIn('700 mm (28")', block)
+		self.assertIn("PCD (bolt circle diameter): 863.6 mm", block)
+
+	def test_a_label_figure_that_is_not_questioned_is_left(self):
+		self.assertEqual(reference.public_label(ROWS[4]), ROWS[4]["label"])
+		# the label's 12 is the size: a bare number is not cut from a label
+		self.assertEqual(reference.public_label(BOLTS_QUESTIONED), BOLTS_QUESTIONED["label"])
+		self.assertEqual(
+			reference.describe(ROWS[0]),
+			f"Flange Drilling Tables, page 2 — Flange drilling: {ROWS[0]['label']}",
+		)
+
+	def test_a_label_never_supports_a_questioned_figure(self):
+		for answer, rows, cited in (
+			('A 1/4" line is 6 mm.', [LINE_QUESTIONED, LINE_5], []),
+			('A 1/4" line is 6 mm.', [LINE_QUESTIONED, LINE_5], [LINE_5]),
+			('The 28" flange is to ASME B16.5.', [STANDARD_QUESTIONED], []),
+			('The 12" BS 10 Table F flange takes 12 bolts.', [BOLTS_QUESTIONED], []),
+		):
+			with self.subTest(answer=answer, cited=bool(cited)):
+				used, missing = reference.verify(answer, rows, cited)
+				self.assertIsNone(used, missing)
+
+	def test_the_confirmed_figures_of_such_a_row_still_pass(self):
+		used, missing = reference.verify(
+			'The 28" Class 150 flange has a PCD of 863.6 mm.', [STANDARD_QUESTIONED], []
+		)
+		self.assertEqual((used, missing), ([STANDARD_QUESTIONED], []))
+		used, missing = reference.verify('A 5" line is 125 mm.', [LINE_QUESTIONED, LINE_5], [])
+		self.assertEqual((used, missing), ([LINE_5], []))
 
 
 class OutputTest(UnitTestCase):

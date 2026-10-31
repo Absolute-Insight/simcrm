@@ -46,6 +46,7 @@
       v-slot="{ idx, column, item, row }"
       :rows="rows"
       doctype="Contact"
+      :scrollKey="options.scrollKey"
     >
       <ListRowItem :item="item" :align="column.align" class="overflow-hidden">
         <template #prefix>
@@ -82,6 +83,7 @@
                   idx,
                   column,
                   item,
+                  row,
                   firstColumn: columns[0],
                 })
             "
@@ -124,6 +126,7 @@
                   idx,
                   column,
                   item,
+                  row,
                   firstColumn: columns[0],
                 })
             "
@@ -138,6 +141,7 @@
                   idx,
                   column,
                   item,
+                  row,
                   firstColumn: columns[0],
                 })
             "

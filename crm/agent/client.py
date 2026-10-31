@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import time
+from urllib.parse import urlsplit
 
 import requests
 from pydantic import BaseModel
@@ -103,23 +104,33 @@ def complete(
 				# an empty answer already refused; spend the second attempt only
 				# when there is something for the model to correct.
 				break
-			attempt_messages = prompting.fit_messages(
-				[
-					*messages,
-					# The rejected reply goes back with the complaint. Without it the
-					# retry was a fresh request with an instruction appended, and a
-					# model that cannot see what it got wrong repeats it.
-					{"role": "assistant", "content": str(raw)[:RETRY_ECHO_CHARS]},
-					{"role": "user", "content": RETRY_INSTRUCTION.format(error=last_error)},
-				],
-				budget,
-			)
+			attempt_messages = _retry_messages(messages, raw, last_error, budget)
 			if deadline is not None and time.monotonic() >= deadline:
 				# the retry would be refused at _time_allowed anyway; say why
 				# the reply was bad rather than that the clock ran out
 				break
 
 	raise SchemaMismatch(last_error)
+
+
+def _retry_messages(messages: list[dict], raw: str, error: str, budget: int) -> list[dict]:
+	"""The request again, then the rejected reply, then the complaint.
+
+	The rejected reply goes back with the complaint. Without it the retry was a
+	fresh request with an instruction appended, and a model that cannot see
+	what it got wrong repeats it. But the request is what the retry answers:
+	re-fitted as one list, the oldest droppable turn was the quoted thread or
+	the rep's question itself, and a valid reply to nothing came back as ok. So
+	the request and the complaint are both protected, history goes only if the
+	complaint does not fit beside it, and the echo takes whatever room is left.
+	"""
+	complaint = {"role": "user", "content": RETRY_INSTRUCTION.format(error=error)}
+	request = prompting.fit_messages([*messages, complaint], budget, protected=2)
+	room = budget - prompting.estimate_messages(request) - prompting.MESSAGE_OVERHEAD_TOKENS
+	echo = str(raw)[: min(RETRY_ECHO_CHARS, prompting.tokens_to_chars(room))]
+	if not echo.strip():
+		return request
+	return [*request[:-1], {"role": "assistant", "content": echo}, request[-1]]
 
 
 def _time_allowed(cfg: AgentConfig, deadline: float | None) -> float:
@@ -235,6 +246,14 @@ def _post(cfg: AgentConfig, body: dict, timeout: float | None = None) -> str:
 			allow_redirects=False,
 		)
 		try:
+			if 300 <= response.status_code < 400:
+				# refused above, so say so: read as a reply, the redirect's empty
+				# body came back as "Expecting value: line 1 column 1"
+				raise AgentUnavailable(
+					f"{cfg.base_url}: endpoint redirected (HTTP {response.status_code}) to "
+					f"{_redirect_target(response)}, which is not followed; set the base URL "
+					"to where it points"
+				)
 			if response.status_code in (401, 403):
 				# distinguished so test_connection can point the admin at api_key
 				# rather than at the URL; the body is not echoed, it may be anything
@@ -255,6 +274,14 @@ def _post(cfg: AgentConfig, body: dict, timeout: float | None = None) -> str:
 		return _content(raw)
 	except (requests.RequestException, KeyError, IndexError, TypeError, ValueError) as exc:
 		raise AgentUnavailable(f"{cfg.base_url}: {exc}") from exc
+
+
+def _redirect_target(response) -> str:
+	"""Where a redirect points, as scheme and host: enough to fix the base URL by."""
+	target = urlsplit(str(response.headers.get("Location") or "")[:500])
+	if not target.hostname:
+		return "another path on the same host"
+	return f"{target.scheme}://{target.hostname}" if target.scheme else target.hostname
 
 
 def _error_body(response) -> str:

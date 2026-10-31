@@ -21,6 +21,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import frappe
+from frappe.utils import getdate
 from openpyxl import load_workbook
 
 from crm.integrations.acumatica.importer import COMMIT_EVERY, upsert_organization
@@ -266,6 +267,10 @@ def shape_sales_order(
 	if order_type != "QT":
 		# fulfilment records, branch transfers and credit memos are not opportunities
 		return {"skip": f"order type {order_type}"}
+	if not row.get("Customer"):
+		# looked up as {"acumatica_id": None}, which is IS NULL: the deal went to
+		# whichever organization nobody had linked to Acumatica
+		return {"reject": "no customer", "key": nbr}
 
 	status = map_deal_status(row.get("Status"), row.get("Quote Outcome"))
 	if status is None:
@@ -317,8 +322,12 @@ def upsert_deal(deal: dict, organization: str) -> str | None:
 	those already present, including any a rep has edited, so a re-run leaves
 	a rep-edited deal alone rather than overwriting their changes."""
 	name = frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": deal["order_nbr"]}, "name")
-	if name and frappe.db.get_value("CRM Deal", name, "modified_by") != frappe.session.user:
-		return None
+	if name:
+		current = frappe.db.get_value(
+			"CRM Deal", name, ["modified_by", "status", "closed_date"], as_dict=True
+		)
+		if current.modified_by != frappe.session.user or _closed_since(current, deal):
+			return None
 	doc = frappe.get_doc("CRM Deal", name) if name else frappe.new_doc("CRM Deal")
 	doc.organization = organization
 	doc.status = deal["status"]
@@ -358,6 +367,17 @@ def upsert_deal(deal: dict, organization: str) -> str | None:
 	if after:
 		doc.db_set(after, update_modified=False)
 	return doc.name
+
+
+def _closed_since(current, deal: dict) -> bool:
+	"""Closed, and not the way this row closes it: the live sync won, lost or expired the
+	deal after the import wrote it. The sync runs as Administrator -- the user an
+	operator runs the import as -- so ``modified_by`` cannot tell the two apart, and a
+	re-run reopened the deal or re-closed it under the workbook's date."""
+	if current.status not in ("Won", "Lost"):
+		return False
+	closed_on = getdate(current.closed_date) if current.closed_date else None
+	return current.status != deal["status"] or closed_on != deal["closed_date"]
 
 
 def import_sales_orders(
@@ -500,6 +520,11 @@ def revenue_by_customer(rows: list[dict], rates: dict[str, Decimal], base_curren
 	rejects: list[tuple] = []
 	for row in rows:
 		if row.get("Status") == "Canceled":
+			continue
+		if not row.get("Customer"):
+			# summed under None and looked up as IS NULL, it booked the revenue to
+			# whichever organization nobody had linked to Acumatica
+			rejects.append((row.get("Reference Nbr."), "no customer"))
 			continue
 		currency = row.get("Currency") or base_currency
 		rate = _rate_for(currency, rates, base_currency)
@@ -664,10 +689,15 @@ def import_workbooks(
 			warnings.append(
 				f"{with_sla} imported deals picked up a Service Level Agreement; response timers are now running on them"
 			)
-	except Exception:
+	except BaseException:
 		# the current batch rolls back; batches already committed by
 		# `_commit_every` stay, and a re-run is idempotent so the operator
-		# resumes rather than restores
+		# resumes rather than restores.
+		#
+		# BaseException, not Exception: Ctrl-C (KeyboardInterrupt) and a SIGTERM's
+		# SystemExit skipped this branch, so the manifest below was written as a clean
+		# finish -- naming the batch that bench is about to roll back, which every
+		# later run then skipped for good as "deleted by a rep".
 		crashed = True
 		frappe.db.rollback()
 		raise

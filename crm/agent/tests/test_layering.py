@@ -32,8 +32,9 @@ ALLOWED_SIBLING_IMPORTS = {
 	"context": {"prompting"},
 	# knowledge grounds the chat assistant on the help articles. Pure like
 	# context: it takes articles as plain dicts and builds messages; loading
-	# them (crm.help, itself frappe-free) is the caller's job.
-	"knowledge": set(),
+	# them (crm.help, itself frappe-free) is the caller's job. It sizes its
+	# prompt with the arithmetic the client fits it by.
+	"knowledge": {"prompting"},
 	# reference answers from reference-sheet rows and checks the figures.
 	# Pure for the same reason: rows in, messages and verdicts out.
 	"reference": set(),

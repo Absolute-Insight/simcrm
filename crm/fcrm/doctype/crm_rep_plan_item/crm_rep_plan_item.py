@@ -2,6 +2,7 @@
 # For license information, please see license.txt
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 
@@ -37,3 +38,21 @@ class CRMRepPlanItem(Document):
 		status: DF.Literal["Planned", "Done", "Missed", "Cancelled"]
 		suggestion: DF.Link | None
 	# end: auto-generated types
+
+	def validate(self):
+		"""A planned activity is saved with its plan, never on its own.
+
+		frappe runs this only when the row itself is saved or inserted -- a plan's
+		save does not call its rows' controllers. That is a door past everything
+		CRMRepPlan.validate checks: the REST resource API saves the row directly and
+		then re-saves a plan that reads it back from the database unchanged, and
+		frappe.client.save never re-saves the plan at all, so a rep could mark her
+		own item Done with a colleague's meeting and the colleague's item could then
+		never be fulfilled by it. The planner never writes a row this way.
+		"""
+		if self.flags.ignore_permissions or frappe.session.user == "Administrator":
+			return
+		frappe.throw(
+			_("A planned activity is saved with its plan, not on its own."),
+			frappe.PermissionError,
+		)
