@@ -14,7 +14,7 @@ from __future__ import annotations
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from crm.api.doc import get_linked_docs_of_document, remove_doc_link
+from crm.api.doc import get_linked_docs_of_document, remove_doc_link, remove_linked_doc_reference
 
 REP = "plan-links-rep@crmtest.test"
 
@@ -60,6 +60,10 @@ class PlanItemLinksOnDeleteTest(IntegrationTestCase):
 	def tearDown(self):
 		frappe.set_user("Administrator")
 		frappe.db.delete("CRM Rep Plan", {"user": REP})
+		frappe.db.delete("CRM Task", {"reference_doctype": "CRM Deal", "reference_docname": self.deal.name})
+		frappe.db.delete(
+			"CRM Suggestion", {"reference_doctype": "CRM Deal", "reference_docname": self.deal.name}
+		)
 		if frappe.db.exists("CRM Deal", self.deal.name):
 			frappe.delete_doc("CRM Deal", self.deal.name, force=True, ignore_permissions=True)
 		super().tearDown()
@@ -77,6 +81,48 @@ class PlanItemLinksOnDeleteTest(IntegrationTestCase):
 		linked = next(item for item in plan.items if item.note == "Call about the valves")
 		self.assertFalse(linked.reference_docname)
 		self.assertFalse(linked.reference_doctype)
+
+	def test_a_refused_delete_leaves_the_plan_link_and_the_suggestions_alone(self):
+		"""frappe runs on_trash *before* its link check. With the cleanup hung there,
+		a delete refused because a task still points at the deal had already
+		unlinked the plan item and dropped the deal's suggestions, dismiss history
+		included -- and the "delete linked" flow catches the refusal and commits."""
+		frappe.get_doc(
+			{
+				"doctype": "CRM Task",
+				"title": "Call them back",
+				"status": "Todo",
+				"reference_doctype": "CRM Deal",
+				"reference_docname": self.deal.name,
+			}
+		).insert(ignore_permissions=True)
+		dismissed = frappe.get_doc(
+			{
+				"doctype": "CRM Suggestion",
+				"signal": "idle_deal",
+				"title": "Re-engage the valves deal",
+				"reference_doctype": "CRM Deal",
+				"reference_docname": self.deal.name,
+				"user": REP,
+				"status": "Dismissed",
+			}
+		).insert(ignore_permissions=True)
+
+		result = remove_linked_doc_reference(
+			[{"doctype": "CRM Deal", "docname": self.deal.name}], delete=True
+		)
+
+		self.assertEqual(result["unlinked"], [])
+		self.assertTrue(frappe.db.exists("CRM Deal", self.deal.name))
+		self.assertTrue(frappe.db.exists("CRM Suggestion", dismissed.name))
+		self.assertEqual(
+			frappe.db.get_value(
+				"CRM Rep Plan Item",
+				{"parent": self.plan.name, "note": "Call about the valves"},
+				"reference_docname",
+			),
+			self.deal.name,
+		)
 
 	def test_the_plan_is_never_offered_as_a_linked_document_of_the_deal(self):
 		"""The protection that actually holds. CRM Rep Plan and CRM Rep Plan Item

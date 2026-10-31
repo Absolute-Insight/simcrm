@@ -58,14 +58,30 @@ _TEMPLATE_ENV = SandboxedEnvironment(autoescape=False)
 
 
 def run_automations(doc, method=None):
-	"""doc_events entry point for CRM Lead and CRM Deal."""
+	"""doc_events entry point for CRM Lead and CRM Deal.
+
+	"Created" rules wait for ``on_change``, not ``after_insert``. frappe applies
+	Assignment Rules from its own ``*`` on_update hook, which runs after
+	``after_insert`` and after this doctype's own on_update hooks, so a lead from
+	the web form, an import or the API had no owner yet when the rule read it:
+	the owner's task went out unassigned and the suggestion to nobody. The insert's
+	on_update marks the record and its on_change -- the last event of the insert,
+	after every on_update hook -- runs the rules. The mark keeps an on_change from
+	a ``db_set`` earlier in the insert from running them before the row is routed.
+	"""
 	if frappe.flags.in_install or frappe.flags.in_migrate or frappe.flags.in_patch:
 		return
 
 	if method == "on_update":
 		_resync_suggestion_owner(doc)
 
-	if method == "after_insert":
+	if method == "on_update" and doc.flags.in_insert:
+		doc.flags.crm_created_rules_pending = True
+		return
+	elif method == "on_change":
+		if not doc.flags.pop("crm_created_rules_pending", None):
+			return
+		_read_routed_owner(doc)
 		trigger = "Created"
 	elif method == "on_update" and _status_just_changed(doc):
 		trigger = "Status Changed"
@@ -115,6 +131,17 @@ def _status_just_changed(doc) -> bool:
 	return doc.has_value_changed("status")
 
 
+def _read_routed_owner(doc) -> None:
+	"""Pick up the owner an Assignment Rule gave the record during its insert.
+
+	The rule's ToDo writes the owner with ``db.set_value`` (crm.api.todo), so the
+	document in hand still has none.
+	"""
+	field = OWNER_FIELD.get(doc.doctype)
+	if field and not doc.get(field):
+		doc.set(field, frappe.db.get_value(doc.doctype, doc.name, field))
+
+
 def _resync_suggestion_owner(doc) -> None:
 	"""Follow a reassignment with the record's open suggestions.
 
@@ -130,18 +157,25 @@ def _resync_suggestion_owner(doc) -> None:
 
 
 def clear_suggestions(doc, method=None) -> None:
-	"""on_trash entry point: a deleted record leaves no suggestions behind."""
+	"""after_delete entry point: a deleted record leaves no suggestions behind.
+
+	Not on_trash: frappe runs on_trash before it checks whether anything still
+	links to the record, so a delete it then refused (a task or a note on the
+	deal) had already wiped the suggestions and their dismiss history -- and the
+	"delete linked" flow catches that refusal and commits.
+	"""
 	clear_suggestions_for(doc.doctype, doc.name)
 
 
 def clear_plan_item_references(doc, method=None) -> None:
-	"""on_trash entry point: plan items that pointed at the record keep the item, lose the link.
+	"""after_delete entry point: plan items that pointed at the record keep the item, lose the link.
 
 	``CRM Rep Plan Item.reference_docname`` is a Dynamic Link. Left alone, frappe's
 	link check refused to delete a deal any rep had planned work against, and the
 	app's "delete linked" flow, which knows only records with their own reference
 	fields, deleted the *plan* -- the rep's whole week -- to free the deal. The
 	planned activity is the rep's; the record it was about is what is going away.
+	After the delete, like clear_suggestions, so a refused one leaves the links.
 	"""
 	frappe.db.set_value(
 		"CRM Rep Plan Item",
