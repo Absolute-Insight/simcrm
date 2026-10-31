@@ -39,7 +39,7 @@
          layout jumping when it does. 14 columns: the rep, twelve months and
          the row total. -->
     <SkeletonTable
-      v-if="grid.loading"
+      v-if="!shown && !grid.error"
       :columns="14"
       :rows="6"
       density="compact"
@@ -89,7 +89,7 @@
               {{ __('Rep') }}
             </th>
             <th
-              v-for="(month, i) in grid.data.months"
+              v-for="(month, i) in shown.months"
               :key="month"
               class="sticky top-0 z-10 min-w-[4rem] border-b border-outline-gray-1 bg-surface-elevation-2 px-1 py-2 text-right text-xs font-medium uppercase tracking-wider text-ink-gray-5"
             >
@@ -108,11 +108,17 @@
               class="sticky left-0 z-10 whitespace-nowrap border-b border-outline-gray-1 bg-surface-elevation-2 px-3 py-1.5"
             >
               <div class="flex items-center gap-2">
-                <span class="truncate text-ink-gray-8">{{
-                  row.full_name
-                }}</span>
+                <span
+                  class="truncate text-ink-gray-8"
+                  :title="
+                    editable && !canEdit(row)
+                      ? __('Your own target is set by an administrator')
+                      : ''
+                  "
+                  >{{ row.full_name }}</span
+                >
                 <Button
-                  v-if="editable"
+                  v-if="canEdit(row)"
                   class="opacity-0 transition group-hover:opacity-100"
                   variant="ghost"
                   size="sm"
@@ -123,19 +129,20 @@
               </div>
             </td>
             <td
-              v-for="month in grid.data.months"
+              v-for="month in shown.months"
               :key="month"
               class="min-w-[4rem] border-b border-outline-gray-1 px-0.5 py-1"
             >
               <input
-                v-if="editable"
-                :value="displayValue(row, month)"
+                v-if="canEdit(row)"
+                :value="cellValue(row, month)"
                 class="w-full rounded-[var(--v-radius-control)] border border-transparent bg-transparent px-1.5 py-1 text-right text-sm tabular-nums text-ink-gray-8 transition placeholder:text-ink-gray-4 hover:border-outline-gray-2 focus:border-outline-gray-3 focus:bg-surface-white focus:outline-none focus:ring-2 focus:ring-outline-gray-3"
                 inputmode="decimal"
                 placeholder="—"
                 :aria-label="`${row.full_name} ${month}`"
                 :title="exactTitle(row.quota?.[month])"
                 @focus="onFocus($event, row, month)"
+                @input="onInput"
                 @blur="onBlur($event, row, month)"
                 @keydown.enter="$event.target.blur()"
               />
@@ -160,7 +167,7 @@
               {{ __('Team') }}
             </td>
             <td
-              v-for="month in grid.data.months"
+              v-for="month in shown.months"
               :key="month"
               class="min-w-[4rem] px-1.5 py-2 text-right text-sm tabular-nums text-ink-gray-6"
               :title="exactTitle(columnTotal(month))"
@@ -177,10 +184,10 @@
       </table>
     </div>
 
-    <p v-if="grid.data" class="shrink-0 text-p-xs text-ink-gray-5">
+    <p v-if="shown" class="shrink-0 text-p-xs text-ink-gray-5">
       {{
         __('Amounts are in {0}. Deal values are converted before comparison.', [
-          grid.data.currency,
+          shown.currency,
         ])
       }}
     </p>
@@ -190,30 +197,75 @@
 <script setup>
 import { PhTarget as LucideTarget } from '@phosphor-icons/vue'
 import { usersStore } from '@/stores/users'
-import { Button, call, createResource, toast } from 'frappe-ui'
+import {
+  Button,
+  call,
+  createResource,
+  frappeRequest,
+  getConfig,
+  toast,
+} from 'frappe-ui'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import { computed, ref, watch } from 'vue'
+import { parseAmount } from '@/utils/amountInput'
 import { formatCell } from '@/utils/reportExport'
 import { quiet } from '@/utils/quiet'
 
-const { isManager } = usersStore()
+const { isManager, isAdmin, getUser } = usersStore()
 
 const year = ref(new Date().getFullYear())
 const editable = computed(() => isManager())
 
+const isOwnRow = (row) => row.user === getUser().name
+
+/* A manager does not set their own target -- crm.api.quota._not_the_caller
+   refuses it to anyone but an administrator -- so their row is read-only here
+   rather than editable and then refused. */
+function canEdit(row) {
+  return editable.value && (!isOwnRow(row) || isAdmin())
+}
+
 const grid = createResource({
   url: 'crm.api.quota.get_quota_grid',
   makeParams: () => ({ year: year.value }),
+  /* Two quick clicks on a year arrow put two requests in flight, and whichever
+     landed last became the grid: the header could read 2028 over 2027's
+     targets, and an edit made there wrote to 2027. An answer -- or a failure --
+     for any year but the one in the header is dropped as an abort, which
+     createResource treats as a deliberate stop and leaves its data alone for. */
+  resourceFetcher: (options) => {
+    const send = getConfig('resourceFetcher') || frappeRequest
+    const superseded = () => Number(options.params?.year) !== year.value
+    const dropped = () =>
+      Object.assign(new Error('Superseded by another year'), {
+        name: 'AbortError',
+      })
+    return send(options).then(
+      (data) => {
+        if (superseded()) throw dropped()
+        return data
+      },
+      (error) => {
+        throw superseded() ? dropped() : error
+      },
+    )
+  },
   auto: true,
 })
 
 watch(year, () => quiet(grid.reload()))
 
-const rows = computed(() => grid.data?.rows || [])
+// The grid for the year in the header, and nothing while that year loads: the
+// previous year's data must not be shown, or edited, under the new heading.
+const shown = computed(() =>
+  Number(grid.data?.year) === year.value ? grid.data : null,
+)
+
+const rows = computed(() => shown.value?.rows || [])
 
 const monthLabels = computed(() =>
-  (grid.data?.months || []).map((m) =>
+  (shown.value?.months || []).map((m) =>
     new Date(`${m}T00:00:00`).toLocaleDateString(undefined, { month: 'short' }),
   ),
 )
@@ -269,26 +321,42 @@ const grandTotal = computed(() =>
   rows.value.reduce((sum, row) => sum + rowTotal(row), 0),
 )
 
+/* The cell being edited and the text in it. Bound through :value, so a
+   re-render while it is focused -- a save elsewhere rolling back, a total
+   moving -- puts back what is being typed. It used to live only in the DOM, and
+   every re-render patched the compact label ("100K") over it, which the blur
+   then saved as 100. */
+const editing = ref(null)
+
+function cellValue(row, month) {
+  const cell = editing.value
+  return cell?.user === row.user && cell.month === month
+    ? cell.text
+    : displayValue(row, month)
+}
+
 function onFocus(event, row, month) {
   // digits only while editing — grouping separators are for reading, not typing
-  event.target.value = row.quota?.[month] || ''
+  editing.value = { user: row.user, month, text: `${row.quota?.[month] || ''}` }
+  event.target.value = editing.value.text
   event.target.select()
 }
 
+function onInput(event) {
+  if (editing.value) editing.value.text = event.target.value
+}
+
 async function onBlur(event, row, month) {
-  const raw = event.target.value.replace(/[^\d.-]/g, '')
-  const amount = raw === '' ? 0 : Number(raw)
+  const amount = parseAmount(event.target.value)
   const previous = row.quota?.[month] || 0
+  // the cell shows its compact label again from the next render
+  editing.value = null
 
   if (Number.isNaN(amount) || amount < 0) {
-    event.target.value = displayValue(row, month)
     toast.error(__('Enter a number of {0} or more.', [0]))
     return
   }
-  if (amount === previous) {
-    event.target.value = displayValue(row, month)
-    return
-  }
+  if (amount === previous) return
 
   // paint the new value first so the grid totals move with the keystroke, then
   // reconcile with what the server actually stored
@@ -303,11 +371,10 @@ async function onBlur(event, row, month) {
     row.quota = { ...row.quota, [month]: previous }
     toast.error(error.messages?.[0] || __('Could not save that target'))
   }
-  event.target.value = displayValue(row, month)
 }
 
 async function copyForward(row) {
-  const january = grid.data.months[0]
+  const january = shown.value.months[0]
   if (!row.quota?.[january]) {
     toast.error(__('Set January first, then fill the year from it.'))
     return

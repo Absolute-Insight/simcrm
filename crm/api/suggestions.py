@@ -137,29 +137,47 @@ def get_dismissal_stats(user: str | None = None):
 	cooldown (``crm.agent.signals.dedupe``); this is the same data made legible,
 	so an administrator tuning ``CRM Agent Settings`` can see which threshold is
 	being rejected rather than guessing at it.
+
+	Without ``user`` it covers everyone the caller can see -- the whole site for
+	an administrator, the subtree for an in-tree manager, their own rows for a
+	rep. It used to mean the caller alone, so the Assistant pane's "What reps are
+	rejecting" showed an administrator their own dismissals: almost always none.
 	"""
 	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
 
-	user = user or frappe.session.user
 	# the same subtree that scopes the inbox: an in-tree manager reads their
 	# team's dismissals, not every rep's on the site
 	users = visible_users()
-	if users is not None and user not in users:
-		frappe.throw(_("Only managers can read another user's dismissals."), frappe.PermissionError)
+	filters = {"status": "Dismissed"}
+	if user:
+		if users is not None and user not in users:
+			frappe.throw(_("Only managers can read another user's dismissals."), frappe.PermissionError)
+		filters["user"] = user
+	elif users is not None:
+		filters["user"] = ("in", users)
 
+	# counted in the database: across a site the dismissals outnumber any page of
+	# rows, and a count taken from a page would rank signals by recency instead
+	counts = frappe.get_all(
+		"CRM Suggestion",
+		filters=filters,
+		fields=["signal", {"COUNT": "*", "as": "dismissals"}],
+		group_by="signal",
+	)
 	rows = frappe.get_all(
 		"CRM Suggestion",
-		filters={"status": "Dismissed", "user": user},
-		fields=["signal", "dismiss_reason", "modified"],
+		filters=filters | {"dismiss_reason": ("is", "set")},
+		fields=["signal", "dismiss_reason"],
 		order_by="modified desc",
 		limit_page_length=500,
 	)
 
-	stats: dict[str, dict] = {}
+	stats = {
+		row.signal: {"signal": row.signal, "dismissals": int(row.dismissals), "reasons": []} for row in counts
+	}
 	for row in rows:
-		bucket = stats.setdefault(row.signal, {"signal": row.signal, "dismissals": 0, "reasons": []})
-		bucket["dismissals"] += 1
-		if row.dismiss_reason and len(bucket["reasons"]) < 5:
+		bucket = stats.get(row.signal)
+		if bucket and len(bucket["reasons"]) < 5:
 			bucket["reasons"].append(row.dismiss_reason)
 	return sorted(stats.values(), key=lambda s: s["dismissals"], reverse=True)
 

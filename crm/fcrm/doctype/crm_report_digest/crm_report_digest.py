@@ -54,9 +54,17 @@ class CRMReportDigest(Document):
 					MAX_RECIPIENTS, len(recipients)
 				)
 			)
+		# Entitlement is checked for the recipients this save adds, not the ones
+		# already on the digest. A rep offboarded after being added is skipped at
+		# send (``_still_entitled``); re-checking them here refused every later
+		# save -- pausing the digest from its switch included -- until someone
+		# found and removed the departed address.
+		before = self.get_doc_before_save()
+		kept = set(before.recipient_list()) if before else set()
 		for email in recipients:
 			validate_email_address(email, throw=True)
-			self.validate_internal_user(email)
+			if email not in kept:
+				self.validate_internal_user(email)
 
 	def validate_report(self) -> None:
 		"""The Select and the report registry are two lists that must not drift.
