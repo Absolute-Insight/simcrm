@@ -141,7 +141,7 @@
           class="mt-4"
           :rows="rows"
           :columns="columns"
-          :options="{ selectable: false, showTooltip: false }"
+          :options="{ selectable: false, showTooltip: false, scrollKey: '' }"
         />
         <div
           v-if="tab.label === 'Deals' && !rows.length"

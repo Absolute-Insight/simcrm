@@ -12,6 +12,7 @@ import json
 import tempfile
 from datetime import date, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
@@ -353,6 +354,55 @@ class ImportTest(IntegrationTestCase):
 		self.assertEqual((first["imported"], second["imported"], second["skipped"]), (2, 0, 2))
 		self.assertEqual(len(self.items_of(REP)), 2)
 		self.assertEqual(frappe.db.count("Event", {"owner": REP}), 2)
+
+	def test_one_id_in_two_exports_of_one_run_lands_once(self):
+		"""A rep's exports are cumulative: two side by side in the folder carried the
+		same visit twice, and with only earlier runs to check against, each copy landed
+		-- two plan items and two events for one visit."""
+		self.write([row(id="a")], name="report_Test_Rep_2026-09-22.csv")
+		self.write([row(id="a"), row(id="b", date="18/03/2026 09:00")], name="report_Test_Rep_2026-10-15.csv")
+		summary = self.run_import()
+		self.assertEqual(len(self.items_of(REP)), 2)
+		self.assertEqual(frappe.db.count("Event", {"owner": REP}), 2)
+		self.assertEqual((summary["rows"], summary["imported"], summary.get("duplicates")), (3, 2, 1))
+
+	def test_a_row_two_later_exports_complete_is_caught_up_once(self):
+		"""Both copies found the item still live before either updated it, so the
+		catch-up ran twice: two Completed events, one of them orphaned."""
+		self.write([row(id="s", status="Scheduled", completedAt="")])
+		self.run_import()
+		self.write([row(id="s", status="Completed")], name="report_Test_Rep_2026-10-01.csv")
+		self.write([row(id="s", status="Completed")], name="report_Test_Rep_2026-10-15.csv")
+		summary = self.run_import()
+		self.assertEqual(summary["updated"], 1)
+		item = self.items_of(REP)[0]
+		self.assertEqual(frappe.get_all("Event", {"owner": REP}, pluck="name"), [item.fulfilled_by])
+
+	def test_every_commit_is_preceded_by_a_manifest_naming_what_it_commits(self):
+		"""A run killed outright never reaches its finally. Written only there, the
+		manifest named none of the plans already committed, and the re-run appended
+		every one of them again."""
+		self.write(
+			[row(id="a"), row(id="b", date="24/03/2026 09:00"), row(id="c", date="31/03/2026 09:00")]
+		)  # three weeks: three plans, a batch commit after two and the closing one
+		path = self.dir / h.MANIFEST_NAME
+		unnamed = []
+
+		def commit():
+			named = set()
+			if path.exists():
+				named = {r["item"] for r in json.loads(path.read_text())["rows"].values()}
+			unnamed.append({item.name for item in self.items_of(REP)} - named)
+
+		in_test = frappe.flags.in_test
+		frappe.flags.in_test = False  # what lets _commit_every commit; commit itself is stubbed
+		try:
+			with patch.object(h, "COMMIT_EVERY", 2), patch.object(frappe.db, "commit", side_effect=commit):
+				self.run_import()
+		finally:
+			frappe.flags.in_test = in_test
+
+		self.assertEqual(unnamed, [set(), set()])
 
 	def test_a_new_row_for_an_existing_week_is_appended_not_duplicated(self):
 		self.write([row(id="a")])

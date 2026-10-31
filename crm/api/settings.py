@@ -17,6 +17,10 @@ def create_email_account(data: dict):
 		service_config = email_service_config.get(service)
 	if not service_config:
 		return "Service not supported"
+	# Sendgrid and SparkPost only send. Said here, outside the try below, so it
+	# is not rewritten as a connection failure.
+	if data.get("enable_incoming") and service != "Frappe Mail" and not service_config.get("email_server"):
+		frappe.throw(_("{0} only sends email. Turn off Enable Incoming to add it.").format(service))
 
 	try:
 		email_doc = frappe.get_doc(
@@ -54,8 +58,12 @@ def create_email_account(data: dict):
 		else:
 			email_doc.append("imap_folder", {"folder_name": "INBOX"})
 			email_doc.password = data.get("password")
-			# validate whether the credentials are correct
-			email_doc.get_incoming_server()
+			# validate whether the credentials are correct. Only an account that
+			# reads mail has an IMAP login to check: run for an outgoing-only one
+			# (Sendgrid, SparkPost) it refused them for having no IMAP server,
+			# and the except below called that a connection failure.
+			if email_doc.enable_incoming:
+				email_doc.get_incoming_server()
 
 		# if correct credentials, save the email account
 		email_doc.save()

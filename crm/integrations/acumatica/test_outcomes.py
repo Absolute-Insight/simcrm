@@ -1,5 +1,5 @@
 from datetime import date, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -46,18 +46,18 @@ class OutcomesTestCase(FrappeTestCase):
 			)
 		return deal.name
 
-
-class PullOutcomesTest(OutcomesTestCase):
-	"""A quote that was accepted is copied into a sales order and the quote itself is
-	Completed; one the customer declined is Canceled or Rejected. Until this, a deal
-	stayed open in the CRM until a rep closed it by hand -- twice, once per system."""
-
 	def _client(self, quotes):
 		client = MagicMock()
 		client.get_page.side_effect = lambda entity, top=100, skip=0, **kw: quotes[skip : skip + top]
 		client.settings.request_pause = 0
 		client.settings.quote_order_type = "QT"
 		return client
+
+
+class PullOutcomesTest(OutcomesTestCase):
+	"""A quote that was accepted is copied into a sales order and the quote itself is
+	Completed; one the customer declined is Canceled or Rejected. Until this, a deal
+	stayed open in the CRM until a rep closed it by hand -- twice, once per system."""
 
 	def test_a_completed_quote_wins_the_deal_on_the_date_it_completed(self):
 		deal = self._deal("QT000001")
@@ -116,6 +116,71 @@ class PullOutcomesTest(OutcomesTestCase):
 		self.assertIn("OrderType eq 'QT'", kw["filter"])
 		self.assertIn("LastModified gt datetimeoffset'2026-09-17T10:00:00Z'", kw["filter"])
 		self.assertIn("OrderNbr", kw["select"])
+
+
+class AnUnsaveableDealTest(OutcomesTestCase):
+	"""A close is a whole-document save. One deal that can no longer pass validation
+	-- here a zero-value deal from before forecasting was switched on -- used to raise
+	out of the sweep: no high-water mark, no later quote applied or expired, and a
+	panel error that did not say which deal."""
+
+	def setUp(self):
+		super().setUp()
+		self.healthy = self._deal("QT000020", closes_in=-45, modified_days_ago=40)
+		self.poisoned = self._deal("QT000021", closes_in=-45, modified_days_ago=40)
+		frappe.db.set_value("CRM Deal", self.healthy, "expected_deal_value", 1000, update_modified=False)
+		frappe.db.set_value("CRM Deal", self.poisoned, "expected_deal_value", 0, update_modified=False)
+		was_on = frappe.db.get_single_value("FCRM Settings", "enable_forecasting")
+		frappe.db.set_single_value("FCRM Settings", "enable_forecasting", 1)
+		# after tearDown's rollback, so the cached single value is put back too
+		self.addCleanup(frappe.db.set_single_value, "FCRM Settings", "enable_forecasting", was_on or 0)
+
+	def _close_failures(self):
+		return [
+			row.remote_id
+			for row in frappe.get_doc("CRM Acumatica Settings").sync_issues
+			if row.entity == "Deal" and row.remote_id in (self.healthy, self.poisoned)
+		]
+
+	def test_the_other_quotes_are_still_applied_and_the_bad_deal_is_named(self):
+		client = self._client(
+			[
+				Q(OrderNbr="QT000021", Status="Completed", LastModified="2026-09-10T08:00:00+02:00"),
+				Q(OrderNbr="QT000020", Status="Completed", LastModified="2026-09-10T08:00:00+02:00"),
+			],
+		)
+
+		counts = outcomes.pull_quote_outcomes(client, None)
+
+		self.assertEqual(counts["won"], 1)
+		self.assertEqual(frappe.db.get_value("CRM Deal", self.healthy, "status"), "Won")
+		self.assertEqual(frappe.db.get_value("CRM Deal", self.poisoned, "status"), "Proposal/Quotation")
+		self.assertEqual(self._close_failures(), [self.poisoned])
+		# the quote is not offered again, so the row says what the deal should have become
+		detail = next(
+			row.detail
+			for row in frappe.get_doc("CRM Acumatica Settings").sync_issues
+			if row.remote_id == self.poisoned
+		)
+		self.assertIn("Won", detail)
+		self.assertIn("Expected deal value is required", detail)
+
+	def test_expiry_carries_on_past_it_and_names_it_once(self):
+		self.assertEqual(outcomes.expire_stale_quotes(grace_days=30), {"expired": 1})
+		self.assertEqual(frappe.db.get_value("CRM Deal", self.healthy, "status"), "Lost")
+		self.assertEqual(frappe.db.get_value("CRM Deal", self.poisoned, "status"), "Proposal/Quotation")
+		# the rule offers the same deal every night until somebody fixes it
+		outcomes.expire_stale_quotes(grace_days=30)
+		self.assertEqual(self._close_failures(), [self.poisoned])
+
+	def test_a_job_timeout_still_ends_the_run(self):
+		def timed_out(*args, **kwargs):
+			raise outcomes.JobTimeoutException("Task exceeded maximum timeout value")
+
+		with patch.object(outcomes, "_close", side_effect=timed_out):
+			with self.assertRaises(outcomes.JobTimeoutException):
+				outcomes.expire_stale_quotes(grace_days=30)
+		self.assertEqual(self._close_failures(), [])
 
 
 class ExpireStaleQuotesTest(OutcomesTestCase):

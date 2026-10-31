@@ -218,6 +218,8 @@ function getValueComponent(f) {
   if (typeSelect.includes(fieldtype) || typeCheck.includes(fieldtype)) {
     const _options =
       fieldtype == 'Check' ? ['Yes', 'No'] : getSelectOptions(options)
+    // frappe-ui v1's Select reports a pick only through update:modelValue;
+    // the template's @change lands on its trigger button, which never fires.
     return h(FormControl, {
       type: 'select',
       options: _options.map((o) => ({
@@ -225,6 +227,7 @@ function getValueComponent(f) {
         value: o,
       })),
       modelValue: newValue.value,
+      'onUpdate:modelValue': updateValue,
     })
   } else if (typeLink.includes(fieldtype)) {
     if (fieldtype == 'Dynamic Link') {

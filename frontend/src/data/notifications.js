@@ -30,7 +30,13 @@ export const useEventNotifications = () => {
      back with the filters it was created with -- and reloads it with them. So
      "now" was the first open's, and every later open listed the events that
      had ended since. Fetched here instead, on every open, with this one's. */
-  const event = useEvent({ filters, notifications: false, auto: false })
+  const event = useEvent({
+    filters,
+    notifications: false,
+    auto: false,
+    // the soonest first: a page of the newest-created dropped imminent events
+    orderBy: 'starts_on asc',
+  })
   event.eventsResource.update({ filters })
   quiet(event.eventsResource.reload())
   return event

@@ -2,7 +2,7 @@
   <div
     class="rounded-6 border border-outline-gray-2 p-3 flex flex-col gap-4 w-full"
   >
-    <template v-for="(condition, i) in conditions" :key="condition.field">
+    <template v-for="(condition, i) in conditions" :key="rowKey(condition, i)">
       <CFCondition
         v-if="Array.isArray(condition)"
         :condition="condition"
@@ -36,7 +36,7 @@
 import CFCondition from './CFCondition.vue'
 import { filterableFields } from './filterableFields'
 import { Button, Dropdown } from 'frappe-ui'
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, toRaw, watch } from 'vue'
 
 const props = defineProps({
   conditions: { type: Array, required: true },
@@ -46,11 +46,26 @@ const props = defineProps({
   doctype: { type: String, required: true },
 })
 
-const conditions = reactive(props.conditions)
+// Follows the prop rather than wrapping it once at setup, so the instance
+// always edits the array it is showing.
+const conditions = computed(() => reactive(props.conditions))
+
+// A condition array has no field to key it by (`condition.field` was always
+// undefined), so rows were reused by position: after Remove, Turn into a
+// Group or Ungroup a row went on showing and editing the condition that used
+// to sit there. Key each array by identity instead.
+const rowKeys = new WeakMap()
+let lastRowKey = 0
+function rowKey(condition, i) {
+  if (typeof condition !== 'object' || !condition) return `conjunction-${i}`
+  condition = toRaw(condition)
+  if (!rowKeys.has(condition)) rowKeys.set(condition, ++lastRowKey)
+  return rowKeys.get(condition)
+}
 
 const getConjunction = () => {
   let conjunction = 'and'
-  conditions.forEach((condition) => {
+  conditions.value.forEach((condition) => {
     if (typeof condition == 'string') {
       conjunction = condition
     }
@@ -59,7 +74,7 @@ const getConjunction = () => {
 }
 
 const turnIntoGroup = (condition) => {
-  conditions.splice(conditions.indexOf(condition), 1, [condition])
+  conditions.value.splice(conditions.value.indexOf(condition), 1, [condition])
 }
 
 const isGroupCondition = (condition) => {
@@ -72,7 +87,7 @@ const dropdownOptions = computed(() => {
       label: __('Add Condition'),
       onClick: () => {
         const conjunction = getConjunction()
-        conditions.push(conjunction, ['', '', ''])
+        conditions.value.push(conjunction, ['', '', ''])
       },
     },
   ]
@@ -81,7 +96,7 @@ const dropdownOptions = computed(() => {
       label: __('Add Condition Group'),
       onClick: () => {
         const conjunction = getConjunction()
-        conditions.push(conjunction, [[]])
+        conditions.value.push(conjunction, [[]])
       },
     })
   }
@@ -89,11 +104,11 @@ const dropdownOptions = computed(() => {
 })
 
 function removeCondition(condition) {
-  const conditionIndex = conditions.indexOf(condition)
+  const conditionIndex = conditions.value.indexOf(condition)
   if (conditionIndex == 0) {
-    conditions.splice(conditionIndex, 2)
+    conditions.value.splice(conditionIndex, 2)
   } else {
-    conditions.splice(conditionIndex - 1, 2)
+    conditions.value.splice(conditionIndex - 1, 2)
   }
 }
 
@@ -106,16 +121,16 @@ function unGroupConditions(condition) {
     return c
   })
 
-  const index = conditions.indexOf(condition)
+  const index = conditions.value.indexOf(condition)
   if (index !== -1) {
-    conditions.splice(index, 1, ...newConditions)
+    conditions.value.splice(index, 1, ...newConditions)
   }
 }
 
 function toggleConjunction(conjunction) {
-  for (let i = 0; i < conditions.length; i++) {
-    if (typeof conditions[i] == 'string') {
-      conditions[i] = conjunction == 'and' ? 'or' : 'and'
+  for (let i = 0; i < conditions.value.length; i++) {
+    if (typeof conditions.value[i] == 'string') {
+      conditions.value[i] = conjunction == 'and' ? 'or' : 'and'
     }
   }
 }
