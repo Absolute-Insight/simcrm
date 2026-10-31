@@ -167,10 +167,12 @@ const filterOptions = ref(null)
 const lastLoadedQuery = ref('')
 
 if (effectiveMode.value === 'contacts') {
+  // Uncached: createResource hands every instance with the same cache key one
+  // shared resource, so the composer's To, Cc and Bcc offered each other's
+  // search results, filtered by the first instance's existingEmails.
   filterOptions.value = createResource({
     url: 'crm.api.contact.search_emails',
     method: 'POST',
-    cache: ['ContactEmails'],
     params: { txt: '' },
     transform: (data) => {
       let allData = (data || []).map((option) => {
@@ -270,14 +272,15 @@ function removeValue(value) {
   values.value = values.value.filter((v) => v !== value)
 }
 
+// frappe-ui v1's Button exposes no rootRef; its $el is the <button>.
 function removeLastValue() {
   if (query.value) return
-  let emailRef = emails.value[emails.value.length - 1]?.rootRef
+  let emailRef = emails.value[emails.value.length - 1]?.$el
   if (document.activeElement === emailRef) {
     values.value.pop()
     nextTick(() => {
       if (values.value.length) {
-        emailRef = emails.value[emails.value.length - 1].rootRef
+        emailRef = emails.value[emails.value.length - 1].$el
         emailRef?.focus()
       } else {
         setFocus()

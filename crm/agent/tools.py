@@ -26,7 +26,7 @@ SUPPORTED_DOCTYPES = ("CRM Deal", "CRM Lead")
 BASE_RECORD_FIELDS = ("name",)
 # Requested only when the doctype actually declares them -- Lead and Deal differ.
 OPTIONAL_RECORD_FIELDS = ("organization", "status")
-THREAD_FIELDS = ("name", "creation", "sender", "content")
+THREAD_FIELDS = ("name", "creation", "sender", "sent_or_received", "content")
 DEFAULT_THREAD_LIMIT = 50
 MAX_THREAD_LIMIT = 200
 

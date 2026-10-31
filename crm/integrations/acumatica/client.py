@@ -50,6 +50,10 @@ class AcumaticaError(Exception):
 		return ("; ".join(found) or str(body))[:limit]
 
 
+class AcumaticaAuthError(AcumaticaError):
+	"""The login itself was refused: a fact about the credentials, not about any record."""
+
+
 def v(rec, field, default=None):
 	"""Unwrap Acumatica's {"value": x} field encoding."""
 	wrapped = (rec or {}).get(field)
@@ -72,9 +76,16 @@ def wrap(payload):
 
 
 class AcumaticaClient:
-	def __init__(self, settings):
+	def __init__(self, settings, shared_session=True):
 		self.settings = settings
 		self.base = settings.instance_url.rstrip("/")
+		# Every process shares one cached token per instance. A client that is not part
+		# of the sync (Test connection) keeps its own instead: it must not test the
+		# credentials behind somebody else's cached login, and dropping that login from
+		# the cache would not end it -- the sync would mint another and the dropped one
+		# would sit in an API login slot until it expired.
+		self.shared_session = shared_session
+		self._own_token = None
 
 	def entity_url(self, entity):
 		s = self.settings
@@ -86,7 +97,7 @@ class AcumaticaClient:
 
 	def _token(self, force=False):
 		if not force:
-			cached = frappe.cache().get_value(self._cache_key())
+			cached = frappe.cache().get_value(self._cache_key()) if self.shared_session else self._own_token
 			if cached:
 				return cached
 		s = self.settings
@@ -107,7 +118,7 @@ class AcumaticaClient:
 			timeout=TIMEOUT,
 		)
 		if resp.status_code != 200:
-			raise AcumaticaError(
+			raise AcumaticaAuthError(
 				"Acumatica token request failed", status_code=resp.status_code, body=resp.text
 			)
 		body = resp.json()
@@ -115,11 +126,21 @@ class AcumaticaClient:
 		# `or 3600`, not a dict default: instances that answer with "expires_in": null
 		# would blow up int(None).
 		ttl = max(int(body.get("expires_in") or 3600) - 60, 60)
-		frappe.cache().set_value(self._cache_key(), token, expires_in_sec=ttl)
+		if self.shared_session:
+			frappe.cache().set_value(self._cache_key(), token, expires_in_sec=ttl)
+		else:
+			self._own_token = token
 		return token
 
-	def _request(self, method, url, **kw):
+	def _forget_token(self):
+		if self.shared_session:
+			frappe.cache().delete_value(self._cache_key())
+		else:
+			self._own_token = None
+
+	def _request(self, method, url, timeout=None, **kw):
 		"""One call with a single re-auth retry on 401."""
+		timeout = timeout or (TIMEOUT if method == "get" else WRITE_TIMEOUT)
 		for attempt in (0, 1):
 			token = self._token(force=attempt == 1)
 			headers = kw.pop("headers", {}) or {}
@@ -131,10 +152,9 @@ class AcumaticaClient:
 				# the API user's default branch.
 				headers["PX-CbApiBranch"] = branch
 			fn = getattr(requests, method)
-			timeout = TIMEOUT if method == "get" else WRITE_TIMEOUT
 			resp = fn(url, headers=headers, timeout=timeout, **dict(kw))
 			if resp.status_code == 401 and attempt == 0:
-				frappe.cache().delete_value(self._cache_key())
+				self._forget_token()
 				continue
 			if resp.status_code >= 400:
 				raise AcumaticaError(
@@ -154,11 +174,12 @@ class AcumaticaClient:
 		on the first day of testing and every later call answered with the login
 		page. Best effort and never raises: it runs in finally blocks, and a logout
 		that fails must not turn a finished sync or a successful ping into an error.
+		A client with its own session ends that one and leaves the shared token alone.
 		"""
-		token = frappe.cache().get_value(self._cache_key())
+		token = frappe.cache().get_value(self._cache_key()) if self.shared_session else self._own_token
 		if not token:
 			return
-		frappe.cache().delete_value(self._cache_key())
+		self._forget_token()
 		try:
 			requests.post(
 				f"{self.base}/entity/auth/logout",
@@ -209,8 +230,9 @@ class AcumaticaClient:
 				time.sleep(pause)
 
 	# --- writes ---------------------------------------------------------
-	def put(self, entity, payload):
-		return self._request("put", self.entity_url(entity), json=wrap(payload)).json()
+	def put(self, entity, payload, timeout=None):
+		"""``timeout`` overrides WRITE_TIMEOUT for a write that has a deadline of its own."""
+		return self._request("put", self.entity_url(entity), json=wrap(payload), timeout=timeout).json()
 
 	# --- diagnostics ------------------------------------------------------
 	def ping(self):

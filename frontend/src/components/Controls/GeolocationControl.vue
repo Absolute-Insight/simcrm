@@ -38,7 +38,7 @@
       v-if="!disabled"
       class="flex h-5 w-5 shrink-0 items-center justify-center rounded-4 text-ink-gray-4 hover:bg-surface-gray-2 hover:text-ink-gray-7 dark:hover:bg-surface-gray-4"
       :title="__('Clear')"
-      @click.prevent="clearLocation"
+      @click.stop="clearLocation"
     >
       <span class="lucide-x h-3 w-3" aria-hidden="true" />
     </button>
@@ -90,7 +90,35 @@ const props = defineProps({
 const emit = defineEmits(['change'])
 const attrs = useAttrs()
 
-const { coords: geoCoords } = useGeolocation()
+// Not watched from mount: that prompted for location and kept GPS running for
+// every instance on the page, read-only ones included. Only an empty,
+// editable map centres on the device, so only opening one asks, once.
+const {
+  coords: geoCoords,
+  resume: watchDevicePosition,
+  pause: pauseDevicePosition,
+} = useGeolocation({ immediate: false })
+let locatingDevice = false
+
+function locateDevice() {
+  if (locatingDevice || isFinite(geoCoords.value.latitude)) return
+  locatingDevice = true
+  watchDevicePosition()
+}
+
+function stopLocatingDevice() {
+  if (!locatingDevice) return
+  locatingDevice = false
+  pauseDevicePosition()
+}
+
+watch(geoCoords, ({ latitude, longitude }) => {
+  stopLocatingDevice()
+  if (!mapInstance || props.value || editableLayers?.getLayers().length) return
+  if (isFinite(latitude) && isFinite(longitude)) {
+    mapInstance.setView([latitude, longitude], 13)
+  }
+})
 
 const showModal = ref(false)
 const mapId = `geo-map-${Math.random().toString(36).slice(2)}`
@@ -198,9 +226,11 @@ function openModal() {
 
 watch(showModal, (visible) => {
   if (!visible) {
+    stopLocatingDevice()
     destroyMap()
     return
   }
+  if (!props.disabled && !props.value) locateDevice()
   nextTick(() => initMap())
 })
 
@@ -421,5 +451,8 @@ function destroyMap() {
   }
 }
 
-onBeforeUnmount(() => destroyMap())
+onBeforeUnmount(() => {
+  stopLocatingDevice()
+  destroyMap()
+})
 </script>

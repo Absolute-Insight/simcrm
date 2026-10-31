@@ -28,8 +28,25 @@ class CRMTelephonyAgent(Document):
 	# end: auto-generated types
 
 	def validate(self):
+		self.keep_user()
 		self.update_phone_nos_based_on_mobile_no()
 		self.set_primary()
+
+	def keep_user(self):
+		"""A row is named by its user and routes that user's calls; it is never handed
+		to someone else. frappe would quietly put ``user`` back to the name before the
+		write anyway (autoname ``field:user``) and keep everything else the caller
+		sent, so say no rather than half-apply the change."""
+		if not self.is_new() and self.has_value_changed("user"):
+			frappe.throw(_("A telephony agent cannot be moved to another user."), frappe.PermissionError)
+
+	def before_rename(self, old, new, merge=False):
+		"""The same rule for a rename, which never saves and so never reaches
+		``keep_user``: frappe asks only for write on the old row, then sets ``user``
+		to the new name. The row follows its user's own rename
+		(crm.api.user.rename_user_keyed_row) and is not renamed otherwise."""
+		if not self.flags.following_user_rename:
+			frappe.throw(_("A telephony agent cannot be moved to another user."), frappe.PermissionError)
 
 	def update_phone_nos_based_on_mobile_no(self):
 		doc_before_save = self.get_doc_before_save()
@@ -97,6 +114,20 @@ def has_permission(doc, ptype="read", user=None):
 	user = user or frappe.session.user
 	if _is_manager(user):
 		return True
-	# ``doc.user`` is the autoname source; on an existing row it equals ``doc.name``,
-	# on a new one it is the only thing that says whose row this is
-	return (doc.user or doc.name) == user
+	return _stored_user(doc) == user
+
+
+def _stored_user(doc) -> str | None:
+	"""Whose row this is as saved, not as the caller has rewritten it.
+
+	frappe checks write on the document *after* ``set_value`` has applied the
+	caller's values, so a rep who set ``user`` to themselves on a colleague's row
+	looked like its owner -- and the colleague's calls then rang the rep's number.
+	A new row has nothing stored, and its ``user`` is the only thing that says whose
+	it is.
+	"""
+	if doc.name and not doc.get("__islocal"):
+		stored = frappe.db.get_value("CRM Telephony Agent", doc.name, "user")
+		if stored:
+			return stored
+	return doc.user or doc.name

@@ -26,11 +26,17 @@ class CRMAcumaticaSettings(Document):
 		# after_migrate whether or not the integration is on (#166) -- enabling
 		# only arms the write paths. Disabling has to undo the one visible thing
 		# enabling did, or the Deal form keeps a dead button forever.
+		#
+		# Turning it on is what puts the button and the Acumatica section in front
+		# of a rep. Any other save only refreshes the script's text: an admin who
+		# then disabled the script or removed the section meant it.
 		if self.enabled:
 			from crm.integrations.acumatica.install import ensure_layout_fields
 
-			self.create_crm_form_script()
-			ensure_layout_fields()
+			turned_on = self.has_value_changed("enabled")
+			self.create_crm_form_script(enable=turned_on)
+			if turned_on:
+				ensure_layout_fields()
 		else:
 			self.disable_crm_form_script()
 
@@ -38,7 +44,14 @@ class CRMAcumaticaSettings(Document):
 		if frappe.db.get_value("CRM Form Script", FORM_SCRIPT_NAME, "enabled"):
 			frappe.db.set_value("CRM Form Script", FORM_SCRIPT_NAME, "enabled", 0)
 
-	def create_crm_form_script(self):
+	def create_crm_form_script(self, enable: bool = False):
+		"""Install the quote button's script, or bring its text up to date.
+
+		``enabled`` is the one thing a site may change on a standard form script,
+		so an existing script is only switched back on when ``enable`` says the
+		integration itself was just turned on -- not on every settings save, and
+		not on every migrate.
+		"""
 		from crm.integrations.acumatica.api import get_crm_form_script
 
 		script = get_crm_form_script()
@@ -64,8 +77,8 @@ class CRMAcumaticaSettings(Document):
 		)
 		if current.script != script:
 			frappe.db.set_value("CRM Form Script", FORM_SCRIPT_NAME, "script", script)
-		if not current.enabled:
-			# re-enabling after a disable brings the button back
+		if enable and not current.enabled:
+			# re-enabling the integration after a disable brings the button back
 			frappe.db.set_value("CRM Form Script", FORM_SCRIPT_NAME, "enabled", 1)
 
 

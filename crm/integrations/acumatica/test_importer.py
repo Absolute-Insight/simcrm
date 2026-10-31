@@ -51,10 +51,99 @@ class TestUpserts(ImporterTestCase):
 
 		rec2 = C(NoteID="guid-org-1", CustomerID="ACME01", CustomerName="Acme Limited")
 		name2 = importer.upsert_organization(rec2)
-		self.assertEqual(name, name2)  # matched on NoteID, not created twice
+		# matched on NoteID, not created twice -- and renamed, since the docname is the name
 		self.assertEqual(
-			frappe.db.get_value("CRM Organization", name, "organization_name"),
+			frappe.get_all("CRM Organization", {"acumatica_noteid": "guid-org-1"}, pluck="name"), [name2]
+		)
+		self.assertEqual(name2, "Acme Limited")
+		self.assertEqual(
+			frappe.db.get_value("CRM Organization", name2, "organization_name"),
 			"Acme Limited",
+		)
+
+	def test_a_customer_renamed_in_acumatica_stays_renamed_after_an_ordinary_save(self):
+		"""The importer wrote the new name past the autoname with db_set, leaving the
+		docname on the old one -- and Document._sync_autoname_field() copies the docname
+		back into organization_name on every save. A rep editing the website, or the
+		enrichment job, quietly undid the rename until Acumatica touched it again."""
+		old = importer.upsert_organization(
+			C(NoteID="g-ren-1", CustomerID="C-REN01", CustomerName="Renamer Ltd")
+		)
+		contact = frappe.get_doc(
+			{"doctype": "Contact", "first_name": "Rena", "last_name": "Mer", "company_name": old}
+		).insert(ignore_permissions=True)
+		deal = frappe.get_doc({"doctype": "CRM Deal", "organization": old, "status": "Qualification"}).insert(
+			ignore_permissions=True
+		)
+
+		new = importer.upsert_organization(
+			C(NoteID="g-ren-1", CustomerID="C-REN01", CustomerName="Renamer Holdings")
+		)
+
+		org = frappe.get_doc("CRM Organization", new)
+		org.website = "https://renamer.example"
+		org.save(ignore_permissions=True)
+		self.assertEqual(
+			frappe.db.get_value(
+				"CRM Organization", {"acumatica_noteid": "g-ren-1"}, ["name", "organization_name"]
+			),
+			("Renamer Holdings", "Renamer Holdings"),
+		)
+		self.assertFalse(frappe.db.exists("CRM Organization", "Renamer Ltd"))
+		# what pointed at the old name points at the new one: the deal by its Link, the
+		# contact by the Data field the org page lists contacts by
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "organization"), new)
+		self.assertEqual(frappe.db.get_value("Contact", contact.name, "company_name"), new)
+
+	def test_following_a_rename_keeps_the_syncs_api_login(self):
+		"""rename_doc clears the whole site cache, the sync's shared Acumatica token
+		included: the next call logged in again, and the dropped login held one of the
+		API user's concurrent-login slots until it expired -- one per renamed customer."""
+		importer.upsert_organization(C(NoteID="g-ren-2", CustomerID="C-REN02", CustomerName="Keeper Ltd"))
+		# frappe.clear_cache() reads persistent_cache_keys from hooks cached per site,
+		# possibly by a process running other code; start from this code's
+		frappe.clear_cache()
+		key = "acumatica_token::https://t.acumatica.com"
+		frappe.cache().set_value(key, "T-SYNC")
+		self.addCleanup(frappe.cache().delete_value, key)
+
+		importer.upsert_organization(
+			C(NoteID="g-ren-2", CustomerID="C-REN02", CustomerName="Keeper Holdings")
+		)
+
+		self.assertTrue(frappe.db.exists("CRM Organization", "Keeper Holdings"))
+		self.assertEqual(frappe.cache().get_value(key), "T-SYNC")
+
+	def test_a_new_customer_whose_name_another_org_holds_in_its_column_is_suffixed(self):
+		"""The spreadsheet import created shared-name accounts as "Name (CustomerID)"
+		while the unique organization_name column could still hold the plain name. A new
+		Acumatica customer with that plain name looked only for a *record* named so, found
+		none, and died on the unique index -- five sweeps of Import Failed, then Gave Up."""
+		frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Column Holder Ltd"}).insert(
+			ignore_permissions=True
+		)
+		frappe.rename_doc(
+			"CRM Organization",
+			"Column Holder Ltd",
+			"Column Holder Ltd (C-HOLD01)",
+			force=True,
+			show_alert=False,
+		)
+		frappe.db.sql(
+			"update `tabCRM Organization` set organization_name=%s, acumatica_id=%s where name=%s",
+			("Column Holder Ltd", "C-HOLD01", "Column Holder Ltd (C-HOLD01)"),
+		)
+
+		name = importer.upsert_organization(
+			C(NoteID="g-hold-2", CustomerID="C-HOLD02", CustomerName="Column Holder Ltd")
+		)
+
+		self.assertEqual(name, "Column Holder Ltd (C-HOLD02)")
+		self.assertEqual(frappe.db.get_value("CRM Organization", name, "acumatica_noteid"), "g-hold-2")
+		# the holder keeps its own link
+		self.assertEqual(
+			frappe.db.get_value("CRM Organization", "Column Holder Ltd (C-HOLD01)", "acumatica_id"),
+			"C-HOLD01",
 		)
 
 	def test_upsert_contact_links_organization(self):
@@ -224,12 +313,13 @@ class TestUpserts(ImporterTestCase):
 		# a different CustomerName on the second call means the organization_name
 		# fallback would find a DIFFERENT (nonexistent) row -- only the acumatica_id
 		# lookup can make this reuse the first call's org rather than duplicate it.
-		first = importer.upsert_organization(C(CustomerID="C-REP01", CustomerName="Repeat Ltd"))
+		importer.upsert_organization(C(CustomerID="C-REP01", CustomerName="Repeat Ltd"))
 		second = importer.upsert_organization(C(CustomerID="C-REP01", CustomerName="Repeat Limited"))
-		self.assertEqual(first, second)
-		self.assertEqual(frappe.db.count("CRM Organization", {"acumatica_id": "C-REP01"}), 1)
 		self.assertEqual(
-			frappe.db.get_value("CRM Organization", first, "organization_name"), "Repeat Limited"
+			frappe.get_all("CRM Organization", {"acumatica_id": "C-REP01"}, pluck="name"), [second]
+		)
+		self.assertEqual(
+			frappe.db.get_value("CRM Organization", second, "organization_name"), "Repeat Limited"
 		)
 
 	def test_a_name_collision_with_another_customer_is_not_merged(self):
@@ -621,9 +711,13 @@ class TestBackfill(ImporterTestCase):
 		importer.run_backfill()
 
 		client.iter_all.side_effect = lambda entity, **kw: iter([])
-		client.get_by_id.side_effect = RuntimeError("Acumatica GET Customer -> 503")
+		# a failure of this record's own, not of Acumatica as a whole (that one ends the
+		# run instead -- see the outage test below)
+		from crm.integrations.acumatica.client import AcumaticaError
+
+		client.get_by_id.side_effect = AcumaticaError("Acumatica GET Customer -> 500", status_code=500)
 		for _ in range(importer.MAX_RETRY_ATTEMPTS - 1):
-			importer.run_backfill()  # must not let a dead endpoint abort the sweep
+			importer.run_backfill()  # must not let one record's failure abort the sweep
 
 		self.assertEqual(self._pending(), {})
 		issues = [
@@ -706,6 +800,53 @@ class TestBackfill(ImporterTestCase):
 				importer.run_backfill()
 
 		self.assertIn("boom", frappe.db.get_single_value("CRM Acumatica Settings", "last_sync_error"))
+
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_an_outage_ends_the_run_without_spending_the_queues_attempts(self, ClientCls):
+		"""Rotated credentials or a tenant that is down fail every queued record the same
+		way. Charged to each record, five sweeps of that emptied the queue into Gave Up
+		rows -- after a failed login per record per sweep."""
+		import requests
+
+		from crm.integrations.acumatica.client import AcumaticaAuthError, AcumaticaError
+
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.settings.request_pause = 0
+		suffix = frappe.generate_hash(length=6)
+		bad = _customer(suffix, self._contested_org(suffix))
+		client.iter_all.side_effect = lambda entity, **kw: iter([bad] if entity == "Customer" else [])
+		client.get_by_id.return_value = bad
+
+		importer.run_backfill()
+		self.assertEqual(self._pending()["Customer"][f"retry-{suffix}"], 1)
+
+		outages = (
+			AcumaticaAuthError("Acumatica token request failed", status_code=400, body="invalid_grant"),
+			requests.ConnectionError("tenant unreachable"),
+			requests.ReadTimeout("read timed out"),
+			AcumaticaError("Acumatica GET Customer -> 503", status_code=503),
+			AcumaticaError("Acumatica GET Customer -> 429", status_code=429),
+		)
+		for outage in outages:
+			client.get_by_id.side_effect = outage
+			for _ in range(importer.MAX_RETRY_ATTEMPTS):
+				with self.assertRaises(type(outage)):
+					importer.run_backfill()
+
+		self.assertEqual(self._pending()["Customer"][f"retry-{suffix}"], 1)
+		kinds = [
+			row.kind
+			for row in frappe.get_doc("CRM Acumatica Settings").sync_issues
+			if row.remote_id in (f"RETRY{suffix}", f"retry-{suffix}")
+		]
+		self.assertEqual(kinds, ["Import Failed"])
+
+		# the record's own failure still counts: some versions answer a deleted id with a 500
+		client.get_by_id.side_effect = AcumaticaError("Acumatica GET Customer -> 500", status_code=500)
+		client.iter_all.side_effect = lambda entity, **kw: iter([])
+		importer.run_backfill()
+		self.assertEqual(self._pending()["Customer"][f"retry-{suffix}"], 2)
 
 	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
 	def test_a_clean_run_clears_the_last_error(self, ClientCls):

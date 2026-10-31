@@ -78,7 +78,9 @@ def _forecast_vs_actual(from_date, to_date, user, territory=None):
 		{
 			"month": (row.get("month") or "")[:7],
 			"forecasted": row.get("forecasted") or 0,
-			"actual": row.get("actual") or 0,
+			# None for a month still ahead, as the dashboard has it: 0 there read
+			# as "closed nothing" on screen, in the CSV and on the printed sheet
+			"actual": row.get("actual"),
 		}
 		for row in data
 	]

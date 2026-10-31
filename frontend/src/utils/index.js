@@ -35,6 +35,9 @@ export function formatTime(seconds) {
 export function formatDate(date, format, onlyDate = false, onlyTime = false) {
   if (!date) return ''
   format = getFormat(date, format, onlyDate, onlyTime, false)
+  // A Date field is a calendar date, not an instant: converting it from the
+  // site's timezone moved it a day back for a user west of the site.
+  if (onlyDate && !onlyTime) return dayjs(date).format(format)
   return dayjsLocal(date).format(format)
 }
 
@@ -564,6 +567,23 @@ export function copy(obj) {
   return JSON.parse(JSON.stringify(obj))
 }
 
+// A date or datetime as the condition builder's pickers store it.
+const DATE_VALUE = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$/
+const isDateValue = (value) =>
+  typeof value === 'string' && DATE_VALUE.test(value)
+
+/**
+ * Order a date field against a picker value in the server's safe_eval.
+ *
+ * The field is a datetime.date/datetime once loaded from the database, a
+ * string on an unsaved doc and None when unset; Python orders none of them
+ * against a 'YYYY-MM-DD' string, and safe_eval offers no getdate in an
+ * Assignment Rule's context. Their ISO text, cut to the value's precision,
+ * orders correctly in every case. The caller guards against None.
+ */
+const compareDate = (fieldAccess, op, value) =>
+  `f"{${fieldAccess}}"[:${value.length}] ${op} "${value}"`
+
 export const convertToConditions = ({ conditions, fieldPrefix }) => {
   if (!conditions || conditions.length === 0) {
     return ''
@@ -638,13 +658,23 @@ export const convertToConditions = ({ conditions, fieldPrefix }) => {
         return `(${fieldAccess} and "${value}" not in ${fieldAccess})`
       }
 
-      if (
-        op === 'between' &&
-        typeof value === 'string' &&
-        value.includes(',')
-      ) {
-        const [start, end] = value.split(',').map((v) => v.trim())
-        return `(${fieldAccess} >= "${start}" and ${fieldAccess} <= "${end}")`
+      if (op === 'between') {
+        // frappe-ui v1's DateRangePicker stores [from, to]; the old one
+        // stored "from,to".
+        const range = Array.isArray(value)
+          ? value
+          : String(value ?? '').split(',')
+        if (range.length === 2) {
+          const [start, end] = range.map((v) => String(v).trim())
+          if (isDateValue(start) && isDateValue(end)) {
+            return `(${fieldAccess} and ${compareDate(fieldAccess, '>=', start)} and ${compareDate(fieldAccess, '<=', end)})`
+          }
+          return `(${fieldAccess} >= "${start}" and ${fieldAccess} <= "${end}")`
+        }
+      }
+
+      if (['<', '<=', '>', '>='].includes(op) && isDateValue(value)) {
+        return `(${fieldAccess} and ${compareDate(fieldAccess, op, value)})`
       }
 
       let valueStr

@@ -18,6 +18,8 @@ export const useEventNotifications = () => {
       ends_on: ['>=', dayjs().toISOString()],
     },
     notifications: false,
+    // the soonest first: a page of the newest-created dropped imminent events
+    orderBy: 'starts_on asc',
   })
 }
 

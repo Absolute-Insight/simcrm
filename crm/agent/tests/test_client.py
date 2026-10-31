@@ -101,6 +101,49 @@ class ClientRetryTest(UnitTestCase):
 
 		self.assertEqual(post.call_count, client_mod.MAX_ATTEMPTS)
 
+	def test_the_retry_keeps_the_request_it_retries(self):
+		"""Audit L-37: re-fitted as [*request, echo, complaint], the retry dropped the
+		oldest droppable turn -- the quoted thread, or the rep's question -- and a
+		valid second reply, answered from nothing, came back as ok."""
+		cfg = CFG.with_overrides(context_tokens=1200, max_tokens=64)
+		budget = client_mod.prompt_budget(cfg)
+		system = {"role": "system", "content": "SYSTEM INSTRUCTION"}
+
+		def filler(used: list[dict]) -> int:
+			# characters that bring the request to within a token of the budget
+			spare = budget - client_mod.prompting.estimate_messages(used) - 1
+			return client_mod.prompting.tokens_to_chars(spare) - 4
+
+		thread = [system, {"role": "user", "content": "THREAD "}]
+		thread[1]["content"] += "t" * filler(thread)
+		question = {"role": "user", "content": "THE QUESTION"}
+		mentor = [
+			system,
+			{"role": "user", "content": "earlier question"},
+			{"role": "assistant", "content": "earlier answer "},
+			question,
+		]
+		mentor[2]["content"] += "a" * filler(mentor)
+
+		def retry_of(messages: list[dict]) -> list[dict]:
+			self.assertEqual(client_mod.prompting.fit_messages(messages, budget), messages)
+			replies = [_reply("not json " * 300), _reply(GOOD)]
+			with mock.patch.object(client_mod.requests, "post", side_effect=replies) as post:
+				client_mod.complete(cfg, ThreadSummary, messages)
+			retry = post.call_args_list[1][1]["json"]["messages"]
+			self.assertEqual(retry[0], system)
+			self.assertIn(messages[-1], retry)
+			self.assertIn("rejected", retry[-1]["content"])
+			return retry
+
+		# nothing but the request: the echo gives way, never the thread
+		self.assertEqual([m["role"] for m in retry_of(thread)], ["system", "user", "user"])
+		# history gives way to the complaint, and the echo has the room left
+		retry = retry_of(mentor)
+		self.assertEqual([m["role"] for m in retry], ["system", "user", "assistant", "user"])
+		self.assertTrue(retry[2]["content"].startswith("not json"))
+		self.assertLessEqual(client_mod.prompting.estimate_messages(retry), budget)
+
 	def test_original_messages_are_not_mutated_by_the_retry(self):
 		replies = [_reply("nope"), _reply(GOOD)]
 		with mock.patch.object(client_mod.requests, "post", side_effect=replies):

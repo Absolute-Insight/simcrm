@@ -40,6 +40,12 @@ def _disable():
 	frappe.clear_cache(doctype="CRM Acumatica Settings")
 
 
+def _forget_inflight():
+	"""In-flight markers live in redis, which the test's rollback does not reach; and a
+	rolled-back naming series hands the next test's deal the same name."""
+	frappe.cache().delete_keys(outbound.INFLIGHT_PREFIX)
+
+
 def _make_deal(status="Won"):
 	# length=10, not the usual 6: the CustomerID-from-name test needs a name that
 	# still exceeds customer_id_max_length after the dash is stripped.
@@ -56,6 +62,7 @@ class TestCreateCustomer(FrappeTestCase):
 	def tearDown(self):
 		frappe.db.rollback()
 		_disable()
+		_forget_inflight()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_noop_when_disabled(self, ClientCls):
@@ -346,6 +353,7 @@ class TestTransportFailures(FrappeTestCase):
 	def tearDown(self):
 		frappe.db.rollback()
 		_disable()
+		_forget_inflight()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_connection_error_lands_in_sync_issues_not_the_users_save(self, ClientCls):
@@ -361,6 +369,72 @@ class TestTransportFailures(FrappeTestCase):
 
 		issues = frappe.get_doc("CRM Acumatica Settings").sync_issues
 		self.assertTrue(any(i.kind == "Push Failed" and i.remote_id == org.name for i in issues))
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_push_after_an_unanswered_one_links_the_customer_it_made(self, ClientCls):
+		"""AutoNumber: a Customer PUT that timed out may still have created the customer,
+		and the next deal save sent another with no CustomerID to collide on -- a second
+		customer in the client's ERP."""
+		import requests
+
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.side_effect = requests.ReadTimeout("read timed out")
+		org, deal = _make_deal(status="Won")
+
+		outbound.push_customer_for_deal(deal.name)
+		issue = [i for i in frappe.get_doc("CRM Acumatica Settings").sync_issues if i.remote_id == org.name]
+		self.assertIn("may have created the customer", issue[-1].detail)
+
+		# it did: the next push finds it by the name it was sent with
+		client.get_page.return_value = [_wrapped(CustomerID="C000777", NoteID="guid-777")]
+		outbound.push_customer_for_deal(deal.name)
+
+		client.put.assert_called_once()
+		self.assertEqual(
+			client.get_page.call_args.kwargs["filter"], f"CustomerName eq '{org.organization_name}'"
+		)
+		self.assertEqual(
+			frappe.db.get_value("CRM Organization", org.name, ["acumatica_id", "acumatica_noteid"]),
+			("C000777", "guid-777"),
+		)
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "acumatica_customer"), "C000777")
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_push_after_an_unanswered_one_that_made_nothing_sends_it_again(self, ClientCls):
+		import requests
+
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.side_effect = requests.ReadTimeout("read timed out")
+		org, deal = _make_deal(status="Won")
+		outbound.push_customer_for_deal(deal.name)
+
+		client.get_page.return_value = []
+		client.put.side_effect = None
+		client.put.return_value = _wrapped(CustomerID="C000778", NoteID="guid-778")
+		outbound.push_customer_for_deal(deal.name)
+
+		self.assertEqual(client.put.call_count, 2)
+		self.assertEqual(frappe.db.get_value("CRM Organization", org.name, "acumatica_id"), "C000778")
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_refused_push_is_sent_again_without_looking(self, ClientCls):
+		"""A 4xx is Acumatica's answer: nothing was created, so there is nothing to find."""
+		from crm.integrations.acumatica.client import AcumaticaError
+
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.side_effect = AcumaticaError("Acumatica PUT Customer -> 422", status_code=422)
+		org, deal = _make_deal(status="Won")
+		outbound.push_customer_for_deal(deal.name)
+		outbound.push_customer_for_deal(deal.name)
+
+		self.assertEqual(client.put.call_count, 2)
+		client.get_page.assert_not_called()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_non_json_response_lands_in_sync_issues(self, ClientCls):
@@ -382,6 +456,7 @@ class TestCreateSalesQuote(FrappeTestCase):
 		frappe.set_user("Administrator")
 		frappe.db.rollback()
 		_disable()
+		_forget_inflight()
 
 	def test_rejects_a_user_without_write_permission(self):
 		_enable()
@@ -449,6 +524,8 @@ class TestCreateSalesQuote(FrappeTestCase):
 
 		self.assertIn("Customer is on credit hold.", str(ctx.exception))
 		self.assertFalse(frappe.db.get_value("CRM Deal", deal.name, "acumatica_sales_quote"))
+		# Acumatica answered: nothing was made, so the next click need not look for it
+		self.assertIsNone(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_a_timed_out_quote_warns_that_it_may_exist(self, ClientCls):
@@ -543,6 +620,125 @@ class TestCreateSalesQuote(FrappeTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			outbound.create_sales_quote_from_deal(deal.name)
 
+		client.put.assert_not_called()
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_the_put_gives_up_before_the_proxy_does(self, ClientCls):
+		"""At WRITE_TIMEOUT (120s) behind nginx's 120s PROXY_READ_TIMEOUT the proxy
+		answered first: the rep got a bare gateway error, never the warning that the
+		quote may exist. The token fetch comes out of the same budget."""
+		from crm.integrations.acumatica.client import TIMEOUT
+
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.return_value = _wrapped(OrderNbr="QT000131")
+		_org, deal = _mapped_deal()
+
+		outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertLess(client.put.call_args.kwargs["timeout"] + TIMEOUT, 120)
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_retry_adopts_the_order_an_unanswered_attempt_made(self, ClientCls):
+		"""The request that never heard back is rolled back with no OrderNbr stored, so
+		the rep's retry -- once the row lock let go -- PUT a second order."""
+		import requests
+
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.side_effect = requests.ReadTimeout("read timed out")
+		_org, deal = _mapped_deal()
+		with self.assertRaises(frappe.ValidationError):
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		# Acumatica finished it after all
+		client.get_page.return_value = [_wrapped(OrderNbr="QT000777")]
+		self.assertEqual(outbound.create_sales_quote_from_deal(deal.name), "QT000777")
+
+		client.put.assert_called_once()
+		self.assertIn(
+			f"Description eq 'Vectora deal {deal.name}'", client.get_page.call_args.kwargs["filter"]
+		)
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "acumatica_sales_quote"), "QT000777")
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_retry_waits_out_acumatica_before_sending_another(self, ClientCls):
+		import time
+
+		import requests
+
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.side_effect = requests.ReadTimeout("read timed out")
+		_org, deal = _mapped_deal()
+		with self.assertRaises(frappe.ValidationError):
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		# nothing there yet proves nothing: Acumatica may still be writing it
+		client.get_page.return_value = []
+		with self.assertRaises(frappe.ValidationError) as ctx:
+			outbound.create_sales_quote_from_deal(deal.name)
+		self.assertIn("Try again in a few minutes", str(ctx.exception))
+		client.put.assert_called_once()
+
+		# once it has had time to finish, nothing there means nothing was made
+		client.put.side_effect = None
+		client.put.return_value = _wrapped(OrderNbr="QT000778")
+		later = time.time() + outbound.QUOTE_SETTLE_SECONDS + 1
+		with patch.object(outbound.time, "time", return_value=later):
+			self.assertEqual(outbound.create_sales_quote_from_deal(deal.name), "QT000778")
+		self.assertEqual(client.put.call_count, 2)
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_deal_priced_in_another_currency_than_its_customer_is_refused(self, ClientCls):
+		"""Acumatica books a quote in its customer's currency and reads every UnitPrice
+		in it: a ZAR-priced deal reached a USD customer as dollars, about 18x the price."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		org, deal = _mapped_deal()
+		frappe.db.set_value("CRM Organization", org.name, "currency", "USD")
+		frappe.db.set_value("CRM Deal", deal.name, "currency", "ZAR")
+
+		with self.assertRaises(frappe.ValidationError) as ctx:
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertIn("billed in USD", str(ctx.exception))
+		client.put.assert_not_called()
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_the_quote_says_which_currency_its_prices_are_in(self, ClientCls):
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.return_value = _wrapped(OrderNbr="QT000132")
+		org, deal = _mapped_deal()
+		frappe.db.set_value("CRM Organization", org.name, "currency", "USD")
+		frappe.db.set_value("CRM Deal", deal.name, "currency", "USD")
+
+		outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertEqual(client.put.call_args[0][1]["CurrencyID"], "USD")
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_free_text_line_is_refused_by_name_not_with_a_type_error(self, ClientCls):
+		"""A line typed in by name has no product_code: its None went into the list of
+		unlinked codes and ", ".join() raised a TypeError -- a generic error toast and
+		an Error Log row instead of the refusal that says what to fix."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		org, deal = _mapped_deal()  # one linked product
+		deal.append("products", {"product_name": "Custom bracket", "qty": 1, "rate": 5})
+		deal.save(ignore_permissions=True)
+
+		with self.assertRaises(frappe.ValidationError) as cm:
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertIn("Custom bracket", str(cm.exception))
 		client.put.assert_not_called()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")

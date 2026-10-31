@@ -238,12 +238,15 @@ function setSort(data) {
 }
 
 function updateSort(data, index) {
-  let oldSort = Array.from(sortValues.value)[index]
-  sortValues.value.delete(oldSort)
-  sortValues.value.add({
+  // Replace the row in place: delete then add appended the new field, so
+  // changing the primary sort's field quietly made it the last one.
+  let values = Array.from(sortValues.value)
+  values[index] = {
     fieldname: data.fieldname,
-    direction: oldSort.direction,
-  })
+    direction: values[index].direction,
+  }
+  sortValues.value.clear()
+  values.forEach((value) => sortValues.value.add(value))
   apply()
 }
 

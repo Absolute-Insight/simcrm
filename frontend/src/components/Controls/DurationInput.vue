@@ -36,7 +36,6 @@ const inputRef = ref(null)
 const isFocused = ref(false)
 const editValue = ref('')
 const errorMessage = ref('')
-const isCommitting = ref(false)
 
 const sizeClass = computed(() => {
   return { sm: 'text-xs', md: 'text-base' }[attrs.size || 'sm']
@@ -52,7 +51,8 @@ function handleFocus() {
   editValue.value = formatDuration(props.value, props.longForm) || ''
   errorMessage.value = ''
   nextTick(() => {
-    inputRef.value?.el?.select()
+    // frappe-ui v1's TextInput exposes the <input> as `inputElement`.
+    inputRef.value?.inputElement?.select()
   })
 }
 
@@ -61,21 +61,22 @@ function handleInput(e) {
   errorMessage.value = ''
 }
 
+// Enter and Escape have already ended the edit (commit and revert both clear
+// isFocused) by the time they blur the input; committing again here emitted
+// Enter's value twice and saved the edit Escape had cancelled.
 function handleBlur() {
-  if (isCommitting.value) return
+  if (!isFocused.value) return
   commit()
 }
 
 function handleKeydown(e) {
   if (e.key === 'Enter') {
     e.preventDefault()
-    isCommitting.value = true
     commit()
-    inputRef.value?.el?.blur()
-    isCommitting.value = false
+    inputRef.value?.inputElement?.blur()
   } else if (e.key === 'Escape') {
     revert()
-    inputRef.value?.el?.blur()
+    inputRef.value?.inputElement?.blur()
   }
 }
 
@@ -105,6 +106,7 @@ function commit() {
 
 function revert() {
   errorMessage.value = ''
+  editValue.value = ''
   isFocused.value = false
 }
 
