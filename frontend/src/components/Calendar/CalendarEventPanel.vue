@@ -518,7 +518,7 @@
       </div>
     </div>
     <div
-      v-else-if="_event.event_participants?.length"
+      v-else-if="_event.event_participants?.length && canRespond"
       class="flex flex-col gap-2 px-4.5 py-3"
     >
       <div class="text-sm text-ink-gray-6">
@@ -581,7 +581,6 @@ import {
   ErrorMessage,
   Dropdown,
   dayjs,
-  createDocumentResource,
   TabButtons,
   toast,
   call,
@@ -686,6 +685,12 @@ const currentAttendee = computed(() => {
   return _event.value?.event_participants?.find((p) => p.email === user)
 })
 
+// Going? is the viewer's own answer: a manager looking at a rep's public event
+// is neither the owner nor an attendee, and had no row for it to land on.
+const canRespond = computed(
+  () => _event.value.owner?.value === user || !!currentAttendee.value,
+)
+
 const attending = computed({
   get() {
     if (_event.value.owner?.value === user) {
@@ -698,7 +703,7 @@ const attending = computed({
     if (_event.value.owner?.value === user) {
       _event.value.attending = value
       updateAttendingStatus(user, value)
-    } else {
+    } else if (currentAttendee.value) {
       currentAttendee.value.attending = value
       updateAttendingStatus(currentAttendee.value.email, value)
     }
@@ -708,8 +713,6 @@ const attending = computed({
 const eventTitle = ref(null)
 const error = ref(null)
 const showAllParticipants = ref(false)
-
-const eventResource = ref({})
 
 const oldEvent = ref(null)
 const dirty = computed(() => {
@@ -721,11 +724,20 @@ const displayedPeoples = computed(() => {
   return peoples.value.slice(0, 2)
 })
 
+// the latest loadEvent(); an earlier one answering after it is discarded
+let eventLoad = 0
+
 watch(
   [() => props.mode, () => event.value],
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   ([mode, event], [oldMode, oldEvent]) => {
     error.value = null
+    // Another event opened while this one has unsaved edits: sync() has
+    // already copied them onto its grid entry, where they would stay looking
+    // saved. Put the saved version back before moving on.
+    if (_event.value.id && _event.value.id !== event?.id && dirty.value) {
+      reset()
+    }
     focusOnTitle()
     fetchEvent(oldMode)
   },
@@ -738,21 +750,16 @@ function fetchEvent(oldMode) {
     event.value.id !== 'new-event' &&
     event.value.id !== 'duplicate-event'
   ) {
-    eventResource.value = createDocumentResource({
-      doctype: 'Event',
-      name: event.value.id,
-      fields: ['*'],
-      onSuccess: (data) => {
-        _event.value = parseEventDoc(data)
-        oldEvent.value = deepClone(_event.value)
-        handleReadonlyEvent()
-      },
-    })
-    if (eventResource.value.doc && !event.value.reloadEvent) {
-      _event.value = parseEventDoc(eventResource.value.doc)
-      oldEvent.value = deepClone(_event.value)
-    } else {
-      eventResource.value.reload()
+    // Fetched on every open, and only then: the same event changing mode
+    // (details <-> edit) keeps what is on screen, edits included. This used
+    // createDocumentResource, whose cache hands back the first panel's
+    // resource -- its onSuccess wrote to that unmounted panel, and this one
+    // showed the doc as it was at the first open (a time since dragged
+    // elsewhere, which Going? or a Save would then write back).
+    if (_event.value.id !== event.value.id || event.value.reloadEvent) {
+      loadEvent(event.value.id)
+      showAllParticipants.value = false
+      return
     }
   } else {
     _event.value = event.value
@@ -770,6 +777,27 @@ function fetchEvent(oldMode) {
   }
   handleReadonlyEvent()
   showAllParticipants.value = false
+}
+
+function loadEvent(id) {
+  const load = ++eventLoad
+  if (_event.value.id !== id) {
+    // nothing of the previous event on screen while this one loads
+    _event.value = {}
+    oldEvent.value = {}
+  }
+  call('frappe.client.get', { doctype: 'Event', name: id })
+    .then((doc) => {
+      if (load !== eventLoad) return // another event was opened meanwhile
+      _event.value = parseEventDoc(doc)
+      oldEvent.value = deepClone(_event.value)
+      handleReadonlyEvent()
+    })
+    .catch((err) => {
+      if (load !== eventLoad) return
+      error.value = actionErrorMessage(err, __('Could not load this event.'))
+      toast.error(error.value)
+    })
 }
 
 function handleReadonlyEvent() {
@@ -1021,14 +1049,20 @@ function updateEvent(_e) {
 defineExpose({ updateEvent })
 
 // Keyboard shortcuts
+const INTERACTIVE =
+  'button, a[href], summary, [role="button"], [role="tab"], [role="link"], [role="menuitem"], [role="option"], [role="checkbox"], [role="radio"], [role="switch"]'
+
 useKeyboardShortcuts({
   active: () => show.value,
   shortcuts: [
     { keys: 'Escape', action: () => close() },
     {
       keys: 'Enter',
-      guard: () =>
-        ['details', 'edit'].includes(props.mode) && props.mode === 'details',
+      // Enter on a focused button or link activates it (Going? Yes, See All
+      // Participants, the header actions); this preventDefault()ed it and
+      // opened Edit instead.
+      guard: (e) =>
+        props.mode === 'details' && !e.target?.closest?.(INTERACTIVE),
       action: () => editDetails(),
     },
     {

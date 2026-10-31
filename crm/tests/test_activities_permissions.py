@@ -62,7 +62,7 @@ class DealTimelineWithUnreadableLeadTest(IntegrationTestCase):
 		self.assertTrue(frappe.has_permission("CRM Deal", "read", self.deal.name))
 		self.assertFalse(frappe.has_permission("CRM Lead", "read", self.lead.name))
 
-		activities, _calls, _notes, _tasks, _attachments = get_activities(self.deal.name)
+		activities, *_rest = get_activities(self.deal.name)
 
 		creation = [a for a in activities if a.get("activity_type") == "creation"]
 		self.assertEqual(len(creation), 1, activities)

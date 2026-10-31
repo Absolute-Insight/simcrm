@@ -21,7 +21,7 @@ from frappe.desk.form.assign_to import add as assign_to_add
 from frappe.desk.form.assign_to import remove as assign_to_remove
 from frappe.tests import IntegrationTestCase
 
-from crm.api.doc import remove_assignments
+from crm.api.doc import get_assigned_users, remove_assignments
 
 ALICE = "todoown-alice@crmtest.test"
 BOB = "todoown-bob@crmtest.test"
@@ -313,3 +313,16 @@ class ToDoOwnershipTest(IntegrationTestCase):
 		remove_assignments("CRM Deal", self.deal.name, [ALICE])
 
 		self.assertIsNone(self._owner())
+
+	# --- a blank assignee -----------------------------------------------
+
+	def test_a_blank_assignment_is_not_listed_as_an_assignee(self):
+		"""The SPA's user picker has a Clear button that sent ``assign_to [""]``.
+		frappe stores that as an open ToDo allocated to no one, and the blank name
+		came back here, where the SPA's getUser('') rendered it as whoever was
+		looking. frappe's own ``_assign`` bookkeeping skips such rows; so must this,
+		including the ones already stored."""
+		frappe.set_user("Administrator")
+		assign_to_add({"assign_to": [""], "doctype": "CRM Deal", "name": self.deal.name})
+
+		self.assertEqual(get_assigned_users("CRM Deal", self.deal.name), [ALICE])

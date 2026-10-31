@@ -140,6 +140,29 @@ const confirmUnlink = () => {
   }
 }
 
+// A record that would not go (a link the unlink cannot remove, a permission)
+// used to be counted as deleted, and the toast said so over a list that then
+// reloaded with it still there. Name the survivors and the first reason.
+function notDeletedMessage({ count, failed }) {
+  const total = count + failed.length
+  const [first] = failed
+  if (failed.length == 1) {
+    return __('Deleted {0} of {1}. {2} was not deleted: {3}', [
+      count,
+      total,
+      first.docname,
+      first.reason,
+    ])
+  }
+  return __('Deleted {0} of {1}. Not deleted: {2}. {3}: {4}', [
+    count,
+    total,
+    failed.map((row) => row.docname).join(', '),
+    first.docname,
+    first.reason,
+  ])
+}
+
 const deleteDocs = async () => {
   try {
     // Over ten records frappe deletes in a worker, so the list will not have
@@ -152,6 +175,8 @@ const deleteDocs = async () => {
     })
     if (result?.queued) {
       toast.success(__('Deleting {0} in the background', [result.count]))
+    } else if (result?.failed?.length) {
+      toast.error(notDeletedMessage(result))
     } else {
       toast.success(__('Deleted {0}', [result?.count ?? props.items.length]))
     }

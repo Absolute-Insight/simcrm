@@ -424,22 +424,24 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
     await trigger(handler, row)
   }
 
-  async function triggerOnRowRemove(selectedRows, rows) {
+  // removedRows are the deleted row objects (still carrying the idx they had),
+  // rows the ones that remain -- possibly none, so the removed rows also name
+  // the parentfield and pick the child controllers.
+  async function triggerOnRowRemove(removedRows, rows) {
     const handler = async function () {
-      if (selectedRows.size === 1) {
-        const selectedRow = Array.from(selectedRows)[0]
-        this.currentRowIdx = rows.find((r) => r.name === selectedRow).idx
+      if (removedRows.length === 1) {
+        this.currentRowIdx = removedRows[0].idx
       } else {
         delete this.currentRowIdx
       }
 
-      this.selectedRows = Array.from(selectedRows)
+      this.selectedRows = removedRows.map((r) => r.name)
       this.rows = rows
 
-      await this[rows[0].parentfield + '_remove']?.()
+      await this[removedRows[0].parentfield + '_remove']?.()
     }
 
-    await trigger(handler, rows[0])
+    await trigger(handler, removedRows[0])
   }
 
   async function triggerOnCreateLead() {
