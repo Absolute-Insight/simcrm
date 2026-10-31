@@ -93,26 +93,3 @@ export function uploadFile(
     docname,
   })
 }
-
-/**
- * Upload handler for the email composer.
- *
- * An image placed in an email is fetched by the recipient's mail client,
- * which has no session: a private file is a 403, so the customer saw a broken
- * image. The upload is public instead, under a random prefix, so its address
- * is known only to the people the email went to rather than to anyone who
- * guesses `/files/image.png`.
- */
-export function uploadEmailFile(
-  file: File,
-  doctype?: string,
-  docname?: string,
-) {
-  const token = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) =>
-    b.toString(16).padStart(2, '0'),
-  ).join('')
-  const unguessable = new File([file], `${token}-${file.name}`, {
-    type: file.type,
-  })
-  return uploadFile(unguessable, doctype, docname, false)
-}
