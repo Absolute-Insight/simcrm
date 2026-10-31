@@ -1155,17 +1155,27 @@ def _delete_each(doctype: str, items: list, delete_linked: bool = False, commit:
 	A savepoint per record makes the two steps succeed or fail together. The
 	background job also commits per record, as ``delete_bulk`` did, so five
 	hundred deletes do not hold their row locks until the last one.
+
+	Rolling back to a savepoint leaves frappe's commit callbacks queued, and
+	every linked doc deleted on the way queued one that strips its comments,
+	assignments and versions. Those are cut back with the rows, or the next
+	commit runs them on a linked doc the rollback has just restored.
 	"""
+	callbacks = (frappe.db.before_commit._functions, frappe.db.after_commit._functions)
 	pending = list(items)
 	while True:
 		failed = []
 		for name in pending:
 			frappe.db.savepoint(BULK_DELETE_SAVEPOINT)
+			queued = [len(queue) for queue in callbacks]
 			try:
 				_unlink_linked_docs(doctype, [name], delete_linked)
 				frappe.delete_doc(doctype, name)
 			except Exception as exc:
 				frappe.db.rollback(save_point=BULK_DELETE_SAVEPOINT)
+				for queue, keep in zip(callbacks, queued, strict=True):
+					while len(queue) > keep:
+						queue.pop()
 				failed.append({"docname": name, "reason": strip_html(str(exc)).strip()[:200]})
 				continue
 

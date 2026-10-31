@@ -10,10 +10,13 @@ delete as one thing that either happens or does not.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
 from crm.api.doc import _unlink_linked_docs, delete_bulk_docs, get_linked_docs_of_document
+from crm.fcrm.doctype.crm_deal.crm_deal import CRMDeal
 
 
 def make_contact(first_name: str) -> str:
@@ -190,3 +193,52 @@ class BulkDeleteIsPerRecordTest(IntegrationTestCase):
 
 	def test_a_failure_first_does_not_take_the_rest_down_with_it(self):
 		self.assert_outcome(delete_bulk_docs("CRM Deal", [self.blocked.name, self.plain.name]))
+
+	def test_a_restored_linked_doc_keeps_what_hangs_off_it_after_the_commit(self):
+		"""Deleting a note queues, for after the commit, the removal of its
+		comments, assignments and versions. Rolling back to the savepoint brings
+		the note back but does not take that callback off the queue, so the next
+		commit used to strip a note that is still there.
+
+		Under test frappe runs that callback inline, inside the savepoint, so the
+		rollback undid it; here it is held for the commit, as it is on a site.
+		"""
+		comment = frappe.get_doc(
+			{
+				"doctype": "Comment",
+				"comment_type": "Comment",
+				"reference_doctype": "FCRM Note",
+				"reference_name": self.blocked_note,
+				"content": "still wanted",
+			}
+		).insert(ignore_permissions=True)
+
+		enqueue = frappe.enqueue
+
+		def after_the_commit(method, **kwargs):
+			if not kwargs.pop("enqueue_after_commit", False):
+				return enqueue(method, **kwargs)
+			kwargs["now"] = True
+			frappe.db.after_commit.add(lambda: enqueue(method, **kwargs))
+
+		# "Delete" takes the enrichment run with the deal's other linked docs, so
+		# it no longer stands in the way; the deal refuses to go on its own instead.
+		blocked = self.blocked.name
+
+		def on_trash(doc):
+			if doc.name == blocked:
+				frappe.throw("This deal is still needed")
+
+		with (
+			patch("frappe.enqueue", after_the_commit),
+			patch.object(CRMDeal, "on_trash", on_trash, create=True),
+		):
+			result = delete_bulk_docs("CRM Deal", [self.plain.name, self.blocked.name], delete_linked=True)
+		frappe.db.after_commit.run()
+
+		self.assertEqual([row["docname"] for row in result["failed"]], [self.blocked.name])
+		self.assertFalse(frappe.db.exists("FCRM Note", self.plain_note))
+		self.assertTrue(frappe.db.exists("FCRM Note", self.blocked_note))
+		self.assertTrue(
+			frappe.db.exists("Comment", comment.name), "the surviving deal's note lost its comments"
+		)
