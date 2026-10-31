@@ -36,10 +36,11 @@
           v-if="notifications.data?.length"
           class="divide-y divide-outline-elevation-2 overflow-auto text-base"
         >
-          <RouterLink
+          <component
+            :is="notificationRoute(n) ? 'RouterLink' : 'div'"
             v-for="n in notifications.data"
             :key="n.comment"
-            :to="getRoute(n)"
+            :to="notificationRoute(n) || undefined"
             class="flex cursor-pointer items-start gap-2.5 px-4 py-2.5 hover:bg-surface-gray-2"
             @click="markAsRead(n.comment || n.notification_type_doc)"
           >
@@ -71,7 +72,7 @@
                 {{ __(timeAgo(n.creation)) }}
               </div>
             </div>
-          </RouterLink>
+          </component>
         </div>
         <!-- "You have no new notifications" was the answer to a failed fetch
              as well as an empty one, because the EmptyState was a bare v-else.
@@ -116,6 +117,7 @@ import {
 import { useEventNotificationAlert } from '@/data/notifications'
 import { globalStore } from '@/stores/global'
 import { timeAgo, sanitizeHTML } from '@/utils'
+import { notificationRoute } from '@/utils/notificationRoute'
 import { quiet } from '@/utils/quiet'
 import { onClickOutside } from '@vueuse/core'
 import { useTelemetry } from '@framework/ui/telemetry'
@@ -173,21 +175,4 @@ onMounted(() => {
   $socket.on('crm_notification', onCrmNotification)
   $socket.on('event_notification', onEventNotification)
 })
-
-function getRoute(notification) {
-  let params = {
-    leadId: notification.reference_name,
-  }
-  if (notification.route_name === 'Deal') {
-    params = {
-      dealId: notification.reference_name,
-    }
-  }
-
-  return {
-    name: notification.route_name,
-    params: params,
-    hash: notification.hash,
-  }
-}
 </script>
