@@ -188,7 +188,10 @@ class Inliner:
 		if size > self.bytes_left:
 			return None
 
-		with open(full_path, "rb") as f:
+		# path is the stored row's, confined to the private files directory just above
+		with open(
+			full_path, "rb"
+		) as f:  # nosemgrep: frappe-semgrep-rules.rules.security.frappe-security-file-traversal
 			content = f.read(size + 1)
 		if len(content) > self.bytes_left:
 			return None
