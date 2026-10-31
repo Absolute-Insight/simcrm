@@ -1,5 +1,5 @@
 import { afterEach } from 'vitest'
-import { createApp, h, nextTick } from 'vue'
+import { camelize, createApp, h, nextTick, toHandlerKey } from 'vue'
 
 const mounted = new Set()
 
@@ -29,12 +29,10 @@ export function mount(
   for (const name of component.emits
     ? Object.keys(normaliseEmits(component.emits))
     : []) {
-    const key = 'on' + name[0].toUpperCase() + name.slice(1)
-    const own = props[key]
-    handlers[key] = (...args) => {
-      ;(emitted[name] ||= []).push(args)
-      return own?.(...args)
-    }
+    // camelized so a kebab-case emit still finds a handler passed in props
+    const key = toHandlerKey(camelize(name))
+    const capture = (...args) => (emitted[name] ||= []).push(args)
+    handlers[key] = props[key] ? [capture].concat(props[key]) : capture
   }
   let vm
   const app = createApp({
@@ -45,7 +43,12 @@ export function mount(
   for (const plugin of plugins) app.use(...[].concat(plugin))
   const el = document.createElement('div')
   document.body.appendChild(el)
-  app.mount(el)
+  try {
+    app.mount(el)
+  } catch (error) {
+    el.remove()
+    throw error
+  }
   const wrapper = {
     el,
     get vm() {
