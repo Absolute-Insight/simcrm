@@ -405,25 +405,64 @@ class ServerOwnedFieldsTest(OutcomeTestCase):
 		frappe.client.set_value("CRM Rep Plan Item", item, "note", "After lunch")
 		self.assertEqual(frappe.db.get_value("CRM Rep Plan Item", item, "note"), "After lunch")
 
-	def test_only_the_reps_own_cancellation_is_deleted(self):
-		"""Defence in depth for however an item came to name someone else's event:
-		the planner deletes its events with permissions off, so it checks what it deletes."""
-		victim = self.colleagues_cancelled_visit()
-		item = self.plan_one()
-		frappe.db.set_value(
-			"CRM Rep Plan Item",
-			item,
+	def colleagues_meeting(self) -> str:
+		frappe.set_user(OTHER)
+		event = frappe.get_doc(
 			{
-				"status": "Cancelled",
-				"manual_override": 1,
-				"fulfilled_by_doctype": "Event",
-				"fulfilled_by": victim,
-			},
-		)
+				"doctype": "Event",
+				"subject": "Meeting: Outcome Canyon Coal",
+				"starts_on": frappe.utils.now_datetime(),
+				"event_type": "Private",
+				"status": "Completed",
+			}
+		).insert(ignore_permissions=True)
+		frappe.set_user(REP)
+		return event.name
 
-		clear_override(item)
+	def test_an_item_is_not_saved_on_its_own(self):
+		"""The row-level routes never save the plan, or re-save one that reads the
+		row back unchanged, so CRMRepPlan.validate never saw the claim."""
+		from frappe.api.v2 import create_doc, update_doc
 
-		self.assertTrue(frappe.db.exists("Event", victim))
+		victim = self.colleagues_meeting()
+		item = self.plan_one(activity_type="Meeting")
+		claim = {
+			"status": "Done",
+			"manual_override": 1,
+			"fulfilled_by_doctype": "Event",
+			"fulfilled_by": victim,
+		}
+
+		def as_rest_body(data):
+			form_dict = frappe.local.form_dict
+			self.addCleanup(setattr, frappe.local, "form_dict", form_dict)
+			frappe.local.form_dict = frappe._dict(data)
+
+		row = frappe.get_doc("CRM Rep Plan Item", item).as_dict()
+		with self.subTest("frappe.client.save"), self.assertRaises(frappe.PermissionError):
+			frappe.client.save({**row, **claim})
+
+		with self.subTest("PUT /api/resource"), self.assertRaises(frappe.PermissionError):
+			as_rest_body(claim)
+			update_doc("CRM Rep Plan Item", item)
+
+		with self.subTest("POST /api/resource"), self.assertRaises(frappe.PermissionError):
+			as_rest_body(
+				{
+					"parenttype": "CRM Rep Plan",
+					"parentfield": "items",
+					"parent": row.parent,
+					"activity_type": "Meeting",
+					"planned_date": today(),
+					**claim,
+				}
+			)
+			create_doc("CRM Rep Plan Item")
+
+		stored = frappe.db.get_value("CRM Rep Plan Item", item, ["status", "fulfilled_by"], as_dict=True)
+		self.assertEqual((stored.status, stored.fulfilled_by), ("Planned", None))
+		self.assertEqual(frappe.db.count("CRM Rep Plan Item", {"parent": row.parent}), 1)
+		self.assertFalse(frappe.db.exists("CRM Rep Plan Item", {"fulfilled_by": victim}))
 
 
 class CorrectingACompletedVisitTest(OutcomeTestCase):
