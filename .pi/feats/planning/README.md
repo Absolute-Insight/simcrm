@@ -56,9 +56,11 @@
   `CRMRepPlan.validate` refuses a client change to them through the generic
   document API (`SERVER_ITEM_FIELDS`); only code saving with
   `ignore_permissions` (the endpoints, the matcher, imports, patches) writes
-  them. A link to a record deleted since (the item is in
-  `ignore_links_on_delete`) is dropped on the next save or log rather than
-  failing the week (`_drop_dangling_links`).
+  them. A row is never saved on its own from a client (`CRMRepPlanItem.validate`
+  refuses the REST resource API and `frappe.client.save` on an item), and a
+  plan row naming an item that is not in the plan is refused. A link to a record
+  deleted since (the item is in `ignore_links_on_delete`) is dropped on the next
+  save or log rather than failing the week (`_drop_dangling_links`).
 
 Concrete items are the source of truth; rollups are derived, so "planned 30
 calls" and the 30 planned call items can never disagree.
