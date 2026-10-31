@@ -63,12 +63,17 @@ const { getUser } = usersStore()
 
 const {
   eventNotificationAlerts,
+  isEventCompleted,
   completeEventNotificationAlert,
   removeCompletedEventNotificationAlerts,
 } = useEventNotificationAlert()
 
+// isEventCompleted covers a re-send that arrives before the dismissed list has
+// loaded after a page reload.
 const visibleAlerts = computed(() => {
-  return eventNotificationAlerts.value.filter((alert) => !alert.completed)
+  return eventNotificationAlerts.value.filter(
+    (alert) => !alert.completed && !isEventCompleted(alert.id),
+  )
 })
 
 function openEvent(e) {
@@ -89,14 +94,27 @@ function completeAlert(id) {
 }
 
 function formatEventTime(notification) {
+  let time = ''
   if (notification.all_day_event) {
-    return __('All Day')
+    time = __('All Day')
   } else if (notification.starts_on) {
     const startTime = dayjs(notification.starts_on).format('h:mm a')
     const endTime = dayjs(notification.ends_on).format('h:mm a')
-    return `${startTime} - ${endTime}`
+    time = `${startTime} - ${endTime}`
   }
-  return ''
+  const day = notification.starts_on && eventDay(dayjs(notification.starts_on))
+  return day ? `${day} · ${time}` : time
+}
+
+// Reminders also go out a day or a week ahead, and a time alone reads as
+// today's. Today's events keep the bare time.
+function eventDay(start) {
+  const today = dayjs()
+  if (start.isSame(today, 'day')) return ''
+  if (start.isSame(today.add(1, 'day'), 'day')) return __('Tomorrow')
+  return start.format(
+    start.isSame(today, 'year') ? 'ddd, D MMM' : 'ddd, D MMM YYYY',
+  )
 }
 
 function getParticipants(notification) {
