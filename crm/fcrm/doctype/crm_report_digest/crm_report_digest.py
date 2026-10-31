@@ -214,7 +214,7 @@ def send_due_digests():
 						# finally below restores the scheduler user unconditionally.
 						# nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser
 						frappe.set_user(recipient)
-						report = get_report(digest.report, str(from_date), str(to_date))
+						report = get_report(digest.report, str(from_date), str(to_date), snapshot=True)
 					finally:
 						# nosemgrep: frappe-semgrep-rules.rules.security.frappe-setuser
 						frappe.set_user(original_user)
@@ -316,11 +316,18 @@ def _render_digest(report, from_date, to_date, currency: str | None = None) -> s
 			+ "</td></tr>"
 		)
 
+	# a snapshot covers no window, so it says when it was true instead
+	period_line = (
+		_("As at {0}").format(escape_html(str(to_date)))
+		if report.get("period") is False
+		else f"{escape_html(str(from_date))} – {escape_html(str(to_date))}"
+	)
+
 	return f"""
 	<div style="font-family:ui-sans-serif,system-ui,sans-serif;color:#16161f">
 		<h2 style="font-size:18px;margin:0 0 4px">{escape_html(str(report["title"]))}</h2>
 		<p style="margin:0 0 16px;color:#7a7990;font-size:13px">
-			{escape_html(str(from_date))} – {escape_html(str(to_date))}
+			{period_line}
 		</p>
 		<table style="border-collapse:collapse;width:100%">
 			<thead><tr>{head}</tr></thead>

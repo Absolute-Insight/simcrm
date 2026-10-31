@@ -8,10 +8,12 @@ import { ref } from 'vue'
  * on the dashboard, the screen an exec actually looks at, that reads as a
  * widget bolted onto someone else's product.
  *
- * ONE series, both themes: these eight are drawn from the brand hues and
- * validated (six-check CVD validator) against BOTH canvases — light #fafbff
- * and dark #131521 — so a series keeps its colour when the user flips the
- * theme, and adjacent series stay separable for the common forms of colour
+ * SERIES is validated (six-check CVD validator) against the dark canvas
+ * #131521, LIGHT_SERIES against the light canvas: the light theme's steel and
+ * coral lead, deepened from the artwork so they clear 3:1 as marks. The two
+ * cannot be one list — indigo beside a steel-blue app reads as a foreign brand —
+ * so a series' colour now follows its position within a theme, not across the
+ * flip. Adjacent series stay separable for the common forms of colour
  * blindness. The one sub-8 adjacent pair (positions 7-8) is legal because
  * every chart carries a legend and direct labels as secondary encoding. The
  * old split ramps failed those checks (light: magenta↔sky ΔE 3.0 deutan and
@@ -28,13 +30,24 @@ const SERIES = [
   '#4d7c0f', // olive
 ]
 
+const LIGHT_SERIES = [
+  '#2f7ab8', // steel — the primary series
+  '#d0625a', // coral
+  '#0d9488', // teal
+  '#7c3aed', // violet
+  '#d97706', // amber
+  '#0284c7', // deep sky
+  '#be185d', // deep magenta
+  '#4d7c0f', // olive
+]
+
 function isDark() {
   if (typeof document === 'undefined') return false
   return document.documentElement.getAttribute('data-theme') === 'dark'
 }
 
-export function chartSeriesColors() {
-  return [...SERIES]
+export function chartSeriesColors(dark = isDark()) {
+  return [...(dark ? SERIES : LIGHT_SERIES)]
 }
 
 /**
@@ -89,7 +102,7 @@ function verticalFade(hex, topAlpha, bottomAlpha) {
 export function applyLuxChartTheme(config, dark) {
   if (!config || typeof config !== 'object') return config
   if (config.colors?.length) return config
-  const palette = [...SERIES]
+  const palette = chartSeriesColors(dark)
   if (!Array.isArray(config.series)) return { ...config, colors: palette }
 
   const series = config.series.map((s, index) => {
