@@ -53,6 +53,7 @@ vi.mock('frappe-ui', async (importOriginal) => ({
   createDocumentResource: ({ name }) =>
     (records[name] ||= reactive({
       doc: { name, doctype: 'CRM Deal', products: [] },
+      get: { fetch: async () => {} },
       save: { submit: async () => {} },
     })),
   createResource: () => reactive({ data: null, reload() {}, fetch() {} }),

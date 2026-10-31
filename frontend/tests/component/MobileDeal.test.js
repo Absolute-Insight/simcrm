@@ -190,6 +190,8 @@ const later = (value, ms) =>
 setConfig('resourceFetcher', ({ url, params }) => {
   if (url.endsWith('get_sidepanel_sections'))
     return later(layout, S.delay.sections)
+  if (url.endsWith('get_deal_contacts') && params.name === 'DEAL-REFUSED')
+    return Promise.reject(new Error('refused'))
   if (url.endsWith('get_deal_contacts'))
     return later(S.contacts[params.name] || [], S.delay.contacts)
   return later([], 1)
@@ -249,6 +251,16 @@ afterEach(() => {
 })
 
 describe('MobileDeal contacts', () => {
+  it('leaves no rejection unhandled when they are refused', async () => {
+    const rejections = []
+    const onRejection = (reason) => rejections.push(reason)
+    process.on('unhandledRejection', onRejection)
+    await visit(MobileDeal, { dealId: 'DEAL-REFUSED' })
+    await new Promise((r) => setTimeout(r, 20))
+    process.off('unhandledRejection', onRejection)
+    expect(rejections).toEqual([])
+  })
+
   it('sets the tapped contact as primary, and offers it only on the others', async () => {
     await visit(MobileDeal, { dealId: 'DEAL-A' })
     const [alice, bob] = [

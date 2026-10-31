@@ -7,6 +7,7 @@ import { readableLoadError } from '@/composables/useDocumentError'
 import { showSettings, activeSettingsPage } from '@/composables/settings'
 import { runSequentially, parseAssignees, sanitizeText } from '@/utils'
 import { findMissingMandatory } from '@/utils/fieldTransforms'
+import { quiet } from '@/utils/quiet'
 import { validationErrorMessage } from '@/utils/formScriptErrors'
 import { createDocumentResource, createResource, toast } from 'frappe-ui'
 import { ref, reactive, getCurrentInstance } from 'vue'
@@ -168,9 +169,14 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
             },
           },
           ...resourceOverrides,
+          // The first read is started below instead, where it can be caught.
+          // A failure is already on `error` and in a toast; `auto` would add
+          // an unhandled rejection for each.
+          auto: false,
         },
         vm,
       )
+      quiet(documentsCache[doctype][docname].get.fetch())
       if (!documentsCache[doctype][docname].fieldHtmlMap) {
         documentsCache[doctype][docname].fieldHtmlMap = {}
       }
@@ -218,13 +224,13 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
     assigneesCache[doctype][docname || ''] = createResource({
       url: 'crm.api.doc.get_assigned_users',
       cache: `assignees:${doctype}:${docname}`,
-      auto: docname ? true : false,
       params: {
         doctype: doctype,
         name: docname,
       },
       transform: (data) => parseAssignees(data),
     })
+    if (docname) quiet(assigneesCache[doctype][docname].fetch())
   }
 
   permissionsCache[doctype] = permissionsCache[doctype] || {}
@@ -233,13 +239,13 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
     permissionsCache[doctype][docname || ''] = createResource({
       url: 'frappe.client.get_doc_permissions',
       cache: `permissions:${doctype}:${docname}`,
-      auto: docname ? true : false,
       params: {
         doctype: doctype,
         docname: docname,
       },
       initialData: { permissions: {} },
     })
+    if (docname) quiet(permissionsCache[doctype][docname].fetch())
   }
 
   async function setupFormScript() {

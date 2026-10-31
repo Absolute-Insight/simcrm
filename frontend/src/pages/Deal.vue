@@ -381,6 +381,8 @@ import { globalStore } from '@/stores/global'
 import { statusesStore } from '@/stores/statuses'
 import { getMeta } from '@/stores/meta'
 import { useDocument } from '@/data/document'
+import { quiet } from '@/utils/quiet'
+import { useDocumentError } from '@/composables/useDocumentError'
 import { whatsappEnabled } from '@/composables/whatsapp'
 import { callEnabled } from '@/composables/telephony'
 import { useBroadcast } from '@/composables/useBroadcast'
@@ -425,8 +427,6 @@ const props = defineProps({
   dealId: { type: String, required: true },
 })
 
-const errorTitle = ref('')
-const errorMessage = ref('')
 const showDeleteLinkedDocModal = ref(false)
 
 const {
@@ -439,25 +439,13 @@ const {
   error,
 } = useDocument('CRM Deal', props.dealId)
 
+const { errorTitle, errorMessage } = useDocumentError(error)
+
 const canDelete = computed(() => permissions.data?.permissions?.delete || false)
 
 const doc = computed(() => document.doc || {})
 
 useUnsavedChangesWarning(() => document.isDirty)
-
-watch(error, (err) => {
-  if (err) {
-    errorTitle.value = __(
-      err.exc_type == 'DoesNotExistError'
-        ? 'Document Not Found'
-        : 'Error Occurred',
-    )
-    errorMessage.value = __(err.messages?.[0] || 'An Error Occurred')
-  } else {
-    errorTitle.value = ''
-    errorMessage.value = ''
-  }
-})
 
 watch(
   () => document.doc,
@@ -722,14 +710,14 @@ async function setPrimaryContact(contact) {
   }
 }
 
-// `auto` is what makes a cached resource refetch when the page is opened
-// again: without it a revisit reused the first visit's contacts, so a number
-// edited on the contact in between was still the one Make a Call dialled.
+// Fetched on every mount, or a revisit reused the first visit's contacts and a
+// number edited on the contact in between was still the one Make a Call
+// dialled. Not `auto`, whose fetch nothing can catch: a refused deal would log
+// an unhandled rejection behind the page that already says so.
 const dealContacts = createResource({
   url: 'crm.fcrm.doctype.crm_deal.api.get_deal_contacts',
   params: { name: props.dealId },
   cache: ['deal_contacts', props.dealId],
-  auto: true,
   transform: (data) => {
     // get_deal_contacts orders primary first, so expanding the first contact
     // surfaces the most relevant email and phone without a click.
@@ -739,6 +727,7 @@ const dealContacts = createResource({
     return data
   },
 })
+quiet(dealContacts.fetch())
 
 function triggerCall() {
   let primaryContact = dealContacts.data?.find((c) => c.is_primary)
