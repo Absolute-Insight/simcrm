@@ -4,10 +4,13 @@ import re
 import frappe
 from frappe import _
 from frappe.permissions import add_permission, update_permission_property
+from frappe.utils import get_fullname
 
 from crm.api.doc import assigned_users
 from crm.fcrm.doctype.crm_notification.crm_notification import notify_user
 from crm.integrations.api import lookup_contact_lead_or_deal_from_number
+from crm.integrations.whatsapp.lines import get_line_user, get_sending_account, require_sending_account
+from crm.utils import canonical_whatsapp_number, is_same_whatsapp_number
 
 ALLOWED_WHATSAPP_ROLES = ["System Manager", "Sales Manager", "Sales User"]
 
@@ -49,6 +52,27 @@ def _digits(number: str) -> str:
 	return re.sub(r"\D", "", number or "")
 
 
+def _is_same_number(number: str, other: str) -> bool:
+	"""Digit for digit, or as the same number in two spellings: the composer sends
+	what the record holds, and a contact row may hold the +27 form of an 082."""
+	if _digits(number) == _digits(other):
+		return True
+	canonical = canonical_whatsapp_number(other)
+	return bool(canonical) and is_same_whatsapp_number(number, canonical)
+
+
+def _meta_number(number: str) -> str:
+	"""A record's number the way Meta needs it. A stored 082 number, passed on as
+	it is, would be refused or dialled in another country."""
+	canonical = canonical_whatsapp_number(number)
+	if not canonical:
+		frappe.throw(
+			_("{0} is not a valid phone number. Add the country code to the record.").format(number),
+			frappe.ValidationError,
+		)
+	return canonical
+
+
 def resolve_destination(reference_doc, to: str | None = None) -> str:
 	"""The number a message about ``reference_doc`` may go to.
 
@@ -68,8 +92,7 @@ def resolve_destination(reference_doc, to: str | None = None) -> str:
 		)
 	if not to:
 		return numbers[0]
-	wanted = _digits(to)
-	match = next((number for number in numbers if wanted and _digits(number) == wanted), None)
+	match = next((number for number in numbers if _digits(to) and _is_same_number(number, to)), None)
 	if not match:
 		frappe.throw(
 			_("{0} is not a phone number of {1} {2}.").format(to, reference_doc.doctype, reference_doc.name),
@@ -83,12 +106,14 @@ def validate(doc, method):
 	# Matching its number instead re-filed it -- on every status save, too --
 	# onto whichever lead or deal the lookup found first, so a message sent from
 	# one deal of a contact who is primary on two turned up on the other one.
-	if doc.type == "Outgoing" and doc.reference_doctype and doc.reference_name:
+	# An incoming one likewise: a status or media save must not move it.
+	if doc.reference_doctype and doc.reference_name:
 		return
 	phone_number = doc.get("from") if doc.type == "Incoming" else doc.get("to")
 	if phone_number:
 		try:
-			name, doctype = lookup_contact_lead_or_deal_from_number(phone_number)
+			prefer_user = get_line_user(doc.get("whatsapp_account"))
+			name, doctype = lookup_contact_lead_or_deal_from_number(phone_number, prefer_user=prefer_user)
 			if doctype and name is not None:
 				doc.reference_doctype = doctype
 				doc.reference_name = name
@@ -143,34 +168,56 @@ def notify_agent(doc):
                 <span class="font-medium text-ink-gray-9">{safe_reference_title}</span>
             </div>
         """
-		notify_these = assigned_users(doc.reference_doctype, doc.reference_name)
-		for user in notify_these:
+		# The rep whose number it arrived on is told even when the record is
+		# another rep's. Row scoping still holds: they get neither its title nor
+		# a link to a page that would refuse them.
+		unnamed_text = f"""
+            <div class="mb-2 leading-5 text-ink-gray-5">
+                <span class="font-medium text-ink-gray-9">{_("You")}</span>
+                <span>{_("received a whatsapp message on your number")}</span>
+            </div>
+        """
+		for user in recipients_of(doc):
+			readable = frappe.has_permission(doc.reference_doctype, "read", doc=doc.reference_name, user=user)
 			notify_user(
 				{
 					"owner": doc.owner,
 					"assigned_to": user,
 					"notification_type": "WhatsApp",
 					"message": doc.message,
-					"notification_text": notification_text,
+					"notification_text": notification_text if readable else unnamed_text,
 					"reference_doctype": "WhatsApp Message",
 					"reference_docname": doc.name,
-					"redirect_to_doctype": doc.reference_doctype,
-					"redirect_to_docname": doc.reference_name,
+					"redirect_to_doctype": doc.reference_doctype if readable else None,
+					"redirect_to_docname": doc.reference_name if readable else None,
 				}
 			)
 
 
+def recipients_of(doc) -> list[str]:
+	"""Who hears about an incoming message: the record's assignees and owner, and
+	the rep whose number it arrived on, who may be none of those."""
+	owner_field = {"CRM Lead": "lead_owner", "CRM Deal": "deal_owner"}.get(doc.reference_doctype)
+	users = set(assigned_users(doc.reference_doctype, doc.reference_name))
+	if owner_field:
+		users.add(frappe.db.get_value(doc.reference_doctype, doc.reference_name, owner_field))
+	users.add(get_line_user(doc.get("whatsapp_account")))
+	return sorted(user for user in users if user and user != "Guest")
+
+
 @frappe.whitelist()
 def is_whatsapp_enabled():
-	if not frappe.db.exists("DocType", "WhatsApp Settings"):
+	"""Whether the site has WhatsApp at all: one active number turns it on for
+	everyone, because a rep with no number of their own may still read a thread.
+	Whether this user can send is ``can_send_whatsapp``."""
+	if not frappe.db.exists("DocType", "WhatsApp Account"):
 		return False
-	default_outgoing = frappe.get_cached_value(
-		"WhatsApp Settings", "WhatsApp Settings", "default_outgoing_account"
-	)
-	if not default_outgoing:
-		return False
-	status = frappe.get_cached_value("WhatsApp Account", default_outgoing, "status")
-	return status == "Active"
+	return bool(frappe.db.exists("WhatsApp Account", {"status": "Active"}))
+
+
+@frappe.whitelist()
+def can_send_whatsapp():
+	return bool(get_sending_account())
 
 
 @frappe.whitelist()
@@ -234,6 +281,7 @@ def get_whatsapp_messages(reference_doctype: str, reference_name: str):
 		},
 		fields=[
 			"name",
+			"owner",
 			"type",
 			"to",
 			"from",
@@ -312,8 +360,7 @@ def get_whatsapp_messages(reference_doctype: str, reference_name: str):
 		return names_by_record[record]
 
 	for message in messages:
-		from_name = from_name_of(message) if message["from"] else _("You")
-		message["from_name"] = from_name
+		message["from_name"] = from_name_of(message) if message["from"] else sender_name(message)
 	# Filter messages to get only replies
 	reply_messages = [message for message in messages if message["is_reply"]]
 
@@ -327,7 +374,9 @@ def get_whatsapp_messages(reference_doctype: str, reference_name: str):
 
 		# If the replied message is found, add the reply details to the reply message
 		if replied_message:
-			from_name = from_name_of(reply_message) if replied_message["from"] else _("You")
+			from_name = (
+				from_name_of(reply_message) if replied_message["from"] else sender_name(replied_message)
+			)
 			message = replied_message["message"]
 			if replied_message["message_type"] == "Template":
 				message = replied_message["template"]
@@ -353,7 +402,10 @@ def create_whatsapp_message(
 ):
 	# sending on a record's behalf is a write to its thread, not a read of it
 	reference_doc = validate_access(reference_doctype, reference_name, permtype="write")
-	to = resolve_destination(reference_doc, to)
+	if not ((message or "").strip() or attach):
+		frappe.throw(_("Type a message or attach a file."), frappe.ValidationError)
+	to = _meta_number(resolve_destination(reference_doc, to))
+	account = require_sending_account()
 	doc = frappe.new_doc("WhatsApp Message")
 
 	if reply_to:
@@ -380,6 +432,8 @@ def create_whatsapp_message(
 			"to": to,
 			"attach": attach,
 			"content_type": content_type,
+			"type": "Outgoing",
+			"whatsapp_account": account,
 		}
 	)
 	doc.insert(ignore_permissions=True)
@@ -389,7 +443,8 @@ def create_whatsapp_message(
 @frappe.whitelist()
 def send_whatsapp_template(reference_doctype: str, reference_name: str, template: str, to: str | None = None):
 	reference_doc = validate_access(reference_doctype, reference_name, permtype="write")
-	to = resolve_destination(reference_doc, to)
+	to = _meta_number(resolve_destination(reference_doc, to))
+	account = require_sending_account()
 	doc = frappe.new_doc("WhatsApp Message")
 	doc.update(
 		{
@@ -401,6 +456,8 @@ def send_whatsapp_template(reference_doctype: str, reference_name: str, template
 			"use_template": True,
 			"template": template,
 			"to": to,
+			"type": "Outgoing",
+			"whatsapp_account": account,
 		}
 	)
 	doc.insert(ignore_permissions=True)
@@ -421,7 +478,8 @@ def react_on_whatsapp_message(emoji: str, reply_to_name: str):
 	# record's thread like any other send, not a read of it
 	validate_access(reply_to_doc.reference_doctype, reply_to_doc.reference_name, permtype="write")
 
-	to = (reply_to_doc.type == "Incoming" and reply_to_doc.get("from")) or reply_to_doc.to
+	to = _meta_number((reply_to_doc.type == "Incoming" and reply_to_doc.get("from")) or reply_to_doc.to)
+	account = require_sending_account()
 	doc = frappe.new_doc("WhatsApp Message")
 	doc.update(
 		{
@@ -431,6 +489,8 @@ def react_on_whatsapp_message(emoji: str, reply_to_name: str):
 			"to": to,
 			"reply_to_message_id": reply_to_doc.message_id,
 			"content_type": "reaction",
+			"type": "Outgoing",
+			"whatsapp_account": account,
 		}
 	)
 	doc.insert(ignore_permissions=True)
@@ -443,6 +503,12 @@ def parse_template_parameters(string, parameters):
 		string = string.replace(placeholder, str(parameter))
 
 	return string
+
+
+def sender_name(message):
+	"""The rep who sent an outgoing message: a record has several, and the reader
+	of a thread is not always one of them. get_fullname caches per request."""
+	return get_fullname(message.get("owner")) if message.get("owner") else _("You")
 
 
 def get_from_name(message):
@@ -474,6 +540,11 @@ WHATSAPP_PERMISSIONS = {
 	"WhatsApp Templates": {"Sales Manager": ("read",), "Sales User": ("read",)},
 	"WhatsApp Settings": {"Sales Manager": ("read", "write")},
 }
+
+
+def after_app_install(app: str):
+	if app == "frappe_whatsapp":
+		add_roles()
 
 
 def add_roles():

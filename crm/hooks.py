@@ -134,6 +134,9 @@ setup_wizard_complete = "crm.demo.api.seed_demo_data_if_enabled"
 
 before_install = "crm.install.before_install"
 after_install = "crm.install.after_install"
+# frappe_whatsapp arrives after the CRM on an existing site and on a new one
+# alike, so its roles cannot wait for the next migrate.
+after_app_install = "crm.api.whatsapp.after_app_install"
 
 # Uninstallation
 # ------------
@@ -272,6 +275,9 @@ doc_events = {
 		"validate": ["crm.api.whatsapp.validate"],
 		"on_update": ["crm.api.whatsapp.on_update"],
 	},
+	"WhatsApp Notification Log": {
+		"before_insert": ["crm.integrations.whatsapp.webhook.refuse_unverified_log"],
+	},
 	"CRM Deal": {
 		"on_update": [
 			"crm.fcrm.doctype.erpnext_crm_settings.erpnext_crm_settings.create_customer_in_erpnext",
@@ -388,6 +394,11 @@ before_tests = "crm.tests.before_tests"
 override_whitelisted_methods = {
 	# raw SQL behind its own whitelist: the row rules on Event never reach it
 	"frappe.desk.doctype.event.event.get_events": "crm.permissions.customers.get_events",
+	# Guest endpoints of frappe_whatsapp. Upstream's webhook does not check Meta's
+	# signature; see crm/integrations/whatsapp/webhook.py for why this alone is
+	# not enough, and for the second lock in doc_events.
+	"frappe_whatsapp.utils.webhook.webhook": "crm.integrations.whatsapp.webhook.webhook",
+	"frappe_whatsapp.frappe_whatsapp.api.flow_endpoint.handle_flow_request": "crm.integrations.whatsapp.webhook.flows_not_in_use",
 }
 #
 # each overriding function accepts a `data` argument;
@@ -483,6 +494,7 @@ after_migrate = [
 	# never reached a site that had enabled the integration before the fix.
 	"crm.integrations.acumatica.install.refresh_integration",
 	"crm.api.whatsapp.add_roles",
+	"crm.install.add_whatsapp_lead_source",
 	"crm.domain_enrichment.install.seed_default_rules_and_mappings",
 	"crm.agent.install.ensure_agent_role",
 	"crm.install.add_default_scripts",
