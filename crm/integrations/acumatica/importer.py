@@ -2,6 +2,8 @@ import time
 from datetime import datetime, timezone
 
 import frappe
+import requests
+from frappe.model.rename_doc import rename_doc
 from frappe.utils.synchronization import LockTimeoutError, filelock
 
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
@@ -11,7 +13,7 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 	set_pending_retries,
 )
 from crm.integrations.acumatica import outcomes
-from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError, v
+from crm.integrations.acumatica.client import AcumaticaAuthError, AcumaticaClient, AcumaticaError, v
 from crm.integrations.acumatica.names import normalise_account_name
 
 try:
@@ -43,6 +45,18 @@ BACKFILL_TIMEOUT = 4 * 3600
 # failing after five sweeps is failing on something no amount of waiting fixes, and
 # an admin is better told about it than left with a queue that never drains.
 MAX_RETRY_ATTEMPTS = 5
+
+# Answers that say Acumatica, or the way to it, is unavailable to us right now. A 500 is
+# not among them: some versions answer a record deleted since it failed with one.
+_RUN_LEVEL_STATUSES = frozenset({401, 403, 429, 502, 503, 504})
+
+
+def _is_run_level(e: BaseException) -> bool:
+	"""A failure every record would hit alike -- rotated credentials, a tenant that is
+	down, a rate limit -- rather than one this record earned."""
+	if isinstance(e, AcumaticaAuthError | requests.ConnectionError | requests.Timeout):
+		return True
+	return isinstance(e, AcumaticaError) and e.status_code in _RUN_LEVEL_STATUSES
 
 
 def _find_by_noteid(doctype, noteid):
@@ -77,6 +91,17 @@ def _adopt(doctype, name, noteid):
 	return name
 
 
+def _holder_of(organization_name: str) -> str | None:
+	"""The organization a new record or a rename onto ``organization_name`` collides
+	with: one *named* so, or one holding it in the organization_name column. The unique
+	index is on the column, and a record created as "Name (CustomerID)" -- by the
+	spreadsheet import, or renamed past its autoname -- may still hold the plain name
+	there while its docname says otherwise."""
+	return frappe.db.exists("CRM Organization", organization_name) or frappe.db.get_value(
+		"CRM Organization", {"organization_name": organization_name}, "name"
+	)
+
+
 def upsert_organization(rec) -> str:
 	noteid = v(rec, "NoteID")
 	customer_id = v(rec, "CustomerID")
@@ -87,8 +112,10 @@ def upsert_organization(rec) -> str:
 		# a later live sync then finds the imported row here before it can create a rival.
 		name = _adopt("CRM Organization", _find_by_acumatica_id("CRM Organization", customer_id), noteid)
 	if not name and organization_name:
-		# CRM Organization autonames on `field:organization_name`, so the docname IS the name.
-		existing = frappe.db.exists("CRM Organization", organization_name)
+		# CRM Organization autonames on `field:organization_name`, so the docname IS the
+		# name -- but a docname lookup alone missed a holder of the name in the column, and
+		# the insert then died on the unique index every sweep until it was given up on.
+		existing = _holder_of(organization_name)
 		if existing and customer_id:
 			other = frappe.db.get_value("CRM Organization", existing, "acumatica_id")
 			if other and other != customer_id:
@@ -98,12 +125,10 @@ def upsert_organization(rec) -> str:
 				# Organization; refusing it queued a retry that fails the same way every
 				# night. Name the second one by its ID, as the spreadsheet import does.
 				organization_name = f"{organization_name} ({customer_id})"
-				existing = frappe.db.exists("CRM Organization", organization_name)
+				existing = _holder_of(organization_name)
 		name = _adopt("CRM Organization", existing, noteid)
 	elif name and organization_name:
-		# the unique index is on the organization_name COLUMN, and a record created as
-		# "Name (CustomerID)" may still hold the plain name there
-		holder = frappe.db.get_value("CRM Organization", {"organization_name": organization_name}, "name")
+		holder = _holder_of(organization_name)
 		if holder and holder != name:
 			# found by its own link, but its plain name belongs to another organization:
 			# keep the suffixed name it was created under rather than collide on rename
@@ -118,12 +143,42 @@ def upsert_organization(rec) -> str:
 	if currency and frappe.db.exists("Currency", currency):
 		doc.currency = currency
 	doc.save(ignore_permissions=True)
-	if name and doc.organization_name != organization_name:
-		# CRM Organization autonames on `field:organization_name`; Document._sync_autoname_field()
-		# re-derives the field FROM the (stable) docname on every save, clobbering an update to the
-		# display name for an existing record. db_set writes it through without a rename.
-		doc.db_set("organization_name", organization_name)
+	# A record already under its "Name (CustomerID)" form keeps it: it was disambiguated
+	# on purpose, and following the plain name back and forth would rename it every time
+	# the other holder came and went.
+	if (
+		name
+		and organization_name
+		and doc.name not in (organization_name, f"{organization_name} ({customer_id})")
+	):
+		return _rename_organization(doc.name, organization_name)
 	return doc.name
+
+
+def _rename_organization(old: str, new: str) -> str:
+	"""Follow a customer renamed in Acumatica.
+
+	CRM Organization autonames on its name, and Document._sync_autoname_field() copies
+	the docname back into organization_name on every save. Writing the new name past
+	the autoname (db_set) therefore lasted until the next ordinary save of the record
+	-- a rep's edit, the enrichment job -- which quietly put the old name back. A
+	rename makes the docname the new name too, and the links follow it."""
+	# frappe.model's rename_doc, not frappe.rename_doc: only it takes ignore_permissions,
+	# and whoever woke the sync is not the one renaming the customer
+	new = rename_doc(
+		"CRM Organization",
+		old,
+		new,
+		force=True,
+		ignore_permissions=True,
+		show_alert=False,
+		rebuild_search=False,
+	)
+	# Contact.company_name is a Data field holding the organization's name, and
+	# rename_doc rewrites Link columns only: without this every contact the
+	# customer has drops off its page.
+	frappe.db.set_value("Contact", {"company_name": old}, "company_name", new, update_modified=False)
+	return new
 
 
 def _find_matching_contact(first, last, company_name, email):
@@ -294,6 +349,12 @@ def _retry_pending(client, pending: dict, counts: dict) -> None:
 				raise
 			except Exception as e:
 				frappe.db.rollback(save_point="acumatica_retry")
+				if _is_run_level(e):
+					# Charged to the record, an outage spent every queued record's whole
+					# budget in five sweeps -- and a login per record per sweep against an
+					# account whose credentials just stopped working. End the run instead,
+					# as the paging pass would; the queue keeps its counts for the next one.
+					raise
 				attempts += 1
 				if attempts < MAX_RETRY_ATTEMPTS:
 					queued[noteid] = attempts
@@ -451,6 +512,11 @@ def nightly_sweep() -> None:
 	"""Scheduler entry. Webhooks are the latency mechanism; this is the
 	correctness mechanism -- Acumatica keeps failed push notifications for
 	only 2 days, so the sweep must always run."""
+	if frappe.session.user != "Administrator":
+		# rq runs a job as whoever enqueued it, and the webhook enqueues from a guest
+		# request: every record that sweep wrote and every deal it closed was Guest's.
+		# The sweep is the system's, whatever woke it.
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser
 	settings = get_settings()
 	if not settings.enabled:
 		return

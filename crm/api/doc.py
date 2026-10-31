@@ -862,7 +862,9 @@ def _linked_doc_title(doctype: str, row: dict) -> str:
 
 
 @frappe.whitelist()
-def get_linked_docs_of_document(doctype: str, docname: str):
+def get_linked_docs_of_document(doctype: str, docname: str | int):
+	# CRM Task autoincrements: the bulk-delete modal posts its name as a JSON number,
+	# and _unlink_linked_docs passes the ints it was given straight through.
 	try:
 		doc = frappe.get_doc(doctype, docname)
 	except frappe.DoesNotExistError:
