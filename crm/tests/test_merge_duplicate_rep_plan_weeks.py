@@ -160,6 +160,61 @@ class MergeDuplicateRepPlanWeeksTest(IntegrationTestCase):
 		self.assertEqual(items[0].status, "Done")
 		self.assertEqual(str(items[0].fulfilled_by), str(task.name))
 
+	def test_a_dangling_link_does_not_stop_the_merge(self):
+		"""CRM Rep Plan Item is in ignore_links_on_delete, so a fulfilment can be
+		deleted from under an item. The merge saved with a full link check and
+		stopped `bench migrate` on it."""
+		first = self.make_plan([{"activity_type": "Visit", "planned_date": self.monday, "note": "visit A"}])
+		self.make_plan([{"activity_type": "Call", "planned_date": self.tuesday, "note": "call B"}])
+		item = frappe.get_all("CRM Rep Plan Item", filters={"parent": first}, pluck="name")[0]
+		frappe.db.set_value(
+			"CRM Rep Plan Item",
+			item,
+			{"status": "Done", "fulfilled_by_doctype": "Event", "fulfilled_by": "EV-DELETED-SINCE"},
+		)
+
+		merge_duplicates()
+
+		plans = self.surviving_plans()
+		self.assertEqual(len(plans), 1)
+		self.assertEqual({row.note for row in self.items_of(plans[0])}, {"visit A", "call B"})
+
+	def test_a_moved_item_keeps_every_field_and_its_customer_tells_it_apart(self):
+		"""The fields to copy were a hand-kept list from before items had a customer
+		or an outcome: both were dropped, and visits to two mines on one day were
+		merged into one."""
+		medupi, kusile = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": name})
+			.insert(ignore_if_duplicate=True)
+			.name
+			for name in ("Merge Medupi", "Merge Kusile")
+		)
+		visit = {"activity_type": "Visit", "planned_date": self.monday, "note": "site visit"}
+		self.make_plan([{**visit, "organization": medupi}])
+		self.make_plan(
+			[
+				{
+					**visit,
+					"organization": kusile,
+					"status": "Cancelled",
+					"manual_override": 1,
+					"outcome": "Plant shut for maintenance",
+				}
+			]
+		)
+
+		merge_duplicates()
+
+		rows = frappe.get_all(
+			"CRM Rep Plan Item",
+			filters={"parent": self.surviving_plans()[0], "parenttype": "CRM Rep Plan"},
+			fields=["organization", "status", "outcome", "manual_override"],
+		)
+		self.assertEqual(
+			sorted((row.organization, row.status, row.outcome, row.manual_override) for row in rows),
+			[(kusile, "Cancelled", "Plant shut for maintenance", 1), (medupi, "Planned", None, 0)],
+		)
+
 	def test_another_reps_identical_week_is_untouched(self):
 		self.make_plan([{"activity_type": "Task", "planned_date": self.monday, "note": "mine"}])
 		self.make_plan([{"activity_type": "Task", "planned_date": self.monday, "note": "mine too"}])

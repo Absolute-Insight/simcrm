@@ -4,7 +4,8 @@
       v-if="item.type == 'number_chart'"
       class="v-number-card v-glass flex h-full w-full rounded-4 overflow-hidden cursor-pointer"
     >
-      <Tooltip :text="unfilteredNote || __(item.data.tooltip)">
+      <!-- data is null for a saved chart the server no longer knows -->
+      <Tooltip :text="unfilteredNote || __(item.data?.tooltip)">
         <NumberChart
           v-if="item.data"
           :key="index"

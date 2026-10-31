@@ -138,13 +138,15 @@ const oldFields = computed(() => {
   let gridViewSettings = getGridViewSettings(props.parentDoctype)
 
   if (gridViewSettings.length) {
-    return gridViewSettings.map((field) => {
-      let f = _fields.find((f) => f.fieldname === field.fieldname)
-      if (f) {
-        f.columns = field.columns
-        return fieldObj(f)
-      }
-    })
+    // Skip a saved column whose field has since been hidden or deleted: it
+    // mapped to null, which crashed the render and left no way to remove it.
+    // The width goes on a copy, not on the cached meta field.
+    return gridViewSettings
+      .map((field) => {
+        let f = _fields.find((f) => f.fieldname === field.fieldname)
+        return f && fieldObj({ ...f, columns: field.columns })
+      })
+      .filter(Boolean)
   }
   return _fields?.filter((field) => field.in_list_view).map((f) => fieldObj(f))
 })
@@ -177,8 +179,6 @@ function removeField(field) {
 }
 
 function update() {
-  loading.value = true
-
   let updateFields = fields.value.map((field) => {
     return {
       fieldname: field.fieldname,
@@ -191,6 +191,8 @@ function update() {
     return
   }
 
+  error.value = null
+  loading.value = true
   saveUserSettings(props.parentDoctype, 'GridView', updateFields, () => {
     loading.value = false
     show.value = false

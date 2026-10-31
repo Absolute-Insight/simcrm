@@ -160,6 +160,19 @@ class VisitTargetPermissionTest(VisitFixture, IntegrationTestCase):
 		frappe.set_user("Administrator")
 		self.assertEqual(frappe.db.get_value("CRM Visit Target", OUTSIDER, "visits_per_week"), 7)
 
+	def test_a_manager_cannot_reach_another_teams_target_by_rewriting_its_user(self):
+		"""frappe asks for write on the document *after* set_value has applied the
+		caller's values, so a ``user`` rewritten to one of the manager's own reps
+		passed the subtree check and the other team's target was zeroed."""
+		make_target(OUTSIDER, 7)
+		frappe.set_user(MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Visit Target", OUTSIDER, {"user": REP, "visits_per_week": 0})
+		frappe.set_user("Administrator")
+		self.assertEqual(
+			frappe.db.get_value("CRM Visit Target", OUTSIDER, ["user", "visits_per_week"]), (OUTSIDER, 7)
+		)
+
 	def test_a_manager_cannot_set_their_own_target(self):
 		frappe.set_user(MANAGER)
 		with self.assertRaises(frappe.PermissionError):

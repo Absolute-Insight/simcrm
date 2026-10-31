@@ -126,14 +126,14 @@
           class="mt-4"
           :rows="rows"
           :columns="columns"
-          :options="{ selectable: false, showTooltip: false }"
+          :options="{ selectable: false, showTooltip: false, scrollKey: '' }"
         />
         <ContactsListView
           v-if="tab.label === 'Contacts' && rows.length"
           class="mt-4"
           :rows="rows"
           :columns="columns"
-          :options="{ selectable: false, showTooltip: false }"
+          :options="{ selectable: false, showTooltip: false, scrollKey: '' }"
         />
         <div
           v-if="!rows.length && tab.name !== 'Details'"

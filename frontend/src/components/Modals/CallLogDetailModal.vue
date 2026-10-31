@@ -382,15 +382,32 @@ const detailFields = computed(() => {
     .filter((detail) => (detail.condition ? detail.condition() : true))
 })
 
-const d = ref({})
 const leadDetails = ref({})
 const creatingLead = ref(false)
+
+// The call log's document is loaded here, for the Form Script whose
+// onCreateLead runs below, and not as soon as the call log is: CallArea mounts
+// one closed modal per call in a timeline, and each fetched the record, its
+// assignees and its permissions up front. Waits for the record and the
+// script, so a click that beats the load still runs the hook.
+async function callLogDocument(name) {
+  // Clicked before the call log itself arrived: there is no record to script.
+  if (!name) return {}
+  const callLogDoc = useDocument('CRM Call Log', name)
+  const { document } = callLogDoc
+  if (document.get.loading) await document.get.promise?.catch(() => {})
+  if (document.doc) await callLogDoc.setupFormScript()
+  return callLogDoc
+}
 
 async function createLead() {
   if (creatingLead.value) return
   creatingLead.value = true
   try {
-    await d.value.triggerOnCreateLead?.(
+    const { triggerOnCreateLead } = await callLogDocument(
+      callLog.value?.data?.name,
+    )
+    await triggerOnCreateLead?.(
       callLog.value?.data,
       leadDetails.value,
       () => (show.value = false),
@@ -445,7 +462,6 @@ watch(
   (value) => {
     if (!value) return
     recordingError.value = false
-    d.value = useDocument('CRM Call Log', value)
   },
 )
 

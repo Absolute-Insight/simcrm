@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
-from frappe.utils import add_days, now
+from frappe.utils import add_days, now, set_request
 
 
 class TestCRMInvitation(FrappeTestCase):
@@ -202,6 +202,58 @@ class TestCRMInvitation(FrappeTestCase):
 		self.assertEqual(frappe.local.response["type"], "page")
 		self.assertEqual(frappe.local.response["http_status_code"], 410)
 
+	def link_request(self, method: str):
+		"""The emailed link's request, as a browser -- or a mail scanner -- makes it.
+
+		With a request present the endpoint's rate limits apply, and they key on
+		the caller's address.
+		"""
+		set_request(method=method, path="/api/method/crm.api.accept_invitation")
+		frappe.local.request_ip = "203.0.113.7"
+		self.addCleanup(setattr, frappe.local, "request", None)
+		self.addCleanup(setattr, frappe.local, "request_ip", None)
+
+	def test_fetching_the_link_does_not_use_the_invitation(self):
+		"""Mail scanners fetch every link in a message before anyone reads it.
+
+		Acceptance used to happen on that GET and commit, so one automated fetch
+		spent the key and the invitee found "no longer valid" when they clicked.
+		"""
+		from crm.api import accept_invitation
+
+		invitation = self.make_invitation(email="prefetched@example.com")
+		self.link_request("GET")
+
+		accept_invitation(key=invitation._raw_key)
+
+		self.assertEqual(frappe.db.get_value("CRM Invitation", invitation.name, "status"), "Pending")
+		self.assertFalse(frappe.db.exists("User", "prefetched@example.com"))
+		self.assertEqual(frappe.local.response["type"], "page")
+		# the page is a button that posts the same key back
+		self.assertIn('method="post"', frappe.local.message)
+		self.assertIn(f'name="key" value="{invitation._raw_key}"', frappe.local.message)
+
+	def test_the_confirm_button_accepts(self):
+		from crm.api import accept_invitation
+
+		invitation = self.make_invitation(email="confirmed@example.com")
+		self.link_request("POST")
+
+		accept_invitation(key=invitation._raw_key)
+
+		self.assertEqual(frappe.db.get_value("CRM Invitation", invitation.name, "status"), "Accepted")
+		self.assertEqual(frappe.local.response["type"], "redirect")
+
+	def test_a_dead_key_gets_the_plain_page_before_any_confirm_step(self):
+		from crm.api import accept_invitation
+
+		self.link_request("GET")
+
+		accept_invitation(key="no-such-key")
+
+		self.assertEqual(frappe.local.response["http_status_code"], 410)
+		self.assertNotIn("<form", frappe.local.message)
+
 
 MANAGER = "invitation-manager@crmtest.test"
 OTHER_MANAGER = "invitation-other-manager@crmtest.test"
@@ -390,3 +442,71 @@ class ReInviteTest(FrappeTestCase):
 		sendmail.assert_not_called()
 		self.assertEqual(result["existing_members"], [self.EMAIL])
 		self.assertEqual(result["to_invite"], [])
+
+
+class InviteCaseTest(FrappeTestCase):
+	"""An address is one address whatever its capitals.
+
+	User.autoname stores it lower-cased and the database matches it ignoring
+	case, so the lookups found the member -- and then a case-sensitive set
+	difference invited "Sarah@MBP.co.za" anyway, mailed them, and accepting as
+	Sales User rewrote the existing account's blocked modules.
+	"""
+
+	MEMBER = "case-member@example.com"
+	INVITEE = "case-invitee@example.com"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		for email in (self.MEMBER, self.INVITEE):
+			frappe.db.delete("CRM Invitation", {"email": email})
+			self.addCleanup(frappe.db.delete, "CRM Invitation", {"email": email})
+		self.drop_member()
+		self.addCleanup(self.drop_member)
+
+	def drop_member(self):
+		if frappe.db.exists("User", self.MEMBER):
+			frappe.delete_doc("User", self.MEMBER, force=True, ignore_permissions=True)
+			# creating a User commits, as ReInviteTest explains
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit
+
+	def invite(self, emails):
+		from crm.api import invite_by_email
+
+		with patch.object(frappe, "sendmail") as sendmail:
+			result = invite_by_email(emails, "Sales User")
+		return result, sendmail
+
+	def test_a_member_typed_in_capitals_is_reported_not_invited(self):
+		frappe.get_doc(
+			doctype="User",
+			user_type="System User",
+			email=self.MEMBER,
+			send_welcome_email=0,
+			first_name="Case Member",
+		).insert(ignore_permissions=True)
+
+		result, sendmail = self.invite("Case-Member@Example.COM")
+
+		sendmail.assert_not_called()
+		self.assertEqual(result["existing_members"], [self.MEMBER])
+		self.assertEqual(result["to_invite"], [])
+		self.assertFalse(frappe.db.exists("CRM Invitation", {"email": self.MEMBER}))
+
+	def test_a_live_invitation_typed_differently_is_not_sent_again(self):
+		self.invite(self.INVITEE)
+
+		result, sendmail = self.invite(" Case-Invitee@Example.com")
+
+		sendmail.assert_not_called()
+		self.assertEqual(result["existing_invites"], [self.INVITEE])
+		self.assertEqual(result["to_invite"], [])
+
+	def test_an_invitation_is_stored_under_the_address_the_account_will_have(self):
+		result, _sendmail = self.invite("Case-Invitee@Example.com")
+
+		self.assertEqual(result["to_invite"], [self.INVITEE])
+		self.assertEqual(
+			frappe.get_all("CRM Invitation", filters={"email": self.INVITEE}, pluck="email"), [self.INVITEE]
+		)

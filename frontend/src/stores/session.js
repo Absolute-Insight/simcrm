@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { createResource } from 'frappe-ui'
 import router from '@/router'
+import { clearOfflineCache } from '@/utils/offlineCache'
 import { ref, computed } from 'vue'
 
 export const sessionStore = defineStore('crm-session', () => {
@@ -30,8 +31,11 @@ export const sessionStore = defineStore('crm-session', () => {
 
   const logout = createResource({
     url: 'logout',
-    onSuccess() {
+    async onSuccess() {
       user.value = null
+      // The cached lists and timelines are this rep's; the clear has to finish
+      // before the page goes, or IndexedDB drops it half done.
+      await clearOfflineCache()
       window.location.href = '/login?redirect-to=/crm'
     },
   })

@@ -104,7 +104,10 @@ const dialogOptions = computed(() => {
 
 const tabs = createResource({
   url: 'crm.fcrm.doctype.crm_fields_layout.crm_fields_layout.get_fields_layout',
-  cache: ['QuickEntry', props.doctype],
+  // Not ['QuickEntry', doctype]: ContactModal, OrganizationModal, DealModal and
+  // LeadModal use that key with a transform of their own, and frappe-ui hands
+  // a cached resource to the next caller with the first caller's options.
+  cache: ['CreateDocumentModal', props.doctype],
   params: { doctype: props.doctype, type: 'Quick Entry' },
   auto: true,
 })

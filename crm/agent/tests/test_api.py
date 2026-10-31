@@ -112,6 +112,37 @@ class EmptyThreadTest(IntegrationTestCase):
 		self.assertEqual(result["status"], "ok")
 		self.assertEqual(result["reply_to"], "buyer@acme.test")
 
+	def test_draft_reply_never_answers_our_own_shared_mailbox(self):
+		"""Audit L-59: a rep who sends from a shared mailbox sends as an address no
+		User has, so "not a User" read our own outbound mail as the customer's and
+		pre-filled To: with sales@ -- the thread says which way each mail went."""
+		thread = [
+			{
+				"name": "C3",
+				"creation": "2026-08-03",
+				"sender": "sales@shared-mailbox.test",
+				"sent_or_received": "Sent",
+				"content": "following up on our quote",
+			},
+			{
+				"name": "C2",
+				"creation": "2026-08-02",
+				"sender": "buyer@acme.test",
+				"sent_or_received": "Received",
+				"content": "price too high",
+			},
+		]
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			no_budget_check(),
+			mock.patch.object(api_mod.tools, "read_record", return_value={"name": "CRM-DEAL-0001"}),
+			mock.patch.object(api_mod.tools, "read_thread", return_value=thread),
+			mock.patch.object(api_mod.actions, "propose_reply") as propose,
+		):
+			propose.return_value.model_dump.return_value = {"subject": "Re: quote", "body": "Hi"}
+			result = api_mod.draft_reply("CRM Deal", "CRM-DEAL-0001")
+		self.assertEqual(result["reply_to"], "buyer@acme.test")
+
 	def test_draft_reply_reports_empty_the_same_way(self):
 		with (
 			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
@@ -730,6 +761,18 @@ class UnreachableModelRefundTest(IntegrationTestCase):
 		patches = self.stubs(SchemaMismatch("not JSON"))
 		with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
 			self.assertEqual(api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001"), {"status": "unavailable"})
+		self.assertEqual(self.counters(), (1, 1))
+
+	def test_a_reply_cut_off_at_max_tokens_keeps_the_charge(self):
+		"""Audit L-38: ReplyCutOff is an AgentUnavailable, so it was refunded like an
+		outage -- but the model was reached and generated a whole max_tokens, the
+		most expensive call there is."""
+		patches = self.stubs(api_mod.client.ReplyCutOff("the reply budget ran out"))
+		with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+			self.assertEqual(
+				api_mod.summarise_thread("CRM Deal", "CRM-DEAL-0001"),
+				{"status": "unavailable", "reason": "reply_length"},
+			)
 		self.assertEqual(self.counters(), (1, 1))
 
 	def test_the_analyst_refunds_once_when_both_its_completions_fail(self):

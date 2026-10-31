@@ -30,25 +30,111 @@ def before_insert(doc, method):
 	if doc.reference_type not in OWNER_FIELD or not doc.reference_name or not doc.allocated_to:
 		return
 
+	user = doc.owner or frappe.session.user
+	if doc.status == "Cancelled":
+		_refuse_cancel_unless_permitted(doc, user)
+	_refuse_unless_permitted(doc, user)
+
+
+def validate(doc, method):
+	"""Hold an edit to a ToDo to the rule :func:`before_insert` holds a new one to.
+
+	frappe's ToDo grants write to ``All``, and ``ToDo.has_permission`` passes for
+	the row's owner and its assignee, so ``frappe.client.set_value`` reaches any
+	field of a ToDo the caller made or was given. Guarding the insert alone left
+	two steps around it: insert a reminder that points at nothing (or at a deal,
+	allocated to nobody), then point it at any deal and allocate it to yourself;
+	or set an assignment a manager cancelled back to Open. Either way the rep is
+	left holding a live ToDo on the record, which
+	:mod:`crm.permissions.org_hierarchy` reads as read, write and delete.
+
+	So an edit that gives someone a live ToDo on a lead or deal they did not
+	hold one on before is judged exactly as that insert would be -- asked of the
+	session making the edit, not of the row's owner, who may be the manager who
+	wrote the assignment in the first place. Cancelling the owner's own
+	assignment is held to :func:`_refuse_cancel_unless_permitted`. Every other
+	edit (closing it, rewording it, moving its date) is left alone.
+	"""
+	if doc.is_new():
+		return  # judged by before_insert, against the account inserting it
+
+	before = doc.get_doc_before_save()
+	if (
+		doc.status == "Cancelled"
+		and (not before or before.status != "Cancelled")
+		and doc.reference_type in OWNER_FIELD
+		and doc.reference_name
+		and doc.allocated_to
+	):
+		_refuse_cancel_unless_permitted(doc, frappe.session.user)
+
+	opened = _opens(doc)
+	if not opened or opened == _opens(before):
+		return
+
+	_refuse_unless_permitted(doc, frappe.session.user)
+
+
+def _opens(row) -> tuple | None:
+	"""The ``(doctype, name, user)`` a ToDo row makes visible, if it makes any.
+
+	The same rows org_hierarchy counts: on a lead or deal, allocated to someone,
+	and not Cancelled.
+	"""
+	if not row or row.reference_type not in OWNER_FIELD or not row.reference_name or not row.allocated_to:
+		return None
+	if row.status == "Cancelled":
+		return None
+	return (row.reference_type, row.reference_name, row.allocated_to)
+
+
+def _refuse_unless_permitted(doc, user: str) -> None:
 	fieldname = OWNER_FIELD[doc.reference_type]
 	if frappe.db.get_value(doc.reference_type, doc.reference_name, fieldname) == doc.allocated_to:
 		return
 
-	if not may_assign(doc):
+	if not may_assign(doc, user):
 		frappe.throw(
 			_("Not permitted to assign {0} {1}").format(_(doc.reference_type), doc.reference_name),
 			frappe.PermissionError,
 		)
 
 
-def may_assign(doc) -> bool:
+def _refuse_cancel_unless_permitted(doc, user: str) -> None:
+	"""Cancelling the owner's own assignment clears the owner
+	(:func:`clear_owner_on_unassign`), and moves the record's suggestions off them,
+	so it is gated as ``crm.api.doc.remove_assignments`` gates it: a write to the
+	record. A ToDo row passes ``ToDo.has_permission`` for whoever wrote it, and one
+	allocated to the owner was let through :func:`before_insert` because it moved
+	nothing -- so without this a rep could insert one, or insert it already
+	Cancelled, on a deal they cannot even read and take it off its owner.
+
+	The owner stepping off their own record is not asked.
+	"""
+	if user == doc.allocated_to:
+		return
+	fieldname = OWNER_FIELD[doc.reference_type]
+	if frappe.db.get_value(doc.reference_type, doc.reference_name, fieldname) != doc.allocated_to:
+		return
+
+	if not may_assign(doc, user):
+		frappe.throw(
+			_("Not permitted to change assignments on {0} {1}").format(
+				_(doc.reference_type), doc.reference_name
+			),
+			frappe.PermissionError,
+		)
+
+
+def may_assign(doc, user: str | None = None) -> bool:
 	"""Whether this ToDo may hand its lead or deal to ``allocated_to``.
 
-	Asked of ``doc.owner`` -- the account the row is being inserted by, which
-	frappe has already set by the time ``before_insert`` runs -- rather than of
-	the session, so a row written in a background job is still that account's
-	assignment. It is a *write* check: assignment moves ownership, not just
-	visibility.
+	Asked of ``user``. For an insert that is ``doc.owner`` -- the account the
+	row is being inserted by, which frappe has already set by the time
+	``before_insert`` runs -- rather than the session, so a row written in a
+	background job is still that account's assignment. For an edit it is the
+	session making it. It is a *write* check: assignment moves ownership, not
+	just visibility.
 
 	``doc.flags.ignore_permissions`` is deliberately not an exemption.
 	``frappe.desk.form.assign_to`` inserts every ToDo with it, including from its
@@ -67,12 +153,15 @@ def may_assign(doc) -> bool:
 
 	# frappe's own assignment rules: the row carries the rule that made it, and
 	# the rule is an administrator's instruction rather than the saving user's.
-	if doc.assignment_rule:
+	# Only while that rule is actually running, though (crm.overrides.assignment_rule):
+	# ``assignment_rule`` is an ordinary field, and frappe.client.insert or the
+	# whitelisted assign_to.add will write any rule's name into it on request.
+	if doc.assignment_rule and doc.assignment_rule == frappe.flags.crm_running_assignment_rule:
 		return True
 
 	return bool(
 		frappe.has_permission(
-			doc.reference_type, "write", doc=doc.reference_name, user=doc.owner or frappe.session.user
+			doc.reference_type, "write", doc=doc.reference_name, user=user or doc.owner or frappe.session.user
 		)
 	)
 
@@ -88,6 +177,7 @@ def after_insert(doc, method):
 			doc.allocated_to,
 			update_modified=False,
 		)
+		_resync_suggestions(doc, doc.allocated_to)
 
 	if doc.reference_type in ["CRM Lead", "CRM Deal", "CRM Task"] and doc.reference_name and doc.allocated_to:
 		notify_assigned_user(doc)
@@ -116,6 +206,20 @@ def clear_owner_on_unassign(doc):
 	if frappe.db.get_value(doc.reference_type, doc.reference_name, fieldname) != doc.allocated_to:
 		return
 	frappe.db.set_value(doc.reference_type, doc.reference_name, fieldname, None, update_modified=False)
+	_resync_suggestions(doc, None)
+
+
+def _resync_suggestions(doc, owner: str | None) -> None:
+	"""Move the record's open suggestions to the owner just written.
+
+	The owner is written here with ``db.set_value``, which fires no on_update, so
+	the resync crm.automation runs when a lead or deal is saved with a new owner
+	never ran for "Assign to": the previous rep kept the suggestions until they
+	expired, possibly for a record they can no longer open.
+	"""
+	from crm.agent.signals import resync_owner
+
+	resync_owner(doc.reference_type, doc.reference_name, owner)
 
 
 def notify_assigned_user(doc, is_cancelled=False):
