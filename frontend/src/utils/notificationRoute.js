@@ -14,10 +14,23 @@
  * and Vue could not tell them apart on a reload.
  */
 
-/** The router target for a notification row. */
+/**
+ * The router target for a notification row, or null when it points nowhere.
+ *
+ * A task can be assigned with no lead or deal behind it. Its notification came
+ * back labelled with the Lead route and no name, and asking vue-router for
+ * `/leads/:leadId` without a leadId throws while the row renders -- so the row
+ * the badge counted never appeared. Such a task is on the Tasks list; anything
+ * else that names no record gets a row that is not a link.
+ */
 export function notificationRoute(notification) {
   const routeName = notification?.route_name
   const referenceName = notification?.reference_name
+  if (!routeName || !referenceName) {
+    return notification?.notification_type_doctype === 'CRM Task'
+      ? { name: 'Tasks' }
+      : null
+  }
   return {
     name: routeName,
     params:

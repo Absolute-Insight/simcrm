@@ -37,6 +37,9 @@ INDEXED_FIELDS = {
 	"crm_lead": {
 		"lead_owner": "the hierarchy filter scopes leads by owner",
 	},
+	"crm_notification": {
+		"to_user": "the inbox, its unread count and mark-as-read all filter on the recipient",
+	},
 }
 
 

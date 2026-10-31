@@ -22,10 +22,11 @@
       v-if="notifications.data?.length"
       class="divide-y divide-outline-gray-1 overflow-y-auto text-base"
     >
-      <RouterLink
+      <component
+        :is="notificationRoute(n) ? 'RouterLink' : 'div'"
         v-for="n in notifications.data"
         :key="notificationKey(n)"
-        :to="notificationRoute(n)"
+        :to="notificationRoute(n) || undefined"
         class="flex cursor-pointer items-start gap-3 px-2.5 py-3 hover:bg-surface-gray-2"
         @click="mark_doc_as_read(n.notification_type_doc)"
       >
@@ -57,7 +58,7 @@
             {{ __(timeAgo(n.creation)) }}
           </div>
         </div>
-      </RouterLink>
+      </component>
     </div>
     <!-- "No New Notifications" was the answer to a failed fetch as well as an
          empty one, so an outage read as a cleared inbox. The desktop panel
