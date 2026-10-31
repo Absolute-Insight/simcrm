@@ -363,6 +363,53 @@ input[type='checkbox']:checked {
   }
 }
 
+/* The bulk-select bar. frappe-ui's ListSelectBanner is `absolute bottom-6`
+   inside the list's scroller, with no hook: `bottom-6` is not generated, so it
+   sat over the column headers, and an offset alone would scroll away with the
+   rows. So it is a zero-height sticky strip, the width of the scroller, at the
+   end of the card, and the bar hangs up from it. The card clips rather than
+   hides overflow: a `hidden` card would be the scroller the strip sticks to. */
+.relative:has(> .v-list-card) {
+  container-type: inline-size;
+}
+.v-list-card {
+  overflow: clip;
+}
+.v-list-card > .absolute.inset-x-0.bottom-6 {
+  /* the card's own margin, mx-3 sm:mx-[var(--v-page-gutter)] */
+  --list-margin: 0.75rem;
+  position: sticky;
+  left: var(--list-margin);
+  bottom: 24px;
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  width: calc(100cqw - 2 * var(--list-margin));
+  height: 0;
+  margin: 0;
+  pointer-events: none;
+}
+.v-list-card > .absolute.inset-x-0.bottom-6 > * {
+  align-self: flex-end;
+  height: max-content;
+  pointer-events: auto;
+}
+
+@media (min-width: 640px) {
+  .v-list-card > .absolute.inset-x-0.bottom-6 {
+    --list-margin: var(--v-page-gutter);
+  }
+}
+
+/* A sticky column at the end of a scrolled table sits above what passes under
+   it: the shadow says so, where a bare edge reads as a clipped label. */
+.v-sticky-end {
+  box-shadow: -8px 0 8px -8px rgb(0 0 0 / 0.2);
+}
+[data-theme='dark'] .v-sticky-end {
+  box-shadow: -8px 0 8px -8px rgb(0 0 0 / 0.7);
+}
+
 /* Column headers get quiet — reuse of `.v-kpi-label`'s shape (11px/600/
    0.09em/uppercase), not a new treatment: column headers are navigation, not
    content, and should recede (design direction, "Column headers get quiet").
