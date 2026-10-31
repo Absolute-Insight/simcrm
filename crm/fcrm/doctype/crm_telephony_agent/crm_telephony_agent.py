@@ -40,6 +40,14 @@ class CRMTelephonyAgent(Document):
 		if not self.is_new() and self.has_value_changed("user"):
 			frappe.throw(_("A telephony agent cannot be moved to another user."), frappe.PermissionError)
 
+	def before_rename(self, old, new, merge=False):
+		"""The same rule for a rename, which never saves and so never reaches
+		``keep_user``: frappe asks only for write on the old row, then sets ``user``
+		to the new name. The row follows its user's own rename
+		(crm.api.user.rename_user_keyed_row) and is not renamed otherwise."""
+		if not self.flags.following_user_rename:
+			frappe.throw(_("A telephony agent cannot be moved to another user."), frappe.PermissionError)
+
 	def update_phone_nos_based_on_mobile_no(self):
 		doc_before_save = self.get_doc_before_save()
 		if not doc_before_save:

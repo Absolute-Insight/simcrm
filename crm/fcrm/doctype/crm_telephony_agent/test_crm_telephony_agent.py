@@ -12,6 +12,7 @@ are what stop a rep from re-routing or deleting a colleague's agent.
 from __future__ import annotations
 
 import frappe
+from frappe.model.rename_doc import update_document_title
 from frappe.tests import IntegrationTestCase
 
 ALICE = "telagent-alice@crmtest.test"
@@ -96,6 +97,24 @@ class IntegrationTestCRMTelephonyAgent(IntegrationTestCase):
 			)
 		frappe.set_user("Administrator")
 		self.assertEqual(frappe.db.get_value("CRM Telephony Agent", BOB, "twilio_number"), "+15550000002")
+
+	def test_a_rep_cannot_move_their_agent_to_another_user_by_renaming_it(self):
+		"""A rename never saves, so ``keep_user`` does not see it, and frappe then
+		rewrites ``user`` to the new name: the rep's numbers would route the
+		colleague's calls."""
+		frappe.set_user("Administrator")
+		frappe.get_doc(
+			{"doctype": "CRM Telephony Agent", "user": ALICE, "twilio_number": "+15550000001"}
+		).insert(ignore_permissions=True)
+		frappe.set_user(ALICE)
+		with self.assertRaises(frappe.PermissionError):
+			update_document_title(doctype="CRM Telephony Agent", docname=ALICE, name=MANAGER)
+		frappe.set_user("Administrator")
+		self.assertFalse(frappe.db.exists("CRM Telephony Agent", MANAGER))
+		self.assertEqual(
+			frappe.db.get_value("CRM Telephony Agent", ALICE, ["user", "twilio_number"]),
+			(ALICE, "+15550000001"),
+		)
 
 	def test_a_rep_cannot_plant_an_agent_under_another_users_name(self):
 		frappe.set_user(ALICE)

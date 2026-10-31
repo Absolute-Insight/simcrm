@@ -363,9 +363,11 @@ def rename_user_keyed_row(doctype: str, old: str, new: str) -> None:
 	from frappe.model.rename_doc import rename_doc
 
 	if frappe.db.exists(doctype, old) and not frappe.db.exists(doctype, new):
+		doc = frappe.get_doc(doctype, old)
+		# what the rows' before_rename lets through (CRM Telephony Agent)
+		doc.flags.following_user_rename = True
 		rename_doc(
-			doctype=doctype,
-			old=old,
+			doc=doc,
 			new=new,
 			force=True,
 			ignore_permissions=True,
