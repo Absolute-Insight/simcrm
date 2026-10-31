@@ -3,7 +3,9 @@
     <NotPermitted v-if="$route.name === 'Not Permitted'" />
     <router-view v-else-if="$route.name === 'Onboarding'" />
     <Layout v-else-if="session.isLoggedIn" class="isolate">
-      <router-view :key="$route.fullPath" />
+      <!-- Keyed without the hash: Deal and Lead record their tab there, and a
+           tab click must not rebuild the page (see useActiveTabManager). -->
+      <router-view :key="$route.fullPath.split('#')[0]" />
     </Layout>
     <Dialogs />
     <DoctypeModals />

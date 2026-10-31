@@ -15,6 +15,12 @@ const documentsCache = {}
 const controllersCache = {}
 const assigneesCache = {}
 const permissionsCache = {}
+/* The load error of each record, beside the resource whose onError writes it.
+   It was a fresh ref per useDocument call, but the resource -- and with it the
+   onError closure -- is made once per session, so every later mount of the
+   record got a ref nothing wrote: a forbidden or deleted record showed its
+   ErrorPage on the first visit and a blank page on the next. */
+const errorsCache = {}
 /* Setups in flight, keyed the same way as controllersCache. The re-entrancy
    guard used to be `controllersCache[...] = {}` written before the await, which
    doubled as a permanent "already tried" marker: a script that threw while
@@ -79,16 +85,29 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
   const vm = getCurrentInstance()?.proxy
   documentsCache[doctype] = documentsCache[doctype] || {}
 
-  const error = ref('')
+  errorsCache[doctype] = errorsCache[doctype] || {}
+  errorsCache[doctype][docname || ''] ||= ref('')
+  const error = errorsCache[doctype][docname || '']
 
-  if (!documentsCache[doctype][docname || '']) {
+  const cached = documentsCache[doctype][docname || '']
+  if (cached && docname && error.value && !cached.get?.loading) {
+    // The last load failed and nothing will retry it: ask again for the page
+    // now mounting, which then shows either the record or the failure (the
+    // resource's onError reports that, hence the empty catch).
+    cached.reload().catch(() => {})
+  }
+
+  if (!cached) {
     if (docname) {
       documentsCache[doctype][docname] = createDocumentResource(
         {
           realtime: Boolean(vm?.$socket),
           doctype: doctype,
           name: docname,
-          onSuccess: async () => await setupFormScript(),
+          onSuccess: async () => {
+            error.value = ''
+            await setupFormScript()
+          },
           onError: (err) => {
             const deletionKey = `${doctype}:${docname}`
             if (

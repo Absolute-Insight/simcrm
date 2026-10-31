@@ -59,7 +59,7 @@ vi.mock('frappe-ui', async (importOriginal) => ({
   createListResource: (o) => ({
     loading: false,
     list: { promise: Promise.resolve() },
-    fetch: () => o.onSuccess([{ name: 'Deal Script', script: SCRIPT }]),
+    reload: async () => o.onSuccess([{ name: 'Deal Script', script: SCRIPT }]),
   }),
   call: async () => null,
   Checkbox: stub('Checkbox', 'input'),

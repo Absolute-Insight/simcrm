@@ -7,8 +7,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { createDialog } from './utils/dialogs'
 import { cleanUpSupersededWorkers } from './utils/staleServiceWorkers'
-import { isSessionGone, loginUrlFor } from './utils/sessionExpiry'
-import { clearOfflineCache } from './utils/offlineCache'
+import { redirectIfSessionGone } from './utils/sessionExpiry'
 import { initSocket } from './socket'
 import router from './router'
 import translationPlugin from './translation'
@@ -28,10 +27,10 @@ import {
 } from 'frappe-ui'
 
 import { telemetryPlugin } from '@framework/ui/telemetry'
-// injects the lucide SVG sprite into the DOM so the IconPicker and lucide Icons
-// (used for view icons) can render from it
-// parked in experimental for v1 (frappe-ui migration doc)
-import { spritePlugin } from 'frappe-ui/experimental'
+// The lucide sprite the IconPicker and string icons draw from is injected on
+// first use (utils/lucideSprite), not here: frappe-ui's spritePlugin put all
+// of it in the entry chunk, and the experimental barrel it came through
+// pulled the rich-text editor into the boot chunks with it.
 
 /* Vectora ships dark-first: a visitor with no stored preference boots into
    the premium dark theme. Any stored choice — light, dark, or system — wins
@@ -70,22 +69,15 @@ app.provide('color', 'currentColor')
    frappe answers 403 to everything, which the pages used to render as a
    permission problem ("ask an administrator"). Send the person back to log in,
    returning to the page they were on; a genuine 403 on a live session still
-   surfaces as a permission error. */
-let redirectingToLogin = false
+   surfaces as a permission error. `call()` bypasses this hook, so the
+   'frappe-ui' compat shim wraps it with the same check. */
 setConfig('resourceFetcher', (options) =>
   frappeRequest(options).catch((error) => {
-    if (!redirectingToLogin && isSessionGone(error, document.cookie)) {
-      redirectingToLogin = true
-      // whoever logs in next may not be this person
-      clearOfflineCache().then(() =>
-        window.location.assign(loginUrlFor(window.location)),
-      )
-    }
+    redirectIfSessionGone(error)
     throw error
   }),
 )
 app.use(FrappeUI)
-app.use(spritePlugin)
 app.use(pinia)
 app.use(router)
 app.use(translationPlugin)

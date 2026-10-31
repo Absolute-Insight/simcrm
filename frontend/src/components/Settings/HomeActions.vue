@@ -15,7 +15,7 @@
           v-if="document.isDirty"
           :label="__('Update')"
           variant="solid"
-          :loading="document.loading"
+          :loading="document.save.loading"
           @click="updateSettings"
         />
       </div>
@@ -51,11 +51,14 @@ provide('triggerOnChange', triggerOnChange)
 
 const errorMessage = ref('')
 
+// A refusal is toasted by the settings store's resource (stores/settings.js).
 function updateSettings() {
-  document.save.submit(null, {
-    onSuccess: () => {
-      showSettings.value = false
-    },
-  })
+  document.save
+    .submit(null, {
+      onSuccess: () => {
+        showSettings.value = false
+      },
+    })
+    .catch(() => {})
 }
 </script>

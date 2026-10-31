@@ -20,7 +20,7 @@
           v-if="settings.isDirty"
           :label="__('Update')"
           variant="solid"
-          :loading="settings.loading"
+          :loading="settings.save.loading"
           @click="updateSettings"
         />
       </div>
@@ -279,11 +279,14 @@ const allDayNotifications = computed({
   set: (val) => (settings.doc.all_day_event_notifications = val),
 })
 
+// A refusal is toasted by the settings store's resource (stores/settings.js).
 function updateSettings() {
-  settings.save.submit(null, {
-    onSuccess: () => {
-      showSettings.value = false
-    },
-  })
+  settings.save
+    .submit(null, {
+      onSuccess: () => {
+        showSettings.value = false
+      },
+    })
+    .catch(() => {})
 }
 </script>

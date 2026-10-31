@@ -326,6 +326,7 @@ import {
   reactive,
   computed,
   markRaw,
+  nextTick,
   onBeforeUnmount,
   onMounted,
   watch,
@@ -585,9 +586,13 @@ const steps = reactive([
     title: __('Create your first lead'),
     icon: markRaw(LeadsIcon),
     completed: false,
-    onClick: () => {
+    onClick: async () => {
       minimize.value = true
-      router.push({ name: 'Leads' })
+      // Sent once Leads is the page on screen. From another Leads view the
+      // push remounts the page, and useBroadcast keeps only what nobody
+      // heard, so the instance on its way out would swallow it.
+      await router.push({ name: 'Leads' })
+      await nextTick()
       send('trigger_lead_create', true)
       capture('onboarding_step_clicked_create_first_lead')
     },

@@ -15,7 +15,7 @@
           v-if="settings.isDirty"
           :label="__('Update')"
           variant="solid"
-          :loading="settings.loading"
+          :loading="settings.save.loading"
           @click="updateSettings"
         />
       </div>
@@ -125,12 +125,15 @@ import { showSettings } from '@/composables/settings'
 
 const { _settings: settings, setupBrand } = getSettings()
 
+// A refusal is toasted by the settings store's resource (stores/settings.js).
 function updateSettings() {
-  settings.save.submit(null, {
-    onSuccess: () => {
-      showSettings.value = false
-      setupBrand()
-    },
-  })
+  settings.save
+    .submit(null, {
+      onSuccess: () => {
+        showSettings.value = false
+        setupBrand()
+      },
+    })
+    .catch(() => {})
 }
 </script>

@@ -155,8 +155,8 @@ async function setLock(value) {
         ? __('Reps now plan for today or later')
         : __('Reps can plan on past days again'),
     )
-  } catch (error) {
-    toast.error(error.messages?.[0] || __('Could not change the setting'))
+  } catch {
+    // A refusal is toasted by the settings store's resource (stores/settings.js).
   }
 }
 
