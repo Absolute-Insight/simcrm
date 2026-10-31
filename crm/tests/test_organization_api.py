@@ -77,6 +77,8 @@ class OrganizationLogoLookupTest(IntegrationTestCase):
 		)
 		self.assertNotIn(self.without_logo.name, rows)
 		self.assertTrue(all(set(row) == {"name", "organization_logo"} for row in rows.values()))
+
+
 class CustomerCodeShownTest(IntegrationTestCase):
 	"""The code is how the sales team names an account, so it is on the list,
 	in every organization picker, and labelled as what it is."""
