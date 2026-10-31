@@ -7,7 +7,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { mount } from './mount.js'
 
-const fp = vi.hoisted(() => ({ requests: [], selects: {} }))
+const fp = vi.hoisted(() => ({
+  requests: [],
+  selects: {},
+  dropdown: null,
+  opened: 0,
+}))
 
 const recorder = vi.hoisted(() => (name) => async () => {
   const { defineComponent, h } = await import('vue')
@@ -34,8 +39,10 @@ vi.mock('frappe-ui', async (importOriginal) => {
     defineComponent({
       name,
       inheritAttrs: false,
-      setup(_, { attrs, slots }) {
+      setup(_, { attrs, slots, expose }) {
         if (name === 'Select') fp.selects[attrs['aria-label']] = attrs
+        if (name === 'Dropdown') fp.dropdown = attrs
+        if (name === 'DateRangePicker') expose({ open: () => fp.opened++ })
         return () => h('div', { 'data-stub': name }, slots.default?.())
       },
     })
@@ -103,6 +110,7 @@ setConfig('resourceFetcher', (options) => {
 afterEach(() => {
   fp.requests.length = 0
   fp.selects = {}
+  fp.opened = 0
 })
 
 const pending = (url, match = () => true) =>
@@ -275,5 +283,26 @@ describe('Reports', () => {
     await flush()
     expect(heading(el)).toBe('Rep summary')
     expect(cells(el)).toEqual(['Alice', '4'])
+  })
+  /* The menu's Dropdown gives focus back to its trigger a tick or two after it
+     closes; a picker opened before that is dismissed by the focus leaving it. */
+  it('opens the Custom Range picker only once the menu has let go of focus', async () => {
+    await openReports()
+    const menu = document.createElement('div')
+    menu.setAttribute('role', 'menu')
+    menu.tabIndex = -1
+    const trigger = document.createElement('button')
+    document.body.append(menu, trigger)
+    menu.focus()
+
+    fp.dropdown.options.at(-1).onClick() // Custom Range
+    await flush()
+    expect(fp.opened).toBe(0)
+
+    trigger.focus()
+    await flush()
+    expect(fp.opened).toBe(1)
+    menu.remove()
+    trigger.remove()
   })
 })

@@ -640,6 +640,7 @@ import {
   parseDateRange,
   type DashboardDateRange,
 } from '@/utils/dashboard'
+import { afterMenuFocusReturn } from '@/utils/afterMenuFocusReturn'
 import {
   usePageMeta,
   createResource,
@@ -1291,7 +1292,7 @@ const options = computed(() => [
        server answers with the current calendar month. A click in a full range
        starts a new one, so there is nothing to clear for the pick either. */
     onClick: () => {
-      setTimeout(() => datePickerRef.value?.open(), 0)
+      afterMenuFocusReturn(() => datePickerRef.value?.open())
     },
   },
 ])

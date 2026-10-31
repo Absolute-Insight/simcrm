@@ -385,6 +385,7 @@ import {
   usePageMeta,
 } from 'frappe-ui'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { afterMenuFocusReturn } from '@/utils/afterMenuFocusReturn'
 import { useRoute, useRouter } from 'vue-router'
 
 const route = useRoute()
@@ -433,7 +434,7 @@ const presetOptions = computed(() => [
   {
     label: __('Custom Range'),
     onClick: () => {
-      nextTick(() => datePickerRef.value?.open())
+      afterMenuFocusReturn(() => datePickerRef.value?.open())
     },
   },
 ])

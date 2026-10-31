@@ -293,6 +293,29 @@ describe('Dashboard, as a manager', () => {
     expect(latest('Dropdown').button.label).toBe('Last 7 Days')
   })
 
+  /* The closing Dropdown gives focus back to its trigger a tick or two later,
+     and focus leaving the picker's popover dismisses it. */
+  it('opens the Custom Range picker only once the menu has let go of focus', async () => {
+    mountDashboard()
+    await settle()
+    const menu = document.createElement('div')
+    menu.setAttribute('role', 'menu')
+    menu.tabIndex = -1
+    const trigger = document.createElement('button')
+    document.body.append(menu, trigger)
+    menu.focus()
+
+    latest('Dropdown').options.at(-1).onClick() // Custom Range
+    await settle()
+    expect(fp.opened).toBe(0)
+
+    trigger.focus()
+    await settle()
+    expect(fp.opened).toBe(1)
+    menu.remove()
+    trigger.remove()
+  })
+
   it('drills into a tile with the chosen territory', async () => {
     mountDashboard()
     await settle()
