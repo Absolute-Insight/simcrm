@@ -1,3 +1,4 @@
+import { describe, expect, it, vi } from 'vitest'
 import { describeError } from '@/utils/describeError'
 
 describe('describeError', () => {
@@ -157,5 +158,75 @@ describe('describeError', () => {
   it('handles an error that carries nothing useful', () => {
     const result = describeError({})
     expect(result).toEqual({ kind: 'unknown', message: '', detail: '' })
+  })
+})
+
+/* The errors above are hand-built. These come from frappe-ui's own
+   frappeRequest, which fills `messages` with a placeholder of its own when the
+   server wrote none: an unhandled exception (a 500 without frappe.throw) or a
+   gateway's HTML 504 then read "Internal Server Error", untranslated, where
+   the caller's sentence belonged. */
+describe('describeError on what frappeRequest throws', () => {
+  async function failWith(status, body) {
+    const { frappeRequest } = await import(
+      '../../node_modules/frappe-ui/src/utils/frappeRequest.ts'
+    )
+    vi.stubGlobal('fetch', async () => new Response(body, { status }))
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      await frappeRequest({ url: 'crm.api.dashboard.get_chart' })
+    } catch (error) {
+      return error
+    } finally {
+      vi.unstubAllGlobals()
+      vi.restoreAllMocks()
+    }
+    throw new Error('the request did not fail')
+  }
+
+  it('an unhandled server exception leaves the face to the caller', async () => {
+    const error = await failWith(
+      500,
+      JSON.stringify({ exc_type: 'TypeError', exc: '["Traceback: boom"]' }),
+    )
+    expect(error.messages).toEqual(['Internal Server Error']) // the placeholder
+    const result = describeError(error)
+    expect(result.kind).toBe('server')
+    expect(result.message).toBe('')
+    expect(result.detail).toContain('HTTP 500')
+  })
+
+  it("a gateway's HTML 504 leaves the face to the caller", async () => {
+    const error = await failWith(
+      504,
+      '<html><body>504 Gateway Time-out</body></html>',
+    )
+    const result = describeError(error)
+    expect(result.kind).toBe('server')
+    expect(result.message).toBe('')
+  })
+
+  it('still promotes what the server wrote for a person', async () => {
+    const error = await failWith(
+      417,
+      JSON.stringify({
+        exc_type: 'ValidationError',
+        _server_messages: JSON.stringify([
+          JSON.stringify({ message: 'Enter a number of 0 or more.' }),
+        ]),
+      }),
+    )
+    expect(describeError(error).message).toBe('Enter a number of 0 or more.')
+  })
+
+  it("still promotes the server's _error_message", async () => {
+    const error = await failWith(
+      404,
+      JSON.stringify({
+        exc_type: 'DoesNotExistError',
+        _error_message: 'CRM Deal CRM-DEAL-9 not found',
+      }),
+    )
+    expect(describeError(error).message).toBe('CRM Deal CRM-DEAL-9 not found')
   })
 })

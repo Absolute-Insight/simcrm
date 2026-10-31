@@ -36,7 +36,9 @@
             >
               {{ draft.icon }}
             </div>
+            <!-- the picker lists the sprite's symbols when it mounts -->
             <IconPicker
+              v-if="lucideSpriteReady"
               v-model="pickerIcon"
               class="flex-1"
               :max-icons="1000"
@@ -46,6 +48,7 @@
                   : __('Select an icon...')
               "
             />
+            <div v-else class="h-7 flex-1" />
           </div>
         </div>
       </div>
@@ -73,6 +76,7 @@
 // parked in experimental for v1 (frappe-ui migration doc)
 import { IconPicker } from 'frappe-ui/experimental'
 import { isEmoji } from '@/utils'
+import { ensureLucideSprite, lucideSpriteReady } from '@/utils/lucideSprite'
 import { call } from 'frappe-ui'
 import { ref, computed, watch } from 'vue'
 
@@ -86,6 +90,8 @@ const props = defineProps({
 
 const show = defineModel({ type: Boolean })
 const view = defineModel('view', { type: Object, default: () => ({}) })
+
+ensureLucideSprite().catch(() => {})
 
 // The form edits a copy taken when the dialog opens; only Create or Save
 // Changes sends it. Bound to `view` itself, a dismissed rename stayed on the

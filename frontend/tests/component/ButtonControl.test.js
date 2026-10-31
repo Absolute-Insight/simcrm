@@ -30,7 +30,7 @@ describe('ButtonControl', () => {
     const w = mount(ButtonControl, {
       props: { label: 'Call', icon: 'lucide-phone' },
     })
-    // From the sprite main.js installs: Tailwind only writes a lucide-* class
+    // From the lucide sprite: Tailwind only writes a lucide-* class
     // for a name it finds in the source, and this one is set at runtime.
     const use = w.el.querySelector('button svg use')
     expect(use?.getAttribute('href')).toBe('#phone')

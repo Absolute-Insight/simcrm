@@ -54,10 +54,19 @@ function parseServerMessages(raw) {
   })
 }
 
+/* frappe-ui's frappeRequest puts this in `messages` when the server wrote
+   nothing at all -- an unhandled exception, a gateway's HTML 504. It is a
+   status line, not text the server wrote for a person, so it must not take
+   the place of the caller's sentence. */
+const FRAPPE_UI_PLACEHOLDER = 'Internal Server Error'
+
 function humanMessages(error) {
   const found = []
-  if (Array.isArray(error.messages)) found.push(...error.messages)
-  else if (typeof error.messages === 'string') found.push(error.messages)
+  if (Array.isArray(error.messages)) {
+    found.push(...error.messages.filter((m) => m !== FRAPPE_UI_PLACEHOLDER))
+  } else if (typeof error.messages === 'string') {
+    found.push(error.messages)
+  }
   if (typeof error._server_messages === 'string') {
     found.push(...parseServerMessages(error._server_messages))
   }

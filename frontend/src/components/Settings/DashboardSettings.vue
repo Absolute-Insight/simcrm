@@ -18,7 +18,7 @@
           v-if="settings.isDirty"
           :label="__('Update')"
           variant="solid"
-          :loading="settings.loading"
+          :loading="settings.save.loading"
           @click="updateSettings"
         />
       </div>
@@ -212,29 +212,34 @@ const requiresAccessKey = computed(() =>
 )
 const providerMeta = computed(() => PROVIDER_META[serviceProvider.value])
 
-function updateSettings() {
-  settings.save.submit(null, {
-    validate: () => {
-      errorMessage.value = ''
-      if (!settings.doc?.currency) {
-        errorMessage.value = __('Please select a currency before saving.')
-        return errorMessage.value
-      }
-      if (requiresAccessKey.value && !settings.doc.access_key) {
-        errorMessage.value = __('Please enter the {0} access key.', [
-          providerMeta.value.label,
-        ])
-        return errorMessage.value
-      }
-    },
-    onSuccess: () => {
-      toast.success(__('Dashboard settings updated successfully'))
+/* Checked before submitting rather than as the resource's `validate`: a
+   failed validate runs the resource's onError, and the settings store's
+   toasts every refusal (stores/settings.js), so the same sentence would show
+   twice. A server refusal is toasted there too. */
+function missingSetting() {
+  if (!settings.doc?.currency) {
+    return __('Please select a currency before saving.')
+  }
+  if (requiresAccessKey.value && !settings.doc.access_key) {
+    return __('Please enter the {0} access key.', [providerMeta.value.label])
+  }
+  return ''
+}
 
-      if (route.name === 'Deal') {
-        send('reload-deal-sections')
-      }
-    },
-  })
+function updateSettings() {
+  errorMessage.value = missingSetting()
+  if (errorMessage.value) return
+  settings.save
+    .submit(null, {
+      onSuccess: () => {
+        toast.success(__('Dashboard settings updated successfully'))
+
+        if (route.name === 'Deal') {
+          send('reload-deal-sections')
+        }
+      },
+    })
+    .catch(() => {})
 }
 
 function setCurrency(value) {
@@ -251,13 +256,20 @@ function setCurrency(value) {
         label: __('Save'),
         variant: 'solid',
         onClick: ({ close }) => {
+          const previous = settings.doc.currency
           settings.doc.currency = value
-          settings.save.submit(null, {
-            onSuccess: () => {
-              toast.success(__('Currency set as {0} successfully', [value]))
-              close()
-            },
-          })
+          settings.save
+            .submit(null, {
+              onSuccess: () => {
+                toast.success(__('Currency set as {0} successfully', [value]))
+                close()
+              },
+            })
+            .catch(() => {
+              // A set currency cannot be edited, so one left on screen after
+              // a refusal hid the picker for good. The store says why.
+              settings.doc.currency = previous
+            })
         },
       },
     ],

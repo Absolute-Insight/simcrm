@@ -1,9 +1,9 @@
 import { nextTick, onBeforeUnmount, ref } from 'vue'
 
-// App.vue keys <router-view> on $route.fullPath and a record page keeps its
-// tab in the URL hash, so changing a Deal or Lead tab remounts the whole page.
-// A request to open the composer on another tab has to outlive the page that
-// made it: it waits here for the instance the tab change mounts.
+// A record page keeps its tab in the URL hash. App.vue's <router-view> key leaves
+// the hash out, so a tab change keeps the page; any other route change remounts
+// it, so a request to open the composer on another tab can also outlive the page
+// that made it: it waits here for the instance that mounts.
 const pending = new Set()
 
 /**

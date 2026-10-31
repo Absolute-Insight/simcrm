@@ -109,6 +109,55 @@ describe('createChatStore', () => {
     expect(store.visible.value).toBe(true)
   })
 
+  it('drops an answer that lands after Clear', async () => {
+    // Clear is live while the model thinks, and a local model takes seconds:
+    // the late answer used to appear alone in the emptied panel and then
+    // travel as history with the next question.
+    const store = makeStore()
+    let resolve
+    callMock.mockReturnValueOnce(new Promise((r) => (resolve = r)))
+    const pending = store.ask('Which deals did Thabo win in September?')
+    store.clear()
+    expect(store.asking.value).toBe(false) // a new question can go now
+
+    resolve({ status: 'ok', answer: 'Thabo won 3 deals worth R 1.2m.' })
+    await pending
+    expect(store.messages.value).toEqual([])
+
+    callMock.mockResolvedValueOnce({ status: 'ok', answer: 'ok' })
+    await store.ask('How do I log a visit?')
+    expect(callMock.mock.calls.at(-1)[1].history).toEqual([])
+  })
+
+  it('drops a failure that lands after Clear', async () => {
+    const store = makeStore()
+    let reject
+    callMock.mockReturnValueOnce(new Promise((_, r) => (reject = r)))
+    const pending = store.ask('q')
+    store.clear()
+    reject(new Error('timeout'))
+    await pending
+    expect(store.failure.value).toBe('')
+  })
+
+  it('a question asked after Clear is not cut short by the old one', async () => {
+    const store = makeStore()
+    let resolveOld, resolveNew
+    callMock.mockReturnValueOnce(new Promise((r) => (resolveOld = r)))
+    const old = store.ask('old')
+    store.clear()
+    callMock.mockReturnValueOnce(new Promise((r) => (resolveNew = r)))
+    const fresh = store.ask('new')
+
+    resolveOld({ status: 'ok', answer: 'stale' })
+    await old
+    expect(store.asking.value).toBe(true) // still waiting on the new one
+
+    resolveNew({ status: 'ok', answer: 'fresh' })
+    await fresh
+    expect(store.messages.value.map((m) => m.content)).toEqual(['new', 'fresh'])
+  })
+
   it('caps the history it sends', async () => {
     const store = makeStore({ historyTurns: 2 })
     callMock.mockResolvedValue({ status: 'ok', answer: 'a' })
