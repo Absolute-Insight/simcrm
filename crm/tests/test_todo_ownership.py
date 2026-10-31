@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import frappe
 from frappe.desk.form.assign_to import add as assign_to_add
+from frappe.desk.form.assign_to import remove as assign_to_remove
 from frappe.tests import IntegrationTestCase
 
 from crm.api.doc import remove_assignments
@@ -258,6 +259,41 @@ class ToDoOwnershipTest(IntegrationTestCase):
 			remove_assignments("CRM Deal", self.deal.name, [ALICE])
 		frappe.set_user("Administrator")
 		self.assertEqual(self._owner(), ALICE)
+
+	# Cancelling the owner's own assignment clears the owner, so the document API
+	# is held to remove_assignments' rule: a write to the record.
+
+	def test_a_rep_cannot_clear_the_owner_by_inserting_a_cancelled_assignment(self):
+		frappe.set_user(MALLORY)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.insert(
+				{
+					"doctype": "ToDo",
+					"reference_type": "CRM Deal",
+					"reference_name": self.deal.name,
+					"allocated_to": ALICE,
+					"status": "Cancelled",
+					"description": "Planted",
+				}
+			)
+		frappe.set_user("Administrator")
+		self.assertEqual(self._owner(), ALICE)
+
+	def test_a_rep_cannot_clear_the_owner_by_cancelling_an_assignment_they_wrote(self):
+		frappe.set_user(MALLORY)
+		todo = self._insert_todo(ALICE)  # changes nothing, so it is let through
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("ToDo", todo.name, "status", "Cancelled")
+		frappe.set_user("Administrator")
+		self.assertEqual(self._owner(), ALICE)
+
+	def test_the_owner_may_still_step_off_their_own_deal(self):
+		frappe.set_user("Administrator")
+		assign_to_add({"assign_to": [ALICE], "doctype": "CRM Deal", "name": self.deal.name})
+		frappe.set_user(ALICE)
+		assign_to_remove("CRM Deal", self.deal.name, ALICE)
+		frappe.set_user("Administrator")
+		self.assertIsNone(self._owner())
 
 	def test_removing_a_co_assignee_leaves_the_owner_alone(self):
 		"""A manager co-assigns Bob to Alice's deal and Bob steps off it again. The

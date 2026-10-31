@@ -30,7 +30,10 @@ def before_insert(doc, method):
 	if doc.reference_type not in OWNER_FIELD or not doc.reference_name or not doc.allocated_to:
 		return
 
-	_refuse_unless_permitted(doc, doc.owner or frappe.session.user)
+	user = doc.owner or frappe.session.user
+	if doc.status == "Cancelled":
+		_refuse_cancel_unless_permitted(doc, user)
+	_refuse_unless_permitted(doc, user)
 
 
 def validate(doc, method):
@@ -48,14 +51,25 @@ def validate(doc, method):
 	So an edit that gives someone a live ToDo on a lead or deal they did not
 	hold one on before is judged exactly as that insert would be -- asked of the
 	session making the edit, not of the row's owner, who may be the manager who
-	wrote the assignment in the first place. Every other edit (closing it,
-	rewording it, moving its date) is left alone.
+	wrote the assignment in the first place. Cancelling the owner's own
+	assignment is held to :func:`_refuse_cancel_unless_permitted`. Every other
+	edit (closing it, rewording it, moving its date) is left alone.
 	"""
 	if doc.is_new():
 		return  # judged by before_insert, against the account inserting it
 
+	before = doc.get_doc_before_save()
+	if (
+		doc.status == "Cancelled"
+		and (not before or before.status != "Cancelled")
+		and doc.reference_type in OWNER_FIELD
+		and doc.reference_name
+		and doc.allocated_to
+	):
+		_refuse_cancel_unless_permitted(doc, frappe.session.user)
+
 	opened = _opens(doc)
-	if not opened or opened == _opens(doc.get_doc_before_save()):
+	if not opened or opened == _opens(before):
 		return
 
 	_refuse_unless_permitted(doc, frappe.session.user)
@@ -82,6 +96,32 @@ def _refuse_unless_permitted(doc, user: str) -> None:
 	if not may_assign(doc, user):
 		frappe.throw(
 			_("Not permitted to assign {0} {1}").format(_(doc.reference_type), doc.reference_name),
+			frappe.PermissionError,
+		)
+
+
+def _refuse_cancel_unless_permitted(doc, user: str) -> None:
+	"""Cancelling the owner's own assignment clears the owner
+	(:func:`clear_owner_on_unassign`), and moves the record's suggestions off them,
+	so it is gated as ``crm.api.doc.remove_assignments`` gates it: a write to the
+	record. A ToDo row passes ``ToDo.has_permission`` for whoever wrote it, and one
+	allocated to the owner was let through :func:`before_insert` because it moved
+	nothing -- so without this a rep could insert one, or insert it already
+	Cancelled, on a deal they cannot even read and take it off its owner.
+
+	The owner stepping off their own record is not asked.
+	"""
+	if user == doc.allocated_to:
+		return
+	fieldname = OWNER_FIELD[doc.reference_type]
+	if frappe.db.get_value(doc.reference_type, doc.reference_name, fieldname) != doc.allocated_to:
+		return
+
+	if not may_assign(doc, user):
+		frappe.throw(
+			_("Not permitted to change assignments on {0} {1}").format(
+				_(doc.reference_type), doc.reference_name
+			),
 			frappe.PermissionError,
 		)
 
