@@ -583,9 +583,7 @@ class TrendClaimTest(UnitTestCase):
 
 	def test_that_shape_with_the_windows_figures_is_replaced_too(self):
 		"""Prod's sentence: the total was true, the verb was not."""
-		for text in (
-			"Revenue grew to a total of 42,198,807.",
-		):
+		for text in ("Revenue grew to a total of 42,198,807.",):
 			with self.subTest(text=text):
 				reply = ground_at(text, FALLING)
 				self.assertEqual(reply["answer"], self.FACT)
