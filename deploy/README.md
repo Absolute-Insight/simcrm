@@ -711,6 +711,54 @@ docker compose exec backend bench --site <site> execute frappe.client.set_value 
 Removing `pulse_api_key` from `site_config.json` is the other off switch, and
 the more durable one: a setup-wizard re-run can tick the checkbox back.
 
+## WhatsApp
+
+The image ships [frappe_whatsapp](https://github.com/shridarpatil/frappe_whatsapp)
+(MIT, unmodified, pinned by commit in `scripts/frappe-whatsapp-pin.env`). It does
+nothing until a WhatsApp Account is set Active: the tab, the composer and the
+webhook all stay off. A new site gets it from `create-site`. An existing one has
+to be given it, once:
+
+```bash
+# 0. a backup you could actually restore from -- see the warning below
+docker compose exec backend bench --site all backup --with-files
+
+# 1. upgrade to a release that contains it, as in "Upgrading". `up -d` reruns the
+#    configurator, which puts the app in the volume's sites/apps.txt.
+
+# 2. install it, then migrate so the CRM roles and the WhatsApp lead source land
+docker compose exec backend bench --site <site> install-app frappe_whatsapp
+docker compose exec backend bench --site <site> migrate
+```
+
+**This changes what a rollback means.** Once it is installed the site's database
+names an app that older images do not contain, so `bench` fails on them with an
+import error for every command, `migrate` included. The only way back past this
+point is the database backup from step 0, restored as in **Rolling back**.
+
+Then configure it:
+
+1. **System Settings:** Country must be South Africa. Numbers stored as `082…`
+   are read in that country when sending.
+2. **`host_name`:** the public HTTPS URL, or media links sent to Meta point at an
+   internal name: `bench --site <site> set-config host_name https://crm.example.com`
+3. **Meta:** in the app, point the WhatsApp webhook at
+   `https://<host>/api/method/frappe_whatsapp.utils.webhook.webhook`, with the
+   account's verify token, subscribed to `messages`. Meta's delivery addresses
+   are not a stable published list, so **put no IP allowlist or login in front of
+   this path**: every message and status would be dropped. The App Secret check
+   is what protects it.
+4. **WhatsApp Account** in Desk, one per number: token, phone number id, business
+   id, `https://graph.facebook.com`, API version, verify token, status Active.
+5. **CRM WhatsApp Line** in Desk, one per number: the account, the rep, and the
+   App Secret. **A number with no App Secret has every webhook refused with a
+   403**, on purpose. A rep with no line reads threads but cannot send, unless
+   a default outgoing account is set in WhatsApp Settings that is nobody's line.
+
+A message from a number the CRM has never seen creates a lead owned by the rep
+whose number received it. Tokens and App Secrets are Password fields,
+System Manager only.
+
 ## site_config keys
 
 Everything this stack reads from `sites/<site>/site_config.json`, set with

@@ -8,7 +8,7 @@ cd ~ || ex
 sudo rm -f /etc/apt/sources.list.d/google-chrome*
 sudo apt update
 sudo apt remove mysql-server mysql-client
-sudo apt install libcups2-dev redis-server mariadb-client libmariadb-dev
+sudo apt install libcups2-dev redis-server mariadb-client libmariadb-dev libmagic1
 
 # Frappe comes from scripts/frappe-pin.env -- one pinned commit shared by the
 # devcontainer, every test lane and the published image, so none of them can
@@ -62,6 +62,13 @@ sed -i 's/redis_socketio:/# redis_socketio:/g' Procfile
 
 bench get-app crm "${GITHUB_WORKSPACE}"
 
+# The real frappe_whatsapp, at the commit the image ships, so
+# crm/tests/test_whatsapp_real.py runs here rather than skipping.
+# shellcheck source=../../scripts/frappe-whatsapp-pin.env
+source "${GITHUB_WORKSPACE}/scripts/frappe-whatsapp-pin.env"
+bash "${GITHUB_WORKSPACE}/scripts/fetch-frappe-whatsapp.sh" ~/app-src/frappe_whatsapp
+bench get-app --skip-assets --branch "${FRAPPE_WHATSAPP_PIN_BRANCH}" ~/app-src/frappe_whatsapp
+
 # Only pull erpnext when the integration is under test, to keep other runs fast.
 if [ "${INSTALL_ERPNEXT}" = "true" ]; then
     bench get-app erpnext --branch "${ERPNEXT_BRANCH}"
@@ -78,6 +85,7 @@ if [ "${INSTALL_ERPNEXT}" = "true" ]; then
 else
     bench --verbose --site test_site install-app crm
 fi
+bench --verbose --site test_site install-app frappe_whatsapp
 
 # Pin the site's clock to the runner's.
 #

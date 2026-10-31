@@ -44,6 +44,15 @@ if [[ "$(grep -c "^$copy_line$" "$file")" != "1" ]]; then
     exit 1
 fi
 
+# Pinned by commit for the same reason, and handed to bench by path in APPS_JSON.
+whatsapp_line='COPY --chown=frappe:frappe app-src /home/frappe/app-src'
+sed -i "s|^$anchor|$whatsapp_line\n&|" "$file"
+
+if [[ "$(grep -c "^$whatsapp_line$" "$file")" != "1" ]]; then
+    echo "::error::The app-src COPY was not inserted exactly once." >&2
+    exit 1
+fi
+
 # 2. Point both base images at pinned digests instead of at the frappe branch.
 #
 # Missing one is not a build failure at this step -- it is a manifest-not-found
