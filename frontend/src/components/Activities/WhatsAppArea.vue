@@ -21,6 +21,12 @@
           class="absolute -top-2 right-0"
         />
         <div
+          v-if="whatsapp.type == 'Outgoing' && whatsapp.from_name"
+          class="mb-0.5 text-xs text-ink-gray-5"
+        >
+          {{ whatsapp.from_name }}
+        </div>
+        <div
           v-if="whatsapp.is_reply"
           class="mb-1 cursor-pointer rounded-[var(--v-radius-control)] border-0 border-l-4 bg-surface-gray-3 p-2 text-ink-gray-5"
           :class="
