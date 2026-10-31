@@ -167,7 +167,7 @@ class AnUnsaveableDealTest(OutcomesTestCase):
 
 	def test_expiry_carries_on_past_it_and_names_it_once(self):
 		self.assertEqual(outcomes.expire_stale_quotes(grace_days=30), {"expired": 1})
-		self.assertEqual(frappe.db.get_value("CRM Deal", self.healthy, "status"), "Lost")
+		self.assertEqual(frappe.db.get_value("CRM Deal", self.healthy, "status"), "Expired")
 		self.assertEqual(frappe.db.get_value("CRM Deal", self.poisoned, "status"), "Proposal/Quotation")
 		# the rule offers the same deal every night until somebody fixes it
 		outcomes.expire_stale_quotes(grace_days=30)
