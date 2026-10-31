@@ -1,5 +1,8 @@
 <template>
-  <div v-if="events?.length" class="flex flex-col w-full overflow-y-auto">
+  <div
+    v-if="computedEvents.some((event) => event.count)"
+    class="flex flex-col w-full overflow-y-auto"
+  >
     <template v-for="(event, i) in computedEvents" :key="event.type">
       <div v-if="event.count" class="p-3">
         <CollapsibleSection :opened="!event.collapsed">
@@ -125,7 +128,15 @@ function handleEventClick(e) {
 const computedEvents = computed(() => {
   if (!events.value?.length) return []
 
-  let mappedEvents = events.value.map((event) => {
+  // The query keeps out events that had ended when the panel opened, but one
+  // can end while it is open, and an ended event fell through every check
+  // below into "upcoming".
+  const now = dayjs()
+  const notOver = events.value.filter(
+    (event) => !dayjs(event.ends_on).isBefore(now),
+  )
+
+  let mappedEvents = notOver.map((event) => {
     let type = 'upcoming'
 
     // Starting Now: Event is within [now - 5 min, now + 5 min]
