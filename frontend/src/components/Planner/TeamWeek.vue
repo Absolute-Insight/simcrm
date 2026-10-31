@@ -10,7 +10,7 @@
         class="w-48"
         @update:modelValue="(value) => (type = value)"
       />
-      <span v-if="team.data" class="tabular-nums">
+      <span v-if="shown" class="tabular-nums">
         {{
           __('{0} planned · {1} done · {2} missed · {3} cancelled', [
             teamTotals.planned,
@@ -30,7 +30,7 @@
     />
 
     <SkeletonTable
-      v-else-if="team.loading && !team.data"
+      v-else-if="!shown"
       :columns="8"
       :rows="6"
       density="compact"
@@ -165,11 +165,22 @@ const typeOptions = computed(() => [
    team week open past midnight should not see yesterday marked as today. */
 const today = ref(props.today)
 
+/* frappe-ui keeps whichever response lands last, not the last one asked for:
+   two quick week changes answered out of order put the previous week's totals
+   under the new week's header, over an empty grid. Only an answer for the
+   week on screen is kept, and only shown while that week is. */
+const answered = ref(null)
+const shown = computed(() =>
+  answered.value?.week_start === props.weekStart ? answered.value : null,
+)
+
 const team = createResource({
   url: 'crm.api.rep_plan.get_team_week',
   makeParams: () => ({ week_start: props.weekStart }),
   auto: true,
-  onSuccess() {
+  onSuccess(data) {
+    if (data?.week_start !== props.weekStart) return
+    answered.value = data
     today.value = todayInTimeZone(getConfig('systemTimezone'))
   },
 })
@@ -183,7 +194,7 @@ const days = computed(() => weekDayCells(props.weekStart, today.value))
 
 const rows = computed(() =>
   teamGrid(
-    team.data?.reps || [],
+    shown.value?.reps || [],
     days.value.map((d) => d.date),
     type.value,
   ),
@@ -192,7 +203,7 @@ const rows = computed(() =>
 const teamTotals = computed(() =>
   rollupTotals(
     rollupItems(
-      (team.data?.reps || [])
+      (shown.value?.reps || [])
         .flatMap((rep) => rep.items || [])
         .filter((item) => !type.value || item.activity_type === type.value),
     ),
