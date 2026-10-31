@@ -59,14 +59,17 @@ export default {
         // same hexes. Kept as literals rather than `var(--brand-*)` so the
         // Tailwind opacity modifiers (`text-brand-500/60`) keep working.
         //
-        // The gradient endpoints (sky, magenta) are deliberately NOT here:
-        // they exist only to compose --brand-gradient, and a `text-brand-sky`
+        // These are the dark theme's indigo; only DEFAULT follows the light
+        // theme's steel, and no numbered step has a call site today.
+        //
+        // The gradient endpoints (start, end) are deliberately NOT here:
+        // they exist only to compose --brand-gradient, and a `text-brand-start`
         // utility would be advertising a colour the design language does not
         // let you spend.
         brand: {
           // `text-brand` / `bg-brand` is the brand used as ink, so it has to
-          // flip with the theme: 500 is 4.9:1 on the light canvas but 3.3:1 on
-          // the dark one. The numbered steps below stay literal.
+          // flip with the theme: each resolves its own step that clears AA on
+          // its canvas. The numbered steps below stay literal.
           DEFAULT: 'var(--brand-ink)',
           50: '#EFF0FD',
           100: '#E0E2FB',

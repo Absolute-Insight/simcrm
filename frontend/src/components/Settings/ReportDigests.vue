@@ -21,14 +21,21 @@
       </Button>
     </div>
 
-    <div v-if="digests.loading" class="flex flex-col gap-3">
+    <!-- A list resource keeps its request state on `.list`: read off the
+         resource itself, loading and error were always undefined, and a slow
+         or failed load both read "No digests yet". The skeleton is for the
+         first load only, so a save's reload does not blank the list. -->
+    <div
+      v-if="digests.list.loading && !digests.data"
+      class="flex flex-col gap-3"
+    >
       <Skeleton shape="text" width="60%" :label="__('Loading digests')" />
       <Skeleton shape="block" width="100%" height="4rem" />
     </div>
 
     <ErrorState
-      v-else-if="digests.error"
-      :error="digests.error"
+      v-else-if="digests.list.error"
+      :error="digests.list.error"
       :title="__('Could not load digests')"
       :retry="() => digests.reload()"
     />
@@ -171,6 +178,7 @@ import LucideMailCheck from '~icons/lucide/mail-check'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import { quiet } from '@/utils/quiet'
 import { actionErrorMessage } from '@/utils/reportActionError'
 import {
   Badge,
@@ -227,8 +235,10 @@ const digests = createListResource({
   fields: ['name', 'report', 'frequency', 'enabled', 'recipients'],
   orderBy: 'modified desc',
   pageLength: 100,
-  auto: true,
 })
+// Fetched here rather than by auto: a failed load is reported by the
+// ErrorState, and auto's own fetch rejected unhandled on top of it.
+quiet(digests.reload())
 
 const editorOpen = ref(false)
 const saving = ref(false)
