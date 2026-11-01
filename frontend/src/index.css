@@ -701,6 +701,102 @@ input[type='checkbox']:checked {
     -webkit-backdrop-filter: blur(12px);
   }
 }
+
+/* Light theme: the shell takes the brand gradients as they were sampled — the
+   coral ramp on the sidebar, the blue one on the page canvas behind every
+   card. Unlayered so it beats the `bg-surface-base` utility on the canvas
+   element; the sidebar's own `bg-surface-sidebar` fill is cleared through its
+   token so the gradient on the wrapper shows through.
+
+   The gradients are far darker than the near-white the gray inks were solved
+   against, so text standing directly on them is re-stepped: ink-gray-4/5 take
+   the ink-gray-6 colour on the sidebar (coral is its binding stop), and on the
+   canvas every step up to 7 takes the 7 or 8 colour (steel binds). The
+   generator asserts both pairings. Anything with its own fill — cards, chips,
+   filled inputs — gets the original ladder back, because that is the surface
+   its text actually sits on. "Own fill" means a bare `bg-surface-*` class: not
+   a `hover:` one, which is transparent at rest, not the sidebar's cleared
+   fill, and nothing inside a side panel's `.form-control` — SidePanelLayout
+   clears those fields' frappe-ui fill, so their placeholders sit on the
+   gradient whatever class they still carry. The `--v-ink-*` copies are resolved on :root, so
+   they carry the untouched values down past the overrides. */
+:root {
+  --v-ink-4: var(--ink-gray-4);
+  --v-ink-5: var(--ink-gray-5);
+  --v-ink-6: var(--ink-gray-6);
+  --v-ink-7: var(--ink-gray-7);
+}
+:root:not([data-theme='dark']) .v-shell-sidebar {
+  background: var(--shell-sidebar-gradient);
+  --surface-sidebar: transparent;
+  --ink-gray-4: var(--v-ink-6);
+  --ink-gray-5: var(--v-ink-6);
+}
+/* The sidebar's tinted nav icons and its red "Clear Demo Data" row are the
+   -6 step, which reads at about 2:1 on coral. Same re-step as the grays: on the
+   sidebar a -6 ink takes its own hue's -9, the step AGENTS.md already reserves
+   for coloured text because it clears every surface. */
+:root:not([data-theme='dark']) .v-shell-sidebar {
+  --ink-blue-6: var(--ink-blue-9);
+  --ink-cyan-6: var(--ink-cyan-9);
+  --ink-green-6: var(--ink-green-9);
+  --ink-orange-6: var(--ink-orange-9);
+  --ink-pink-6: var(--ink-pink-9);
+  --ink-purple-6: var(--ink-purple-9);
+  --ink-red-6: var(--ink-red-9);
+  --ink-teal-6: var(--ink-teal-9);
+  --ink-violet-6: var(--ink-violet-9);
+  --ink-yellow-6: var(--ink-yellow-9);
+  --ink-amber-6: var(--ink-amber-9);
+}
+/* Status dots (IndicatorIcon) standing on the canvas — kanban column heads —
+   drop to ~1:1 against the steel end. A ring in the card surface's colour
+   gives every hue a 3:1 edge without changing the hue that carries the status;
+   inside a white card the ring is simply invisible. */
+:root:not([data-theme='dark']) .v-shell-canvas .v-indicator circle {
+  stroke: var(--surface-white);
+  stroke-width: 2.5px;
+  paint-order: stroke;
+}
+:root:not([data-theme='dark']) .v-shell-canvas {
+  background: var(--shell-canvas-gradient);
+  --ink-gray-4: var(--v-ink-7);
+  --ink-gray-5: var(--v-ink-7);
+  --ink-gray-6: var(--ink-gray-8);
+  --ink-gray-7: var(--ink-gray-8);
+}
+:root:not([data-theme='dark']) .v-shell-header {
+  background: transparent;
+}
+/* A later preflight rule pins placeholders to a literal mid-gray, which is
+   1.5:1 on the steel end. Route them back through the ink token so they take
+   the re-step on the gradient and the stock ladder inside a filled field. */
+:root:not([data-theme='dark'])
+  :is(.v-shell-sidebar, .v-shell-canvas)
+  :is(input, textarea)::placeholder {
+  color: var(--ink-gray-4);
+}
+:root:not([data-theme='dark'])
+  :is(.v-shell-sidebar, .v-shell-canvas)
+  :where(
+    .v-glass,
+    .v-glass-sm,
+    [class^='bg-surface-']:not(
+        .bg-surface-sidebar,
+        .form-control,
+        .form-control *
+      ),
+    [class*=' bg-surface-']:not(
+        .bg-surface-sidebar,
+        .form-control,
+        .form-control *
+      )
+  ) {
+  --ink-gray-4: var(--v-ink-4);
+  --ink-gray-5: var(--v-ink-5);
+  --ink-gray-6: var(--v-ink-6);
+  --ink-gray-7: var(--v-ink-7);
+}
 /* The active nav row: a lit rim and a whisper of brand glow behind the
    position rail. Unlayered on purpose — it has to win over frappe-ui's
    `shadow-sm` utility on the same element. */

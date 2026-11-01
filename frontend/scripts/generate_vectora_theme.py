@@ -466,6 +466,12 @@ LIGHT_BRAND = {
 	"--cta-from": SKY,
 	"--cta-to": STEEL,
 	"--cta-edge": LIGHT_CTA_EDGE,
+	# The shell, exactly as sampled: the sidebar wears the coral ramp and the
+	# page canvas the blue one, both left to right so blush meets sky at the
+	# sidebar's edge. index.css paints them and re-steps the gray inks that sit
+	# straight on them; the assertions below hold those pairings.
+	"--shell-sidebar-gradient": "linear-gradient(90deg, var(--brand-start) 0%, var(--brand-100) 100%)",
+	"--shell-canvas-gradient": "linear-gradient(90deg, var(--cta-from) 0%, var(--cta-to) 100%)",
 }
 
 # Motion. Three durations and two curves is the whole language: anything that
@@ -618,6 +624,13 @@ check("cta edge on dark canvas", CTA_EDGE, DARK_GRAY["950"], NON_TEXT_FLOOR)
 check("light cta ink on ramp top", CTA_INK, SKY, AA_FLOOR)
 check("light cta ink on ramp bottom", CTA_INK, STEEL, AA_FLOOR)
 check("light cta edge on light canvas", LIGHT_CTA_EDGE, LIGHT_SURFACE_BASE, NON_TEXT_FLOOR)
+# Text straight on the shell gradients. index.css lifts ink-gray-4/5 to the
+# ink-gray-6 colour on the sidebar, and ink-gray-4..7 to ink-gray-7/8 on the
+# canvas; the binding stop is the darker end of each ramp.
+for stop in (CORAL, BLUSH):
+	check(f"sidebar ink-gray-6 on {stop}", light_vars["--ink-gray-6"], stop, AA_FLOOR)
+for stop in (SKY, STEEL):
+	check(f"canvas ink-gray-7 on {stop}", light_vars["--ink-gray-7"], stop, AA_FLOOR)
 
 check("light selection", LIGHT_BRAND["--brand-900"], BLUSH, AA_FLOOR)
 check("dark selection", DARK_GRAY["50"], BRAND["--brand-700"], AA_FLOOR)

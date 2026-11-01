@@ -2,7 +2,7 @@
   <div class="flex h-screen w-screen">
     <MobileSidebar />
     <div
-      class="v-lux-stage flex h-full flex-1 flex-col overflow-auto bg-surface-base"
+      class="v-lux-stage v-shell-canvas flex h-full flex-1 flex-col overflow-auto bg-surface-base"
     >
       <MobileAppHeader />
       <slot />

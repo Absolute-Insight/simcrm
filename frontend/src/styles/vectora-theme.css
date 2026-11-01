@@ -48,6 +48,16 @@
     var(--cta-from) 0%,
     var(--cta-to) 100%
   );
+  --shell-sidebar-gradient: linear-gradient(
+    90deg,
+    var(--brand-start) 0%,
+    var(--brand-100) 100%
+  );
+  --shell-canvas-gradient: linear-gradient(
+    90deg,
+    var(--cta-from) 0%,
+    var(--cta-to) 100%
+  );
 
   /* Motion */
   --motion-fast: 90ms;
