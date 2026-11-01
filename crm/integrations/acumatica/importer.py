@@ -420,6 +420,13 @@ def _import_all(modified_since: str | None) -> dict:
 	try:
 		_retry_pending(client, pending, counts)
 		_import_entities(client, filter_, pending, counts)
+		if settings.get("create_deals_from_quotes"):
+			# quotes raised since the last run become deals -- after the customers, so a
+			# quote for a customer created today finds its organization, and before the
+			# outcomes, which then see every deal the quotes have
+			from crm.integrations.acumatica import quotes  # quotes -> spreadsheet -> importer
+
+			counts.update(quotes.pull_new_quotes(client, modified_since, pending, settings))
 		# what happened to the quotes: a converted one wins its deal, a declined one
 		# loses it, and one nobody answered expires once its validity plus grace is up
 		counts.update(outcomes.pull_quote_outcomes(client, modified_since))

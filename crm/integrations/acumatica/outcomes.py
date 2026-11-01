@@ -60,7 +60,7 @@ RECENT_TOUCH_DAYS = 14
 REREAD_ALL_QUOTES = "acumatica_reread_all_quotes"
 
 
-def _ensure_lost_reason(reason: str) -> None:
+def ensure_lost_reason(reason: str) -> None:
 	if not frappe.db.exists("CRM Lost Reason", reason):
 		frappe.get_doc({"doctype": "CRM Lost Reason", "lost_reason": reason}).insert(ignore_permissions=True)
 
@@ -79,7 +79,7 @@ def _close(deal_name: str, status: str, lost_reason: str | None = None, closed_o
 	doc = frappe.get_doc("CRM Deal", deal_name)
 	doc.status = status
 	if lost_reason:
-		_ensure_lost_reason(lost_reason)
+		ensure_lost_reason(lost_reason)
 		doc.lost_reason = lost_reason
 	doc.flags.ignore_permissions = True
 	doc.save()
@@ -128,7 +128,7 @@ def _log_close_failure(deal_name: str, detail: str) -> None:
 		frappe.log_error(frappe.get_traceback(), "Acumatica sync issue recording failed")
 
 
-def _date_of(value) -> datetime | None:
+def date_of(value) -> datetime | None:
 	if not value:
 		return None
 	try:
@@ -163,12 +163,22 @@ def _is_expired(deal: str) -> bool:
 	return frappe.db.get_value("CRM Deal", deal, "status") == EXPIRED
 
 
-def _apply_outcomes(client, by_quote: dict[str, str], modified_since: str | None, counts: dict) -> None:
-	order_type = getattr(client.settings, "quote_order_type", None) or "QT"
-	filter_ = f"OrderType eq '{order_type}'"
+def quote_order_type(client) -> str:
+	return getattr(client.settings, "quote_order_type", None) or "QT"
+
+
+def quote_filter(client, modified_since: str | None) -> str:
+	"""Quotes of the configured order type, changed since the high-water mark when
+	there is one. Shared with the new-quote pass (``quotes.py``)."""
+	filter_ = f"OrderType eq '{quote_order_type(client)}'"
 	if modified_since:
 		# SalesOrder's modification stamp is `LastModified`, not `LastModifiedDateTime`
 		filter_ += f" and LastModified gt datetimeoffset'{str(modified_since).replace(' ', 'T')}Z'"
+	return filter_
+
+
+def _apply_outcomes(client, by_quote: dict[str, str], modified_since: str | None, counts: dict) -> None:
+	filter_ = quote_filter(client, modified_since)
 	pause = float(getattr(client.settings, "request_pause", 0) or 0)
 	skip = 0
 	while True:
@@ -183,7 +193,7 @@ def _apply_outcomes(client, by_quote: dict[str, str], modified_since: str | None
 				continue
 			status = v(quote, "Status")
 			if status in WON_STATUSES:
-				if _try_close(deal, "Won", closed_on=_date_of(v(quote, "LastModified"))):
+				if _try_close(deal, "Won", closed_on=date_of(v(quote, "LastModified"))):
 					counts["won"] += 1
 			elif status in LOST_STATUSES:
 				if _try_close(deal, "Lost", lost_reason=LOST_STATUSES[status]):
