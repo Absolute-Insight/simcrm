@@ -725,6 +725,17 @@ input[type='checkbox']:checked {
   --v-ink-5: var(--ink-gray-5);
   --v-ink-6: var(--ink-gray-6);
   --v-ink-7: var(--ink-gray-7);
+  --v-ink-blue-6: var(--ink-blue-6);
+  --v-ink-cyan-6: var(--ink-cyan-6);
+  --v-ink-green-6: var(--ink-green-6);
+  --v-ink-orange-6: var(--ink-orange-6);
+  --v-ink-pink-6: var(--ink-pink-6);
+  --v-ink-purple-6: var(--ink-purple-6);
+  --v-ink-red-6: var(--ink-red-6);
+  --v-ink-teal-6: var(--ink-teal-6);
+  --v-ink-violet-6: var(--ink-violet-6);
+  --v-ink-yellow-6: var(--ink-yellow-6);
+  --v-ink-amber-6: var(--ink-amber-6);
 }
 :root:not([data-theme='dark']) .v-shell-sidebar {
   background: var(--shell-sidebar-gradient);
@@ -732,11 +743,12 @@ input[type='checkbox']:checked {
   --ink-gray-4: var(--v-ink-6);
   --ink-gray-5: var(--v-ink-6);
 }
-/* The sidebar's tinted nav icons and its red "Clear Demo Data" row are the
-   -6 step, which reads at about 2:1 on coral. Same re-step as the grays: on the
-   sidebar a -6 ink takes its own hue's -9, the step AGENTS.md already reserves
-   for coloured text because it clears every surface. */
-:root:not([data-theme='dark']) .v-shell-sidebar {
+/* Tinted -6 inks — the sidebar's nav icons and "Clear Demo Data" row, the
+   error pages' octagon on the canvas — read at about 2:1 on either gradient.
+   Same re-step as the grays: on a gradient a -6 ink takes its own hue's -9, the
+   step AGENTS.md already reserves for coloured text because it clears every
+   surface. Filled surfaces get the -6 back below. */
+:root:not([data-theme='dark']) :is(.v-shell-sidebar, .v-shell-canvas) {
   --ink-blue-6: var(--ink-blue-9);
   --ink-cyan-6: var(--ink-cyan-9);
   --ink-green-6: var(--ink-green-9);
@@ -796,6 +808,17 @@ input[type='checkbox']:checked {
   --ink-gray-5: var(--v-ink-5);
   --ink-gray-6: var(--v-ink-6);
   --ink-gray-7: var(--v-ink-7);
+  --ink-blue-6: var(--v-ink-blue-6);
+  --ink-cyan-6: var(--v-ink-cyan-6);
+  --ink-green-6: var(--v-ink-green-6);
+  --ink-orange-6: var(--v-ink-orange-6);
+  --ink-pink-6: var(--v-ink-pink-6);
+  --ink-purple-6: var(--v-ink-purple-6);
+  --ink-red-6: var(--v-ink-red-6);
+  --ink-teal-6: var(--v-ink-teal-6);
+  --ink-violet-6: var(--v-ink-violet-6);
+  --ink-yellow-6: var(--v-ink-yellow-6);
+  --ink-amber-6: var(--v-ink-amber-6);
 }
 /* The active nav row: a lit rim and a whisper of brand glow behind the
    position rail. Unlayered on purpose — it has to win over frappe-ui's
