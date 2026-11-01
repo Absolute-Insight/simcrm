@@ -134,7 +134,7 @@
           <p class="text-p-sm text-ink-gray-6">
             {{
               __(
-                "Each sync turns quotes raised in Acumatica into deals — owned by the quote's salesperson, Won, Lost or open as the quote is.",
+                "Each sync turns quotes raised in Acumatica into deals — owned by the quote's salesperson, Won, Lost or open as the quote is. Turning this on, or moving the date earlier, makes the next sync read every quote from that date; Run backfill does it now.",
               )
             }}
           </p>
@@ -160,8 +160,24 @@
                 )
               }}
             </p>
+            <template v-if="ownersUnreadable">
+              <p class="text-p-sm text-ink-red-9">
+                {{
+                  __(
+                    'The saved mapping cannot be read. Fix it below as a JSON object of salesperson ID to user email, or clear it to start over.',
+                  )
+                }}
+              </p>
+              <FormControl
+                v-model="settings.doc.salesperson_owners"
+                type="textarea"
+                :rows="4"
+                :aria-label="__('Salesperson owners')"
+                class="font-mono"
+              />
+            </template>
             <div
-              v-for="(row, i) in ownerRows"
+              v-for="(row, i) in ownersUnreadable ? [] : ownerRows"
               :key="i"
               class="flex items-center gap-2"
             >
@@ -187,7 +203,7 @@
                 @click="removeOwner(i)"
               />
             </div>
-            <div>
+            <div v-if="!ownersUnreadable">
               <Button
                 :label="__('Add salesperson')"
                 icon-left="plus"
@@ -302,12 +318,17 @@ let unmounted = false
 // the doc's value is not the one the rows just wrote (a load, a reload), so a row
 // being typed into is not swept away as incomplete.
 const ownerRows = ref([])
+// What is stored cannot be read as a mapping: show it to fix rather than rows,
+// which would overwrite it with the first edit.
+const ownersUnreadable = ref(false)
 let ownersWritten = null
 watch(
   () => settings.doc?.salesperson_owners,
   (raw) => {
     if (raw === ownersWritten) return
-    ownerRows.value = parseOwnerMap(raw)
+    const rows = parseOwnerMap(raw)
+    ownersUnreadable.value = rows === null
+    ownerRows.value = rows || []
   },
   { immediate: true },
 )

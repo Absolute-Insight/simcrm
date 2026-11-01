@@ -11,9 +11,15 @@ describe('parseOwnerMap', () => {
     ])
   })
 
-  it('starts empty on nothing, bad JSON or the wrong shape', () => {
-    for (const raw of [null, '', '{', '[1]', '"x"', 'null']) {
+  it('starts empty on nothing', () => {
+    for (const raw of [null, undefined, '']) {
       expect(parseOwnerMap(raw)).toEqual([])
+    }
+  })
+
+  it('refuses bad JSON or the wrong shape instead of reading it as empty', () => {
+    for (const raw of ['{', '[1]', '"x"', 'null']) {
+      expect(parseOwnerMap(raw)).toBeNull()
     }
   })
 })

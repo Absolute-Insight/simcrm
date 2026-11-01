@@ -2,7 +2,11 @@
 // as JSON; the settings panel edits it as rows. The server validates it again on
 // save (crm/integrations/acumatica/quotes.py:parse_owner_map), so these only shape it.
 
-/** Rows for the editor; anything unreadable starts as no rows rather than throwing. */
+/**
+ * Rows for the editor; [] when nothing is stored. null when what is stored cannot
+ * be read as a mapping: the panel then shows the raw value to fix, because rows
+ * started empty would overwrite it with the first edit.
+ */
 export function parseOwnerMap(raw) {
   if (!raw) return []
   let data = raw
@@ -10,10 +14,10 @@ export function parseOwnerMap(raw) {
     try {
       data = JSON.parse(raw)
     } catch {
-      return []
+      return null
     }
   }
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return []
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
   return Object.entries(data).map(([code, user]) => ({
     code: String(code),
     user: typeof user === 'string' ? user : '',
