@@ -1,6 +1,7 @@
 <template>
   <svg
     v-if="!fill"
+    class="v-indicator"
     width="16"
     height="16"
     viewBox="0 0 16 16"
@@ -18,6 +19,7 @@
   </svg>
   <svg
     v-else
+    class="v-indicator"
     width="12"
     height="12"
     viewBox="0 0 16 16"
