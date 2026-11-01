@@ -58,25 +58,25 @@ export const statusesStore = defineStore('crm-statuses', () => {
     },
   })
 
+  // A record page can render before its status list has loaded (a cold cache,
+  // or a status renamed since). Callers read .color and .type straight off the
+  // result, so hand back a colourless stand-in rather than undefined: the dot
+  // fills in once the list arrives, instead of the render throwing.
+  function lookup(resource, byName, name) {
+    name = name || resource.data?.[0]?.name
+    return byName[name] || { name, color: '', type: '' }
+  }
+
   function getLeadStatus(name) {
-    if (!name) {
-      name = leadStatuses.data[0].name
-    }
-    return leadStatusesByName[name]
+    return lookup(leadStatuses, leadStatusesByName, name)
   }
 
   function getDealStatus(name) {
-    if (!name) {
-      name = dealStatuses.data[0].name
-    }
-    return dealStatusesByName[name]
+    return lookup(dealStatuses, dealStatusesByName, name)
   }
 
   function getCommunicationStatus(name) {
-    if (!name) {
-      name = communicationStatuses.data[0].name
-    }
-    return communicationStatuses[name]
+    return lookup(communicationStatuses, communicationStatusesByName, name)
   }
 
   function statusOptions(doctype, statuses = [], triggerStatusChange = null) {
