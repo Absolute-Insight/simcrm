@@ -13,7 +13,9 @@
           v-if="!column.column.delete"
           class="flex flex-col gap-2.5 min-w-72 w-72 hover:bg-surface-gray-2 rounded-[var(--v-radius-card)] p-2.5"
         >
-          <div class="flex gap-2 items-center group justify-between">
+          <div
+            class="v-kanban-head flex gap-2 items-center group justify-between"
+          >
             <div class="flex items-center text-base">
               <Popover>
                 <template #trigger>
