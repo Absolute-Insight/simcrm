@@ -716,7 +716,7 @@ input[type='checkbox']:checked {
    filled inputs — gets the original ladder back, because that is the surface
    its text actually sits on. "Own fill" means a bare `bg-surface-*` class: not
    a `hover:` one, which is transparent at rest, not the sidebar's cleared
-   fill, and nothing inside a side panel's `.form-control` — SidePanelLayout
+   fill, and no `.form-control` field or its children — SidePanelLayout
    clears those fields' frappe-ui fill, so their placeholders sit on the
    gradient whatever class they still carry. The `--v-ink-*` copies are resolved on :root, so
    they carry the untouched values down past the overrides. */
@@ -761,14 +761,14 @@ input[type='checkbox']:checked {
   --ink-yellow-6: var(--ink-yellow-9);
   --ink-amber-6: var(--ink-amber-9);
 }
-/* Status dots (IndicatorIcon) standing on the canvas — kanban column heads —
-   drop to ~1:1 against the steel end. A ring in the card surface's colour
-   gives every hue a 3:1 edge without changing the hue that carries the status;
-   inside a white card the ring is simply invisible. */
-:root:not([data-theme='dark']) .v-shell-canvas .v-indicator circle {
-  stroke: var(--surface-white);
-  stroke-width: 2.5px;
-  paint-order: stroke;
+/* Status icons in kanban column heads stand straight on the canvas, and the
+   amber and orange hues drop to ~1:1 against the steel end. A halo in the card
+   fill gives every shape a 3:1 edge without changing the hue that carries the
+   status or shrinking the icon. Scoped to the head: everywhere else these icons
+   sit on a card. */
+:root:not([data-theme='dark']) .v-shell-canvas .v-kanban-head svg {
+  filter: drop-shadow(0 0 1px var(--surface-elevation-2))
+    drop-shadow(0 0 1px var(--surface-elevation-2));
 }
 :root:not([data-theme='dark']) .v-shell-canvas {
   background: var(--shell-canvas-gradient);
