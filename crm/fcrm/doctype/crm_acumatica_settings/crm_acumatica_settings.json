@@ -29,6 +29,9 @@
   "section_break_ausg",
   "quote_order_type",
   "quote_expiry_grace_days",
+  "create_deals_from_quotes",
+  "create_deals_from_quotes_since",
+  "salesperson_owners",
   "column_break_ausj",
   "webhook_verify_token",
   "request_pause",
@@ -184,6 +187,29 @@
    "label": "Quote Expiry Grace (days)"
   },
   {
+   "default": "0",
+   "description": "Off by default. When on, the sync makes a deal for every quote of the order type above that no deal carries yet: owned by the quote's salesperson (mapped below), on the customer's organization, Won, Lost or open as the quote is.",
+   "fieldname": "create_deals_from_quotes",
+   "fieldtype": "Check",
+   "label": "Create Deals from New Quotes"
+  },
+  {
+   "depends_on": "create_deals_from_quotes",
+   "description": "Quotes dated before this are never turned into deals, so a full backfill does not recreate years of history",
+   "fieldname": "create_deals_from_quotes_since",
+   "fieldtype": "Date",
+   "label": "Quotes Dated From",
+   "mandatory_depends_on": "create_deals_from_quotes"
+  },
+  {
+   "depends_on": "create_deals_from_quotes",
+   "description": "JSON object of Acumatica salesperson ID to CRM user, e.g. {\"036-NEW\": \"isabella@example.com\"}. A quote whose salesperson is not here is owned by Administrator.",
+   "fieldname": "salesperson_owners",
+   "fieldtype": "Code",
+   "label": "Salesperson Owners",
+   "options": "JSON"
+  },
+  {
    "fieldname": "column_break_ausj",
    "fieldtype": "Column Break"
   },
@@ -239,7 +265,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-18 16:00:00.000000",
+ "modified": "2026-11-01 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM Acumatica Settings",

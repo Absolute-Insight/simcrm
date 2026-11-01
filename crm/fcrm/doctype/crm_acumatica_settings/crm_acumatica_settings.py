@@ -11,6 +11,10 @@ MAX_SYNC_ISSUES = 200
 
 class CRMAcumaticaSettings(Document):
 	def validate(self):
+		from crm.integrations.acumatica.quotes import validate_settings
+
+		# checked enabled or not: the mapping is read the moment the integration is on
+		validate_settings(self)
 		if not self.enabled:
 			return
 		if not self.instance_url:
