@@ -406,9 +406,13 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 	return order_nbr
 
 
+# Also how the sync's new-quote pass (quotes.py) recognises a quote this CRM made.
+QUOTE_DESCRIPTION_PREFIX = "Vectora deal "
+
+
 def _quote_description(deal_name: str) -> str:
 	# also the key _earlier_quote finds an unanswered attempt's order by
-	return f"Vectora deal {deal_name}"
+	return f"{QUOTE_DESCRIPTION_PREFIX}{deal_name}"
 
 
 def _earlier_quote(client, payload: dict) -> str | None:

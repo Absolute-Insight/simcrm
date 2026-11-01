@@ -445,6 +445,20 @@ class ShapeSalesOrderTest(UnitTestCase):
 		deal = shape(**{"Date": date(2026, 9, 1)})
 		self.assertEqual(deal["quote_date"], date(2026, 9, 1))
 
+	def test_a_deal_is_created_when_the_quote_was(self):
+		self.assertEqual(shape()["created_on"], datetime(2026, 9, 2, 13, 53))
+
+	def test_a_quote_entered_after_its_date_is_created_on_that_date(self):
+		# a closed quote closes on its date; created any later, it would close
+		# before it existed and every time-to-close average would go negative
+		deal = shape(
+			**{"Status": "Completed", "Date": datetime(2026, 5, 1), "Created On": datetime(2026, 5, 4, 9, 30)}
+		)
+		self.assertEqual(deal["created_on"], datetime(2026, 5, 1, 9, 30))
+
+	def test_no_created_on_falls_back_to_the_quote_date(self):
+		self.assertEqual(shape(**{"Created On": None})["created_on"], datetime(2026, 9, 2))
+
 
 class ImportSalesOrdersTest(SpreadsheetImportTestCase):
 	def setUp(self):
@@ -495,6 +509,9 @@ class ImportSalesOrdersTest(SpreadsheetImportTestCase):
 		open_deal = frappe.get_doc("CRM Deal", {"acumatica_sales_quote": "QT103012"})
 		self.assertEqual(str(open_deal.expected_closure_date), "2026-10-02")
 		self.assertEqual(open_deal.expected_deal_value, open_deal.deal_value)
+		# created when the quote was, not on the day of the import: every
+		# by-creation table (new deals per month, funnel, breakdowns) reads this
+		self.assertEqual(str(open_deal.creation), "2026-09-02 13:53:00")
 
 	def test_a_usd_deal_keeps_the_supplied_rate(self):
 		path = self.rows(order(**{"Currency": "USD", "Order Total": 1000}))

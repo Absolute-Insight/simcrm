@@ -16,7 +16,7 @@ import json
 import re
 import time
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -87,6 +87,17 @@ def _as_date(value) -> date | None:
 	if value is None:
 		return None
 	return value.date() if hasattr(value, "date") else value
+
+
+def created_on(value, quote_date: date) -> datetime:
+	"""When the quote was entered, never later than its date: a closed quote
+	closes on its date, and one created after that would close before it existed.
+	Shared with the live sync's new-quote pass (``quotes.py``)."""
+	if not isinstance(value, datetime):
+		return datetime.combine(quote_date, datetime.min.time())
+	if value.date() > quote_date:
+		return datetime.combine(quote_date, value.time())
+	return value
 
 
 def map_deal_status(status: str, outcome) -> str | None:
@@ -303,6 +314,7 @@ def shape_sales_order(
 
 	closed = status in ("Won", "Lost")
 	return {
+		"created_on": created_on(row.get("Created On"), quote_date),
 		"order_nbr": nbr,
 		"customer_id": row.get("Customer"),
 		"status": status,
@@ -321,7 +333,13 @@ def upsert_deal(deal: dict, organization: str) -> str | None:
 	"""``None`` means the deal already exists and a rep, not this importer, last
 	touched it -- widening the window later must add deals without disturbing
 	those already present, including any a rep has edited, so a re-run leaves
-	a rep-edited deal alone rather than overwriting their changes."""
+	a rep-edited deal alone rather than overwriting their changes.
+
+	Also how the live sync writes a deal for a quote raised in Acumatica after
+	the import (``quotes.py``), so the two cannot drift apart. That caller adds
+	``lost_reason`` (Acumatica's own word for why) and may leave
+	``exchange_rate`` None, which lets the deal controller fetch the rate as it
+	does for any deal a rep types in."""
 	name = frappe.db.get_value("CRM Deal", {"acumatica_sales_quote": deal["order_nbr"]}, "name")
 	if name:
 		current = frappe.db.get_value(
@@ -337,12 +355,14 @@ def upsert_deal(deal: dict, organization: str) -> str | None:
 	doc.expected_deal_value = float(deal["value"])
 	doc.expected_closure_date = deal["expected_closure_date"]
 	doc.currency = deal["currency"]
-	doc.exchange_rate = float(deal["exchange_rate"])
+	rate = deal.get("exchange_rate")
+	if rate is not None:
+		doc.exchange_rate = float(rate)
 	doc.deal_owner = deal["owner"]
 	doc.acumatica_sales_quote = deal["order_nbr"]
 	doc.acumatica_customer = deal["customer_id"]
 	if deal["status"] == "Lost":
-		doc.lost_reason = LOST_REASON
+		doc.lost_reason = deal.get("lost_reason") or LOST_REASON
 	# Belt and braces: with notifications off (bulk_assign_quietly) there should be
 	# no jobs from this importer, but a site automation may still enqueue and trip
 	# max_queued_jobs mid-run -- a short retry outlasts a transient queue backlog
@@ -357,14 +377,18 @@ def upsert_deal(deal: dict, organization: str) -> str | None:
 			time.sleep(2)
 
 	after = {}
+	if deal.get("created_on"):
+		# creation is the insert's own clock; left alone, every imported deal is
+		# "new" in the month of the import and the history collapses into it
+		after["creation"] = deal["created_on"]
 	if deal["closed_date"]:
 		# validate() stamps closed_date = today on any transition into Won; the file
 		# knows the real date, so write it through after the controller has run
 		after["closed_date"] = deal["closed_date"]
-	if deal["exchange_rate"] != 1:
+	if rate is not None and rate != 1:
 		# update_exchange_rate() tries a live fetch for a non-base currency on insert
 		# and may have replaced the supplied rate; the supplied rate is the record
-		after["exchange_rate"] = float(deal["exchange_rate"])
+		after["exchange_rate"] = float(rate)
 	if after:
 		doc.db_set(after, update_modified=False)
 	return doc.name
