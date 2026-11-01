@@ -190,6 +190,11 @@ fact — re-running the checks on that commit uses the workflow files _from that
 a CI bug fixed later on `main` does not retroactively fix them. That is exactly how v3.2.0
 ended up as a release with no image, and why the fix had to ship as v3.2.1.
 
+**A red Dependabot check counts too.** Its update job attaches to whatever commit is
+`develop`'s HEAD when it runs, so a failed security update (on 2026-11-01, a low `glob`
+alert with no patched version) stops a release whose code is fine. Re-running does not
+clear it. Land an ordinary commit so HEAD moves past it, then release.
+
 ## Things that make a check look green when it never ran
 
 Three asymmetries have each hidden a failure here. All three are worth knowing before you
