@@ -48,6 +48,12 @@ QUOTE_VALIDITY_DAYS = 30
 DEFAULT_OWNER = "Administrator"
 # The salesperson on a quote is in its Commissions section, not in the header.
 EXPAND = "Commissions"
+# Set when the switch is turned on, or its date floor moved earlier: the high-water
+# mark is past every quote raised before then, so the next pass reads all quotes
+# (the floor still applies) -- once, cleared only when that pass has finished.
+REREAD_ALL_NEW_QUOTES = "acumatica_reread_all_new_quotes"
+# Who may own a deal the sync makes: the roles a rep or a sales manager holds.
+OWNER_ROLES = ("Sales User", "Sales Manager")
 
 
 def parse_owner_map(raw) -> dict[str, str]:
@@ -61,7 +67,7 @@ def parse_owner_map(raw) -> dict[str, str]:
 		try:
 			data = json.loads(raw)
 		except ValueError as e:
-			raise ValueError(_("Salesperson Owners is not valid JSON: {0}").format(e)) from e
+			raise ValueError(_("Salesperson Owners is not valid JSON: {0}").format(str(e))) from e
 	if not isinstance(data, dict):
 		raise ValueError(_("Salesperson Owners must be a JSON object of salesperson ID to user"))
 	out = {}
@@ -192,19 +198,39 @@ class _Pass:
 				frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 	def _is_ours(self, quote, nbr: str) -> bool:
-		"""A quote the CRM's own Create Sales Quote made. Its deal stores the number
-		once Acumatica answers; a sweep that reads the quote first must not make the
-		same opportunity a second deal. An answer that never came is adopted here."""
+		"""A quote the CRM's own Create Sales Quote made, adopted by the deal that made it.
+
+		The deal stores the number once Acumatica answers; a sweep that reads the quote
+		first must not make the same opportunity a second deal. Matched as
+		``outbound._earlier_quote`` matches an unanswered attempt -- Description AND
+		customer -- and only onto a deal still without a quote. A deal that already has
+		one is not this quote's: a copy of a CRM-made quote carries its Description too,
+		and is a deal of its own rather than revenue that never arrives."""
 		description = v(quote, "Description") or ""
 		if not description.startswith(QUOTE_DESCRIPTION_PREFIX):
 			return False
-		deal = description[len(QUOTE_DESCRIPTION_PREFIX) :].strip()
-		current = frappe.db.get_value("CRM Deal", deal, "acumatica_sales_quote") if deal else None
-		if current is None and not frappe.db.exists("CRM Deal", deal):
+		name = description[len(QUOTE_DESCRIPTION_PREFIX) :].strip()
+		deal = (
+			frappe.db.get_value(
+				"CRM Deal",
+				name,
+				["acumatica_sales_quote", "acumatica_customer", "organization"],
+				as_dict=True,
+			)
+			if name
+			else None
+		)
+		if not deal or deal.acumatica_sales_quote:
 			return False
-		if not current:
-			frappe.db.set_value("CRM Deal", deal, "acumatica_sales_quote", nbr, update_modified=False)
-			self.counts["linked_quotes"] += 1
+		customer = deal.acumatica_customer or (
+			frappe.db.get_value("CRM Organization", deal.organization, "acumatica_id")
+			if deal.organization
+			else None
+		)
+		if not customer or customer != v(quote, "CustomerID"):
+			return False
+		frappe.db.set_value("CRM Deal", name, "acumatica_sales_quote", nbr, update_modified=False)
+		self.counts["linked_quotes"] += 1
 		self.known.add(nbr)
 		return True
 
@@ -227,7 +253,7 @@ class _Pass:
 		if code not in self.unmapped_logged:
 			self.unmapped_logged.add(code)
 			detail = (
-				f"salesperson {code} maps to {user}, who is not an enabled user; their quotes go to {DEFAULT_OWNER}"
+				f"salesperson {code} maps to {user}, who cannot own deals ({_owner_problem(user)}); their quotes go to {DEFAULT_OWNER}"
 				if user
 				else f"salesperson {code} is not in Salesperson Owners; their quotes go to {DEFAULT_OWNER}"
 			)
@@ -236,7 +262,8 @@ class _Pass:
 
 	def _usable(self, user: str) -> bool:
 		if user not in self.usable_users:
-			self.usable_users[user] = bool(frappe.db.get_value("User", user, "enabled"))
+			# the settings check, again: a rep disabled or demoted since it was saved
+			self.usable_users[user] = _owner_problem(user) is None
 		return self.usable_users[user]
 
 	@staticmethod
@@ -294,6 +321,9 @@ def pull_new_quotes(client, modified_since: str | None, pending: dict, settings)
 	fetched again by number on the next sweeps until it lands or runs out of attempts.
 	"""
 	counts = {"new_deals": 0, "linked_quotes": 0, "quotes_skipped": 0, "quote_issues": 0}
+	reread = bool(frappe.db.get_default(REREAD_ALL_NEW_QUOTES))
+	if reread:
+		modified_since = None
 	quiet = frappe.flags.bulk_assign_quietly
 	# a night's quotes are assigned in one run, with nobody at a desk to read them:
 	# the ToDo is the assignment, and no notification, email or job per deal
@@ -304,6 +334,9 @@ def pull_new_quotes(client, modified_since: str | None, pending: dict, settings)
 		_page_quotes(run, client, modified_since, retried)
 	finally:
 		frappe.flags.bulk_assign_quietly = quiet
+	if reread:
+		# only once every page has been read: a run that died part-way asks again
+		frappe.defaults.clear_default(REREAD_ALL_NEW_QUOTES)
 	return counts
 
 
@@ -372,18 +405,55 @@ def _page_quotes(run: _Pass, client, modified_since: str | None, retried: set[st
 			time.sleep(pause)
 
 
-def validate_settings(doc) -> None:
-	"""Called from the settings controller: refuse a mapping the sweep cannot read,
-	a user who does not exist, and the switch without its date floor."""
+def validate_settings(doc, before=None) -> None:
+	"""Called from the settings controller's validate: refuse a mapping the sweep
+	cannot read or a user who could not own a deal, and the switch without its date
+	floor; and ask the next sweep to read every quote when the switch is turned on or
+	its floor moved earlier. ``before`` is the saved settings (None on a first save)."""
+	if before is None and hasattr(doc, "get_doc_before_save"):
+		before = doc.get_doc_before_save()
+	before = before or frappe._dict()
 	try:
 		owners = parse_owner_map(doc.get("salesperson_owners"))
 	except ValueError as e:
 		frappe.throw(str(e))
-	missing = sorted({user for user in owners.values() if not frappe.db.exists("User", user)})
-	if missing:
-		frappe.throw(_("Salesperson Owners names users that do not exist: {0}").format(", ".join(missing)))
-	if doc.get("create_deals_from_quotes") and not doc.get("create_deals_from_quotes_since"):
+	switched_on = bool(doc.get("create_deals_from_quotes"))
+	# Users are checked when it matters, not on every save: one deleted later must
+	# not block an unrelated edit while the switch is off.
+	if switched_on or doc.get("salesperson_owners") != before.get("salesperson_owners"):
+		problems = [_owner_problem(user) for user in sorted(set(owners.values()))]
+		problems = [p for p in problems if p]
+		if problems:
+			frappe.throw("; ".join(problems), title=_("Salesperson Owners"))
+	if not switched_on:
+		return
+	since = doc.get("create_deals_from_quotes_since")
+	if not since:
 		frappe.throw(
 			_("Set Quotes Dated From before turning on Create Deals from New Quotes"),
 			title=_("Missing date"),
 		)
+	was_on = bool(before.get("create_deals_from_quotes"))
+	old_since = before.get("create_deals_from_quotes_since")
+	if not was_on or not old_since or getdate(since) < getdate(old_since):
+		frappe.db.set_default(REREAD_ALL_NEW_QUOTES, 1)
+
+
+def _owner_problem(user: str) -> str | None:
+	"""Why ``user`` cannot own the deals the sync makes, or None."""
+	if user in ("Guest", "Administrator"):
+		return _("{0} cannot own synced deals; map the salesperson to a rep").format(
+			frappe.utils.escape_html(user)
+		)
+	row = frappe.db.get_value("User", user, ["enabled", "user_type"], as_dict=True)
+	if not row:
+		return _("{0} is not a user").format(frappe.utils.escape_html(user))
+	if not row.enabled:
+		return _("{0} is disabled").format(frappe.utils.escape_html(user))
+	if row.user_type != "System User":
+		return _("{0} is not a System User").format(frappe.utils.escape_html(user))
+	if not set(frappe.get_roles(user)) & set(OWNER_ROLES):
+		return _("{0} has neither the Sales User nor the Sales Manager role").format(
+			frappe.utils.escape_html(user)
+		)
+	return None

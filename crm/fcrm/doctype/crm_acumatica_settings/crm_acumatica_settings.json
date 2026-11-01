@@ -188,7 +188,7 @@
   },
   {
    "default": "0",
-   "description": "Off by default. When on, the sync makes a deal for every quote of the order type above that no deal carries yet: owned by the quote's salesperson (mapped below), on the customer's organization, Won, Lost or open as the quote is.",
+   "description": "Off by default. When on, the sync makes a deal for every quote of the order type above that no deal carries yet: owned by the quote's salesperson (mapped below), on the customer's organization, Won, Lost or open as the quote is. Turning it on, or moving Quotes Dated From earlier, makes the next sync read every quote from that date once.",
    "fieldname": "create_deals_from_quotes",
    "fieldtype": "Check",
    "label": "Create Deals from New Quotes"
@@ -265,7 +265,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-01 12:00:00.000000",
+ "modified": "2026-11-01 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM Acumatica Settings",
