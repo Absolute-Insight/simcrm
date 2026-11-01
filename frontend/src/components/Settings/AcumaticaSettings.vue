@@ -124,6 +124,80 @@
         />
       </div>
 
+      <div class="flex flex-col gap-4 border-t border-outline-elevation-2 pt-4">
+        <div class="flex flex-col gap-1.5">
+          <FormControl
+            v-model="settings.doc.create_deals_from_quotes"
+            type="checkbox"
+            :label="__('Create deals from new quotes')"
+          />
+          <p class="text-p-sm text-ink-gray-6">
+            {{
+              __(
+                "Each sync turns quotes raised in Acumatica into deals — owned by the quote's salesperson, Won, Lost or open as the quote is.",
+              )
+            }}
+          </p>
+        </div>
+        <template v-if="settings.doc.create_deals_from_quotes">
+          <div class="flex w-64 flex-col gap-1.5">
+            <FormLabel :label="__('Quotes dated from')" />
+            <DatePicker
+              v-model="settings.doc.create_deals_from_quotes_since"
+              variant="subtle"
+              class="w-full"
+            />
+            <p class="text-p-sm text-ink-gray-6">
+              {{ __('Older quotes never become deals, even on a backfill.') }}
+            </p>
+          </div>
+          <div class="flex flex-col gap-2">
+            <FormLabel :label="__('Salesperson owners')" />
+            <p class="text-p-sm text-ink-gray-6">
+              {{
+                __(
+                  'Acumatica salesperson ID → CRM user. Quotes from anyone not listed go to Administrator.',
+                )
+              }}
+            </p>
+            <div
+              v-for="(row, i) in ownerRows"
+              :key="i"
+              class="flex items-center gap-2"
+            >
+              <FormControl
+                v-model="row.code"
+                :placeholder="__('Salesperson ID')"
+                :aria-label="__('Salesperson ID')"
+                class="w-40"
+                @update:model-value="syncOwners"
+              />
+              <Link
+                v-model="row.user"
+                doctype="User"
+                :filters="{ enabled: 1, user_type: 'System User' }"
+                :placeholder="__('User')"
+                class="w-64"
+                @update:model-value="syncOwners"
+              />
+              <Button
+                variant="ghost"
+                icon="x"
+                :aria-label="__('Remove')"
+                @click="removeOwner(i)"
+              />
+            </div>
+            <div>
+              <Button
+                :label="__('Add salesperson')"
+                icon-left="plus"
+                @click="ownerRows.push({ code: '', user: '' })"
+              />
+            </div>
+          </div>
+        </template>
+      </div>
+
       <div class="flex items-center gap-3">
         <Button
           :label="__('Save')"
@@ -189,15 +263,18 @@
 <script setup>
 import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import {
   createDocumentResource,
   call,
+  DatePicker,
   FormControl,
+  FormLabel,
   Button,
   toast,
 } from 'frappe-ui'
 import Link from '@/components/Controls/Link.vue'
+import { parseOwnerMap, serialiseOwnerMap } from '@/utils/salespersonOwners.js'
 
 const settings = createDocumentResource({
   doctype: 'CRM Acumatica Settings',
@@ -220,6 +297,30 @@ const backfilling = ref(false)
 const testing = ref(false)
 let pollTimer = null
 let unmounted = false
+
+// The rows are the editor's; the doc holds their JSON. Re-read the rows only when
+// the doc's value is not the one the rows just wrote (a load, a reload), so a row
+// being typed into is not swept away as incomplete.
+const ownerRows = ref([])
+let ownersWritten = null
+watch(
+  () => settings.doc?.salesperson_owners,
+  (raw) => {
+    if (raw === ownersWritten) return
+    ownerRows.value = parseOwnerMap(raw)
+  },
+  { immediate: true },
+)
+
+function syncOwners() {
+  ownersWritten = serialiseOwnerMap(ownerRows.value)
+  settings.doc.salesperson_owners = ownersWritten
+}
+
+function removeOwner(i) {
+  ownerRows.value.splice(i, 1)
+  syncOwners()
+}
 
 function save() {
   return settings.save.submit(null, {
