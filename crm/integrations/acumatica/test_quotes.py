@@ -45,9 +45,7 @@ class NewQuotesTestCase(FrappeTestCase):
 		super().setUp()
 		self.suffix = frappe.generate_hash(length=6).upper()
 		self.rep = f"quotes-rep-{self.suffix.lower()}@example.com"
-		frappe.get_doc(
-			{"doctype": "User", "email": self.rep, "first_name": "Quotes Rep", "send_welcome_email": 0}
-		).insert(ignore_permissions=True)
+		self._user(self.rep)
 		self.customer = f"C-Q{self.suffix}"
 		self.org = self._org(self.customer)
 		self.base = frappe.db.get_single_value("FCRM Settings", "currency") or "USD"
@@ -60,6 +58,26 @@ class NewQuotesTestCase(FrappeTestCase):
 
 	def tearDown(self):
 		frappe.db.rollback()
+
+	def _user(self, email, role="Sales User", **fields):
+		user = frappe.get_doc(
+			{"doctype": "User", "email": email, "first_name": "Quotes", "send_welcome_email": 0, **fields}
+		).insert(ignore_permissions=True)
+		if role:
+			user.add_roles(role)
+		return email
+
+	def _crm_deal(self, organization=None):
+		return frappe.get_doc(
+			{
+				"doctype": "CRM Deal",
+				"organization": organization or self.org,
+				"status": OPEN_STATUS,
+				"deal_value": 70,
+				"expected_deal_value": 70,
+				"expected_closure_date": date(2026, 12, 1),
+			}
+		).insert(ignore_permissions=True)
 
 	def _org(self, customer_id):
 		org = frappe.get_doc(
@@ -228,22 +246,37 @@ class NewQuoteBecomesADealTest(NewQuotesTestCase):
 	def test_a_quote_the_crm_made_is_linked_to_its_deal_not_duplicated(self):
 		"""Create Sales Quote stores the number once Acumatica answers; a sweep that
 		reads the quote before then must not make the same opportunity twice."""
-		mine = frappe.get_doc(
-			{
-				"doctype": "CRM Deal",
-				"organization": self.org,
-				"status": OPEN_STATUS,
-				"deal_value": 70,
-				"expected_deal_value": 70,
-				"expected_closure_date": date(2026, 12, 1),
-			}
-		).insert(ignore_permissions=True)
+		mine = self._crm_deal()
 
 		counts = self.pull([self.quote(14, Description=f"Vectora deal {mine.name}")])
 
 		self.assertEqual((counts["new_deals"], counts["linked_quotes"]), (0, 1))
 		self.assertEqual(frappe.db.get_value("CRM Deal", mine.name, "acumatica_sales_quote"), self.nbr(14))
 		self.assertEqual(self.deals_for(14), 1)
+
+	def test_a_copy_of_a_crm_made_quote_becomes_a_deal_of_its_own(self):
+		"""A rep copies QT0100 to QT0101 in Acumatica; the copy keeps the Description.
+		Swallowed as "ours", its revenue never reached the CRM."""
+		mine = self._crm_deal()
+		frappe.db.set_value("CRM Deal", mine.name, "acumatica_sales_quote", self.nbr(16))
+
+		counts = self.pull([self.quote(17, status="Completed", Description=f"Vectora deal {mine.name}")])
+
+		self.assertEqual((counts["new_deals"], counts["linked_quotes"]), (1, 0))
+		self.assertEqual(frappe.db.get_value("CRM Deal", mine.name, "acumatica_sales_quote"), self.nbr(16))
+		self.assertEqual(self.deal(17, ("status",)).status, "Won")
+
+	def test_a_description_naming_another_customers_deal_is_not_adopted(self):
+		"""Matched as outbound._earlier_quote matches: Description and customer."""
+		other = f"C-OTHER{self.suffix}"
+		self._org(other)
+		mine = self._crm_deal()
+
+		counts = self.pull([self.quote(18, customer=other, Description=f"Vectora deal {mine.name}")])
+
+		self.assertEqual((counts["new_deals"], counts["linked_quotes"]), (1, 0))
+		self.assertFalse(frappe.db.get_value("CRM Deal", mine.name, "acumatica_sales_quote"))
+		self.assertEqual(self.deals_for(18), 1)
 
 	def test_a_deal_a_rep_deleted_does_not_come_back(self):
 		self.pull([self.quote(15)])
@@ -299,19 +332,95 @@ class OwnerMapTest(NewQuotesTestCase):
 			with self.assertRaises(ValueError, msg=bad):
 				quotes.parse_owner_map(bad)
 
-	def test_settings_refuse_an_unknown_user_and_the_switch_without_its_floor(self):
-		doc = frappe._dict(salesperson_owners=json.dumps({"007": "nobody-here@example.com"}))
-		with self.assertRaises(frappe.ValidationError):
-			quotes.validate_settings(doc)
-		with self.assertRaises(frappe.ValidationError):
-			quotes.validate_settings(frappe._dict(create_deals_from_quotes=1))
-		quotes.validate_settings(
-			frappe._dict(
-				create_deals_from_quotes=1,
-				create_deals_from_quotes_since="2026-09-06",
-				salesperson_owners=json.dumps({"007": self.rep}),
-			)
+	def _settings(self, owners=None, **kw):
+		return frappe._dict(
+			create_deals_from_quotes=1,
+			create_deals_from_quotes_since="2026-09-06",
+			salesperson_owners=json.dumps(owners if owners is not None else {"007": self.rep}),
+			**kw,
 		)
+
+	def test_settings_refuse_users_who_cannot_own_deals(self):
+		s = self.suffix.lower()
+		cannot = [
+			"nobody-here@example.com",
+			"Administrator",
+			"Guest",
+			self._user(f"norole-{s}@example.com", role=None),
+			self._user(f"website-{s}@example.com", role=None, user_type="Website User"),
+			self._user(f"disabled-{s}@example.com", enabled=0),
+		]
+		for user in cannot:
+			with self.assertRaises(frappe.ValidationError, msg=user):
+				quotes.validate_settings(self._settings({"007": user}), before=frappe._dict())
+		manager = self._user(f"manager-{s}@example.com", role="Sales Manager")
+		quotes.validate_settings(self._settings({"007": self.rep, "008": manager}), before=frappe._dict())
+
+	def test_a_user_gone_since_does_not_block_an_unrelated_save_while_off(self):
+		owners = json.dumps({"007": "gone-since@example.com"})
+		before = frappe._dict(salesperson_owners=owners)
+		quotes.validate_settings(frappe._dict(salesperson_owners=owners, request_pause=1), before=before)
+		with self.assertRaises(frappe.ValidationError):
+			quotes.validate_settings(
+				frappe._dict(
+					salesperson_owners=owners,
+					create_deals_from_quotes=1,
+					create_deals_from_quotes_since="2026-09-06",
+				),
+				before=before,
+			)
+
+	def test_the_switch_needs_its_floor(self):
+		with self.assertRaises(frappe.ValidationError):
+			quotes.validate_settings(frappe._dict(create_deals_from_quotes=1), before=frappe._dict())
+
+
+class RereadOnEnableTest(NewQuotesTestCase):
+	"""The high-water mark is past every quote raised before the switch was turned on,
+	so without a re-read the September-October gap would never be read."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.defaults.clear_default(quotes.REREAD_ALL_NEW_QUOTES)
+		self.addCleanup(frappe.defaults.clear_default, quotes.REREAD_ALL_NEW_QUOTES)
+
+	def flagged(self):
+		return bool(frappe.db.get_default(quotes.REREAD_ALL_NEW_QUOTES))
+
+	def validate(self, before, **now):
+		doc = frappe._dict(self.settings, **now)
+		quotes.validate_settings(doc, before=frappe._dict(before))
+
+	def test_turning_it_on_asks_for_a_reread(self):
+		self.validate({"create_deals_from_quotes": 0})
+		self.assertTrue(self.flagged())
+
+	def test_moving_the_floor_earlier_asks_for_a_reread_and_later_does_not(self):
+		on = {"create_deals_from_quotes": 1, "salesperson_owners": self.settings.salesperson_owners}
+		self.validate({**on, "create_deals_from_quotes_since": "2026-09-01"})
+		self.assertFalse(self.flagged())
+		self.validate({**on, "create_deals_from_quotes_since": "2026-10-01"})
+		self.assertTrue(self.flagged())
+
+	def test_the_next_pass_reads_every_quote_and_then_clears_it(self):
+		frappe.db.set_default(quotes.REREAD_ALL_NEW_QUOTES, 1)
+		client = self.client([self.quote(30)])
+
+		quotes.pull_new_quotes(client, "2026-10-21T00:00:00", self.pending, self.settings)
+
+		self.assertNotIn("LastModified", client.get_page.call_args_list[0].kwargs["filter"])
+		self.assertEqual(self.deals_for(30), 1)
+		self.assertFalse(self.flagged())
+
+	def test_a_pass_that_dies_keeps_it(self):
+		frappe.db.set_default(quotes.REREAD_ALL_NEW_QUOTES, 1)
+		client = self.client([])
+		client.get_page.side_effect = RuntimeError("tenant down")
+
+		with self.assertRaises(RuntimeError):
+			quotes.pull_new_quotes(client, "2026-10-21T00:00:00", self.pending, self.settings)
+
+		self.assertTrue(self.flagged())
 
 
 class TheSweepTest(NewQuotesTestCase):
