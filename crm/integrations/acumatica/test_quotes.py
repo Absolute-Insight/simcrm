@@ -278,6 +278,24 @@ class NewQuoteBecomesADealTest(NewQuotesTestCase):
 		self.assertFalse(frappe.db.get_value("CRM Deal", mine.name, "acumatica_sales_quote"))
 		self.assertEqual(self.deals_for(18), 1)
 
+	def test_a_quote_stored_by_create_sales_quote_mid_pass_is_left_alone(self):
+		"""Create Sales Quote commits the number after the pass listed the known ones."""
+		mine = self._crm_deal()
+		row = self.quote(19, Description=f"Vectora deal {mine.name}", OrderTotal=999)
+		client = self.client([row])
+		fetch = client.get_page.side_effect
+
+		def late_commit(*args, **kw):
+			frappe.db.set_value("CRM Deal", mine.name, "acumatica_sales_quote", self.nbr(19))
+			return fetch(*args, **kw)
+
+		client.get_page.side_effect = late_commit
+		counts = quotes.pull_new_quotes(client, None, self.pending, self.settings)
+
+		self.assertEqual((counts["new_deals"], counts["linked_quotes"]), (0, 0))
+		self.assertEqual(self.deals_for(19), 1)
+		self.assertEqual(frappe.db.get_value("CRM Deal", mine.name, "deal_value"), 70)
+
 	def test_a_deal_a_rep_deleted_does_not_come_back(self):
 		self.pull([self.quote(15)])
 		frappe.delete_doc("CRM Deal", self.deal(15).name, force=True, ignore_permissions=True)

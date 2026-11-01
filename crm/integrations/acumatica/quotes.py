@@ -220,6 +220,11 @@ class _Pass:
 			if name
 			else None
 		)
+		if deal and deal.acumatica_sales_quote == nbr:
+			# Create Sales Quote stored this number after the pass listed the known
+			# ones: already this deal's, and upsert_deal must not overwrite it
+			self.known.add(nbr)
+			return True
 		if not deal or deal.acumatica_sales_quote:
 			return False
 		customer = deal.acumatica_customer or (
@@ -326,7 +331,7 @@ def pull_new_quotes(client, modified_since: str | None, pending: dict, settings)
 		modified_since = None
 	quiet = frappe.flags.bulk_assign_quietly
 	# a night's quotes are assigned in one run, with nobody at a desk to read them:
-	# the ToDo is the assignment, and no notification, email or job per deal
+	# the ToDo is the assignment, and no email or job per deal (the rep gets one in-app notification)
 	frappe.flags.bulk_assign_quietly = True
 	try:
 		run = _Pass(client, settings, pending, counts)
