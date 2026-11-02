@@ -170,13 +170,13 @@ CATALOGUE: dict[str, dict] = {
 	"won_by_rep": {
 		"title": "Won value and win rate by rep",
 		"description": "Value of the deals each rep closed as won in the period, with deals won and "
-		"win rate (won / closed). Use this for who is best, top performers and any ranking of reps.",
+		"win rate (won / won, lost or expired). Use this for who is best, top performers and any ranking of reps.",
 		"source": CRM,
 		"columns": [
 			_col("rep", "Rep", "text"),
 			_col("won", "Won value", "currency"),
 			_col("won_deals", "Won deals", "int"),
-			_col("closed_deals", "Closed deals", "int"),
+			_col("closed_deals", "Won, lost or expired", "int"),
 			_col("win_rate_pct", "Win rate", "percent"),
 		],
 	},

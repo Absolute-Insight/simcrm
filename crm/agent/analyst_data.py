@@ -343,7 +343,7 @@ def _won_by_rep(from_date, to_date):
 			"rep": row["salesperson"],
 			"won": float(row["won_value"]),
 			"won_deals": row["won_deals"],
-			"closed_deals": row["won_deals"] + row["lost_deals"],
+			"closed_deals": row["won_deals"] + row["lost_deals"] + row["expired_deals"],
 			"win_rate_pct": row["win_rate"],
 			"unassigned": not row["owner"],
 		}
@@ -351,7 +351,8 @@ def _won_by_rep(from_date, to_date):
 	]
 	return rows, (
 		"Won value is the deals closed as won in the period, by deal owner. Win rate is won deals as "
-		"a share of deals closed in the period, won or lost; open and expired deals are not counted."
+		"a share of the deals won, lost or expired in the period; a quote left to expire counts as "
+		"not won, and open deals are not counted. Deals with no rep are shown as Unassigned."
 	)
 
 
