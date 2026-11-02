@@ -69,3 +69,4 @@ crm.patches.v1_0.anchor_seeded_twitter_rule
 crm.patches.v1_0.clear_status_filter_on_created_rules
 crm.patches.v1_0.disable_rules_waiting_on_a_foreign_status
 crm.patches.v1_0.add_vat_number_to_organization_side_panel
+crm.patches.v1_0.grant_acumatica_identity_permlevel

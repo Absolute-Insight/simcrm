@@ -72,7 +72,8 @@ def ensure_custom_fields() -> None:
 					# after the confirmation is checked afresh. Set only by
 					# api.confirm_new_customer; permlevel 1 keeps reps from setting it.
 					"fieldname": "acumatica_confirmed_for",
-					"fieldtype": "Data",
+					# JSON: the fingerprint and the customer codes confirmed past
+					"fieldtype": "Small Text",
 					"label": "Confirmed New Acumatica Customer",
 					"hidden": 1,
 					"read_only": 1,
@@ -84,10 +85,13 @@ def ensure_custom_fields() -> None:
 			"CRM Product": _identity_fields("product_code"),
 			"CRM Deal": [
 				{
+					# permlevel 1 like the organization's: Create Sales Quote prefers this
+					# code, so a rep who could write it could quote under another customer
 					"fieldname": "acumatica_customer",
 					"fieldtype": "Data",
 					"label": CUSTOMER_CODE,
 					"read_only": 1,
+					"permlevel": 1,
 					"insert_after": "organization",
 				},
 				{
@@ -98,6 +102,8 @@ def ensure_custom_fields() -> None:
 					"fieldtype": "Data",
 					"label": "Sales Quote in Acumatica",
 					"read_only": 1,
+					# and clearing it would let the quote be sent twice
+					"permlevel": 1,
 					"insert_after": "acumatica_customer",
 				},
 			],
@@ -242,3 +248,29 @@ def block_dual_erp(doc, method=None) -> None:
 		frappe.throw(
 			_("Disable the Acumatica integration first — one ERP integration may be active at a time")
 		)
+
+
+CONTACT_IDENTITY = ("acumatica_id", "acumatica_noteid")
+
+
+def guard_contact_identity(doc, method=None) -> None:
+	"""Contact validate: only the sync, the push and a manager set a contact's
+	Acumatica identity. A fake id would block the contact push (it skips a contact
+	already linked) and a copied one would merge two people at the next sync.
+
+	Not permlevel, as on the CRM doctypes: Contact is frappe's, its standard
+	permissions grant every role, and the level-1 rows it would need could only come
+	as Custom DocPerm -- which replaces the doctype's permissions wholesale and
+	freezes them against frappe's own releases. The writers that may set it pass
+	ignore_permissions (the importer) or write with db.set_value (the push)."""
+	if doc.flags.ignore_permissions or frappe.session.user == "Administrator":
+		return
+	if set(frappe.get_roles()) & {"System Manager", "Sales Manager"}:
+		return
+	before = None if doc.is_new() else doc.get_doc_before_save()
+	for field in CONTACT_IDENTITY:
+		if not doc.meta.has_field(field):
+			continue
+		kept = before.get(field) if before else None
+		if (doc.get(field) or None) != (kept or None):
+			doc.set(field, kept)

@@ -196,6 +196,9 @@ permission_query_conditions = {
 }
 
 has_permission = {
+	# its sync-issue log names every rep's customers, and frappe hands a Single's child
+	# rows to whoever reads the Single
+	"CRM Acumatica Settings": "crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings.has_permission",
 	"CRM Lead": "crm.permissions.org_hierarchy.has_lead_permission",
 	"CRM Deal": "crm.permissions.org_hierarchy.has_deal_permission",
 	"CRM Organization": "crm.permissions.customers.has_organization_permission",
@@ -240,7 +243,10 @@ extend_doctype_class = {
 
 doc_events = {
 	"Contact": {
-		"validate": ["crm.api.contact.validate"],
+		"validate": [
+			"crm.api.contact.validate",
+			"crm.integrations.acumatica.install.guard_contact_identity",
+		],
 	},
 	"Event": {
 		"validate": ["crm.permissions.customers.validate_event_participants"],
@@ -304,6 +310,8 @@ doc_events = {
 	"CRM Organization": {
 		# an address or name a rep just fixed may be all a blocked customer push needed
 		"on_update": ["crm.integrations.acumatica.outbound.queue_customer_push_for_organization"],
+		# the push's in-flight markers are keyed by the docname
+		"after_rename": ["crm.integrations.acumatica.outbound.move_markers_on_rename"],
 		"after_delete": ["crm.domain_enrichment.tasks.clear_runs"],
 	},
 	"ERPNext CRM Settings": {
