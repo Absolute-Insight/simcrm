@@ -17,7 +17,7 @@ class CRMAcumaticaSettings(Document):
 		# checked enabled or not: the mapping is read the moment the integration is on
 		validate_settings(self)
 		self.validate_customer_push()
-		self.keep_stored_sync_issues()
+		self.drop_sync_issues()
 		if not self.enabled:
 			return
 		if not self.instance_url:
@@ -28,17 +28,22 @@ class CRMAcumaticaSettings(Document):
 				_("Disable the SIMERP integration first — one ERP integration may be active at a time")
 			)
 
-	def keep_stored_sync_issues(self):
-		"""The table is written row by row by the jobs (record_sync_issue); a save of the
-		form carries whatever copy it loaded, which would delete rows recorded since
-		and undo dismissals. A save of the settings never changes the log."""
-		if self.is_new():
+	def drop_sync_issues(self):
+		"""A settings save never touches the issue log. The table is written row by row
+		by the jobs (record_sync_issue); a form save carries whatever copy it loaded,
+		which would delete rows recorded since and undo dismissals. The rows are also
+		dropped from the document, so the copy frappe.client.save / set_value hands
+		back holds none -- the log is read through api.get_open_sync_issues, which
+		knows who may see what."""
+		if not self.flags.write_sync_issues:
+			self.set("sync_issues", [])
+
+	def update_child_table(self, fieldname, df=None):
+		# with drop_sync_issues, what keeps the stale copy from deleting the log; only
+		# code that means to rewrite it (a test resetting the table) sets the flag
+		if fieldname == "sync_issues" and not self.flags.write_sync_issues:
 			return
-		self.set("sync_issues", [])
-		for row in frappe.get_all(
-			ISSUE, filters=_issue_rows_filter(), fields=["*"], order_by="idx asc", limit=MAX_SYNC_ISSUES * 5
-		):
-			self.append("sync_issues", row)
+		super().update_child_table(fieldname, df)
 
 	def validate_customer_push(self):
 		for field in ("new_customer_class", "tax_zone_home", "tax_zone_abroad"):
@@ -110,6 +115,24 @@ class CRMAcumaticaSettings(Document):
 		if enable and not current.enabled:
 			# re-enabling the integration after a disable brings the button back
 			frappe.db.set_value("CRM Form Script", FORM_SCRIPT_NAME, "enabled", 1)
+
+
+def has_permission(doc, ptype=None, user=None, debug=False):
+	"""Only those who see every customer may read the settings document.
+
+	Its sync-issue log names organizations and quotes Acumatica's errors about any
+	of them. The table is permlevel 1, which keeps it out of frappe.client.get -- but
+	frappe lists a Single's child rows to anyone who can read the Single
+	(``frappe.get_list(child, parent_doctype=...)`` checks the parent only, and not
+	the table's permlevel), so a manager whose customers are scoped could read every
+	row past it. They read the log through api.get_open_sync_issues instead, which
+	filters it for them. Returning True defers to the role permissions."""
+	user = user or frappe.session.user
+	if user == "Administrator" or "System Manager" in frappe.get_roles(user):
+		return True
+	from crm.permissions.customers import scope_applies
+
+	return not scope_applies(user)
 
 
 def get_settings():

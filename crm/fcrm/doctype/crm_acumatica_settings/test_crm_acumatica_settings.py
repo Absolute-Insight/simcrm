@@ -23,6 +23,7 @@ class TestAcumaticaSettings(FrappeTestCase):
 			return
 		doc.sync_issues = []
 		doc.flags.ignore_validate = True
+		doc.flags.write_sync_issues = True
 		doc.save(ignore_permissions=True)
 
 	def test_doctype_exists_with_expected_fields(self):
@@ -89,6 +90,7 @@ class TestAcumaticaSettings(FrappeTestCase):
 				{"entity": "Customer", "remote_id": f"R{i}", "kind": "Import Failed", "detail": "x"},
 			)
 		doc.flags.ignore_validate = True
+		doc.flags.write_sync_issues = True
 		doc.save(ignore_permissions=True)
 
 		record_sync_issue("Customer", "NEWEST", "Import Failed", "boom")

@@ -295,13 +295,14 @@
    "fieldtype": "Table",
    "label": "Sync Issues",
    "options": "CRM Acumatica Sync Issue",
-   "read_only": 1
+   "read_only": 1,
+   "permlevel": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-02 10:00:00.000000",
+ "modified": "2026-11-02 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM Acumatica Settings",
@@ -326,6 +327,11 @@
    "role": "Sales Manager",
    "share": 1,
    "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager"
   }
  ],
  "row_format": "Dynamic",
