@@ -299,8 +299,8 @@
       <div v-if="status" class="flex flex-col gap-2 text-p-sm text-ink-gray-6">
         <div>
           {{ __('Last synced') }} ({{ __('UTC') }}):
-          {{ status.last_synced_at || __('never') }} · {{ __('Sync') }}:
-          {{ status.running ? __('running') : __('idle') }} ·
+          {{ formatIssueTime(status.last_synced_at) || __('never') }} ·
+          {{ __('Sync') }}: {{ status.running ? __('running') : __('idle') }} ·
           {{ __('Open sync issues') }}: {{ status.open_issues }}
         </div>
         <div v-if="status.last_sync_error" class="text-ink-red-9">
