@@ -44,6 +44,7 @@ def _enable(**overrides):
 	s.tax_zone_home = overrides.get("tax_zone_home", "01")
 	s.tax_zone_abroad = overrides.get("tax_zone_abroad", "02")
 	s.salesperson_owners = overrides.get("salesperson_owners")
+	s.salesperson_branches = overrides.get("salesperson_branches")
 	s.save(ignore_permissions=True)
 	frappe.clear_cache(doctype="CRM Acumatica Settings")
 
@@ -666,6 +667,45 @@ class TestCreateSalesQuote(FrappeTestCase):
 			outbound.create_sales_quote_from_deal(deal.name)
 
 		self.assertEqual(client.put.call_count, 1)
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_the_quote_is_booked_in_the_owners_branch(self, ClientCls):
+		"""MBP's reps each quote from one branch (Rustenburg, KZN, ...); without the
+		branch every quote landed in the API user's default one."""
+		rep = _rep()
+		_enable(salesperson_owners=f'{{"007": "{rep}"}}', salesperson_branches='{"007": "RTB"}')
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.return_value = _wrapped(OrderNbr="QT000130")
+		org, deal = _mapped_deal()
+		frappe.db.set_value("CRM Deal", deal.name, "deal_owner", rep)
+
+		outbound.create_sales_quote_from_deal(deal.name)
+
+		payload = client.put.call_args.args[1]
+		self.assertEqual(payload["FinancialSettings"], {"Branch": {"value": "RTB"}})
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_an_owner_without_a_branch_leaves_it_to_acumatica(self, ClientCls):
+		rep = _rep()
+		other = _rep()
+		_enable(
+			salesperson_owners=f'{{"007": "{rep}", "024": "{other}"}}', salesperson_branches='{"024": "KZN"}'
+		)
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.return_value = _wrapped(OrderNbr="QT000131")
+		org, deal = _mapped_deal()
+		frappe.db.set_value("CRM Deal", deal.name, "deal_owner", rep)
+
+		outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertNotIn("FinancialSettings", client.put.call_args.args[1])
+
+	def test_a_branch_map_that_is_not_an_object_of_ids_is_refused(self):
+		for raw in ('["RTB"]', '{"007": ""}', "{not json"):
+			with self.subTest(raw=raw), self.assertRaises(frappe.ValidationError):
+				_enable(salesperson_branches=raw)
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_rechecks_the_quote_with_a_row_lock_before_the_put(self, ClientCls):

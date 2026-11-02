@@ -36,6 +36,7 @@
   "create_deals_from_quotes",
   "create_deals_from_quotes_since",
   "salesperson_owners",
+  "salesperson_branches",
   "column_break_ausj",
   "webhook_verify_token",
   "request_pause",
@@ -246,6 +247,12 @@
    "options": "JSON"
   },
   {
+   "description": "JSON object of Acumatica salesperson ID to branch ID, e.g. {\"007\": \"RTB\"}. A sales quote created from a deal is booked in its owner's branch; without one it lands in the API user's default branch.",
+   "fieldname": "salesperson_branches",
+   "fieldtype": "Code",
+   "label": "Salesperson Branches"
+  },
+  {
    "fieldname": "column_break_ausj",
    "fieldtype": "Column Break"
   },
@@ -302,7 +309,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-02 12:00:00.000000",
+ "modified": "2026-11-02 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM Acumatica Settings",
