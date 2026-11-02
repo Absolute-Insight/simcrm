@@ -1,4 +1,5 @@
 import hashlib
+import json
 import re
 import time
 
@@ -103,9 +104,16 @@ def queue_customer_push(doc, method):
 		return
 	if doc.status != settings.deal_status:
 		before = doc.get_doc_before_save() if hasattr(doc, "get_doc_before_save") else None
-		if before and before.status == settings.deal_status:
-			# the deal left the trigger status: nothing is waiting on a manager or a rep
-			# for it any more
+		if (
+			before
+			and before.status == settings.deal_status
+			and not frappe.db.exists(
+				"CRM Deal",
+				{"organization": doc.organization, "status": settings.deal_status, "name": ("!=", doc.name)},
+			)
+		):
+			# the organization's last deal left the trigger status: nothing is waiting on
+			# a manager or a rep for it any more
 			dismiss_sync_issues("Customer", doc.organization, WAITING_KINDS)
 		return
 	_enqueue_push(doc.name, doc.organization)
@@ -326,7 +334,8 @@ def push_customer_for_deal(deal: str) -> None:
 		# An earlier push never heard back, and the next deal save fired this one. Under
 		# AutoNumber a second PUT is a second customer; under From Organization Name the
 		# collision check below would refuse the id the first one took. Link what it
-		# made instead -- but only what it can only have made.
+		# made instead -- but only what it can only have made, looked for by what it
+		# SENT: the organization may have been renamed since.
 		try:
 			earlier, why_not = _earlier_customer(client, payload, marker)
 		except (AcumaticaError, requests.RequestException, ValueError) as e:
@@ -346,17 +355,49 @@ def push_customer_for_deal(deal: str) -> None:
 			_after_customer_created(client, org.name, v(earlier, "CustomerID"), facts.contact, doc, settings)
 			return
 
+	# Decided without a lock: the reads below go to Acumatica, and a row lock held
+	# across them would stall a rep's save of the organization, or a manager's
+	# action, for as long as Acumatica takes. What the decision rests on -- the link
+	# and the confirmation -- is re-read under the lock just before the PUT.
+	confirmation = org.get("acumatica_confirmed_for") or ""
+	confirmed_past = _confirmed_past(confirmation, facts)
+
+	candidates = [c for c in _local_duplicates(org, facts) if c["customer_id"] not in confirmed_past]
+	if candidates:
+		_report_duplicate(org, doc, candidates)
+		return
+
+	if payload.get("CustomerID"):
+		collision = _customer_id_collision(client, payload["CustomerID"], org.name)
+		if collision:
+			_issue(org.name, collision)
+			return
+
+	try:
+		# right before the PUT: a customer keyed in at Acumatica since the last sync is
+		# in no organization here yet. The same-name customers that exist now are also
+		# what an unanswered PUT must never be taken for.
+		preexisting, candidates = _remote_duplicates(client, facts)
+	except (AcumaticaError, requests.RequestException, ValueError) as e:
+		# same rule as the collision check: "the check failed" is not "there is none"
+		_issue(org.name, f"could not check Acumatica for an existing customer: {e} :: {_reason(e)}")
+		return
+	candidates = [c for c in candidates if c["customer_id"] not in confirmed_past]
+	if candidates:
+		_report_duplicate(org, doc, candidates)
+		return
+
 	# enqueue_after_commit only defers the ENQUEUE into frappe.db.after_commit -- a plain
 	# deque with no de-duplication of its own. Two deals on the same organization saved
 	# inside one request both pass queue_customer_push's redis dedup check at hook time
 	# (nothing has committed yet, so neither looks like a duplicate to the other) and
 	# both land a job at commit; two workers then reach this point concurrently, and the
 	# unlocked read above can't see a link a concurrent winner is mid-write on. Re-read
-	# with a row lock before the checks and the PUT: the loser blocks here until the
+	# with a row lock immediately before the PUT: the loser blocks here until the
 	# winner's write below commits, then sees the link already populated and no-ops
-	# instead of PUTting a second Customer into the client's ERP. The same read is the
-	# one that decides whether a manager's confirmation still holds, so a confirmation
-	# that landed while this job was queued is not missed.
+	# instead of PUTting a second Customer into the client's ERP. A confirmation that
+	# changed since the decision above ends this run too: the job confirm_new_customer
+	# queued decides on it.
 	locked = frappe.db.get_value(
 		"CRM Organization",
 		org.name,
@@ -368,36 +409,19 @@ def push_customer_for_deal(deal: str) -> None:
 		if not doc.get("acumatica_customer") and locked.acumatica_id:
 			frappe.db.set_value("CRM Deal", doc.name, "acumatica_customer", locked.acumatica_id)
 		return
-	confirmed = bool(
-		locked and locked.get("acumatica_confirmed_for")
-	) and locked.acumatica_confirmed_for == confirmation_hash(facts)
-
-	if not confirmed:
-		candidates = _local_duplicates(org, facts)
-		if candidates:
-			_report_duplicate(org, doc, candidates)
-			return
-
-	if payload.get("CustomerID"):
-		collision = _customer_id_collision(client, payload["CustomerID"], org.name)
-		if collision:
-			_issue(org.name, collision)
-			return
-
-	try:
-		# right before the PUT: a customer keyed in at Acumatica since the last sync is
-		# in no organization here yet. Read even when confirmed -- the same-name
-		# customers that exist now are what an unanswered PUT must never be taken for.
-		preexisting, candidates = _remote_duplicates(client, facts)
-	except (AcumaticaError, requests.RequestException, ValueError) as e:
-		# same rule as the collision check: "the check failed" is not "there is none"
-		_issue(org.name, f"could not check Acumatica for an existing customer: {e} :: {_reason(e)}")
-		return
-	if candidates and not confirmed:
-		_report_duplicate(org, doc, candidates)
+	if locked and (locked.get("acumatica_confirmed_for") or "") != confirmation:
 		return
 
-	_mark_inflight(inflight, {"sent_at": time.time(), "preexisting": preexisting})
+	_mark_inflight(
+		inflight,
+		{
+			"sent_at": time.time(),
+			"preexisting": preexisting,
+			# what was sent, so recovery after a rename looks for the right thing
+			"name": payload["CustomerName"],
+			"customer_id": payload.get("CustomerID"),
+		},
+	)
 	try:
 		created = client.put("Customer", payload)
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
@@ -442,6 +466,43 @@ def _read_marker(raw) -> dict | None:
 		return {"sent_at": float(raw), "preexisting": None}
 	except (TypeError, ValueError):
 		return {"sent_at": None, "preexisting": None}
+
+
+def confirmation_value(facts, candidates) -> str:
+	"""What confirm_new_customer stores: the fingerprint of what the manager saw, and
+	the customer codes they confirmed it is not."""
+	return json.dumps(
+		{"hash": confirmation_hash(facts), "past": sorted({c for c in candidates if c})}, sort_keys=True
+	)
+
+
+def _confirmed_past(raw: str, facts) -> set:
+	"""The customer codes a manager confirmed this organization is not -- empty when
+	there is no confirmation, or it no longer matches what the push is about to send.
+	A candidate outside the set still blocks: the manager never saw it."""
+	if not raw:
+		return set()
+	try:
+		data = json.loads(raw)
+	except ValueError:
+		return set()
+	if not isinstance(data, dict) or data.get("hash") != confirmation_hash(facts):
+		return set()
+	return {str(c) for c in data.get("past") or []}
+
+
+def move_markers_on_rename(doc, method, old: str, new: str, merge: bool = False) -> None:
+	"""CRM Organization after_rename: the in-flight markers are keyed by the docname,
+	and one orphaned by a rename is a push that forgot it may already have created the
+	customer -- the next one sends a second."""
+	cache = frappe.cache()
+	for entity in ("Customer", "CustomerContact"):
+		value = cache.get_value(_inflight_key(entity, old))
+		if not value:
+			continue
+		if not cache.get_value(_inflight_key(entity, new)):
+			cache.set_value(_inflight_key(entity, new), value, expires_in_sec=INFLIGHT_TTL)
+		cache.delete_value(_inflight_key(entity, old))
 
 
 def confirmation_hash(facts) -> str:
@@ -915,10 +976,11 @@ def _earlier_customer(client, payload: dict, marker: dict):
 	excluded, as is any customer an organization here already holds; exactly one left
 	is the push's, none means it made nothing, and more than one is not a guess to
 	make on the client's ERP."""
-	if payload.get("CustomerID"):
-		page = client.get_page(
-			"Customer", top=2, filter=f"CustomerID eq {_odata(payload['CustomerID'])}", orderby=None
-		)
+	# what the unanswered push sent; a marker from before it was recorded, the payload
+	sent_name = marker.get("name") or payload["CustomerName"]
+	sent_id = marker.get("customer_id") if "name" in marker else payload.get("CustomerID")
+	if sent_id:
+		page = client.get_page("Customer", top=2, filter=f"CustomerID eq {_odata(sent_id)}", orderby=None)
 		if not page:
 			return None, None
 		if _held_here(v(page[0], "CustomerID")):
@@ -931,7 +993,7 @@ def _earlier_customer(client, payload: dict, marker: dict):
 	page = client.get_page(
 		"Customer",
 		top=RECOVERY_PAGE,
-		filter=f"CustomerName eq {_odata(payload['CustomerName'])}",
+		filter=f"CustomerName eq {_odata(sent_name)}",
 		orderby=None,
 	)
 	if not page:
@@ -939,7 +1001,7 @@ def _earlier_customer(client, payload: dict, marker: dict):
 	preexisting = marker.get("preexisting")
 	if preexisting is None:
 		return None, (
-			f"Acumatica has a customer named {payload['CustomerName']}, and an unanswered push "
+			f"Acumatica has a customer named {sent_name}, and an unanswered push "
 			"recorded no list to tell its own from an existing one; link the right one by hand"
 		)
 	fresh = [
@@ -953,7 +1015,7 @@ def _earlier_customer(client, payload: dict, marker: dict):
 		return None, None
 	if len(fresh) > 1:
 		return None, (
-			f"Acumatica has more than one new customer named {payload['CustomerName']} "
+			f"Acumatica has more than one new customer named {sent_name} "
 			f"({', '.join(v(r, 'CustomerID') for r in fresh)}); link the right one by hand"
 		)
 	return fresh[0], None

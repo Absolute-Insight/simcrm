@@ -874,6 +874,17 @@ class TestCreateSalesQuote(FrappeTestCase):
 		client.put.assert_not_called()
 
 
+def _confirm_past(org, deal, past=()):
+	facts = outbound._customer_facts(
+		frappe.get_doc("CRM Deal", deal.name),
+		frappe.get_doc("CRM Organization", org.name),
+		frappe.get_cached_doc("CRM Acumatica Settings"),
+	)
+	frappe.db.set_value(
+		"CRM Organization", org.name, "acumatica_confirmed_for", outbound.confirmation_value(facts, past)
+	)
+
+
 def _issues_for(remote_id, kind=None):
 	return [
 		row
@@ -1159,15 +1170,8 @@ class TestDuplicatePrevention(CustomerPushCase):
 		self.assertEqual(len(notes), 1)
 		self.assertIn("sales manager", notes[0].notification_text)
 
-	def _confirm(self, org, deal):
-		facts = outbound._customer_facts(
-			frappe.get_doc("CRM Deal", deal.name),
-			frappe.get_doc("CRM Organization", org.name),
-			frappe.get_cached_doc("CRM Acumatica Settings"),
-		)
-		frappe.db.set_value(
-			"CRM Organization", org.name, "acumatica_confirmed_for", outbound.confirmation_hash(facts)
-		)
+	def _confirm(self, org, deal, past=()):
+		_confirm_past(org, deal, past)
 
 	def test_a_confirmed_organization_skips_every_duplicate_check(self):
 		"""A VAT match too: MBP holds several accounts for one taxpayer (branches)."""
@@ -1175,13 +1179,68 @@ class TestDuplicatePrevention(CustomerPushCase):
 		_linked_org(f"Theta Pumps {suffix}", f"C-T{suffix}", vat="4777777777")
 		_enable()
 		org, deal = _complete_deal(org_name=f"Theta Pumps {suffix} Ltd", vat="4777777777")
-		self._confirm(org, deal)
+		self._confirm(org, deal, past=(f"C-T{suffix}", "C-REMOTE"))
 		self.client.get_page.side_effect = _pages(
 			customers=[_wrapped(CustomerID="C-REMOTE", CustomerName=org.organization_name)]
 		)
 		outbound.push_customer_for_deal(deal.name)
 		self.assertEqual(len(_customer_puts(self.client)), 1)
 		self.assertEqual(_issues_for(org.name, "Possible Duplicate"), [])
+
+	def test_a_candidate_the_manager_never_saw_still_blocks(self):
+		suffix = frappe.generate_hash(length=6)
+		_linked_org(f"Mu Pumps {suffix}", f"C-M{suffix}")
+		_enable()
+		org, deal = _complete_deal(org_name=f"Mu Pumps {suffix} Ltd")
+		self._confirm(org, deal, past=(f"C-M{suffix}",))
+		# a customer by the same name keyed in at Acumatica after the confirmation
+		self.client.get_page.side_effect = _pages(
+			customers=[_wrapped(CustomerID="C-LATER", CustomerName=org.organization_name)]
+		)
+		outbound.push_customer_for_deal(deal.name)
+		self.assertEqual(_customer_puts(self.client), [])
+		issue = _issues_for(org.name, "Possible Duplicate")[0]
+		self.assertEqual([c["customer_id"] for c in json.loads(issue.candidates)], ["C-LATER"])
+
+	def test_a_confirmation_that_changes_before_the_put_stops_the_run(self):
+		"""Decided unlocked, re-checked under the lock: a manager's action in between
+		belongs to the job it queued."""
+		_enable()
+		org, deal = _complete_deal()
+		real_get_value = frappe.db.get_value
+
+		def confirmed_meanwhile(doctype, filters=None, fieldname="name", *args, **kwargs):
+			if doctype == "CRM Organization" and kwargs.get("for_update"):
+				return frappe._dict(
+					acumatica_noteid=None, acumatica_id=None, acumatica_confirmed_for='{"x": 1}'
+				)
+			return real_get_value(doctype, filters, fieldname, *args, **kwargs)
+
+		with patch(
+			"crm.integrations.acumatica.outbound.frappe.db.get_value", side_effect=confirmed_meanwhile
+		):
+			outbound.push_customer_for_deal(deal.name)
+		self.client.put.assert_not_called()
+
+	def test_the_remote_reads_run_before_the_row_lock(self):
+		_enable()
+		org, deal = _complete_deal()
+		order = []
+		# the Customer reads that decide; the contact follow-up after the PUT reads too
+		self.client.get_page.side_effect = (
+			lambda entity, **kw: (entity == "Customer" and order.append("read")) or []
+		)
+		real_get_value = frappe.db.get_value
+
+		def spy(doctype, filters=None, fieldname="name", *args, **kwargs):
+			if doctype == "CRM Organization" and kwargs.get("for_update"):
+				order.append("lock")
+			return real_get_value(doctype, filters, fieldname, *args, **kwargs)
+
+		with patch("crm.integrations.acumatica.outbound.frappe.db.get_value", side_effect=spy):
+			outbound.push_customer_for_deal(deal.name)
+		self.assertIn("lock", order)
+		self.assertNotIn("read", order[order.index("lock") :])
 
 	def test_a_rename_after_the_confirmation_is_checked_again(self):
 		suffix = frappe.generate_hash(length=6)
@@ -1505,16 +1564,10 @@ class TestUnansweredPushRecovery(CustomerPushCase):
 		self.client.put.return_value = _wrapped(ContactID=5)
 
 	def _confirmed_deal(self):
+		"""Confirmed new beside its existing namesake C-OLD1."""
 		_enable()
 		org, deal = _complete_deal()
-		facts = outbound._customer_facts(
-			frappe.get_doc("CRM Deal", deal.name),
-			frappe.get_doc("CRM Organization", org.name),
-			frappe.get_cached_doc("CRM Acumatica Settings"),
-		)
-		frappe.db.set_value(
-			"CRM Organization", org.name, "acumatica_confirmed_for", outbound.confirmation_hash(facts)
-		)
+		_confirm_past(org, deal, ("C-OLD1",))
 		return org, deal
 
 	def test_a_namesake_that_existed_before_the_push_is_never_adopted(self):
@@ -1556,6 +1609,7 @@ class TestUnansweredPushRecovery(CustomerPushCase):
 
 	def test_a_customer_another_organization_holds_is_never_adopted(self):
 		org, deal = self._confirmed_deal()
+		_confirm_past(org, deal, ("C-OLD1", "C-HELD"))
 		self._time_out_first_push(org, deal)
 		_linked_org(f"Holder {frappe.generate_hash(length=6)}", "C-HELD")
 		self.client.get_page.side_effect = _pages(
@@ -1564,6 +1618,32 @@ class TestUnansweredPushRecovery(CustomerPushCase):
 		self.client.put.return_value = _wrapped(CustomerID="C-NEW2", NoteID="g-n2")
 		outbound.push_customer_for_deal(deal.name)
 		self.assertEqual(frappe.db.get_value("CRM Organization", org.name, "acumatica_id"), "C-NEW2")
+
+	def test_a_rename_after_an_unanswered_push_still_finds_what_it_made(self):
+		"""Recovery looks for what was SENT, and the marker follows the rename."""
+		from frappe.model.rename_doc import rename_doc
+
+		org, deal = self._confirmed_deal()
+		sent = org.organization_name
+		self._time_out_first_push(org, deal)
+		renamed = rename_doc(
+			"CRM Organization",
+			org.name,
+			f"{sent} Renamed",
+			force=True,
+			ignore_permissions=True,
+			show_alert=False,
+		)
+		self.assertTrue(frappe.cache().get_value(outbound._inflight_key("Customer", renamed)))
+		self.assertFalse(frappe.cache().get_value(outbound._inflight_key("Customer", org.name)))
+
+		made = _wrapped(CustomerID="C-MADE2", CustomerName=sent, NoteID="g-made2")
+		self.client.get_page.side_effect = lambda entity, **kw: (
+			[made] if kw.get("filter") == f"CustomerName eq '{sent}'" else []
+		)
+		outbound.push_customer_for_deal(deal.name)
+		self.assertEqual(frappe.db.get_value("CRM Organization", renamed, "acumatica_id"), "C-MADE2")
+		self.assertEqual(_customer_puts(self.client), [])
 
 	def test_a_marker_without_the_list_adopts_nothing(self):
 		_enable()
@@ -1686,3 +1766,80 @@ class TestSweepThrottle(FrappeTestCase):
 			runs.append({c.kwargs["job_id"] for c in _pushes(enqueue)})
 		self.assertEqual([len(r) for r in runs], [1, 1])
 		self.assertNotEqual(runs[0], runs[1])
+
+
+class TestRound3Guards(CustomerPushCase):
+	def test_one_deal_leaving_the_status_keeps_the_rows_another_still_waits_on(self):
+		_enable()
+		org, deal = _complete_deal(with_address=False)
+		other = frappe.get_doc({"doctype": "CRM Deal", "organization": org.name, "status": "Won"}).insert(
+			ignore_permissions=True
+		)
+		outbound.push_customer_for_deal(deal.name)
+		doc = frappe.get_doc("CRM Deal", deal.name)
+		doc.status = "Qualification"
+		doc.save(ignore_permissions=True)
+		self.assertEqual(len(_issues_for(org.name, "Push Blocked")), 1)
+		other = frappe.get_doc("CRM Deal", other.name)
+		other.status = "Qualification"
+		other.save(ignore_permissions=True)
+		self.assertEqual(_issues_for(org.name, "Push Blocked"), [])
+
+	def test_a_sales_user_cannot_set_a_deals_customer_code_or_quote_number(self):
+		from crm.integrations.acumatica.install import ensure_custom_fields
+
+		ensure_custom_fields()
+		rep = _rep()
+		frappe.set_user(rep)
+		try:
+			org = frappe.get_doc(
+				{"doctype": "CRM Organization", "organization_name": f"Rep-{frappe.generate_hash(length=8)}"}
+			).insert()
+			deal = frappe.get_doc(
+				{
+					"doctype": "CRM Deal",
+					"organization": org.name,
+					"status": "Qualification",
+					"deal_owner": rep,
+				}
+			).insert()
+			deal.reload()
+			deal.acumatica_customer = "C-OTHER"
+			deal.acumatica_sales_quote = "QT000123"
+			deal.save()
+		finally:
+			frappe.set_user("Administrator")
+		self.assertEqual(
+			frappe.db.get_value("CRM Deal", deal.name, ["acumatica_customer", "acumatica_sales_quote"]),
+			(None, None),
+		)
+		meta = frappe.get_meta("CRM Deal")
+		self.assertEqual(meta.get_field("acumatica_customer").permlevel, 1)
+		self.assertEqual(meta.get_field("acumatica_sales_quote").permlevel, 1)
+
+	def test_a_sales_user_reads_the_deals_customer_code(self):
+		levels = [
+			p.permlevel for p in frappe.get_meta("CRM Deal").permissions if p.role == "Sales User" and p.read
+		]
+		self.assertIn(1, levels)
+
+	def test_a_sales_user_cannot_set_a_contacts_acumatica_identity(self):
+		rep = _rep()
+		frappe.set_user(rep)
+		try:
+			person = frappe.get_doc(
+				{"doctype": "Contact", "first_name": "Fake", "acumatica_id": "999"}
+			).insert()
+			person.reload()
+			person.acumatica_noteid = "g-fake"
+			person.save()
+		finally:
+			frappe.set_user("Administrator")
+		self.assertEqual(
+			frappe.db.get_value("Contact", person.name, ["acumatica_id", "acumatica_noteid"]), (None, None)
+		)
+		# the sync still may
+		person = frappe.get_doc("Contact", person.name)
+		person.acumatica_id = "123"
+		person.save(ignore_permissions=True)
+		self.assertEqual(frappe.db.get_value("Contact", person.name, "acumatica_id"), "123")
