@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError, v, wrap
+from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError, token_cache_key, v, wrap
 
 
 def _resp(status=200, json_body=None):
@@ -13,6 +13,9 @@ def _resp(status=200, json_body=None):
 	m.json.return_value = json_body if json_body is not None else {}
 	m.text = str(json_body)
 	return m
+
+
+KEY = token_cache_key("https://t.acumatica.com", "cid", "api")
 
 
 def _settings(branch=None):
@@ -66,7 +69,7 @@ class TestErrorDetail(unittest.TestCase):
 
 class TestClient(FrappeTestCase):
 	def setUp(self):
-		frappe.cache().delete_value("acumatica_token::https://t.acumatica.com")
+		frappe.cache().delete_value(KEY)
 
 	@patch("crm.integrations.acumatica.client.requests.post")
 	@patch("crm.integrations.acumatica.client.requests.get")
@@ -173,7 +176,26 @@ class TestClient(FrappeTestCase):
 		c.logout()
 		self.assertEqual(rpost.call_args[0][0], "https://t.acumatica.com/entity/auth/logout")
 		self.assertEqual(rpost.call_args.kwargs["headers"]["Authorization"], "Bearer tok")
-		self.assertIsNone(frappe.cache().get_value("acumatica_token::https://t.acumatica.com"))
+		self.assertIsNone(frappe.cache().get_value(KEY))
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_a_new_login_on_the_same_instance_does_not_reuse_the_old_token(self, rget, rpost):
+		"""MBP's Sandbox and live companies share one URL; the client ID's @Tenant picks
+		the company. Saving the live login must not leave the sync on the Sandbox's token."""
+		rpost.return_value = _resp(200, {"access_token": "live", "expires_in": 3600})
+		rget.return_value = _resp(200, [])
+		frappe.cache().set_value(KEY, "sandbox")
+		live = _settings()
+		live.client_id = "other@MBP"
+		live_key = token_cache_key(live.instance_url, live.client_id, live.username)
+		self.addCleanup(frappe.cache().delete_value, live_key)
+
+		AcumaticaClient(live).get_page("Customer")
+
+		self.assertEqual(rget.call_args.kwargs["headers"]["Authorization"], "Bearer live")
+		self.assertEqual(frappe.cache().get_value(live_key), "live")
+		self.assertNotIn("other@MBP", live_key)
 
 	@patch("crm.integrations.acumatica.client.requests.post")
 	def test_logout_without_a_session_does_nothing(self, rpost):
@@ -190,13 +212,13 @@ class TestClient(FrappeTestCase):
 		c = AcumaticaClient(_settings())
 		c.get_page("Customer")
 		c.logout()  # must not raise
-		self.assertIsNone(frappe.cache().get_value("acumatica_token::https://t.acumatica.com"))
+		self.assertIsNone(frappe.cache().get_value(KEY))
 
 	@patch("crm.integrations.acumatica.client.requests.post")
 	@patch("crm.integrations.acumatica.client.requests.get")
 	def test_a_session_of_its_own_never_touches_the_shared_token(self, rget, rpost):
 		"""Test connection runs beside the sync and must neither use nor drop its login."""
-		key = "acumatica_token::https://t.acumatica.com"
+		key = KEY
 		frappe.cache().set_value(key, "shared")
 		self.addCleanup(frappe.cache().delete_value, key)
 		rpost.return_value = _resp(200, {"access_token": "own", "expires_in": 3600})

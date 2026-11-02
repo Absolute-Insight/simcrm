@@ -1,3 +1,4 @@
+import hashlib
 import json
 import time
 
@@ -5,6 +6,22 @@ import frappe
 import requests
 
 TOKEN_CACHE_PREFIX = "acumatica_token::"
+
+
+def token_cache_key(base: str, client_id: str | None, username: str | None) -> str:
+	"""Where the sync's shared token is cached: one per login, not one per instance.
+
+	One instance URL serves every company on it -- MBP's Sandbox and live share
+	https://mbp.brilliantcloud.online/MBP, and the client ID's @Tenant suffix is what
+	picks the company. Keyed on the URL alone, a token minted for the Sandbox outlived
+	the switch to live: new credentials were saved, and the sync went on reading (and
+	the quote button writing to) the Sandbox until that token expired an hour later.
+	Hashed so the cache key never carries the login's names in the clear.
+	"""
+	login = hashlib.sha256(f"{client_id or ''}\0{username or ''}".encode()).hexdigest()[:16]
+	return f"{TOKEN_CACHE_PREFIX}{base.rstrip('/')}::{login}"
+
+
 TIMEOUT = 30
 # A SalesOrder PUT runs the tenant's whole order pipeline (pricing, tax, customisations)
 # and routinely outlasts a read. Timing out a write that then succeeds is the expensive
@@ -93,7 +110,7 @@ class AcumaticaClient:
 
 	# --- auth -----------------------------------------------------------
 	def _cache_key(self):
-		return f"{TOKEN_CACHE_PREFIX}{self.base}"
+		return token_cache_key(self.base, self.settings.client_id, self.settings.username)
 
 	def _token(self, force=False):
 		if not force:
