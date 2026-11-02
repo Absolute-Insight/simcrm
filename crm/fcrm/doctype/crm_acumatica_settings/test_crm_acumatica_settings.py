@@ -447,5 +447,55 @@ class TestCustomerPushSettings(FrappeTestCase):
 		ensure_custom_fields()
 		meta = frappe.get_meta("CRM Organization")
 		self.assertEqual(meta.get_field("tax_registration_id").label, "VAT Number")
-		self.assertTrue(meta.get_field("acumatica_confirmed_new").hidden)
+		self.assertTrue(meta.get_field("acumatica_confirmed_for").hidden)
 		self.assertIn("tax_registration_id", LAYOUT_FIELDS["CRM Organization-Side Panel"])
+
+	def test_a_stale_save_of_the_settings_keeps_the_issue_log(self):
+		"""The panel saves the copy it loaded; rows a job recorded or a manager
+		dismissed since must survive it."""
+		from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
+			dismiss_sync_issues,
+			record_sync_issue,
+		)
+
+		record_sync_issue("Customer", "STALE-1", "Push Failed", "first")
+		stale = frappe.get_doc("CRM Acumatica Settings")
+		record_sync_issue("Customer", "STALE-2", "Push Failed", "recorded after the copy was loaded")
+		dismiss_sync_issues("Customer", "STALE-1", ("Push Failed",))
+		stale.save(ignore_permissions=True)
+
+		rows = {r.remote_id: r for r in frappe.get_doc("CRM Acumatica Settings").sync_issues}
+		self.assertIn("STALE-2", rows)
+		self.assertEqual(rows["STALE-1"].dismissed, 1)
+
+	def test_the_vat_number_patch_puts_it_beside_the_customer_code(self):
+		from crm.patches.v1_0 import add_vat_number_to_organization_side_panel as patch_module
+
+		layout = [
+			{
+				"name": "details",
+				"columns": [{"name": "c1", "fields": ["website", "acumatica_id", "industry"]}],
+			}
+		]
+		name = "CRM Organization-Side Panel"
+		if frappe.db.exists("CRM Fields Layout", name):
+			doc = frappe.get_doc("CRM Fields Layout", name)
+			doc.layout = json.dumps(layout)
+			doc.save(ignore_permissions=True)
+		else:
+			frappe.get_doc(
+				{
+					"doctype": "CRM Fields Layout",
+					"dt": "CRM Organization",
+					"type": "Side Panel",
+					"layout": json.dumps(layout),
+				}
+			).insert(ignore_permissions=True)
+
+		patch_module.execute()
+		patch_module.execute()  # idempotent
+
+		fields = json.loads(frappe.db.get_value("CRM Fields Layout", name, "layout"))[0]["columns"][0][
+			"fields"
+		]
+		self.assertEqual(fields, ["website", "acumatica_id", "tax_registration_id", "industry"])

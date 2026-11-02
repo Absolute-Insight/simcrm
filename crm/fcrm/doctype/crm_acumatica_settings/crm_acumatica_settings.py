@@ -3,6 +3,7 @@ import json
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.query_builder.functions import Max, Min
 from frappe.utils import now_datetime
 
 FORM_SCRIPT_NAME = "Create Sales Quote from CRM Deal"
@@ -16,6 +17,7 @@ class CRMAcumaticaSettings(Document):
 		# checked enabled or not: the mapping is read the moment the integration is on
 		validate_settings(self)
 		self.validate_customer_push()
+		self.keep_stored_sync_issues()
 		if not self.enabled:
 			return
 		if not self.instance_url:
@@ -25,6 +27,18 @@ class CRMAcumaticaSettings(Document):
 			frappe.throw(
 				_("Disable the SIMERP integration first — one ERP integration may be active at a time")
 			)
+
+	def keep_stored_sync_issues(self):
+		"""The table is written row by row by the jobs (record_sync_issue); a save of the
+		form carries whatever copy it loaded, which would delete rows recorded since
+		and undo dismissals. A save of the settings never changes the log."""
+		if self.is_new():
+			return
+		self.set("sync_issues", [])
+		for row in frappe.get_all(
+			ISSUE, filters=_issue_rows_filter(), fields=["*"], order_by="idx asc", limit=MAX_SYNC_ISSUES * 5
+		):
+			self.append("sync_issues", row)
 
 	def validate_customer_push(self):
 		for field in ("new_customer_class", "tax_zone_home", "tax_zone_abroad"):
@@ -120,58 +134,142 @@ def set_pending_retries(pending: dict) -> None:
 	frappe.db.set_single_value("CRM Acumatica Settings", "pending_retries", json.dumps(pending))
 
 
+SETTINGS = "CRM Acumatica Settings"
+ISSUE = "CRM Acumatica Sync Issue"
+
+
+def _issue_rows_filter(**extra) -> dict:
+	return {"parent": SETTINGS, "parenttype": SETTINGS, "parentfield": "sync_issues", **extra}
+
+
+def _touched() -> None:
+	# get_settings() is a cached doc; a row written past it must not be read stale
+	frappe.clear_document_cache(SETTINGS, SETTINGS)
+
+
 def record_sync_issue(
 	entity: str, remote_id: str, kind: str, detail: str, candidates: list | None = None
 ) -> None:
 	"""Append a row to the sync-issues table without touching the rest of the doc.
 
+	The row is inserted on its own, never through a save of the Single: jobs record
+	issues concurrently, and a whole-document save from a stale copy either fails on
+	the timestamp check or writes the stale copy back -- inside a job that may just
+	have linked a customer, whose link the failure would roll back.
+
 	``candidates`` (Possible Duplicate rows) is what the settings panel offers to link
 	the organization to, kept as JSON beside the human-readable detail."""
-	doc = frappe.get_doc("CRM Acumatica Settings")
-	doc.append(
-		"sync_issues",
+	Issue = frappe.qb.DocType(ISSUE)
+	top = (
+		frappe.qb.from_(Issue)
+		.select(Max(Issue.idx))
+		.where((Issue.parent == SETTINGS) & (Issue.parentfield == "sync_issues"))
+	).run()
+	row = frappe.get_doc(
 		{
+			"doctype": ISSUE,
+			"parent": SETTINGS,
+			"parenttype": SETTINGS,
+			"parentfield": "sync_issues",
+			"idx": ((top and top[0][0]) or 0) + 1,
 			"entity": entity,
 			"remote_id": remote_id,
 			"kind": kind,
-			"detail": detail[:500],
+			"detail": (detail or "")[:500],
 			"candidates": json.dumps(candidates) if candidates else None,
 			"detected_on": now_datetime(),
-		},
+			"dismissed": 0,
+		}
 	)
-	if len(doc.sync_issues) > MAX_SYNC_ISSUES:
-		# The table is a log, and a bad backfill can write one row per record: unbounded
-		# growth makes every later append rewrite the whole table. Keep the newest rows.
-		del doc.sync_issues[0 : len(doc.sync_issues) - MAX_SYNC_ISSUES]
-		for idx, row in enumerate(doc.sync_issues, start=1):
-			row.idx = idx
-	# This save runs inside whatever transaction hit the failure -- often a user's deal
-	# save. validate() would re-run the mutual-exclusion check and could throw a
-	# ValidationError from there, turning a logged sync issue into a failed save.
-	doc.flags.ignore_validate = True
-	doc.save(ignore_permissions=True)
+	row.db_insert()
+	_trim()
+	_touched()
+
+
+def _trim() -> None:
+	"""The table is a log, and a bad backfill can write one row per record: keep the
+	newest MAX_SYNC_ISSUES, renumbered from 1."""
+	names = frappe.get_all(
+		ISSUE, filters=_issue_rows_filter(), order_by="idx asc", pluck="name", limit=MAX_SYNC_ISSUES * 5
+	)
+	excess = len(names) - MAX_SYNC_ISSUES
+	if excess > 0:
+		frappe.db.delete(ISSUE, {"name": ("in", names[:excess])})
+	Issue = frappe.qb.DocType(ISSUE)
+	first = (
+		frappe.qb.from_(Issue)
+		.select(Min(Issue.idx))
+		.where((Issue.parent == SETTINGS) & (Issue.parentfield == "sync_issues"))
+	).run()
+	first = first[0][0] if first else None
+	if first and int(first) > 1:
+		(
+			frappe.qb.update(Issue)
+			.set(Issue.idx, Issue.idx - (int(first) - 1))
+			.where((Issue.parent == SETTINGS) & (Issue.parentfield == "sync_issues"))
+		).run()
+
+
+def open_sync_issues(entity: str, remote_id: str, kinds) -> list:
+	"""Undismissed rows for ``remote_id`` of one of ``kinds``, newest first, read from
+	the table itself rather than a cached copy of the Single."""
+	return frappe.get_all(
+		ISSUE,
+		filters=_issue_rows_filter(entity=entity, remote_id=remote_id, kind=("in", list(kinds)), dismissed=0),
+		fields=["name", "kind", "detail", "candidates", "detected_on"],
+		order_by="idx desc",
+	)
 
 
 def has_open_sync_issue(entity: str, remote_id: str, kind: str, detail: str | None = None) -> bool:
 	"""Whether an undismissed row already says this. ``detail`` None matches any."""
-	for row in frappe.get_doc("CRM Acumatica Settings").sync_issues:
-		if row.dismissed or row.entity != entity or row.remote_id != remote_id or row.kind != kind:
-			continue
-		if detail is None or row.detail == detail[:500]:
-			return True
+	return any(
+		detail is None or row.detail == detail[:500] for row in open_sync_issues(entity, remote_id, (kind,))
+	)
+
+
+def upsert_sync_issue(
+	entity: str, remote_id: str, kind: str, detail: str, candidates: list | None = None
+) -> bool:
+	"""One open row per record and kind: an open row is brought up to date in place,
+	otherwise one is recorded. True when the row is new -- the caller's cue to tell
+	somebody. Repeats (every deal save, every sweep) then neither churn the capped
+	table nor evict the issues that matter."""
+	rows = open_sync_issues(entity, remote_id, (kind,))
+	if not rows:
+		record_sync_issue(entity, remote_id, kind, detail, candidates)
+		return True
+	keep, *stale = rows
+	frappe.db.set_value(
+		ISSUE,
+		keep.name,
+		{
+			"detail": (detail or "")[:500],
+			"candidates": json.dumps(candidates) if candidates else None,
+			"detected_on": now_datetime(),
+		},
+		update_modified=False,
+	)
+	for row in stale:
+		frappe.db.set_value(ISSUE, row.name, "dismissed", 1, update_modified=False)
+	_touched()
 	return False
 
 
 def dismiss_sync_issues(entity: str, remote_id: str, kinds) -> int:
-	"""Dismiss every open row for ``remote_id`` of one of ``kinds``; how many it did."""
-	doc = frappe.get_doc("CRM Acumatica Settings")
-	count = 0
-	for row in doc.sync_issues:
-		if not row.dismissed and row.entity == entity and row.remote_id == remote_id and row.kind in kinds:
-			row.dismissed = 1
-			count += 1
-	if count:
-		# same reason as record_sync_issue: a log write must not trip the config checks
-		doc.flags.ignore_validate = True
-		doc.save(ignore_permissions=True)
-	return count
+	"""Dismiss every open row for ``remote_id`` of one of ``kinds``; how many it did.
+	Row by row, never through a save of the Single (see record_sync_issue)."""
+	rows = open_sync_issues(entity, remote_id, kinds)
+	for row in rows:
+		frappe.db.set_value(ISSUE, row.name, "dismissed", 1, update_modified=False)
+	if rows:
+		_touched()
+	return len(rows)
+
+
+def dismiss_sync_issue_row(name) -> bool:
+	if not frappe.db.exists(ISSUE, _issue_rows_filter(name=name)):
+		return False
+	frappe.db.set_value(ISSUE, name, "dismissed", 1, update_modified=False)
+	_touched()
+	return True
