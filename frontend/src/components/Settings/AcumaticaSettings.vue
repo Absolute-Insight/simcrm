@@ -114,14 +114,56 @@
           type="checkbox"
           :label="__('Create the customer in Acumatica on deal status change')"
         />
-        <Link
-          v-if="settings.doc.create_customer_on_status_change"
-          v-model="settings.doc.deal_status"
-          doctype="CRM Deal Status"
-          :label="__('Deal Status')"
-          :placeholder="__('Won')"
-          class="w-64"
-        />
+        <template v-if="settings.doc.create_customer_on_status_change">
+          <Link
+            v-model="settings.doc.deal_status"
+            doctype="CRM Deal Status"
+            :label="__('Deal Status')"
+            :placeholder="__('Won')"
+            class="w-64"
+          />
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormControl
+              v-model="settings.doc.new_customer_class"
+              :label="__('New customer class')"
+              placeholder="COD"
+              :description="
+                __(
+                  'The class supplies terms, credit limit and statement cycle; Vectora never sends those.',
+                )
+              "
+            />
+            <Link
+              v-model="settings.doc.home_country"
+              doctype="Country"
+              :label="__('Home country')"
+              :placeholder="__('South Africa')"
+            />
+            <FormControl
+              v-model="settings.doc.tax_zone_home"
+              :label="__('Tax zone at home')"
+              placeholder="01"
+              :description="
+                __('Blank leaves the tax zone to the customer class')
+              "
+            />
+            <FormControl
+              v-model="settings.doc.tax_zone_abroad"
+              :label="__('Tax zone abroad')"
+              placeholder="02"
+              :description="
+                __('Blank leaves the tax zone to the customer class')
+              "
+            />
+          </div>
+          <p class="text-p-sm text-ink-gray-6">
+            {{
+              __(
+                'A customer is created once its organization has an address with line 1, city and country, and the deal a primary contact with a first name and an email or phone — the deal owner is told what is missing. One that looks like an existing Acumatica customer waits under sync issues below for a manager to link or confirm.',
+              )
+            }}
+          </p>
+        </template>
       </div>
 
       <div class="flex flex-col gap-4 border-t border-outline-elevation-2 pt-4">
@@ -151,67 +193,76 @@
               {{ __('Older quotes never become deals, even on a backfill.') }}
             </p>
           </div>
-          <div class="flex flex-col gap-2">
-            <FormLabel :label="__('Salesperson owners')" />
-            <p class="text-p-sm text-ink-gray-6">
+        </template>
+      </div>
+
+      <div
+        v-if="
+          settings.doc.create_deals_from_quotes ||
+          settings.doc.create_customer_on_status_change
+        "
+        class="flex flex-col gap-4 border-t border-outline-elevation-2 pt-4"
+      >
+        <div class="flex flex-col gap-2">
+          <FormLabel :label="__('Salesperson owners')" />
+          <p class="text-p-sm text-ink-gray-6">
+            {{
+              __(
+                "Acumatica salesperson ID → CRM user. Quotes from anyone not listed go to Administrator; a customer created from a deal gets its owner's salesperson when exactly one ID maps to them.",
+              )
+            }}
+          </p>
+          <template v-if="ownersUnreadable">
+            <p class="text-p-sm text-ink-red-9">
               {{
                 __(
-                  'Acumatica salesperson ID → CRM user. Quotes from anyone not listed go to Administrator.',
+                  'The saved mapping cannot be read. Fix it below as a JSON object of salesperson ID to user email, or clear it to start over.',
                 )
               }}
             </p>
-            <template v-if="ownersUnreadable">
-              <p class="text-p-sm text-ink-red-9">
-                {{
-                  __(
-                    'The saved mapping cannot be read. Fix it below as a JSON object of salesperson ID to user email, or clear it to start over.',
-                  )
-                }}
-              </p>
-              <FormControl
-                v-model="settings.doc.salesperson_owners"
-                type="textarea"
-                :rows="4"
-                :aria-label="__('Salesperson owners')"
-                class="font-mono"
-              />
-            </template>
-            <div
-              v-for="(row, i) in ownersUnreadable ? [] : ownerRows"
-              :key="i"
-              class="flex items-center gap-2"
-            >
-              <FormControl
-                v-model="row.code"
-                :placeholder="__('Salesperson ID')"
-                :aria-label="__('Salesperson ID')"
-                class="w-40"
-                @update:model-value="syncOwners"
-              />
-              <Link
-                v-model="row.user"
-                doctype="User"
-                :filters="{ enabled: 1, user_type: 'System User' }"
-                :placeholder="__('User')"
-                class="w-64"
-                @update:model-value="syncOwners"
-              />
-              <Button
-                variant="ghost"
-                icon="x"
-                :aria-label="__('Remove')"
-                @click="removeOwner(i)"
-              />
-            </div>
-            <div v-if="!ownersUnreadable">
-              <Button
-                :label="__('Add salesperson')"
-                icon-left="plus"
-                @click="ownerRows.push({ code: '', user: '' })"
-              />
-            </div>
+            <FormControl
+              v-model="settings.doc.salesperson_owners"
+              type="textarea"
+              :rows="4"
+              :aria-label="__('Salesperson owners')"
+              class="font-mono"
+            />
+          </template>
+          <div
+            v-for="(row, i) in ownersUnreadable ? [] : ownerRows"
+            :key="i"
+            class="flex items-center gap-2"
+          >
+            <FormControl
+              v-model="row.code"
+              :placeholder="__('Salesperson ID')"
+              :aria-label="__('Salesperson ID')"
+              class="w-40"
+              @update:model-value="syncOwners"
+            />
+            <Link
+              v-model="row.user"
+              doctype="User"
+              :filters="{ enabled: 1, user_type: 'System User' }"
+              :placeholder="__('User')"
+              class="w-64"
+              @update:model-value="syncOwners"
+            />
+            <Button
+              variant="ghost"
+              icon="x"
+              :aria-label="__('Remove')"
+              @click="removeOwner(i)"
+            />
           </div>
-        </template>
+          <div v-if="!ownersUnreadable">
+            <Button
+              :label="__('Add salesperson')"
+              icon-left="plus"
+              @click="ownerRows.push({ code: '', user: '' })"
+            />
+          </div>
+        </div>
       </div>
 
       <div class="flex items-center gap-3">
@@ -258,28 +309,68 @@
           <div
             v-for="issue in issues"
             :key="issue.name"
-            class="group flex items-center gap-3 border-b border-outline-gray-1 py-2 last:border-b-0"
+            class="group flex flex-col gap-2 border-b border-outline-gray-1 py-2 last:border-b-0 sm:flex-row sm:items-center sm:gap-3"
           >
-            <div class="min-w-0 flex-1 truncate text-ink-gray-8">
+            <div
+              class="min-w-0 flex-1 text-ink-gray-8"
+              :class="needsAction(issue) ? 'break-words' : 'truncate'"
+              :title="issue.detail"
+            >
               {{ issue.entity }} · {{ issue.remote_id }} · {{ issue.kind }} ·
               {{ issue.detail }} · {{ issue.detected_on }}
             </div>
-            <Button
-              variant="ghost"
-              :label="__('Dismiss')"
-              @click="dismissIssue(issue)"
-            />
+            <div class="flex shrink-0 flex-wrap items-center gap-2">
+              <template
+                v-for="c in duplicateCandidates(issue)"
+                :key="c.customerId"
+              >
+                <Button
+                  v-if="c.canLink"
+                  :label="__('Link to {0}', [c.customerId])"
+                  :title="c.name"
+                  :loading="resolving === `${issue.name}:${c.customerId}`"
+                  :disabled="!!resolving"
+                  @click="linkCustomer(issue, c)"
+                />
+              </template>
+              <Button
+                v-if="canConfirmNew(issue)"
+                :label="__('Create as new')"
+                :disabled="!!resolving"
+                @click="askConfirmNew(issue)"
+              />
+              <Button
+                variant="ghost"
+                :label="__('Dismiss')"
+                @click="dismissIssue(issue)"
+              />
+            </div>
           </div>
         </div>
       </div>
     </template>
+
+    <ConfirmDialog
+      v-model="confirmNew.show"
+      :title="__('Create a new Acumatica customer?')"
+      :message="
+        __(
+          '{0} will be created as a new customer in Acumatica, even though it looks like an existing one. Use Link instead if it is the same business.',
+          [confirmNew.issue?.remote_id],
+        )
+      "
+      :confirm-label="__('Create as new')"
+      :onConfirm="confirmNewCustomer"
+      :onCancel="() => (confirmNew.show = false)"
+    />
   </div>
 </template>
 
 <script setup>
 import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import { reactive, ref, watch, onMounted, onUnmounted } from 'vue'
 import {
   createDocumentResource,
   call,
@@ -291,6 +382,7 @@ import {
 } from 'frappe-ui'
 import Link from '@/components/Controls/Link.vue'
 import { parseOwnerMap, serialiseOwnerMap } from '@/utils/salespersonOwners.js'
+import { canConfirmNew, duplicateCandidates } from '@/utils/acumaticaIssues.js'
 
 const settings = createDocumentResource({
   doctype: 'CRM Acumatica Settings',
@@ -412,6 +504,67 @@ async function dismissIssue(issue) {
     loadStatus()
   } catch (e) {
     toast.error(e.messages?.[0] || __('Could not dismiss the issue'))
+  }
+}
+
+// The panel's resolution actions; the server checks the role, the organization and
+// the customer again, so a stale row can only be refused, never misapplied.
+const resolving = ref('')
+const confirmNew = reactive({ show: false, issue: null })
+
+function needsAction(issue) {
+  return issue.kind === 'Possible Duplicate' || issue.kind === 'Push Blocked'
+}
+
+async function linkCustomer(issue, candidate) {
+  resolving.value = `${issue.name}:${candidate.customerId}`
+  try {
+    await call('crm.integrations.acumatica.api.link_existing_customer', {
+      organization: issue.remote_id,
+      customer_id: candidate.customerId,
+    })
+    toast.success(
+      __('{0} linked to Acumatica customer {1}', [
+        issue.remote_id,
+        candidate.customerId,
+      ]),
+    )
+    await loadStatus()
+  } catch (e) {
+    toast.error(e.messages?.[0] || __('Could not link the customer'))
+  } finally {
+    resolving.value = ''
+  }
+}
+
+function askConfirmNew(issue) {
+  confirmNew.issue = issue
+  confirmNew.show = true
+}
+
+async function confirmNewCustomer({ hideDialog }) {
+  const issue = confirmNew.issue
+  if (!issue) return hideDialog()
+  resolving.value = `${issue.name}:new`
+  try {
+    const out = await call(
+      'crm.integrations.acumatica.api.confirm_new_customer',
+      { organization: issue.remote_id },
+    )
+    toast.success(
+      out?.queued
+        ? __('{0} will be created in Acumatica shortly', [issue.remote_id])
+        : __(
+            '{0} is confirmed as new; it is created when one of its deals reaches the trigger status',
+            [issue.remote_id],
+          ),
+    )
+    hideDialog()
+    await loadStatus()
+  } catch (e) {
+    toast.error(e.messages?.[0] || __('Could not confirm the customer'))
+  } finally {
+    resolving.value = ''
   }
 }
 
