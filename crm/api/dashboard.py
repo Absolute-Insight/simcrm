@@ -109,6 +109,27 @@ def blank_bucket(column):
 	return Coalesce(NullIf(column, ""), blank_label())
 
 
+# Administrator is not a rep: it owns what nobody was given -- above all the deals the
+# Acumatica sync made for a quote with no mapped salesperson. Ranked as a person it
+# came second among MBP's "salespeople".
+SYSTEM_OWNERS = ("Administrator",)
+
+
+def owner_bucket(column):
+	"""The owner to group a sales figure on: NULL for nobody -- NULL, ``''`` and the
+	:data:`SYSTEM_OWNERS` alike -- else the owner."""
+	return Case().when(column.isnull() | column.isin(["", *SYSTEM_OWNERS]), None).else_(column)
+
+
+def owner_label(column, full_name):
+	"""The rep's name for an :func:`owner_bucket` group: :func:`blank_label` for nobody."""
+	return (
+		Case()
+		.when(owner_bucket(column).isnull(), blank_label())
+		.else_(Coalesce(NullIf(full_name, ""), column))
+	)
+
+
 def in_territory(table, territory: str | None):
 	"""Criterion for "this record belongs to that territory", or ``None``.
 
@@ -1691,13 +1712,13 @@ def get_deals_by_salesperson(
 		.left_join(User)
 		.on(User.name == CRMDeal.deal_owner)
 		.select(
-			Coalesce(NullIf(User.full_name, ""), blank_bucket(CRMDeal.deal_owner)).as_("salesperson"),
+			owner_label(CRMDeal.deal_owner, User.full_name).as_("salesperson"),
 			Count("*").as_("deals"),
 			Sum(Coalesce(CRMDeal.deal_value, 0) * IfNull(CRMDeal.exchange_rate, 1)).as_("value"),
 		)
 		.where(Date(CRMDeal.creation).between(from_date, to_date))
-		# NULL and '' are both "nobody", and must be one bar rather than two
-		.groupby(NullIf(CRMDeal.deal_owner, ""))
+		# NULL, '' and Administrator are all "nobody", and must be one bar rather than three
+		.groupby(owner_bucket(CRMDeal.deal_owner))
 		.orderby(Count("*"), order=frappe.qb.desc)
 		.orderby(
 			Sum(Coalesce(CRMDeal.deal_value, 0) * IfNull(CRMDeal.exchange_rate, 1)), order=frappe.qb.desc
@@ -1740,10 +1761,11 @@ def won_by_salesperson(
 	user: str | None = None,
 	territory: str | None = None,
 ) -> list[dict]:
-	"""What each rep closed in the period: won value and deals, lost deals, win rate.
+	"""What each rep closed in the period: won value and deals, lost and expired deals, win rate.
 
-	``[{owner, salesperson, won_value, won_deals, lost_deals, win_rate}]``, best
-	first. ``owner`` is ``None`` on the unowned row.
+	``[{owner, salesperson, won_value, won_deals, lost_deals, expired_deals, win_rate}]``,
+	best first. ``owner`` is ``None`` on the unowned row, which also holds
+	:data:`SYSTEM_OWNERS`' deals.
 
 	Per deal owner, so every deal counts once and the reps add up to
 	:func:`actual_by_month` over the same period -- unlike
@@ -1752,16 +1774,20 @@ def won_by_salesperson(
 
 	Only a move into Won stamps ``closed_date``, so a lost deal is dated by that
 	when an import set it, else by the status change that lost it, else by when it
-	was last touched. ``win_rate`` is a whole percentage of won + lost, or ``None``
-	with neither. On Hold, which holds Expired, is not closed.
+	was last touched. An Expired deal is dated by the change that expired it, else
+	by when it was last touched. ``win_rate`` is a whole percentage of won over won +
+	lost + expired, or ``None`` with none of them: Acumatica almost never cancels a
+	quote a customer did not take -- it is left open until it expires -- so a rate
+	over won + lost alone read 100% for nearly every rep. Expired is still not a
+	close (the deal can be won later, and then counts as won).
 	"""
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
 	User = DocType("User")
 	Log = DocType("CRM Status Change Log")
 
-	owner = NullIf(Deal.deal_owner, "")
-	label = Coalesce(NullIf(User.full_name, ""), blank_bucket(Deal.deal_owner))
+	owner = owner_bucket(Deal.deal_owner)
+	label = owner_label(Deal.deal_owner, User.full_name)
 
 	won_query = (
 		_won_deals_query(from_date, to_date)
@@ -1792,9 +1818,28 @@ def won_by_salesperson(
 		.where((Status.type == "Lost") & lost_on.between(from_date, to_date))
 		.groupby(owner)
 	)
+	expired_on = Coalesce(Date(Log.to_date), Date(Deal.modified))
+	expired_query = (
+		frappe.qb.from_(Deal)
+		.left_join(User)
+		.on(User.name == Deal.deal_owner)
+		.left_join(Log)
+		.on((Log.parent == Deal.name) & (Log.parenttype == "CRM Deal") & (Log["to"] == EXPIRED))
+		.select(
+			owner.as_("owner"),
+			label.as_("salesperson"),
+			Count(Deal.name).distinct().as_("deals"),
+		)
+		.where((Deal.status == EXPIRED) & expired_on.between(from_date, to_date))
+		.groupby(owner)
+	)
 
 	rows: dict[str | None, dict] = {}
-	for query, field in ((won_query, "won_deals"), (lost_query, "lost_deals")):
+	for query, field in (
+		(won_query, "won_deals"),
+		(lost_query, "lost_deals"),
+		(expired_query, "expired_deals"),
+	):
 		if user:
 			query = query.where(belongs_to(Deal, user, "CRM Deal"))
 		query = apply_territory(query, Deal, territory)
@@ -1807,13 +1852,14 @@ def won_by_salesperson(
 					"won_value": 0.0,
 					"won_deals": 0,
 					"lost_deals": 0,
+					"expired_deals": 0,
 				},
 			)
 			entry[field] = row.deals
 			entry["won_value"] = flt(row.get("value")) or entry["won_value"]
 
 	for entry in rows.values():
-		closed = entry["won_deals"] + entry["lost_deals"]
+		closed = entry["won_deals"] + entry["lost_deals"] + entry["expired_deals"]
 		entry["win_rate"] = round(entry["won_deals"] / closed * 100) if closed else None
 	return sorted(rows.values(), key=lambda entry: -entry["won_value"])
 
