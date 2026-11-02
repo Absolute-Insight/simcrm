@@ -96,7 +96,7 @@ class AcumaticaClient:
 	def __init__(self, settings, shared_session=True):
 		self.settings = settings
 		self.base = settings.instance_url.rstrip("/")
-		# Every process shares one cached token per instance. A client that is not part
+		# Every process shares one cached token per login. A client that is not part
 		# of the sync (Test connection) keeps its own instead: it must not test the
 		# credentials behind somebody else's cached login, and dropping that login from
 		# the cache would not end it -- the sync would mint another and the dropped one
