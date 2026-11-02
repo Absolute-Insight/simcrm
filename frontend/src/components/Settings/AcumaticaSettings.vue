@@ -231,7 +231,7 @@
           <div
             v-for="(row, i) in ownersUnreadable ? [] : ownerRows"
             :key="i"
-            class="flex items-center gap-2"
+            class="flex flex-wrap items-center gap-2"
           >
             <FormControl
               v-model="row.code"
@@ -257,7 +257,7 @@
             />
             <Button
               variant="ghost"
-              icon="x"
+              icon="lucide-x"
               :aria-label="__('Remove')"
               @click="removeOwner(i)"
             />
@@ -265,7 +265,7 @@
           <div v-if="!ownersUnreadable">
             <Button
               :label="__('Add salesperson')"
-              icon-left="plus"
+              icon-left="lucide-plus"
               @click="ownerRows.push({ code: '', user: '', branch: '' })"
             />
           </div>
