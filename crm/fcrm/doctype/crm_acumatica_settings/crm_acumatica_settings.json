@@ -247,7 +247,7 @@
    "options": "JSON"
   },
   {
-   "description": "JSON object of Acumatica salesperson ID to branch ID, e.g. {\"007\": \"RTB\"}. A sales quote created from a deal is booked in its owner's branch; without one it lands in the API user's default branch.",
+   "description": "JSON object of Acumatica salesperson ID to branch ID, e.g. {\"007\": \"BR-A\"}. A sales quote created from a deal is booked in its owner's branch; without one it lands in the API user's default branch.",
    "fieldname": "salesperson_branches",
    "fieldtype": "Code",
    "label": "Salesperson Branches"

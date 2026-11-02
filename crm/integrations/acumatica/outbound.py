@@ -1179,7 +1179,7 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 		payload["Details"] = details
 	branch = _quote_branch(deal, settings)
 	if branch:
-		# MBP books each rep's quotes in that rep's branch (Rustenburg, KZN, ...). Left
+		# A multi-branch tenant books each rep's quotes in that rep's own branch. Left
 		# out, a quote lands in the API user's default branch for every rep alike.
 		payload["FinancialSettings"] = {"Branch": {"value": branch}}
 

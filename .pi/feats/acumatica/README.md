@@ -306,8 +306,7 @@ know.)
 Per rep, `salesperson_branches` (JSON, salesperson ID → branch ID, edited as the
 *Quote branch* column of the Salesperson owners rows) books a deal's quote in its
 owner's branch: the owner's salesperson (exactly one ID mapped to them) → branch,
-sent as `FinancialSettings.Branch` in the quote body. MBP's live quotes since
-2026-09 sit one branch per rep (JHB, RTB, KXE, KZN). No entry leaves it to the
+sent as `FinancialSettings.Branch` in the quote body. No entry leaves it to the
 header above or the user's default. Unproven on the live tenant until the first
 real quote: check its Financial tab.
 

@@ -16,10 +16,10 @@ describe('parseOwnerMap', () => {
     expect(
       parseOwnerMap(
         '{"007": "tamryn@example.com", "019": "rob@example.com"}',
-        '{"007": "RTB"}',
+        '{"007": "BR-A"}',
       ),
     ).toEqual([
-      { code: '007', user: 'tamryn@example.com', branch: 'RTB' },
+      { code: '007', user: 'tamryn@example.com', branch: 'BR-A' },
       { code: '019', user: 'rob@example.com', branch: '' },
     ])
   })
@@ -67,11 +67,11 @@ describe('serialiseOwnerMap', () => {
 describe('serialiseBranchMap', () => {
   it('keeps the branch of complete rows only, trimmed', () => {
     const value = serialiseBranchMap([
-      { code: '007', user: 'tamryn@example.com', branch: ' RTB ' },
+      { code: '007', user: 'tamryn@example.com', branch: ' BR-A ' },
       { code: '019', user: 'rob@example.com', branch: '' },
-      { code: '032', user: '', branch: 'KXE' },
+      { code: '032', user: '', branch: 'BR-B' },
     ])
-    expect(JSON.parse(value)).toEqual({ '007': 'RTB' })
+    expect(JSON.parse(value)).toEqual({ '007': 'BR-A' })
   })
 
   it('clears the field when no row has a branch', () => {
