@@ -118,29 +118,48 @@ The worker, in order:
    no request at all, a **"Push Blocked"** sync issue naming what is missing, and
    one in-app note (CRM Notification, via `notify_user`) to the deal owner saying
    what to fill in.
-3. **Unanswered earlier push** (in-flight marker) — look for what it made and
-   link that, as before.
-4. **Local duplicates** — one read of every linked organization (~1,100 rows):
-   same VAT number (digits only); the same name or a similar one
-   (`matching.normalise_name`: casefold, `&`→and, punctuation and legal-form
-   tokens — pty, ltd, cc, holdings… — and a trailing "COD" dropped; then equal,
-   token-sorted `SequenceMatcher` ≥ 0.9, or all of one name's words (two or more)
-   inside the other's, so "Bearing Man Group - Mozambique" is flagged against
-   "Bearing Man Group (Pty) Ltd"); or the primary contact's email on a contact of
-   a linked organization.
-5. **Derived-id collision** (From Organization Name only), as before.
-6. **Remote duplicates**, right before the PUT: `CustomerName eq` and, with a VAT
-   number, `TaxRegistrationID eq` — two reads, catching customers keyed in at
-   Acumatica since the last sync. A read that fails is a "Push Failed", not a
-   go-ahead.
-7. Row-locked re-check, PUT, link.
+3. **Unanswered earlier push** (in-flight marker). The marker holds the send time
+   and the CustomerIDs Acumatica already had *by that name* before the PUT. Under
+   AutoNumber the recovery reads by name, drops those and any code an organization
+   here holds: exactly one left is adopted, none means the PUT made nothing (send
+   again), more than one is a "Push Failed" for a manager to link by hand. Under
+   From Organization Name the id was checked free before sending, so finding it is
+   finding ours. A marker from before this change (a bare timestamp) adopts nothing.
+4. **Row lock and the confirmation**: the organization is re-read `for_update`
+   (link, and `acumatica_confirmed_for`). A manager's confirmation counts only if it
+   still equals `confirmation_hash` (normalised name, VAT digits, primary-contact
+   email) of what is about to be sent: a rename onto an existing customer after
+   the confirmation goes back through the checks.
+5. **Local duplicates** (skipped when confirmed) — one read of every linked
+   organization (~1,100 rows): same VAT number (digits only); the same name or a
+   similar one (`matching.normalise_name`: casefold, `&`→and, punctuation and
+   legal-form tokens — pty, ltd, cc, holdings… — and a trailing "COD" dropped; then
+   equal, token-sorted `SequenceMatcher` ≥ 0.9, or all of one name's words (two or
+   more) inside the other's, so "Bearing Man Group - Mozambique" is flagged against
+   "Bearing Man Group (Pty) Ltd"); or the primary contact's email on a contact of a
+   linked organization.
+6. **Derived-id collision** (From Organization Name only), as before.
+7. **Remote duplicates**, right before the PUT: `CustomerName eq`, and
+   `TaxRegistrationID eq` both as typed and as digits — separate reads. The name
+   read always runs (it is what fills the marker's list); its hits only block when
+   not confirmed. A read that fails is a "Push Failed", not a go-ahead.
+8. PUT, link, **commit** — so no later failure in the job can roll the link back.
 
 Any duplicate hit → no PUT; a **"Possible Duplicate"** sync issue whose detail names
-the candidates and whose hidden `candidates` column (JSON:
-`customer_id`, `organization`, `organization_name`, `reasons`) drives the settings
-panel, plus a note to the deal owner that a manager must confirm. Both issue kinds
-are written once per organization per message (`has_open_sync_issue`), so the
-re-runs below do not spam; a successful push dismisses them.
+the candidates and whose hidden `candidates` column (JSON: `customer_id`,
+`organization`, `organization_name`, `reasons`) drives the settings panel, plus a
+note to the deal owner that a manager is reviewing it — without the candidates,
+which may be another rep's customers.
+
+Sync-issue rows are written one row at a time (`record_sync_issue` inserts the
+child row; `upsert_sync_issue` and `dismiss_sync_issues` update rows), never by
+saving the Single: concurrent jobs saving it collided on the timestamp check, and a
+save from a stale copy wrote it back. `CRMAcumaticaSettings.validate` reloads the
+table from the database, so a stale form save keeps the log as it is. The push
+keeps **one open row per organization and kind** — a repeat updates it in place
+and does not notify again; moving from Push Blocked to Possible Duplicate (or back)
+dismisses the other, the deal leaving the trigger status dismisses both, and a
+successful push dismisses Blocked, Duplicate and Push Failed.
 
 Resolution, in the settings panel's sync-issue list (`api.py`, POST only, System
 Manager / Sales Manager, plus write permission on the organization):
@@ -150,11 +169,27 @@ Manager / Sales Manager, plus write permission on the organization):
   Acumatica, sets the organization's `acumatica_id`/`acumatica_noteid`, puts the
   code on its unlinked deals. A code another organization already holds is
   refused: two organizations on one customer is the split the sync cannot undo,
-  so the fix is to move the deal to the organization that has it.
-- **Create as new** (`confirm_new_customer`) — sets the hidden
-  `acumatica_confirmed_new`, which skips the name and email checks (local and
-  remote) next time, and enqueues the push. Refused — and not offered — when a
-  candidate shares the VAT number: one taxpayer is one customer.
+  so the fix is to move the deal to the organization that has it (the refusal
+  names that organization only to a manager whose customers are not scoped).
+- **Create as new** (`confirm_new_customer`) — for any candidate, a same-VAT match
+  included (MBP holds several accounts for one taxpayer — branches; the dialog
+  says so when the VAT matched). Needs a deal in the trigger status that passes the
+  gate; stores `confirmation_hash` of it in `acumatica_confirmed_for` and enqueues
+  the push under its own job id (`acumatica_customer_<org>_confirm`), because a push
+  already running under the ordinary id would swallow a deduplicated enqueue.
+
+`get_open_sync_issues` hides, from a manager whose customers are scoped, rows about
+organizations they cannot see and candidates that are such organizations (the
+detail of a row that had one is replaced, since it names them). The panel reloads
+the settings document after every action, so a later Save does not carry a stale
+copy.
+
+The identity fields on CRM Organization (`acumatica_id`, `acumatica_noteid`,
+`acumatica_confirmed_for`) are **permlevel 1**: a Sales User reads them, only a
+manager writes them. `read_only`/`hidden` are the form's alone, so before this a
+rep could `set_value` their organization onto another customer's code, or confirm
+it themselves. The sync and the push write past it with `ignore_permissions` /
+`db.set_value`. (`tax_registration_id` stays permlevel 0 — reps fill it in.)
 
 What is sent (`_customer_payload`): `CustomerName`, `CustomerClass`
 (`new_customer_class`, default COD — the class supplies terms, credit limit and
@@ -163,42 +198,57 @@ else the base currency), `TaxZone` (`tax_zone_home` when the address country is
 `home_country`, else `tax_zone_abroad`; blank → not sent), `TaxRegistrationID`,
 `MainContact` {`Email`, `Phone1`, `WebSite`, `Address` {`AddressLine1`,
 `AddressLine2`, `City`, `State`, `PostalCode`, `Country` (ISO-2 from the Country
-doc)}}, and `Salespersons: [{SalespersonID, Default: true}]` when exactly one
-`salesperson_owners` code maps to the deal owner. `State`: a South African
-province in any spelling ("GP - Gauteng", "KwaZulu-Natal") becomes MBP's code
-(GP NW MP LP KZN WC FS EC NC, `matching.state_code`); elsewhere only a value that
-already looks like a code (≤3 alphanumerics) is sent. Nested entities are wrapped
-here — `client.wrap` passes a dict through as already wrapped.
+doc)}}. `State`: a South African province in any spelling ("GP - Gauteng",
+"KwaZulu-Natal") becomes MBP's code (GP NW MP LP KZN WC FS EC NC,
+`matching.state_code`); elsewhere only a value that already looks like a code (≤3
+alphanumerics) is sent. Nested entities are wrapped here — `client.wrap` passes a
+dict through as already wrapped.
 
-After the customer is linked, the primary contact follows: GET Contact under the
-new `BusinessAccount` by email (else first/last name) — adopting what an earlier
-attempt made — or PUT one (`FirstName`, `LastName`, `Email`, `Phone1`, `JobTitle`,
-`BusinessAccount`); link the CRM Contact's `acumatica_id`/`acumatica_noteid`; then
-PUT Customer {`CustomerID`, `PrimaryContactID`}. A failure here is a "Push Failed"
-sync issue on the Contact; the customer is never rolled back or re-created. A
-redis marker (`acumatica_inflight::CustomerContact::<org>`) remembers the
-follow-up is owed, and the next deal save finishes it — only for a customer this
-push created, never for an imported one. A contact already linked to Acumatica is
-left alone.
+After the customer is linked and committed, two follow-ups, each of which only ever
+records a sync issue:
+
+- **Salesperson** — a separate PUT {`CustomerID`, `Salespersons: [{SalespersonID,
+  Default: true}]`} when exactly one `salesperson_owners` code maps to the deal
+  owner. Separate because a brand-new customer has no MAIN location yet, and a
+  Salespersons row without a `LocationID` can be refused — which in the create PUT
+  would refuse the customer. A failure is a "Push Failed" on entity "Customer
+  Salesperson"; it is not retried.
+- **Primary contact** — GET Contact under the new `BusinessAccount` by email (else
+  first/last name), adopting what an earlier attempt made, or PUT one (`FirstName`,
+  `LastName`, `Email`, `Phone1`, `JobTitle`, `BusinessAccount`); link the CRM
+  Contact's `acumatica_id`/`acumatica_noteid`; then PUT Customer {`CustomerID`,
+  `PrimaryContactID`}. A failure is a "Push Failed" on the Contact; a redis marker
+  (`acumatica_inflight::CustomerContact::<org>`) remembers the follow-up is owed and
+  the next deal save finishes it — only for a customer this push created, never an
+  imported one. A contact already linked to Acumatica is left alone.
 
 Retry for a blocked or failed push: (a) every deal save while it stays in the
 status; (b) `queue_customer_push_for_organization` on CRM Organization
-`on_update` for an unlinked organization with a deal in the status; (c) the sync
-(`_import_all`, after the entities) calls `queue_pending_customer_pushes` —
-unlinked organizations with a deal in the status *modified in the last 30 days*,
-at most 100 a run, so turning the switch on does not turn years of won deals into
-customers overnight. An Address or Contact edited on its own saves neither deal
-nor organization; (c) is what catches those.
+`on_update` — only for an unlinked organization with an **open Push Blocked or
+Possible Duplicate row** and a deal in the status, so editing an organization with
+a years-old won deal never creates it; (c) the sync (`_import_all`, after the
+entities) calls `queue_pending_customer_pushes`: **at most once per 20 hours**
+(cache timestamp — every Acumatica push notification runs the sync), unlinked
+organizations (one row each) with a deal in the status modified in the last 30
+days, at most 100 queued a run, resuming after the last organization the previous
+run reached (cache cursor, wrapping at the end). An organization with an open
+Blocked/Duplicate row is passed over unless it, its address, the deal or the
+deal's primary contact was modified after the row was written. An Address or
+Contact edited on its own saves neither deal nor organization; (c) is what
+catches those.
 
 Settings defaults on existing sites: frappe applies a Single's defaults only while
 nothing is stored for it, so `install.ensure_customer_push_defaults`
 (after_migrate) writes `new_customer_class` = COD and `home_country` = South
 Africa where no row exists — never over a value an admin cleared.
 
-The organization's **VAT Number** (`tax_registration_id`, custom field, on the
-organization side panel when the integration is turned on) is filled by the sync
-from the Customer's `TaxRegistrationID` (top-level, so no `$select` change) and
-never blanked by it.
+The organization's **VAT Number** (`tax_registration_id`, custom field) is filled by
+the sync from the Customer's `TaxRegistrationID` (top-level, so no `$select`
+change) and never blanked by it. It is on the organization side panel: on enabling
+(`ensure_layout_fields`), and on sites whose panel already shows the customer code
+by patch `add_vat_number_to_organization_side_panel`, which places it right after
+`acumatica_id` (it calls `ensure_custom_fields` first — patches run before the
+after_migrate hook that creates the field).
 
 `CustomerID` derived from the organization name (`customer_numbering` =
 *From Organization Name*) strips non-alphanumerics and truncates to
