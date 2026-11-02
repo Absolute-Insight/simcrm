@@ -1,13 +1,32 @@
 import { describe, it, expect } from 'vitest'
 import {
   parseOwnerMap,
+  serialiseBranchMap,
   serialiseOwnerMap,
 } from '../../src/utils/salespersonOwners.js'
 
 describe('parseOwnerMap', () => {
   it('turns the stored JSON into rows', () => {
     expect(parseOwnerMap('{"036-NEW": "isabella@example.com"}')).toEqual([
-      { code: '036-NEW', user: 'isabella@example.com' },
+      { code: '036-NEW', user: 'isabella@example.com', branch: '' },
+    ])
+  })
+
+  it("puts each salesperson's branch on their row", () => {
+    expect(
+      parseOwnerMap(
+        '{"007": "tamryn@example.com", "019": "rob@example.com"}',
+        '{"007": "BR-A"}',
+      ),
+    ).toEqual([
+      { code: '007', user: 'tamryn@example.com', branch: 'BR-A' },
+      { code: '019', user: 'rob@example.com', branch: '' },
+    ])
+  })
+
+  it('reads the owners even when the branch map is unreadable', () => {
+    expect(parseOwnerMap('{"007": "t@example.com"}', '{')).toEqual([
+      { code: '007', user: 't@example.com', branch: '' },
     ])
   })
 
@@ -42,5 +61,20 @@ describe('serialiseOwnerMap', () => {
   it('round-trips', () => {
     const raw = serialiseOwnerMap([{ code: 'A', user: 'a@example.com' }])
     expect(serialiseOwnerMap(parseOwnerMap(raw))).toBe(raw)
+  })
+})
+
+describe('serialiseBranchMap', () => {
+  it('keeps the branch of complete rows only, trimmed', () => {
+    const value = serialiseBranchMap([
+      { code: '007', user: 'tamryn@example.com', branch: ' BR-A ' },
+      { code: '019', user: 'rob@example.com', branch: '' },
+      { code: '032', user: '', branch: 'BR-B' },
+    ])
+    expect(JSON.parse(value)).toEqual({ '007': 'BR-A' })
+  })
+
+  it('clears the field when no row has a branch', () => {
+    expect(serialiseBranchMap([{ code: 'x', user: 'x@example.com' }])).toBe('')
   })
 })

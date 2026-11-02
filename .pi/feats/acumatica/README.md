@@ -303,6 +303,13 @@ the header a quote lands in the API user's default branch. (The token request
 still names it in the body too; the identity server ignores what it does not
 know.)
 
+Per rep, `salesperson_branches` (JSON, salesperson ID → branch ID, edited as the
+*Quote branch* column of the Salesperson owners rows) books a deal's quote in its
+owner's branch: the owner's salesperson (exactly one ID mapped to them) → branch,
+sent as `FinancialSettings.Branch` in the quote body. No entry leaves it to the
+header above or the user's default. Unproven on the live tenant until the first
+real quote: check its Financial tab.
+
 **Create Sales Quote** (`create_sales_quote_from_deal`) refuses the whole quote
 if any product on the deal is not linked to an Acumatica inventory item
 (`CRM Product.acumatica_id` unset) — the failure names the unlinked product
@@ -399,8 +406,8 @@ Written against documentation; none of this has met a live instance yet.
   `Salespersons`), the Contact PUT under a new `BusinessAccount` and the
   `PrimaryContactID` update are written against the 25.200.001 swagger and MBP's
   export, not yet exercised on the tenant.
-- The quote PUT sends no `Branch`/`LocationID`/`CurrencyID`/`ManualPrice`, and
-  the deal's currency is never compared with the customer's.
+- The quote PUT sends no `LocationID`/`ManualPrice`; `Branch` only from
+  `salesperson_branches` (see above).
 
 ## Shapes the first live pull taught us (MBP, 2026-09-18)
 

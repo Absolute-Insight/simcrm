@@ -79,6 +79,29 @@ def parse_owner_map(raw) -> dict[str, str]:
 	return out
 
 
+def parse_branch_map(raw) -> dict[str, str]:
+	"""``{"<salesperson ID>": "<branch ID>"}`` from Salesperson Branches, or a
+	ValueError that says what is wrong with it. Empty is an empty map."""
+	if not raw:
+		return {}
+	if isinstance(raw, dict):
+		data = raw
+	else:
+		try:
+			data = json.loads(raw)
+		except ValueError as e:
+			raise ValueError(_("Salesperson Branches is not valid JSON: {0}").format(str(e))) from e
+	if not isinstance(data, dict):
+		raise ValueError(_("Salesperson Branches must be a JSON object of salesperson ID to branch"))
+	out = {}
+	for code, branch in data.items():
+		code = str(code).strip()
+		if not code or not isinstance(branch, str) or not branch.strip():
+			raise ValueError(_("Salesperson Branches: {0} must map to a branch ID").format(code or '""'))
+		out[code] = branch.strip()
+	return out
+
+
 def _odata(value: str) -> str:
 	return "'" + str(value).replace("'", "''") + "'"
 
@@ -420,6 +443,7 @@ def validate_settings(doc, before=None) -> None:
 	before = before or frappe._dict()
 	try:
 		owners = parse_owner_map(doc.get("salesperson_owners"))
+		parse_branch_map(doc.get("salesperson_branches"))
 	except ValueError as e:
 		frappe.throw(str(e))
 	switched_on = bool(doc.get("create_deals_from_quotes"))

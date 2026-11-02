@@ -632,6 +632,23 @@ def _salesperson(deal_doc, settings) -> str | None:
 	return codes[0] if len(codes) == 1 else None
 
 
+def _quote_branch(deal_doc, settings) -> str | None:
+	"""The branch the deal owner's quotes are booked in: their salesperson's entry in
+	Salesperson Branches, or None -- and then the request's branch (the Branch
+	setting, sent as a header by the client) or the API user's default decides."""
+	from crm.integrations.acumatica.quotes import parse_branch_map  # quotes imports this module
+
+	salesperson = _salesperson(deal_doc, settings)
+	if salesperson:
+		try:
+			branch = parse_branch_map(settings.get("salesperson_branches")).get(salesperson)
+		except ValueError:
+			# the settings save refuses a broken map; one that got past it is no branch
+			branch = None
+		return branch or None
+	return None
+
+
 def _customer_payload(facts, settings) -> dict:
 	"""The Customer PUT as MBP keeps its customers. Terms, credit limit, status and
 	statement cycle are the customer class's and the accounts department's to set,
@@ -1160,6 +1177,11 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 		payload["CurrencyID"] = deal_currency
 	if details:
 		payload["Details"] = details
+	branch = _quote_branch(deal, settings)
+	if branch:
+		# A multi-branch tenant books each rep's quotes in that rep's own branch. Left
+		# out, a quote lands in the API user's default branch for every rep alike.
+		payload["FinancialSettings"] = {"Branch": {"value": branch}}
 
 	# The check above read the deal without a lock. Two quick clicks are two requests
 	# that both pass it before either has an OrderNbr to store, and SalesOrder is a
