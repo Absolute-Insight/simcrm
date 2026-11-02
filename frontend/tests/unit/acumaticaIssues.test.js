@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   canConfirmNew,
   duplicateCandidates,
+  formatIssueTime,
   hasSameVat,
 } from '../../src/utils/acumaticaIssues.js'
 
@@ -102,5 +103,20 @@ describe('hasSameVat', () => {
       hasSameVat(issue([{ customer_id: 'C-1', reasons: ['same name'] }])),
     ).toBe(false)
     expect(hasSameVat(null)).toBe(false)
+  })
+})
+
+describe('formatIssueTime', () => {
+  it('shows date and minutes, without seconds or microseconds', () => {
+    expect(formatIssueTime('2026-11-02 09:28:17.161536')).toBe(
+      '2026-11-02 09:28',
+    )
+    expect(formatIssueTime('2026-11-02T09:28:17')).toBe('2026-11-02 09:28')
+  })
+
+  it('leaves nothing as nothing and an unknown shape as it came', () => {
+    expect(formatIssueTime(null)).toBe('')
+    expect(formatIssueTime('')).toBe('')
+    expect(formatIssueTime('yesterday')).toBe('yesterday')
   })
 })

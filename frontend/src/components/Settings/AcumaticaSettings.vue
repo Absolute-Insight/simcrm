@@ -317,7 +317,7 @@
               :title="issue.detail"
             >
               {{ issue.entity }} · {{ issue.remote_id }} · {{ issue.kind }} ·
-              {{ issue.detail }} · {{ issue.detected_on }}
+              {{ issue.detail }} · {{ formatIssueTime(issue.detected_on) }}
             </div>
             <div class="flex shrink-0 flex-wrap items-center gap-2">
               <template
@@ -390,6 +390,7 @@ import { parseOwnerMap, serialiseOwnerMap } from '@/utils/salespersonOwners.js'
 import {
   canConfirmNew,
   duplicateCandidates,
+  formatIssueTime,
   hasSameVat,
 } from '@/utils/acumaticaIssues.js'
 

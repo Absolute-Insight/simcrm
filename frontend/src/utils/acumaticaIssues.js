@@ -41,3 +41,15 @@ export function canConfirmNew(issue) {
 export function hasSameVat(issue) {
   return duplicateCandidates(issue).some((c) => c.reasons.includes(SAME_VAT))
 }
+
+/**
+ * A sync issue's timestamp as the rest of the app shows one: date and HH:mm. The
+ * server sends the site's naive datetime with microseconds ("2026-11-02
+ * 09:28:17.161536"); it is trimmed, not converted -- the panel labels sync times as
+ * the server's, and the issue rows sit beside them.
+ */
+export function formatIssueTime(value) {
+  if (!value) return ''
+  const match = String(value).match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/)
+  return match ? `${match[1]} ${match[2]}` : String(value)
+}
