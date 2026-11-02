@@ -878,11 +878,26 @@ class TestBlankGroupingLabels(IntegrationTestCase):
 
 	def test_an_owned_deal_still_shows_its_owner(self):
 		"""The control: the fallback must not swallow real names."""
-		self.make_deal(deal_owner="Administrator")
+		rep = "crm.user1@example.com"  # from test_records.json
+		self.make_deal(deal_owner=rep)
 
 		rows = get_deals_by_salesperson(self.from_date, self.to_date)["data"]
 
-		self.assertIn("Administrator", [row["salesperson"] for row in rows])
+		name = frappe.db.get_value("User", rep, "full_name") or rep
+		self.assertIn(name, [row["salesperson"] for row in rows])
+
+	def test_administrators_deals_are_unassigned(self):
+		"""Administrator owns the deals a sync made for a quote with no mapped
+		salesperson; a sales chart naming it beside the reps read as a person."""
+		self.make_deal(deal_owner="Administrator")
+		self.make_deal(deal_owner=None)
+
+		labels = [
+			row["salesperson"] for row in get_deals_by_salesperson(self.from_date, self.to_date)["data"]
+		]
+
+		self.assertNotIn("Administrator", labels)
+		self.assertEqual(labels.count(blank_label()), 1, "Administrator and nobody are one bar")
 
 	def test_blank_dimensions_agree_on_one_label(self):
 		"""The point of the shared helper: no chart invents its own word."""

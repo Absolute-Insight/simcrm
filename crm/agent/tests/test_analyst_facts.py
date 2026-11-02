@@ -389,12 +389,12 @@ class RankedByWonValueTest(UnitTestCase):
 		facts = analyst_facts.table_facts(WON_BY_REP, TODAY)
 		self.assertEqual(
 			facts[0],
-			"Ranked by won value in the period: 1. Ann-Mari Prins 9,000,000 (60% win rate, 12 of 20 closed); "
-			"2. Janca Meiring 7,000,000 (75% win rate, 30 of 40 closed); "
-			"3. Kevin Purdon 0 (0% win rate, 0 of 5 closed)",
+			"Ranked by won value in the period: 1. Ann-Mari Prins 9,000,000 (60% win rate, 12 of 20 won, lost or expired); "
+			"2. Janca Meiring 7,000,000 (75% win rate, 30 of 40 won, lost or expired); "
+			"3. Kevin Purdon 0 (0% win rate, 0 of 5 won, lost or expired)",
 		)
 		self.assertIn("Total won value in the period: 16,000,000", facts)
-		self.assertIn("Overall win rate: 65% (42 won of 65 closed)", facts)
+		self.assertIn("Overall win rate: 65% (42 won of 65 won, lost or expired)", facts)
 
 	def test_the_measure_is_among_the_lines_on_screen(self):
 		self.assertIn("won value", analyst_facts.highlights(with_facts(WON_BY_REP))[0])
@@ -402,7 +402,7 @@ class RankedByWonValueTest(UnitTestCase):
 	def test_a_rep_with_no_closed_deals_has_no_win_rate(self):
 		rows = [{"rep": "New Rep", "won": 0.0, "won_deals": 0, "closed_deals": 0, "win_rate_pct": None}]
 		facts = analyst_facts.table_facts(table("won_by_rep", rows), TODAY)
-		self.assertIn("1. New Rep 0 (no closed deals)", facts[0])
+		self.assertIn("1. New Rep 0 (no deals won, lost or expired)", facts[0])
 		self.assertFalse([line for line in facts if line.startswith("Overall win rate")])
 
 	def test_ranked_rows_sort_the_way_the_ranking_reads(self):

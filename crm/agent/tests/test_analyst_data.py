@@ -408,6 +408,72 @@ class WonByRepTest(IntegrationTestCase):
 			},
 		)
 
+	def _expired(self, owner, expired_at, valid_until=None):
+		from crm.fcrm.doctype.crm_deal_status.crm_deal_status import ensure_expired_status
+
+		status = ensure_expired_status()
+		name = make_won_deal(self.org, 300, "2019-05-01")
+		frappe.db.set_value(
+			"CRM Deal",
+			name,
+			{
+				"status": status,
+				"deal_owner": owner,
+				"closed_date": None,
+				"expected_closure_date": valid_until,
+			},
+		)
+		frappe.get_doc(
+			{
+				"doctype": "CRM Status Change Log",
+				"name": frappe.generate_hash(length=10),
+				"parent": name,
+				"parenttype": "CRM Deal",
+				"parentfield": "status_change_log",
+				"to_type": "On Hold",
+				"to": status,
+				"to_date": expired_at,
+			}
+		).db_insert()
+		return name
+
+	def test_a_quote_left_to_expire_counts_as_not_won(self):
+		"""Prod: Acumatica never cancels a quote nobody took, so a rate over won + lost
+		read 100% for nearly every rep."""
+		self._won("a@example.com", 100, "2019-05-01")
+		self._expired("a@example.com", "2019-05-20 02:00:00")
+		self._expired("a@example.com", "2019-07-20 02:00:00")  # after the period
+		row = self._rows()[0]
+		self.assertEqual((row["won_deals"], row["closed_deals"], row["win_rate_pct"]), (1, 2, 50))
+
+	def test_a_quote_expires_when_its_validity_ran_out_not_when_the_sweep_ran(self):
+		"""The first sweep on a site with history expires every stale quote in one
+		night; dated by that night, they would all sink the go-live month's rate."""
+		self._won("a@example.com", 100, "2019-05-01")
+		self._expired("a@example.com", "2019-09-01 02:00:00", valid_until="2019-05-15")
+		self.assertEqual(self._rows()[0]["closed_deals"], 2)
+		self.assertEqual(self._rows(from_date="2019-09-01", to_date="2019-09-30"), [])
+
+	def test_a_rep_whose_quotes_only_expired_still_appears_at_zero(self):
+		self._won("a@example.com", 100, "2019-05-01")
+		self._expired("b@example.com", "2019-05-20 02:00:00")
+		self.assertEqual(
+			[(r["rep"], r["closed_deals"], r["win_rate_pct"]) for r in self._rows()],
+			[("a@example.com", 1, 100), ("b@example.com", 1, 0)],
+		)
+
+	def test_administrators_deals_are_nobodys(self):
+		"""Prod: the sync gives Administrator every quote with no mapped salesperson, and
+		the ranking named Administrator second among the reps."""
+		self._won("Administrator", 900, "2019-05-01")
+		self._won(None, 40, "2019-05-02")
+		self._won("a@example.com", 100, "2019-05-03")
+		rows = self._rows()
+		self.assertEqual(len(rows), 2, "Administrator and nobody are one Unassigned row")
+		unassigned = next(r for r in rows if r["unassigned"])
+		self.assertEqual((unassigned["rep"], unassigned["won"]), ("Unassigned", 940.0))
+		self.assertNotIn("Administrator", {r["rep"] for r in rows})
+
 	def test_the_ranking_states_the_measure_and_the_note_defines_it(self):
 		self._won("a@example.com", 100, "2019-05-01")
 		with mock.patch.object(analyst_data, "data_start", return_value="2019-01"):

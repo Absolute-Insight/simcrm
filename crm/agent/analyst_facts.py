@@ -371,15 +371,20 @@ def _ranked_facts(key, rows) -> list[str]:
 		won = sum(int(row.get("won_deals") or 0) for row in rows)
 		closed = sum(int(row.get("closed_deals") or 0) for row in rows)
 		if closed:
-			lines.append(f"Overall win rate: {round(won / closed * 100)}% ({won:,} won of {closed:,} closed)")
+			lines.append(
+				f"Overall win rate: {round(won / closed * 100)}% ({won:,} won of {closed:,} won, lost or expired)"
+			)
 	return lines
 
 
 def _win_rate(row: dict) -> str:
 	closed = int(row.get("closed_deals") or 0)
 	if not closed:
-		return " (no closed deals)"
-	return f" ({row.get('win_rate_pct')}% win rate, {int(row.get('won_deals') or 0):,} of {closed:,} closed)"
+		return " (no deals won, lost or expired)"
+	return (
+		f" ({row.get('win_rate_pct')}% win rate, "
+		f"{int(row.get('won_deals') or 0):,} of {closed:,} won, lost or expired)"
+	)
 
 
 def _pipeline_facts(rows) -> list[str]:
