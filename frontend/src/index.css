@@ -700,6 +700,53 @@ input[type='checkbox']:checked {
     -webkit-backdrop-filter: blur(12px);
   }
 }
+
+/* The header band. The sidebar's brand row and the page header are one bar:
+   the same height (--v-toolbar-h) and a hairline at the same y. The sidebar's
+   band is painted as a background clipped to that height rather than sized to
+   its element, because the collapsed rail stacks the brand row into a column
+   taller than the bar.
+
+   Light mode colours the bar from the brand artwork: coral to blush over the
+   sidebar, sky to steel over the page. Everything below the bar stays on the
+   stock light surfaces. Unlayered, so it beats .v-shell-header above. */
+.v-head-band--sidebar {
+  background: linear-gradient(var(--v-shell-hairline), var(--v-shell-hairline))
+    0 calc(var(--v-toolbar-h) - 1px) / 100% 1px no-repeat;
+}
+:root:not([data-theme='dark']) {
+  --v-head-sidebar: linear-gradient(90deg, #efa29c 0%, #fad8d6 100%);
+  --v-head-page: linear-gradient(90deg, #b7cee1 0%, #6097c3 100%);
+}
+:root:not([data-theme='dark']) .v-head-band {
+  background: var(--v-head-page);
+}
+:root:not([data-theme='dark']) .v-head-band--sidebar {
+  background:
+    linear-gradient(var(--v-shell-hairline), var(--v-shell-hairline)) 0
+      calc(var(--v-toolbar-h) - 1px) / 100% 1px no-repeat,
+    var(--v-head-sidebar) 0 0 / 100% var(--v-toolbar-h) no-repeat;
+}
+/* The light greys and the -6 tints are tuned for near-white grounds; on the
+   bar (steel is a mid blue) they fall under AA. Step them darker for anything
+   standing on the bar. Filled controls inside it only gain contrast. */
+:root:not([data-theme='dark']) .v-head-band {
+  --ink-gray-4: var(--ink-gray-8);
+  --ink-gray-5: var(--ink-gray-8);
+  --ink-gray-6: var(--ink-gray-8);
+  --ink-gray-7: var(--ink-gray-8);
+  --ink-blue-6: var(--ink-blue-9);
+  --ink-cyan-6: var(--ink-cyan-9);
+  --ink-green-6: var(--ink-green-9);
+  --ink-orange-6: var(--ink-orange-9);
+  --ink-pink-6: var(--ink-pink-9);
+  --ink-purple-6: var(--ink-purple-9);
+  --ink-red-6: var(--ink-red-9);
+  --ink-teal-6: var(--ink-teal-9);
+  --ink-violet-6: var(--ink-violet-9);
+  --ink-yellow-6: var(--ink-yellow-9);
+  --ink-amber-6: var(--ink-amber-9);
+}
 /* The active nav row: a lit rim and a whisper of brand glow behind the
    position rail. Unlayered on purpose — it has to win over frappe-ui's
    `shadow-sm` utility on the same element. */

@@ -15,8 +15,8 @@
     class="flex rounded-[var(--v-radius-control)] duration-300 ease-in-out"
     :class="
       isCollapsed
-        ? 'flex-col items-center gap-1 px-0 py-2'
-        : 'h-12 flex-row items-center px-2 py-2'
+        ? 'flex-col items-center gap-1 px-0 pb-2 pt-[10px]'
+        : 'h-[var(--v-toolbar-h)] flex-row items-center px-2'
     "
   >
     <BrandLogo v-model="brand" class="h-8 max-w-16 shrink-0" />
@@ -54,7 +54,7 @@
          of the row. One element, ordered by the flex container. -->
     <button
       class="grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] text-ink-gray-7 hover:bg-surface-gray-2"
-      :class="isCollapsed ? 'order-first mb-1' : 'ml-1'"
+      :class="isCollapsed ? 'order-first mb-[14px]' : 'ml-1'"
       :aria-label="isCollapsed ? __('Expand sidebar') : __('Collapse sidebar')"
       :title="isCollapsed ? __('Expand sidebar') : __('Collapse sidebar')"
       @click="emit('toggle')"
