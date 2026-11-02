@@ -5,7 +5,7 @@ from frappe import _
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 
-def _identity_fields(insert_after, **id_field):
+def _identity_fields(insert_after, permlevel=0, **id_field):
 	return [
 		{
 			"fieldname": "acumatica_noteid",
@@ -14,6 +14,7 @@ def _identity_fields(insert_after, **id_field):
 			"hidden": 1,
 			"search_index": 1,
 			"insert_after": insert_after,
+			"permlevel": permlevel,
 		},
 		{
 			"fieldname": "acumatica_id",
@@ -21,6 +22,7 @@ def _identity_fields(insert_after, **id_field):
 			"label": "Acumatica ID",
 			"read_only": 1,
 			"insert_after": "acumatica_noteid",
+			"permlevel": permlevel,
 			**id_field,
 		},
 	]
@@ -41,20 +43,55 @@ def ensure_custom_fields() -> None:
 	relabel reaches existing sites at their next migrate."""
 	create_custom_fields(
 		{
-			"CRM Organization": _identity_fields(
-				"organization_name",
-				label=CUSTOMER_CODE,
-				in_list_view=1,
-				search_index=1,
-			),
+			"CRM Organization": [
+				# permlevel 1, which CRM Organization lets a Sales User read and only a
+				# manager write: read_only and hidden are the form's, and the server does
+				# not enforce them -- a rep could otherwise set_value an organization
+				# onto another customer's code, or off its own to have it pushed again.
+				# The sync and the push write past it with ignore_permissions.
+				*_identity_fields(
+					"organization_name",
+					permlevel=1,
+					label=CUSTOMER_CODE,
+					in_list_view=1,
+					search_index=1,
+				),
+				{
+					# Acumatica's TaxRegistrationID: pulled in by the sync, sent with a new
+					# customer, and the one sure sign two organizations are one taxpayer
+					"fieldname": "tax_registration_id",
+					"fieldtype": "Data",
+					"label": "VAT Number",
+					"insert_after": "acumatica_id",
+				},
+				{
+					# A manager looked at the possible duplicates and said this one is new:
+					# the fingerprint (outbound.confirmation_hash) of the name, VAT number
+					# and primary-contact email they saw. The push skips the duplicate
+					# checks only while the organization still matches it, so a rename
+					# after the confirmation is checked afresh. Set only by
+					# api.confirm_new_customer; permlevel 1 keeps reps from setting it.
+					"fieldname": "acumatica_confirmed_for",
+					# JSON: the fingerprint and the customer codes confirmed past
+					"fieldtype": "Small Text",
+					"label": "Confirmed New Acumatica Customer",
+					"hidden": 1,
+					"read_only": 1,
+					"permlevel": 1,
+					"insert_after": "tax_registration_id",
+				},
+			],
 			"Contact": _identity_fields("company_name"),
 			"CRM Product": _identity_fields("product_code"),
 			"CRM Deal": [
 				{
+					# permlevel 1 like the organization's: Create Sales Quote prefers this
+					# code, so a rep who could write it could quote under another customer
 					"fieldname": "acumatica_customer",
 					"fieldtype": "Data",
 					"label": CUSTOMER_CODE,
 					"read_only": 1,
+					"permlevel": 1,
 					"insert_after": "organization",
 				},
 				{
@@ -65,6 +102,8 @@ def ensure_custom_fields() -> None:
 					"fieldtype": "Data",
 					"label": "Sales Quote in Acumatica",
 					"read_only": 1,
+					# and clearing it would let the quote be sent twice
+					"permlevel": 1,
 					"insert_after": "acumatica_customer",
 				},
 			],
@@ -72,6 +111,35 @@ def ensure_custom_fields() -> None:
 		ignore_validate=True,
 	)
 	ensure_customer_code_search()
+
+
+# Defaults a new field on the settings Single would never get on an existing site:
+# frappe applies a Single's defaults only while nothing at all is stored for it.
+CUSTOMER_PUSH_DEFAULTS = {"new_customer_class": "COD", "home_country": "South Africa"}
+
+
+def ensure_customer_push_defaults() -> None:
+	"""after_migrate: give a saved settings Single the customer-push defaults it
+	predates. Only a field with no stored row at all is filled -- saving the Single
+	stores every field, cleared ones included, so an admin's blank survives -- and
+	nothing is written to a Single that was never saved, which still reads its
+	defaults from the doctype (writing one row would end that)."""
+	# tabSingles has no creation column, so not frappe.get_all (which orders by it)
+	Singles = frappe.qb.DocType("Singles")
+	stored = set(
+		frappe.qb.from_(Singles)
+		.select(Singles.field)
+		.where(Singles.doctype == "CRM Acumatica Settings")
+		.run(pluck=True)
+	)
+	if not stored:
+		return
+	for field, value in CUSTOMER_PUSH_DEFAULTS.items():
+		if field in stored:
+			continue
+		if field == "home_country" and not frappe.db.exists("Country", value):
+			continue
+		frappe.db.set_single_value("CRM Acumatica Settings", field, value)
 
 
 def ensure_customer_code_search() -> None:
@@ -104,7 +172,7 @@ def ensure_customer_code_search() -> None:
 LAYOUT_FIELDS = {
 	"CRM Deal-Side Panel": ["acumatica_customer", "acumatica_sales_quote"],
 	"CRM Deal-Data Fields": ["acumatica_customer", "acumatica_sales_quote"],
-	"CRM Organization-Side Panel": ["acumatica_id"],
+	"CRM Organization-Side Panel": ["acumatica_id", "tax_registration_id"],
 }
 LAYOUT_SECTION = {"label": "Acumatica", "name": "acumatica_section", "opened": True}
 
@@ -180,3 +248,29 @@ def block_dual_erp(doc, method=None) -> None:
 		frappe.throw(
 			_("Disable the Acumatica integration first — one ERP integration may be active at a time")
 		)
+
+
+CONTACT_IDENTITY = ("acumatica_id", "acumatica_noteid")
+
+
+def guard_contact_identity(doc, method=None) -> None:
+	"""Contact validate: only the sync, the push and a manager set a contact's
+	Acumatica identity. A fake id would block the contact push (it skips a contact
+	already linked) and a copied one would merge two people at the next sync.
+
+	Not permlevel, as on the CRM doctypes: Contact is frappe's, its standard
+	permissions grant every role, and the level-1 rows it would need could only come
+	as Custom DocPerm -- which replaces the doctype's permissions wholesale and
+	freezes them against frappe's own releases. The writers that may set it pass
+	ignore_permissions (the importer) or write with db.set_value (the push)."""
+	if doc.flags.ignore_permissions or frappe.session.user == "Administrator":
+		return
+	if set(frappe.get_roles()) & {"System Manager", "Sales Manager"}:
+		return
+	before = None if doc.is_new() else doc.get_doc_before_save()
+	for field in CONTACT_IDENTITY:
+		if not doc.meta.has_field(field):
+			continue
+		kept = before.get(field) if before else None
+		if (doc.get(field) or None) != (kept or None):
+			doc.set(field, kept)

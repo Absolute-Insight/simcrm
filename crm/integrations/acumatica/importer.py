@@ -142,6 +142,12 @@ def upsert_organization(rec) -> str:
 	currency = v(rec, "CurrencyID")
 	if currency and frappe.db.exists("Currency", currency):
 		doc.currency = currency
+	# Customer's top-level fields come back without a $select, this one included. Only
+	# ever filled in, never blanked: a rep may have typed one Acumatica does not have,
+	# and it is what the customer push's duplicate check matches taxpayers on.
+	vat = (v(rec, "TaxRegistrationID") or "").strip()
+	if vat:
+		doc.tax_registration_id = vat
 	doc.save(ignore_permissions=True)
 	# A record already under its "Name (CustomerID)" form keeps it: it was disambiguated
 	# on purpose, and following the plain name back and forth would rename it every time
@@ -427,6 +433,13 @@ def _import_all(modified_since: str | None) -> dict:
 			from crm.integrations.acumatica import quotes  # quotes -> spreadsheet -> importer
 
 			counts.update(quotes.pull_new_quotes(client, modified_since, pending, settings))
+		if settings.get("create_customer_on_status_change"):
+			# the retry for a customer push nothing else re-triggered: an address fixed on
+			# the Address itself, a contact given an email -- after the entities, so an
+			# organization that has since appeared in Acumatica is linked, not pushed
+			from crm.integrations.acumatica.outbound import queue_pending_customer_pushes
+
+			counts["customer_pushes_queued"] = queue_pending_customer_pushes(settings)
 		# what happened to the quotes: a converted one wins its deal, a declined one
 		# loses it, and one nobody answered expires once its validity plus grace is up
 		counts.update(outcomes.pull_quote_outcomes(client, modified_since))
