@@ -411,12 +411,14 @@ def confirm_new_customer(organization: str) -> dict:
 	)
 	if facts.missing:
 		frappe.throw(_("Complete the organization first: missing {0}").format(", ".join(facts.missing)))
-	shown = [c.get("customer_id") for c in candidates]
-	if not shown:
-		# A second confirm with nothing open (the first already dismissed the row)
-		# keeps what the first confirmed past rather than wiping it -- the push would
-		# otherwise block on the very candidates that were confirmed.
-		shown = sorted(_confirmed_past(org.get("acumatica_confirmed_for") or "", facts))
+	# Merged with what was confirmed past before, while the facts still match: the push
+	# leaves already-confirmed codes out of a new row, so replacing `past` with this
+	# row's candidates would drop the earlier ones and block on them again -- and a
+	# second confirm with nothing open would wipe them.
+	shown = sorted(
+		{c.get("customer_id") for c in candidates if c.get("customer_id")}
+		| set(_confirmed_past(org.get("acumatica_confirmed_for") or "", facts))
+	)
 	frappe.db.set_value(
 		"CRM Organization",
 		org.name,

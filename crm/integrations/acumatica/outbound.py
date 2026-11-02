@@ -329,7 +329,7 @@ def push_customer_for_deal(deal: str) -> None:
 	payload = _customer_payload(facts, settings)
 
 	inflight = _inflight_key("Customer", org.name)
-	started_with = frappe.cache().get_value(inflight)
+	started_with = frappe.cache().get_value(inflight, use_local_cache=False)
 	marker = _read_marker(started_with)
 	if marker:
 		# An earlier push never heard back, and the next deal save fired this one. Under
@@ -412,7 +412,7 @@ def push_customer_for_deal(deal: str) -> None:
 		return
 	if locked and (locked.get("acumatica_confirmed_for") or "") != confirmation:
 		return
-	current = frappe.cache().get_value(inflight)
+	current = frappe.cache().get_value(inflight, use_local_cache=False)
 	if current and current != started_with:
 		# Another job for this organization took the lock first and sent its PUT, which
 		# got no answer: the customer may exist. Sending ours too would make a second;

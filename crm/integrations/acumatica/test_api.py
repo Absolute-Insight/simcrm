@@ -499,6 +499,21 @@ class TestDuplicateResolution(FrappeTestCase):
 			]
 		)
 
+	@patch("crm.integrations.acumatica.outbound.frappe.enqueue")
+	def test_confirming_a_new_candidate_keeps_the_ones_confirmed_before(self, enqueue):
+		from crm.integrations.acumatica.api import confirm_new_customer
+		from crm.integrations.acumatica.test_outbound import _complete_deal
+
+		org, _deal = _complete_deal()
+		_duplicate_issue(org.name, customer_id="C-A00405")
+		confirm_new_customer(org.name)
+		# the next push leaves C-A00405 out and finds a new one
+		_duplicate_issue(org.name, customer_id="C-A00406")
+		confirm_new_customer(org.name)
+
+		stored = json.loads(frappe.db.get_value("CRM Organization", org.name, "acumatica_confirmed_for"))
+		self.assertEqual(stored["past"], ["C-A00405", "C-A00406"])
+
 	def test_confirm_needs_a_deal_waiting_on_it(self):
 		from crm.integrations.acumatica.api import confirm_new_customer
 

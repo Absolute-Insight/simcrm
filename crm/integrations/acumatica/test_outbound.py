@@ -1232,10 +1232,14 @@ class TestDuplicatePrevention(CustomerPushCase):
 
 		def first_job_sent(doctype, filters=None, fieldname="name", *args, **kwargs):
 			if doctype == "CRM Organization" and kwargs.get("for_update"):
+				key = outbound._inflight_key("Customer", org.name)
 				frappe.cache().set_value(
-					outbound._inflight_key("Customer", org.name),
+					key,
 					{"sent_at": 1.0, "preexisting": [], "name": org.organization_name, "customer_id": None},
 				)
+				# another worker writes redis only: this process's local cache still holds
+				# the None it read at the top, which a cached re-read would return
+				frappe.local.cache[frappe.cache().make_key(key)] = None
 			return real_get_value(doctype, filters, fieldname, *args, **kwargs)
 
 		with patch("crm.integrations.acumatica.outbound.frappe.db.get_value", side_effect=first_job_sent):
