@@ -112,7 +112,7 @@ class TestUpserts(ImporterTestCase):
 		# frappe.clear_cache() reads persistent_cache_keys from hooks cached per site,
 		# possibly by a process running other code; start from this code's
 		frappe.clear_cache()
-		key = "acumatica_token::https://t.acumatica.com"
+		key = _sync_token_key()
 		frappe.cache().set_value(key, "T-SYNC")
 		self.addCleanup(frappe.cache().delete_value, key)
 
@@ -929,3 +929,12 @@ class TestScheduleSweep(FrappeTestCase):
 		importer.schedule_sweep()
 
 		enqueue.assert_not_called()
+
+
+def _sync_token_key() -> str:
+	"""The key the sync caches its token under for the site's saved login."""
+	from crm.integrations.acumatica.client import token_cache_key
+
+	get = frappe.db.get_single_value
+	settings = "CRM Acumatica Settings"
+	return token_cache_key("https://t.acumatica.com", get(settings, "client_id"), get(settings, "username"))

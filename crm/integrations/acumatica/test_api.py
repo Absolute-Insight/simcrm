@@ -175,7 +175,7 @@ class TestConnection(FrappeTestCase):
 
 		frappe.set_user("Administrator")
 		frappe.db.set_single_value("CRM Acumatica Settings", "instance_url", "https://t.acumatica.com")
-		key = "acumatica_token::https://t.acumatica.com"
+		key = _sync_token_key()
 		frappe.cache().set_value(key, "T-SYNC")  # a sync is running on this login
 		self.addCleanup(frappe.cache().delete_value, key)
 
@@ -856,3 +856,12 @@ class TestLinkBackfill(FrappeTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			link_existing_customer(org.name, "C-A00402")
 		self.assertFalse(frappe.db.get_value("CRM Organization", org.name, "acumatica_id"))
+
+
+def _sync_token_key() -> str:
+	"""The key the sync caches its token under for the site's saved login."""
+	from crm.integrations.acumatica.client import token_cache_key
+
+	get = frappe.db.get_single_value
+	settings = "CRM Acumatica Settings"
+	return token_cache_key("https://t.acumatica.com", get(settings, "client_id"), get(settings, "username"))
