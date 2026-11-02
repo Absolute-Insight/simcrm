@@ -42,17 +42,34 @@ def start_backfill() -> dict:
 def get_sync_status() -> dict:
 	frappe.only_for(["System Manager", "Sales Manager"], True)
 	settings = frappe.get_cached_doc("CRM Acumatica Settings")
-	open_issues = sum(1 for row in settings.sync_issues if not row.dismissed)
 	# a count, not the queue itself -- the retry list is a work list for the sweep,
 	# not something the panel walks entity by entity
 	pending_retries = sum(len(attempts) for attempts in get_pending_retries().values())
+	if scope_applies():
+		# the same rows get_open_sync_issues shows them, and no free text: the run's
+		# last error may name any customer
+		return {
+			"last_synced_at": settings.last_synced_at,
+			"open_issues": sum(1 for row in settings.sync_issues if _visible_row(row)),
+			"running": is_job_enqueued(SYNC_JOB_ID),
+			"last_sync_error": _("The last sync stopped with an error.") if settings.last_sync_error else "",
+			"pending_retries": pending_retries,
+		}
 	return {
 		"last_synced_at": settings.last_synced_at,
-		"open_issues": open_issues,
+		"open_issues": sum(1 for row in settings.sync_issues if not row.dismissed),
 		"running": is_job_enqueued(SYNC_JOB_ID),
 		"last_sync_error": settings.last_sync_error,
 		"pending_retries": pending_retries,
 	}
+
+
+def _visible_row(row) -> bool:
+	"""For a scoped manager: an open row about an organization they can see."""
+	if row.dismissed:
+		return False
+	owner = _issue_organization(row)
+	return bool(owner) and customer_visible(owner)
 
 
 # POST only, like everything here that acts: frappe skips the CSRF check on a GET, so
@@ -104,8 +121,7 @@ def get_open_sync_issues() -> list[dict]:
 		detail = issue.detail
 		candidates = _candidates(issue)
 		if scoped:
-			owner = _issue_organization(issue)
-			if not owner or not customer_visible(owner):
+			if not _visible_row(issue):
 				continue
 			candidates = [
 				c for c in candidates if not c.get("organization") or customer_visible(c["organization"])
@@ -181,6 +197,16 @@ def dismiss_sync_issue(issue_name: str | int) -> bool:
 		name = int(issue_name)
 	except (TypeError, ValueError):
 		return False
+	if scope_applies():
+		# only a row they were shown: the id is a counter, easy to walk
+		row = frappe.db.get_value(
+			"CRM Acumatica Sync Issue",
+			{"name": name, "parent": "CRM Acumatica Settings"},
+			["name", "entity", "remote_id", "dismissed"],
+			as_dict=True,
+		)
+		if not row or not _visible_row(row):
+			frappe.throw(_("Not permitted"), frappe.PermissionError)
 	return dismiss_sync_issue_row(name)
 
 
@@ -255,7 +281,7 @@ def _unlinked_organization(organization: str):
 	return frappe.db.get_value(
 		"CRM Organization",
 		organization,
-		["name", "acumatica_id", "acumatica_noteid"],
+		["name", "acumatica_id", "acumatica_noteid", "acumatica_confirmed_for"],
 		as_dict=True,
 		for_update=True,
 	)
@@ -350,6 +376,22 @@ def confirm_new_customer(organization: str) -> dict:
 	org = _unlinked_organization(organization)
 	if org.acumatica_id or org.acumatica_noteid:
 		frappe.throw(_("This organization is already linked to an Acumatica customer"))
+	# confirmed past the candidates the manager was shown, and only those: one that
+	# turns up later still blocks
+	candidates = [
+		c
+		for issue in open_sync_issues("Customer", org.name, ("Possible Duplicate",))
+		for c in _candidates(issue)
+	]
+	if scope_applies() and any(
+		c.get("organization") and not customer_visible(c["organization"]) for c in candidates
+	):
+		# get_open_sync_issues hid that candidate from them; they cannot confirm past
+		# what they were never shown
+		frappe.throw(
+			_("This may be a customer you cannot see. A manager who can see all customers must review it."),
+			frappe.PermissionError,
+		)
 	settings = get_settings()
 	if not (settings.create_customer_on_status_change and settings.deal_status):
 		frappe.throw(_("Creating customers in Acumatica is switched off"))
@@ -357,20 +399,24 @@ def confirm_new_customer(organization: str) -> dict:
 	if not deal:
 		frappe.throw(_("No deal of this organization is waiting to create it in Acumatica"))
 
-	from crm.integrations.acumatica.outbound import _customer_facts, _enqueue_push, confirmation_value
+	from crm.integrations.acumatica.outbound import (
+		_confirmed_past,
+		_customer_facts,
+		_enqueue_push,
+		confirmation_value,
+	)
 
 	facts = _customer_facts(
 		frappe.get_doc("CRM Deal", deal), frappe.get_doc("CRM Organization", org.name), settings
 	)
 	if facts.missing:
 		frappe.throw(_("Complete the organization first: missing {0}").format(", ".join(facts.missing)))
-	# confirmed past the candidates the manager was shown, and only those: one that
-	# turns up later still blocks
-	shown = [
-		c.get("customer_id")
-		for issue in open_sync_issues("Customer", org.name, ("Possible Duplicate",))
-		for c in _candidates(issue)
-	]
+	shown = [c.get("customer_id") for c in candidates]
+	if not shown:
+		# A second confirm with nothing open (the first already dismissed the row)
+		# keeps what the first confirmed past rather than wiping it -- the push would
+		# otherwise block on the very candidates that were confirmed.
+		shown = sorted(_confirmed_past(org.get("acumatica_confirmed_for") or "", facts))
 	frappe.db.set_value(
 		"CRM Organization",
 		org.name,

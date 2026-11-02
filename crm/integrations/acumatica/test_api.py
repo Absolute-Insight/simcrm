@@ -471,6 +471,34 @@ class TestDuplicateResolution(FrappeTestCase):
 		self.assertEqual(len(pushes), 1)
 		self.assertEqual(pushes[0].kwargs["deal"], deal.name)
 
+	@patch("crm.integrations.acumatica.outbound.frappe.enqueue")
+	def test_confirming_again_with_nothing_open_keeps_what_was_confirmed(self, enqueue):
+		from crm.integrations.acumatica import outbound
+		from crm.integrations.acumatica.api import confirm_new_customer
+		from crm.integrations.acumatica.test_outbound import _complete_deal
+
+		org, deal = _complete_deal()
+		_duplicate_issue(org.name, customer_id="C-A00405")
+		confirm_new_customer(org.name)
+		enqueue.reset_mock()
+		confirm_new_customer(org.name)  # the row is dismissed by now
+
+		stored = json.loads(frappe.db.get_value("CRM Organization", org.name, "acumatica_confirmed_for"))
+		self.assertEqual(stored["past"], ["C-A00405"])
+		facts = outbound._customer_facts(
+			frappe.get_doc("CRM Deal", deal.name),
+			frappe.get_doc("CRM Organization", org.name),
+			frappe.get_cached_doc("CRM Acumatica Settings"),
+		)
+		self.assertEqual(stored["hash"], outbound.confirmation_hash(facts))
+		self.assertTrue(
+			[
+				c
+				for c in enqueue.call_args_list
+				if c.kwargs.get("job_id") == f"acumatica_customer_{org.name}_confirm"
+			]
+		)
+
 	def test_confirm_needs_a_deal_waiting_on_it(self):
 		from crm.integrations.acumatica.api import confirm_new_customer
 
@@ -702,6 +730,54 @@ class TestScopedManagers(FrappeTestCase):
 		self.assertTrue(
 			[r for r in frappe.get_doc("CRM Acumatica Settings").sync_issues if r.remote_id == self.other_org]
 		)
+
+	def test_a_scoped_manager_cannot_confirm_past_a_candidate_they_were_not_shown(self):
+		from crm.integrations.acumatica.api import confirm_new_customer
+
+		frappe.set_user(self.manager)
+		try:
+			# the team's row carries a candidate on the other team's organization
+			with self.assertRaises(frappe.PermissionError) as caught:
+				confirm_new_customer(self.team_org)
+		finally:
+			frappe.set_user("Administrator")
+		self.assertIn("can see all customers", str(caught.exception))
+		self.assertFalse(frappe.db.get_value("CRM Organization", self.team_org, "acumatica_confirmed_for"))
+
+	def test_a_scoped_manager_dismisses_only_rows_they_were_shown(self):
+		from crm.integrations.acumatica.api import dismiss_sync_issue
+
+		def row(remote_id, kind):
+			return next(
+				r.name
+				for r in frappe.get_doc("CRM Acumatica Settings").sync_issues
+				if r.remote_id == remote_id and r.kind == kind and not r.dismissed
+			)
+
+		hidden, mine = row(self.other_org, "Push Blocked"), row(self.team_org, "Push Failed")
+		frappe.set_user(self.manager)
+		try:
+			with self.assertRaises(frappe.PermissionError):
+				dismiss_sync_issue(hidden)
+			self.assertTrue(dismiss_sync_issue(mine))
+		finally:
+			frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("CRM Acumatica Sync Issue", hidden, "dismissed"), 0)
+
+	def test_a_scoped_managers_status_counts_only_their_rows(self):
+		from crm.integrations.acumatica.api import get_sync_status
+
+		frappe.db.set_single_value("CRM Acumatica Settings", "last_sync_error", f"failed on {self.other_org}")
+		frappe.clear_document_cache("CRM Acumatica Settings", "CRM Acumatica Settings")
+		frappe.set_user(self.manager)
+		try:
+			status = get_sync_status()
+		finally:
+			frappe.set_user("Administrator")
+		# exactly the rows their list shows (the team's duplicate and push failure among them)
+		self.assertEqual(status["open_issues"], len(self._issues_as(self.manager)))
+		self.assertLess(status["open_issues"], len(self._issues_as("Administrator")))
+		self.assertNotIn(self.other_org, status["last_sync_error"])
 
 	@patch("crm.integrations.acumatica.api.AcumaticaClient")
 	def test_neither_action_reaches_another_teams_organization(self, ClientCls):
