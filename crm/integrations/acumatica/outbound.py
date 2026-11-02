@@ -1,18 +1,19 @@
+import hashlib
 import re
 import time
 
 import frappe
 import requests
 from frappe import _
-from frappe.query_builder import Order
+from frappe.query_builder.functions import Max
 from frappe.utils import add_days, cint, now_datetime
 
 from crm.agent.doctype.crm_agent_settings.crm_agent_settings import DEFAULT_PROXY_READ_TIMEOUT
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 	dismiss_sync_issues,
 	get_settings,
-	has_open_sync_issue,
-	record_sync_issue,
+	open_sync_issues,
+	upsert_sync_issue,
 )
 from crm.integrations.acumatica.client import TIMEOUT, AcumaticaClient, AcumaticaError, v, wrap
 from crm.integrations.acumatica.matching import name_match, normalise_name, normalise_vat, state_code
@@ -35,8 +36,8 @@ def _inflight_key(entity: str, name: str) -> str:
 	return f"{INFLIGHT_PREFIX}{entity}::{name}"
 
 
-def _mark_inflight(key: str) -> None:
-	frappe.cache().set_value(key, time.time(), expires_in_sec=INFLIGHT_TTL)
+def _mark_inflight(key: str, value=None) -> None:
+	frappe.cache().set_value(key, value or time.time(), expires_in_sec=INFLIGHT_TTL)
 
 
 def _settle_inflight(key: str) -> None:
@@ -64,15 +65,29 @@ def _push_switched_on(settings) -> bool:
 	return bool(settings.enabled and settings.create_customer_on_status_change and settings.deal_status)
 
 
-def _enqueue_push(deal: str, organization: str) -> None:
+def _enqueue_push(deal: str, organization: str, job_suffix: str = "") -> None:
 	frappe.enqueue(
 		"crm.integrations.acumatica.outbound.push_customer_for_deal",
 		deal=deal,
 		queue="short",
-		job_id=f"acumatica_customer_{organization}",
+		job_id=f"acumatica_customer_{organization}{job_suffix}",
 		deduplicate=True,
 		enqueue_after_commit=True,
 	)
+
+
+def _commit() -> None:
+	"""A customer now exists in the client's ERP and its link is written: make that
+	durable before anything else in the job can fail and roll it back. The follow-ups
+	(contact, salesperson, issue rows) run after this and only ever record issues."""
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
+
+
+# The kinds an organization's push leaves behind until somebody acts.
+PUSH_BLOCKED = "Push Blocked"
+POSSIBLE_DUPLICATE = "Possible Duplicate"
+PUSH_FAILED = "Push Failed"
+WAITING_KINDS = (PUSH_BLOCKED, POSSIBLE_DUPLICATE)
 
 
 def queue_customer_push(doc, method):
@@ -84,25 +99,31 @@ def queue_customer_push(doc, method):
 		# demo data's Won deals must not become customers in a real ERP
 		return
 	settings = get_settings()
-	if (
-		not settings.enabled
-		or not settings.create_customer_on_status_change
-		or doc.status != settings.deal_status
-		or not doc.organization
-	):
+	if not settings.enabled or not settings.create_customer_on_status_change or not doc.organization:
+		return
+	if doc.status != settings.deal_status:
+		before = doc.get_doc_before_save() if hasattr(doc, "get_doc_before_save") else None
+		if before and before.status == settings.deal_status:
+			# the deal left the trigger status: nothing is waiting on a manager or a rep
+			# for it any more
+			dismiss_sync_issues("Customer", doc.organization, WAITING_KINDS)
 		return
 	_enqueue_push(doc.name, doc.organization)
 
 
 def queue_customer_push_for_organization(doc, method):
 	"""CRM Organization on_update handler: a push blocked on this organization's
-	address or name tries again once a rep has fixed it. Cheap checks only -- the
-	identity test needs no read at all, and it is what turns away every save the sync
-	itself makes."""
+	address or name tries again once a rep has fixed it. Only an organization with a
+	push actually waiting on it -- an open Push Blocked or Possible Duplicate row --
+	is re-queued: editing an unlinked organization with a years-old won deal must not
+	be what creates it as a live customer. The identity test needs no read at all,
+	and it is what turns away every save the sync itself makes."""
 	if frappe.flags.in_demo_seed or doc.get("acumatica_noteid") or doc.get("acumatica_id"):
 		return
 	settings = get_settings()
 	if not _push_switched_on(settings):
+		return
+	if not open_sync_issues("Customer", doc.name, WAITING_KINDS):
 		return
 	deal = frappe.db.get_value("CRM Deal", {"organization": doc.name, "status": settings.deal_status}, "name")
 	if deal:
@@ -116,42 +137,80 @@ def create_customer_in_acumatica(doc, method):
 	return queue_customer_push(doc, method)
 
 
-# The nightly sweep re-tries what nothing else re-triggers (an Address or a Contact
-# edited on its own, which saves neither the deal nor the organization). Bounded both
-# ways: only deals that moved recently, so switching the push on does not turn years
-# of won deals into customers overnight, and only so many organizations a night.
+# The sweep re-tries what nothing else re-triggers (an Address or a Contact edited on
+# its own, which saves neither the deal nor the organization). Bounded every way: only
+# deals that moved recently, so switching the push on does not turn years of won deals
+# into customers overnight; so many organizations a run, resuming where the last run
+# stopped; and once a day, because every Acumatica push notification runs the sync.
 SWEEP_WINDOW_DAYS = 30
 SWEEP_LIMIT = 100
+# organizations read per run; waiting ones with nothing new are passed over
+SWEEP_PAGE = 500
+SWEEP_EVERY = 20 * 3600
+_SWEEP_RAN = f"{INFLIGHT_PREFIX}CustomerPushSweep::ran"
+_SWEEP_CURSOR = f"{INFLIGHT_PREFIX}CustomerPushSweep::cursor"
 
 
-def queue_pending_customer_pushes(settings=None) -> int:
-	"""Enqueue a push for each unlinked organization with a recently-moved deal in the
-	trigger status; how many it queued. Never raises: it runs inside the sync, and a
-	retry that cannot be queued tonight is not a reason to fail the sync."""
+def queue_pending_customer_pushes(settings=None, force: bool = False) -> int:
+	"""Enqueue a push for unlinked organizations with a recently-moved deal in the
+	trigger status; how many it queued. An organization whose push is waiting on a
+	rep or a manager (an open Push Blocked / Possible Duplicate row) is skipped unless
+	it, its address, the deal or the deal's primary contact changed since the row was
+	written -- re-running it would only say the same thing again.
+
+	Never raises: it runs inside the sync, and a retry that cannot be queued tonight is
+	not a reason to fail the sync."""
 	settings = settings or get_settings()
 	if not _push_switched_on(settings):
 		return 0
+	cache = frappe.cache()
+	if not force and cache.get_value(_SWEEP_RAN):
+		return 0
 	try:
-		Deal = frappe.qb.DocType("CRM Deal")
-		Org = frappe.qb.DocType("CRM Organization")
-		rows = (
-			frappe.qb.from_(Deal)
-			.join(Org)
-			.on(Org.name == Deal.organization)
-			.select(Deal.name, Deal.organization)
-			.where(
-				(Deal.status == settings.deal_status)
-				& (Deal.modified >= add_days(now_datetime(), -SWEEP_WINDOW_DAYS))
-				& (Org.acumatica_id.isnull() | (Org.acumatica_id == ""))
-				& (Org.acumatica_noteid.isnull() | (Org.acumatica_noteid == ""))
-			)
-			.orderby(Deal.modified, order=Order.desc)
-			.limit(SWEEP_LIMIT * 5)
-		).run(as_dict=True)
+		cursor = cache.get_value(_SWEEP_CURSOR) or ""
+		rows = _pending_push_rows(settings, cursor)
+		if not rows and cursor:
+			cursor = ""
+			rows = _pending_push_rows(settings, cursor)
+		waiting = {}
+		for issue in frappe.get_all(
+			"CRM Acumatica Sync Issue",
+			filters={
+				"parent": "CRM Acumatica Settings",
+				"entity": "Customer",
+				"kind": ("in", list(WAITING_KINDS)),
+				"dismissed": 0,
+			},
+			fields=["remote_id", "detected_on"],
+		):
+			seen = waiting.get(issue.remote_id)
+			waiting[issue.remote_id] = max(seen, issue.detected_on) if seen else issue.detected_on
+
 		queued = {}
+		last = cursor
 		for row in rows:
-			if row.organization not in queued and len(queued) < SWEEP_LIMIT:
-				queued[row.organization] = row.name
+			if len(queued) >= SWEEP_LIMIT:
+				break
+			last = row.organization
+			if row.organization in queued:
+				continue
+			since = waiting.get(row.organization)
+			if since:
+				changed = [
+					t
+					for t in (row.deal_modified, row.org_modified, row.address_modified, row.contact_modified)
+					if t
+				]
+				if not changed or max(changed) <= since:
+					continue
+			queued[row.organization] = row.deal
+		# a short page is the end of the list: the next run starts from the top again
+		cache.set_value(
+			_SWEEP_CURSOR,
+			last if len(rows) >= SWEEP_PAGE or len(queued) >= SWEEP_LIMIT else "",
+			expires_in_sec=INFLIGHT_TTL,
+		)
+		cache.set_value(_SWEEP_RAN, time.time(), expires_in_sec=SWEEP_EVERY)
 		for organization, deal in queued.items():
 			_enqueue_push(deal, organization)
 		return len(queued)
@@ -160,15 +219,61 @@ def queue_pending_customer_pushes(settings=None) -> int:
 		return 0
 
 
+def _pending_push_rows(settings, cursor: str) -> list:
+	Deal = frappe.qb.DocType("CRM Deal")
+	Org = frappe.qb.DocType("CRM Organization")
+	Address = frappe.qb.DocType("Address")
+	Link = frappe.qb.DocType("CRM Contacts")
+	Contact = frappe.qb.DocType("Contact")
+	return (
+		frappe.qb.from_(Deal)
+		.join(Org)
+		.on(Org.name == Deal.organization)
+		.left_join(Address)
+		.on(Address.name == Org.address)
+		.left_join(Link)
+		.on((Link.parent == Deal.name) & (Link.parenttype == "CRM Deal") & (Link.is_primary == 1))
+		.left_join(Contact)
+		.on(Contact.name == Link.contact)
+		# one row per organization: a customer with hundreds of won deals is one push
+		.select(
+			Max(Deal.name).as_("deal"),
+			Deal.organization,
+			Max(Deal.modified).as_("deal_modified"),
+			Max(Org.modified).as_("org_modified"),
+			Max(Address.modified).as_("address_modified"),
+			Max(Contact.modified).as_("contact_modified"),
+		)
+		.where(
+			(Deal.status == settings.deal_status)
+			& (Deal.modified >= add_days(now_datetime(), -SWEEP_WINDOW_DAYS))
+			& (Org.acumatica_id.isnull() | (Org.acumatica_id == ""))
+			& (Org.acumatica_noteid.isnull() | (Org.acumatica_noteid == ""))
+			& (Org.name > cursor)
+		)
+		.groupby(Deal.organization)
+		.orderby(Deal.organization)
+		.limit(SWEEP_PAGE)
+	).run(as_dict=True)
+
+
+def _issue(org_name: str, detail: str, kind: str = PUSH_FAILED, entity: str = "Customer") -> None:
+	"""A push failure, one open row per record: the same outage on every deal save and
+	every sync must not fill the capped table and push the real issues out of it."""
+	upsert_sync_issue(entity, org_name, kind, detail)
+
+
 def push_customer_for_deal(deal: str) -> None:
 	"""Worker: does the actual Acumatica customer push. Re-loads the deal and
 	re-checks the conditions, since time has passed since the hook enqueued this
 	and the deal's status may have moved on.
 
 	In order: the organization must not be linked already; it must carry what MBP
-	keeps on a customer (_customer_facts -- no remote call before that); it must not
-	look like a customer Acumatica already has, by the synced organizations here and
-	then by Acumatica itself; then the PUT, and after it the primary contact."""
+	keeps on a customer (_customer_facts -- no remote call before that); an earlier
+	unanswered push is looked for; it must not look like a customer Acumatica already
+	has, by the synced organizations here and then by Acumatica itself -- unless a
+	manager confirmed it new and it is still what they confirmed; then the PUT, and
+	after it the salesperson and the primary contact."""
 	doc = frappe.get_doc("CRM Deal", deal)
 	settings = get_settings()
 	if (
@@ -199,7 +304,7 @@ def push_customer_for_deal(deal: str) -> None:
 	facts = _customer_facts(doc, org, settings)
 	if facts.missing:
 		missing = ", ".join(facts.missing)
-		_report_once(
+		_report(
 			org.name,
 			doc,
 			PUSH_BLOCKED,
@@ -209,59 +314,37 @@ def push_customer_for_deal(deal: str) -> None:
 			),
 		)
 		return
+	# past the gate: whatever it was blocked on is fixed
+	dismiss_sync_issues("Customer", org.name, (PUSH_BLOCKED,))
 
 	client = AcumaticaClient(settings)
-	payload = _customer_payload(doc, facts, settings)
+	payload = _customer_payload(facts, settings)
 
 	inflight = _inflight_key("Customer", org.name)
-	if frappe.cache().get_value(inflight):
+	marker = _read_marker(frappe.cache().get_value(inflight))
+	if marker:
 		# An earlier push never heard back, and the next deal save fired this one. Under
 		# AutoNumber a second PUT is a second customer; under From Organization Name the
 		# collision check below would refuse the id the first one took. Link what it
-		# made instead.
+		# made instead -- but only what it can only have made.
 		try:
-			earlier = _earlier_customer(client, payload)
+			earlier, why_not = _earlier_customer(client, payload, marker)
 		except (AcumaticaError, requests.RequestException, ValueError) as e:
-			record_sync_issue(
-				"Customer",
+			_issue(
 				org.name,
-				"Push Failed",
 				f"could not look for the customer an unanswered push may have created: {e} :: {_reason(e)}",
 			)
+			return
+		if why_not:
+			# the marker stays: nothing is sent until somebody links the right one
+			_issue(org.name, why_not)
 			return
 		if earlier:
 			_link_customer(org.name, doc.name, earlier)
 			_settle_inflight(inflight)
-			_after_customer_created(client, org.name, v(earlier, "CustomerID"), facts.contact)
+			_commit()
+			_after_customer_created(client, org.name, v(earlier, "CustomerID"), facts.contact, doc, settings)
 			return
-
-	candidates = _local_duplicates(org, facts)
-	if candidates:
-		_report_duplicate(org, doc, candidates)
-		return
-
-	if payload.get("CustomerID"):
-		collision = _customer_id_collision(client, payload["CustomerID"], org.name)
-		if collision:
-			record_sync_issue("Customer", org.name, "Push Failed", collision)
-			return
-
-	try:
-		# right before the PUT: a customer keyed in at Acumatica since the last sync is
-		# in no organization here yet
-		candidates = _remote_duplicates(client, org, facts)
-	except (AcumaticaError, requests.RequestException, ValueError) as e:
-		# same rule as the collision check: "the check failed" is not "there is none"
-		record_sync_issue(
-			"Customer",
-			org.name,
-			"Push Failed",
-			f"could not check Acumatica for an existing customer: {e} :: {_reason(e)}",
-		)
-		return
-	if candidates:
-		_report_duplicate(org, doc, candidates)
-		return
 
 	# enqueue_after_commit only defers the ENQUEUE into frappe.db.after_commit -- a plain
 	# deque with no de-duplication of its own. Two deals on the same organization saved
@@ -269,18 +352,52 @@ def push_customer_for_deal(deal: str) -> None:
 	# (nothing has committed yet, so neither looks like a duplicate to the other) and
 	# both land a job at commit; two workers then reach this point concurrently, and the
 	# unlocked read above can't see a link a concurrent winner is mid-write on. Re-read
-	# with a row lock immediately before the PUT: the loser blocks here until the
+	# with a row lock before the checks and the PUT: the loser blocks here until the
 	# winner's write below commits, then sees the link already populated and no-ops
-	# instead of PUTting a second Customer into the client's ERP.
+	# instead of PUTting a second Customer into the client's ERP. The same read is the
+	# one that decides whether a manager's confirmation still holds, so a confirmation
+	# that landed while this job was queued is not missed.
 	locked = frappe.db.get_value(
-		"CRM Organization", org.name, ["acumatica_noteid", "acumatica_id"], as_dict=True, for_update=True
+		"CRM Organization",
+		org.name,
+		["acumatica_noteid", "acumatica_id", "acumatica_confirmed_for"],
+		as_dict=True,
+		for_update=True,
 	)
 	if locked and (locked.acumatica_noteid or locked.acumatica_id):
 		if not doc.get("acumatica_customer") and locked.acumatica_id:
 			frappe.db.set_value("CRM Deal", doc.name, "acumatica_customer", locked.acumatica_id)
 		return
+	confirmed = bool(
+		locked and locked.get("acumatica_confirmed_for")
+	) and locked.acumatica_confirmed_for == confirmation_hash(facts)
 
-	_mark_inflight(inflight)
+	if not confirmed:
+		candidates = _local_duplicates(org, facts)
+		if candidates:
+			_report_duplicate(org, doc, candidates)
+			return
+
+	if payload.get("CustomerID"):
+		collision = _customer_id_collision(client, payload["CustomerID"], org.name)
+		if collision:
+			_issue(org.name, collision)
+			return
+
+	try:
+		# right before the PUT: a customer keyed in at Acumatica since the last sync is
+		# in no organization here yet. Read even when confirmed -- the same-name
+		# customers that exist now are what an unanswered PUT must never be taken for.
+		preexisting, candidates = _remote_duplicates(client, facts)
+	except (AcumaticaError, requests.RequestException, ValueError) as e:
+		# same rule as the collision check: "the check failed" is not "there is none"
+		_issue(org.name, f"could not check Acumatica for an existing customer: {e} :: {_reason(e)}")
+		return
+	if candidates and not confirmed:
+		_report_duplicate(org, doc, candidates)
+		return
+
+	_mark_inflight(inflight, {"sent_at": time.time(), "preexisting": preexisting})
 	try:
 		created = client.put("Customer", payload)
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
@@ -295,12 +412,13 @@ def push_customer_for_deal(deal: str) -> None:
 			detail = f"{detail} -- Acumatica may have created the customer anyway; the next push looks for it before sending another"
 		else:
 			frappe.cache().delete_value(inflight)
-		record_sync_issue("Customer", org.name, "Push Failed", detail)
+		_issue(org.name, detail)
 		return
 
 	_link_customer(org.name, doc.name, created)
 	_settle_inflight(inflight)
-	_after_customer_created(client, org.name, v(created, "CustomerID"), facts.contact)
+	_commit()
+	_after_customer_created(client, org.name, v(created, "CustomerID"), facts.contact, doc, settings)
 
 
 def _link_customer(org_name: str, deal_name: str, customer) -> None:
@@ -312,11 +430,34 @@ def _link_customer(org_name: str, deal_name: str, customer) -> None:
 	frappe.db.set_value("CRM Deal", deal_name, "acumatica_customer", v(customer, "CustomerID"))
 
 
+def _read_marker(raw) -> dict | None:
+	"""An in-flight marker as ``{"sent_at", "preexisting"}``. A bare timestamp is a
+	marker written before the push recorded which same-name customers already
+	existed: ``preexisting`` None, which makes any same-name hit ambiguous."""
+	if not raw:
+		return None
+	if isinstance(raw, dict):
+		return raw
+	try:
+		return {"sent_at": float(raw), "preexisting": None}
+	except (TypeError, ValueError):
+		return {"sent_at": None, "preexisting": None}
+
+
+def confirmation_hash(facts) -> str:
+	"""What a manager confirmed as a new customer: the normalised name, the VAT
+	number's digits and the primary contact's email. Any of them changing afterwards
+	(a rename onto an existing customer) puts the organization back through the
+	duplicate checks."""
+	email = _clean(facts.contact.email_id).lower() if facts.contact else ""
+	basis = "|".join((normalise_name(facts.name), normalise_vat(facts.vat), email))
+	return hashlib.sha256(basis.encode()).hexdigest()[:40]
+
+
 # --- what a customer needs before it is created ------------------------------------
 
-PUSH_BLOCKED = "Push Blocked"
-POSSIBLE_DUPLICATE = "Possible Duplicate"
 MAX_CANDIDATES = 5
+SAME_VAT = "same VAT number"
 
 _ADDRESS_FIELDS = ["address_line1", "address_line2", "city", "state", "pincode", "country"]
 _CONTACT_FIELDS = [
@@ -423,7 +564,7 @@ def _salesperson(deal_doc, settings) -> str | None:
 	return codes[0] if len(codes) == 1 else None
 
 
-def _customer_payload(deal_doc, facts, settings) -> dict:
+def _customer_payload(facts, settings) -> dict:
 	"""The Customer PUT as MBP keeps its customers. Terms, credit limit, status and
 	statement cycle are the customer class's and the accounts department's to set,
 	and are never sent."""
@@ -459,9 +600,6 @@ def _customer_payload(deal_doc, facts, settings) -> dict:
 	# already in Acumatica's {"value": x} form, so the nested ones are wrapped here
 	main_contact["Address"] = wrap(main_address)
 	payload["MainContact"] = wrap(main_contact)
-	salesperson = _salesperson(deal_doc, settings)
-	if salesperson:
-		payload["Salespersons"] = [{"SalespersonID": salesperson, "Default": True}]
 	if settings.customer_numbering == "From Organization Name":
 		# Acumatica's default CUSTOMER ID segment is 10; the setting exists for
 		# tenants that widened it.
@@ -490,7 +628,7 @@ def _add_candidate(found: dict, customer_id, organization, organization_name, re
 		entry["reasons"].append(reason)
 
 
-_REASON_ORDER = ("same VAT number", "same name", "same contact email", "similar name")
+_REASON_ORDER = (SAME_VAT, "same name", "same contact email", "similar name")
 
 
 def _ranked(found: dict) -> list[dict]:
@@ -507,14 +645,9 @@ def _ranked(found: dict) -> list[dict]:
 def _local_duplicates(org, facts) -> list[dict]:
 	"""Synced customers this organization may already be. Every Acumatica customer is
 	an organization here with its code, so one read of those (~1,100 rows on MBP's
-	tenant) is the whole comparison; no per-row queries.
-
-	After a manager confirmed it as new, only a same-VAT match still blocks: the
-	names and the email are what they looked at."""
-	confirmed = bool(org.get("acumatica_confirmed_new"))
+	tenant) is the whole comparison; no per-row queries. Not called once a manager
+	confirmed the organization as new (and it still matches what they confirmed)."""
 	vat = normalise_vat(facts.vat)
-	if confirmed and not vat:
-		return []
 	linked = frappe.get_all(
 		"CRM Organization",
 		filters={"acumatica_id": ("is", "set"), "name": ("!=", org.name)},
@@ -525,15 +658,13 @@ def _local_duplicates(org, facts) -> list[dict]:
 	ours = normalise_name(facts.name)
 	for row in linked:
 		if vat and normalise_vat(row.tax_registration_id) == vat:
-			_add_candidate(found, row.acumatica_id, row.name, row.organization_name, "same VAT number")
-		if confirmed:
-			continue
+			_add_candidate(found, row.acumatica_id, row.name, row.organization_name, SAME_VAT)
 		reason = name_match(ours, normalise_name(row.organization_name))
 		if reason:
 			_add_candidate(found, row.acumatica_id, row.name, row.organization_name, reason)
 
 	email = _clean(facts.contact.email_id).lower() if facts.contact else ""
-	if email and not confirmed:
+	if email:
 		by_name = {row.name: row for row in linked}
 		Email = frappe.qb.DocType("Contact Email")
 		Contact = frappe.qb.DocType("Contact")
@@ -558,26 +689,38 @@ def _local_duplicates(org, facts) -> list[dict]:
 	return _ranked(found)
 
 
-def _remote_duplicates(client, org, facts) -> list[dict]:
-	"""Customers Acumatica has by this name or VAT number -- the ones created there
-	since the last sync. Two reads rather than one `or` filter: each is a shape this
-	integration already relies on."""
-	confirmed = bool(org.get("acumatica_confirmed_new"))
-	queries = []
-	if not confirmed:
-		queries.append(("same name", f"CustomerName eq {_odata(facts.name)}"))
-	if normalise_vat(facts.vat):
-		queries.append(("same VAT number", f"TaxRegistrationID eq {_odata(facts.vat)}"))
+def _vat_forms(vat: str) -> list[str]:
+	"""The VAT number as typed and as digits: Acumatica holds whichever someone keyed."""
+	raw = _clean(vat)
+	digits = normalise_vat(raw)
+	if not digits:
+		return []
+	return [raw] if raw == digits else [raw, digits]
+
+
+def _remote_duplicates(client, facts) -> tuple[list[str], list[dict]]:
+	"""(the CustomerIDs Acumatica already has by this exact name, candidates by name or
+	VAT number) -- the customers created there since the last sync. Separate reads
+	rather than one `or` filter: each is a shape this integration already relies on."""
+	queries = [("same name", f"CustomerName eq {_odata(facts.name)}")]
+	queries += [(SAME_VAT, f"TaxRegistrationID eq {_odata(form)}") for form in _vat_forms(facts.vat)]
 	found = {}
+	same_name = []
 	for reason, filter_ in queries:
 		page = client.get_page(
-			"Customer", top=MAX_CANDIDATES, filter=filter_, select="CustomerID,CustomerName", orderby=None
+			"Customer",
+			top=RECOVERY_PAGE if reason == "same name" else MAX_CANDIDATES,
+			filter=filter_,
+			select="CustomerID,CustomerName",
+			orderby=None,
 		)
 		for rec in page or []:
 			customer_id = v(rec, "CustomerID")
+			if reason == "same name" and customer_id:
+				same_name.append(customer_id)
 			holder = frappe.db.get_value("CRM Organization", {"acumatica_id": customer_id}, "name")
 			_add_candidate(found, customer_id, holder, v(rec, "CustomerName"), reason)
-	return _ranked(found)
+	return same_name, _ranked(found)
 
 
 def _describe(candidates: list[dict]) -> str:
@@ -589,31 +732,31 @@ def _describe(candidates: list[dict]) -> str:
 
 def _report_duplicate(org, deal_doc, candidates: list[dict]) -> None:
 	described = _describe(candidates)
-	_report_once(
+	_report(
 		org.name,
 		deal_doc,
 		POSSIBLE_DUPLICATE,
 		f"not created in Acumatica: may already be {described}. "
 		"A manager must link it to that customer (or move the deal to the organization that "
 		"already holds it) or confirm it is new.",
+		# Not the candidates: they may be another rep's customers, which this rep is not
+		# allowed to see. The manager's panel names them.
 		_(
-			"{0} may already be a customer in Acumatica ({1}). A sales manager must confirm it before it is created."
-		).format(
-			frappe.utils.escape_html(org.organization_name or org.name),
-			frappe.utils.escape_html(", ".join(c["customer_id"] for c in candidates)),
-		),
+			"{0} may already be a customer in Acumatica. A sales manager is reviewing it before it is created."
+		).format(frappe.utils.escape_html(org.organization_name or org.name)),
 		candidates,
 	)
 
 
-def _report_once(org_name: str, deal_doc, kind: str, detail: str, message: str, candidates=None) -> None:
-	"""A sync issue, and one in-app note to the deal owner -- unless an open issue
-	already says exactly this, which is the ordinary case: every save of the deal and
-	every nightly sweep re-runs the push, and the rep was told the first time."""
-	if has_open_sync_issue("Customer", org_name, kind, detail):
-		return
-	record_sync_issue("Customer", org_name, kind, detail, candidates)
-	_notify_owner(deal_doc, message)
+def _report(org_name: str, deal_doc, kind: str, detail: str, message: str, candidates=None) -> None:
+	"""A waiting push: one open row per organization and kind, brought up to date when
+	it is already there, and one in-app note to the deal owner when the row is new.
+	Every deal save and every sync re-runs the push, and the rep was told the first
+	time. Moving on from one kind to the other (blocked to duplicate, or back) clears
+	the stale one."""
+	dismiss_sync_issues("Customer", org_name, tuple(k for k in WAITING_KINDS if k != kind))
+	if upsert_sync_issue("Customer", org_name, kind, detail, candidates):
+		_notify_owner(deal_doc, message)
 
 
 def _notify_owner(deal_doc, message: str) -> None:
@@ -651,19 +794,44 @@ def _contact_followup_key(org_name: str) -> str:
 	return _inflight_key("CustomerContact", org_name)
 
 
-def _after_customer_created(client, org_name: str, customer_id, contact) -> None:
-	"""The customer is linked: clear the issues that held it back, then give it its
-	primary contact. Nothing from here on rolls the customer back or makes it again --
-	a failure is a sync issue, and the next save of the deal tries the contact again."""
+def _after_customer_created(client, org_name: str, customer_id, contact, deal_doc, settings) -> None:
+	"""The customer is linked and committed: clear the issues that held it back, then
+	give it its salesperson and its primary contact. Nothing from here on rolls the
+	customer back or makes it again -- a failure is a sync issue, and the next save of
+	the deal tries the contact again."""
 	try:
-		dismiss_sync_issues("Customer", org_name, (PUSH_BLOCKED, POSSIBLE_DUPLICATE))
+		dismiss_sync_issues("Customer", org_name, (*WAITING_KINDS, PUSH_FAILED))
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Acumatica sync issue dismissal failed")
-	if not customer_id or not contact or contact.get("acumatica_id"):
+	if not customer_id:
+		return
+	_push_salesperson(client, org_name, customer_id, deal_doc, settings)
+	if not contact or contact.get("acumatica_id"):
 		# a contact already linked is somebody's in Acumatica; it is not ours to re-home
 		return
 	frappe.cache().set_value(_contact_followup_key(org_name), contact.name, expires_in_sec=INFLIGHT_TTL)
 	_push_primary_contact(client, org_name, customer_id)
+
+
+def _push_salesperson(client, org_name: str, customer_id: str, deal_doc, settings) -> None:
+	"""A second PUT rather than part of the first: a new customer has no MAIN location
+	yet, and a Salespersons row without a LocationID can be refused -- which in the
+	create PUT would have refused the customer itself."""
+	salesperson = _salesperson(deal_doc, settings)
+	if not salesperson:
+		return
+	try:
+		client.put(
+			"Customer",
+			{"CustomerID": customer_id, "Salespersons": [{"SalespersonID": salesperson, "Default": True}]},
+		)
+	except (AcumaticaError, requests.RequestException, ValueError) as e:
+		_issue(
+			org_name,
+			f"customer {customer_id} was created, but salesperson {salesperson} was not set on it: "
+			f"{e} :: {_reason(e)} -- set it in Acumatica",
+			entity="Customer Salesperson",
+		)
 
 
 def _push_primary_contact(client, org_name: str, customer_id: str) -> None:
@@ -707,14 +875,14 @@ def _push_primary_contact(client, org_name: str, customer_id: str) -> None:
 			)
 		client.put("Customer", {"CustomerID": customer_id, "PrimaryContactID": int(contact_id)})
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
-		record_sync_issue(
-			"Contact",
+		_issue(
 			contact.name,
-			"Push Failed",
 			f"customer {customer_id} was created, but its primary contact was not set: {e} :: {_reason(e)}"
 			" -- the next save of the deal tries again",
+			entity="Contact",
 		)
 		return
+	dismiss_sync_issues("Contact", contact.name, (PUSH_FAILED,))
 	_settle_inflight(key)
 
 
@@ -733,20 +901,66 @@ def _existing_remote_contact(client, customer_id: str, contact):
 	return page[0] if page else None
 
 
-def _earlier_customer(client, payload: dict):
-	"""The customer an unanswered push may have created, or None. Under From
-	Organization Name it carries the id the push sent; under AutoNumber only the name.
-	Two customers by that name is not a guess to make on the client's ERP."""
+RECOVERY_PAGE = 10
+
+
+def _earlier_customer(client, payload: dict, marker: dict):
+	"""(the customer an unanswered push made, or None; why none may be adopted, or None).
+
+	Under From Organization Name the push carried an id that was checked free just
+	before it was sent, so a customer with that id now is the push's own. Under
+	AutoNumber there is only the name, and a same-name customer may well be somebody
+	else's -- most of all after a manager confirmed the organization as new beside an
+	existing namesake. So the customers the push saw by that name before it sent are
+	excluded, as is any customer an organization here already holds; exactly one left
+	is the push's, none means it made nothing, and more than one is not a guess to
+	make on the client's ERP."""
 	if payload.get("CustomerID"):
-		filter_ = f"CustomerID eq {_odata(payload['CustomerID'])}"
-	else:
-		filter_ = f"CustomerName eq {_odata(payload['CustomerName'])}"
-	page = client.get_page("Customer", top=2, filter=filter_, orderby=None)
-	if len(page) > 1:
-		raise AcumaticaError(
-			f"Acumatica has more than one customer named {payload['CustomerName']}; link the right one by hand"
+		page = client.get_page(
+			"Customer", top=2, filter=f"CustomerID eq {_odata(payload['CustomerID'])}", orderby=None
 		)
-	return page[0] if page else None
+		if not page:
+			return None, None
+		if _held_here(v(page[0], "CustomerID")):
+			return None, (
+				f"customer {v(page[0], 'CustomerID')} the unanswered push may have made is already "
+				"linked to another organization here; link the right one by hand"
+			)
+		return page[0], None
+
+	page = client.get_page(
+		"Customer",
+		top=RECOVERY_PAGE,
+		filter=f"CustomerName eq {_odata(payload['CustomerName'])}",
+		orderby=None,
+	)
+	if not page:
+		return None, None
+	preexisting = marker.get("preexisting")
+	if preexisting is None:
+		return None, (
+			f"Acumatica has a customer named {payload['CustomerName']}, and an unanswered push "
+			"recorded no list to tell its own from an existing one; link the right one by hand"
+		)
+	fresh = [
+		rec
+		for rec in page
+		if v(rec, "CustomerID")
+		and v(rec, "CustomerID") not in preexisting
+		and not _held_here(v(rec, "CustomerID"))
+	]
+	if not fresh:
+		return None, None
+	if len(fresh) > 1:
+		return None, (
+			f"Acumatica has more than one new customer named {payload['CustomerName']} "
+			f"({', '.join(v(r, 'CustomerID') for r in fresh)}); link the right one by hand"
+		)
+	return fresh[0], None
+
+
+def _held_here(customer_id) -> bool:
+	return bool(frappe.db.exists("CRM Organization", {"acumatica_id": customer_id}))
 
 
 def _reason(e) -> str:
