@@ -41,12 +41,33 @@ def ensure_custom_fields() -> None:
 	relabel reaches existing sites at their next migrate."""
 	create_custom_fields(
 		{
-			"CRM Organization": _identity_fields(
-				"organization_name",
-				label=CUSTOMER_CODE,
-				in_list_view=1,
-				search_index=1,
-			),
+			"CRM Organization": [
+				*_identity_fields(
+					"organization_name",
+					label=CUSTOMER_CODE,
+					in_list_view=1,
+					search_index=1,
+				),
+				{
+					# Acumatica's TaxRegistrationID: pulled in by the sync, sent with a new
+					# customer, and the one sure sign two organizations are one taxpayer
+					"fieldname": "tax_registration_id",
+					"fieldtype": "Data",
+					"label": "VAT Number",
+					"insert_after": "acumatica_id",
+				},
+				{
+					# A manager looked at the possible duplicates and said this one is new:
+					# the next push skips the name and email checks (a same-VAT match still
+					# blocks). Set only by api.confirm_new_customer.
+					"fieldname": "acumatica_confirmed_new",
+					"fieldtype": "Check",
+					"label": "Confirmed New Acumatica Customer",
+					"hidden": 1,
+					"read_only": 1,
+					"insert_after": "tax_registration_id",
+				},
+			],
 			"Contact": _identity_fields("company_name"),
 			"CRM Product": _identity_fields("product_code"),
 			"CRM Deal": [
@@ -72,6 +93,35 @@ def ensure_custom_fields() -> None:
 		ignore_validate=True,
 	)
 	ensure_customer_code_search()
+
+
+# Defaults a new field on the settings Single would never get on an existing site:
+# frappe applies a Single's defaults only while nothing at all is stored for it.
+CUSTOMER_PUSH_DEFAULTS = {"new_customer_class": "COD", "home_country": "South Africa"}
+
+
+def ensure_customer_push_defaults() -> None:
+	"""after_migrate: give a saved settings Single the customer-push defaults it
+	predates. Only a field with no stored row at all is filled -- saving the Single
+	stores every field, cleared ones included, so an admin's blank survives -- and
+	nothing is written to a Single that was never saved, which still reads its
+	defaults from the doctype (writing one row would end that)."""
+	# tabSingles has no creation column, so not frappe.get_all (which orders by it)
+	Singles = frappe.qb.DocType("Singles")
+	stored = set(
+		frappe.qb.from_(Singles)
+		.select(Singles.field)
+		.where(Singles.doctype == "CRM Acumatica Settings")
+		.run(pluck=True)
+	)
+	if not stored:
+		return
+	for field, value in CUSTOMER_PUSH_DEFAULTS.items():
+		if field in stored:
+			continue
+		if field == "home_country" and not frappe.db.exists("Country", value):
+			continue
+		frappe.db.set_single_value("CRM Acumatica Settings", field, value)
 
 
 def ensure_customer_code_search() -> None:
@@ -104,7 +154,7 @@ def ensure_customer_code_search() -> None:
 LAYOUT_FIELDS = {
 	"CRM Deal-Side Panel": ["acumatica_customer", "acumatica_sales_quote"],
 	"CRM Deal-Data Fields": ["acumatica_customer", "acumatica_sales_quote"],
-	"CRM Organization-Side Panel": ["acumatica_id"],
+	"CRM Organization-Side Panel": ["acumatica_id", "tax_registration_id"],
 }
 LAYOUT_SECTION = {"label": "Acumatica", "name": "acumatica_section", "opened": True}
 

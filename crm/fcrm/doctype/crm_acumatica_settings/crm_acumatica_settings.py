@@ -15,6 +15,7 @@ class CRMAcumaticaSettings(Document):
 
 		# checked enabled or not: the mapping is read the moment the integration is on
 		validate_settings(self)
+		self.validate_customer_push()
 		if not self.enabled:
 			return
 		if not self.instance_url:
@@ -23,6 +24,17 @@ class CRMAcumaticaSettings(Document):
 		if frappe.db.get_single_value("ERPNext CRM Settings", "enabled"):
 			frappe.throw(
 				_("Disable the SIMERP integration first — one ERP integration may be active at a time")
+			)
+
+	def validate_customer_push(self):
+		for field in ("new_customer_class", "tax_zone_home", "tax_zone_abroad"):
+			self.set(field, (self.get(field) or "").strip())
+		# the class is what supplies terms, credit limit and statement cycle -- the push
+		# never sends those -- so a customer without one is not one to create
+		if self.create_customer_on_status_change and not self.new_customer_class:
+			frappe.throw(
+				_("Set New Customer Class before turning on creating customers in Acumatica"),
+				title=_("Missing customer class"),
 			)
 
 	def on_update(self):
@@ -108,8 +120,13 @@ def set_pending_retries(pending: dict) -> None:
 	frappe.db.set_single_value("CRM Acumatica Settings", "pending_retries", json.dumps(pending))
 
 
-def record_sync_issue(entity: str, remote_id: str, kind: str, detail: str) -> None:
-	"""Append a row to the sync-issues table without touching the rest of the doc."""
+def record_sync_issue(
+	entity: str, remote_id: str, kind: str, detail: str, candidates: list | None = None
+) -> None:
+	"""Append a row to the sync-issues table without touching the rest of the doc.
+
+	``candidates`` (Possible Duplicate rows) is what the settings panel offers to link
+	the organization to, kept as JSON beside the human-readable detail."""
 	doc = frappe.get_doc("CRM Acumatica Settings")
 	doc.append(
 		"sync_issues",
@@ -118,6 +135,7 @@ def record_sync_issue(entity: str, remote_id: str, kind: str, detail: str) -> No
 			"remote_id": remote_id,
 			"kind": kind,
 			"detail": detail[:500],
+			"candidates": json.dumps(candidates) if candidates else None,
 			"detected_on": now_datetime(),
 		},
 	)
@@ -132,3 +150,28 @@ def record_sync_issue(entity: str, remote_id: str, kind: str, detail: str) -> No
 	# ValidationError from there, turning a logged sync issue into a failed save.
 	doc.flags.ignore_validate = True
 	doc.save(ignore_permissions=True)
+
+
+def has_open_sync_issue(entity: str, remote_id: str, kind: str, detail: str | None = None) -> bool:
+	"""Whether an undismissed row already says this. ``detail`` None matches any."""
+	for row in frappe.get_doc("CRM Acumatica Settings").sync_issues:
+		if row.dismissed or row.entity != entity or row.remote_id != remote_id or row.kind != kind:
+			continue
+		if detail is None or row.detail == detail[:500]:
+			return True
+	return False
+
+
+def dismiss_sync_issues(entity: str, remote_id: str, kinds) -> int:
+	"""Dismiss every open row for ``remote_id`` of one of ``kinds``; how many it did."""
+	doc = frappe.get_doc("CRM Acumatica Settings")
+	count = 0
+	for row in doc.sync_issues:
+		if not row.dismissed and row.entity == entity and row.remote_id == remote_id and row.kind in kinds:
+			row.dismissed = 1
+			count += 1
+	if count:
+		# same reason as record_sync_issue: a log write must not trip the config checks
+		doc.flags.ignore_validate = True
+		doc.save(ignore_permissions=True)
+	return count

@@ -406,3 +406,46 @@ class TestDealLayoutFields(FrappeTestCase):
 			frappe.db.get_value("CRM Form Script", FORM_SCRIPT_NAME, "script"), get_crm_form_script()
 		)
 		self.assertEqual(frappe.db.get_value("CRM Form Script", FORM_SCRIPT_NAME, "enabled"), 0)
+
+
+class TestCustomerPushSettings(FrappeTestCase):
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def test_the_new_fields_and_their_defaults(self):
+		meta = frappe.get_meta("CRM Acumatica Settings")
+		self.assertEqual(meta.get_field("new_customer_class").default, "COD")
+		self.assertEqual(meta.get_field("home_country").default, "South Africa")
+		self.assertEqual(meta.get_field("home_country").options, "Country")
+		self.assertIsNotNone(meta.get_field("tax_zone_home"))
+		self.assertIsNotNone(meta.get_field("tax_zone_abroad"))
+		kinds = frappe.get_meta("CRM Acumatica Sync Issue").get_field("kind").options.split("\n")
+		self.assertIn("Push Blocked", kinds)
+		self.assertIn("Possible Duplicate", kinds)
+
+	def test_the_switch_needs_a_customer_class(self):
+		doc = frappe.get_doc("CRM Acumatica Settings")
+		doc.create_customer_on_status_change = 1
+		doc.deal_status = "Won"
+		doc.new_customer_class = " "
+		with self.assertRaises(frappe.ValidationError):
+			doc.save(ignore_permissions=True)
+
+	def test_an_existing_site_gets_the_defaults_once(self):
+		from crm.integrations.acumatica.install import ensure_customer_push_defaults
+
+		frappe.db.delete("Singles", {"doctype": "CRM Acumatica Settings", "field": "new_customer_class"})
+		frappe.db.set_single_value("CRM Acumatica Settings", "home_country", None)
+		ensure_customer_push_defaults()
+		self.assertEqual(frappe.db.get_single_value("CRM Acumatica Settings", "new_customer_class"), "COD")
+		# a field an admin cleared stays cleared
+		self.assertFalse(frappe.db.get_single_value("CRM Acumatica Settings", "home_country"))
+
+	def test_vat_and_confirmed_fields_are_installed(self):
+		from crm.integrations.acumatica.install import LAYOUT_FIELDS, ensure_custom_fields
+
+		ensure_custom_fields()
+		meta = frappe.get_meta("CRM Organization")
+		self.assertEqual(meta.get_field("tax_registration_id").label, "VAT Number")
+		self.assertTrue(meta.get_field("acumatica_confirmed_new").hidden)
+		self.assertIn("tax_registration_id", LAYOUT_FIELDS["CRM Organization-Side Panel"])

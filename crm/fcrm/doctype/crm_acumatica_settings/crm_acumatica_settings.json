@@ -26,6 +26,10 @@
   "column_break_ausf",
   "create_customer_on_status_change",
   "deal_status",
+  "new_customer_class",
+  "home_country",
+  "tax_zone_home",
+  "tax_zone_abroad",
   "section_break_ausg",
   "quote_order_type",
   "quote_expiry_grace_days",
@@ -166,6 +170,38 @@
    "options": "CRM Deal Status"
   },
   {
+   "default": "COD",
+   "depends_on": "create_customer_on_status_change",
+   "description": "The Acumatica customer class a new customer is created in. The class supplies terms, credit limit and statement cycle; Vectora never sends those.",
+   "fieldname": "new_customer_class",
+   "fieldtype": "Data",
+   "label": "New Customer Class",
+   "mandatory_depends_on": "create_customer_on_status_change"
+  },
+  {
+   "default": "South Africa",
+   "depends_on": "create_customer_on_status_change",
+   "description": "Customers in this country get the home tax zone; all others the abroad one",
+   "fieldname": "home_country",
+   "fieldtype": "Link",
+   "label": "Home Country",
+   "options": "Country"
+  },
+  {
+   "depends_on": "create_customer_on_status_change",
+   "description": "e.g. 01. Blank leaves the tax zone to the customer class",
+   "fieldname": "tax_zone_home",
+   "fieldtype": "Data",
+   "label": "Tax Zone (Home)"
+  },
+  {
+   "depends_on": "create_customer_on_status_change",
+   "description": "e.g. 02. Blank leaves the tax zone to the customer class",
+   "fieldname": "tax_zone_abroad",
+   "fieldtype": "Data",
+   "label": "Tax Zone (Abroad)"
+  },
+  {
    "depends_on": "enabled",
    "fieldname": "section_break_ausg",
    "fieldtype": "Section Break",
@@ -202,8 +238,8 @@
    "mandatory_depends_on": "create_deals_from_quotes"
   },
   {
-   "depends_on": "create_deals_from_quotes",
-   "description": "JSON object of Acumatica salesperson ID to CRM user, e.g. {\"036-NEW\": \"isabella@example.com\"}. A quote whose salesperson is not here is owned by Administrator.",
+   "depends_on": "eval:doc.create_deals_from_quotes || doc.create_customer_on_status_change",
+   "description": "JSON object of Acumatica salesperson ID to CRM user, e.g. {\"036-NEW\": \"isabella@example.com\"}. A quote whose salesperson is not here is owned by Administrator. A customer the CRM creates gets the deal owner's salesperson when exactly one ID maps to them.",
    "fieldname": "salesperson_owners",
    "fieldtype": "Code",
    "label": "Salesperson Owners",
@@ -265,7 +301,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-01 13:00:00.000000",
+ "modified": "2026-11-02 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM Acumatica Settings",
