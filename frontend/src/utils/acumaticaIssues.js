@@ -1,3 +1,5 @@
+import { describeError } from './describeError.js'
+
 // What the settings panel offers on a "Possible Duplicate" sync issue. The server
 // (crm/integrations/acumatica/outbound.py) stores the customers the organization may
 // already be as `candidates`; crm.integrations.acumatica.api checks every action again,
@@ -52,4 +54,12 @@ export function formatIssueTime(value) {
   if (!value) return ''
   const match = String(value).match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/)
   return match ? `${match[1]} ${match[2]}` : String(value)
+}
+
+/**
+ * Whether the settings document was refused rather than failed: a manager whose
+ * customers are scoped may not read it, and gets a note, not an error to retry.
+ */
+export function settingsManagedElsewhere(error) {
+  return !!error && describeError(error).kind === 'permission'
 }

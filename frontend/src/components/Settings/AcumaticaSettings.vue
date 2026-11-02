@@ -11,8 +11,14 @@
       />
     </div>
 
+    <!-- A manager whose customers are scoped may not read the settings document
+         (its log names every rep's customers): they get the issues that are
+         theirs below, filtered on the server, and no connection settings. -->
+    <p v-if="managedElsewhere" class="text-p-base text-ink-gray-6">
+      {{ __('Connection settings are managed by a System Manager.') }}
+    </p>
     <ErrorState
-      v-if="settings.get.error"
+      v-else-if="settings.get.error"
       :error="settings.get.error"
       :title="__('Could not load Acumatica settings')"
       :retry="() => settings.reload()"
@@ -284,7 +290,9 @@
           @click="runBackfill"
         />
       </div>
+    </template>
 
+    <template v-if="settings.doc || managedElsewhere">
       <div v-if="statusError" class="text-p-sm text-ink-orange-9">
         {{ __('Could not load the sync status.') }} {{ statusError }}
       </div>
@@ -375,7 +383,7 @@
 import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
-import { reactive, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, reactive, ref, watch, onMounted, onUnmounted } from 'vue'
 import {
   createDocumentResource,
   call,
@@ -392,6 +400,7 @@ import {
   duplicateCandidates,
   formatIssueTime,
   hasSameVat,
+  settingsManagedElsewhere,
 } from '@/utils/acumaticaIssues.js'
 
 const settings = createDocumentResource({
@@ -525,8 +534,15 @@ const confirmNew = reactive({ show: false, issue: null })
 // The actions change the settings' sync-issue rows on the server. Reloading the doc
 // keeps a later Save from carrying the copy this panel loaded before them.
 async function refreshAfterAction() {
-  await Promise.all([loadStatus(), settings.reload()])
+  await Promise.all([
+    loadStatus(),
+    managedElsewhere.value ? null : settings.reload(),
+  ])
 }
+
+const managedElsewhere = computed(() =>
+  settingsManagedElsewhere(settings.get.error),
+)
 
 function needsAction(issue) {
   return issue.kind === 'Possible Duplicate' || issue.kind === 'Push Blocked'

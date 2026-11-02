@@ -4,6 +4,7 @@ import {
   duplicateCandidates,
   formatIssueTime,
   hasSameVat,
+  settingsManagedElsewhere,
 } from '../../src/utils/acumaticaIssues.js'
 
 const issue = (candidates, kind = 'Possible Duplicate') => ({
@@ -118,5 +119,24 @@ describe('formatIssueTime', () => {
     expect(formatIssueTime(null)).toBe('')
     expect(formatIssueTime('')).toBe('')
     expect(formatIssueTime('yesterday')).toBe('yesterday')
+  })
+})
+
+describe('settingsManagedElsewhere', () => {
+  it('is a refusal, not a failure, on a permission error', () => {
+    expect(
+      settingsManagedElsewhere({ exc_type: 'PermissionError', messages: [] }),
+    ).toBe(true)
+    expect(settingsManagedElsewhere({ httpStatus: 403 })).toBe(true)
+  })
+
+  it('leaves every other failure, and none, to the error state', () => {
+    expect(settingsManagedElsewhere(null)).toBe(false)
+    expect(
+      settingsManagedElsewhere({ httpStatus: 500, exc_type: 'ValueError' }),
+    ).toBe(false)
+    expect(settingsManagedElsewhere(new TypeError('Failed to fetch'))).toBe(
+      false,
+    )
   })
 })
