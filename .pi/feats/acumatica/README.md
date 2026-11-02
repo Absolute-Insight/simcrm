@@ -118,19 +118,22 @@ The worker, in order:
    no request at all, a **"Push Blocked"** sync issue naming what is missing, and
    one in-app note (CRM Notification, via `notify_user`) to the deal owner saying
    what to fill in.
-3. **Unanswered earlier push** (in-flight marker). The marker holds the send time
-   and the CustomerIDs Acumatica already had *by that name* before the PUT. Under
+3. **Unanswered earlier push** (in-flight marker). The marker holds the send time,
+   the `CustomerName` and `CustomerID` *as sent* (recovery looks for those, not the
+   organization's current name — it may have been renamed since; the CRM
+   Organization `after_rename` hook moves the marker to the new docname), and the
+   CustomerIDs Acumatica already had *by that name* before the PUT. Under
    AutoNumber the recovery reads by name, drops those and any code an organization
    here holds: exactly one left is adopted, none means the PUT made nothing (send
    again), more than one is a "Push Failed" for a manager to link by hand. Under
    From Organization Name the id was checked free before sending, so finding it is
    finding ours. A marker from before this change (a bare timestamp) adopts nothing.
-4. **Row lock and the confirmation**: the organization is re-read `for_update`
-   (link, and `acumatica_confirmed_for`). A manager's confirmation counts only if it
-   still equals `confirmation_hash` (normalised name, VAT digits, primary-contact
-   email) of what is about to be sent: a rename onto an existing customer after
-   the confirmation goes back through the checks.
-5. **Local duplicates** (skipped when confirmed) — one read of every linked
+4. **The confirmation**: `acumatica_confirmed_for` holds JSON `{hash, past}` —
+   `confirmation_hash` (normalised name, VAT digits, primary-contact email) of what
+   the manager confirmed, and the candidate codes they confirmed it is *not*. While
+   the hash still matches, candidates in `past` are ignored; any other candidate
+   still blocks, and a rename (hash mismatch) puts everything back in play.
+5. **Local duplicates** (candidates in `past` excepted) — one read of every linked
    organization (~1,100 rows): same VAT number (digits only); the same name or a
    similar one (`matching.normalise_name`: casefold, `&`→and, punctuation and
    legal-form tokens — pty, ltd, cc, holdings… — and a trailing "COD" dropped; then
@@ -139,11 +142,15 @@ The worker, in order:
    "Bearing Man Group (Pty) Ltd"); or the primary contact's email on a contact of a
    linked organization.
 6. **Derived-id collision** (From Organization Name only), as before.
-7. **Remote duplicates**, right before the PUT: `CustomerName eq`, and
-   `TaxRegistrationID eq` both as typed and as digits — separate reads. The name
-   read always runs (it is what fills the marker's list); its hits only block when
-   not confirmed. A read that fails is a "Push Failed", not a go-ahead.
-8. PUT, link, **commit** — so no later failure in the job can roll the link back.
+7. **Remote duplicates**: `CustomerName eq`, and `TaxRegistrationID eq` both as
+   typed and as digits — separate reads. The name read always runs (it is what fills
+   the marker's list). A read that fails is a "Push Failed", not a go-ahead.
+8. Steps 4–7 run **without a lock** — they wait on Acumatica, and a row lock held
+   across them stalled reps' saves of the organization and managers' actions. Only
+   then is the organization re-read `for_update`: already linked → stop; the
+   confirmation changed since step 4 → stop (the job `confirm_new_customer` queued
+   decides on it). Then PUT, link, **commit** — so no later failure in the job can
+   roll the link back.
 
 Any duplicate hit → no PUT; a **"Possible Duplicate"** sync issue whose detail names
 the candidates and whose hidden `candidates` column (JSON: `customer_id`,
@@ -159,7 +166,25 @@ table from the database, so a stale form save keeps the log as it is. The push
 keeps **one open row per organization and kind** — a repeat updates it in place
 and does not notify again; moving from Push Blocked to Possible Duplicate (or back)
 dismisses the other, the deal leaving the trigger status dismisses both, and a
-successful push dismisses Blocked, Duplicate and Push Failed.
+successful push dismisses Blocked, Duplicate and Push Failed. A deal leaving the
+status dismisses the organization's waiting rows only when none of its deals is
+still in the status.
+
+A settings save never touches the log: `validate` drops the rows from the document
+and the controller's `update_child_table` skips the table (a test that means to
+rewrite it sets `flags.write_sync_issues`), so neither a stale form copy nor the
+document `frappe.client.save`/`set_value` hands back carries rows. Who may read
+the log: the `sync_issues` table is permlevel 1 (System Manager only), which keeps
+it out of `frappe.client.get` — but frappe lists a Single's child rows to anyone who
+can read the Single (`get_list(child, parent_doctype=…)` checks the parent only), so
+the settings' `has_permission` hook refuses the whole document to a manager whose
+customers are scoped. They see the panel's error state; the log reaches them only
+through `get_open_sync_issues`, which **fails closed** for them: a row is shown only
+if its organization resolves (Customer / Customer Salesperson: `remote_id`; Contact:
+its `company_name`; Deal: its organization; anything else hidden) and is
+`customer_visible`, candidates that are someone else's organization are dropped, and
+the detail is kept only for Push Blocked (it names fields), rebuilt from the visible
+candidates for Possible Duplicate, and replaced for every other kind.
 
 Resolution, in the settings panel's sync-issue list (`api.py`, POST only, System
 Manager / Sales Manager, plus write permission on the organization):
@@ -178,15 +203,24 @@ Manager / Sales Manager, plus write permission on the organization):
   the push under its own job id (`acumatica_customer_<org>_confirm`), because a push
   already running under the ordinary id would swallow a deduplicated enqueue.
 
-`get_open_sync_issues` hides, from a manager whose customers are scoped, rows about
-organizations they cannot see and candidates that are such organizations (the
-detail of a row that had one is replaced, since it names them). The panel reloads
-the settings document after every action, so a later Save does not carry a stale
-copy.
+The panel reloads the settings document after every action, and shows issue times
+as date and HH:mm.
+
+`link_existing_customer` refuses a code another organization holds by
+`acumatica_id`, or — once Acumatica answered — holds the customer's NoteID; it
+writes the code onto every deal of the organization that has no quote number,
+replacing a stale one.
 
 The identity fields on CRM Organization (`acumatica_id`, `acumatica_noteid`,
-`acumatica_confirmed_for`) are **permlevel 1**: a Sales User reads them, only a
-manager writes them. `read_only`/`hidden` are the form's alone, so before this a
+`acumatica_confirmed_for`) and on CRM Deal (`acumatica_customer` — Create Sales
+Quote prefers it — and `acumatica_sales_quote`, the quote's idempotency key) are
+**permlevel 1**: a Sales User reads them, only a manager writes them. CRM Deal's
+level-1 rows are in its JSON; patch `grant_acumatica_identity_permlevel` adds them
+as Custom DocPerm only where a site customised the doctype's permissions. Contact
+is frappe's doctype, whose standard permissions grant every role and which would
+need Custom DocPerm (freezing it) for a level-1 row, so its `acumatica_id` /
+`acumatica_noteid` are guarded by a validate hook (`install.guard_contact_identity`)
+that restores them for anyone but a manager or an `ignore_permissions` save. `read_only`/`hidden` are the form's alone, so before this a
 rep could `set_value` their organization onto another customer's code, or confirm
 it themselves. The sync and the push write past it with `ignore_permissions` /
 `db.set_value`. (`tax_registration_id` stays permlevel 0 — reps fill it in.)
