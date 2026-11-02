@@ -29,11 +29,15 @@ export function duplicateCandidates(issue) {
   return out
 }
 
-/**
- * Whether "Create as new" may be offered. One taxpayer is one customer, so a match
- * on the VAT number cannot be confirmed past -- the server refuses it as well.
- */
+/** Whether "Create as new" may be offered: on every possible duplicate. */
 export function canConfirmNew(issue) {
-  if (issue?.kind !== 'Possible Duplicate') return false
-  return !duplicateCandidates(issue).some((c) => c.reasons.includes(SAME_VAT))
+  return issue?.kind === 'Possible Duplicate'
+}
+
+/**
+ * Whether a candidate has the same VAT number. Still confirmable -- one taxpayer
+ * can hold several accounts (branches) -- but the confirmation must say so.
+ */
+export function hasSameVat(issue) {
+  return duplicateCandidates(issue).some((c) => c.reasons.includes(SAME_VAT))
 }

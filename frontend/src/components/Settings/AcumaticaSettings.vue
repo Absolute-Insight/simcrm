@@ -354,10 +354,15 @@
       v-model="confirmNew.show"
       :title="__('Create a new Acumatica customer?')"
       :message="
-        __(
-          '{0} will be created as a new customer in Acumatica, even though it looks like an existing one. Use Link instead if it is the same business.',
-          [confirmNew.issue?.remote_id],
-        )
+        hasSameVat(confirmNew.issue)
+          ? __(
+              '{0} has the same VAT number as an existing Acumatica customer. Create it as a new customer only if it is a separate account of that taxpayer, such as a branch. Use Link instead if it is the same account.',
+              [confirmNew.issue?.remote_id],
+            )
+          : __(
+              '{0} will be created as a new customer in Acumatica, even though it looks like an existing one. Use Link instead if it is the same business.',
+              [confirmNew.issue?.remote_id],
+            )
       "
       :confirm-label="__('Create as new')"
       :onConfirm="confirmNewCustomer"
@@ -382,7 +387,11 @@ import {
 } from 'frappe-ui'
 import Link from '@/components/Controls/Link.vue'
 import { parseOwnerMap, serialiseOwnerMap } from '@/utils/salespersonOwners.js'
-import { canConfirmNew, duplicateCandidates } from '@/utils/acumaticaIssues.js'
+import {
+  canConfirmNew,
+  duplicateCandidates,
+  hasSameVat,
+} from '@/utils/acumaticaIssues.js'
 
 const settings = createDocumentResource({
   doctype: 'CRM Acumatica Settings',
@@ -501,7 +510,7 @@ async function dismissIssue(issue) {
     await call('crm.integrations.acumatica.api.dismiss_sync_issue', {
       issue_name: issue.name,
     })
-    loadStatus()
+    await refreshAfterAction()
   } catch (e) {
     toast.error(e.messages?.[0] || __('Could not dismiss the issue'))
   }
@@ -511,6 +520,12 @@ async function dismissIssue(issue) {
 // the customer again, so a stale row can only be refused, never misapplied.
 const resolving = ref('')
 const confirmNew = reactive({ show: false, issue: null })
+
+// The actions change the settings' sync-issue rows on the server. Reloading the doc
+// keeps a later Save from carrying the copy this panel loaded before them.
+async function refreshAfterAction() {
+  await Promise.all([loadStatus(), settings.reload()])
+}
 
 function needsAction(issue) {
   return issue.kind === 'Possible Duplicate' || issue.kind === 'Push Blocked'
@@ -529,7 +544,7 @@ async function linkCustomer(issue, candidate) {
         candidate.customerId,
       ]),
     )
-    await loadStatus()
+    await refreshAfterAction()
   } catch (e) {
     toast.error(e.messages?.[0] || __('Could not link the customer'))
   } finally {
@@ -560,7 +575,7 @@ async function confirmNewCustomer({ hideDialog }) {
           ),
     )
     hideDialog()
-    await loadStatus()
+    await refreshAfterAction()
   } catch (e) {
     toast.error(e.messages?.[0] || __('Could not confirm the customer'))
   } finally {

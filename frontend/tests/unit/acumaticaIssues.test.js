@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   canConfirmNew,
   duplicateCandidates,
+  hasSameVat,
 } from '../../src/utils/acumaticaIssues.js'
 
 const issue = (candidates, kind = 'Possible Duplicate') => ({
@@ -71,24 +72,35 @@ describe('duplicateCandidates', () => {
 })
 
 describe('canConfirmNew', () => {
-  it('allows a name or email match to be confirmed as new', () => {
+  it('allows any possible duplicate to be confirmed as new, a VAT match too', () => {
     expect(
       canConfirmNew(issue([{ customer_id: 'C-1', reasons: ['same name'] }])),
     ).toBe(true)
-  })
-
-  it('refuses past a same-VAT match', () => {
     expect(
       canConfirmNew(
+        issue([{ customer_id: 'C-2', reasons: ['same VAT number'] }]),
+      ),
+    ).toBe(true)
+  })
+
+  it('is only for possible duplicates', () => {
+    expect(canConfirmNew(issue([], 'Push Blocked'))).toBe(false)
+  })
+})
+
+describe('hasSameVat', () => {
+  it('says when a candidate shares the VAT number', () => {
+    expect(
+      hasSameVat(
         issue([
           { customer_id: 'C-1', reasons: ['similar name'] },
           { customer_id: 'C-2', reasons: ['same VAT number'] },
         ]),
       ),
+    ).toBe(true)
+    expect(
+      hasSameVat(issue([{ customer_id: 'C-1', reasons: ['same name'] }])),
     ).toBe(false)
-  })
-
-  it('is only for possible duplicates', () => {
-    expect(canConfirmNew(issue([], 'Push Blocked'))).toBe(false)
+    expect(hasSameVat(null)).toBe(false)
   })
 })
