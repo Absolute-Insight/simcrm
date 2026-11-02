@@ -729,10 +729,21 @@ input[type='checkbox']:checked {
 }
 /* The light greys and the -6 tints are tuned for near-white grounds; on the
    bar (steel is a mid blue) they fall under AA. Step them darker for anything
-   standing on the bar. Filled controls inside it only gain contrast. */
+   standing on the bar. Filled controls inside it only gain contrast.
+
+   The quiet greys (4/5: inactive breadcrumbs, separators) land on the stock
+   gray-7, 4.6:1 at the steel end, so a breadcrumb trail keeps its quiet ->
+   hover -> current steps instead of flattening to one ink. That needs the
+   value captured on :root, since --ink-gray-7 is itself redefined here.
+   Amber and yellow are left alone: no step of either is text on a light
+   ground (see AGENTS.md), and the bar has none. Above the steel end only
+   gray-8/9 are text-safe; the -9 tints there are icon-grade (3:1). */
+:root:not([data-theme='dark']) {
+  --v-head-quiet: var(--ink-gray-7);
+}
 :root:not([data-theme='dark']) .v-head-band {
-  --ink-gray-4: var(--ink-gray-8);
-  --ink-gray-5: var(--ink-gray-8);
+  --ink-gray-4: var(--v-head-quiet);
+  --ink-gray-5: var(--v-head-quiet);
   --ink-gray-6: var(--ink-gray-8);
   --ink-gray-7: var(--ink-gray-8);
   --ink-blue-6: var(--ink-blue-9);
@@ -744,8 +755,6 @@ input[type='checkbox']:checked {
   --ink-red-6: var(--ink-red-9);
   --ink-teal-6: var(--ink-teal-9);
   --ink-violet-6: var(--ink-violet-9);
-  --ink-yellow-6: var(--ink-yellow-9);
-  --ink-amber-6: var(--ink-amber-9);
 }
 /* The active nav row: a lit rim and a whisper of brand glow behind the
    position rail. Unlayered on purpose — it has to win over frappe-ui's
