@@ -42,6 +42,15 @@ class TestUpserts(ImporterTestCase):
 	def tearDown(self):
 		frappe.db.rollback()
 
+	def test_the_vat_number_comes_in_and_is_never_blanked(self):
+		rec = C(
+			NoteID="guid-vat-1", CustomerID="VAT01", CustomerName="Vat Ltd", TaxRegistrationID=" 4123456789 "
+		)
+		name = importer.upsert_organization(rec)
+		self.assertEqual(frappe.db.get_value("CRM Organization", name, "tax_registration_id"), "4123456789")
+		importer.upsert_organization(C(NoteID="guid-vat-1", CustomerID="VAT01", CustomerName="Vat Ltd"))
+		self.assertEqual(frappe.db.get_value("CRM Organization", name, "tax_registration_id"), "4123456789")
+
 	def test_upsert_organization_creates_then_updates(self):
 		rec = C(NoteID="guid-org-1", CustomerID="ACME01", CustomerName="Acme Ltd")
 		name = importer.upsert_organization(rec)
@@ -551,6 +560,30 @@ class TestBackfill(ImporterTestCase):
 		out = importer.run_backfill()
 		self.assertIn("won", out)
 		self.assertIn("expired", out)
+
+	@patch("crm.integrations.acumatica.outbound.queue_pending_customer_pushes", return_value=3)
+	@patch("crm.integrations.acumatica.importer.AcumaticaClient")
+	def test_a_sync_queues_pending_customer_pushes_only_when_the_push_is_on(self, ClientCls, queue):
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.settings.request_pause = 0
+		client.settings.quote_order_type = "QT"
+		client.iter_all.side_effect = lambda entity, **kw: iter([])
+		client.get_page.return_value = []
+
+		importer.run_backfill()
+		queue.assert_not_called()
+
+		frappe.db.set_single_value("CRM Acumatica Settings", "create_customer_on_status_change", 1)
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+		try:
+			out = importer.run_backfill()
+		finally:
+			frappe.db.set_single_value("CRM Acumatica Settings", "create_customer_on_status_change", 0)
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit
+			frappe.clear_cache(doctype="CRM Acumatica Settings")
+		queue.assert_called_once()
+		self.assertEqual(out["customer_pushes_queued"], 3)
 
 	def test_nightly_sweep_noop_when_disabled(self):
 		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)

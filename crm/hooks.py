@@ -302,6 +302,8 @@ doc_events = {
 		],
 	},
 	"CRM Organization": {
+		# an address or name a rep just fixed may be all a blocked customer push needed
+		"on_update": ["crm.integrations.acumatica.outbound.queue_customer_push_for_organization"],
 		"after_delete": ["crm.domain_enrichment.tasks.clear_runs"],
 	},
 	"ERPNext CRM Settings": {
