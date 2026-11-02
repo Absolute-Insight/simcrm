@@ -1222,6 +1222,26 @@ class TestDuplicatePrevention(CustomerPushCase):
 			outbound.push_customer_for_deal(deal.name)
 		self.client.put.assert_not_called()
 
+	def test_a_push_another_job_sent_meanwhile_stops_this_one(self):
+		"""Both jobs read no marker at the top; the first takes the lock, sends, gets
+		no answer and leaves its marker. The second, holding the lock next, must not
+		send a second customer."""
+		_enable()
+		org, deal = _complete_deal()
+		real_get_value = frappe.db.get_value
+
+		def first_job_sent(doctype, filters=None, fieldname="name", *args, **kwargs):
+			if doctype == "CRM Organization" and kwargs.get("for_update"):
+				frappe.cache().set_value(
+					outbound._inflight_key("Customer", org.name),
+					{"sent_at": 1.0, "preexisting": [], "name": org.organization_name, "customer_id": None},
+				)
+			return real_get_value(doctype, filters, fieldname, *args, **kwargs)
+
+		with patch("crm.integrations.acumatica.outbound.frappe.db.get_value", side_effect=first_job_sent):
+			outbound.push_customer_for_deal(deal.name)
+		self.client.put.assert_not_called()
+
 	def test_the_remote_reads_run_before_the_row_lock(self):
 		_enable()
 		org, deal = _complete_deal()

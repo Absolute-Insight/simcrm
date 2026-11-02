@@ -329,7 +329,8 @@ def push_customer_for_deal(deal: str) -> None:
 	payload = _customer_payload(facts, settings)
 
 	inflight = _inflight_key("Customer", org.name)
-	marker = _read_marker(frappe.cache().get_value(inflight))
+	started_with = frappe.cache().get_value(inflight)
+	marker = _read_marker(started_with)
 	if marker:
 		# An earlier push never heard back, and the next deal save fired this one. Under
 		# AutoNumber a second PUT is a second customer; under From Organization Name the
@@ -410,6 +411,12 @@ def push_customer_for_deal(deal: str) -> None:
 			frappe.db.set_value("CRM Deal", doc.name, "acumatica_customer", locked.acumatica_id)
 		return
 	if locked and (locked.get("acumatica_confirmed_for") or "") != confirmation:
+		return
+	current = frappe.cache().get_value(inflight)
+	if current and current != started_with:
+		# Another job for this organization took the lock first and sent its PUT, which
+		# got no answer: the customer may exist. Sending ours too would make a second;
+		# the next push recovers what that one made.
 		return
 
 	_mark_inflight(
