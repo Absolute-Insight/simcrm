@@ -1,9 +1,17 @@
+import json
+import re
+
 import frappe
+import requests
 from frappe import _
 from frappe.utils.background_jobs import is_job_enqueued
 
-from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import get_pending_retries
-from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError
+from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
+	dismiss_sync_issues,
+	get_pending_retries,
+	get_settings,
+)
+from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError, v
 
 # Both describe the sync rather than this button -- the timeout is how long one takes,
 # and the job id is shared with the sweep and the webhook so only one can be queued --
@@ -86,11 +94,25 @@ def get_open_sync_issues() -> list[dict]:
 			"remote_id": issue.remote_id,
 			"kind": issue.kind,
 			"detail": issue.detail,
+			"candidates": _candidates(issue),
 			"detected_on": issue.detected_on,
 		}
 		for issue in settings.sync_issues
 		if not issue.dismissed
 	]
+
+
+def _candidates(issue) -> list[dict]:
+	"""A Possible Duplicate row's candidates; [] for every other row, or one whose JSON
+	does not read."""
+	raw = issue.get("candidates")
+	if not raw:
+		return []
+	try:
+		data = json.loads(raw) if isinstance(raw, str) else raw
+	except ValueError:
+		return []
+	return data if isinstance(data, list) else []
 
 
 @frappe.whitelist(methods=["POST"])
@@ -162,3 +184,119 @@ def get_crm_form_script():
 		})
 	}
 }"""
+
+
+# Acumatica's CUSTOMER ID segment: letters, digits and the separators tenants put in
+# them (C-A00403). Anything else is not a code this would ever hold, and never reaches
+# an OData filter.
+CUSTOMER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-./]{0,29}$")
+_RESOLVED = ("Possible Duplicate", "Push Blocked")
+
+
+def _unlinked_organization(organization: str):
+	"""The organization a manager is resolving, checked: it exists, they may edit it,
+	and the integration is in a state to act on."""
+	if not get_settings().enabled:
+		frappe.throw(_("The Acumatica integration is not enabled"))
+	if not isinstance(organization, str) or not frappe.db.exists("CRM Organization", organization):
+		frappe.throw(_("Organization not found"), frappe.DoesNotExistError)
+	frappe.has_permission("CRM Organization", "write", doc=organization, throw=True)
+	return frappe.db.get_value(
+		"CRM Organization",
+		organization,
+		["name", "acumatica_id", "acumatica_noteid"],
+		as_dict=True,
+		for_update=True,
+	)
+
+
+# POST only, managers only: both write an organization's Acumatica identity, which
+# decides whether a customer is created in the client's ERP.
+@frappe.whitelist(methods=["POST"])
+def link_existing_customer(organization: str, customer_id: str) -> dict:
+	"""A possible duplicate was right: link the organization to that customer instead
+	of creating one."""
+	frappe.only_for(["System Manager", "Sales Manager"], True)
+	customer_id = (customer_id or "").strip() if isinstance(customer_id, str) else ""
+	if not CUSTOMER_ID.match(customer_id):
+		frappe.throw(_("That is not an Acumatica customer code"))
+	org = _unlinked_organization(organization)
+	if org.acumatica_id and org.acumatica_id != customer_id:
+		frappe.throw(
+			_("This organization is already linked to Acumatica customer {0}").format(org.acumatica_id)
+		)
+	holder = frappe.db.get_value(
+		"CRM Organization", {"acumatica_id": customer_id, "name": ("!=", org.name)}, "name"
+	)
+	if holder:
+		frappe.throw(
+			_(
+				"Customer {0} is already linked to organization {1}. Move the deal to {1} instead of linking a second organization to it."
+			).format(customer_id, frappe.utils.escape_html(holder))
+		)
+
+	from crm.integrations.acumatica.outbound import _odata, _reason
+
+	try:
+		page = AcumaticaClient(get_settings()).get_page(
+			"Customer",
+			top=1,
+			filter=f"CustomerID eq {_odata(customer_id)}",
+			select="CustomerID,CustomerName,NoteID",
+			orderby=None,
+		)
+	except (AcumaticaError, requests.RequestException, ValueError) as e:
+		frappe.throw(_("Could not check the customer in Acumatica: {0}").format(_reason(e)))
+	if not page:
+		frappe.throw(_("Acumatica has no customer {0}").format(customer_id))
+
+	noteid = v(page[0], "NoteID")
+	frappe.db.set_value(
+		"CRM Organization",
+		org.name,
+		{"acumatica_id": customer_id, "acumatica_noteid": noteid or org.acumatica_noteid},
+	)
+	frappe.db.set_value(
+		"CRM Deal",
+		{"organization": org.name, "acumatica_customer": ("is", "not set")},
+		"acumatica_customer",
+		customer_id,
+	)
+	dismiss_sync_issues("Customer", org.name, _RESOLVED)
+	return {"organization": org.name, "customer_id": customer_id}
+
+
+@frappe.whitelist(methods=["POST"])
+def confirm_new_customer(organization: str) -> dict:
+	"""A manager looked at the possible duplicates and this is a new customer: push it,
+	skipping the name and email checks. A same-VAT match is not something to confirm
+	past -- one taxpayer is one customer -- so it is refused here too."""
+	frappe.only_for(["System Manager", "Sales Manager"], True)
+	org = _unlinked_organization(organization)
+	if org.acumatica_id or org.acumatica_noteid:
+		frappe.throw(_("This organization is already linked to an Acumatica customer"))
+	settings = get_settings()
+	# the stored rows, not the cached doc: the issue may have been written a moment ago
+	for issue in frappe.get_doc("CRM Acumatica Settings").sync_issues:
+		if issue.dismissed or issue.remote_id != org.name or issue.kind != "Possible Duplicate":
+			continue
+		if any("same VAT number" in (c.get("reasons") or []) for c in _candidates(issue)):
+			frappe.throw(
+				_(
+					"An Acumatica customer has the same VAT number. Link to it, or correct the VAT number first."
+				)
+			)
+
+	frappe.db.set_value("CRM Organization", org.name, "acumatica_confirmed_new", 1)
+	dismiss_sync_issues("Customer", org.name, ("Possible Duplicate",))
+	queued = False
+	if settings.create_customer_on_status_change and settings.deal_status:
+		deal = frappe.db.get_value(
+			"CRM Deal", {"organization": org.name, "status": settings.deal_status}, "name"
+		)
+		if deal:
+			from crm.integrations.acumatica.outbound import _enqueue_push
+
+			_enqueue_push(deal, org.name)
+			queued = True
+	return {"organization": org.name, "queued": queued}
