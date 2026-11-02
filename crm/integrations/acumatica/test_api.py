@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -458,7 +459,7 @@ class TestDuplicateResolution(FrappeTestCase):
 		)
 		self.assertEqual(
 			frappe.db.get_value("CRM Organization", org.name, "acumatica_confirmed_for"),
-			outbound.confirmation_hash(facts),
+			outbound.confirmation_value(facts, ["C-A00400"]),
 		)
 		self.assertEqual(_open(org.name), [])
 		# not the ordinary job id: a push already running under it would swallow this one
@@ -552,3 +553,215 @@ class TestDuplicateResolution(FrappeTestCase):
 
 		TestMutatingEndpointsRefuseGet._refused_on_get(self, link_existing_customer)
 		TestMutatingEndpointsRefuseGet._refused_on_get(self, confirm_new_customer)
+
+
+class TestScopedManagers(FrappeTestCase):
+	"""Real scoped managers, not a patched scope_applies: an in-tree manager whose team
+	is one rep, and a manager outside the tree kept to their own records."""
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		_enable_push()
+		suffix = frappe.generate_hash(length=6)
+		self.manager = self._user(f"tree-mgr-{suffix}@example.com", "Sales Manager")
+		self.loner = self._user(f"own-mgr-{suffix}@example.com", "Sales Manager")
+		self.rep_a = self._user(f"team-rep-{suffix}@example.com", "Sales User")
+		self.rep_b = self._user(f"other-rep-{suffix}@example.com", "Sales User")
+		top = frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": self.manager, "is_group": 1}).insert(
+			ignore_permissions=True
+		)
+		frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": self.rep_a, "reports_to": top.name}).insert(
+			ignore_permissions=True
+		)
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		frappe.db.set_single_value("CRM Access Settings", "rep_customer_scope", "Own and unclaimed customers")
+		self.team_org = self._owned(self.rep_a)
+		self.other_org = self._owned(self.rep_b)
+		frappe.db.set_value("CRM Organization", self.other_org, "acumatica_id", "C-OTH1")
+
+		from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import record_sync_issue
+
+		record_sync_issue(
+			"Customer", self.other_org, "Push Blocked", "not created in Acumatica: missing the city"
+		)
+		record_sync_issue(
+			"Customer",
+			self.team_org,
+			"Possible Duplicate",
+			f"not created in Acumatica: may already be {self.other_org} [C-OTH1] (same name)",
+			[
+				{
+					"customer_id": "C-OTH1",
+					"organization": self.other_org,
+					"organization_name": self.other_org,
+					"reasons": ["same name"],
+				},
+				{
+					"customer_id": "C-REM1",
+					"organization": None,
+					"organization_name": "Remote",
+					"reasons": ["same name"],
+				},
+			],
+		)
+		record_sync_issue(
+			"Customer",
+			self.team_org,
+			"Push Failed",
+			f"CustomerID X derived from the name is already held by CRM Organization {self.other_org}",
+		)
+		person = frappe.get_doc({"doctype": "Contact", "first_name": "Other", "company_name": self.other_org})
+		person.insert(ignore_permissions=True)
+		record_sync_issue("Contact", person.name, "Push Failed", "primary contact was not set")
+		record_sync_issue("Mystery", "nothing-resolves", "Push Failed", "who knows")
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+
+	def _user(self, email, role):
+		user = frappe.get_doc(
+			{"doctype": "User", "email": email, "first_name": email.split("@")[0], "send_welcome_email": 0}
+		).insert(ignore_permissions=True)
+		user.add_roles(role)
+		return email
+
+	def _owned(self, owner):
+		org = frappe.get_doc(
+			{"doctype": "CRM Organization", "organization_name": f"Scoped {frappe.generate_hash(length=8)}"}
+		).insert(ignore_permissions=True)
+		frappe.db.set_value("CRM Organization", org.name, "account_owner", owner)
+		return org.name
+
+	def _issues_as(self, user):
+		from crm.integrations.acumatica.api import get_open_sync_issues
+
+		frappe.set_user(user)
+		try:
+			return get_open_sync_issues()
+		finally:
+			frappe.set_user("Administrator")
+
+	def test_an_in_tree_manager_sees_only_their_teams_rows_redacted(self):
+		rows = self._issues_as(self.manager)
+		about = {(r["entity"], r["remote_id"]) for r in rows}
+		self.assertNotIn(("Customer", self.other_org), about)
+		self.assertFalse([r for r in rows if r["entity"] in ("Contact", "Mystery")])
+		team = {r["kind"]: r for r in rows if r["remote_id"] == self.team_org}
+		self.assertEqual([c["customer_id"] for c in team["Possible Duplicate"]["candidates"]], ["C-REM1"])
+		for row in rows:
+			self.assertNotIn(self.other_org, row["detail"])
+			self.assertNotIn(self.other_org, json.dumps(row["candidates"]))
+
+	def test_a_manager_kept_to_their_own_records_sees_none_of_these(self):
+		self.assertEqual(
+			[r for r in self._issues_as(self.loner) if r["remote_id"] in (self.team_org, self.other_org)], []
+		)
+
+	def test_an_unscoped_admin_still_sees_everything(self):
+		rows = self._issues_as("Administrator")
+		self.assertIn(("Customer", self.other_org), {(r["entity"], r["remote_id"]) for r in rows})
+
+	def test_a_scoped_manager_cannot_read_the_settings_or_list_its_log(self):
+		import frappe.client
+
+		frappe.set_user(self.manager)
+		try:
+			with self.assertRaises(frappe.PermissionError):
+				frappe.client.get("CRM Acumatica Settings", "CRM Acumatica Settings")
+			with self.assertRaises(frappe.PermissionError):
+				frappe.get_list(
+					"CRM Acumatica Sync Issue",
+					parent_doctype="CRM Acumatica Settings",
+					fields=["remote_id", "detail"],
+					limit_page_length=0,
+				)
+		finally:
+			frappe.set_user("Administrator")
+
+	def test_an_unscoped_manager_gets_the_settings_without_the_log(self):
+		import frappe.client
+
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 0)
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		frappe.set_user(self.loner)
+		try:
+			doc = frappe.client.get("CRM Acumatica Settings", "CRM Acumatica Settings")
+			self.assertFalse(doc.get("sync_issues"))
+			saved = frappe.client.set_value(
+				"CRM Acumatica Settings", "CRM Acumatica Settings", "request_pause", 0.3
+			)
+			self.assertFalse(saved.get("sync_issues"))
+		finally:
+			frappe.set_user("Administrator")
+		# and the save left the log as it was
+		self.assertTrue(
+			[r for r in frappe.get_doc("CRM Acumatica Settings").sync_issues if r.remote_id == self.other_org]
+		)
+
+	@patch("crm.integrations.acumatica.api.AcumaticaClient")
+	def test_neither_action_reaches_another_teams_organization(self, ClientCls):
+		from crm.integrations.acumatica.api import confirm_new_customer, link_existing_customer
+
+		frappe.db.set_value("CRM Organization", self.other_org, "acumatica_id", None)
+		frappe.set_user(self.manager)
+		try:
+			with self.assertRaises(frappe.PermissionError):
+				link_existing_customer(self.other_org, "C-A00400")
+			with self.assertRaises(frappe.PermissionError):
+				confirm_new_customer(self.other_org)
+		finally:
+			frappe.set_user("Administrator")
+		ClientCls.assert_not_called()
+
+
+class TestLinkBackfill(FrappeTestCase):
+	def setUp(self):
+		frappe.set_user("Administrator")
+		_enable_push()
+
+	def tearDown(self):
+		frappe.db.rollback()
+		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
+
+	@patch("crm.integrations.acumatica.api.AcumaticaClient")
+	def test_the_linked_code_replaces_a_stale_one_but_not_on_a_quoted_deal(self, ClientCls):
+		from crm.integrations.acumatica.api import link_existing_customer
+
+		ClientCls.return_value.get_page.return_value = [
+			{"CustomerID": {"value": "C-A00401"}, "NoteID": {"value": "g-401"}}
+		]
+		org = _org()
+		stale = frappe.get_doc({"doctype": "CRM Deal", "organization": org.name, "status": "Qualification"})
+		stale.insert(ignore_permissions=True)
+		quoted = frappe.get_doc({"doctype": "CRM Deal", "organization": org.name, "status": "Qualification"})
+		quoted.insert(ignore_permissions=True)
+		frappe.db.set_value("CRM Deal", stale.name, "acumatica_customer", "C-WRONG")
+		frappe.db.set_value(
+			"CRM Deal", quoted.name, {"acumatica_customer": "C-QUOTED", "acumatica_sales_quote": "QT1"}
+		)
+
+		link_existing_customer(org.name, "C-A00401")
+
+		self.assertEqual(frappe.db.get_value("CRM Deal", stale.name, "acumatica_customer"), "C-A00401")
+		self.assertEqual(frappe.db.get_value("CRM Deal", quoted.name, "acumatica_customer"), "C-QUOTED")
+
+	@patch("crm.integrations.acumatica.api.AcumaticaClient")
+	def test_a_customer_held_under_its_noteid_is_refused(self, ClientCls):
+		from crm.integrations.acumatica.api import link_existing_customer
+
+		ClientCls.return_value.get_page.return_value = [
+			{"CustomerID": {"value": "C-A00402"}, "NoteID": {"value": "g-held"}}
+		]
+		holder = _org()
+		frappe.db.set_value("CRM Organization", holder.name, "acumatica_noteid", "g-held")
+		org = _org()
+		with self.assertRaises(frappe.ValidationError):
+			link_existing_customer(org.name, "C-A00402")
+		self.assertFalse(frappe.db.get_value("CRM Organization", org.name, "acumatica_id"))

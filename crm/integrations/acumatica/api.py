@@ -11,6 +11,7 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 	dismiss_sync_issues,
 	get_pending_retries,
 	get_settings,
+	open_sync_issues,
 )
 from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError, v
 
@@ -88,9 +89,11 @@ def test_connection() -> dict:
 def get_open_sync_issues() -> list[dict]:
 	"""The counter alone tells an admin something broke but not what.
 
-	A manager whose customers are scoped (an in-tree manager) sees no row about an
-	organization they cannot see, and no candidate customer of somebody else's: the
-	detail of a row that had one is replaced, since it names them."""
+	A manager whose customers are scoped (an in-tree manager, or one outside the tree
+	kept to their own records) gets a filtered view that fails closed: a row is shown
+	only when the organization it is about resolves and is one they can see, a
+	candidate only when it is no organization here or one they can see, and the free
+	text only where nothing in it can name somebody else's customer."""
 	frappe.only_for(["System Manager", "Sales Manager"], True)
 	settings = frappe.get_cached_doc("CRM Acumatica Settings")
 	scoped = scope_applies()
@@ -101,18 +104,13 @@ def get_open_sync_issues() -> list[dict]:
 		detail = issue.detail
 		candidates = _candidates(issue)
 		if scoped:
-			if (
-				issue.entity == "Customer"
-				and frappe.db.exists("CRM Organization", issue.remote_id)
-				and not customer_visible(issue.remote_id)
-			):
+			owner = _issue_organization(issue)
+			if not owner or not customer_visible(owner):
 				continue
-			visible = [
+			candidates = [
 				c for c in candidates if not c.get("organization") or customer_visible(c["organization"])
 			]
-			if len(visible) != len(candidates):
-				candidates = visible
-				detail = _("not created in Acumatica: it may already be an existing customer.")
+			detail = _scoped_detail(issue, candidates)
 		out.append(
 			{
 				"name": issue.name,
@@ -125,6 +123,38 @@ def get_open_sync_issues() -> list[dict]:
 			}
 		)
 	return out
+
+
+def _issue_organization(issue) -> str | None:
+	"""The organization a row is about, or None when it cannot be told -- which hides
+	the row from a scoped manager."""
+	remote_id = issue.remote_id
+	if not remote_id:
+		return None
+	if issue.entity in ("Customer", "Customer Salesperson"):
+		return remote_id if frappe.db.exists("CRM Organization", remote_id) else None
+	if issue.entity == "Contact":
+		company = frappe.db.get_value("Contact", remote_id, "company_name")
+		return company if company and frappe.db.exists("CRM Organization", company) else None
+	if issue.entity == "Deal":
+		return frappe.db.get_value("CRM Deal", remote_id, "organization") or None
+	return None
+
+
+def _scoped_detail(issue, candidates: list[dict]) -> str:
+	"""The detail a scoped manager may read. The push's own messages name other
+	organizations (a candidate, the holder of a colliding code), and an Acumatica
+	error may quote anything, so only what is rebuilt from visible facts is kept."""
+	if issue.kind == "Push Blocked":
+		# the gate's list of what is missing names nothing but fields
+		return issue.detail
+	if issue.kind == "Possible Duplicate":
+		if not candidates:
+			return _("not created in Acumatica: it may already be an existing customer.")
+		from crm.integrations.acumatica.outbound import _describe
+
+		return _("not created in Acumatica: may already be {0}.").format(_describe(candidates))
+	return _("{0}: the details are shown to a manager who sees every customer.").format(_(issue.kind))
 
 
 def _candidates(issue) -> list[dict]:
@@ -250,18 +280,7 @@ def link_existing_customer(organization: str, customer_id: str) -> dict:
 		"CRM Organization", {"acumatica_id": customer_id, "name": ("!=", org.name)}, "name"
 	)
 	if holder:
-		if scope_applies():
-			# which organization holds it may be a customer this manager cannot see
-			frappe.throw(
-				_(
-					"Customer {0} is already linked to another organization. Move the deal to that organization instead of linking a second one to it."
-				).format(customer_id)
-			)
-		frappe.throw(
-			_(
-				"Customer {0} is already linked to organization {1}. Move the deal to {1} instead of linking a second organization to it."
-			).format(customer_id, frappe.utils.escape_html(holder))
-		)
+		_refuse_held(customer_id, holder)
 
 	from crm.integrations.acumatica.outbound import _odata, _reason
 
@@ -279,19 +298,44 @@ def link_existing_customer(organization: str, customer_id: str) -> dict:
 		frappe.throw(_("Acumatica has no customer {0}").format(customer_id))
 
 	noteid = v(page[0], "NoteID")
+	if noteid:
+		# the same customer held under its NoteID alone (a sync that saw it renamed)
+		holder = frappe.db.get_value(
+			"CRM Organization", {"acumatica_noteid": noteid, "name": ("!=", org.name)}, "name"
+		)
+		if holder:
+			_refuse_held(customer_id, holder)
 	frappe.db.set_value(
 		"CRM Organization",
 		org.name,
 		{"acumatica_id": customer_id, "acumatica_noteid": noteid or org.acumatica_noteid},
 	)
+	# Every deal of the organization without a quote number gets the code, whatever it
+	# held: Create Sales Quote prefers the deal's code to the organization's. One with
+	# a quote is left as it is -- its quote was raised under that code.
 	frappe.db.set_value(
 		"CRM Deal",
-		{"organization": org.name, "acumatica_customer": ("is", "not set")},
+		{"organization": org.name, "acumatica_sales_quote": ("is", "not set")},
 		"acumatica_customer",
 		customer_id,
 	)
 	dismiss_sync_issues("Customer", org.name, _RESOLVED)
 	return {"organization": org.name, "customer_id": customer_id}
+
+
+def _refuse_held(customer_id: str, holder: str) -> None:
+	if scope_applies():
+		# which organization holds it may be a customer this manager cannot see
+		frappe.throw(
+			_(
+				"Customer {0} is already linked to another organization. Move the deal to that organization instead of linking a second one to it."
+			).format(customer_id)
+		)
+	frappe.throw(
+		_(
+			"Customer {0} is already linked to organization {1}. Move the deal to {1} instead of linking a second organization to it."
+		).format(customer_id, frappe.utils.escape_html(holder))
+	)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -313,18 +357,25 @@ def confirm_new_customer(organization: str) -> dict:
 	if not deal:
 		frappe.throw(_("No deal of this organization is waiting to create it in Acumatica"))
 
-	from crm.integrations.acumatica.outbound import _customer_facts, _enqueue_push, confirmation_hash
+	from crm.integrations.acumatica.outbound import _customer_facts, _enqueue_push, confirmation_value
 
 	facts = _customer_facts(
 		frappe.get_doc("CRM Deal", deal), frappe.get_doc("CRM Organization", org.name), settings
 	)
 	if facts.missing:
 		frappe.throw(_("Complete the organization first: missing {0}").format(", ".join(facts.missing)))
+	# confirmed past the candidates the manager was shown, and only those: one that
+	# turns up later still blocks
+	shown = [
+		c.get("customer_id")
+		for issue in open_sync_issues("Customer", org.name, ("Possible Duplicate",))
+		for c in _candidates(issue)
+	]
 	frappe.db.set_value(
 		"CRM Organization",
 		org.name,
 		"acumatica_confirmed_for",
-		confirmation_hash(facts),
+		confirmation_value(facts, shown),
 		update_modified=False,
 	)
 	dismiss_sync_issues("Customer", org.name, ("Possible Duplicate",))
