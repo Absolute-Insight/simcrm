@@ -15,12 +15,17 @@
       :width="mobile ? '260px' : undefined"
       class="border-r border-[var(--v-shell-hairline)]"
     >
-      <div class="flex h-full flex-col p-2">
-        <SidebarBrand
-          :isCollapsed="isCollapsed"
-          @toggle="isSidebarCollapsed = !isSidebarCollapsed"
-        >
-          <!-- Notifications and Suggestions are panels, not places, so they sit
+      <div class="flex h-full flex-col px-2 pb-2">
+        <!-- The header band: the brand row sits in a strip exactly as tall as
+             the page header beside it, with its hairline at the same height,
+             so the two read as one bar. In light mode the band carries its own
+             gradient (index.css, .v-head-band). -->
+        <div class="v-head-band v-head-band--sidebar -mx-2 px-2">
+          <SidebarBrand
+            :isCollapsed="isCollapsed"
+            @toggle="isSidebarCollapsed = !isSidebarCollapsed"
+          >
+            <!-- Notifications and Suggestions are panels, not places, so they sit
                with the collapse control rather than in the nav list below.
 
                Icon-only costs the two states the labelled rows used to show: a
@@ -29,45 +34,46 @@
                title/aria-label does instead -- that distinction was deliberate
                and is not worth losing to a layout change. The dot appears only
                for a count we actually have. -->
-          <template #actions>
-            <button
-              id="notifications-btn"
-              class="relative grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] hover:bg-surface-gray-2"
-              :class="
-                notificationsActive
-                  ? 'bg-surface-gray-3 text-ink-gray-9'
-                  : 'text-ink-gray-7'
-              "
-              :aria-label="notificationsLabel"
-              :title="notificationsLabel"
-              @click="onNotificationsClick"
-            >
-              <NotificationsIcon class="size-4 text-ink-blue-6" />
-              <span
-                v-if="unreadNotificationsCount"
-                class="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-surface-gray-9 ring-1 ring-[var(--surface-gray-1)]"
-              />
-            </button>
-            <button
-              id="suggestions-btn"
-              class="relative grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] hover:bg-surface-gray-2"
-              :class="
-                suggestionsActive
-                  ? 'bg-surface-gray-3 text-ink-gray-9'
-                  : 'text-ink-gray-7'
-              "
-              :aria-label="suggestionsLabel"
-              :title="suggestionsLabel"
-              @click="onSuggestionsClick"
-            >
-              <SuggestionsIcon class="size-4 text-ink-orange-6" />
-              <span
-                v-if="openSuggestionsCount"
-                class="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-surface-gray-9 ring-1 ring-[var(--surface-gray-1)]"
-              />
-            </button>
-          </template>
-        </SidebarBrand>
+            <template #actions>
+              <button
+                id="notifications-btn"
+                class="relative grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] hover:bg-surface-gray-2"
+                :class="
+                  notificationsActive
+                    ? 'bg-surface-gray-3 text-ink-gray-9'
+                    : 'text-ink-gray-7'
+                "
+                :aria-label="notificationsLabel"
+                :title="notificationsLabel"
+                @click="onNotificationsClick"
+              >
+                <NotificationsIcon class="size-4 text-ink-blue-6" />
+                <span
+                  v-if="unreadNotificationsCount"
+                  class="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-surface-gray-9 ring-1 ring-[var(--surface-gray-1)]"
+                />
+              </button>
+              <button
+                id="suggestions-btn"
+                class="relative grid size-6 shrink-0 place-items-center rounded-[var(--v-radius-control)] hover:bg-surface-gray-2"
+                :class="
+                  suggestionsActive
+                    ? 'bg-surface-gray-3 text-ink-gray-9'
+                    : 'text-ink-gray-7'
+                "
+                :aria-label="suggestionsLabel"
+                :title="suggestionsLabel"
+                @click="onSuggestionsClick"
+              >
+                <SuggestionsIcon class="size-4 text-ink-orange-6" />
+                <span
+                  v-if="openSuggestionsCount"
+                  class="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-surface-gray-9 ring-1 ring-[var(--surface-gray-1)]"
+                />
+              </button>
+            </template>
+          </SidebarBrand>
+        </div>
 
         <!-- overflow-y-auto forces overflow-x to clip too, which would slice the
              active row's shadow. Widen the scroll box to the sidebar edges and

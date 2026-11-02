@@ -1,5 +1,5 @@
 <template>
-  <div class="flex pr-3">
+  <div class="v-head-band flex min-h-[var(--v-toolbar-h)] pr-3">
     <div class="z-20 ml-2 flex items-center justify-center">
       <Button
         class="size-7"

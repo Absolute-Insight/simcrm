@@ -632,13 +632,12 @@ input[type='checkbox']:checked {
    signature on every Save button would leave the rail saying nothing.
 
    The ink is --cta-ink, a deep navy, because white cannot sit on a light blue:
-   the dark theme's sky against white is 2.54:1. The generator asserts both ramp stops
+   brand-sky against white is 2.54:1. The generator asserts both ramp stops
    against this ink at AA, so the pairing cannot quietly drift apart.
 
    The edge is an inset shadow rather than a border so the button does not grow
-   by 2px. It is not decoration: the pale top of the light theme's sky-to-steel
-   ramp is far under 3:1 against its canvas, which leaves the control's own
-   boundary short of SC 1.4.11 there.
+   by 2px. It is not decoration: the fill alone is 1.59:1 against the light
+   canvas, which leaves the control's own boundary short of SC 1.4.11 there.
 
    Hover and active repeat the element in the selector on purpose. Tailwind's
    `hover:bg-surface-gray-9` is specificity (0,2,0); a bare class rule would
@@ -702,53 +701,51 @@ input[type='checkbox']:checked {
   }
 }
 
-/* Light theme: the shell takes the brand gradients as they were sampled — the
-   coral ramp on the sidebar, the blue one on the page canvas behind every
-   card. Unlayered so it beats the `bg-surface-base` utility on the canvas
-   element; the sidebar's own `bg-surface-sidebar` fill is cleared through its
-   token so the gradient on the wrapper shows through.
+/* The header band. The sidebar's brand row and the page header are one bar:
+   the same height (--v-toolbar-h) and a hairline at the same y. The sidebar's
+   band is painted as a background clipped to that height rather than sized to
+   its element, because the collapsed rail stacks the brand row into a column
+   taller than the bar.
 
-   The gradients are far darker than the near-white the gray inks were solved
-   against, so text standing directly on them is re-stepped: ink-gray-4/5 take
-   the ink-gray-6 colour on the sidebar (coral is its binding stop), and on the
-   canvas every step up to 7 takes the 7 or 8 colour (steel binds). The
-   generator asserts both pairings. Anything with its own fill — cards, chips,
-   filled inputs — gets the original ladder back, because that is the surface
-   its text actually sits on. "Own fill" means a bare `bg-surface-*` class: not
-   a `hover:` one, which is transparent at rest, not the sidebar's cleared
-   fill, and no `.form-control` field or its children — SidePanelLayout
-   clears those fields' frappe-ui fill, so their placeholders sit on the
-   gradient whatever class they still carry. The `--v-ink-*` copies are resolved on :root, so
-   they carry the untouched values down past the overrides. */
-:root {
-  --v-ink-4: var(--ink-gray-4);
-  --v-ink-5: var(--ink-gray-5);
-  --v-ink-6: var(--ink-gray-6);
-  --v-ink-7: var(--ink-gray-7);
-  --v-ink-blue-6: var(--ink-blue-6);
-  --v-ink-cyan-6: var(--ink-cyan-6);
-  --v-ink-green-6: var(--ink-green-6);
-  --v-ink-orange-6: var(--ink-orange-6);
-  --v-ink-pink-6: var(--ink-pink-6);
-  --v-ink-purple-6: var(--ink-purple-6);
-  --v-ink-red-6: var(--ink-red-6);
-  --v-ink-teal-6: var(--ink-teal-6);
-  --v-ink-violet-6: var(--ink-violet-6);
-  --v-ink-yellow-6: var(--ink-yellow-6);
-  --v-ink-amber-6: var(--ink-amber-6);
+   Light mode colours the bar from the brand artwork: coral to blush over the
+   sidebar, sky to steel over the page. Everything below the bar stays on the
+   stock light surfaces. Unlayered, so it beats .v-shell-header above. */
+.v-head-band--sidebar {
+  background: linear-gradient(var(--v-shell-hairline), var(--v-shell-hairline))
+    0 calc(var(--v-toolbar-h) - 1px) / 100% 1px no-repeat;
 }
-:root:not([data-theme='dark']) .v-shell-sidebar {
-  background: var(--shell-sidebar-gradient);
-  --surface-sidebar: transparent;
-  --ink-gray-4: var(--v-ink-6);
-  --ink-gray-5: var(--v-ink-6);
+:root:not([data-theme='dark']) {
+  --v-head-sidebar: linear-gradient(90deg, #efa29c 0%, #fad8d6 100%);
+  --v-head-page: linear-gradient(90deg, #b7cee1 0%, #6097c3 100%);
 }
-/* Tinted -6 inks — the sidebar's nav icons and "Clear Demo Data" row, the
-   error pages' octagon on the canvas — read at about 2:1 on either gradient.
-   Same re-step as the grays: on a gradient a -6 ink takes its own hue's -9, the
-   step AGENTS.md already reserves for coloured text because it clears every
-   surface. Filled surfaces get the -6 back below. */
-:root:not([data-theme='dark']) :is(.v-shell-sidebar, .v-shell-canvas) {
+:root:not([data-theme='dark']) .v-head-band {
+  background: var(--v-head-page);
+}
+:root:not([data-theme='dark']) .v-head-band--sidebar {
+  background:
+    linear-gradient(var(--v-shell-hairline), var(--v-shell-hairline)) 0
+      calc(var(--v-toolbar-h) - 1px) / 100% 1px no-repeat,
+    var(--v-head-sidebar) 0 0 / 100% var(--v-toolbar-h) no-repeat;
+}
+/* The light greys and the -6 tints are tuned for near-white grounds; on the
+   bar (steel is a mid blue) they fall under AA. Step them darker for anything
+   standing on the bar. Filled controls inside it only gain contrast.
+
+   The quiet greys (4/5: inactive breadcrumbs, separators) land on the stock
+   gray-7, 4.6:1 at the steel end, so a breadcrumb trail keeps its quiet ->
+   hover -> current steps instead of flattening to one ink. That needs the
+   value captured on :root, since --ink-gray-7 is itself redefined here.
+   Amber and yellow are left alone: no step of either is text on a light
+   ground (see AGENTS.md), and the bar has none. Above the steel end only
+   gray-8/9 are text-safe; the -9 tints there are icon-grade (3:1). */
+:root:not([data-theme='dark']) {
+  --v-head-quiet: var(--ink-gray-7);
+}
+:root:not([data-theme='dark']) .v-head-band {
+  --ink-gray-4: var(--v-head-quiet);
+  --ink-gray-5: var(--v-head-quiet);
+  --ink-gray-6: var(--ink-gray-8);
+  --ink-gray-7: var(--ink-gray-8);
   --ink-blue-6: var(--ink-blue-9);
   --ink-cyan-6: var(--ink-cyan-9);
   --ink-green-6: var(--ink-green-9);
@@ -758,67 +755,6 @@ input[type='checkbox']:checked {
   --ink-red-6: var(--ink-red-9);
   --ink-teal-6: var(--ink-teal-9);
   --ink-violet-6: var(--ink-violet-9);
-  --ink-yellow-6: var(--ink-yellow-9);
-  --ink-amber-6: var(--ink-amber-9);
-}
-/* Status icons in kanban column heads stand straight on the canvas, and the
-   amber and orange hues drop to ~1:1 against the steel end. A halo in the card
-   fill gives every shape a 3:1 edge without changing the hue that carries the
-   status or shrinking the icon. Scoped to the head: everywhere else these icons
-   sit on a card. */
-:root:not([data-theme='dark']) .v-shell-canvas .v-kanban-head svg {
-  filter: drop-shadow(0 0 1px var(--surface-elevation-2))
-    drop-shadow(0 0 1px var(--surface-elevation-2));
-}
-:root:not([data-theme='dark']) .v-shell-canvas {
-  background: var(--shell-canvas-gradient);
-  --ink-gray-4: var(--v-ink-7);
-  --ink-gray-5: var(--v-ink-7);
-  --ink-gray-6: var(--ink-gray-8);
-  --ink-gray-7: var(--ink-gray-8);
-}
-:root:not([data-theme='dark']) .v-shell-header {
-  background: transparent;
-}
-/* A later preflight rule pins placeholders to a literal mid-gray, which is
-   1.5:1 on the steel end. Route them back through the ink token so they take
-   the re-step on the gradient and the stock ladder inside a filled field. */
-:root:not([data-theme='dark'])
-  :is(.v-shell-sidebar, .v-shell-canvas)
-  :is(input, textarea)::placeholder {
-  color: var(--ink-gray-4);
-}
-:root:not([data-theme='dark'])
-  :is(.v-shell-sidebar, .v-shell-canvas)
-  :where(
-    .v-glass,
-    .v-glass-sm,
-    [class^='bg-surface-']:not(
-        .bg-surface-sidebar,
-        .form-control,
-        .form-control *
-      ),
-    [class*=' bg-surface-']:not(
-        .bg-surface-sidebar,
-        .form-control,
-        .form-control *
-      )
-  ) {
-  --ink-gray-4: var(--v-ink-4);
-  --ink-gray-5: var(--v-ink-5);
-  --ink-gray-6: var(--v-ink-6);
-  --ink-gray-7: var(--v-ink-7);
-  --ink-blue-6: var(--v-ink-blue-6);
-  --ink-cyan-6: var(--v-ink-cyan-6);
-  --ink-green-6: var(--v-ink-green-6);
-  --ink-orange-6: var(--v-ink-orange-6);
-  --ink-pink-6: var(--v-ink-pink-6);
-  --ink-purple-6: var(--v-ink-purple-6);
-  --ink-red-6: var(--v-ink-red-6);
-  --ink-teal-6: var(--v-ink-teal-6);
-  --ink-violet-6: var(--v-ink-violet-6);
-  --ink-yellow-6: var(--v-ink-yellow-6);
-  --ink-amber-6: var(--v-ink-amber-6);
 }
 /* The active nav row: a lit rim and a whisper of brand glow behind the
    position rail. Unlayered on purpose — it has to win over frappe-ui's
