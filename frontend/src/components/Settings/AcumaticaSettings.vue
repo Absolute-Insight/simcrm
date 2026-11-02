@@ -202,19 +202,13 @@
         </template>
       </div>
 
-      <div
-        v-if="
-          settings.doc.create_deals_from_quotes ||
-          settings.doc.create_customer_on_status_change
-        "
-        class="flex flex-col gap-4 border-t border-outline-elevation-2 pt-4"
-      >
+      <div class="flex flex-col gap-4 border-t border-outline-elevation-2 pt-4">
         <div class="flex flex-col gap-2">
           <FormLabel :label="__('Salesperson owners')" />
           <p class="text-p-sm text-ink-gray-6">
             {{
               __(
-                "Acumatica salesperson ID → CRM user. Quotes from anyone not listed go to Administrator; a customer created from a deal gets its owner's salesperson when exactly one ID maps to them.",
+                "Acumatica salesperson ID → CRM user, and the branch their quotes are booked in. Quotes from anyone not listed go to Administrator; a customer created from a deal gets its owner's salesperson when exactly one ID maps to them; a quote created from a deal goes to its owner's branch, or the API user's default branch when none is set.",
               )
             }}
           </p>
@@ -254,6 +248,13 @@
               class="w-64"
               @update:model-value="syncOwners"
             />
+            <FormControl
+              v-model="row.branch"
+              :placeholder="__('Quote branch')"
+              :aria-label="__('Quote branch')"
+              class="w-32"
+              @update:model-value="syncOwners"
+            />
             <Button
               variant="ghost"
               icon="x"
@@ -265,7 +266,7 @@
             <Button
               :label="__('Add salesperson')"
               icon-left="plus"
-              @click="ownerRows.push({ code: '', user: '' })"
+              @click="ownerRows.push({ code: '', user: '', branch: '' })"
             />
           </div>
         </div>
@@ -394,7 +395,11 @@ import {
   toast,
 } from 'frappe-ui'
 import Link from '@/components/Controls/Link.vue'
-import { parseOwnerMap, serialiseOwnerMap } from '@/utils/salespersonOwners.js'
+import {
+  parseOwnerMap,
+  serialiseBranchMap,
+  serialiseOwnerMap,
+} from '@/utils/salespersonOwners.js'
 import {
   canConfirmNew,
   duplicateCandidates,
@@ -433,11 +438,12 @@ const ownerRows = ref([])
 // which would overwrite it with the first edit.
 const ownersUnreadable = ref(false)
 let ownersWritten = null
+let branchesWritten = null
 watch(
-  () => settings.doc?.salesperson_owners,
-  (raw) => {
-    if (raw === ownersWritten) return
-    const rows = parseOwnerMap(raw)
+  () => [settings.doc?.salesperson_owners, settings.doc?.salesperson_branches],
+  ([raw, rawBranches]) => {
+    if (raw === ownersWritten && rawBranches === branchesWritten) return
+    const rows = parseOwnerMap(raw, rawBranches)
     ownersUnreadable.value = rows === null
     ownerRows.value = rows || []
   },
@@ -446,7 +452,9 @@ watch(
 
 function syncOwners() {
   ownersWritten = serialiseOwnerMap(ownerRows.value)
+  branchesWritten = serialiseBranchMap(ownerRows.value)
   settings.doc.salesperson_owners = ownersWritten
+  settings.doc.salesperson_branches = branchesWritten
 }
 
 function removeOwner(i) {
