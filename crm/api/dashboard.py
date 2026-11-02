@@ -1774,8 +1774,8 @@ def won_by_salesperson(
 
 	Only a move into Won stamps ``closed_date``, so a lost deal is dated by that
 	when an import set it, else by the status change that lost it, else by when it
-	was last touched. An Expired deal is dated by the change that expired it, else
-	by when it was last touched. ``win_rate`` is a whole percentage of won over won +
+	was last touched. An Expired deal is dated by its quote's validity date (see
+	``expired_on``), else by the change that expired it. ``win_rate`` is a whole percentage of won over won +
 	lost + expired, or ``None`` with none of them: Acumatica almost never cancels a
 	quote a customer did not take -- it is left open until it expires -- so a rate
 	over won + lost alone read 100% for nearly every rep. Expired is still not a
@@ -1818,7 +1818,16 @@ def won_by_salesperson(
 		.where((Status.type == "Lost") & lost_on.between(from_date, to_date))
 		.groupby(owner)
 	)
-	expired_on = Coalesce(Date(Log.to_date), Date(Deal.modified))
+	# By the quote's validity date, which is when it really ran out: the sweep expires
+	# a quote only once validity plus grace has passed, and its first run on a site
+	# with history expires two years of quotes in one night -- dated by the log, they
+	# all landed in the go-live month and sank its win rate to nothing. The log date
+	# for a deal with no validity, or one a rep expired before its validity was up.
+	changed_on = Coalesce(Date(Log.to_date), Date(Deal.modified))
+	expired_on = Coalesce(
+		Case().when(Deal.expected_closure_date <= changed_on, Deal.expected_closure_date),
+		changed_on,
+	)
 	expired_query = (
 		frappe.qb.from_(Deal)
 		.left_join(User)

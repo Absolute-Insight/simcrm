@@ -408,12 +408,21 @@ class WonByRepTest(IntegrationTestCase):
 			},
 		)
 
-	def _expired(self, owner, expired_at):
+	def _expired(self, owner, expired_at, valid_until=None):
 		from crm.fcrm.doctype.crm_deal_status.crm_deal_status import ensure_expired_status
 
 		status = ensure_expired_status()
 		name = make_won_deal(self.org, 300, "2019-05-01")
-		frappe.db.set_value("CRM Deal", name, {"status": status, "deal_owner": owner, "closed_date": None})
+		frappe.db.set_value(
+			"CRM Deal",
+			name,
+			{
+				"status": status,
+				"deal_owner": owner,
+				"closed_date": None,
+				"expected_closure_date": valid_until,
+			},
+		)
 		frappe.get_doc(
 			{
 				"doctype": "CRM Status Change Log",
@@ -436,6 +445,14 @@ class WonByRepTest(IntegrationTestCase):
 		self._expired("a@example.com", "2019-07-20 02:00:00")  # after the period
 		row = self._rows()[0]
 		self.assertEqual((row["won_deals"], row["closed_deals"], row["win_rate_pct"]), (1, 2, 50))
+
+	def test_a_quote_expires_when_its_validity_ran_out_not_when_the_sweep_ran(self):
+		"""The first sweep on a site with history expires every stale quote in one
+		night; dated by that night, they would all sink the go-live month's rate."""
+		self._won("a@example.com", 100, "2019-05-01")
+		self._expired("a@example.com", "2019-09-01 02:00:00", valid_until="2019-05-15")
+		self.assertEqual(self._rows()[0]["closed_deals"], 2)
+		self.assertEqual(self._rows(from_date="2019-09-01", to_date="2019-09-30"), [])
 
 	def test_a_rep_whose_quotes_only_expired_still_appears_at_zero(self):
 		self._won("a@example.com", 100, "2019-05-01")
