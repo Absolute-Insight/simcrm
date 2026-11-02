@@ -149,7 +149,9 @@ The worker, in order:
    across them stalled reps' saves of the organization and managers' actions. Only
    then is the organization re-read `for_update`: already linked → stop; the
    confirmation changed since step 4 → stop (the job `confirm_new_customer` queued
-   decides on it). Then PUT, link, **commit** — so no later failure in the job can
+   decides on it); an in-flight marker this run did not start with → stop (another
+   job sent a PUT that got no answer; the next push recovers what it made). Then
+   PUT, link, **commit** — so no later failure in the job can
    roll the link back.
 
 Any duplicate hit → no PUT; a **"Possible Duplicate"** sync issue whose detail names
@@ -178,13 +180,19 @@ the log: the `sync_issues` table is permlevel 1 (System Manager only), which kee
 it out of `frappe.client.get` — but frappe lists a Single's child rows to anyone who
 can read the Single (`get_list(child, parent_doctype=…)` checks the parent only), so
 the settings' `has_permission` hook refuses the whole document to a manager whose
-customers are scoped. They see the panel's error state; the log reaches them only
-through `get_open_sync_issues`, which **fails closed** for them: a row is shown only
+customers are scoped. Their panel shows "Connection settings are managed by a System
+Manager" in place of the settings, and below it the status and their own issue
+list with its actions. The log reaches them only through `get_open_sync_issues`
+(and `get_sync_status` counts the same rows and withholds the last sync error's
+text), which **fails closed** for them: a row is shown only
 if its organization resolves (Customer / Customer Salesperson: `remote_id`; Contact:
 its `company_name`; Deal: its organization; anything else hidden) and is
 `customer_visible`, candidates that are someone else's organization are dropped, and
 the detail is kept only for Push Blocked (it names fields), rebuilt from the visible
-candidates for Possible Duplicate, and replaced for every other kind.
+candidates for Possible Duplicate, and replaced for every other kind. Their
+`dismiss_sync_issue` accepts only a row that list would show them, and
+`confirm_new_customer` refuses an organization whose duplicate row has a candidate
+they cannot see — a manager who sees every customer must review that one.
 
 Resolution, in the settings panel's sync-issue list (`api.py`, POST only, System
 Manager / Sales Manager, plus write permission on the organization):
@@ -199,7 +207,8 @@ Manager / Sales Manager, plus write permission on the organization):
 - **Create as new** (`confirm_new_customer`) — for any candidate, a same-VAT match
   included (MBP holds several accounts for one taxpayer — branches; the dialog
   says so when the VAT matched). Needs a deal in the trigger status that passes the
-  gate; stores `confirmation_hash` of it in `acumatica_confirmed_for` and enqueues
+  gate; stores `confirmation_hash` of it in `acumatica_confirmed_for` (a second
+  confirm with no open row keeps the codes already confirmed past) and enqueues
   the push under its own job id (`acumatica_customer_<org>_confirm`), because a push
   already running under the ordinary id would swallow a deduplicated enqueue.
 
