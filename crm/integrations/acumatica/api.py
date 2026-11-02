@@ -7,6 +7,7 @@ from frappe import _
 from frappe.utils.background_jobs import is_job_enqueued
 
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
+	dismiss_sync_issue_row,
 	dismiss_sync_issues,
 	get_pending_retries,
 	get_settings,
@@ -17,6 +18,7 @@ from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError, v
 # and the job id is shared with the sweep and the webhook so only one can be queued --
 # so they live with the importer.
 from crm.integrations.acumatica.importer import BACKFILL_TIMEOUT, SYNC_JOB_ID
+from crm.permissions.customers import customer_visible, scope_applies
 
 
 @frappe.whitelist(methods=["POST"])
@@ -84,22 +86,45 @@ def test_connection() -> dict:
 
 @frappe.whitelist()
 def get_open_sync_issues() -> list[dict]:
-	"""The counter alone tells an admin something broke but not what."""
+	"""The counter alone tells an admin something broke but not what.
+
+	A manager whose customers are scoped (an in-tree manager) sees no row about an
+	organization they cannot see, and no candidate customer of somebody else's: the
+	detail of a row that had one is replaced, since it names them."""
 	frappe.only_for(["System Manager", "Sales Manager"], True)
 	settings = frappe.get_cached_doc("CRM Acumatica Settings")
-	return [
-		{
-			"name": issue.name,
-			"entity": issue.entity,
-			"remote_id": issue.remote_id,
-			"kind": issue.kind,
-			"detail": issue.detail,
-			"candidates": _candidates(issue),
-			"detected_on": issue.detected_on,
-		}
-		for issue in settings.sync_issues
-		if not issue.dismissed
-	]
+	scoped = scope_applies()
+	out = []
+	for issue in settings.sync_issues:
+		if issue.dismissed:
+			continue
+		detail = issue.detail
+		candidates = _candidates(issue)
+		if scoped:
+			if (
+				issue.entity == "Customer"
+				and frappe.db.exists("CRM Organization", issue.remote_id)
+				and not customer_visible(issue.remote_id)
+			):
+				continue
+			visible = [
+				c for c in candidates if not c.get("organization") or customer_visible(c["organization"])
+			]
+			if len(visible) != len(candidates):
+				candidates = visible
+				detail = _("not created in Acumatica: it may already be an existing customer.")
+		out.append(
+			{
+				"name": issue.name,
+				"entity": issue.entity,
+				"remote_id": issue.remote_id,
+				"kind": issue.kind,
+				"detail": detail,
+				"candidates": candidates,
+				"detected_on": issue.detected_on,
+			}
+		)
+	return out
 
 
 def _candidates(issue) -> list[dict]:
@@ -119,18 +144,14 @@ def _candidates(issue) -> list[dict]:
 def dismiss_sync_issue(issue_name: str | int) -> bool:
 	"""Child rows autoincrement, so ``get_open_sync_issues`` hands the panel an int and
 	the panel posts it back as a JSON number. A bare ``str`` annotation made Frappe's
-	argument validation answer 417 to every real Dismiss click."""
+	argument validation answer 417 to every real Dismiss click. The row alone is
+	written -- never the whole Single, which a job may be writing at the same time."""
 	frappe.only_for(["System Manager", "Sales Manager"], True)
-	settings = frappe.get_doc("CRM Acumatica Settings")
-	for issue in settings.sync_issues:
-		# an int from the panel, a string from anything that stringified it first
-		if str(issue.name) == str(issue_name):
-			issue.dismissed = 1
-			# clearing a log row must not be blocked by the config validations
-			settings.flags.ignore_validate = True
-			settings.save(ignore_permissions=True)
-			return True
-	return False
+	try:
+		name = int(issue_name)
+	except (TypeError, ValueError):
+		return False
+	return dismiss_sync_issue_row(name)
 
 
 @frappe.whitelist()
@@ -190,7 +211,7 @@ def get_crm_form_script():
 # them (C-A00403). Anything else is not a code this would ever hold, and never reaches
 # an OData filter.
 CUSTOMER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-./]{0,29}$")
-_RESOLVED = ("Possible Duplicate", "Push Blocked")
+_RESOLVED = ("Possible Duplicate", "Push Blocked", "Push Failed")
 
 
 def _unlinked_organization(organization: str):
@@ -229,6 +250,13 @@ def link_existing_customer(organization: str, customer_id: str) -> dict:
 		"CRM Organization", {"acumatica_id": customer_id, "name": ("!=", org.name)}, "name"
 	)
 	if holder:
+		if scope_applies():
+			# which organization holds it may be a customer this manager cannot see
+			frappe.throw(
+				_(
+					"Customer {0} is already linked to another organization. Move the deal to that organization instead of linking a second one to it."
+				).format(customer_id)
+			)
 		frappe.throw(
 			_(
 				"Customer {0} is already linked to organization {1}. Move the deal to {1} instead of linking a second organization to it."
@@ -268,35 +296,40 @@ def link_existing_customer(organization: str, customer_id: str) -> dict:
 
 @frappe.whitelist(methods=["POST"])
 def confirm_new_customer(organization: str) -> dict:
-	"""A manager looked at the possible duplicates and this is a new customer: push it,
-	skipping the name and email checks. A same-VAT match is not something to confirm
-	past -- one taxpayer is one customer -- so it is refused here too."""
+	"""A manager looked at the possible duplicates and this is a new customer -- a
+	same-VAT match included, since one taxpayer can hold several accounts (MBP keeps
+	branches apart). What they confirmed is recorded as a fingerprint of the name,
+	VAT number and primary-contact email (outbound.confirmation_hash) of the deal
+	waiting on it: the push skips the duplicate checks only while the organization
+	still matches it."""
 	frappe.only_for(["System Manager", "Sales Manager"], True)
 	org = _unlinked_organization(organization)
 	if org.acumatica_id or org.acumatica_noteid:
 		frappe.throw(_("This organization is already linked to an Acumatica customer"))
 	settings = get_settings()
-	# the stored rows, not the cached doc: the issue may have been written a moment ago
-	for issue in frappe.get_doc("CRM Acumatica Settings").sync_issues:
-		if issue.dismissed or issue.remote_id != org.name or issue.kind != "Possible Duplicate":
-			continue
-		if any("same VAT number" in (c.get("reasons") or []) for c in _candidates(issue)):
-			frappe.throw(
-				_(
-					"An Acumatica customer has the same VAT number. Link to it, or correct the VAT number first."
-				)
-			)
+	if not (settings.create_customer_on_status_change and settings.deal_status):
+		frappe.throw(_("Creating customers in Acumatica is switched off"))
+	deal = frappe.db.get_value("CRM Deal", {"organization": org.name, "status": settings.deal_status}, "name")
+	if not deal:
+		frappe.throw(_("No deal of this organization is waiting to create it in Acumatica"))
 
-	frappe.db.set_value("CRM Organization", org.name, "acumatica_confirmed_new", 1)
+	from crm.integrations.acumatica.outbound import _customer_facts, _enqueue_push, confirmation_hash
+
+	facts = _customer_facts(
+		frappe.get_doc("CRM Deal", deal), frappe.get_doc("CRM Organization", org.name), settings
+	)
+	if facts.missing:
+		frappe.throw(_("Complete the organization first: missing {0}").format(", ".join(facts.missing)))
+	frappe.db.set_value(
+		"CRM Organization",
+		org.name,
+		"acumatica_confirmed_for",
+		confirmation_hash(facts),
+		update_modified=False,
+	)
 	dismiss_sync_issues("Customer", org.name, ("Possible Duplicate",))
-	queued = False
-	if settings.create_customer_on_status_change and settings.deal_status:
-		deal = frappe.db.get_value(
-			"CRM Deal", {"organization": org.name, "status": settings.deal_status}, "name"
-		)
-		if deal:
-			from crm.integrations.acumatica.outbound import _enqueue_push
-
-			_enqueue_push(deal, org.name)
-			queued = True
-	return {"organization": org.name, "queued": queued}
+	# A job of its own: one already running for this organization would swallow a
+	# deduplicated enqueue under the ordinary id -- and, having read the organization
+	# before this, report the duplicate all over again.
+	_enqueue_push(deal, org.name, job_suffix="_confirm")
+	return {"organization": org.name, "queued": True}

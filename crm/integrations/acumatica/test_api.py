@@ -438,38 +438,46 @@ class TestDuplicateResolution(FrappeTestCase):
 			link_existing_customer("No Such Org 9f8e7d", "C-A00400")
 
 	@patch("crm.integrations.acumatica.outbound.frappe.enqueue")
-	def test_confirm_new_customer_marks_it_and_queues_the_push(self, enqueue):
+	def test_confirm_new_customer_records_what_was_confirmed_and_queues_its_own_job(self, enqueue):
+		from crm.integrations.acumatica import outbound
 		from crm.integrations.acumatica.api import confirm_new_customer
+		from crm.integrations.acumatica.test_outbound import _complete_deal
 
-		org = _org()
-		frappe.flags.in_demo_seed = True  # keep the insert's own hook out of the count
-		try:
-			deal = frappe.get_doc({"doctype": "CRM Deal", "organization": org.name, "status": "Won"})
-			deal.insert(ignore_permissions=True)
-		finally:
-			frappe.flags.in_demo_seed = False
-		_duplicate_issue(org.name)
+		org, deal = _complete_deal(vat="4123456789")
+		# a same-VAT match is confirmable: one taxpayer may hold several accounts
+		_duplicate_issue(org.name, reasons=("same VAT number",))
 		enqueue.reset_mock()
 
 		out = confirm_new_customer(org.name)
 
 		self.assertTrue(out["queued"])
-		self.assertEqual(frappe.db.get_value("CRM Organization", org.name, "acumatica_confirmed_new"), 1)
+		facts = outbound._customer_facts(
+			frappe.get_doc("CRM Deal", deal.name),
+			frappe.get_doc("CRM Organization", org.name),
+			frappe.get_cached_doc("CRM Acumatica Settings"),
+		)
+		self.assertEqual(
+			frappe.db.get_value("CRM Organization", org.name, "acumatica_confirmed_for"),
+			outbound.confirmation_hash(facts),
+		)
 		self.assertEqual(_open(org.name), [])
+		# not the ordinary job id: a push already running under it would swallow this one
 		pushes = [
-			c for c in enqueue.call_args_list if c.kwargs.get("job_id") == f"acumatica_customer_{org.name}"
+			c
+			for c in enqueue.call_args_list
+			if c.kwargs.get("job_id") == f"acumatica_customer_{org.name}_confirm"
 		]
 		self.assertEqual(len(pushes), 1)
 		self.assertEqual(pushes[0].kwargs["deal"], deal.name)
 
-	def test_confirm_refuses_past_a_same_vat_match(self):
+	def test_confirm_needs_a_deal_waiting_on_it(self):
 		from crm.integrations.acumatica.api import confirm_new_customer
 
 		org = _org()
-		_duplicate_issue(org.name, reasons=("same VAT number", "same name"))
+		_duplicate_issue(org.name)
 		with self.assertRaises(frappe.ValidationError):
 			confirm_new_customer(org.name)
-		self.assertFalse(frappe.db.get_value("CRM Organization", org.name, "acumatica_confirmed_new"))
+		self.assertFalse(frappe.db.get_value("CRM Organization", org.name, "acumatica_confirmed_for"))
 
 	def test_confirm_refuses_a_linked_organization(self):
 		from crm.integrations.acumatica.api import confirm_new_customer
@@ -490,7 +498,54 @@ class TestDuplicateResolution(FrappeTestCase):
 			confirm_new_customer(org.name)
 		frappe.set_user("Administrator")
 		ClientCls.assert_not_called()
-		self.assertFalse(frappe.db.get_value("CRM Organization", org.name, "acumatica_confirmed_new"))
+		self.assertFalse(frappe.db.get_value("CRM Organization", org.name, "acumatica_confirmed_for"))
+
+	@patch("crm.integrations.acumatica.api.AcumaticaClient")
+	@patch("crm.integrations.acumatica.api.scope_applies", return_value=True)
+	def test_a_scoped_manager_is_not_told_who_holds_the_code(self, _scoped, ClientCls):
+		from crm.integrations.acumatica.api import link_existing_customer
+
+		holder = _org(customer_id="C-HELD2")
+		org = _org()
+		with self.assertRaises(frappe.ValidationError) as caught:
+			link_existing_customer(org.name, "C-HELD2")
+		self.assertNotIn(holder.name, str(caught.exception))
+
+	def test_a_scoped_manager_sees_no_row_or_candidate_they_may_not_see(self):
+		from crm.integrations.acumatica import api
+
+		hidden, mine = _org(), _org()
+		_duplicate_issue(hidden.name)
+		from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import record_sync_issue
+
+		record_sync_issue(
+			"Customer",
+			mine.name,
+			"Possible Duplicate",
+			f"not created in Acumatica: may already be {hidden.name} [C-H1] (same name)",
+			[
+				{
+					"customer_id": "C-H1",
+					"organization": hidden.name,
+					"organization_name": hidden.name,
+					"reasons": ["same name"],
+				},
+				{
+					"customer_id": "C-R1",
+					"organization": None,
+					"organization_name": "Remote",
+					"reasons": ["same name"],
+				},
+			],
+		)
+		with (
+			patch.object(api, "scope_applies", return_value=True),
+			patch.object(api, "customer_visible", side_effect=lambda name: name != hidden.name),
+		):
+			rows = {row["remote_id"]: row for row in api.get_open_sync_issues()}
+		self.assertNotIn(hidden.name, rows)
+		self.assertEqual([c["customer_id"] for c in rows[mine.name]["candidates"]], ["C-R1"])
+		self.assertNotIn(hidden.name, rows[mine.name]["detail"])
 
 	def test_both_refuse_get(self):
 		from crm.integrations.acumatica.api import confirm_new_customer, link_existing_customer

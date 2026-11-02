@@ -5,7 +5,7 @@ from frappe import _
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
 
-def _identity_fields(insert_after, **id_field):
+def _identity_fields(insert_after, permlevel=0, **id_field):
 	return [
 		{
 			"fieldname": "acumatica_noteid",
@@ -14,6 +14,7 @@ def _identity_fields(insert_after, **id_field):
 			"hidden": 1,
 			"search_index": 1,
 			"insert_after": insert_after,
+			"permlevel": permlevel,
 		},
 		{
 			"fieldname": "acumatica_id",
@@ -21,6 +22,7 @@ def _identity_fields(insert_after, **id_field):
 			"label": "Acumatica ID",
 			"read_only": 1,
 			"insert_after": "acumatica_noteid",
+			"permlevel": permlevel,
 			**id_field,
 		},
 	]
@@ -42,8 +44,14 @@ def ensure_custom_fields() -> None:
 	create_custom_fields(
 		{
 			"CRM Organization": [
+				# permlevel 1, which CRM Organization lets a Sales User read and only a
+				# manager write: read_only and hidden are the form's, and the server does
+				# not enforce them -- a rep could otherwise set_value an organization
+				# onto another customer's code, or off its own to have it pushed again.
+				# The sync and the push write past it with ignore_permissions.
 				*_identity_fields(
 					"organization_name",
+					permlevel=1,
 					label=CUSTOMER_CODE,
 					in_list_view=1,
 					search_index=1,
@@ -58,13 +66,17 @@ def ensure_custom_fields() -> None:
 				},
 				{
 					# A manager looked at the possible duplicates and said this one is new:
-					# the next push skips the name and email checks (a same-VAT match still
-					# blocks). Set only by api.confirm_new_customer.
-					"fieldname": "acumatica_confirmed_new",
-					"fieldtype": "Check",
+					# the fingerprint (outbound.confirmation_hash) of the name, VAT number
+					# and primary-contact email they saw. The push skips the duplicate
+					# checks only while the organization still matches it, so a rename
+					# after the confirmation is checked afresh. Set only by
+					# api.confirm_new_customer; permlevel 1 keeps reps from setting it.
+					"fieldname": "acumatica_confirmed_for",
+					"fieldtype": "Data",
 					"label": "Confirmed New Acumatica Customer",
 					"hidden": 1,
 					"read_only": 1,
+					"permlevel": 1,
 					"insert_after": "tax_registration_id",
 				},
 			],
