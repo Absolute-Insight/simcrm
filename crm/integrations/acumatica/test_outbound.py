@@ -1730,16 +1730,14 @@ class TestFollowUpsAndIssueRows(CustomerPushCase):
 	def test_recording_an_issue_never_saves_the_settings_document(self):
 		from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import record_sync_issue
 
-		before = frappe.db.get_value("CRM Acumatica Settings", "CRM Acumatica Settings", "modified")
+		before = frappe.db.get_single_value("CRM Acumatica Settings", "modified")
 		with patch(
 			"crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings.CRMAcumaticaSettings.save"
 		) as save:
 			record_sync_issue("Customer", "ROW-ONLY", "Push Failed", "boom")
 			outbound.dismiss_sync_issues("Customer", "ROW-ONLY", ("Push Failed",))
 		save.assert_not_called()
-		self.assertEqual(
-			frappe.db.get_value("CRM Acumatica Settings", "CRM Acumatica Settings", "modified"), before
-		)
+		self.assertEqual(frappe.db.get_single_value("CRM Acumatica Settings", "modified"), before)
 
 
 class TestSweepThrottle(FrappeTestCase):
