@@ -147,7 +147,18 @@ def item_open_to_company(item, company: str | None) -> bool:
 		return True
 	if not company:
 		return False
-	return any(row.get("company") == company for row in item.get("allowed_companies") or [])
+	return any(_same_company(row.get("company"), company) for row in item.get("allowed_companies") or [])
+
+
+def _same_company(a: str | None, b: str | None) -> bool:
+	"""Compare company names the way the database does.
+
+	``erpnext_company`` is typed by hand, not picked, and :func:`items_closed_to_crm`
+	matches it in SQL, where the collation ignores case and trailing spaces. The
+	two have to agree, or an Item is closed to the hooks and open to everything
+	else.
+	"""
+	return bool(a and b) and a.strip().casefold() == b.strip().casefold()
 
 
 def items_closed_to_crm(item_codes: list[str] | None = None) -> set[str]:
@@ -170,7 +181,7 @@ def items_closed_to_crm(item_codes: list[str] | None = None) -> set[str]:
 		filters["name"] = ("in", item_codes)
 
 	restricted = set(frappe.get_all("Item", filters=filters, pluck="name"))
-	company = crm_company()
+	company = (crm_company() or "").strip()
 	if not restricted or not company:
 		return restricted
 

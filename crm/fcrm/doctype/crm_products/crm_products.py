@@ -49,6 +49,11 @@ def _contextual_rate(product_code: str, deal: str | None):
 	item_code = frappe.db.get_value("CRM Product", product_code, "erpnext_item_code")
 	if not item_code:
 		return None
+	# The price of an Item closed to our company is not ours to quote, or to show.
+	from crm.integrations.erpnext.utils import items_closed_to_crm
+
+	if items_closed_to_crm([item_code]):
+		return None
 	return get_deal_product_rate(item_code, deal)
 
 

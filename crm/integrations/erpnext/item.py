@@ -48,11 +48,6 @@ def _catalogue_data(doc) -> dict:
 	# Coercing here also stops payload_differs seeing None != 0.0 forever and
 	# rewriting the row on every Item save.
 	data["standard_rate"] = frappe.utils.flt(data["standard_rate"])
-	# An Item restricted away from the CRM's company stays linked but is switched
-	# off here, whatever its own `disabled` says: the link is what carries a
-	# rename or a delete across, and a deal may already hold the product.
-	if not item_open_to_company(doc, crm_company()):
-		data["disabled"] = 1
 	return data
 
 
@@ -69,6 +64,18 @@ def after_insert(doc, method=None):
 
 
 def _create_product(doc):
+	# The product is named by its code, so one that already carries this Item's
+	# code would make the insert a duplicate and the Item unsaveable. Unlinked,
+	# it is the pair the reconciliation would link, ERPNext's values winning;
+	# linked to another Item, it is not ours to touch.
+	existing = frappe.db.get_value("CRM Product", doc.item_code, ["name", "erpnext_item_code"], as_dict=True)
+	if existing:
+		if not existing.erpnext_item_code:
+			frappe.db.set_value(
+				"CRM Product", existing.name, {"product_name": doc.item_name, **_catalogue_data(doc)}
+			)
+			set_links(doc.name, existing.name)
+		return
 	product = frappe.get_doc(
 		{
 			"doctype": "CRM Product",
@@ -89,6 +96,14 @@ def on_update(doc, method=None):
 	if not product_name:
 		if _restriction_lifted(doc):
 			_create_product(doc)
+		return
+	# Closed to the CRM's company: the product stays linked, because the link
+	# carries a rename or a delete across and a deal may already hold it, but it
+	# is switched off and nothing else is copied. A new name or price is as
+	# much the other company's business as the Item was on the day it was made.
+	if not item_open_to_company(doc, crm_company()):
+		if not frappe.db.get_value("CRM Product", product_name, "disabled"):
+			frappe.db.set_value("CRM Product", product_name, "disabled", 1)
 		return
 	data = {
 		"product_name": doc.item_name,

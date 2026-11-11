@@ -11,6 +11,7 @@ from crm.integrations.erpnext.utils import (
 	in_cascade,
 	items_closed_to_crm,
 	should_push_to_erpnext,
+	should_sync,
 	validate_rename_conflict,
 )
 
@@ -48,6 +49,21 @@ class CRMProduct(Document):
 
 	def validate(self):
 		self.set_product_name()
+		self.validate_item_is_open_to_crm()
+
+	def validate_item_is_open_to_crm(self):
+		"""Refuse to switch back on the product of an Item ERPNext closed to our company."""
+		if self.disabled or self.is_new() or not self.get("erpnext_item_code"):
+			return
+		if not self.has_value_changed("disabled") or not should_sync():
+			return
+		if items_closed_to_crm([self.erpnext_item_code]):
+			frappe.throw(
+				_(
+					"This product's item is restricted to other companies in SIMERP and cannot be enabled here."
+				),
+				title=_("Restricted to Other Companies"),
+			)
 
 	def set_product_name(self):
 		self.product_name = (self.product_name or self.product_code or "").strip()

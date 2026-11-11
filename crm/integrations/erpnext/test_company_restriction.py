@@ -58,6 +58,10 @@ class TestItemOpenToCompany(FrappeTestCase):
 		"""ERPNext clears the rows on save, but only the checkbox is the rule."""
 		self.assertTrue(utils.item_open_to_company(_item(0, [THEIRS]), OURS))
 
+	def test_the_company_is_matched_the_way_the_database_matches_it(self):
+		"""The setting is typed by hand; the SQL twin ignores case and padding."""
+		self.assertTrue(utils.item_open_to_company(_item(1, ["Vectora Trading"]), " vectora trading "))
+
 	def test_an_erpnext_without_the_feature_restricts_nothing(self):
 		legacy = frappe._dict(name="ITM-OLD")
 		self.assertTrue(utils.item_open_to_company(legacy, OURS))
@@ -136,11 +140,43 @@ class TestItemHooksHonourTheRestriction(FrappeTestCase):
 			item_hooks.after_insert(_item(1, [OURS]))
 		create.assert_called_once()
 
-	def test_a_closed_item_switches_its_product_off(self):
+	def _update(self, doc, product_disabled):
+		"""Save an Item that has a product; return what was written to the product."""
 		sync, company, rate = self._patched()
-		with sync, company, rate:
-			self.assertEqual(item_hooks._catalogue_data(_item(1, [THEIRS]))["disabled"], 1)
-			self.assertEqual(item_hooks._catalogue_data(_item(1, [OURS]))["disabled"], 0)
+
+		def get_value(doctype, name, fieldname=None, **kwargs):
+			if isinstance(name, dict):
+				return "P-1"
+			if fieldname == "disabled":
+				return product_disabled
+			return frappe._dict(product_name="Old name", standard_rate=1, disabled=product_disabled)
+
+		with (
+			sync,
+			company,
+			rate,
+			patch.object(frappe.db, "get_value", side_effect=get_value),
+			patch.object(frappe.db, "set_value") as set_value,
+		):
+			item_hooks.on_update(doc)
+		return set_value
+
+	def test_a_closed_item_switches_its_product_off_and_copies_nothing_else(self):
+		"""A new name or price on a restricted Item must not reach the catalogue."""
+		set_value = self._update(_SavedItem(_item(1, [THEIRS]), before=_item()), product_disabled=0)
+		set_value.assert_called_once_with("CRM Product", "P-1", "disabled", 1)
+
+	def test_a_closed_item_whose_product_is_already_off_writes_nothing(self):
+		set_value = self._update(
+			_SavedItem(_item(1, [THEIRS]), before=_item(1, [THEIRS])), product_disabled=1
+		)
+		set_value.assert_not_called()
+
+	def test_reopening_an_item_switches_its_product_back_on(self):
+		set_value = self._update(_SavedItem(_item(1, [OURS]), before=_item(1, [THEIRS])), product_disabled=1)
+		set_value.assert_called_once()
+		self.assertEqual(set_value.call_args.args[2]["disabled"], 0)
+		self.assertEqual(set_value.call_args.args[2]["product_name"], "Restricted Widget")
 
 	def test_an_open_item_keeps_its_own_disabled_flag(self):
 		sync, company, rate = self._patched()
@@ -190,6 +226,99 @@ class TestItemHooksHonourTheRestriction(FrappeTestCase):
 		create.assert_not_called()
 
 
+class TestCreateProduct(FrappeTestCase):
+	"""The product is named by its code, so a same-code product must not make the Item unsaveable."""
+
+	def _create(self, existing):
+		with (
+			patch.object(item_hooks, "get_item_price_rate", return_value=None),
+			patch.object(frappe.db, "get_value", return_value=existing),
+			patch.object(frappe.db, "set_value") as set_value,
+			patch.object(item_hooks, "set_links") as set_links,
+			patch.object(frappe, "get_doc") as get_doc,
+		):
+			item_hooks._create_product(_item())
+		return set_value, set_links, get_doc
+
+	def test_an_unlinked_product_with_the_same_code_is_linked_not_duplicated(self):
+		existing = frappe._dict(name="ITM-R", erpnext_item_code=None)
+		set_value, set_links, get_doc = self._create(existing)
+		get_doc.assert_not_called()
+		set_links.assert_called_once_with("ITM-R", "ITM-R")
+		self.assertEqual(set_value.call_args.args[2]["product_name"], "Restricted Widget")
+
+	def test_a_product_linked_to_another_item_is_left_alone(self):
+		existing = frappe._dict(name="ITM-R", erpnext_item_code="OTHER")
+		set_value, set_links, get_doc = self._create(existing)
+		get_doc.assert_not_called()
+		set_links.assert_not_called()
+		set_value.assert_not_called()
+
+	def test_a_new_code_inserts_a_product(self):
+		_set_value, set_links, get_doc = self._create(None)
+		get_doc.assert_called_once()
+		get_doc.return_value.insert.assert_called_once_with(ignore_permissions=True)
+		set_links.assert_called_once()
+
+
+class TestProductOfAClosedItem(FrappeTestCase):
+	def _product(self, disabled, changed=True):
+		from crm.fcrm.doctype.crm_product.crm_product import CRMProduct
+
+		class Product:
+			erpnext_item_code = "ITM-R"
+
+			def get(self, key):
+				return getattr(self, key, None)
+
+			def is_new(self):
+				return False
+
+			def has_value_changed(self, fieldname):
+				return changed
+
+		product = Product()
+		product.disabled = disabled
+		return lambda: CRMProduct.validate_item_is_open_to_crm(product)
+
+	def _closed(self, closed):
+		from crm.fcrm.doctype.crm_product import crm_product
+
+		return (
+			patch.object(crm_product, "should_sync", return_value=True),
+			patch.object(crm_product, "items_closed_to_crm", return_value=closed),
+		)
+
+	def test_it_cannot_be_switched_back_on(self):
+		sync, closed = self._closed({"ITM-R"})
+		with sync, closed:
+			self.assertRaises(frappe.ValidationError, self._product(disabled=0))
+
+	def test_it_can_be_edited_while_it_stays_off(self):
+		sync, closed = self._closed({"ITM-R"})
+		with sync, closed:
+			self._product(disabled=1)()
+			self._product(disabled=0, changed=False)()
+
+	def test_the_product_of_an_open_item_can_be_switched_on(self):
+		sync, closed = self._closed(set())
+		with sync, closed:
+			self._product(disabled=0)()
+
+	def test_its_price_is_not_looked_up(self):
+		from crm.fcrm.doctype.crm_products import crm_products
+
+		meta = frappe._dict(has_field=lambda fieldname: True)
+		with (
+			patch.object(frappe, "get_meta", return_value=meta),
+			patch.object(frappe.db, "get_value", return_value="ITM-R"),
+			patch.object(utils, "items_closed_to_crm", return_value={"ITM-R"}),
+			patch.object(crm_products, "get_deal_product_rate") as rate,
+		):
+			self.assertIsNone(crm_products._contextual_rate("P-1", None))
+		rate.assert_not_called()
+
+
 class TestProductPushSkipsAClosedItem(FrappeTestCase):
 	def test_nothing_is_pushed_to_an_item_closed_to_our_company(self):
 		"""The mirror disabled the product; pushing that back would disable the
@@ -237,11 +366,41 @@ class TestReconciliationSkipsClosedItems(FrappeTestCase):
 		sync.assert_not_called()
 		set_value.assert_called_once_with("CRM Product", "B", "disabled", 1)
 
+	def test_the_mirror_is_found_by_its_link_not_its_code(self):
+		"""A product under another code still mirrors the Item; one that only shares the code does not."""
+		items = {"B": {"item_code": "B"}}
+		products = {
+			"B": {"name": "B", "product_code": "B", "erpnext_item_code": "OTHER", "disabled": 0},
+			"RENAMED": {
+				"name": "RENAMED",
+				"product_code": "RENAMED",
+				"erpnext_item_code": "B",
+				"disabled": 0,
+			},
+		}
+		_summary, _sync, set_value = self._run(items, products, closed={"B"})
+		set_value.assert_called_once_with("CRM Product", "RENAMED", "disabled", 1)
+
 	def test_a_product_already_off_is_not_rewritten(self):
 		items = {"B": {"item_code": "B"}}
 		products = {"B": {"name": "B", "product_code": "B", "erpnext_item_code": "B", "disabled": 1}}
 		_summary, _sync, set_value = self._run(items, products, closed={"B"})
 		set_value.assert_not_called()
+
+	def test_a_linked_product_follows_its_open_item_back_on(self):
+		"""Reopened without an Item save (the company changed in settings): left off,
+		the next edit of the product would push `disabled` to the Item."""
+		from crm.fcrm.doctype.crm_product import reconcile_job
+
+		item = {"item_code": "B", "crm_product_code": "B", "disabled": 0}
+		product = {"name": "B", "product_code": "B", "erpnext_item_code": "B", "disabled": 1}
+		summary = reconcile_job._initial_summary()
+		with patch.object(frappe.db, "set_value") as set_value:
+			reconcile_job._sync_item_to_product(item, product, summary)
+			set_value.assert_called_once_with("CRM Product", "B", "disabled", 0)
+			set_value.reset_mock()
+			reconcile_job._sync_item_to_product(item, {**product, "disabled": 0}, summary)
+			set_value.assert_not_called()
 
 
 class TestQuotationPrefillSkipsClosedItems(FrappeTestCase):

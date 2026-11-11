@@ -76,7 +76,9 @@ class ERPNextCRMSettings(Document):
 			self.create_custom_fields()
 			self.create_crm_form_script()
 			self.grant_item_access_to_sales_roles()
-			if not was_active and not self.is_erpnext_in_different_site:
+			# A different company opens and closes a different set of Items.
+			company_changed = bool(old) and (old.erpnext_company or "") != (self.erpnext_company or "")
+			if (not was_active or company_changed) and not self.is_erpnext_in_different_site:
 				from crm.fcrm.doctype.crm_product.reconcile_job import enqueue_reconciliation
 
 				enqueue_reconciliation()
