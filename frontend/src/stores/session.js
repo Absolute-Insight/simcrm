@@ -2,19 +2,11 @@ import { defineStore } from 'pinia'
 import { createResource } from 'frappe-ui'
 import router from '@/router'
 import { clearOfflineCache } from '@/utils/offlineCache'
+import { getSessionUser } from '@/utils/session'
 import { ref, computed } from 'vue'
 
 export const sessionStore = defineStore('crm-session', () => {
-  function sessionUser() {
-    let cookies = new URLSearchParams(document.cookie.split('; ').join('&'))
-    let _sessionUser = cookies.get('user_id')
-    if (_sessionUser === 'Guest') {
-      _sessionUser = null
-    }
-    return _sessionUser
-  }
-
-  let user = ref(sessionUser())
+  let user = ref(getSessionUser())
   const isLoggedIn = computed(() => !!user.value)
 
   const login = createResource({
@@ -23,7 +15,7 @@ export const sessionStore = defineStore('crm-session', () => {
       throw new Error(__('Invalid Email or Password'))
     },
     onSuccess() {
-      user.value = sessionUser()
+      user.value = getSessionUser()
       login.reset()
       router.replace({ path: '/' })
     },

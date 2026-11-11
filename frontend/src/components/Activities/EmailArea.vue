@@ -80,16 +80,19 @@ import EmailContent from '@/components/Activities/EmailContent.vue'
 import { Badge } from 'frappe-ui'
 import TimelineTimestamp from '@/components/Activities/TimelineTimestamp.vue'
 import ToneBadge from '@/components/ui/ToneBadge.vue'
-import { reactive, computed } from 'vue'
+import { computed } from 'vue'
 
 const props = defineProps({
   activity: { type: Object, default: () => ({}) },
   emailBox: { type: Object, default: () => ({}) },
 })
 
-const emailBox = reactive(props.emailBox)
-
 function reply(email, reply_all = false) {
+  // Read at the click, not at setup: the composer is a template ref further
+  // down the page, and a card mounted before it (the first render of a tab)
+  // would hold null for good and throw here.
+  const emailBox = props.emailBox
+  if (!emailBox) return
   emailBox.show = true
   let editor = emailBox.editor
   let message = email.content
@@ -138,6 +141,7 @@ function reply(email, reply_all = false) {
   }
 
   let repliedMessage = `<blockquote>${message}</blockquote>`
+  let draft = draftBeforeQuote(editor.editor)
 
   editor.editor
     .chain()
@@ -145,9 +149,20 @@ function reply(email, reply_all = false) {
     .updateAttributes('paragraph', { class: 'reply-to-content' })
     .insertContent(repliedMessage)
     .focus('all')
-    .insertContentAt(0, { type: 'paragraph' })
+    .insertContentAt(0, draft.length ? draft : { type: 'paragraph' })
     .focus('start')
     .run()
+}
+
+// Keep what the user already typed, dropping any previously quoted email
+function draftBeforeQuote(editor) {
+  let draft = []
+  let quoted = false
+  editor.state.doc.forEach((node) => {
+    quoted ||= node.type.name === 'blockquote'
+    if (!quoted) draft.push(node.toJSON())
+  })
+  return draft
 }
 
 const status = computed(() => {
