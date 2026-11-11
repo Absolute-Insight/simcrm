@@ -16,6 +16,10 @@ def enqueue_reconciliation():
 		timeout=1200,
 		job_id="crm_product_item_reconciliation",
 		deduplicate=True,
+		# The settings save that asks for this has not committed yet. A worker
+		# that started first read the old company, or `enabled = 0`, and nothing
+		# ran it again.
+		enqueue_after_commit=True,
 	)
 
 
