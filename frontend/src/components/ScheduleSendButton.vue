@@ -18,7 +18,7 @@
       {
         label: __('Schedule send'),
         variant: 'solid',
-        disabled: !pickedInFuture,
+        disabled: !pickedOk,
         onClick: schedulePicked,
       },
     ]"
@@ -26,12 +26,20 @@
     <DateTimePicker
       v-model="pickedTime"
       :placeholder="__('Pick date & time')"
-      :isDateUnavailable="(date) => date.isBefore(dayjs(), 'day')"
+      :isDateUnavailable="
+        (date) =>
+          date.isBefore(dayjs(), 'day') ||
+          date.isAfter(dayjs().add(MAX_DAYS_AHEAD, 'day'), 'day')
+      "
     />
     <ErrorMessage
       class="mt-2"
       :message="
-        pickedTime && !pickedInFuture ? __('Pick a time in the future') : ''
+        !pickedTime || pickedOk
+          ? ''
+          : pickedInFuture
+            ? __('Pick a time within the next {0} days', [MAX_DAYS_AHEAD])
+            : __('Pick a time in the future')
       "
     />
   </Dialog>
@@ -73,6 +81,16 @@ const pickedAt = computed(() =>
   pickedTime.value ? dayjs.tz(pickedTime.value, localTimezone) : null,
 )
 const pickedInFuture = computed(() => !!pickedAt.value?.isAfter(dayjs()))
+
+// Ours, not upstream's. frappe clears email queue rows 30 days after they were
+// made, whatever their status, so an email scheduled further out than that
+// stays "Scheduled" on the timeline for good and is never sent.
+const MAX_DAYS_AHEAD = 28
+const pickedOk = computed(
+  () =>
+    pickedInFuture.value &&
+    !pickedAt.value?.isAfter(dayjs().add(MAX_DAYS_AHEAD, 'day')),
+)
 
 function at(day: Dayjs, hour: number) {
   return day.hour(hour).minute(0).second(0)
@@ -132,7 +150,7 @@ function schedule(time: Dayjs, confirmed = false) {
 
 function schedulePicked() {
   // Re-checked here: the time can pass while the dialog sits open
-  if (!pickedInFuture.value) return
+  if (!pickedOk.value) return
   showPicker.value = false
   schedule(pickedAt.value as Dayjs, true)
 }

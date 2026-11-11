@@ -179,3 +179,34 @@ class TestCancelScheduledEmail(FrappeTestCase):
 
 		self.assertNotIn("send_after", data)
 		self.assertNotIn("scheduled_by_me", data)
+
+	# ---- send now (ours) ----
+
+	def test_send_now_refuses_a_recipient_who_unsubscribed_since(self):
+		"""frappe drops unsubscribed recipients when the email is queued and never
+		looks again; sending now is a person choosing to mail them."""
+		name = self.schedule()
+		frappe.get_doc(
+			{
+				"doctype": "Email Unsubscribe",
+				"email": "scheduled@example.com",
+				"reference_doctype": "CRM Lead",
+				"reference_name": self.lead.name,
+			}
+		).insert(ignore_permissions=True)
+
+		with self.assertRaises(frappe.ValidationError) as refused:
+			send_scheduled_email_now(name)
+
+		self.assertIn("scheduled@example.com", str(refused.exception))
+		self.assertEqual(frappe.db.get_value("Communication", name, "delivery_status"), "Scheduled")
+
+	def test_send_now_does_not_claim_to_send_an_email_with_no_queue_left(self):
+		"""frappe clears month-old queue rows whatever their status."""
+		name = self.schedule()
+		frappe.db.delete("Email Queue", {"communication": name})
+
+		with self.assertRaises(frappe.ValidationError):
+			send_scheduled_email_now(name)
+
+		self.assertEqual(frappe.db.get_value("Communication", name, "delivery_status"), "Scheduled")

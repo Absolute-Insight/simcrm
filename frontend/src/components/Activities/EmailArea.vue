@@ -153,6 +153,9 @@ async function run(method, success, error) {
     return result
   } catch (e) {
     toast.error(e?.messages?.[0] || error)
+    // A failed send may still have left the queue, and a refused change means
+    // the card is out of date. Either way, show what the server has now.
+    emit('reload')
   } finally {
     busy.value = false
   }

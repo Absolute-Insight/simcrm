@@ -3,7 +3,7 @@ from frappe import _
 from frappe.utils import get_datetime, now_datetime
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def cancel_scheduled_email(name: str):
 	"""Delete a scheduled email before it goes out and return it as a draft to edit."""
 	communication, queues = get_scheduled_email(name)
@@ -42,10 +42,29 @@ def cancel_scheduled_email(name: str):
 	}
 
 
-@frappe.whitelist()
+# POST only (ours, not upstream's): frappe checks the CSRF token on unsafe
+# methods alone, and the send commits on its own, so a link opened by the person
+# who scheduled the email was enough to send it early.
+@frappe.whitelist(methods=["POST"])
 def send_scheduled_email_now(name: str):
 	"""Send a scheduled email right away instead of at its scheduled time."""
 	communication, queues = get_scheduled_email(name)
+
+	# frappe clears queue rows a month after they were made, whatever their
+	# status. An email scheduled further out than that is still "Scheduled" here
+	# with nothing left to send, and this used to answer "Email sent".
+	if not queues:
+		frappe.throw(_("This email is no longer queued. Delete it and send it again."))
+
+	# frappe drops unsubscribed recipients when the email is queued and never
+	# looks again. Someone who left the conversation after it was scheduled is
+	# still on the queue row, and sending now is a person choosing to mail them.
+	if unsubscribed := unsubscribed_recipients(communication, queues):
+		frappe.throw(
+			_("{0} has unsubscribed since this email was scheduled. Edit it to remove them.").format(
+				", ".join(unsubscribed)
+			)
+		)
 
 	communication.db_set(
 		{"send_after": None, "delivery_status": "Sending", "communication_date": now_datetime()}
@@ -65,6 +84,34 @@ def stamp_send_time(doc, method=None):
 		return
 	frappe.db.set_value(
 		"Communication", doc.name, "communication_date", now_datetime(), update_modified=False
+	)
+
+
+def unsubscribed_recipients(communication, queues: list[str]) -> list[str]:
+	"""Recipients on the queued email who have unsubscribed, from everything or from this record."""
+	from email.utils import parseaddr
+
+	recipients = frappe.get_all(
+		"Email Queue Recipient", filters={"parent": ("in", queues)}, pluck="recipient"
+	)
+	emails = sorted({parseaddr(recipient)[1] or recipient for recipient in recipients if recipient})
+	if not emails:
+		return []
+
+	EmailUnsubscribe = frappe.qb.DocType("Email Unsubscribe")
+	return (
+		frappe.qb.from_(EmailUnsubscribe)
+		.select(EmailUnsubscribe.email)
+		.distinct()
+		.where(EmailUnsubscribe.email.isin(emails))
+		.where(
+			(EmailUnsubscribe.global_unsubscribe == 1)
+			| (
+				(EmailUnsubscribe.reference_doctype == communication.reference_doctype)
+				& (EmailUnsubscribe.reference_name == communication.reference_name)
+			)
+		)
+		.run(pluck=True)
 	)
 
 
