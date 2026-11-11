@@ -5,7 +5,8 @@
         class="flex h-[var(--v-toolbar-h)] items-center justify-between gap-2 sm:pl-5 pl-2"
       >
         <!-- the title gives way; the actions never do -->
-        <div class="flex min-w-0 items-center gap-2 overflow-hidden">
+        <!-- -m-1 p-1: room inside the clip for a focus ring on the first crumb -->
+        <div class="-m-1 flex min-w-0 items-center gap-2 overflow-hidden p-1">
           <slot name="left-header" />
         </div>
         <div class="flex shrink-0 items-center gap-2">
