@@ -508,9 +508,10 @@ def prefill_quotation_items(crm_deal: str):
 		return []
 	frappe.has_permission("CRM Deal", "read", doc=crm_deal, throw=True)
 	deal = frappe.get_doc("CRM Deal", crm_deal)
+	item_codes = _item_codes_for([row.product_code for row in deal.products])
 	items = []
 	for row in deal.products:
-		item_code = frappe.db.get_value("CRM Product", row.product_code, "erpnext_item_code")
+		item_code = item_codes.get(row.product_code)
 		if not item_code:
 			continue
 		items.append(
@@ -522,6 +523,31 @@ def prefill_quotation_items(crm_deal: str):
 			}
 		)
 	return items
+
+
+def _item_codes_for(product_codes: list[str]) -> dict[str, str]:
+	"""The ERPNext Item behind each product, for the ones a quotation may carry.
+
+	One lookup for the deal, not one per line. An Item restricted away from the
+	CRM's company is left out: ERPNext refuses the whole quotation on save if a
+	single line names one, so a deal that still holds such a product (added
+	before the restriction) prefills its other lines instead of none.
+	"""
+	from crm.integrations.erpnext.utils import items_closed_to_crm
+
+	product_codes = [code for code in product_codes if code]
+	if not product_codes or not frappe.get_meta("CRM Product").has_field("erpnext_item_code"):
+		return {}
+	linked = dict(
+		frappe.get_all(
+			"CRM Product",
+			filters={"name": ("in", product_codes), "erpnext_item_code": ("is", "set")},
+			fields=["name", "erpnext_item_code"],
+			as_list=True,
+		)
+	)
+	closed = items_closed_to_crm(list(linked.values()))
+	return {product: item for product, item in linked.items() if item not in closed}
 
 
 def get_primary_contact(crm_deal):
