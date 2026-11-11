@@ -494,6 +494,8 @@ before_job = ["crm.permissions.document_guard.reserve_action"]
 # Authentication and authorization
 # --------------------------------
 
+on_login = ["crm.api.auth.land_in_crm"]
+
 # auth_hooks = [
 # "crm.auth.validate"
 # ]
