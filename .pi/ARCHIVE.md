@@ -1358,3 +1358,10 @@ composer; upstream had not changed these files again by `d68ef63d1`.
   `send_after` is stored in the site's.
 - Needs a default outgoing Email Account and the scheduler, like any queued mail. Nothing else to
   configure, no schema change.
+- **Hardened past upstream after review:** both endpoints are POST only; Send now refuses when
+  the queue row is gone and when a recipient has unsubscribed since; the picker stops at 28 days,
+  because frappe clears queue rows a month after they were made, whatever their status.
+- **Known and left:** the scheduled flush itself does not re-check unsubscribes (frappe's, true of
+  any queued mail). A scheduled email counts as sent from the moment it is written for the SLA's
+  first response, the planner's Email match and the "touched today" signal. Only the person who
+  scheduled an email can stop it; a manager cannot.
