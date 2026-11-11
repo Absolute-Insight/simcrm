@@ -1255,6 +1255,13 @@ def delete_bulk_docs(doctype: str, items: str | list, delete_linked: bool = Fals
 			)
 		)
 
+	# Asked once, of the role, before anything is queued. Each record is still
+	# judged on its own by frappe.delete_doc, so this refuses nothing that would
+	# have gone. What it changes is the answer: someone who may not delete this
+	# doctype at all was told "deleting in the background" for a batch over ten,
+	# and the reason nothing went was left in the Error Log.
+	frappe.has_permission(doctype, "delete", throw=True)
+
 	# Over ten, the unlinking and the delete both happen in a worker, so the
 	# request path only enqueues. Saying "success" for that was the same word
 	# used for "these are gone", so a rep watched a list reload with every

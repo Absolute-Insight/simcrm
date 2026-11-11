@@ -3,6 +3,7 @@
 
 import json
 import os
+from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -598,3 +599,33 @@ class TestBulkDeleteReportsWhatItDid(IntegrationTestCase):
 
 		self.assertTrue(result["queued"], "over ten goes to a worker and must say so")
 		self.assertEqual(result["count"], 11)
+
+	def test_someone_who_may_not_delete_the_doctype_is_refused_not_queued(self):
+		"""Over ten records the request only enqueues, so a rep with no delete
+		permission was told the batch was on its way. Nothing was deleted, and
+		only the Error Log said why."""
+		from crm.api.doc import delete_bulk_docs
+
+		email = "bulk-delete-rep@example.com"
+		if not frappe.db.exists("User", email):
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": email,
+					"first_name": "Bulk Delete Rep",
+					"send_welcome_email": 0,
+					"roles": [{"role": "Sales User"}],
+				}
+			).insert(ignore_permissions=True)
+		self.assertFalse(
+			frappe.has_permission("CRM Product", "delete", user=email),
+			"the test needs a doctype a rep may read but not delete",
+		)
+
+		frappe.set_user(email)
+		self.addCleanup(frappe.set_user, "Administrator")
+		with patch("crm.api.doc.frappe.enqueue") as enqueue:
+			for count in (2, 11):
+				with self.assertRaises(frappe.PermissionError):
+					delete_bulk_docs("CRM Product", [f"NO-SUCH-PRODUCT-{n}" for n in range(count)])
+		enqueue.assert_not_called()
