@@ -24,8 +24,26 @@
           variant="subtle"
           :theme="status.color"
         />
-        <TimelineTimestamp :date="activity.communication_date" />
-        <div class="flex gap-0.5">
+        <!-- a scheduled email shows when it goes out, not when it was written -->
+        <TimelineTimestamp
+          :date="
+            scheduled ? activity.data.send_after : activity.communication_date
+          "
+        />
+        <Dropdown
+          v-if="scheduled && activity.data.scheduled_by_me"
+          :options="scheduledActions"
+          align="end"
+        >
+          <Button
+            variant="ghost"
+            icon="lucide-ellipsis"
+            :tooltip="__('Scheduled email actions')"
+            :aria-label="__('Scheduled email actions')"
+            :loading="busy"
+          />
+        </Dropdown>
+        <div v-if="!scheduled" class="flex gap-0.5">
           <Button
             :tooltip="__('Reply')"
             variant="ghost"
@@ -77,15 +95,116 @@ import ReplyIcon from '@/components/Icons/ReplyIcon.vue'
 import ReplyAllIcon from '@/components/Icons/ReplyAllIcon.vue'
 import AttachmentItem from '@/components/AttachmentItem.vue'
 import EmailContent from '@/components/Activities/EmailContent.vue'
-import { Badge } from 'frappe-ui'
+import { createDialog } from '@/utils/dialogs'
+import { Badge, Dropdown, call, dayjsLocal, toast } from 'frappe-ui'
 import TimelineTimestamp from '@/components/Activities/TimelineTimestamp.vue'
 import ToneBadge from '@/components/ui/ToneBadge.vue'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps({
   activity: { type: Object, default: () => ({}) },
   emailBox: { type: Object, default: () => ({}) },
 })
+
+const emit = defineEmits(['reload'])
+
+const scheduled = computed(() => {
+  const { delivery_status, send_after } = props.activity.data
+  return delivery_status === 'Scheduled' && !!send_after
+})
+
+const busy = ref(false)
+
+const scheduledActions = [
+  { label: __('Send now'), icon: 'lucide-send', onClick: sendNow },
+  { label: __('Edit'), icon: 'lucide-pencil', onClick: edit },
+  {
+    label: __('Delete'),
+    icon: 'lucide-trash-2',
+    theme: 'red',
+    onClick: deleteScheduled,
+  },
+]
+
+function confirm(title, message, label, onConfirm, theme = 'gray') {
+  createDialog({
+    title,
+    message,
+    actions: [
+      {
+        label,
+        theme,
+        variant: 'solid',
+        onClick: ({ close }) => {
+          close()
+          onConfirm()
+        },
+      },
+    ],
+  })
+}
+
+async function run(method, success, error) {
+  busy.value = true
+  try {
+    const result = await call(method, { name: props.activity.name })
+    toast.success(success)
+    emit('reload')
+    return result
+  } catch (e) {
+    toast.error(e?.messages?.[0] || error)
+  } finally {
+    busy.value = false
+  }
+}
+
+function sendNow() {
+  const at = dayjsLocal(props.activity.data.send_after).format(
+    'ddd, D MMM, h:mm A',
+  )
+  confirm(
+    __('Send now?'),
+    __('It will be sent right away instead of on {0}.', [at]),
+    __('Send now'),
+    () =>
+      run(
+        'crm.api.email.send_scheduled_email_now',
+        __('Email sent'),
+        __('Failed to send email'),
+      ),
+  )
+}
+
+async function edit() {
+  const emailBox = props.emailBox
+  if (!emailBox) return
+  // Editing moves the email into the composer, so don't overwrite a draft
+  if (emailBox.hasDraft) {
+    toast.error(__('Send or discard the email you are writing first'))
+    return
+  }
+  const draft = await run(
+    'crm.api.email.cancel_scheduled_email',
+    __('Moved to the composer. Schedule it again when ready.'),
+    __('Failed to edit scheduled email'),
+  )
+  if (draft) emailBox.restoreDraft(draft)
+}
+
+function deleteScheduled() {
+  confirm(
+    __('Delete scheduled email?'),
+    __("It won't be sent. This can't be undone."),
+    __('Delete'),
+    () =>
+      run(
+        'crm.api.email.cancel_scheduled_email',
+        __('Scheduled email deleted'),
+        __('Failed to delete scheduled email'),
+      ),
+    'red',
+  )
+}
 
 function reply(email, reply_all = false) {
   // Read at the click, not at setup: the composer is a template ref further
