@@ -8,6 +8,7 @@ from frappe.desk.form.assign_to import set_status
 from frappe.model import no_value_fields
 from frappe.model.delete_doc import get_dynamic_linked_docs, get_linked_docs
 from frappe.model.document import get_controller
+from frappe.permissions import get_role_permissions
 from frappe.utils import cint, cstr, make_filter_tuple, strip_html
 from pypika import Criterion
 
@@ -1256,11 +1257,17 @@ def delete_bulk_docs(doctype: str, items: str | list, delete_linked: bool = Fals
 		)
 
 	# Asked once, of the role, before anything is queued. Each record is still
-	# judged on its own by frappe.delete_doc, so this refuses nothing that would
-	# have gone. What it changes is the answer: someone who may not delete this
-	# doctype at all was told "deleting in the background" for a batch over ten,
-	# and the reason nothing went was left in the Error Log.
-	frappe.has_permission(doctype, "delete", throw=True)
+	# judged on its own by frappe.delete_doc. What this changes is the answer:
+	# someone who may not delete this doctype at all was told "deleting in the
+	# background" for a batch over ten, and the reason nothing went was left in
+	# the Error Log.
+	#
+	# "At all" includes their own records. Contact grants delete only to the
+	# creator, and has_permission without a document counts that as no. Asking
+	# it plainly would refuse a rep the contacts they made.
+	perms = get_role_permissions(frappe.get_meta(doctype), is_owner=True)
+	if not (perms.get("delete") or perms.get("if_owner", {}).get("delete")):
+		frappe.has_permission(doctype, "delete", throw=True)
 
 	# Over ten, the unlinking and the delete both happen in a worker, so the
 	# request path only enqueues. Saying "success" for that was the same word
