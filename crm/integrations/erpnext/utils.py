@@ -118,3 +118,70 @@ def _should_sync_direction(self_doctype):
 	if self_doctype == "CRM Product":
 		return should_push_to_erpnext()
 	return should_sync()
+
+
+def crm_company() -> str | None:
+	"""The ERPNext company this CRM quotes and invoices as."""
+	return frappe.get_cached_doc("ERPNext CRM Settings").erpnext_company or None
+
+
+def item_open_to_company(item, company: str | None) -> bool:
+	"""Whether ERPNext lets ``company`` transact with this Item.
+
+	ERPNext can restrict an Item to a list of companies (``restrict_to_companies``
+	with ``allowed_companies`` rows). A transaction for any other company that
+	names the Item is refused on save, and users of other companies do not see
+	it at all. The CRM catalogue has no company dimension, so an Item closed to
+	the CRM's company must not be offered in it: a rep would add it to a deal
+	and only learn at the quotation that it cannot be sold, having seen the
+	name and price of something ERPNext hides from them.
+
+	With no company configured there is nothing to match the list against, and a
+	restricted Item is treated as closed: the restriction says "these companies
+	only", and we cannot show we are one of them.
+
+	Reads the document it is given, so the Item hooks can ask about the row in
+	hand (and about the one before the save) without a query.
+	"""
+	if not item.get("restrict_to_companies"):
+		return True
+	if not company:
+		return False
+	return any(row.get("company") == company for row in item.get("allowed_companies") or [])
+
+
+def items_closed_to_crm(item_codes: list[str] | None = None) -> set[str]:
+	"""Of ``item_codes`` (or of every Item), those restricted away from the CRM's company.
+
+	The set-based twin of :func:`item_open_to_company`, for callers holding names
+	rather than documents. Two queries whatever the number of items. An ERPNext
+	that predates company restrictions has no such field, and nothing is closed.
+	"""
+	if not frappe.db.exists("DocType", "Item") or not frappe.get_meta("Item").has_field(
+		"restrict_to_companies"
+	):
+		return set()
+
+	filters = {"restrict_to_companies": 1}
+	if item_codes is not None:
+		item_codes = [code for code in item_codes if code]
+		if not item_codes:
+			return set()
+		filters["name"] = ("in", item_codes)
+
+	restricted = set(frappe.get_all("Item", filters=filters, pluck="name"))
+	company = crm_company()
+	if not restricted or not company:
+		return restricted
+
+	allowed = frappe.get_all(
+		"Company Restriction",
+		filters={
+			"parenttype": "Item",
+			"parentfield": "allowed_companies",
+			"parent": ("in", sorted(restricted)),
+			"company": company,
+		},
+		pluck="parent",
+	)
+	return restricted - set(allowed)
