@@ -94,7 +94,12 @@ def unsubscribed_recipients(communication, queues: list[str]) -> list[str]:
 	recipients = frappe.get_all(
 		"Email Queue Recipient", filters={"parent": ("in", queues)}, pluck="recipient"
 	)
-	emails = sorted({parseaddr(recipient)[1] or recipient for recipient in recipients if recipient})
+	# Both forms: frappe queues "Name <a@b>" for a contact with a name, its
+	# unsubscribe link carries that string, and the row it writes keeps it.
+	emails = sorted(
+		{recipient for recipient in recipients if recipient}
+		| {parseaddr(recipient)[1] for recipient in recipients if recipient and parseaddr(recipient)[1]}
+	)
 	if not emails:
 		return []
 
