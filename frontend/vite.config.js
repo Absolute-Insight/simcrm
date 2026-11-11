@@ -4,6 +4,7 @@ import vueJsx from '@vitejs/plugin-vue-jsx'
 import fs from 'node:fs'
 import path from 'path'
 import { VitePWA } from 'vite-plugin-pwa'
+import { fontDestination } from './scripts/cssFontRefs.mjs'
 
 /**
  * Ship the fonts the built CSS actually asks for.
@@ -23,9 +24,13 @@ import { VitePWA } from 'vite-plugin-pwa'
  * worth discovering from a screenshot.
  */
 function shipFontsReferencedByCss({ searchRoots }) {
+  let base = '/'
   return {
     name: 'ship-fonts-referenced-by-css',
     apply: 'build',
+    configResolved(config) {
+      base = config.base
+    },
     writeBundle(options, bundle) {
       const outDir = options.dir
       const wanted = new Map()
@@ -37,10 +42,8 @@ function shipFontsReferencedByCss({ searchRoots }) {
           /url\(\s*['"]?([^'")?]+\.woff2?)(?:\?[^'")]*)?['"]?\s*\)/g,
         )) {
           const ref = match[1]
-          if (/^(https?:)?\/\//.test(ref) || ref.startsWith('data:')) continue
-          // Resolve relative to the CSS file, which is where the browser will.
-          const dest = path.normalize(path.join(path.dirname(fileName), ref))
-          if (!wanted.has(dest)) wanted.set(dest, path.basename(ref))
+          const dest = fontDestination(fileName, ref, base)
+          if (dest && !wanted.has(dest)) wanted.set(dest, path.basename(ref))
         }
       }
 

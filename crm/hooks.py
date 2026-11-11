@@ -273,6 +273,7 @@ doc_events = {
 	"Communication": {
 		"after_insert": ["crm.utils.on_communication_insert"],
 		"on_update": ["crm.utils.on_communication_update"],
+		"on_change": ["crm.api.email.stamp_send_time"],
 	},
 	"Comment": {
 		"after_insert": ["crm.utils.on_comment_insert"],
@@ -492,6 +493,8 @@ before_job = ["crm.permissions.document_guard.reserve_action"]
 
 # Authentication and authorization
 # --------------------------------
+
+on_login = ["crm.api.auth.land_in_crm"]
 
 # auth_hooks = [
 # "crm.auth.validate"

@@ -7,7 +7,7 @@ from frappe.desk.form.load import add_comments, get_communication_data
 from frappe.model.utils.mask import mask_version_data
 from frappe.query_builder import JoinType
 from frappe.translate import get_translated_doctypes
-from frappe.utils import cint
+from frappe.utils import cint, get_datetime
 
 from crm.fcrm.doctype.crm_call_log.crm_call_log import parse_call_logs, redact_hidden_references
 
@@ -194,9 +194,14 @@ def get_deal_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 	for communication in communications:
 		activity = {
 			"activity_type": "communication",
+			"name": communication.name,
 			"communication_type": communication.communication_type,
 			"communication_date": communication.communication_date or communication.creation,
-			"creation": communication.creation,
+			# a scheduled email belongs where it was sent, not where it was written
+			"creation": max(
+				communication.creation,
+				get_datetime(communication.communication_date or communication.creation),
+			),
 			"data": {
 				"subject": communication.subject,
 				"content": communication.content,
@@ -209,6 +214,7 @@ def get_deal_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 				"attachments": communication_attachments.get(communication.name, []),
 				"read_by_recipient": communication.read_by_recipient,
 				"delivery_status": communication.delivery_status,
+				**get_schedule(communication),
 			},
 			"is_lead": False,
 		}
@@ -344,9 +350,14 @@ def get_lead_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 	for communication in communications:
 		activity = {
 			"activity_type": "communication",
+			"name": communication.name,
 			"communication_type": communication.communication_type,
 			"communication_date": communication.communication_date or communication.creation,
-			"creation": communication.creation,
+			# a scheduled email belongs where it was sent, not where it was written
+			"creation": max(
+				communication.creation,
+				get_datetime(communication.communication_date or communication.creation),
+			),
 			"data": {
 				"subject": communication.subject,
 				"content": communication.content,
@@ -359,6 +370,7 @@ def get_lead_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 				"attachments": communication_attachments.get(communication.name, []),
 				"read_by_recipient": communication.read_by_recipient,
 				"delivery_status": communication.delivery_status,
+				**get_schedule(communication),
 			},
 			"is_lead": True,
 		}
@@ -398,6 +410,20 @@ ATTACHMENT_FIELDS = [
 	"creation",
 	"owner",
 ]
+
+
+def get_schedule(communication) -> dict:
+	"""When a still-scheduled email goes out, and whether this user may change that.
+
+	docinfo fetches neither field, and only an email that is still waiting needs
+	them, so the one lookup is spent on those alone. Whoever can read the record
+	sees the email and its time; only the person who scheduled it is offered the
+	actions, which is also all :mod:`crm.api.email` will allow.
+	"""
+	if communication.delivery_status != "Scheduled":
+		return {}
+	send_after, owner = frappe.db.get_value("Communication", communication.name, ["send_after", "owner"])
+	return {"send_after": send_after, "scheduled_by_me": owner == frappe.session.user}
 
 
 def get_attachments(doctype: str, name: str):

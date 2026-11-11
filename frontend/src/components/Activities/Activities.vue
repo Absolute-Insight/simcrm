@@ -210,7 +210,11 @@
             v-if="activity.activity_type == 'communication'"
             class="pb-5 mt-px"
           >
-            <EmailArea :activity="activity" :emailBox="emailBox" />
+            <EmailArea
+              :activity="activity"
+              :emailBox="emailBox"
+              @reload="all_activities.reload()"
+            />
           </div>
           <div
             v-else-if="activity.activity_type == 'comment'"

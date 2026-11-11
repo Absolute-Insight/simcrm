@@ -41,3 +41,26 @@ def oauth_providers():
 				}
 			)
 	return out
+
+
+CRM_ONLY_ROLES = ("Sales User", "Sales Manager")
+
+
+def land_in_crm(login_manager):
+	"""Send someone whose job is the CRM to the CRM when they sign in.
+
+	frappe answers a form login with ``get_home_page()``, which for any internal
+	user with no role home page is the desk. A rep who typed their password
+	landed on an apps screen holding a single icon, and had to know to click
+	it. Only a link that carried ``redirect-to``, or the set-password link in an
+	invitation, went to the CRM.
+
+	``flags.home_page`` is what ``get_home_page`` reads first and it lasts for
+	this request only, so nothing else that asks for the home page (the site
+	root, the portal) changes its answer. A System Manager keeps the desk: it is
+	where they administer the site from.
+	"""
+	roles = frappe.get_roles(login_manager.user)
+	if "System Manager" in roles or not any(role in roles for role in CRM_ONLY_ROLES):
+		return
+	frappe.local.flags.home_page = "crm"

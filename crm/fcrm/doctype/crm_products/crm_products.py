@@ -32,6 +32,14 @@ class CRMProducts(Document):
 
 @frappe.whitelist()
 def get_product_rate_details(product_code: str, deal: str | None = None) -> dict:
+	# Without a deal nothing else was checked, and any signed-in account, a
+	# portal user included, could read a product's name and price by its code.
+	frappe.has_permission("CRM Product", "read", throw=True)
+	# The same form script runs on leads and sends the lead's name here. It is
+	# not a deal, so there is no customer context to price in, and judging it as
+	# one refused a rep every product they picked on a lead.
+	if deal and not frappe.db.exists("CRM Deal", deal):
+		deal = None
 	if deal:
 		frappe.has_permission("CRM Deal", "read", doc=deal, throw=True)
 	product = (
@@ -48,6 +56,11 @@ def _contextual_rate(product_code: str, deal: str | None):
 		return None
 	item_code = frappe.db.get_value("CRM Product", product_code, "erpnext_item_code")
 	if not item_code:
+		return None
+	# The price of an Item closed to our company is not ours to quote, or to show.
+	from crm.integrations.erpnext.utils import items_closed_to_crm
+
+	if items_closed_to_crm([item_code]):
 		return None
 	return get_deal_product_rate(item_code, deal)
 
@@ -158,7 +171,7 @@ class CRMProducts {
 
     let a = await call("crm.fcrm.doctype.crm_products.crm_products.get_product_rate_details", {
         product_code: productCode,
-        deal: this.doc.name,
+        deal: this.doc.doctype === 'CRM Deal' ? this.doc.name : null,
     })
     if (!a || row.product_code !== productCode) return
 

@@ -1296,3 +1296,72 @@ in the `mcr.microsoft.com/playwright` image because this host lacks two of its l
 device was not. Notes for the next port: the first conversion repro failed on a mandatory field,
 not on the bug, and reading the screenshot caught it. Tests in one class share the database until
 it ends, so an `IntegrationTestCase` that changes a shared row has to put it back.
+
+## Upstream fixes — frappe/crm develop to d68ef63d1
+
+**Completed 2026-11-11.** Branch `fix/upstream-to-d68ef63d1`. Merge base `7dcd8430d`; range
+`14b5efa59..d68ef63d1`, 101 commits. The next port starts from `d68ef63d1`.
+
+Prompted by upstream's `v16.0.2`. That tag is on the release line, which is now cut per framework
+version (`version-15`, `version-16`) and still descends from the March 2025 split, so it is not an
+ancestor of ours either. `v16.0.1..v16.0.2` itself holds only #3292 and a test-fixture fix.
+
+### What was taken
+
+- **#2865 stored link filters, adapted.** Customize Form stores `link_filters` as a list of
+  `[doctype, field, operator, value]`; we passed the list through, and the User picker spread it
+  into `{0: [...]}`. `parseLinkFilters` now returns the mapping `search_link` expects and evaluates
+  `eval:` values against the document. In the grid upstream parses every cell on every render; ours
+  parses a column once, and per row only when the filter holds an `eval:` (`linkFiltersNeedDoc`)
+  or a form script overrides `link_filters` for that row or column.
+- **#3309 reply keeps the draft,** unchanged, with component tests upstream did not write. QA in a
+  browser found Reply on an email card dead after a tab switch: the card took the composer ref at
+  setup, when it could still be null. Ours and upstream's; the card now reads it at the click.
+
+### Already carried, in stricter form
+
+#3300 exotel events to the agent only, #3253 linked deals on a contact, #3252 ToDo edits, #3303 and
+#3308 event reminders, #3290 invitation checks in the controller, #3214 WhatsApp notifications to
+assignees, the realtime scoping in #3295, and `04f0ee7dc` (Reply All without cc or bcc), which
+upstream shipped inside #3294.
+
+**#3291 bulk-delete permission is carried differently, not more strictly.** Upstream refuses up
+front; ours unlinks inside a per-record savepoint and lets `frappe.delete_doc` refuse, rolling that
+record back. Nothing is deleted either way, but over ten records the caller is told "queued" and
+only the Error Log says why nothing went. No test of ours runs the bulk delete as a rep.
+
+### Left out, and why
+
+- **#3372 data import for sales roles.** Widens what a rep can do; reps here own customers only.
+  A product decision.
+- **#3294 schedule send** was left out of this port and taken on 2026-11-11 as its own change,
+  recorded below.
+- **#3388 WA Account read for sales roles.** Our reps read templates and do not edit them, and the
+  account holds Meta credentials.
+- **#3287 layout field dicts.** Repairs layouts seeded in June 2024; no site of ours is that old.
+- **#3292, #3212** Frappe Cloud setup and billing. **#3329** guards the automation engine we never
+  took. **#3312** upstream's help links. The `nosemgrep` comments in #3295, and the CI changes.
+
+## Upstream feature — schedule send (frappe/crm #3294)
+
+**Completed 2026-11-11.** Branch `feat/schedule-send`. Net diff of `500ec678e`, by hand onto our
+composer; upstream had not changed these files again by `d68ef63d1`.
+
+- `crm/api/email.py` and `crm/tests/test_email.py` are upstream's, unchanged: cancel returns the
+  email as a draft, send-now, and a Communication `on_change` hook that dates a scheduled email by
+  when it went out. Only the person who scheduled an email may change it.
+- **Ours:** the timeline says whether the email is the viewer's (`scheduled_by_me`), and the card
+  offers Send now / Edit / Delete only then. Upstream shows the menu to everyone who can read the
+  record and lets the server refuse. Our communication activities carried no `name`; they do now,
+  because the card acts on the email by name.
+- The times offered are in the user's time zone as frappe-ui has it (`localTimezone`), and
+  `send_after` is stored in the site's.
+- Needs a default outgoing Email Account and the scheduler, like any queued mail. Nothing else to
+  configure, no schema change.
+- **Hardened past upstream after review:** both endpoints are POST only; Send now refuses when
+  the queue row is gone and when a recipient has unsubscribed since; the picker stops at 28 days,
+  because frappe clears queue rows a month after they were made, whatever their status.
+- **Known and left:** the scheduled flush itself does not re-check unsubscribes (frappe's, true of
+  any queued mail). A scheduled email counts as sent from the moment it is written for the SLA's
+  first response, the planner's Email match and the "touched today" signal. Only the person who
+  scheduled an email can stop it; a manager cannot.

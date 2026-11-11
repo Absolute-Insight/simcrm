@@ -6,6 +6,7 @@ from crm.fcrm.doctype.crm_product.reconciliation import (
 	classify_pair,
 	detect_orphan,
 )
+from crm.integrations.erpnext.utils import items_closed_to_crm
 
 
 def enqueue_reconciliation():
@@ -15,6 +16,10 @@ def enqueue_reconciliation():
 		timeout=1200,
 		job_id="crm_product_item_reconciliation",
 		deduplicate=True,
+		# The settings save that asks for this has not committed yet. A worker
+		# that started first read the old company, or `enabled = 0`, and nothing
+		# ran it again.
+		enqueue_after_commit=True,
 	)
 
 
@@ -44,12 +49,31 @@ def _initial_summary():
 		"created_in_crm": 0,
 		"created_in_erpnext": 0,
 		"unlinked_orphans": 0,
+		"closed_to_crm_company": 0,
 	}
 
 
 def _sync_items_to_products(items, products, summary):
+	closed = items_closed_to_crm()
+	# by the link, not the code: a renamed product keeps its Item under another name
+	linked = {p["erpnext_item_code"]: p for p in products.values() if p.get("erpnext_item_code")}
 	for code, item in items.items():
+		if code in closed:
+			_close_product(linked.get(code), summary)
+			continue
 		_sync_item_to_product(item, products.get(code), summary)
+
+
+def _close_product(product, summary):
+	"""An Item restricted away from the CRM's company: never created, never linked, switched off.
+
+	A product that already mirrors it stays, because a deal may hold it, but
+	disabled, so it is no longer offered. One that only shares the code is left
+	unlinked: linking is what would copy the Item's name and price across.
+	"""
+	summary["closed_to_crm_company"] += 1
+	if product and not product.get("disabled"):
+		frappe.db.set_value("CRM Product", product["name"], "disabled", 1)
 
 
 def _sync_products_to_items(products, existing_item_codes, summary, settings):
@@ -137,6 +161,12 @@ def _sync_item_to_product(item, product, summary):
 	action = classify_pair(item, product)
 	if action.rule == "already_linked":
 		summary["already_linked"] += 1
+		# The mirror switches a product off when its Item is closed to the CRM's
+		# company, and only an Item save switches it back. An Item reopened any
+		# other way (the company changed in settings, a patch) would leave the
+		# product off, and the next edit of it would push that to the Item.
+		if bool(product.get("disabled")) != bool(item.get("disabled")):
+			frappe.db.set_value("CRM Product", product["name"], "disabled", item.get("disabled") or 0)
 	else:
 		summary["linked_by_exact_code"] += 1
 	if action.crm_updates:

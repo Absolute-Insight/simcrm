@@ -24,12 +24,30 @@ const Button = {
   },
 }
 
-function composer() {
+// `draft` is what the rep has already typed, as the editor's top-level nodes.
+function composer(draft = []) {
+  const inserted = []
   const chain = new Proxy(
     {},
-    { get: (_, k) => (k === 'run' ? () => {} : () => chain) },
+    {
+      get: (_, k) => {
+        if (k === 'run') return () => {}
+        if (k === 'insertContentAt')
+          return (at, content) => (inserted.push({ at, content }), chain)
+        return () => chain
+      },
+    },
   )
-  return { show: false, editor: { editor: { chain: () => chain } } }
+  const nodes = draft.map((node) => ({
+    type: { name: node.type },
+    toJSON: () => node,
+  }))
+  const doc = { forEach: (fn) => nodes.forEach(fn) }
+  return {
+    show: false,
+    inserted,
+    editor: { editor: { chain: () => chain, state: { doc } } },
+  }
 }
 
 function email(data) {
@@ -49,15 +67,14 @@ function email(data) {
   }
 }
 
-function clickReply(activity, tooltip) {
-  const emailBox = composer()
+function clickReply(activity, tooltip, emailBox = composer()) {
   const w = mount(EmailArea, {
     props: { activity, emailBox },
     stubs: { Button },
   })
   w.el.querySelector(`[data-tooltip="${tooltip}"]`).click()
   w.unmount()
-  return emailBox.editor
+  return emailBox?.editor
 }
 
 describe('EmailArea reply addressing', () => {
@@ -96,5 +113,95 @@ describe('EmailArea reply addressing', () => {
     const editor = clickReply(received, 'Reply')
     expect(editor.toEmails).toEqual(['buyer@customer.co.za'])
     expect(editor.replyAddresses).toContain('thabo@mbp-engineering.co.za')
+  })
+
+  it('does nothing, and does not throw, before the composer is mounted', () => {
+    const received = email({
+      sent_or_received: 'Received',
+      sender: 'buyer@customer.co.za',
+      recipients: 'thabo@mbp-engineering.co.za',
+    })
+    expect(() => clickReply(received, 'Reply', null)).not.toThrow()
+  })
+
+  // Upstream frappe/crm #3309: Reply used to clear the composer first, so a
+  // rep who had started typing and then picked the email to answer lost it.
+  describe('what was already typed', () => {
+    const received = email({
+      sent_or_received: 'Received',
+      sender: 'buyer@customer.co.za',
+      recipients: 'thabo@mbp-engineering.co.za',
+    })
+    const typed = { type: 'paragraph', content: [{ type: 'text', text: 'Hi' }] }
+
+    it('is kept above the quoted email', () => {
+      const emailBox = composer([typed])
+      clickReply(received, 'Reply', emailBox)
+      expect(emailBox.inserted).toEqual([{ at: 0, content: [typed] }])
+    })
+
+    it('drops an earlier quote and whatever sits under it', () => {
+      const emailBox = composer([
+        typed,
+        { type: 'blockquote' },
+        { type: 'paragraph' },
+      ])
+      clickReply(received, 'Reply All', emailBox)
+      expect(emailBox.inserted).toEqual([{ at: 0, content: [typed] }])
+    })
+
+    it('opens on an empty line when nothing was typed', () => {
+      const emailBox = composer()
+      clickReply(received, 'Reply', emailBox)
+      expect(emailBox.inserted).toEqual([
+        { at: 0, content: { type: 'paragraph' } },
+      ])
+    })
+  })
+})
+
+// Upstream frappe/crm #3294. Anyone who can read the record sees a scheduled
+// email; only the person who scheduled it may send, edit or delete it, and the
+// server refuses everyone else. The card must not offer what will be refused.
+describe('EmailArea scheduled email', () => {
+  const tooltips = (data) => {
+    const w = mount(EmailArea, {
+      props: {
+        activity: email({
+          sent_or_received: 'Sent',
+          sender: 'thabo@mbp-engineering.co.za',
+          recipients: 'buyer@customer.co.za',
+          ...data,
+        }),
+        emailBox: composer(),
+      },
+      stubs: { Button },
+    })
+    const found = [...w.el.querySelectorAll('[data-tooltip]')].map((b) =>
+      b.getAttribute('data-tooltip'),
+    )
+    w.unmount()
+    return found
+  }
+  const waiting = {
+    delivery_status: 'Scheduled',
+    send_after: '2026-11-14 09:00:00',
+  }
+
+  it('offers its actions to the person who scheduled it, and no reply', () => {
+    expect(tooltips({ ...waiting, scheduled_by_me: true })).toEqual([
+      'Scheduled email actions',
+    ])
+  })
+
+  it('offers a colleague neither the actions nor a reply', () => {
+    expect(tooltips({ ...waiting, scheduled_by_me: false })).toEqual([])
+  })
+
+  it('leaves an email that has gone out as it was', () => {
+    expect(tooltips({ delivery_status: 'Sent' })).toEqual([
+      'Reply',
+      'Reply All',
+    ])
   })
 })
