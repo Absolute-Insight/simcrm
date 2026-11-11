@@ -140,6 +140,8 @@ describe('linkFiltersNeedDoc', () => {
       false,
     )
     expect(linkFiltersNeedDoc({ enabled: 1 })).toBe(false)
+    // a mapping is never evaluated, whatever its values say
+    expect(linkFiltersNeedDoc({ note: ['=', 'eval:doc.x'] })).toBe(false)
   })
 
   it('is true when a condition is an eval: expression', () => {

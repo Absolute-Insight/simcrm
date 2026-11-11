@@ -586,14 +586,24 @@ function getRowFieldObj(field, row) {
 
   // A column whose link filters read the row (`eval:doc.x`) has none worked
   // out yet; every other column got its filters once, in getFieldObj.
-  const perRowFilters = field.filters === undefined && field.link_filters
+  // A form script that sets link_filters on one row, or on the column after
+  // the fields were built, also needs them worked out again here.
+  const overridden =
+    rowOverrides?.link_filters !== undefined ||
+    colOverrides?.link_filters !== undefined
+  const perRowFilters =
+    overridden || (field.filters === undefined && field.link_filters)
 
   if (!colOverrides && !rowOverrides && !perRowFilters) return field
 
   let merged = { ...field }
   if (colOverrides) Object.assign(merged, colOverrides)
   if (rowOverrides) Object.assign(merged, rowOverrides)
-  if (perRowFilters) merged.filters ??= getLinkFilters(merged, row)
+  if (overridden && !rowOverrides?.filters && !colOverrides?.filters) {
+    merged.filters = getLinkFilters(merged, row)
+  } else if (perRowFilters) {
+    merged.filters ??= getLinkFilters(merged, row)
+  }
   return merged
 }
 

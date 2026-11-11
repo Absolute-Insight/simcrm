@@ -71,9 +71,16 @@ export function normalizeLinkFilters(linkFilters, context = {}) {
  */
 export function linkFiltersNeedDoc(linkFilters) {
   if (!linkFilters) return false
-  const text =
-    typeof linkFilters === 'string' ? linkFilters : JSON.stringify(linkFilters)
-  return text.includes('eval:')
+  if (typeof linkFilters === 'string') return linkFilters.includes('eval:')
+  // Only the stored list form is evaluated; a mapping is passed through as it is.
+  if (!Array.isArray(linkFilters)) return false
+  return linkFilters.some(
+    (condition) =>
+      Array.isArray(condition) &&
+      condition.some(
+        (part) => typeof part === 'string' && part.startsWith('eval:'),
+      ),
+  )
 }
 
 /**
