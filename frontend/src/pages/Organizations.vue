@@ -6,7 +6,9 @@
     <template #right-header>
       <!-- MBP's reps identify an account by its Acumatica code (C-IMP003E),
            which is what both screens of their old app searched on. -->
-      <div class="flex items-center gap-1">
+      <!-- Not on a phone: with it the header ran past the screen and took
+           Create with it. Search in the top bar finds a customer by code. -->
+      <div v-if="!isMobileView" class="flex items-center gap-1">
         <FormControl
           v-model="codeQuery"
           type="text"
@@ -102,6 +104,7 @@ import OrganizationsListView from '@/components/ListViews/OrganizationsListView.
 import ViewControls from '@/components/ViewControls.vue'
 import { getMeta } from '@/stores/meta'
 import { usersStore } from '@/stores/users'
+import { isMobileView } from '@/composables/settings'
 import { formatDate, website } from '@/utils'
 import { timestampCell } from '@/composables/useTimelinePreferences'
 import { ref, computed } from 'vue'

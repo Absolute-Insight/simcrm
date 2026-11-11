@@ -4,9 +4,13 @@
       <ViewBreadcrumbs routeName="Planner" />
     </template>
     <template #right-header>
+      <!-- On a phone the two secondary actions are icons, so Save plan stays on
+           the screen: three labelled buttons ran 120px past a 390px display. -->
       <Button
         v-if="isOwnPlan"
-        :label="__('Log activity')"
+        :label="isMobileView ? undefined : __('Log activity')"
+        :aria-label="__('Log activity')"
+        :tooltip="isMobileView ? __('Log activity') : undefined"
         :disabled="logging || saving"
         :loading="logging"
         @click="logVisit"
@@ -17,7 +21,9 @@
       </Button>
       <Button
         v-if="isOwnPlan"
-        :label="__('Propose my week')"
+        :label="isMobileView ? undefined : __('Propose my week')"
+        :aria-label="__('Propose my week')"
+        :tooltip="isMobileView ? __('Propose my week') : undefined"
         :disabled="!canEdit || proposing"
         :loading="proposing"
         @click="proposeWeek"
@@ -477,6 +483,7 @@ import {
 } from '@/utils/planner'
 import { sessionStore } from '@/stores/session'
 import { usersStore } from '@/stores/users'
+import { isMobileView } from '@/composables/settings'
 import { getSettings } from '@/stores/settings'
 import {
   Dropdown,

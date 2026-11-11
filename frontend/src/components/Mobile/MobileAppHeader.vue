@@ -16,7 +16,10 @@
         @click="openCommandPalette"
       />
     </div>
-    <div id="app-header" class="flex-1" />
+    <!-- min-w-0: a flex child will not shrink below its content otherwise, and
+         a long record title or a row of page actions pushed the header wider
+         than the phone, taking the status menu or Save off the screen -->
+    <div id="app-header" class="min-w-0 flex-1" />
   </div>
   <CallUI />
 </template>
