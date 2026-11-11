@@ -56,7 +56,18 @@ describe('fontDestination', () => {
     ).toBeNull()
   })
 
-  it('works with the dev server base of /', () => {
+  it('never names a file outside the output directory', () => {
+    expect(
+      fontDestination(
+        'assets/a.css',
+        '/assets/crm/frontend/../../../x.woff2',
+        BASE,
+      ),
+    ).toBeNull()
+    expect(fontDestination('assets/a.css', '../../x.woff2', BASE)).toBeNull()
+  })
+
+  it('works with a base of /', () => {
     expect(fontDestination('assets/a.css', '/assets/a.woff2', '/')).toBe(
       'assets/a.woff2',
     )

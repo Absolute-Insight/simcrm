@@ -23,11 +23,23 @@ import path from 'node:path'
  */
 export function fontDestination(cssFileName, ref, base = '/') {
   if (/^(https?:)?\/\//.test(ref) || ref.startsWith('data:')) return null
+  let dest
   if (ref.startsWith('/')) {
     const root = base.endsWith('/') ? base : base + '/'
     // served from somewhere this build does not write to
     if (!ref.startsWith(root)) return null
-    return path.normalize(ref.slice(root.length))
+    dest = path.normalize(ref.slice(root.length))
+  } else {
+    dest = path.normalize(path.join(path.dirname(cssFileName), ref))
   }
-  return path.normalize(path.join(path.dirname(cssFileName), ref))
+  // A reference that climbs out of the output directory is not a file this
+  // build may write, wherever the stylesheet came from.
+  if (
+    dest === '..' ||
+    dest.startsWith('..' + path.sep) ||
+    path.isAbsolute(dest)
+  ) {
+    return null
+  }
+  return dest
 }
