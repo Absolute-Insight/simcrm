@@ -150,3 +150,25 @@ class TestRateDetailsNeedProductAccess(FrappeTestCase):
 		self.addCleanup(frappe.set_user, "Administrator")
 		with self.assertRaises(frappe.PermissionError):
 			crm_products.get_product_rate_details("ANY-CODE")
+
+	def test_a_lead_name_in_the_deal_slot_is_not_judged_as_a_deal(self):
+		"""The products script runs on leads too and sends the lead's name."""
+		from crm.fcrm.doctype.crm_products import crm_products
+
+		email = "rate-lookup-rep@example.com"
+		if not frappe.db.exists("User", email):
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": email,
+					"first_name": "Rate Lookup Rep",
+					"send_welcome_email": 0,
+					"roles": [{"role": "Sales User"}],
+				}
+			).insert(ignore_permissions=True)
+
+		frappe.set_user(email)
+		self.addCleanup(frappe.set_user, "Administrator")
+		out = crm_products.get_product_rate_details("ANY-CODE", deal="CRM-LEAD-NOT-A-DEAL")
+
+		self.assertEqual(out, {"product_name": None, "rate": None})
