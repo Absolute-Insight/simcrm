@@ -132,3 +132,21 @@ class TestProductDetailsScript(unittest.TestCase):
 		self.assertIn("row.rate = a.rate ?? 0", script)
 		self.assertNotIn("!row.rate", script)
 		self.assertIn("row.product_code !== productCode", script)
+
+
+class TestRateDetailsNeedProductAccess(FrappeTestCase):
+	"""No ERPNext needed: the check comes before any pricing."""
+
+	def test_an_account_that_cannot_read_products_is_refused(self):
+		from crm.fcrm.doctype.crm_products import crm_products
+
+		email = "no-crm-role@example.com"
+		if not frappe.db.exists("User", email):
+			frappe.get_doc(
+				{"doctype": "User", "email": email, "first_name": "No CRM Role", "send_welcome_email": 0}
+			).insert(ignore_permissions=True)
+
+		frappe.set_user(email)
+		self.addCleanup(frappe.set_user, "Administrator")
+		with self.assertRaises(frappe.PermissionError):
+			crm_products.get_product_rate_details("ANY-CODE")

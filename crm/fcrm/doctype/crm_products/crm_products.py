@@ -32,6 +32,9 @@ class CRMProducts(Document):
 
 @frappe.whitelist()
 def get_product_rate_details(product_code: str, deal: str | None = None) -> dict:
+	# Without a deal nothing else was checked, and any signed-in account, a
+	# portal user included, could read a product's name and price by its code.
+	frappe.has_permission("CRM Product", "read", throw=True)
 	if deal:
 		frappe.has_permission("CRM Deal", "read", doc=deal, throw=True)
 	product = (
