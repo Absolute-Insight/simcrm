@@ -74,7 +74,7 @@ function clickReply(activity, tooltip, emailBox = composer()) {
   })
   w.el.querySelector(`[data-tooltip="${tooltip}"]`).click()
   w.unmount()
-  return emailBox.editor
+  return emailBox?.editor
 }
 
 describe('EmailArea reply addressing', () => {
@@ -113,6 +113,15 @@ describe('EmailArea reply addressing', () => {
     const editor = clickReply(received, 'Reply')
     expect(editor.toEmails).toEqual(['buyer@customer.co.za'])
     expect(editor.replyAddresses).toContain('thabo@mbp-engineering.co.za')
+  })
+
+  it('does nothing, and does not throw, before the composer is mounted', () => {
+    const received = email({
+      sent_or_received: 'Received',
+      sender: 'buyer@customer.co.za',
+      recipients: 'thabo@mbp-engineering.co.za',
+    })
+    expect(() => clickReply(received, 'Reply', null)).not.toThrow()
   })
 
   // Upstream frappe/crm #3309: Reply used to clear the composer first, so a

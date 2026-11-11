@@ -80,16 +80,19 @@ import EmailContent from '@/components/Activities/EmailContent.vue'
 import { Badge } from 'frappe-ui'
 import TimelineTimestamp from '@/components/Activities/TimelineTimestamp.vue'
 import ToneBadge from '@/components/ui/ToneBadge.vue'
-import { reactive, computed } from 'vue'
+import { computed } from 'vue'
 
 const props = defineProps({
   activity: { type: Object, default: () => ({}) },
   emailBox: { type: Object, default: () => ({}) },
 })
 
-const emailBox = reactive(props.emailBox)
-
 function reply(email, reply_all = false) {
+  // Read at the click, not at setup: the composer is a template ref further
+  // down the page, and a card mounted before it (the first render of a tab)
+  // would hold null for good and throw here.
+  const emailBox = props.emailBox
+  if (!emailBox) return
   emailBox.show = true
   let editor = emailBox.editor
   let message = email.content
