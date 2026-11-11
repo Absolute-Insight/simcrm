@@ -9,6 +9,7 @@ from crm.fcrm.doctype.crm_product.sync_utils import payload_differs
 from crm.integrations.erpnext.utils import (
 	cascade_rename,
 	in_cascade,
+	items_closed_to_crm,
 	should_push_to_erpnext,
 	validate_rename_conflict,
 )
@@ -89,6 +90,11 @@ def _push_to_item(doc):
 	item_code = doc.erpnext_item_code
 	if not frappe.db.exists("Item", item_code):
 		frappe.db.set_value("CRM Product", doc.name, "erpnext_item_code", None)
+		return
+	# The product of an Item restricted away from the CRM's company is disabled
+	# by the mirror, not by anyone's choice. Pushing it back would disable the
+	# Item for the companies that do sell it, so nothing goes back at all.
+	if items_closed_to_crm([item_code]):
 		return
 	data = {"item_name": doc.product_name, **{f: doc.get(f) for f in CATALOGUE_FIELDS}}
 	current = frappe.db.get_value("Item", item_code, list(data.keys()), as_dict=True) or {}

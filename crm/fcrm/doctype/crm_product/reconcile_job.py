@@ -6,6 +6,7 @@ from crm.fcrm.doctype.crm_product.reconciliation import (
 	classify_pair,
 	detect_orphan,
 )
+from crm.integrations.erpnext.utils import items_closed_to_crm
 
 
 def enqueue_reconciliation():
@@ -44,12 +45,29 @@ def _initial_summary():
 		"created_in_crm": 0,
 		"created_in_erpnext": 0,
 		"unlinked_orphans": 0,
+		"closed_to_crm_company": 0,
 	}
 
 
 def _sync_items_to_products(items, products, summary):
+	closed = items_closed_to_crm()
 	for code, item in items.items():
+		if code in closed:
+			_close_product(products.get(code), summary)
+			continue
 		_sync_item_to_product(item, products.get(code), summary)
+
+
+def _close_product(product, summary):
+	"""An Item restricted away from the CRM's company: never created, never linked, switched off.
+
+	A product that already mirrors it stays, because a deal may hold it, but
+	disabled, so it is no longer offered. One that only shares the code is left
+	unlinked: linking is what would copy the Item's name and price across.
+	"""
+	summary["closed_to_crm_company"] += 1
+	if product and product.get("erpnext_item_code") and not product.get("disabled"):
+		frappe.db.set_value("CRM Product", product["name"], "disabled", 1)
 
 
 def _sync_products_to_items(products, existing_item_codes, summary, settings):
