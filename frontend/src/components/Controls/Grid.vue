@@ -511,6 +511,7 @@ import { flt } from '@/utils/numberFormat.js'
 import { usersStore } from '@/stores/users'
 import { getMeta } from '@/stores/meta'
 import {
+  linkFiltersNeedDoc,
   parseLinkFilters,
   withCustomValueOption,
 } from '@/utils/fieldTransforms'
@@ -583,12 +584,31 @@ function getRowFieldObj(field, row) {
   const colOverrides = ov[colKey]
   const rowOverrides = rowKey ? ov[rowKey] : null
 
-  if (!colOverrides && !rowOverrides) return field
+  // A column whose link filters read the row (`eval:doc.x`) has none worked
+  // out yet; every other column got its filters once, in getFieldObj.
+  const perRowFilters = field.filters === undefined && field.link_filters
+
+  if (!colOverrides && !rowOverrides && !perRowFilters) return field
 
   let merged = { ...field }
   if (colOverrides) Object.assign(merged, colOverrides)
   if (rowOverrides) Object.assign(merged, rowOverrides)
+  if (perRowFilters) merged.filters ??= getLinkFilters(merged, row)
   return merged
+}
+
+function getLinkFilters(field, row) {
+  const filters = parseLinkFilters(field.link_filters, {
+    doc: row,
+    parent: parentDoc.value,
+  })
+  if (field.fieldtype !== 'User') return filters
+
+  return {
+    name: ['in', users.data.crmUsers?.map((user) => user.name)],
+    ignore_user_type: 1,
+    ...filters,
+  }
 }
 
 const showRowList = ref(new Array(rows.value?.length || []).fill(false))
@@ -653,16 +673,14 @@ function getFieldObj(field) {
 
   if (field.fieldtype === 'Link' && field.options === 'User') {
     field.fieldtype = 'User'
-    field.link_filters = JSON.stringify({
-      name: ['in', users.data.crmUsers?.map((user) => user.name)],
-      ignore_user_type: 1,
-      ...(parseLinkFilters(field.link_filters) || {}),
-    })
   }
 
   const fieldObjWithFilters = {
     ...field,
-    filters: parseLinkFilters(field.link_filters),
+    // undefined, not null: getRowFieldObj fills these in against each row
+    filters: linkFiltersNeedDoc(field.link_filters)
+      ? undefined
+      : getLinkFilters(field, null),
     placeholder: field.placeholder || field.label,
   }
 
