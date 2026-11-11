@@ -1334,10 +1334,34 @@ only the Error Log says why nothing went. No test of ours runs the bulk delete a
 
 - **#3372 data import for sales roles.** Widens what a rep can do; reps here own customers only.
   A product decision.
-- **#3294 schedule send.** A feature, 600 lines across the composer. The strongest candidate for
-  the next feature port.
+- **#3294 schedule send** was left out of this port and taken on 2026-11-11 as its own change,
+  recorded below.
 - **#3388 WA Account read for sales roles.** Our reps read templates and do not edit them, and the
   account holds Meta credentials.
 - **#3287 layout field dicts.** Repairs layouts seeded in June 2024; no site of ours is that old.
 - **#3292, #3212** Frappe Cloud setup and billing. **#3329** guards the automation engine we never
   took. **#3312** upstream's help links. The `nosemgrep` comments in #3295, and the CI changes.
+
+## Upstream feature — schedule send (frappe/crm #3294)
+
+**Completed 2026-11-11.** Branch `feat/schedule-send`. Net diff of `500ec678e`, by hand onto our
+composer; upstream had not changed these files again by `d68ef63d1`.
+
+- `crm/api/email.py` and `crm/tests/test_email.py` are upstream's, unchanged: cancel returns the
+  email as a draft, send-now, and a Communication `on_change` hook that dates a scheduled email by
+  when it went out. Only the person who scheduled an email may change it.
+- **Ours:** the timeline says whether the email is the viewer's (`scheduled_by_me`), and the card
+  offers Send now / Edit / Delete only then. Upstream shows the menu to everyone who can read the
+  record and lets the server refuse. Our communication activities carried no `name`; they do now,
+  because the card acts on the email by name.
+- The times offered are in the user's time zone as frappe-ui has it (`localTimezone`), and
+  `send_after` is stored in the site's.
+- Needs a default outgoing Email Account and the scheduler, like any queued mail. Nothing else to
+  configure, no schema change.
+- **Hardened past upstream after review:** both endpoints are POST only; Send now refuses when
+  the queue row is gone and when a recipient has unsubscribed since; the picker stops at 28 days,
+  because frappe clears queue rows a month after they were made, whatever their status.
+- **Known and left:** the scheduled flush itself does not re-check unsubscribes (frappe's, true of
+  any queued mail). A scheduled email counts as sent from the moment it is written for the SLA's
+  first response, the planner's Email match and the "touched today" signal. Only the person who
+  scheduled an email can stop it; a manager cannot.

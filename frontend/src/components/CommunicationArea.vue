@@ -36,6 +36,7 @@
         onClick: submitEmail,
         disabled: emailEmpty,
       }"
+      :scheduleSend="scheduleEmail"
       :discardButtonProps="{
         onClick: async () => {
           await deleteAttachedFiles('email')
@@ -91,7 +92,8 @@ import EmailEditor from '@/components/EmailEditor.vue'
 import CommentBox from '@/components/CommentBox.vue'
 import CommentIcon from '@/components/Icons/CommentIcon.vue'
 import Email2Icon from '@/components/Icons/Email2Icon.vue'
-import { isContentEmpty } from '@/utils'
+import { isContentEmpty, htmlToText } from '@/utils'
+import { createDialog } from '@/utils/dialogs'
 import { usersStore } from '@/stores/users'
 import { useStorage } from '@vueuse/core'
 import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
@@ -217,7 +219,7 @@ const emailBlocked = computed(
   () => emailEmpty.value || newEmailEditor.value?.sendBlocked,
 )
 
-async function sendMail() {
+async function sendMail(sendAfter = null) {
   let fromEmail = newEmailEditor.value.fromEmail || getUser().email
   let recipients = newEmailEditor.value.toEmails
   let subject = newEmailEditor.value.subject
@@ -239,6 +241,7 @@ async function sendMail() {
     send_email: 1,
     sender: fromEmail,
     sender_full_name: getUser()?.full_name || undefined,
+    send_after: sendAfter || undefined,
   })
 }
 
@@ -291,17 +294,56 @@ async function submitEmail() {
     success: __('Email sent'),
     error: (e) => e?.messages?.[0] || __('Failed to send email!'),
   })
+  if (await afterSend(sending)) {
+    capture('email_sent', { doctype: props.doctype })
+    updateOnboardingStep('send_first_email')
+  }
+}
+
+function scheduleEmail(sendAfter, label, confirmed) {
+  if (emailBlocked.value) return
+  if (confirmed) return confirmSchedule(sendAfter, label)
+  createDialog({
+    title: __('Schedule email?'),
+    message: __('It will be sent on {0}.', [label]),
+    actions: [
+      {
+        label: __('Schedule'),
+        variant: 'solid',
+        onClick: ({ close }) => {
+          close()
+          confirmSchedule(sendAfter, label)
+        },
+      },
+    ],
+  })
+}
+
+async function confirmSchedule(sendAfter, label) {
+  showEmailBox.value = false
+  const scheduling = sendMail(sendAfter)
+  toast.promise(scheduling, {
+    loading: __('Scheduling email...'),
+    success: __('Email scheduled for {0}', [label]),
+    error: (e) => e?.messages?.[0] || __('Failed to schedule email!'),
+  })
+  if (await afterSend(scheduling)) {
+    capture('email_scheduled', { doctype: props.doctype })
+  }
+}
+
+// Clears the draft and refreshes the timeline once the email is saved
+async function afterSend(sending) {
   try {
     await sending
   } catch {
-    return
+    return false
   }
   newEmail.value = ''
   emailAttachments.value = []
   reload.value = true
   emit('scroll')
-  capture('email_sent', { doctype: props.doctype })
-  updateOnboardingStep('send_first_email')
+  return true
 }
 
 async function submitComment() {
@@ -340,9 +382,45 @@ function toggleCommentBox() {
   showCommentBox.value = !showCommentBox.value
 }
 
+// A composer holding only the signature counts as empty
+const hasDraft = computed(() => {
+  const text = (html) => htmlToText(html || '').replace(/\s+/g, '')
+  const content = text(newEmail.value)
+  return (
+    !!emailAttachments.value.length ||
+    (!!content && content !== text(signature.data))
+  )
+})
+
+// Puts a cancelled scheduled email back in the composer
+function restoreDraft(draft) {
+  const split = (emails) =>
+    emails
+      ? emails
+          .split(',')
+          .map((e) => e.trim())
+          .filter(Boolean)
+      : []
+  const editor = newEmailEditor.value
+  // The draft already carries its signature
+  signatureAdded.value = true
+  editor.subject = draft.subject
+  editor.toEmails = split(draft.recipients)
+  editor.ccEmails = split(draft.cc)
+  editor.bccEmails = split(draft.bcc)
+  editor.cc = !!editor.ccEmails.length
+  editor.bcc = !!editor.bccEmails.length
+  editor.replyAddresses = [draft.sender?.match(/<(.+)>/)?.[1] || draft.sender]
+  emailAttachments.value = draft.attachments
+  newEmail.value = draft.content
+  showEmailBox.value = true
+}
+
 defineExpose({
   show: showEmailBox,
   showComment: showCommentBox,
   editor: newEmailEditor,
+  hasDraft,
+  restoreDraft,
 })
 </script>

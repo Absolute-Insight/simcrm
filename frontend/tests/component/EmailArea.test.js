@@ -159,3 +159,49 @@ describe('EmailArea reply addressing', () => {
     })
   })
 })
+
+// Upstream frappe/crm #3294. Anyone who can read the record sees a scheduled
+// email; only the person who scheduled it may send, edit or delete it, and the
+// server refuses everyone else. The card must not offer what will be refused.
+describe('EmailArea scheduled email', () => {
+  const tooltips = (data) => {
+    const w = mount(EmailArea, {
+      props: {
+        activity: email({
+          sent_or_received: 'Sent',
+          sender: 'thabo@mbp-engineering.co.za',
+          recipients: 'buyer@customer.co.za',
+          ...data,
+        }),
+        emailBox: composer(),
+      },
+      stubs: { Button },
+    })
+    const found = [...w.el.querySelectorAll('[data-tooltip]')].map((b) =>
+      b.getAttribute('data-tooltip'),
+    )
+    w.unmount()
+    return found
+  }
+  const waiting = {
+    delivery_status: 'Scheduled',
+    send_after: '2026-11-14 09:00:00',
+  }
+
+  it('offers its actions to the person who scheduled it, and no reply', () => {
+    expect(tooltips({ ...waiting, scheduled_by_me: true })).toEqual([
+      'Scheduled email actions',
+    ])
+  })
+
+  it('offers a colleague neither the actions nor a reply', () => {
+    expect(tooltips({ ...waiting, scheduled_by_me: false })).toEqual([])
+  })
+
+  it('leaves an email that has gone out as it was', () => {
+    expect(tooltips({ delivery_status: 'Sent' })).toEqual([
+      'Reply',
+      'Reply All',
+    ])
+  })
+})
