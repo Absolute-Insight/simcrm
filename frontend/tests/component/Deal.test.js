@@ -413,6 +413,21 @@ describe.each([
 })
 
 describe('Deal', () => {
+  it('starts no scroll once the page has gone', async () => {
+    const timers = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      S.children = {}
+      page = mount(Deal, { props: { dealId: 'CRM-DEAL-2' }, stubs })
+      page.unmount() // before the scroll queued on mount has run
+      timers.mockClear()
+      await flush()
+      const scrolls = timers.mock.calls.filter(([, delay]) => delay === 500)
+      expect(scrolls).toEqual([])
+    } finally {
+      timers.mockRestore()
+    }
+  })
+
   it('leaves no rejection unhandled when its contacts are refused', async () => {
     const rejections = []
     const onRejection = (reason) => rejections.push(reason)
