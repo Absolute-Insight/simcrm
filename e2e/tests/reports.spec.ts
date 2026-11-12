@@ -26,11 +26,11 @@ test.describe('Reports', () => {
 		// The description is the registry speaking, and unlike a column header it
 		// is present whether or not the period happens to contain any rows.
 		await page.getByRole('tab', { name: 'Funnel conversion' }).click()
-		await expect(page.getByText(/lead-to-won conversion/i)).toBeVisible()
+		await expect(page.getByText(/deals that entered the pipeline/i)).toBeVisible()
 
 		await page.getByRole('tab', { name: 'Plan adherence by rep' }).click()
 		await expect(page.getByText(/planned activities due in the period/i)).toBeVisible()
-		await expect(page.getByText(/lead-to-won conversion/i)).toHaveCount(0)
+		await expect(page.getByText(/deals that entered the pipeline/i)).toHaveCount(0)
 	})
 
 	test('the selected report is deep-linkable', async ({ page }) => {

@@ -1982,6 +1982,28 @@ def lost_deal_count(
 	return rows[0].count if rows else 0
 
 
+def deals_entered_count(
+	from_date: str | None = None,
+	to_date: str | None = None,
+	user: str | None = None,
+	territory: str | None = None,
+) -> int:
+	"""Deals created in the period, whatever became of them: the funnel's entry,
+	the base every deal stage's conversion is measured against."""
+	Deal = DocType("CRM Deal")
+	query = (
+		frappe.qb.from_(Deal)
+		.select(Count(Deal.name).as_("count"))
+		.where(Date(Deal.creation).between(from_date, to_date))
+	)
+	if user:
+		query = query.where(belongs_to(Deal, user, "CRM Deal"))
+	query = apply_territory(query, Deal, territory)
+
+	rows = scope_deals(query).run(as_dict=True)
+	return rows[0].count if rows else 0
+
+
 def activity_cancellations(
 	from_date: str | None = None,
 	to_date: str | None = None,
@@ -2155,10 +2177,12 @@ def plan_adherence(
 	daily ``crm.rep_planning.match_actuals`` job, so today's items have not been
 	matched yet and counting them would dock every rep a day's work.
 
-	A Cancelled item (the rep called it off) is not due, so it is left out of
-	planned/done/missed and counted under ``cancelled`` instead, together with
-	cancelled tasks and events -- less the event that records a cancelled item,
-	which is the same cancellation twice.
+	A Cancelled item still counts as planned: MBP measures a rep on everything
+	they planned, so 25 done of 97 planned is 26% however many of the other 72
+	were cancelled rather than missed (Bianca, 2026-11-12). ``cancelled`` beside
+	it is the wider count -- cancelled plan items plus cancelled tasks and
+	events, less the event that records a cancelled item, which is the same
+	cancellation twice.
 
 	Returns one row per rep when ``group_by_user``, otherwise a single total row.
 	"""
@@ -2174,9 +2198,6 @@ def plan_adherence(
 		.join(Plan)
 		.on(PlanItem.parent == Plan.name)
 		.where((PlanItem.planned_date >= from_date) & (PlanItem.planned_date <= cutoff))
-		# a cancelled item was called off, not due: holding it against the rep
-		# would make cancelling a visit the customer moved cost as much as missing one
-		.where(PlanItem.status != "Cancelled")
 		.select(
 			Count(PlanItem.name).as_("planned"),
 			Count(done).as_("done"),
@@ -2340,7 +2361,7 @@ def _tidy(value: float) -> float | int:
 
 
 def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list[dict]:
-	"""Customer visits per rep in the period, against their weekly visit target.
+	"""Customer visits per rep in the period, against their visit target.
 
 	A visit is a plan item of a TARGET_KINDS type: a planned Visit. Calls,
 	emails, deliveries and admin never count, and neither does an unplanned
@@ -2349,7 +2370,7 @@ def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list
 	planned visit dated in the period; ``completed``/``cancelled``/``missed``/
 	``open`` split it by status.
 
-	``target`` is the whole period's share of the weekly target (pro-rated by
+	``target`` is the whole period's share of the weekly or monthly target (pro-rated by
 	working days, ``crm.api.visit_targets.target_for``); ``target_to_date`` is
 	the share that is already due -- up to yesterday, because today is not
 	settled (the same rule as ``plan_adherence``). A rep is "On track" when they
@@ -2380,10 +2401,15 @@ def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list
 
 	reps = set(counts) | set(unplanned)
 	scope = _scope_users(user)
-	filters = {"visits_per_week": (">", 0)}
-	if scope is not None:
-		filters["user"] = ("in", scope)
-	reps.update(frappe.get_all("CRM Visit Target", filters=filters, pluck="user"))
+	filters = {"user": ("in", scope)} if scope is not None else {}
+	reps.update(
+		frappe.get_all(
+			"CRM Visit Target",
+			filters=filters,
+			or_filters={"visits_per_week": (">", 0), "visits_per_month": (">", 0)},
+			pluck="user",
+		)
+	)
 
 	cutoff = min(getdate(to_date), getdate(add_days(nowdate(), -1)))
 	targets = target_for(reps, from_date, to_date)
@@ -2711,7 +2737,10 @@ def customer_interaction(
 	period_end = getdate(to_date)
 	rows = []
 	# get_list, not get_all: a rep's report lists only the customers they may see
-	for org in frappe.get_list("CRM Organization", pluck="name", limit_page_length=0):
+	organizations = frappe.get_list("CRM Organization", pluck="name", limit_page_length=0)
+	if only_without and user:
+		organizations = _neglect_candidates(organizations, user)
+	for org in organizations:
 		bucket = counts.get(org) or dict.fromkeys(INTERACTION_BUCKETS, 0)
 		at, rep = last.get(org, (None, None))
 		row = frappe._dict({"organization": org, **bucket})
@@ -2732,6 +2761,30 @@ def customer_interaction(
 		)
 	)
 	return rows
+
+
+def _neglect_candidates(organizations: list[str], user: str) -> list[str]:
+	"""The customers a rep is answerable for neglecting, out of ``organizations``.
+
+	A rep with customers allocated to them (``account_owner``) is measured on
+	those alone; a rep with none -- an internal rep who serves whoever calls --
+	on the unallocated ones. Every other rep's customers were on the list
+	before, and MBP's external reps read a colleague's accounts as their own
+	neglect (Bianca, 2026-11-12).
+	"""
+	# only the allocated ones: a few hundred rows, not every customer's name in an IN list
+	owners = dict(
+		frappe.get_all(
+			"CRM Organization",
+			filters={"account_owner": ("is", "set")},
+			fields=["name", "account_owner"],
+			as_list=True,
+		)
+	)
+	own = [org for org in organizations if owners.get(org) == user]
+	if own:
+		return own
+	return [org for org in organizations if not owners.get(org)]
 
 
 def _at_risk_deals(to_date: str | None = None, user: str | None = None) -> list[dict]:
@@ -3110,6 +3163,19 @@ def quota_in_period(from_date: str, to_date: str, user: str | None = None) -> fl
 	return sum(_prorated_quota(row, from_date, to_date) for row in rows)
 
 
+def quota_holders(from_date: str, to_date: str) -> list[str]:
+	"""The reps in the caller's scope with a quota row in a month the period touches."""
+	from_date, to_date = getdate(from_date), getdate(to_date)
+	filters = {
+		"period_start": ("between", [get_first_day(from_date), get_last_day(to_date)]),
+		"amount": (">", 0),
+	}
+	reps = visible_reps()
+	if reps is not None:
+		filters["user"] = ("in", reps)
+	return frappe.get_all("CRM Quota", filters=filters, pluck="user", distinct=True)
+
+
 def _prorated_quota(row, from_date, to_date) -> float:
 	"""One monthly quota row's share of ``[from_date, to_date]``, by covered days."""
 	month_start = getdate(row.period_start)
@@ -3151,8 +3217,12 @@ def quota_by_user(users: list[str], from_date: str, to_date: str) -> dict[str, f
 	return totals
 
 
-def won_value_in_period(from_date: str, to_date: str, user: str | None = None) -> float:
-	"""Closed-won revenue in the period, normalised to the base currency."""
+def won_value_in_period(
+	from_date: str, to_date: str, user: str | None = None, users: list[str] | None = None
+) -> float:
+	"""Closed-won revenue in the period, normalised to the base currency.
+
+	``users`` narrows it to the deals belonging to any of them, each deal once."""
 	Deal = DocType("CRM Deal")
 
 	# the period and status live in WHERE, not inside a CASE: a conditional
@@ -3160,6 +3230,10 @@ def won_value_in_period(from_date: str, to_date: str, user: str | None = None) -
 	query = _won_deals_query(from_date, to_date).select(Sum(Deal.deal_value * IfNull(Deal.exchange_rate, 1)))
 	if user:
 		query = query.where(belongs_to(Deal, user, "CRM Deal"))
+	elif users is not None:
+		if not users:
+			return 0.0
+		query = query.where(belongs_to_any(Deal, users, "CRM Deal"))
 	return float(scope_deals(query).run()[0][0] or 0)
 
 
@@ -3249,7 +3323,13 @@ def get_quota_attainment(
 	target has nothing to attain, and 0 read as the worst number on the page.
 	"""
 	quota = quota_in_period(from_date, to_date, user)
-	actual = won_value_in_period(from_date, to_date, user)
+	if user:
+		actual = won_value_in_period(from_date, to_date, user)
+	else:
+		# the team's won value against the team's targets: only the reps who carry
+		# one. Unassigned deals and reps without a target have no quota on the
+		# other side, and one large unassigned win could double the percentage.
+		actual = won_value_in_period(from_date, to_date, users=quota_holders(from_date, to_date))
 	attainment = round(actual / quota * 100) if quota else None
 
 	if quota:

@@ -1,13 +1,13 @@
 # Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-"""How many customer visits a rep should complete in a working week.
+"""How many customer visits a rep should complete: a week's worth, or a month's.
 
-One row per rep, not per month like ``CRM Quota``: MBP's managers talk about
-visits a week ("15 a week"), and a visit rate does not change month to month
-the way a revenue target does. Any other period is pro-rated by its working
-days (``crm.api.visit_targets.target_for``), so a month and a fortnight read
-against the same weekly number.
+One row per rep, not per month like ``CRM Quota``: a visit rate does not change
+month to month the way a revenue target does. MBP's managers first talked about
+visits a week ("15 a week"), then set the budget as 80 a month, so a row holds
+either rate; the monthly one wins when both are set. Any period is pro-rated by
+its working days (``crm.api.visit_targets.target_for``).
 
 Access follows the sales hierarchy exactly as quota does, including the rule
 that nobody sets their own target.
@@ -28,6 +28,7 @@ class CRMVisitTarget(Document):
 		from frappe.types import DF
 
 		user: DF.Link
+		visits_per_month: DF.Int
 		visits_per_week: DF.Int
 	# end: auto-generated types
 
@@ -36,7 +37,7 @@ class CRMVisitTarget(Document):
 		# handed to somebody else (see _stored_user)
 		if not self.is_new() and self.has_value_changed("user"):
 			frappe.throw(_("A visit target cannot be moved to another user."), frappe.PermissionError)
-		if (self.visits_per_week or 0) < 0:
+		if (self.visits_per_week or 0) < 0 or (self.visits_per_month or 0) < 0:
 			frappe.throw(_("A visit target cannot be negative."))
 
 

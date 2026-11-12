@@ -528,6 +528,29 @@ class MetricsTest(IntegrationTestCase):
 		self.assertEqual([row["stage"] for row in funnel].count(_("Lost")), 1, funnel)
 		self.assertEqual(funnel[-1]["count"], 1)
 
+	def test_the_funnel_report_converts_deal_stages_against_the_deals_that_entered(self):
+		"""Measured against leads, a site whose deals come from the ERP and never
+		as leads read 0% on every row (MBP, 2026-11-12). Each deal row is a share
+		of the deals created in the period, so Won is "quotes won"."""
+		from crm.api.reports import _funnel_conversion
+
+		entry, won, lost = (self.status_of_type(t) for t in ("Open", "Won", "Lost"))
+		reason = "Metrics Funnel Reason"
+		frappe.get_doc({"doctype": "CRM Lost Reason", "lost_reason": reason}).insert(
+			ignore_permissions=True, ignore_if_duplicate=True
+		)
+		self.make_deal(status=entry)
+		self.make_deal(status=entry)
+		self.make_deal(status=won)
+		self.make_deal(status=lost, lost_reason=reason)
+
+		today = str(frappe.utils.nowdate())
+		rows = {row["stage"]: row for row in _funnel_conversion(today, today, USER)}
+		self.assertEqual(rows[won]["count"], 1)
+		self.assertEqual(rows[won]["conversion"], 25.0)  # one won of four quotes
+		self.assertEqual(rows[_("Lost")]["conversion"], 25.0)
+		self.assertEqual(rows[entry]["conversion"], 50.0)
+
 	def test_a_deal_that_re_enters_a_stage_is_still_one_deal(self):
 		from crm.api.dashboard import get_deal_status_change_counts
 
