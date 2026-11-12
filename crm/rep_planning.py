@@ -125,7 +125,7 @@ EVENT_KINDS = ("Visit", "Unplanned Meeting", "Delivery")
 
 # A plan item's statuses. Cancelled is the rep's call, never the matcher's:
 # an item is only ever Cancelled by hand (manual_override), and it is neither
-# done nor missed -- adherence leaves it out of what was due.
+# done nor missed -- adherence still counts it as planned and not done.
 FINAL_STATUSES = ("Done", "Missed", "Cancelled")
 
 # the reverse map, for callers handed a doctype (mark_fulfilled's claim check)

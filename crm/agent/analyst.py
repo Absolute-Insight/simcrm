@@ -193,7 +193,7 @@ CATALOGUE: dict[str, dict] = {
 	},
 	"plan_adherence_by_rep": {
 		"title": "Plan adherence by rep",
-		"description": "Planned activities done versus missed per rep for the period.",
+		"description": "Planned activities done versus missed or cancelled per rep for the period.",
 		"source": CRM,
 		"columns": [
 			_col("rep", "Rep", "text"),

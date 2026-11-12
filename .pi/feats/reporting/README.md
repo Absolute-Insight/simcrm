@@ -43,9 +43,10 @@ pattern.
 - **Cancellations are counted from the records and the plan, once.** A
   cancelled task or event fulfils nothing, so the matcher never sees it;
   `activity_cancellations` counts them directly. A plan item a rep marks
-  **Cancelled** is not due: `plan_adherence` leaves it out of
-  planned/done/missed (and so out of the adherence percentage) and adds it to
-  `cancelled` instead, over the whole period. The planner also writes a
+  **Cancelled** still counts as planned and not done (MBP, 2026-11-12: "planned
+  97, completed 25, the rest cancelled or missed" is 26%), so it lowers the
+  adherence percentage like a missed one; it is also counted in `cancelled`,
+  over the whole period. The planner also writes a
   Cancelled Visit event as such an item's `fulfilled_by`; that event is the same
   cancellation seen from the calendar, so `plan_adherence` asks
   `activity_cancellations(..., skip_plan_cancellations=True)` and counts it once.

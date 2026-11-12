@@ -2,7 +2,7 @@
 # For license information, please see license.txt
 
 """Visit targets, the visit and activity reports, customer interaction, and how
-plan adherence treats a cancelled plan item.
+plan adherence treats a cancelled plan item (as planned and not done).
 
 Everything is dated in *last* week, Monday to Sunday, so every day in it has
 settled whatever weekday the suite runs on -- today is never counted against
@@ -133,6 +133,24 @@ class TargetProrationTest(VisitFixture, IntegrationTestCase):
 		self.assertEqual(target_for([REP], "2026-03-01", "2026-03-31"), {REP: 66})  # 15 x 22 / 5
 		self.assertAlmostEqual(target_for([REP], "2026-03-02", "2026-03-04")[REP], 9)
 
+	def test_a_whole_month_reads_the_monthly_target_whatever_its_working_days(self):
+		frappe.get_doc({"doctype": "CRM Visit Target", "user": REP, "visits_per_month": 80}).insert(
+			ignore_permissions=True
+		)
+		self.assertAlmostEqual(target_for([REP], "2026-03-01", "2026-03-31")[REP], 80)  # 22 working days
+		self.assertAlmostEqual(target_for([REP], "2026-02-01", "2026-02-28")[REP], 80)  # 20
+		# a week inside March is 5 of its 22 working days
+		self.assertAlmostEqual(target_for([REP], "2026-03-02", "2026-03-08")[REP], 80 * 5 / 22)
+		# a range across a month end takes each month's own share
+		expected = 80 * 2 / 22 + 80 * 3 / 22  # Mon 30 - Tue 31 March, Wed 1 - Fri 3 April
+		self.assertAlmostEqual(target_for([REP], "2026-03-30", "2026-04-03")[REP], expected)
+
+	def test_the_monthly_target_wins_over_a_weekly_one(self):
+		frappe.get_doc(
+			{"doctype": "CRM Visit Target", "user": REP, "visits_per_week": 15, "visits_per_month": 80}
+		).insert(ignore_permissions=True)
+		self.assertAlmostEqual(target_for([REP], "2026-03-01", "2026-03-31")[REP], 80)
+
 	def test_a_rep_without_a_target_is_left_out_not_zero(self):
 		make_target(REP, 10)
 		self.assertEqual(target_for([REP, OUTSIDER], "2026-03-02", "2026-03-08"), {REP: 10})
@@ -189,6 +207,27 @@ class VisitTargetPermissionTest(VisitFixture, IntegrationTestCase):
 		self.assertFalse(frappe.db.exists("CRM Visit Target", REP))
 		targets_api.set_visit_target(REP, 4)
 		targets_api.set_visit_target(REP, "")
+		self.assertFalse(frappe.db.exists("CRM Visit Target", REP))
+
+	def test_a_manager_sets_a_monthly_target_beside_the_weekly_one_and_clears_both(self):
+		frappe.set_user(MANAGER)
+		saved = targets_api.set_visit_target(REP, visits_per_month=80)
+		self.assertEqual((saved["visits_per_week"], saved["visits_per_month"]), (None, 80))
+		saved = targets_api.set_visit_target(REP, visits_per_week=15)
+		self.assertEqual((saved["visits_per_week"], saved["visits_per_month"]), (15, 80))
+		rows = {row["user"]: row for row in targets_api.get_visit_targets()}
+		self.assertEqual((rows[REP]["visits_per_week"], rows[REP]["visits_per_month"]), (15, 80))
+		targets_api.set_visit_target(REP, visits_per_month=0)
+		self.assertEqual(frappe.db.get_value("CRM Visit Target", REP, "visits_per_month"), 0)
+		targets_api.set_visit_target(REP, visits_per_week="")
+		self.assertFalse(frappe.db.exists("CRM Visit Target", REP))
+
+	def test_a_monthly_target_is_bounded_and_one_of_the_two_is_required(self):
+		frappe.set_user(MANAGER)
+		with self.assertRaises(frappe.ValidationError):
+			targets_api.set_visit_target(REP, visits_per_month=targets_api.MAX_VISITS_PER_MONTH + 1)
+		with self.assertRaises(frappe.ValidationError):
+			targets_api.set_visit_target(REP)
 		self.assertFalse(frappe.db.exists("CRM Visit Target", REP))
 
 	def test_a_target_is_a_whole_non_negative_number(self):
@@ -342,6 +381,27 @@ class VisitsByRepTest(VisitFixture, IntegrationTestCase):
 		yesterday = add_days(nowdate(), -1)
 		self.assertEqual(rows[0]["target"], 10)
 		self.assertEqual(rows[0]["target_to_date"], round(5 * working_days(self.monday, yesterday) / 5, 1))
+
+	def test_a_rep_with_only_a_monthly_target_is_measured_against_it(self):
+		frappe.get_doc({"doctype": "CRM Visit Target", "user": OUTSIDER, "visits_per_month": 80}).insert(
+			ignore_permissions=True
+		)
+		rows = {r["user"]: r for r in visits_by_rep(self.start, self.end)}
+		self.assertIn(OUTSIDER, rows)
+		self.assertGreater(rows[OUTSIDER]["target"], 0)
+		self.assertEqual(rows[OUTSIDER]["on_track"], "Behind")
+
+	def test_plan_adherence_by_rep_shows_visits_against_the_target(self):
+		make_target(REP, 5)
+		row = next(
+			r
+			for r in get_report("plan_adherence_by_rep", self.start, self.end, REP)["rows"]
+			if r["user"] == REP
+		)
+		# eight items planned (the cancelled visit included), six done; three planned
+		# visits done of the five due
+		self.assertEqual((row["planned"], row["done"], row["adherence"]), (8, 6, 75))
+		self.assertEqual((row["visit_target"], row["visits_done"], row["visit_attainment"]), (5, 3, 60))
 
 	def test_a_rep_with_a_target_and_no_visits_still_has_a_row(self):
 		make_target(OUTSIDER, 3)
@@ -514,6 +574,27 @@ class CustomerInteractionTest(VisitFixture, IntegrationTestCase):
 		make_event(OUTSIDER, self.day(1), self.orgs["visited"])
 		self.assertEqual(self.rows()[self.orgs["visited"]]["total"], 0)
 
+	def test_a_rep_with_allocated_customers_is_shown_only_their_own_neglect(self):
+		frappe.db.set_value("CRM Organization", self.orgs["untouched"], "account_owner", REP)
+		frappe.db.set_value("CRM Organization", self.orgs["called"], "account_owner", OUTSIDER)
+		without = self.rows(only_without=True)
+		self.assertEqual(set(without), {self.orgs["untouched"]})
+		# the colleague's customer is theirs to neglect, and the unallocated ones too
+		self.assertNotIn(self.orgs["called"], without)
+		# the interaction report itself is not narrowed
+		self.assertIn(self.orgs["called"], self.rows())
+
+	def test_a_rep_with_no_allocated_customers_is_shown_the_unallocated_ones(self):
+		frappe.db.set_value("CRM Organization", self.orgs["called"], "account_owner", OUTSIDER)
+		without = self.rows(only_without=True)
+		self.assertIn(self.orgs["untouched"], without)
+		self.assertNotIn(self.orgs["called"], without)
+
+	def test_the_whole_team_view_still_lists_every_customer(self):
+		frappe.db.set_value("CRM Organization", self.orgs["called"], "account_owner", OUTSIDER)
+		without = {r["organization"] for r in customer_interaction(self.start, self.end, only_without=True)}
+		self.assertTrue({self.orgs["untouched"], self.orgs["called"]} <= without)
+
 
 class RepSummaryTest(VisitFixture, IntegrationTestCase):
 	"""Visits beside quotes and orders, per rep -- the managers' dashboard line."""
@@ -616,7 +697,8 @@ class RepSummaryTest(VisitFixture, IntegrationTestCase):
 
 
 class AdherenceCancellationTest(VisitFixture, IntegrationTestCase):
-	def test_a_cancelled_item_is_not_due_and_is_counted_once_as_cancelled(self):
+	def test_a_cancelled_item_counts_as_planned_and_once_as_cancelled(self):
+		# MBP measures a rep on everything they planned: cancelled is not done
 		org = (
 			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Adherence Cancel Pty"})
 			.insert(ignore_permissions=True)
@@ -645,15 +727,34 @@ class AdherenceCancellationTest(VisitFixture, IntegrationTestCase):
 		)
 
 		total = plan_adherence(self.start, self.end, REP)[0]
-		self.assertEqual((total["planned"], total["done"], total["missed"]), (2, 1, 1))
-		self.assertEqual(total["adherence"], 50)
+		self.assertEqual((total["planned"], total["done"], total["missed"]), (3, 1, 1))
+		self.assertEqual(total["adherence"], 33)
 		# the item, plus the calendar-only cancellation; the recording event is the item
 		self.assertEqual(total["cancelled"], 2)
 
 		grouped = {r["user"]: r for r in plan_adherence(self.start, self.end, REP, group_by_user=True)}
-		self.assertEqual((grouped[REP]["planned"], grouped[REP]["cancelled"]), (2, 2))
+		self.assertEqual((grouped[REP]["planned"], grouped[REP]["cancelled"]), (3, 2))
 
-	def test_a_rep_whose_only_items_were_cancelled_gets_a_row_with_nothing_due(self):
+	def test_biancas_example_25_done_of_97_planned_is_26_percent(self):
+		statuses = ["Done"] * 25 + ["Cancelled"] * 10 + ["Missed"] * 62
+		make_plan(
+			REP,
+			self.monday,
+			[
+				{
+					"activity_type": "Visit",
+					"planned_date": self.day(i % 5),
+					"status": status,
+					"manual_override": 1 if status == "Cancelled" else 0,
+				}
+				for i, status in enumerate(statuses)
+			],
+		)
+		row = plan_adherence(self.start, self.end, REP, group_by_user=True)[0]
+		self.assertEqual((row["planned"], row["done"]), (97, 25))
+		self.assertEqual(row["adherence"], 26)
+
+	def test_a_rep_whose_only_items_were_cancelled_has_nothing_done_of_one_planned(self):
 		make_plan(
 			REP,
 			self.monday,
@@ -668,5 +769,5 @@ class AdherenceCancellationTest(VisitFixture, IntegrationTestCase):
 		)
 		rows = plan_adherence(self.start, self.end, REP, group_by_user=True)
 		self.assertEqual(len(rows), 1)
-		self.assertEqual((rows[0]["planned"], rows[0]["cancelled"]), (0, 1))
-		self.assertIsNone(rows[0]["adherence"])
+		self.assertEqual((rows[0]["planned"], rows[0]["cancelled"]), (1, 1))
+		self.assertEqual(rows[0]["adherence"], 0)

@@ -53,13 +53,24 @@ def _open_pipeline(from_date, to_date, user, territory=None):
 
 
 def _funnel_conversion(from_date, to_date, user, territory=None):
-	from crm.api.dashboard import get_funnel_conversion
+	"""The funnel's counts with each stage's conversion.
+
+	The Leads row converts against itself. Every deal row -- each stage, Won,
+	and the Lost leak -- is a share of the deals that entered the funnel in the
+	period, so Won reads as "quotes won" (MBP: "a % of Proposal/Quotation vs
+	Won"). Measured against leads, as it was, a site whose deals arrive from the
+	ERP and never as leads read 0% on every row.
+	"""
+	from crm.api.dashboard import deals_entered_count, get_funnel_conversion
 
 	data = get_funnel_conversion(from_date, to_date, user, territory)["data"]
-	rows = []
-	first = data[0]["count"] if data and data[0]["count"] else 0
-	for entry in data:
-		conversion = round(entry["count"] / first * 100, 1) if first else 0
+	if not data:
+		return []
+	leads = data[0]["count"] or 0
+	deals = deals_entered_count(from_date, to_date, user, territory)
+	rows = [{"stage": data[0]["stage"], "count": leads, "conversion": 100.0 if leads else None}]
+	for entry in data[1:]:
+		conversion = round(entry["count"] / deals * 100, 1) if deals else None
 		rows.append({"stage": entry["stage"], "count": entry["count"], "conversion": conversion})
 	return rows
 
@@ -82,9 +93,26 @@ def _rep_display(rows: list[dict]) -> list[dict]:
 
 
 def _plan_adherence_by_rep(from_date, to_date, user, territory=None):
-	from crm.api.dashboard import plan_adherence
+	"""Adherence beside the visit target: what was planned and done, and how the
+	completed visits stand against the share of the target already due -- the
+	same numbers as Visits against target, so the two reports cannot disagree."""
+	from crm.api.dashboard import plan_adherence, visits_by_rep
 
-	return _rep_display(plan_adherence(from_date, to_date, user, group_by_user=True))
+	rows = {row["user"]: row for row in plan_adherence(from_date, to_date, user, group_by_user=True)}
+	visits = {row["user"]: row for row in visits_by_rep(from_date, to_date, user)}
+	for rep in sorted(set(visits) - set(rows)):
+		# a rep with a target and nothing planned is the furthest behind on it
+		if visits[rep]["target"]:
+			rows[rep] = frappe._dict(
+				{"user": rep, "planned": 0, "done": 0, "missed": 0, "cancelled": 0, "adherence": None}
+			)
+	for rep, row in rows.items():
+		visit = visits.get(rep) or {}
+		due = visit.get("target_to_date")
+		row["visit_target"] = due
+		row["visits_done"] = visit.get("completed") or 0
+		row["visit_attainment"] = round(row["visits_done"] / due * 100) if due else None
+	return _rep_display([rows[rep] for rep in sorted(rows)])
 
 
 def _forecast_vs_actual(from_date, to_date, user, territory=None):
@@ -288,24 +316,47 @@ REPORTS = {
 	},
 	"funnel_conversion": {
 		"title": "Funnel conversion",
-		"description": "Lead-to-won conversion through the pipeline, including the deals that leaked out",
+		"description": "The deals that entered the pipeline in the period, how many reached each stage and how many were won or lost",
 		"columns": [
 			{"key": "stage", "label": "Stage", "type": "text"},
 			{"key": "count", "label": "Count", "type": "number"},
-			{"key": "conversion", "label": "Conversion %", "type": "percent"},
+			{
+				"key": "conversion",
+				"label": "Conversion %",
+				"type": "percent",
+				"description": "Of the deals created in the period, the share that reached this stage",
+			},
 		],
 		"get_rows": _funnel_conversion,
 	},
 	"plan_adherence_by_rep": {
 		"title": "Plan adherence by rep",
-		"description": "Planned activities due in the period, and how many were done",
+		"description": "Planned activities due in the period and how many were done (cancelled and missed ones count as not done), beside completed visits against the visit target",
 		"columns": [
 			{"key": "rep", "label": "Rep", "type": "text"},
-			{"key": "planned", "label": "Planned (due)", "type": "number"},
+			{
+				"key": "planned",
+				"label": "Planned (due)",
+				"type": "number",
+				"description": "Every activity planned for a day that has passed, cancelled ones included",
+			},
 			{"key": "done", "label": "Done", "type": "number"},
 			{"key": "missed", "label": "Missed", "type": "number"},
 			{"key": "cancelled", "label": "Cancelled", "type": "number"},
-			{"key": "adherence", "label": "Adherence %", "type": "percent"},
+			{
+				"key": "adherence",
+				"label": "Adherence %",
+				"type": "percent",
+				"description": "Done, out of everything planned and due",
+			},
+			{
+				"key": "visit_target",
+				"label": "Visit target to date",
+				"type": "number",
+				"description": "The part of the visit target already due, up to yesterday",
+			},
+			{"key": "visits_done", "label": "Visits done", "type": "number"},
+			{"key": "visit_attainment", "label": "% of visit target", "type": "percent"},
 		],
 		"get_rows": _plan_adherence_by_rep,
 	},
@@ -357,14 +408,14 @@ REPORTS = {
 	},
 	"visits_by_rep": {
 		"title": "Visits against target",
-		"description": "Planned customer visits per rep in the period: scheduled, completed, cancelled and missed, against each rep's weekly visit target. Calls, emails and other activities are not counted; unplanned meetings are shown beside the target",
+		"description": "Planned customer visits per rep in the period: scheduled, completed, cancelled and missed, against each rep's visit target. Calls, emails and other activities are not counted; unplanned meetings are shown beside the target",
 		"columns": [
 			{"key": "rep", "label": "Rep", "type": "text"},
 			{
 				"key": "target",
 				"label": "Target",
 				"type": "number",
-				"description": "Weekly visit target pro-rated to the working days in the period",
+				"description": "The weekly or monthly visit target, pro-rated to the working days in the period",
 			},
 			{
 				"key": "target_to_date",
@@ -460,7 +511,7 @@ REPORTS = {
 	},
 	"customers_without_interaction": {
 		"title": "Customers with no interaction",
-		"description": "Customers nobody visited, delivered to, called or emailed in the period, longest neglected first",
+		"description": "Customers nobody visited, delivered to, called or emailed in the period, longest neglected first. For one rep: the customers allocated to them, or the unallocated ones if they have none",
 		"columns": [
 			{"key": "organization", "label": "Customer", "type": "text"},
 			{"key": "last_interaction", "label": "Last interaction", "type": "text"},

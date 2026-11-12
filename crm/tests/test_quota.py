@@ -181,6 +181,37 @@ class QuotaTest(IntegrationTestCase):
 
 		frappe.delete_doc("CRM Deal", deal.name, force=True)
 
+	def test_the_team_tile_counts_only_the_won_deals_of_reps_with_a_target(self):
+		"""The team tile divided every won deal, unassigned ones included, by the
+		targets of only the reps who carry one. A month far ahead keeps the
+		site's own data out."""
+		won_status = frappe.get_all("CRM Deal Status", filters={"type": "Won"}, pluck="name")
+		if not won_status:
+			self.skipTest("site has no Won deal status")
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Quota Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		for owner, value in ((USER, 25_000), ("Administrator", 100_000), (OTHER, 10_000)):
+			deal = frappe.get_doc(
+				{
+					"doctype": "CRM Deal",
+					"organization": org,
+					"deal_owner": owner,
+					"status": won_status[0],
+					"deal_value": value,
+					"exchange_rate": 1,
+				}
+			).insert(ignore_permissions=True)
+			frappe.db.set_value("CRM Deal", deal.name, "closed_date", "2031-03-15", update_modified=False)
+			self.addCleanup(frappe.delete_doc, "CRM Deal", deal.name, force=True)
+
+		self.make_quota("2031-03-01", 50_000)
+		out = get_quota_attainment("2031-03-01", "2031-03-31")
+		# 25,000 of 50,000: neither the unassigned deal nor the rep without a target
+		self.assertEqual(out["value"], 50)
+
 	def test_the_grouped_reads_agree_with_the_per_rep_ones(self):
 		"""The report and the grid read every rep in one query; the tile reads
 		one rep. Same rows, same pro-rating, same belonging -- including a deal
