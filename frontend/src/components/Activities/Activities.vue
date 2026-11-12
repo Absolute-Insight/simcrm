@@ -667,8 +667,14 @@ const whatsappMessages = createResource({
   },
   auto: false,
   transform: (data) => sortByCreation(data),
-  onSuccess: () => nextTick(() => scroll()),
 })
+
+// Watched per instance, like all_activities above: onSuccess on the cached
+// resource belongs to whichever Activities created it, which may be gone.
+watch(
+  () => whatsappMessages.data,
+  () => nextTick(() => scroll()),
+)
 
 watch(
   whatsappEnabled,
