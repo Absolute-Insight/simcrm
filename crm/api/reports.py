@@ -93,9 +93,9 @@ def _rep_display(rows: list[dict]) -> list[dict]:
 
 
 def _plan_adherence_by_rep(from_date, to_date, user, territory=None):
-	"""Adherence beside the visit target: what was planned and done, and how the
-	completed visits stand against the share of the target already due -- the
-	same numbers as Visits against target, so the two reports cannot disagree."""
+	"""Adherence beside the visit target: what was planned and done, and the
+	completed visits against the period's target -- Visits against target's own
+	numbers, so the two reports cannot disagree."""
 	from crm.api.dashboard import plan_adherence, visits_by_rep
 
 	rows = {row["user"]: row for row in plan_adherence(from_date, to_date, user, group_by_user=True)}
@@ -108,10 +108,10 @@ def _plan_adherence_by_rep(from_date, to_date, user, territory=None):
 			)
 	for rep, row in rows.items():
 		visit = visits.get(rep) or {}
-		due = visit.get("target_to_date")
-		row["visit_target"] = due
+		# Visits against target's own columns, so the two reports read alike
+		row["visit_target"] = visit.get("target")
 		row["visits_done"] = visit.get("completed") or 0
-		row["visit_attainment"] = round(row["visits_done"] / due * 100) if due else None
+		row["visit_attainment"] = visit.get("attainment")
 	return _rep_display([rows[rep] for rep in sorted(rows)])
 
 
@@ -351,9 +351,9 @@ REPORTS = {
 			},
 			{
 				"key": "visit_target",
-				"label": "Visit target to date",
+				"label": "Visit target",
 				"type": "number",
-				"description": "The part of the visit target already due, up to yesterday",
+				"description": "The weekly or monthly visit target, pro-rated to the working days in the period",
 			},
 			{"key": "visits_done", "label": "Visits done", "type": "number"},
 			{"key": "visit_attainment", "label": "% of visit target", "type": "percent"},

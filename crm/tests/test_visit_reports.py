@@ -145,6 +145,14 @@ class TargetProrationTest(VisitFixture, IntegrationTestCase):
 		expected = 80 * 2 / 22 + 80 * 3 / 22  # Mon 30 - Tue 31 March, Wed 1 - Fri 3 April
 		self.assertAlmostEqual(target_for([REP], "2026-03-30", "2026-04-03")[REP], expected)
 
+	def test_a_year_of_monthly_target_is_twelve_months_and_a_long_range_is_cheap(self):
+		frappe.get_doc({"doctype": "CRM Visit Target", "user": REP, "visits_per_month": 80}).insert(
+			ignore_permissions=True
+		)
+		self.assertAlmostEqual(target_for([REP], "2026-03-01", "2027-02-28")[REP], 960)
+		# whole months are counted, not looped over: centuries take no longer than a week
+		self.assertAlmostEqual(target_for([REP], "2001-01-01", "2400-12-31")[REP], 80 * 12 * 400)
+
 	def test_the_monthly_target_wins_over_a_weekly_one(self):
 		frappe.get_doc(
 			{"doctype": "CRM Visit Target", "user": REP, "visits_per_week": 15, "visits_per_month": 80}
@@ -399,9 +407,14 @@ class VisitsByRepTest(VisitFixture, IntegrationTestCase):
 			if r["user"] == REP
 		)
 		# eight items planned (the cancelled visit included), six done; three planned
-		# visits done of the five due
+		# visits done of the week's five
 		self.assertEqual((row["planned"], row["done"], row["adherence"]), (8, 6, 75))
 		self.assertEqual((row["visit_target"], row["visits_done"], row["visit_attainment"]), (5, 3, 60))
+		visits = visits_by_rep(self.start, self.end, REP)[0]
+		self.assertEqual(
+			(row["visit_target"], row["visits_done"], row["visit_attainment"]),
+			(visits["target"], visits["completed"], visits["attainment"]),
+		)
 
 	def test_a_rep_with_a_target_and_no_visits_still_has_a_row(self):
 		make_target(OUTSIDER, 3)

@@ -22,7 +22,7 @@ from datetime import timedelta
 
 import frappe
 from frappe import _
-from frappe.utils import add_months, cstr, get_first_day, get_last_day, getdate
+from frappe.utils import cstr, get_first_day, get_last_day, getdate
 
 from crm.api.quota import _is_manager, _not_the_caller, _only_own_team
 from crm.utils import sales_user_only
@@ -52,17 +52,29 @@ def working_days(from_date, to_date) -> int:
 
 def monthly_share(per_month, from_date, to_date) -> float:
 	"""``per_month`` spread over each calendar month's working days, summed over
-	the part of every month that [from_date, to_date] covers."""
+	the part of every month that [from_date, to_date] covers.
+
+	Constant work whatever the span: the first and last months are pro-rated,
+	every whole month between them is ``per_month``. A loop over the months let
+	a caller-chosen range of centuries cost a request seconds per rep."""
 	start, end = getdate(from_date), getdate(to_date)
-	total = 0.0
-	month = get_first_day(start)
-	while month <= end:
-		last = getdate(get_last_day(month))
-		covered = working_days(max(start, month), min(end, last))
-		if covered:
-			total += per_month * covered / working_days(month, last)
-		month = getdate(add_months(month, 1))
-	return total
+	if end < start:
+		return 0.0
+
+	def share(first, last) -> float:
+		# every calendar month has working days, so the divisor is never 0
+		month_start = getdate(get_first_day(first))
+		month_end = getdate(get_last_day(first))
+		return per_month * working_days(first, last) / working_days(month_start, month_end)
+
+	if (start.year, start.month) == (end.year, end.month):
+		return share(start, end)
+	whole_months = (end.year * 12 + end.month) - (start.year * 12 + start.month) - 1
+	return (
+		share(start, getdate(get_last_day(start)))
+		+ per_month * whole_months
+		+ share(getdate(get_first_day(end)), end)
+	)
 
 
 def target_for(users, from_date, to_date) -> dict[str, float]:

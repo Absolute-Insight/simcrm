@@ -228,8 +228,9 @@ async function onBlur(event, row, key) {
       user: row.user,
       [key]: value,
     })
-    row.visits_per_week = saved?.visits_per_week || null
-    row.visits_per_month = saved?.visits_per_month || null
+    // only the cell this save was for: a response to a save in the other cell
+    // can land after this one and must not paint over it
+    row[key] = saved?.[key] || null
   } catch (error) {
     row[key] = previous || null
     toast.error(error.messages?.[0] || __('Could not save that target'))

@@ -193,7 +193,8 @@ class QuotaTest(IntegrationTestCase):
 			.insert(ignore_if_duplicate=True)
 			.name
 		)
-		for owner, value in ((USER, 25_000), ("Administrator", 100_000), (OTHER, 10_000)):
+		# a deal nobody owns, one parked on Administrator, and a rep with no target
+		for owner, value in ((USER, 25_000), (None, 70_000), ("Administrator", 100_000), (OTHER, 10_000)):
 			deal = frappe.get_doc(
 				{
 					"doctype": "CRM Deal",
@@ -209,7 +210,7 @@ class QuotaTest(IntegrationTestCase):
 
 		self.make_quota("2031-03-01", 50_000)
 		out = get_quota_attainment("2031-03-01", "2031-03-31")
-		# 25,000 of 50,000: neither the unassigned deal nor the rep without a target
+		# 25,000 of 50,000: none of the unassigned deals, nor the rep without a target
 		self.assertEqual(out["value"], 50)
 
 	def test_the_grouped_reads_agree_with_the_per_rep_ones(self):
