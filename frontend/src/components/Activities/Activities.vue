@@ -691,6 +691,7 @@ function handleWhatsappMessage(data) {
 }
 
 onBeforeUnmount(() => {
+  gone = true
   clearTimeout(scrollTimer)
   $socket.off('whatsapp_message', handleWhatsappMessage)
   $socket.off('docinfo_update', handleDocinfoUpdate)
@@ -1003,8 +1004,12 @@ watch([reload, reload_email], ([reload_value, reload_email_value]) => {
 
 // Pending scroll, so it does not run on a page that has gone or fight a newer one.
 let scrollTimer = null
+// A scroll queued with nextTick can arrive after the page has gone, when the
+// timer cleared on unmount is no longer the one that matters.
+let gone = false
 
 function scroll(hash) {
+  if (gone) return
   if (['tasks', 'notes', 'events'].includes(route.hash?.slice(1))) return
   clearTimeout(scrollTimer)
   scrollTimer = setTimeout(() => {
