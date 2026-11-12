@@ -1104,7 +1104,7 @@ const PANEL_CATALOGUE = computed(() => {
       id: 'visits',
       title: __('Visits against target'),
       subtitle: __(
-        "Completed planned visits in the period, against each rep's weekly target",
+        "Completed planned visits in the period, against each rep's visit target",
       ),
       loading: computed(() => teamVisits.loading),
       error: computed(() => teamVisits.error),
@@ -1113,9 +1113,7 @@ const PANEL_CATALOGUE = computed(() => {
         () => !teamVisits.loading && !(teamVisits.data?.rows || []).length,
       ),
       emptyTitle: __('No visits or targets in this period'),
-      emptyDescription: __(
-        'Set weekly visit targets in Settings → Visit Targets.',
-      ),
+      emptyDescription: __('Set visit targets in Settings → Visit Targets.'),
       rows: computed(() => teamVisits.data?.rows || []),
       // No target is not behind on one, the same rule as the quota panel.
       cell: (row) =>

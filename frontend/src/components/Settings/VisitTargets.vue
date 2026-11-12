@@ -7,7 +7,7 @@
       <p class="text-p-sm text-ink-gray-5">
         {{
           __(
-            'Planned customer visits each rep should complete in a working week. Calls, emails and unplanned meetings are not counted. A month or a fortnight is measured against the same number, pro-rated by its working days.',
+            'Planned customer visits each rep should complete, a week or a month. Calls, emails and unplanned meetings are not counted. Any period is measured against its share of the target, by working days; a monthly target, when set, is used instead of the weekly one.',
           )
         }}
       </p>
@@ -39,7 +39,7 @@
 
     <SkeletonTable
       v-if="targets.loading && !targets.data"
-      :columns="2"
+      :columns="3"
       :rows="6"
       density="compact"
       class="flex-1 px-1"
@@ -63,7 +63,7 @@
         {{ __('No sales users yet') }}
       </div>
       <div class="text-sm text-ink-gray-5">
-        {{ __('Invite a rep, then set their weekly visit target here.') }}
+        {{ __('Invite a rep, then set their visit target here.') }}
       </div>
     </div>
 
@@ -81,6 +81,11 @@
             >
               {{ __('Visits per week') }}
             </th>
+            <th
+              class="sticky top-0 z-10 w-40 border-b border-outline-gray-1 bg-surface-elevation-2 px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-ink-gray-5"
+            >
+              {{ __('Visits per month') }}
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -90,16 +95,30 @@
             >
               <span class="truncate text-ink-gray-8">{{ row.full_name }}</span>
             </td>
-            <td class="w-40 border-b border-outline-gray-1 px-1 py-1">
+            <td
+              v-for="field in FIELDS"
+              :key="field.key"
+              class="w-40 border-b border-outline-gray-1 px-1 py-1"
+            >
               <input
                 v-if="row.editable"
-                :value="displayValue(row)"
-                class="w-full rounded-[var(--v-radius-control)] border border-transparent bg-transparent px-1.5 py-1 text-right text-sm tabular-nums text-ink-gray-8 transition placeholder:text-ink-gray-4 hover:border-outline-gray-2 focus:border-outline-gray-3 focus:bg-surface-white focus:outline-none focus:ring-2 focus:ring-outline-gray-3"
+                :value="displayValue(row, field.key)"
+                class="w-full rounded-[var(--v-radius-control)] border border-transparent bg-transparent px-1.5 py-1 text-right text-sm tabular-nums transition placeholder:text-ink-gray-4 hover:border-outline-gray-2 focus:border-outline-gray-3 focus:bg-surface-white focus:outline-none focus:ring-2 focus:ring-outline-gray-3"
+                :class="
+                  overridden(row, field.key)
+                    ? 'text-ink-gray-5'
+                    : 'text-ink-gray-8'
+                "
                 inputmode="numeric"
                 placeholder="—"
-                :aria-label="__('{0} visits per week', [row.full_name])"
+                :aria-label="field.aria(row.full_name)"
+                :title="
+                  overridden(row, field.key)
+                    ? __('Not used: the monthly target applies')
+                    : ''
+                "
                 @focus="$event.target.select()"
-                @blur="onBlur($event, row)"
+                @blur="onBlur($event, row, field.key)"
                 @keydown.enter="$event.target.blur()"
               />
               <div
@@ -111,7 +130,7 @@
                     : ''
                 "
               >
-                {{ displayValue(row) || '—' }}
+                {{ displayValue(row, field.key) || '—' }}
               </div>
             </td>
           </tr>
@@ -167,37 +186,54 @@ const targets = createResource({
 
 const rows = computed(() => targets.data || [])
 
-function displayValue(row) {
-  return row.visits_per_week ? String(row.visits_per_week) : ''
+const FIELDS = [
+  {
+    key: 'visits_per_week',
+    aria: (name) => __('{0} visits per week', [name]),
+  },
+  {
+    key: 'visits_per_month',
+    aria: (name) => __('{0} visits per month', [name]),
+  },
+]
+
+function displayValue(row, key) {
+  return row[key] ? String(row[key]) : ''
 }
 
-async function onBlur(event, row) {
+// a weekly number beside a monthly one is kept but not used
+function overridden(row, key) {
+  return key === 'visits_per_week' && !!row.visits_per_month
+}
+
+async function onBlur(event, row, key) {
   const raw = event.target.value.trim()
   const value = raw === '' ? 0 : Number(raw)
-  const previous = row.visits_per_week || 0
+  const previous = row[key] || 0
 
   if (!Number.isInteger(value) || value < 0) {
-    event.target.value = displayValue(row)
+    event.target.value = displayValue(row, key)
     toast.error(__('Enter a whole number of visits, 0 or more.'))
     return
   }
   if (value === previous) {
-    event.target.value = displayValue(row)
+    event.target.value = displayValue(row, key)
     return
   }
 
   // paint first, then reconcile with what the server stored
-  row.visits_per_week = value || null
+  row[key] = value || null
   try {
     const saved = await call('crm.api.visit_targets.set_visit_target', {
       user: row.user,
-      visits_per_week: value,
+      [key]: value,
     })
     row.visits_per_week = saved?.visits_per_week || null
+    row.visits_per_month = saved?.visits_per_month || null
   } catch (error) {
-    row.visits_per_week = previous || null
+    row[key] = previous || null
     toast.error(error.messages?.[0] || __('Could not save that target'))
   }
-  event.target.value = displayValue(row)
+  event.target.value = displayValue(row, key)
 }
 </script>

@@ -7,7 +7,8 @@
  "field_order": [
   "user",
   "column_break_target",
-  "visits_per_week"
+  "visits_per_week",
+  "visits_per_month"
  ],
  "fields": [
   {
@@ -33,11 +34,20 @@
    "in_list_view": 1,
    "label": "Visits per Week",
    "non_negative": 1
+  },
+  {
+   "default": "0",
+   "description": "Alternatively, visits this rep should complete in a calendar month. When set it is used instead of the weekly number: a whole month reads exactly this many, a part month its share of that month's working days.",
+   "fieldname": "visits_per_month",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Visits per Month",
+   "non_negative": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-16 12:00:00.000000",
+ "modified": "2026-11-12 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM Visit Target",
