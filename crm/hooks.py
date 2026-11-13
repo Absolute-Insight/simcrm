@@ -364,6 +364,7 @@ scheduler_events = {
 		"crm.fcrm.doctype.crm_invitation.crm_invitation.expire_invitations",
 		"crm.fcrm.doctype.crm_view_settings.crm_view_settings.clear_old_versions",
 		"crm.agent.signals.purge_old_suggestions",
+		"crm.fcrm.doctype.crm_offline_receipt.crm_offline_receipt.purge_old_receipts",
 		"crm.telemetry.capture_feature_state",
 	],
 	"weekly": [
