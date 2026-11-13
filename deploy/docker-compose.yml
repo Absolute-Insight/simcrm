@@ -456,6 +456,15 @@ services:
   # at the destination, so the seven-day local retention does not propagate to
   # the archive, and a copy that failed at 02:00 is retried at 03:00 instead of
   # waiting a day. Re-copying is free -- rclone skips files already there.
+  #
+  # What it does NOT copy, unless told to: the `*-site_config_backup.json`
+  # frappe writes beside every dump. That file is site_config.json verbatim --
+  # `db_password` and `encryption_key` in plaintext -- and the dump next to it
+  # holds every stored integration secret encrypted with that same key. Shipped
+  # together to a third party's bucket they are the whole CRM to anyone who
+  # can read the bucket. The price is that the encryption key must be kept
+  # somewhere else for a restore onto a new host to be complete; README.md,
+  # "Restoring onto a new host", is the procedure.
   backup-offsite:
     image: rclone/rclone:1.68.2@sha256:74c51b8817e5431bd6d7ed27cb2a50d8ee78d77f6807b72a41ef6f898845942b
     logging: *logging
@@ -489,6 +498,22 @@ services:
       # hold more than one deployment without them overwriting each other.
       BACKUP_TARGET: ${BACKUP_TARGET:-offsite:vecmbp}
       SITE_NAME: ${SITE_NAME:?}
+      # Everything below is opt-in and off when unset; .env.example and the
+      # README's "Getting them off the host" describe each.
+      #
+      # Client-side encryption: set a passphrase and the copies go through an
+      # rclone `crypt` remote, so the bucket only ever holds ciphertext.
+      OFFSITE_CRYPT_PASSWORD: ${OFFSITE_CRYPT_PASSWORD:-}
+      OFFSITE_CRYPT_SALT: ${OFFSITE_CRYPT_SALT:-}
+      # 1 = also copy site_config_backup.json. Honoured only when the copies
+      # are encrypted.
+      OFFSITE_INCLUDE_SITE_CONFIG: ${OFFSITE_INCLUDE_SITE_CONFIG:-0}
+      # Days to keep at the destination; 0 = never delete there (the default).
+      OFFSITE_RETENTION_DAYS: ${OFFSITE_RETENTION_DAYS:-0}
+      # How old the newest dump at the destination may be before this service
+      # reports unhealthy. Two hours more than the backup's own 26: the copy
+      # runs hourly and a night's files take a while to upload.
+      OFFSITE_MAX_AGE_HOURS: ${OFFSITE_MAX_AGE_HOURS:-28}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -501,11 +526,93 @@ services:
         fi
         src="/data/sites/$${SITE_NAME}/private/backups"
         dest="$${BACKUP_TARGET}/$${SITE_NAME}"
-        echo "[offsite] copying $$src -> $$dest, hourly"
+
+        # Opt-in client-side encryption. The crypt remote is written to
+        # rclone's own config file rather than exported, so that `docker
+        # compose exec backup-offsite rclone ...` and the healthcheck see the
+        # same remote this loop does. The passphrase goes to `rclone obscure`
+        # on stdin, never as an argument. Encrypted copies get a prefix of
+        # their own (<site>.crypt): a directory holding both would hide the
+        # plaintext half from every listing made through the crypt remote.
+        encrypted=0
+        if [ -n "$${OFFSITE_CRYPT_PASSWORD}" ]; then
+          umask 077
+          pass=$$(printf '%s' "$${OFFSITE_CRYPT_PASSWORD}" | rclone obscure -) || pass=""
+          if [ -z "$$pass" ]; then
+            echo "[offsite] refusing to start: could not prepare OFFSITE_CRYPT_PASSWORD, and copying unencrypted instead is not what was asked for" >&2
+            exit 1
+          fi
+          salt=""
+          if [ -n "$${OFFSITE_CRYPT_SALT}" ]; then
+            salt=$$(printf '%s' "$${OFFSITE_CRYPT_SALT}" | rclone obscure -) || salt=""
+            if [ -z "$$salt" ]; then
+              echo "[offsite] refusing to start: could not prepare OFFSITE_CRYPT_SALT" >&2
+              exit 1
+            fi
+          fi
+          conf="$$(rclone config file | tail -n 1)"
+          mkdir -p "$$(dirname "$$conf")"
+          {
+            echo "[offsitecrypt]"
+            echo "type = crypt"
+            echo "remote = $${dest}.crypt"
+            echo "password = $$pass"
+            if [ -n "$$salt" ]; then echo "password2 = $$salt"; fi
+            # Contents are encrypted; names are not, so the bucket's own
+            # console still shows which nights are there.
+            echo "filename_encryption = off"
+            echo "directory_name_encryption = false"
+          } > "$$conf" || { echo "[offsite] refusing to start: cannot write $$conf" >&2; exit 1; }
+          dest="offsitecrypt:"
+          encrypted=1
+        fi
+        # For the healthcheck, and for anyone looking by hand:
+        #   docker compose exec backup-offsite sh -c 'rclone ls "$$(cat /tmp/offsite.dest)"'
+        printf '%s\n' "$$dest" > /tmp/offsite.dest
+
+        # The filter, as the positional parameters: sh has no arrays.
+        set -- --exclude "*site_config_backup*"
+        if [ "$${OFFSITE_INCLUDE_SITE_CONFIG}" = "1" ]; then
+          if [ "$$encrypted" = "1" ]; then
+            set --
+          else
+            echo "[offsite] OFFSITE_INCLUDE_SITE_CONFIG=1 ignored: site_config_backup.json holds the encryption key and is only copied when OFFSITE_CRYPT_PASSWORD is set" >&2
+          fi
+        fi
+
+        # Opt-in pruning. Whole days only, and never fewer than 14: the host
+        # keeps a week of backups, so anything shorter deletes a file here
+        # that the next hourly copy would upload again.
+        keep="$${OFFSITE_RETENTION_DAYS}"
+        case "$$keep" in
+          ""|*[!0-9]*)
+            echo "[offsite] OFFSITE_RETENTION_DAYS='$$keep' is not a whole number of days; nothing will be deleted at the destination" >&2
+            keep=0 ;;
+        esac
+        if [ "$$keep" -gt 0 ] && [ "$$keep" -lt 14 ]; then
+          echo "[offsite] OFFSITE_RETENTION_DAYS=$$keep is below the minimum of 14; nothing will be deleted at the destination" >&2
+          keep=0
+        fi
+
+        echo "[offsite] copying $$src -> $$dest, hourly (encrypted=$$encrypted, retention=$${keep}d, 0 = keep everything)"
         while true; do
           if [ -d "$$src" ]; then
-            if rclone copy "$$src" "$$dest" --log-level NOTICE --stats 0; then
+            if rclone copy "$$src" "$$dest" "$$@" --log-level NOTICE --stats 0; then
               echo "[offsite] $$(date -Is) ok"
+              if [ "$$keep" -gt 0 ]; then
+                # Only behind a copy that just succeeded, and only while fresh
+                # dumps are arriving: an archive that has stopped receiving is
+                # the last copy there is, and must not be aged away.
+                if rclone lsf "$$dest" --files-only --max-age "$${OFFSITE_MAX_AGE_HOURS}h" --include "*-database*.sql.gz" 2>/dev/null | grep -q .; then
+                  if rclone delete "$$dest" --min-age "$${keep}d" --log-level NOTICE --stats 0; then
+                    echo "[offsite] $$(date -Is) pruned files older than $${keep}d"
+                  else
+                    echo "[offsite] $$(date -Is) PRUNE FAILED (does the key allow deleteFiles?)"
+                  fi
+                else
+                  echo "[offsite] $$(date -Is) not pruning: no dump newer than $${OFFSITE_MAX_AGE_HOURS}h at the destination"
+                fi
+              fi
             else
               echo "[offsite] $$(date -Is) COPY FAILED"
             fi
@@ -515,14 +622,29 @@ services:
           sleep 3600
         done
     healthcheck:
-      # Can this service still reach the bucket with the key it was given? A
-      # silent credential expiry is the failure that leaves an operator
-      # believing they have off-host copies when they stopped weeks ago.
-      test: ["CMD-SHELL", 'rclone lsd "$$BACKUP_TARGET" >/dev/null 2>&1']
+      # Two questions. Can this service still reach the bucket with the key it
+      # was given? A silent credential expiry is the failure that leaves an
+      # operator believing they have off-host copies when they stopped weeks
+      # ago. And is the newest dump THERE recent? The key opening the bucket
+      # says nothing about whether anything has arrived lately -- this used to
+      # stay green while copying nothing.
+      #
+      # A host with no dump yet has nothing to be late with, so the second
+      # question is only asked once the first local backup exists.
+      test:
+        - CMD-SHELL
+        - |
+          rclone lsd "$$BACKUP_TARGET" >/dev/null 2>&1 || exit 1
+          ls "/data/sites/$$SITE_NAME/private/backups"/*-database*.sql.gz >/dev/null 2>&1 || exit 0
+          dest=$$(cat /tmp/offsite.dest 2>/dev/null)
+          [ -n "$$dest" ] || exit 1
+          rclone lsf "$$dest" --files-only --max-age "$${OFFSITE_MAX_AGE_HOURS:-28}h" --include "*-database*.sql.gz" 2>/dev/null | grep -q .
       interval: 300s
-      timeout: 30s
+      timeout: 60s
       retries: 3
-      start_period: 60s
+      # Long enough for the first copy of a week of backups to land before a
+      # missing dump counts against it. A passing check ends it early.
+      start_period: 1h
     deploy:
       resources:
         limits:

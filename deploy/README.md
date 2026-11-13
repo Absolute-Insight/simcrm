@@ -383,6 +383,22 @@ docker compose exec backend bench --site all migrate
 docker compose exec backend bench --site <site> set-maintenance-mode off
 ```
 
+**The first `up -d` on a release after v3.30.0 also restarts the database and both
+redis containers**, once, because their definitions changed: `db` gained an
+InnoDB buffer pool size (see [Sizing the database](#sizing-the-database)),
+`redis-cache` a memory ceiling with eviction, and both redis images are now
+pinned by digest. No data changes — the database comes back on the same
+volume, the queue replays its append-only file, and the cache starts empty,
+as it does after every `migrate`. It is a cold restart of MariaDB all the
+same, so let it happen here, inside the maintenance window of step 2, and not
+as a surprise the next time somebody runs `up -d` to change a proxy setting.
+
+**If you run the off-host copy, say so too** — `docker compose --profile
+offsite up -d`. `backup-offsite` is behind a profile like the model servers
+below, so a plain `up -d` leaves the old container running the old script:
+still uploading `site_config_backup.json`, and without the new healthcheck.
+See [Getting them off the host](#getting-them-off-the-host).
+
 **If you run the local model, say so on every `pull` and `up`** —
 `docker compose --profile local-model pull` and
 `docker compose --profile local-model up -d` (or set `COMPOSE_PROFILES=local-model`
@@ -691,7 +707,73 @@ verbatim copy of `site_config.json` (`frappe/utils/backups.py:382`), so the
 `site_config_backup.json` sitting beside every dump carries that site's
 `db_password` and `encryption_key` in plaintext. The encryption key is what
 decrypts stored passwords, so a leaked backup directory is not only a data
-disclosure.
+disclosure. That is why the off-host copy leaves this one file behind — see
+[Getting them off the host](#getting-them-off-the-host) — and why the key has
+to be kept somewhere else as well.
+
+### Restoring onto a new host
+
+The restore above runs on the host that took the backup, where
+`site_config.json` is still in the `sites` volume. Losing the host is a
+different restore, and it needs one thing a dump does not contain: **the
+site's `encryption_key`.**
+
+Frappe encrypts every Password field with it — the Acumatica credentials,
+WhatsApp tokens and App Secrets, mail account passwords. They are in the dump,
+encrypted. A site created fresh gets a fresh key, so a dump restored into it
+restores every one of those values as ciphertext nothing can read: the site
+comes up, users log in (login passwords are hashed, not encrypted), and each
+integration then fails at its first call with a decryption error.
+
+**Do this once, today, while the host is healthy:** put the key in whatever
+holds your other operational secrets — a password manager, not the bucket the
+backups go to.
+
+```bash
+docker compose exec -T backend cat sites/${SITE_NAME}/site_config.json | grep encryption_key
+```
+
+It does not change for the life of the site, so once is enough. (If it is ever
+missing from that file, frappe generates one the first time it encrypts
+something; check again after the first integration is configured.)
+
+Then the new-host restore is:
+
+```bash
+# 1. a fresh stack: .env with the same SITE_NAME, then first boot as usual
+docker compose up -d
+docker compose logs -f create-site
+
+# 2. the backup, from wherever it was kept, into the sites volume
+docker compose cp ./<stamp>-database.sql.gz      backend:/home/frappe/frappe-bench/sites/<site>/private/backups/
+docker compose cp ./<stamp>-files.tar            backend:/home/frappe/frappe-bench/sites/<site>/private/backups/
+docker compose cp ./<stamp>-private-files.tar    backend:/home/frappe/frappe-bench/sites/<site>/private/backups/
+
+# 3. the old key, BEFORE the restore, so nothing is ever read with the new one
+docker compose exec backend bench --site <site> set-config encryption_key '<the key you kept>'
+
+# 4. restore exactly as in "Rolling back" above, then migrate
+: "${DB_ROOT_PASSWORD:?set it in .env before restoring}"
+docker compose exec -T backend bench --site <site> restore --force \
+  --db-root-username root --db-root-password "$DB_ROOT_PASSWORD" \
+  /home/frappe/frappe-bench/sites/<site>/private/backups/<stamp>-database.sql.gz \
+  --with-public-files /home/frappe/frappe-bench/sites/<site>/private/backups/<stamp>-files.tar \
+  --with-private-files /home/frappe/frappe-bench/sites/<site>/private/backups/<stamp>-private-files.tar
+docker compose exec backend bench --site all migrate
+docker compose restart backend queue-short queue-long scheduler websocket
+```
+
+Do **not** carry `db_name` or `db_password` over from the old config: those
+belong to the database the new stack just created, and the new
+`site_config.json` already has the right ones. `encryption_key` is the only
+value that must come from the old host. Everything else the old
+`site_config.json` held — `host_name`, the keys in [site_config
+keys](#site_config-keys) — is configuration to re-apply by hand, as the restore
+notes above say.
+
+Check it worked the way a user would find out it had not: open **CRM Agent
+Settings**, or an Email Account, and save it; or run one ERP sync. A wrong key
+fails there, immediately, with a decryption error.
 
 If `migrate` fails partway, do not roll the image back and carry on — the site
 is between schemas. Read the error (`docker compose logs backend`, and frappe's
@@ -755,13 +837,18 @@ docker compose --profile offsite up -d backup-offsite
 docker compose logs -f backup-offsite        # first copy, then hourly
 ```
 
-Three `.env` keys, all documented in `.env.example`:
+Three `.env` keys are required, and the rest are optional; all are documented
+in `.env.example`:
 
 | Key | What it is |
 |---|---|
 | `B2_ACCOUNT_ID` | The application key's **keyID** |
 | `B2_APPLICATION_KEY` | The application key itself, shown once at creation |
 | `BACKUP_TARGET` | The bucket as an rclone destination, e.g. `offsite:vecmbp` |
+| `OFFSITE_CRYPT_PASSWORD`, `OFFSITE_CRYPT_SALT` | Optional. Encrypt the copies before they leave the host — [below](#encrypting-the-copies) |
+| `OFFSITE_INCLUDE_SITE_CONFIG` | Optional, default `0`. Also copy `site_config_backup.json`; honoured only when the copies are encrypted |
+| `OFFSITE_RETENTION_DAYS` | Optional, default `0` (never delete). Prune the destination — [below](#how-long-the-copies-are-kept) |
+| `OFFSITE_MAX_AGE_HOURS` | Optional, default `28`. How stale the newest copy may be before the container is unhealthy |
 
 Make an **application key scoped to the one bucket** (Backblaze → App Keys →
 Add a New Application Key), never the master key. It needs `listBuckets`,
@@ -777,13 +864,134 @@ later. Re-copying costs nothing — rclone skips what is already there.
 Check it is still working, rather than assuming:
 
 ```bash
-docker compose ps backup-offsite             # healthy == the key still opens the bucket
-docker compose exec backup-offsite rclone ls "$BACKUP_TARGET/$SITE_NAME" | tail
+docker compose ps backup-offsite             # healthy == the key works AND a recent dump is there
+docker compose exec backup-offsite sh -c 'rclone ls "$(cat /tmp/offsite.dest)"' | tail
 ```
 
-The healthcheck lists the bucket every five minutes, so an expired or revoked
-key shows up as unhealthy instead of as an archive that quietly stopped weeks
-ago.
+The healthcheck asks two things every five minutes. Can the key still open
+the bucket — so an expired or revoked key shows up as unhealthy instead of as
+an archive that quietly stopped weeks ago. And is the newest database dump *at
+the destination* younger than `OFFSITE_MAX_AGE_HOURS` (default `28`: the
+backup's own 26 plus time to upload) — because a key that opens the bucket
+says nothing about whether anything has arrived lately, and the old check
+stayed green while copying nothing. Like `backup`, it is only a state; see
+[Knowing when a backup did not happen](#knowing-when-a-backup-did-not-happen)
+for having something watch it.
+
+**After changing any of these settings, or upgrading**, recreate the service by
+name — it is behind a profile, so a plain `docker compose up -d` does not touch
+it:
+
+```bash
+docker compose --profile offsite up -d backup-offsite
+```
+
+#### What is not copied
+
+`*-site_config_backup.json`. Frappe writes one beside every dump and it is
+`site_config.json` verbatim: `db_password` and `encryption_key`, in plaintext.
+The dump next to it holds every stored integration secret, encrypted with that
+key. Together in a third party's bucket they are the whole CRM — every
+customer record and every ERP, WhatsApp and mail credential — to anyone who
+can read the bucket, and an application key scoped to write does not make the
+bucket unreadable to a Backblaze account compromise.
+
+So the copy leaves that file on the host, which means **the encryption key has
+to be kept somewhere else** for a restore onto a new host to be complete —
+[Restoring onto a new host](#restoring-onto-a-new-host) is the procedure, and
+it is one line to do today.
+
+Until this changed the file *was* copied, so a bucket that has been in use
+holds one per night already, and `rclone copy` never deletes. Remove them
+once, from somewhere that holds a key allowed to delete (the Backblaze web
+console, or `rclone delete` with your own credentials — not this service's
+key, which should not have that right):
+
+```bash
+rclone delete --include "*site_config_backup*" <remote>:<bucket>/<site> --dry-run   # then without --dry-run
+```
+
+Whether to also rotate what those files exposed is a judgement about who could
+have read the bucket. The database password is cheap to change; the encryption
+key is not — every stored secret has to be re-entered under the new one.
+
+#### Encrypting the copies
+
+Off by default. Set a passphrase in `.env` and every copy goes through an
+rclone [`crypt`](https://rclone.org/crypt/) remote, so the bucket only ever
+receives ciphertext:
+
+```bash
+OFFSITE_CRYPT_PASSWORD=<long random value: openssl rand -base64 32>
+#OFFSITE_CRYPT_SALT=<optional second value>
+docker compose --profile offsite up -d backup-offsite
+```
+
+- Encrypted copies go to **`<site>.crypt/`**, beside the plaintext `<site>/`
+  that earlier runs wrote. Nothing already there is touched or re-encrypted;
+  delete the plaintext prefix yourself once the encrypted one has a full set.
+- File *contents* are encrypted; file *names* are not (they gain a `.bin`
+  suffix), so the bucket's console still shows which nights are present.
+- With a passphrase set, `OFFSITE_INCLUDE_SITE_CONFIG=1` also copies
+  `site_config_backup.json`, which makes the archive self-contained. Without
+  one that setting is ignored, and the log says so.
+
+**The passphrase is the archive.** There is no recovery if it is lost, and the
+archive exists for the day this host — and its `.env` — are gone. Keep it where
+you keep the encryption key: outside this host. Changing the passphrase or the
+salt later makes everything already encrypted unreadable under the new values.
+
+Reading an encrypted archive back, on any machine with rclone and the two
+secrets:
+
+```bash
+export RCLONE_CONFIG_OFFSITE_TYPE=b2 RCLONE_CONFIG_OFFSITE_ACCOUNT=<keyID> RCLONE_CONFIG_OFFSITE_KEY=<key>
+export RCLONE_CONFIG_ARCHIVE_TYPE=crypt
+export RCLONE_CONFIG_ARCHIVE_REMOTE=offsite:<bucket>/<site>.crypt
+export RCLONE_CONFIG_ARCHIVE_FILENAME_ENCRYPTION=off
+export RCLONE_CONFIG_ARCHIVE_DIRECTORY_NAME_ENCRYPTION=false
+export RCLONE_CONFIG_ARCHIVE_PASSWORD=$(rclone obscure -)     # type the passphrase, then Ctrl-D
+# and RCLONE_CONFIG_ARCHIVE_PASSWORD2 the same way, if a salt was set
+rclone ls archive:
+rclone copy archive: ./restore --include "<stamp>-*"
+```
+
+Do that once after turning encryption on, and compare a file with the
+original. An encrypted backup nobody has ever decrypted is the same kind of
+object as a backup nobody has ever restored.
+
+#### How long the copies are kept
+
+For ever, unless you decide otherwise: the service only adds. Every night is a
+full database dump and two full file archives, so the bucket grows by that much
+a day, and a record deleted from the CRM stays in the archive for as long as
+the archive does.
+
+The place to bound it is **the bucket, not this service**. A Backblaze
+lifecycle rule (Bucket → Lifecycle Settings → custom) with, for example,
+`daysFromUploadingToHiding: 35` and `daysFromHidingToDeleting: 1` keeps five
+weeks and needs nothing from this stack. It also keeps the property that makes
+the off-host copy worth having: the key on this host can write and cannot
+delete, so whoever takes over the host cannot take the archive with it. S3 and
+most other stores have an equivalent.
+
+Where the store has no such rule, the service can prune instead:
+
+```bash
+OFFSITE_RETENTION_DAYS=35      # 0 or unset = never delete (the default)
+```
+
+That deletes, at the destination, files last modified more than that many days
+ago. It is off by default because it is destructive and because it needs an
+application key that may also `deleteFiles` — which is a key that can destroy
+the archive. Three limits are built in: values under 14 are refused (the host
+keeps a week, and a shorter window would delete files only for the next hourly
+copy to upload them again); it runs only straight after a copy that succeeded;
+and it does not run at all unless a dump newer than `OFFSITE_MAX_AGE_HOURS` is
+at the destination — an archive that has stopped receiving is the last copy
+there is, and is not aged away. On Backblaze a delete *hides* a file rather
+than removing it; pair it with "keep only the last version" on the bucket, or
+the storage is not actually released.
 
 ### Why this is a service and not a note in a runbook
 
