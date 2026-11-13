@@ -201,7 +201,9 @@ def _stored_names(references) -> set[tuple[str, str]]:
 	for reference_doctype, name in references:
 		if not reference_doctype or not name:
 			continue
-		reference_doctype = frappe.db.get_value("DocType", str(reference_doctype), "name")
+		if reference_doctype not in FILED_ON:
+			# not typed exactly: ask how the database spells it
+			reference_doctype = frappe.db.get_value("DocType", str(reference_doctype), "name")
 		if reference_doctype not in FILED_ON:
 			continue
 		name = frappe.db.get_value(reference_doctype, str(name), "name")

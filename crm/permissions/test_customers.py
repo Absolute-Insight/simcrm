@@ -494,6 +494,139 @@ class TestCustomerScope(IntegrationTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			frappe.client.set_value("Contact", mine.name, "address", theirs.name)
 
+	# --- a customer's own address field -----------------------------------------
+
+	def _org_address(self, org, title="Office"):
+		"""As the import leaves it: an Administrator-owned row the customer names."""
+		address = self._address(title)
+		frappe.db.set_value("CRM Organization", org, "address", address.name)
+		return address
+
+	def test_a_rep_cannot_point_their_customer_at_another_reps_address(self):
+		"""An address is hidden with the customer that names it, so this took it
+		from the rep whose customer it is. Link validation only asks if it exists."""
+		theirs = self._org_address(self.org_b)
+		frappe.set_user(REP_A)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Organization", self.org_a, "address", theirs.name)
+		doc = frappe.get_doc("CRM Organization", self.org_a)
+		doc.address = theirs.name
+		with self.assertRaises(frappe.PermissionError):
+			doc.save()
+		with self.assertRaises(frappe.PermissionError):
+			frappe.get_doc(
+				{"doctype": "CRM Organization", "organization_name": "Squat Co", "address": theirs.name}
+			).insert()
+		frappe.set_user("Administrator")
+		self.assertIsNone(frappe.db.get_value("CRM Organization", self.org_a, "address"))
+		self.assertIn(theirs.name, self.addresses_for(REP_B))
+		self.assertTrue(has_address_permission(theirs, "read", REP_B))
+		self.assertEqual(frappe.db.get_value("CRM Organization", self.org_b, "address"), theirs.name)
+
+	def test_an_address_read_through_a_deal_is_not_one_to_point_at(self):
+		"""org_shared is rep B's; rep A reads it, and its address, through a deal."""
+		shared = self._org_address(self.org_shared)
+		self.assertTrue(has_address_permission(shared, "read", REP_A), "control: readable")
+		mine = self._contact(self.org_a)
+		frappe.set_user(REP_A)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Organization", self.org_a, "address", shared.name)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("Contact", mine.name, "address", shared.name)
+		frappe.set_user("Administrator")
+		self.assertIn(shared.name, self.addresses_for(REP_B))
+
+	def test_no_customer_push_is_queued_with_a_foreign_address(self):
+		"""The push reads the customer's address with no permission check, so the
+		street of rep B's customer would have gone to the ERP as rep A's."""
+		from unittest.mock import patch
+
+		theirs = self._org_address(self.org_b)
+		own = self._address("A office")
+		frappe.db.set_value("Address", own.name, "owner", REP_A)
+		self.deal(self.org_a, REP_A)
+		outbound = "crm.integrations.acumatica.outbound"
+		settings = frappe._dict(enabled=1, create_customer_on_status_change=1, deal_status="Qualification")
+		frappe.set_user(REP_A)
+		with (
+			patch(f"{outbound}.get_settings", return_value=settings),
+			patch(f"{outbound}.open_sync_issues", return_value=["waiting"]),
+			patch(f"{outbound}._enqueue_push") as enqueue,
+		):
+			with self.assertRaises(frappe.PermissionError):
+				frappe.client.set_value("CRM Organization", self.org_a, "address", theirs.name)
+			enqueue.assert_not_called()
+			# the control: the rep's own address does queue the push that was waiting
+			frappe.client.set_value("CRM Organization", self.org_a, "address", own.name)
+			enqueue.assert_called_once()
+			self.assertEqual(enqueue.call_args.args[1], self.org_a)
+
+	def test_a_rep_still_sets_and_clears_their_own_customers_address(self):
+		"""The address modal's order: the Address is saved, then the customer names it."""
+		frappe.set_user(REP_A)
+		written = frappe.get_doc(
+			{
+				"doctype": "Address",
+				"address_title": "Rep A's customer",
+				"address_type": "Office",
+				"address_line1": "1 Road",
+				"city": "Boksburg",
+				"country": "South Africa",
+			}
+		).insert()
+		frappe.client.set_value("CRM Organization", self.org_a, "address", written.name)
+		self.assertEqual(frappe.db.get_value("CRM Organization", self.org_a, "address"), written.name)
+		# an edit that leaves it alone, then clearing it
+		frappe.client.set_value("CRM Organization", self.org_a, "website", "https://a.example")
+		frappe.client.set_value("CRM Organization", self.org_a, "address", None)
+		self.assertFalse(frappe.db.get_value("CRM Organization", self.org_a, "address"))
+		# and an unclaimed customer's, which is anybody's to edit
+		frappe.client.set_value("CRM Organization", self.org_free, "address", written.name)
+
+	def test_a_customer_keeps_an_address_its_editor_could_not_set(self):
+		"""Put there by a manager or the import: only a new address is checked."""
+		theirs = self._org_address(self.org_b)
+		frappe.db.set_value("CRM Organization", self.org_a, "address", theirs.name)
+		frappe.set_user(REP_A)
+		frappe.client.set_value("CRM Organization", self.org_a, "website", "https://a.example")
+
+	def test_a_team_manager_sets_a_team_customers_address_within_the_team(self):
+		team = self._org_address(self.org_free, "Team office")
+		theirs = self._org_address(self.org_b)
+		self._in_tree_manager()
+		frappe.set_user(MANAGER)
+		frappe.client.set_value("CRM Organization", self.org_a, "address", team.name)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Organization", self.org_a, "address", theirs.name)
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("CRM Organization", self.org_a, "address"), team.name)
+
+	def test_a_manager_outside_the_tree_follows_their_setting(self):
+		theirs = self._org_address(self.org_b)
+		frappe.set_user(MANAGER)
+		# "All records": any customer, any address
+		frappe.client.set_value("CRM Organization", self.org_a, "address", theirs.name)
+		frappe.set_user("Administrator")
+		frappe.db.set_value("CRM Organization", self.org_a, "address", None)
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		own = self._address("Manager's own")
+		frappe.db.set_value("Address", own.name, "owner", MANAGER)
+		frappe.set_user(MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Organization", self.org_free, "address", theirs.name)
+		frappe.client.set_value("CRM Organization", self.org_free, "address", own.name)
+
+	def test_the_import_and_administrators_still_set_any_address(self):
+		theirs = self._org_address(self.org_b)
+		frappe.client.set_value("CRM Organization", self.org_a, "address", theirs.name)
+		frappe.db.set_value("CRM Organization", self.org_a, "address", None)
+		# server code on a rep's behalf, as the Acumatica importer saves
+		frappe.set_user(REP_A)
+		doc = frappe.get_doc("CRM Organization", self.org_a)
+		doc.address = theirs.name
+		doc.save(ignore_permissions=True)
+		self.assertEqual(frappe.db.get_value("CRM Organization", self.org_a, "address"), theirs.name)
+
 	def test_contacts_without_an_address_do_not_hide_every_address(self):
 		"""One NULL in a NOT IN subquery makes the whole test NULL."""
 		self._contact(self.org_b)

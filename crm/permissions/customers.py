@@ -347,21 +347,38 @@ def assert_contact_allowed(contact: str | None, user: str | None = None) -> None
 
 
 def assert_address_allowed(address: str | None, user: str | None = None) -> None:
-	"""Refuse to put a contact at an address the user cannot see.
+	"""Refuse to point a contact or a customer at an address that is not the user's.
 
-	The address rule hides an address with the contact that names it, so a rep who
-	named a colleague's customer's address on a contact of their own took it away
-	from the people it belongs to.
+	An address is hidden with whatever names it: the contact whose ``address`` it
+	is, the customer whose ``address`` it is. So a rep who named a colleague's
+	customer's address on a record of their own took it away from the people it
+	belongs to -- and the Acumatica push would have sent it to the ERP as their
+	own customer's street. Link validation only asks whether the address exists.
+
+	The write rule, not the read one: being able to read an address through a
+	deal at its customer is not a claim on it.
 	"""
 	if not address:
 		return
-	cond = visible_address_condition(user or frappe.session.user)
+	cond = visible_address_condition(user or frappe.session.user, for_write=True)
 	if cond is None or not frappe.db.exists("Address", address) or _row_visible("Address", address, cond):
 		return
 	frappe.throw(
 		_("This address is at another rep's customer. Ask a manager to reassign it to you."),
 		frappe.PermissionError,
 	)
+
+
+def validate_organization_address(doc) -> None:
+	"""``CRM Organization.address``, as ``crm.api.contact`` does for a contact's.
+
+	Only an address that is new on the customer is checked -- one a manager or
+	the import put there stays -- and server code is trusted."""
+	if doc.flags.ignore_permissions or not doc.address:
+		return
+	if not doc.is_new() and not doc.has_value_changed("address"):
+		return
+	assert_address_allowed(doc.address)
 
 
 def validate_address_links(doc, method=None) -> None:
