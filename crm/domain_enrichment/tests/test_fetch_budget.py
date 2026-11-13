@@ -195,6 +195,125 @@ def _serve_once(respond):
 	return server.getsockname()[1]
 
 
+class DnsBudgetTest(UnitTestCase):
+	"""Audit be_enrichment-6: ``getaddrinfo`` takes no timeout and opens no socket
+	the deadline could shut, so a name whose DNS never answers held ``fetch`` for
+	the resolver's own timeout on every hop, outside the budget."""
+
+	def _hung_resolver(self):
+		release = threading.Event()
+		self.addCleanup(release.set)  # let the abandoned lookup thread go
+
+		def getaddrinfo(host, *args, **kwargs):
+			release.wait(10)
+			raise socket.gaierror(socket.EAI_NONAME, "never answered")
+
+		return getaddrinfo
+
+	def test_a_lookup_that_never_answers_ends_at_the_budget(self):
+		cfg = make_config({"request_timeout": 5, "retry_count": 0, "max_fetch_seconds": 0.2})
+		with (
+			mock.patch.object(http.socket, "getaddrinfo", side_effect=self._hung_resolver()),
+			mock.patch.object(http, "_pinned_get", side_effect=AssertionError("connected")),
+		):
+			started = time.monotonic()
+			status, html, error, _final = http.fetch("https://slow-dns.example/", cfg)
+			elapsed = time.monotonic() - started
+
+		self.assertLess(elapsed, 2.0, f"a hung lookup held fetch for {elapsed:.2f}s")
+		self.assertEqual((status, html), (0, ""))
+		self.assertIn("fetch budget", error)
+
+	def test_an_abandoned_lookup_is_refused_never_connected(self):
+		"""Fail closed: no answer means no address was validated, so nothing is pinned."""
+		with (
+			mock.patch.object(http.socket, "getaddrinfo", side_effect=self._hung_resolver()),
+			http._Deadline(0.1),
+		):
+			with self.assertRaises(http.SSRFError):
+				http.validate_url("https://slow-dns.example/", make_config({}))
+
+	def test_a_prompt_lookup_is_checked_exactly_as_before(self):
+		def resolves_to(ip):
+			return lambda host, *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 0))]
+
+		cfg = make_config({"request_timeout": 5, "retry_count": 0, "max_fetch_seconds": 5})
+		with (
+			mock.patch.object(http.socket, "getaddrinfo", side_effect=resolves_to("10.0.0.5")),
+			mock.patch.object(http, "_pinned_get", side_effect=AssertionError("connected")),
+		):
+			status, _html, error, _final = http.fetch("https://intranet.example/", cfg)
+		self.assertEqual(status, 0)
+		self.assertIn("SSRF guard", error)
+
+		pinned = []
+
+		def pinned_get(session, url, ip, timeout, retries):
+			pinned.append(ip)
+			return FakeResponse(iter([b"<html>ok</html>"]))
+
+		with (
+			mock.patch.object(http.socket, "getaddrinfo", side_effect=resolves_to("93.184.216.34")),
+			mock.patch.object(http, "_pinned_get", side_effect=pinned_get),
+			mock.patch.object(http, "build_session", return_value=mock.MagicMock()),
+		):
+			status, html, error, _final = http.fetch("https://public.example/", cfg)
+		self.assertEqual((status, html, error), (200, "<html>ok</html>", ""))
+		self.assertEqual(pinned, ["93.184.216.34"])
+
+	def test_each_hop_is_resolved_exactly_once(self):
+		"""One lookup per hop, and the address pinned is the one it returned: a
+		second lookup is the window a DNS-rebinding host answers differently in."""
+		answers = {"first.example": "93.184.216.34", "second.example": "93.184.216.35"}
+		lookups, pinned = [], []
+
+		def getaddrinfo(host, *args, **kwargs):
+			lookups.append(host)
+			return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (answers[host], 0))]
+
+		def pinned_get(session, url, ip, timeout, retries):
+			pinned.append((url, ip))
+			if "first" in url:
+				return FakeResponse(
+					iter([]),
+					headers={"Location": "https://second.example/"},
+					status_code=302,
+					is_redirect=True,
+				)
+			return FakeResponse(iter([b"<html>ok</html>"]))
+
+		cfg = make_config({"request_timeout": 5, "retry_count": 0, "max_fetch_seconds": 5})
+		with (
+			mock.patch.object(http.socket, "getaddrinfo", side_effect=getaddrinfo),
+			mock.patch.object(http, "_pinned_get", side_effect=pinned_get),
+			mock.patch.object(http, "build_session", return_value=mock.MagicMock()),
+		):
+			status, _html, error, final = http.fetch("https://first.example/", cfg)
+
+		self.assertEqual((status, error, final), (200, "", "https://second.example/"))
+		self.assertEqual(lookups, ["first.example", "second.example"])
+		self.assertEqual(
+			pinned,
+			[("https://first.example/", "93.184.216.34"), ("https://second.example/", "93.184.216.35")],
+		)
+
+	def test_a_hung_lookup_is_asked_once_and_not_retried(self):
+		lookups = []
+		hung = self._hung_resolver()
+
+		def getaddrinfo(host, *args, **kwargs):
+			lookups.append(host)
+			return hung(host, *args, **kwargs)
+
+		cfg = make_config({"request_timeout": 5, "retry_count": 2, "max_fetch_seconds": 0.2})
+		with (
+			mock.patch.object(http.socket, "getaddrinfo", side_effect=getaddrinfo),
+			mock.patch.object(http, "_pinned_get", side_effect=AssertionError("connected")),
+		):
+			http.fetch("https://slow-dns.example/", cfg)
+		self.assertEqual(lookups, ["slow-dns.example"])
+
+
 def _trickle(conn, payload: bytes, pause: float, seconds: float):
 	ends = time.monotonic() + seconds
 	while time.monotonic() < ends:

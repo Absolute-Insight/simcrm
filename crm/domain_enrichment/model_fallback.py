@@ -42,6 +42,7 @@ from crm.agent import client
 from crm.agent.api import _budget_spent, _model_call_slot, _refund_budget
 from crm.agent.config import get_config
 from crm.agent.errors import AgentUnavailable, SchemaMismatch
+from crm.agent.prompting import NEUTRALISED_MARKER, neutralise
 from crm.agent.schemas import SiteFacts
 from crm.domain_enrichment.http import JobTimeout
 from crm.domain_enrichment.result import Field, Method
@@ -51,7 +52,6 @@ from crm.domain_enrichment.result import Field, Method
 # one has broken both.
 CONTENT_START = "<<<PAGE"
 CONTENT_END = "PAGE>>>"
-NEUTRALISED_MARKER = "[fence marker removed]"
 TRUNCATION_NOTE = " [...truncated]"
 
 # Emitted when a page contributes no text at all. Never leave the fence empty: an
@@ -246,7 +246,4 @@ def _neutralise(content: str) -> str:
 	"GE>>>").replace("PAGE>>>", "")`` is exactly ``"PAGE>>>"``, a live terminator.
 	The placeholder keeps them apart and makes the tampering visible.
 	"""
-	text = str(content or "")
-	for marker in (CONTENT_START, CONTENT_END):
-		text = text.replace(marker, NEUTRALISED_MARKER)
-	return text
+	return neutralise(content, (CONTENT_START, CONTENT_END))

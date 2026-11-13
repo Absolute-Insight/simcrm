@@ -78,8 +78,8 @@ Three doctypes hold all the tunable knowledge. `get_config()` reads them on dema
 |---|---|
 | `enabled` | Master on/off for the whole feature. |
 | `enable_lead` / `enable_deal` / `enable_organization` | Which doctypes can be enriched. |
-| `auto_enrich` | When `1`, a newly-created CRM **Lead, Deal or Organization** that has a website is enriched automatically in a background job (`after_insert`). A new Deal with a new Organization enriches both (each crawls and writes its own fields). Default `0` — enrichment is otherwise manual via the Enrich button. Gated per doctype by `enable_lead` / `enable_deal` / `enable_organization`. |
-| `max_pages` / `max_depth` | Crawl breadth/depth caps (BFS). |
+| `auto_enrich` | When `1`, a newly-created CRM **Lead, Deal or Organization** that has a website is enriched automatically in a background job (`after_insert`). A new Deal with a new Organization enriches both (each crawls and writes its own fields). Default `0` — enrichment is otherwise manual via the Enrich button. Gated per doctype by `enable_lead` / `enable_deal` / `enable_organization`. Never fires for a record created in a **Guest** session (a public web form, an inbound webhook): its website is the visitor's to choose, so an anonymous submission must not make the server crawl it. Those records are enriched with the button. |
+| `max_pages` / `max_depth` | Crawl breadth/depth caps (BFS). `max_pages` counts page **fetches**: one that redirects onto a page already crawled is spent, not refunded. |
 | `request_timeout` | Per-request timeout (seconds). |
 | `max_fetch_seconds` | Wall-clock cap on one fetch, redirects and retries included. Empty: 3 × `request_timeout`; never above 30 s. |
 | `max_download_bytes` | Hard cap on bytes read per page (streamed). |

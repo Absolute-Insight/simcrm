@@ -80,6 +80,33 @@ class NormalizeWebsiteTest(UnitTestCase):
 		with self.assertRaises(ValueError):
 			_normalize_website("ftp://x.com")
 
+	def test_a_host_with_a_port_is_a_host_not_a_scheme(self):
+		"""Audit be_enrichment-4: ``urlparse("acme.co.za:8080").scheme`` is
+		"acme.co.za", so a website typed with its port was refused as an
+		unsupported scheme -- an HTTP 500 out of the create modal's preview."""
+		self.assertEqual(_normalize_website("acme.co.za:8080"), "https://acme.co.za:8080")
+		self.assertEqual(_normalize_website("acme.co.za:8080/about"), "https://acme.co.za:8080/about")
+		self.assertEqual(_normalize_website("http://acme.co.za:8080"), "http://acme.co.za:8080")
+		self.assertEqual(_normalize_website("localhost:8000"), "https://localhost:8000")
+
+	def test_what_is_not_a_web_address_is_still_refused(self):
+		for website in (
+			"file:///etc/passwd",
+			"javascript:alert(1)",
+			"acme.co.za:port",
+			"https://",
+			"://x",
+			# review of PR #400: these became https://mailto:... and host "http"
+			"mailto:info@acme.co.za",
+			"http:/acme.co.za",
+			"https:acme.co.za",
+			"tel:+27110000000",
+			"user:secret@acme.co.za",
+		):
+			with self.subTest(website=website):
+				with self.assertRaises(ValueError):
+					_normalize_website(website)
+
 
 class PipelineRunTest(UnitTestCase):
 	def setUp(self):
@@ -218,6 +245,27 @@ class PreviewTest(UnitTestCase):
 		self.assertEqual(result.industry.value, "")
 		self.assertEqual(result.emails, [])
 		self.assertEqual(result.phones, [])
+
+	def test_a_website_that_is_not_one_returns_a_note_without_raising(self):
+		"""``enrich_preview`` calls this inside the request: a ValueError here was a 500."""
+		for website in ("ftp://x.com", "file:///etc/passwd", "acme.co.za:port", ""):
+			with self.subTest(website=website):
+				with mock.patch.object(pipeline_mod, "crawl", side_effect=AssertionError("fetched")):
+					result = pipeline_mod.preview(website, cfg=self.cfg)
+				self.assertTrue(result.notes)
+				self.assertEqual(result.company_name.value, "")
+
+	def test_a_host_with_a_port_is_previewed(self):
+		crawled = []
+
+		def crawl(website, cfg):
+			crawled.append(website)
+			return self._homepage_only()
+
+		with mock.patch.object(pipeline_mod, "crawl", crawl):
+			result = pipeline_mod.preview("acme.co.za:8080", cfg=self.cfg)
+		self.assertEqual(crawled, ["https://acme.co.za:8080"])
+		self.assertEqual(result.company_name.value, "Acme Analytics Inc.")
 
 	def test_unreadable_homepage_returns_notes_without_raising(self):
 		with mock.patch.object(pipeline_mod, "crawl", lambda *a, **k: []):

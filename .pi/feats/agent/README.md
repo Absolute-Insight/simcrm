@@ -696,6 +696,80 @@ permission scope), and `accounts_going_quiet` no longer takes the first 200
 rows of `_working_deal_rows()` — that list is in `modified desc` order, so
 the cap kept the deals touched most recently and dropped the quiet ones.
 
+## The reference-sheet number check (`reference.py`) and its limits
+
+An Assistant answer drawn from a reference sheet is shown only if every figure
+in it is supported by a row in the prompt (`reference.verify`); otherwise the
+rows themselves are shown. A row supports two kinds of number, kept apart:
+
+- **data** — its confirmed cell values. An answer may state these.
+- **naming** — the size, standard and class in its label, its section and
+  sheet title, its page, a digit in a column's name (`(d1)`). These say which
+  row is meant. They are accepted where the answer names the row (`the 6"
+  SABS 1123 flange`, `page 2`, `OD (150 mm): 285.0 mm`) and refused where one
+  stands as a column's value (`the OD is 150 mm`, `6 bolt holes`, `OD → 150`,
+  `the OD will be 150 mm`). A page number needs `page`/`pg.`/`p.`; a digit
+  written onto a column name needs that name.
+
+What counts as "a column" is every column of every row in the prompt, not
+only the row being tried: "the OD is 150 mm" is a claim about an OD even
+against a bolt-set row that has none. A size restated after the column
+(`OD (150 mm): 285.0 mm`, `the OD of 6 inch is 285.0 mm`) is stepped over, so
+the figure after it is still bound to the column. A line that is only a
+column's name (`Flange OD:`) is read together with the line under it.
+
+A number at the start of a line is a list's numbering in a run (`1.`, `2.`,
+`3.` in order — each list starting again at `1.`, since one list per row is
+how an answer covering several rows is written) or as a lone `1.`, unless the
+line above it is a column's name waiting for its value. Otherwise it is a
+figure. "One" is a count only before the thing counted ("the one bolt"), not
+as a pronoun ("only one matches").
+
+A column's word in front of another noun describes that noun ("a 150 mm bolt
+pattern", "the 1600 kPa pressure rating flange") and does not make the size a
+value. Under a column's name on its own line, "size: value" lines
+(`Flange OD` then `- 150 mm: 285.0 mm`) name the row and give the value.
+
+Within an answer a claim stays with the row the one before it resolved to,
+unless it names another row by a label figure the current row does not share
+-- written as a name, not as a column's value: "Number of bolts: 8" under a
+6" bolt set is that row's count, not the 8" row's size.
+
+Every answer shape that has been argued over is in one table,
+`test_reference.VERDICTS`, with the verdict it must keep. Change the check and
+that test says which correct answers are now refused and which wrong ones
+pass.
+
+The check is linear in the answer's length: every look-behind is bounded
+(`_LOOK_BEHIND`, 160 characters), because a looping model writes one very
+long claim. It **fails closed** at that bound: a naming number whose column
+may lie further back than the window is treated as a value.
+
+**Known limits** — the rule reads wording, not meaning. Pinned in
+`test_reference.NamingNumbersTest.test_known_limits`:
+
+- A column called by another word is not recognised as that column: "the
+  flange is 150 mm thick", "it weighs 150 kg" pass on a 150 mm row. So does a
+  column that no row in the prompt has: "the OD is 150 mm" when the prompt
+  holds only bolt-set rows.
+- A figure that is another cell of the same row is data whichever column the
+  answer puts it under: "the PCD is 285.0 mm" passes when 285.0 is the OD. The
+  MBP drilling rows carry the nominal bore as a cell, so "the OD is 150 mm"
+  passes there for this reason.
+- Likewise a figure that is a cell of **another** row in the prompt: the claim
+  is read as that row's, and the citation shown is that row.
+
+- A column's name on its own line binds only the line directly under it:
+  in `Flange OD` / `- 900 mm: 1270.0 mm` / `- 150 mm: 150 mm` the third line
+  is read on its own, where both its figures name the row. And under such a
+  heading "size: value" is trusted to be the heading's value:
+  `Flange OD:` / `150 mm: 8` passes (8 is the row's bolt-hole count).
+- "150 mm OD flange"-style wording, where a column's word stands before
+  another noun, is read as describing the noun.
+
+Closing the cell-swap limits means binding each figure to its column, which
+this check does not do.
+
 ## What is not here yet
 
 MCP transport.

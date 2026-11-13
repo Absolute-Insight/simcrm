@@ -72,7 +72,9 @@ def restore_defaults(force=False):
 	create_default_manager_dashboard(force)
 	create_assignment_rule_custom_fields()
 	add_assignment_rule_property_setters()
-	seed_default_rules_and_mappings()
+	# ``restore``: this is the explicit path. The migrate hook seeds once per
+	# version and never puts back what an admin deleted; here they asked.
+	seed_default_rules_and_mappings(restore=True)
 	ensure_agent_role()
 	ensure_zar_currency()
 	ensure_sa_provinces()

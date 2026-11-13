@@ -198,8 +198,8 @@ def auto_enrich_on_create(doc, method=None):
 	Called from the ``after_insert`` of the CRM Lead / CRM Deal / CRM Organization
 	controllers (the trigger stays visible where the record lives, rather than as a
 	doc_events hook). Best-effort and never raises into the save. Fires only when the
-	feature is enabled, ``auto_enrich`` is on, the doctype is enabled, and the record
-	has a website. Reuses the same per-doc ``job_id``
+	feature is enabled, ``auto_enrich`` is on, the doctype is enabled, the record
+	has a website, and a signed-in user created it (never Guest). Reuses the same per-doc ``job_id``
 	+ ``deduplicate`` as the manual ``api.enrich`` path, so a manual click and the
 	auto-fire never double-run. A new Deal created with a website is therefore enriched
 	alongside its Organization -- each crawls independently and writes its own fields.
@@ -212,6 +212,17 @@ def auto_enrich_on_create(doc, method=None):
 
 		website = (doc.get("website") or "").strip()
 		if not website:
+			return
+
+		if frappe.session.user == "Guest":
+			# A record made by nobody -- a public web form, an inbound webhook.
+			# Its website is whatever the stranger typed, and every submission
+			# would queue a crawl of it on the shared ``long`` queue with no
+			# rate limit in front: an anonymous way to make this server fetch a
+			# URL of the caller's choosing, as often as they like. The job could
+			# not write the result either (Guest has no write). So nothing is
+			# crawled until someone who may edit the record asks, with the
+			# Enrich button, which is permission-checked and rate-limited.
 			return
 
 		enqueue_enrichment(doc.doctype, doc.name, website, frappe.session.user, trigger="auto")
@@ -330,11 +341,18 @@ def run_enrichment(
 		_notify(status="running", message=message, step=step_index)
 
 	try:
+		# Authorise before the crawl, not after it. The job runs as whoever
+		# enqueued it, and the check used to sit behind up to ``max_fetches``
+		# outbound requests: a user who could never write the result had the
+		# whole crawl made for them first.
+		frappe.get_doc(reference_doctype, reference_name).check_permission("write")
+
 		cfg = get_config()
 		_notify(status="running", message="Starting", step=0)
 
 		result = run_pipeline(website, cfg=cfg, progress=progress)
 
+		# loaded again: the crawl takes minutes and the record may have changed
 		doc = frappe.get_doc(reference_doctype, reference_name)
 		doc.check_permission("write")
 		filled_fields = apply_to_document(doc, result, cfg)

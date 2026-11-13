@@ -102,11 +102,45 @@ def _is_blocked_ip(ip: str) -> bool:
 	return not addr.is_global or addr.is_multicast
 
 
-def _resolve_ips(host: str) -> list:
-	"""Resolve ``host`` to its IP strings via ``socket.getaddrinfo``."""
+def _lookup(host: str) -> list:
 	infos = socket.getaddrinfo(host, None)
 	# index 4 is sockaddr; element 0 is the IP for both AF_INET / AF_INET6.
 	return list({info[4][0] for info in infos})
+
+
+def _resolve_ips(host: str) -> list:
+	"""Resolve ``host`` to its IP strings via ``socket.getaddrinfo``.
+
+	Inside a ``fetch`` the lookup is held to what is left of the fetch budget.
+	``getaddrinfo`` takes no timeout and opens no socket ``_Deadline`` could shut, so
+	a name whose authoritative server never answers blocked for the resolver's own
+	timeout on every hop -- outside the budget, in the web worker for a preview. The
+	lookup runs on a helper thread that is waited on only as long as the budget
+	allows; one that outlasts it is abandoned and the name counts as unresolved,
+	which the guard refuses. Nothing about the answer changes: the addresses the
+	guard checks, and the one the connection is pinned to, are still exactly what
+	this one lookup returned.
+	"""
+	deadline = _active_deadline()
+	if deadline is None:
+		return _lookup(host)
+
+	answer: dict = {}
+
+	def work():
+		try:
+			answer["ips"] = _lookup(host)
+		except Exception as exc:
+			answer["error"] = exc
+
+	thread = threading.Thread(target=work, name="enrichment-dns", daemon=True)
+	thread.start()
+	thread.join(max(deadline.remaining(), 0))
+	if "error" in answer:
+		raise answer["error"]
+	if "ips" not in answer:
+		raise socket.gaierror(socket.EAI_AGAIN, "lookup outlasted the fetch budget")
+	return answer["ips"]
 
 
 def validate_url(url: str, cfg) -> str:
@@ -605,6 +639,10 @@ def fetch(url: str, cfg, session=None, html_only: bool = True):
 				try:
 					ips = _validated_ips(current, cfg)
 				except SSRFError as exc:
+					if deadline.remaining() <= 0:
+						# refused because the lookup ran the budget out, not for
+						# where the name points
+						return 0, "", over_budget, current
 					return 0, "", f"blocked by SSRF guard: {exc}", current
 
 				# Redirects are followed manually (each hop re-validated and re-pinned).
