@@ -100,6 +100,12 @@ pushing to it _is_ cutting a release. Nothing else triggers one.
    Neither input exists on the automatic dispatch or on a push, so neither
    can happen by accident.
 
+   **If the release ever moves to a PAT (`RELEASE_TOKEN`), drop the dispatch.**
+   A tag pushed with a PAT *does* trigger `builds.yml`, and `successCmd` in
+   `.releaserc` would still dispatch it: two builds of every release, the
+   second refused as a duplicate, and a red run on every tag. Remove
+   `successCmd` in the same change that adds the secret.
+
    To ask what a host is _actually_ running, and to pin it:
 
    ```bash
