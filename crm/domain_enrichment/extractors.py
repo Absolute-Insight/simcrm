@@ -248,7 +248,9 @@ def _safe_url(base_url, raw):
 	``http(s)`` URL. Rejects ``javascript:``/``data:`` schemes a crawled site could
 	inject into a stored logo/image/icon field (stored-XSS defense)."""
 	raw = (raw or "").strip()
-	if not raw:
+	if not raw or any(char < " " for char in raw):
+		# a tab or newline inside a URL is dropped by browsers and by urlparse,
+		# so what is checked would not be what is stored
 		return ""
 	# urljoin() leaves javascript:/data: schemes as-is, so check the raw scheme
 	# first, then re-check the resolved URL for relative inputs.
@@ -260,7 +262,15 @@ def _safe_url(base_url, raw):
 		# scheme-relative with no base to take a scheme from (a JSON-LD sameAs
 		# link on a page whose URL is not known): https, not dropped
 		resolved = "https:" + resolved
-	return resolved if urlparse(resolved).scheme in ("http", "https") else ""
+	parsed = urlparse(resolved)
+	if parsed.scheme not in ("http", "https"):
+		return ""
+	# a link to store has a host and nothing else in its authority: "//",
+	# "// evil" and "//user:pw@host/x" are not addresses of anything
+	netloc = parsed.netloc
+	if not parsed.hostname or "@" in netloc or any(char.isspace() for char in netloc):
+		return ""
+	return resolved
 
 
 def _best_icon(soup, base_url):

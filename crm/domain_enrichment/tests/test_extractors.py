@@ -637,6 +637,37 @@ class SocialTest(UnitTestCase):
 		)
 		self.assertEqual(extractors._safe_url("", "javascript:alert(1)//linkedin.com/company/x"), "")
 
+	def test_a_stored_link_has_a_host_and_nothing_else_in_its_authority(self):
+		"""Final review of PR #400: with no base, "//" became "https://"."""
+		for base in ("", "https://acme.example/"):
+			for raw in (
+				"// evil",
+				"//user:pw@host/x",
+				"//user@linkedin.com/company/x",
+				"https://user:pw@linkedin.com/company/x",
+				"https://linked in.com/company/x",
+				"//\tlinkedin.com/x",
+				"https://linkedin.com/\ncompany/x",
+			):
+				with self.subTest(base=base, raw=raw):
+					self.assertEqual(extractors._safe_url(base, raw), "")
+		# with no base there is no host for these to fall back on
+		for raw in ("//", "https://", "https:///linkedin.com/company/x", "/company/x", "?q=1"):
+			with self.subTest(raw=raw):
+				self.assertEqual(extractors._safe_url("", raw), "")
+		self.assertEqual(
+			extractors._safe_url("", "//www.linkedin.com/company/acme"),
+			"https://www.linkedin.com/company/acme",
+		)
+		self.assertEqual(
+			extractors._safe_url("https://acme.example/a/", "img/my logo.png"),
+			"https://acme.example/a/img/my logo.png",
+		)
+		self.assertEqual(
+			extractors._safe_url("", "https://acme.example:8443/logo.png"),
+			"https://acme.example:8443/logo.png",
+		)
+
 	def test_protocol_relative_links_made_absolute(self):
 		page, soup = fixtures.make_page(
 			"https://bluedart.com",
