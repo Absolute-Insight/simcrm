@@ -20,7 +20,7 @@ import { isSessionGone } from '@/utils/sessionExpiry'
 import { getSessionUser } from '@/utils/session'
 import { connectivity, onOnline, serverNow } from './connectivity'
 import { hasIndexedDB, outboxStore } from './db'
-import { packState, syncPack } from './pack'
+import { onPackSynced, packState, syncPackFresh } from './pack'
 
 export const outbox = reactive({
   /* This user's entries, oldest first. */
@@ -75,9 +75,9 @@ export function loadOutbox() {
 /**
  * Capture one thing the rep did.
  *
- * Resolves once it is safely on the device -- not once it is sent. Rejects
- * only when it could be neither stored nor sent, which is the one case where
- * the rep must be told their work is not saved.
+ * Resolves once it is safe -- on the device, or failing that on the server.
+ * Rejects when it is neither, which is the one case where the rep must be
+ * told their work is not saved.
  */
 export async function enqueue(action, payload) {
   await loadOutbox()
@@ -86,23 +86,38 @@ export async function enqueue(action, payload) {
     user: getSessionUser(),
     capturedAt: serverNow(),
   })
+  let stored = true
   try {
     await persist(entry)
-  } catch (error) {
-    // Private mode, a full disk. Online it can still go straight out; offline
-    // there is nowhere to keep it, and saying "saved" would be a lie.
-    if (!connectivity.online) {
-      throw new Error(
-        __(
-          'This device cannot save work offline. Connect and try again, or write it down.',
-        ),
-        { cause: error },
-      )
-    }
+  } catch {
+    stored = false
   }
+  // Private mode, a full disk: nowhere to keep it. Offline that is the end of
+  // it, and saying "saved" would be a lie.
+  if (!stored && !connectivity.online) throw unsavedError()
+
   outbox.entries = [...outbox.entries, entry].sort(byTime)
-  flushOutbox()
+  const live = () => outbox.entries.find((other) => other.id === entry.id)
+  if (stored) {
+    flushOutbox()
+    return entry
+  }
+  // Not on the device, so "saved" has to mean the server has it.
+  await flushOutbox()
+  const now = live()
+  if (now && now.status !== 'sent') {
+    outbox.entries = outbox.entries.filter((other) => other.id !== entry.id)
+    throw now.status === 'rejected' ? new Error(now.error) : unsavedError()
+  }
   return entry
+}
+
+function unsavedError() {
+  return new Error(
+    __(
+      'This device cannot save work offline. Connect and try again, or write it down.',
+    ),
+  )
 }
 
 async function send(entry) {
@@ -115,61 +130,96 @@ async function send(entry) {
   })
 }
 
-let flushing = null
+/* Still in the outbox? A rep can discard an entry while it is on the wire;
+   what comes back must not write it onto the device again. */
+const held = (entry) => outbox.entries.some((other) => other.id === entry.id)
+
+async function sendPending() {
+  await loadOutbox()
+  outbox.flushing = true
+  const tried = new Set()
+  try {
+    // Asked again each time round, not listed once at the start: something
+    // captured while the first entry was on the wire goes out in this run.
+    for (;;) {
+      if (!connectivity.online) break
+      const entry = outbox.entries.find(
+        (other) => other.status === 'pending' && !tried.has(other.id),
+      )
+      if (!entry) break
+      tried.add(entry.id)
+      entry.sending = true
+      try {
+        await send(entry)
+      } catch (error) {
+        entry.sending = false
+        if (!held(entry)) continue
+        if (isSessionGone(error, document.cookie)) break
+        if (failureKind(error) !== 'rejected') break
+        entry.status = 'rejected'
+        entry.error = describeError(error).message
+        await persist(entry).catch(() => {})
+        continue
+      }
+      entry.sending = false
+      if (!held(entry)) continue
+      // Applied, or already applied by an earlier attempt whose answer was
+      // lost. Kept as `sent` so the screens go on showing it until a sync
+      // that began after this moment brings the server's own version.
+      entry.status = 'sent'
+      entry.sent_at = Date.now()
+      entry.error = null
+      await persist(entry).catch(() => {})
+    }
+  } finally {
+    outbox.flushing = false
+  }
+}
+
+let sending = null
 
 /**
- * Send what is waiting, oldest first, one at a time. Never rejects.
+ * Send what is waiting, oldest first, one at a time, then bring the pack up
+ * to date. Never rejects.
  *
  * A refusal marks that entry and moves on. Anything else -- no network, a
  * server error, a lapsed session -- stops the run with the rest still
  * waiting, because the next entry would hit the same thing.
  */
 export function flushOutbox() {
-  flushing ||= (async () => {
-    await loadOutbox()
-    outbox.flushing = true
-    let sentAny = false
-    try {
-      for (const entry of outbox.entries.filter(
-        (e) => e.status === 'pending',
-      )) {
-        if (!connectivity.online) break
-        try {
-          await send(entry)
-        } catch (error) {
-          if (isSessionGone(error, document.cookie)) break
-          if (failureKind(error) !== 'rejected') break
-          entry.status = 'rejected'
-          entry.error = describeError(error).message
-          await persist(entry).catch(() => {})
-          continue
-        }
-        // Applied, or already applied by an earlier attempt whose answer was
-        // lost. Kept as `sent` so the screens go on showing it until a sync
-        // brings the server's own version of the same thing.
-        entry.status = 'sent'
-        entry.error = null
-        sentAny = true
-        await persist(entry).catch(() => {})
-      }
-    } finally {
-      outbox.flushing = false
-    }
-    if (sentAny || outbox.entries.some((e) => e.status === 'sent')) {
-      await confirmSent()
-    }
-  })().finally(() => {
-    flushing = null
+  sending ||= sendPending().finally(() => {
+    sending = null
   })
-  return flushing
+  return sending.then(confirmSent).catch((error) => {
+    console.error('outbox flush failed', error)
+  })
 }
 
-/** After a sync, what was sent is in the pack itself: the overlay can go. */
-async function confirmSent() {
-  if (!(await syncPack())) return
-  for (const entry of outbox.entries.filter((e) => e.status === 'sent')) {
-    await forget(entry)
+/* What was sent is in the pack once a sync that *started after the send*
+   has stored one. Asked of every pack sync, whoever started it: the
+   background refresh confirms an entry as well as the one requested here. */
+function dropConfirmed(syncStartedAt) {
+  for (const entry of outbox.entries) {
+    if (entry.status === 'sent' && (entry.sent_at ?? 0) <= syncStartedAt) {
+      forget(entry)
+    }
   }
+}
+onPackSynced(dropConfirmed)
+
+let confirming = null
+
+/* One at a time: every caller of flushOutbox arrives here, and two of them
+   must not each download a pack to confirm the same entry. */
+function confirmSent() {
+  confirming ||= (async () => {
+    if (!connectivity.online) return
+    if (!outbox.entries.some((entry) => entry.status === 'sent')) return
+    await syncPackFresh()
+  })().finally(() => {
+    confirming = null
+  })
+  return confirming
 }
 
 /** Give a refused entry another go, after the rep has read why. */

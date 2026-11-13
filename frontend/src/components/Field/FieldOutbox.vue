@@ -61,8 +61,10 @@
           {{ row.state }}
         </div>
 
+        <!-- Not while it is on the wire: the server may already have it,
+             and "discarded" would then be untrue. -->
         <div
-          v-if="row.status !== 'sent'"
+          v-if="row.status !== 'sent' && !row.sending"
           class="mt-2.5 flex flex-wrap items-center gap-2"
         >
           <Button
@@ -154,11 +156,16 @@ const rows = computed(() =>
     .map((entry) => ({
       id: entry.id,
       status: entry.status,
+      sending: !!entry.sending,
       error: entry.error,
       when: whenLabel(entry.captured_at),
       ...describeEntry(entry, names),
       state:
-        entry.status === 'sent' ? __('Sent, updating') : __('Waiting to send'),
+        entry.status === 'sent'
+          ? __('Sent, updating')
+          : entry.sending
+            ? __('Sending')
+            : __('Waiting to send'),
       icon: entry.status === 'sent' ? LucideRefreshCw : LucideCloudUpload,
     })),
 )

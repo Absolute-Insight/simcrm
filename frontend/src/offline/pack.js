@@ -72,6 +72,16 @@ export function loadPack() {
 }
 
 let syncing = null
+const syncedListeners = new Set()
+
+/**
+ * Run `fn(startedAt)` after each sync that stored a pack, with the device
+ * time that sync *began*: whatever reached the server before then is in it.
+ */
+export function onPackSynced(fn) {
+  syncedListeners.add(fn)
+  return () => syncedListeners.delete(fn)
+}
 
 /**
  * Fetch the pack and store it. Resolves to true when the device now holds a
@@ -83,6 +93,7 @@ export function syncPack() {
     await loadPack()
     packState.syncing = true
     const user = getSessionUser()
+    const startedAt = Date.now()
     try {
       const answer = await call('crm.api.offline.get_pack', {
         known_hash: fieldPack.value?.hash || undefined,
@@ -115,6 +126,7 @@ export function syncPack() {
           console.warn('field pack not stored', error)
         })
       }
+      for (const fn of syncedListeners) fn(startedAt)
       return true
     } catch (error) {
       packState.error = error
@@ -127,6 +139,16 @@ export function syncPack() {
     syncing = null
   })
   return syncing
+}
+
+/**
+ * A sync that starts now. `syncPack` shares one already in flight, which is
+ * right for "keep it fresh" and wrong for "show me what I just sent": that
+ * one may have left before the send did.
+ */
+export async function syncPackFresh() {
+  if (syncing) await syncing
+  return syncPack()
 }
 
 function due() {

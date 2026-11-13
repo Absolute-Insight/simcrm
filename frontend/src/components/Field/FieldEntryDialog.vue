@@ -292,7 +292,10 @@ function entry() {
     case 'cancel':
       return ['cancel_item', { item: context.value.item.name, reason: text }]
     case 'note': {
-      const [doctype, name] = values.about.split('::')
+      // split once: a customer's name may itself contain the separator
+      const cut = values.about.indexOf('::')
+      const doctype = values.about.slice(0, cut)
+      const name = values.about.slice(cut + 2)
       return [
         'add_note',
         { reference_doctype: doctype, reference_docname: name, content: text },

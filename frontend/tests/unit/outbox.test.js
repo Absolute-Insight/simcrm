@@ -22,13 +22,25 @@ vi.mock('frappe-ui', () => ({
     return server.replay(args)
   },
 }))
-vi.mock('@/offline/pack', () => ({
-  packState: { refused: false },
-  syncPack: async () => {
-    server.syncs += 1
-    return server.syncOk
-  },
-}))
+vi.mock('@/offline/pack', () => {
+  const listeners = new Set()
+  return {
+    packState: { refused: false },
+    onPackSynced: (fn) => listeners.add(fn),
+    // a sync that starts now and, when it works, stores a pack
+    syncPackFresh: async () => {
+      server.syncs += 1
+      const startedAt = Date.now()
+      await new Promise((resolve) => setTimeout(resolve, 1))
+      if (server.syncOk) for (const fn of listeners) fn(startedAt)
+      return server.syncOk
+    },
+    // a background sync somebody else started, at a time of the test's choosing
+    backgroundSync: (startedAt) => {
+      for (const fn of listeners) fn(startedAt)
+    },
+  }
+})
 vi.mock('@/utils/session', () => ({ getSessionUser: () => 'rep@example.com' }))
 
 globalThis.indexedDB ??= {}
@@ -91,6 +103,27 @@ describe('capturing', () => {
     expect(server.syncs).toBe(1)
     expect(outbox.entries).toEqual([])
     expect(disk.size).toBe(0)
+  })
+
+  it('with nowhere to store it but a network, "saved" means the server has it', async () => {
+    const { enqueue, outbox } = await load()
+    disk.set = () => {
+      throw new Error('QuotaExceeded')
+    }
+    try {
+      await enqueue('create_task', { title: 'x' })
+      expect(server.calls).toHaveLength(1)
+      // and when the server would not take it, the rep is told, not "saved"
+      server.replay = async () => {
+        throw new TypeError('Failed to fetch')
+      }
+      await expect(enqueue('create_task', { title: 'y' })).rejects.toThrow(
+        /cannot save work offline/,
+      )
+      expect(outbox.entries.some((e) => e.payload.title === 'y')).toBe(false)
+    } finally {
+      delete disk.set
+    }
   })
 
   it('with nowhere to store it and no network, says so instead of "saved"', async () => {
@@ -196,6 +229,57 @@ describe('sending', () => {
     // not sent a second time: it only waited for the pack
     expect(server.calls).toHaveLength(1)
     expect(outbox.entries).toEqual([])
+  })
+})
+
+describe('timing', () => {
+  it('something captured while another entry is on the wire goes out in the same run', async () => {
+    let release
+    const { enqueue, flushOutbox, outbox } = await load()
+    server.replay = async ({ payload }) => {
+      if (payload.title === 'first') {
+        await new Promise((resolve) => (release = resolve))
+      }
+      return { status: 'applied' }
+    }
+    await enqueue('create_task', { title: 'first' })
+    await settle()
+    await enqueue('create_task', { title: 'second' })
+    release()
+    await flushOutbox()
+    expect(server.calls.map((c) => c.payload.title)).toEqual([
+      'first',
+      'second',
+    ])
+    expect(outbox.entries).toEqual([])
+  })
+
+  it('a pack sync that began before the send does not confirm it', async () => {
+    server.syncOk = false
+    const { enqueue, flushOutbox, outbox } = await load()
+    await enqueue('create_task', { title: 'x' })
+    await flushOutbox()
+    const { backgroundSync } = await import('@/offline/pack')
+    // the refresh that left before the replay: its pack cannot hold the entry
+    backgroundSync(outbox.entries[0].sent_at - 1000)
+    expect(outbox.entries.map((e) => e.status)).toEqual(['sent'])
+    // one that began after does, whoever started it
+    backgroundSync(outbox.entries[0].sent_at + 1)
+    expect(outbox.entries).toEqual([])
+  })
+
+  it('an entry discarded while it is on the wire stays discarded', async () => {
+    let release
+    server.replay = () => new Promise((resolve) => (release = resolve))
+    const { enqueue, flushOutbox, discardEntry, outbox } = await load()
+    const entry = await enqueue('create_task', { title: 'x' })
+    await settle()
+    expect(outbox.entries[0].sending).toBe(true)
+    await discardEntry(entry.id)
+    release({ status: 'applied' })
+    await flushOutbox()
+    expect(outbox.entries).toEqual([])
+    expect(disk.has(entry.id)).toBe(false)
   })
 })
 

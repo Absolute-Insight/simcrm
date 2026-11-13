@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import time
 from datetime import UTC, datetime, timedelta
@@ -412,15 +413,17 @@ def replay(
 	except (frappe.UniqueValidationError, frappe.DuplicateEntryError):
 		# the other copy of this entry got there between the check and the insert
 		frappe.db.rollback(save_point="offline_replay")
-		_already_applied(request_id)
+		# a locking read: the plain one would see this transaction's snapshot,
+		# taken before the other copy committed, and find no receipt to check
+		_already_applied(request_id, for_update=True)
 		return {"request_id": request_id, "status": "duplicate"}
 
 	handler(payload, moment, late)
 	return {"request_id": request_id, "status": "applied", "late": late}
 
 
-def _already_applied(request_id: str) -> bool:
-	owner = frappe.db.get_value(RECEIPT, request_id, "user")
+def _already_applied(request_id: str, for_update: bool = False) -> bool:
+	owner = frappe.db.get_value(RECEIPT, request_id, "user", for_update=for_update)
 	if not owner:
 		return False
 	if owner != frappe.session.user:
@@ -452,6 +455,10 @@ def _captured(captured_at) -> tuple[datetime, bool]:
 	try:
 		captured = float(captured_at) / 1000 if captured_at not in (None, "") else now
 	except (TypeError, ValueError):
+		frappe.throw(_("That entry has no usable time."), frappe.ValidationError)
+	if not math.isfinite(captured):
+		# float("nan") parses, compares false with everything, and would get
+		# as far as fromtimestamp before failing as a server error
 		frappe.throw(_("That entry has no usable time."), frappe.ValidationError)
 	if captured > now + CLOCK_TOLERANCE_SECONDS or captured <= 0:
 		frappe.throw(_("That entry is dated in the future. Check the date on this device."))

@@ -217,8 +217,9 @@ class CapturedTimeTest(ReplayTestCase):
 		self.assertEqual(out["status"], "applied")
 
 	def test_rubbish_for_a_time_is_refused(self):
-		with self.assertRaises(frappe.ValidationError):
-			replay(new_id(), "log_activity", self.visit(), "yesterday")
+		for rubbish in ("yesterday", "nan", "inf", "-inf", -5):
+			with self.assertRaises(frappe.ValidationError):
+				replay(new_id(), "log_activity", self.visit(), rubbish)
 
 	def test_the_flag_cannot_be_set_from_the_online_door(self):
 		# the whitelisted function takes no such argument: a request cannot pass it
