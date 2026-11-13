@@ -85,6 +85,11 @@ def notify_user(notification):
 	# the dict form: exists() pops "doctype" off it. Passed as the filter beside
 	# the doctype it became a WHERE on a column the table does not have, the
 	# error was swallowed as "not found", and every repeat was inserted.
-	if frappe.db.exists(values):
+	#
+	# Only an unread twin is a duplicate. The guard is for one operation firing
+	# twice; a payload carries no event key, so matching read rows as well made
+	# the first "A assigned D to you" the last one B was ever sent for D -- a
+	# record assigned again after B had seen the first notice arrived silently.
+	if frappe.db.exists({**values, "read": 0}):
 		return
 	frappe.get_doc(values).insert(ignore_permissions=True)

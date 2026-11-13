@@ -157,3 +157,43 @@ class TimelineEmailDirectionTest(IntegrationTestCase):
 		directions = self._directions(get_lead_activities(lead.name)[0])
 
 		self.assertEqual(directions, {"Sent quote": "Sent", "Received quote": "Received"})
+
+
+class AttachmentThumbnailTest(IntegrationTestCase):
+	"""The Attachments tab draws a 44px square per image. Without the small copy's
+	URL in the row it could only load the original, a phone photo of megabytes."""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _file(self, lead: str, file_name: str, thumbnail_url: str | None):
+		# db_insert: the row is what is under test, not a file on the test site's disk
+		frappe.get_doc(
+			{
+				"doctype": "File",
+				"name": frappe.generate_hash(length=10),
+				"file_name": file_name,
+				"file_url": f"/private/files/{file_name}",
+				"thumbnail_url": thumbnail_url,
+				"is_private": 1,
+				"attached_to_doctype": "CRM Lead",
+				"attached_to_name": lead,
+			}
+		).db_insert()
+
+	def test_an_attachment_carries_its_thumbnail_when_it_has_one(self):
+		frappe.set_user("Administrator")
+		lead = (
+			frappe.get_doc({"doctype": "CRM Lead", "first_name": "Thumbnail"})
+			.insert(ignore_permissions=True)
+			.name
+		)
+		self._file(lead, "site-photo.jpg", "/private/files/site-photo_small.jpg")
+		self._file(lead, "quote.pdf", None)
+
+		attachments = get_lead_activities(lead)[4]
+
+		self.assertEqual(
+			{row["file_name"]: row["thumbnail_url"] for row in attachments},
+			{"site-photo.jpg": "/private/files/site-photo_small.jpg", "quote.pdf": None},
+		)

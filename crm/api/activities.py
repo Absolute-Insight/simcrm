@@ -404,6 +404,9 @@ ATTACHMENT_FIELDS = [
 	"file_name",
 	"file_type",
 	"file_url",
+	# The small copy frappe keeps for an image, when it has made one: the
+	# Attachments tab draws a 44px square and should not fetch a phone photo for it.
+	"thumbnail_url",
 	"file_size",
 	"is_private",
 	"modified",

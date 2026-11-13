@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from './mount.js'
 import AttachmentArea from '@/components/Activities/AttachmentArea.vue'
 
-const S = vi.hoisted(() => ({ dialogs: [], toasts: [], refuse: null }))
+const S = vi.hoisted(() => ({
+  dialogs: [],
+  toasts: [],
+  refuse: null,
+  images: false,
+}))
 
 vi.mock('frappe-ui', () => ({
   call: () => Promise.reject(S.refuse),
@@ -14,7 +19,7 @@ vi.mock('@/stores/global', () => ({
 }))
 vi.mock('@/utils', () => ({
   convertSize: (n) => String(n),
-  isImage: () => false,
+  isImage: (type) => S.images && type === 'JPG',
 }))
 vi.mock('@/components/Icon.vue', () => ({ default: { render: () => null } }))
 vi.mock('@/components/Activities/TimelineTimestamp.vue', () => ({
@@ -83,5 +88,69 @@ describe('AttachmentArea refused actions', () => {
     const { close } = await confirm('Make Public')
     expect(S.toasts).toEqual(['Not permitted to change this file'])
     expect(close).not.toHaveBeenCalled()
+  })
+})
+
+// A deal with N phone photos fetched N originals, 3-8 MB each, the moment the
+// tab drew: the 44px square had the file itself as its src, eagerly.
+describe('AttachmentArea thumbnails', () => {
+  beforeEach(() => {
+    S.images = true
+    return () => (S.images = false)
+  })
+
+  const photo = (i, extra = {}) => ({
+    ...attachment,
+    name: `FILE-${i}`,
+    file_name: `site-${i}.jpg`,
+    file_url: `/private/files/site-${i}.jpg`,
+    file_size: 6_000_000,
+    ...extra,
+  })
+
+  function thumbnails(attachments) {
+    const w = mount(AttachmentArea, {
+      props: { attachments },
+      stubs: { Button },
+    })
+    return [...w.el.querySelectorAll('img')]
+  }
+
+  it('loads every thumbnail lazily, off the main thread, at a fixed size', () => {
+    const imgs = thumbnails([1, 2, 3, 4, 5].map((i) => photo(i)))
+    expect(imgs).toHaveLength(5)
+    for (const img of imgs) {
+      expect(img.getAttribute('loading')).toBe('lazy')
+      expect(img.getAttribute('decoding')).toBe('async')
+      expect(img.getAttribute('width')).toBe('44')
+      expect(img.getAttribute('height')).toBe('44')
+    }
+  })
+
+  it('draws the small copy when the server sends one, the file otherwise', () => {
+    const [small, original] = thumbnails([
+      photo(1, { thumbnail_url: '/private/files/site-1_small.jpg' }),
+      photo(2, { thumbnail_url: null }),
+    ])
+    expect(small.getAttribute('src')).toBe('/private/files/site-1_small.jpg')
+    expect(original.getAttribute('src')).toBe('/private/files/site-2.jpg')
+  })
+
+  it('still opens the original, not the thumbnail', () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const w = mount(AttachmentArea, {
+      props: {
+        attachments: [
+          photo(1, { thumbnail_url: '/private/files/site-1_small.jpg' }),
+        ],
+      },
+      stubs: { Button },
+    })
+    w.el.querySelector('.activity').click()
+    expect(open).toHaveBeenCalledWith(
+      '/private/files/site-1.jpg',
+      '_blank',
+      'noopener',
+    )
   })
 })

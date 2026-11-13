@@ -11,21 +11,40 @@ def get_deal_contacts(name: str):
 		order_by="is_primary desc, idx asc",
 		distinct=True,
 	)
+	# One read for all of them. This was a get_doc per contact -- the row and
+	# every child table of each -- for five columns that live on tabContact. Like
+	# the get_doc it replaces it is not row-scoped: the deal was permission-checked
+	# above, and its own contacts are part of what that deal shows.
+	names = [contact.contact for contact in contacts if contact.contact]
+	details = (
+		{
+			row.name: row
+			for row in frappe.get_all(
+				"Contact",
+				filters={"name": ("in", names)},
+				fields=["name", "image", "full_name", "email_id", "mobile_no"],
+				limit=len(names),
+			)
+		}
+		if names
+		else {}
+	)
+
 	deal_contacts = []
 	for contact in contacts:
-		if not contact.contact:
+		detail = details.get(contact.contact)
+		# no contact on the row, or one that has since been deleted
+		if not detail:
 			continue
 
-		is_primary = contact.is_primary
-		contact = frappe.get_doc("Contact", contact.contact).as_dict()
-
-		_contact = {
-			"name": contact.name,
-			"image": contact.image,
-			"full_name": contact.full_name,
-			"email": contact.email_id,
-			"mobile_no": contact.mobile_no,
-			"is_primary": is_primary,
-		}
-		deal_contacts.append(_contact)
+		deal_contacts.append(
+			{
+				"name": detail.name,
+				"image": detail.image,
+				"full_name": detail.full_name,
+				"email": detail.email_id,
+				"mobile_no": detail.mobile_no,
+				"is_primary": contact.is_primary,
+			}
+		)
 	return deal_contacts

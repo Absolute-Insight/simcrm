@@ -10,11 +10,19 @@
             class="size-11 bg-surface-base rounded-[var(--v-radius-control)] overflow-hidden shrink-0 flex justify-center items-center"
             :class="{ border: !isImage(attachment.file_type) }"
           >
+            <!-- The small copy when the server has one, and only once the row
+                 is near the viewport: this used to fetch every original, a
+                 phone photo of several megabytes each, for a 44px square. -->
             <img
               v-if="isImage(attachment.file_type)"
               class="size-full object-cover"
-              :src="attachment.file_url"
+              :src="attachmentThumbnail(attachment)"
               :alt="attachment.file_name"
+              width="44"
+              height="44"
+              loading="lazy"
+              decoding="async"
+              @error="useOriginal($event, attachment)"
             />
             <component
               :is="fileIcon(attachment.file_type)"
@@ -81,6 +89,7 @@ import { globalStore } from '@/stores/global'
 import { call } from 'frappe-ui'
 import TimelineTimestamp from '@/components/Activities/TimelineTimestamp.vue'
 import { convertSize, isImage } from '@/utils'
+import { attachmentThumbnail } from '@/utils/attachmentThumbnail'
 import { reportActionError } from '@/utils/reportActionError'
 
 defineProps({
@@ -90,6 +99,15 @@ defineProps({
 const emit = defineEmits(['reload'])
 
 const { $dialog } = globalStore()
+
+// A thumbnail that will not load (removed, or written where the private file
+// route does not look) falls back to the file itself, once.
+function useOriginal(event, attachment) {
+  const img = event.target
+  if (!attachment.file_url || img.dataset.fellBack) return
+  img.dataset.fellBack = '1'
+  img.src = attachment.file_url
+}
 
 function openFile(attachment) {
   window.open(attachment.file_url, '_blank', 'noopener')

@@ -562,14 +562,13 @@ def get_data(
 		kanban_columns = capped_columns
 		all_counts = kanban_column_counts(doctype, column_field, filters) if column_field else None
 
+		# The board's own filters are the same for every column: converted once.
+		base_filters = convert_filter_to_tuple(doctype, filters) if filters else []
+		counted_cards = []
+
 		for kc in kanban_columns:
 			# Start with base filters
-			column_filters = []
-
-			# Convert and add the main filters first
-			if filters:
-				base_filters = convert_filter_to_tuple(doctype, filters)
-				column_filters.extend(base_filters)
+			column_filters = [list(base_filter) for base_filter in base_filters]
 
 			# Add the column-specific filter. A Select field's blank first option is
 			# a column too, the records with no value; giving it no filter at all
@@ -616,8 +615,7 @@ def get_data(
 				kc["all_count"] = all_count
 				kc["count"] = len(column_data)
 
-				if doctype in KANBAN_COUNTED_DOCTYPES:
-					set_activity_counts(column_data, doctype)
+				counted_cards.extend(column_data)
 
 			if order:
 				column_data = sorted(
@@ -626,6 +624,12 @@ def get_data(
 				)
 
 			data.append({"column": kc, "fields": kanban_fields, "data": column_data})
+
+		# Once for the board, not once per column: the counts are five queries
+		# however many cards they cover, and a ten-stage board paid fifty. The
+		# cards are the same dicts the columns hold, so they are filled in place.
+		if doctype in KANBAN_COUNTED_DOCTYPES:
+			set_activity_counts(counted_cards, doctype)
 
 	fields = frappe.get_meta(doctype).fields
 	fields = [field for field in fields if field.fieldtype not in no_value_fields]
@@ -1056,27 +1060,52 @@ def remove_doc_link(doctype, docname) -> bool:
 	return True
 
 
-def remove_contact_link(doctype, docname, contact):
-	"""Take one contact off a document that lists it.
+def remove_contact_link(doctype, docname, contact) -> bool:
+	"""Take one contact off a document that lists it. Returns whether a link
+	was actually removed.
 
 	frappe's get_linked_docs reports a CRM Contacts child row as its parent deal,
 	so this is handed the deal and only ``contact`` says which row is going. It
 	used to clear the whole table and the ``contact`` field, so deleting one of a
 	deal's three contacts stripped all three -- and with no primary contact left,
 	the deal's email, mobile and phone too.
+
+	A task, note or call log points at a contact the other way, through its
+	``reference_doctype`` / ``reference_docname`` pair. That reference is cleared
+	as well, as :func:`remove_doc_link` clears it for any other record: left
+	alone, the save was a no-op the caller reported as "unlinked", and the
+	contact then refused to delete over a link the modal said was gone.
 	"""
 	if not doctype or not docname or not contact:
-		return
+		return False
 
 	try:
 		linked_doc_data = frappe.get_doc(doctype, docname)
+		changed = False
 		if linked_doc_data.get("contact") == contact:
 			linked_doc_data.contact = None
+			changed = True
 		if linked_doc_data.meta.has_field("contacts"):
-			linked_doc_data.contacts = [row for row in linked_doc_data.contacts if row.contact != contact]
+			kept = [row for row in linked_doc_data.contacts if row.contact != contact]
+			if len(kept) != len(linked_doc_data.contacts):
+				linked_doc_data.contacts = kept
+				changed = True
+		if (
+			_has_reference_fields(doctype)
+			and linked_doc_data.get("reference_doctype") == "Contact"
+			and linked_doc_data.get("reference_docname") == contact
+		):
+			linked_doc_data.update({"reference_doctype": "", "reference_docname": ""})
+			changed = True
+		if not changed:
+			# it holds the contact in some field of its own: nothing here to clear
+			return False
 		linked_doc_data.save(ignore_permissions=True)
-	except (frappe.DoesNotExistError, frappe.ValidationError):
-		pass
+	except frappe.DoesNotExistError:
+		pass  # gone already: nothing links the contact any more
+	except frappe.ValidationError:
+		return False
+	return True
 
 
 @frappe.whitelist()
@@ -1111,8 +1140,7 @@ def remove_linked_doc_reference(
 
 		try:
 			if remove_contact:
-				remove_contact_link(item["doctype"], item["docname"], contact)
-				unlinked_here = True
+				unlinked_here = remove_contact_link(item["doctype"], item["docname"], contact)
 			else:
 				unlinked_here = remove_doc_link(item["doctype"], item["docname"])
 
@@ -1120,8 +1148,10 @@ def remove_linked_doc_reference(
 				frappe.delete_doc(item["doctype"], item["docname"])
 			elif not unlinked_here:
 				# Nothing was cleared -- the document links the record through a field
-				# of its own -- so "unlinked" would be the false success that left the
-				# modal closed over a link that is still there.
+				# of its own, or would not save without it -- so "unlinked" would be
+				# the false success that left the modal closed over a link that is
+				# still there. Both branches answer for themselves: the contact one
+				# used to be hard-coded to success.
 				skipped.append({"docname": item["docname"], "reason": "not_unlinkable"})
 				continue
 		except (frappe.DoesNotExistError, frappe.ValidationError) as exc:
