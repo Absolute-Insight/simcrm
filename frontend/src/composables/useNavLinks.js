@@ -11,6 +11,7 @@ import PlannerIcon from '@/components/Icons/PlannerIcon.vue'
 import ReportsIcon from '@/components/Icons/ReportsIcon.vue'
 import SparkleIcon from '@/components/Icons/SparkleIcon.vue'
 import TaskIcon from '@/components/Icons/TaskIcon.vue'
+import FieldIcon from '~icons/lucide/map-pinned'
 import { accessStore } from '@/stores/access'
 import { usersStore } from '@/stores/users'
 
@@ -79,6 +80,18 @@ export function useNavLinks({ mobile = () => false } = {}) {
       to: 'Planner',
       tint: 'text-ink-teal-6',
       condition: () => canSee('nav.planner'),
+    },
+    // The week, customers and tasks from the copy on the device, for sites
+    // with no reception. Next to the Planner because it is the same week,
+    // read where the Planner cannot load. Hiding it here hides the link, not
+    // the fallback: an offline start still lands there (router.js).
+    {
+      label: 'Field mode',
+      key: 'nav.field',
+      icon: FieldIcon,
+      to: 'Field',
+      tint: 'text-ink-cyan-6',
+      condition: () => canSee('nav.field'),
     },
     {
       label: 'Leads',

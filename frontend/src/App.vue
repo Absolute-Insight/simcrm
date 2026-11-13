@@ -2,6 +2,9 @@
   <FrappeUIProvider>
     <NotPermitted v-if="$route.name === 'Not Permitted'" />
     <router-view v-else-if="$route.name === 'Onboarding'" />
+    <!-- Field mode brings its own chrome: the app shell's sidebar,
+         notifications and settings each need a server it may not have. -->
+    <router-view v-else-if="$route.meta.standalone && session.isLoggedIn" />
     <Layout v-else-if="session.isLoggedIn" class="isolate">
       <!-- Keyed without the hash: Deal and Lead record their tab there, and a
            tab click must not rebuild the page (see useActiveTabManager). -->

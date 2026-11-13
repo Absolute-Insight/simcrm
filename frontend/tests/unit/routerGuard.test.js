@@ -160,3 +160,50 @@ describe("a rep's Home", () => {
     expect(await navigate(second.router, '/')).toBe('Organizations')
   })
 })
+
+describe('with no server', () => {
+  /* Every request the guard would wait on fails. Before field mode that
+     refused the navigation -- on a cold start, a blank page. */
+  const dead = () => {
+    throw new TypeError('Failed to fetch')
+  }
+  const fieldPage = (name) => ({ default: { name, render: () => null } })
+
+  async function bootOffline() {
+    vi.doMock('@/pages/Field.vue', () => fieldPage('FieldShell'))
+    vi.doMock('@/components/Field/FieldToday.vue', () => fieldPage('Today'))
+    vi.doMock('@/components/Field/FieldCustomers.vue', () =>
+      fieldPage('Customers'),
+    )
+    const tab = await bootTab({ views: dead })
+    const { connectivity } = await import('@/offline/connectivity')
+    connectivity.online = false
+    return { ...tab, connectivity }
+  }
+
+  /* The users store asks for itself the moment it is created; that request
+     is not the guard's and nothing waits on it. What the guard would have
+     asked for -- access settings, views -- must not be requested at all. */
+  const guardRequests = (requests) =>
+    requests.filter((url) => url !== 'crm.api.session.get_users')
+
+  it('sends a page that needs the server to field mode, waiting on nothing', async () => {
+    const { router, requests } = await bootOffline()
+    expect(await navigate(router, '/planner')).toBe('Field')
+    expect(await navigate(router, '/deals')).toBe('Field')
+    expect(guardRequests(requests)).toEqual([])
+  })
+
+  it('opens the field routes as they are', async () => {
+    const { router, requests } = await bootOffline()
+    expect(await navigate(router, '/field/customers')).toBe('FieldCustomers')
+    expect(guardRequests(requests)).toEqual([])
+  })
+
+  it('goes back to guarding normally once the server answers', async () => {
+    const { router, connectivity } = await bootOffline()
+    expect(await navigate(router, '/planner')).toBe('Field')
+    connectivity.online = true
+    expect(await navigate(router, '/planner')).toBe('Planner')
+  })
+})
