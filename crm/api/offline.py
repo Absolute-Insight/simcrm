@@ -435,7 +435,9 @@ def _payload(payload) -> dict:
 			frappe.throw(_("That entry is too large to send."), frappe.ValidationError)
 		try:
 			payload = json.loads(payload or "{}")
-		except ValueError:
+		except (ValueError, RecursionError):
+			# RecursionError: a few kilobytes of nothing but "[[[[" is valid
+			# JSON to start reading and a 500 to finish
 			payload = None
 	if not isinstance(payload, dict):
 		frappe.throw(_("That entry could not be read."), frappe.ValidationError)
@@ -458,7 +460,26 @@ def _captured(captured_at) -> tuple[datetime, bool]:
 	return moment.replace(tzinfo=None, microsecond=0), (now - captured) > LATE_AFTER_SECONDS
 
 
+def _name(payload: dict, key: str) -> str:
+	"""A record name from the payload, as text and nothing else.
+
+	The payload is JSON, so a value can arrive as a dict or a list -- and
+	``frappe.db.exists`` and ``get_value`` read a dict as *filters*, with no row
+	scoping. Handed one, a handler would answer "is there a task of Thabo's
+	whose title starts with Impala" by which error it raised. Every name a
+	handler looks up comes through here.
+	"""
+	value = payload.get(key)
+	if value is None:
+		return ""
+	if not isinstance(value, str | int):
+		frappe.throw(_("That entry could not be read."), frappe.ValidationError)
+	return frappe.utils.cstr(value).strip()
+
+
 def _text(value, limit: int) -> str:
+	if value is not None and not isinstance(value, str | int | float):
+		frappe.throw(_("That entry could not be read."), frappe.ValidationError)
 	text = frappe.utils.cstr(value).strip()
 	if len(text) > limit:
 		frappe.throw(_("That is too long. Keep it under {0} characters.").format(limit))
@@ -476,10 +497,14 @@ def _flag_offline(item: str, late: bool) -> None:
 
 
 def _replay_log_activity(payload: dict, moment: datetime, late: bool) -> None:
+	# On an earlier day than today, by the site's calendar. Asked of the date,
+	# not of `late`: a visit captured at 23:52 and delivered at 00:03 is eleven
+	# minutes old and already "yesterday", and without this the day lock
+	# refused it for good.
+	past = moment.date() < frappe.utils.getdate()
 	if (
-		late
+		past
 		and past_days_locked()
-		and moment.date() < frappe.utils.getdate()
 		and frappe.utils.now_datetime() - moment > timedelta(hours=OFFLINE_GRACE_HOURS)
 	):
 		frappe.throw(
@@ -489,18 +514,19 @@ def _replay_log_activity(payload: dict, moment: datetime, late: bool) -> None:
 			frappe.ValidationError,
 		)
 	log_activity(
-		organization=frappe.utils.cstr(payload.get("organization")) or None,
+		organization=_name(payload, "organization") or None,
 		note=_text(payload.get("note"), NOTE_TEXT_LIMIT),
 		when=moment,
-		reference_doctype=frappe.utils.cstr(payload.get("reference_doctype")) or None,
-		reference_docname=frappe.utils.cstr(payload.get("reference_docname")) or None,
-		activity_type=frappe.utils.cstr(payload.get("activity_type")) or "Unplanned Meeting",
-		captured_offline=late,
+		reference_doctype=_name(payload, "reference_doctype") or None,
+		reference_docname=_name(payload, "reference_docname") or None,
+		activity_type=_name(payload, "activity_type") or "Unplanned Meeting",
+		# flagged whenever the server did not witness the day it is dated
+		captured_offline=late or past,
 	)
 
 
 def _replay_complete_item(payload: dict, moment: datetime, late: bool) -> None:
-	item = frappe.utils.cstr(payload.get("item"))
+	item = _name(payload, "item")
 	# complete_item wants a time inside the item's own week. A Friday visit
 	# closed on Monday falls outside it, and then the planned day stands, as it
 	# does when the Planner is given no time at all.
@@ -515,7 +541,7 @@ def _replay_complete_item(payload: dict, moment: datetime, late: bool) -> None:
 
 
 def _replay_cancel_item(payload: dict, moment: datetime, late: bool) -> None:
-	item = frappe.utils.cstr(payload.get("item"))
+	item = _name(payload, "item")
 	cancel_item(item, _text(payload.get("reason"), NOTE_TEXT_LIMIT))
 	_flag_offline(item, late)
 
@@ -525,18 +551,25 @@ def _parent_of(item: str) -> str | None:
 
 
 def _readable(doctype: str, name: str, allowed: tuple[str, ...]) -> tuple[str, str]:
-	"""A record the caller may attach something to, or a refusal that names nothing."""
-	if doctype not in allowed or not name or not frappe.db.exists(doctype, name):
-		frappe.throw(_("That record is no longer available."), frappe.DoesNotExistError)
-	if not frappe.has_permission(doctype, "read", name):
+	"""A record the caller may attach something to, or a refusal that names nothing.
+
+	One exception for "no such record" and "not yours": two would tell a rep
+	which customer names exist outside their own book.
+	"""
+	if (
+		doctype not in allowed
+		or not name
+		or not frappe.db.exists(doctype, name)
+		or not frappe.has_permission(doctype, "read", name)
+	):
 		frappe.throw(_("That record is no longer available."), frappe.PermissionError)
 	return doctype, name
 
 
 def _replay_add_note(payload: dict, moment: datetime, late: bool) -> None:
 	doctype, name = _readable(
-		frappe.utils.cstr(payload.get("reference_doctype")),
-		frappe.utils.cstr(payload.get("reference_docname")),
+		_name(payload, "reference_doctype"),
+		_name(payload, "reference_docname"),
 		NOTE_DOCTYPES,
 	)
 	content = _text(payload.get("content"), NOTE_TEXT_LIMIT)
@@ -567,26 +600,25 @@ def _replay_create_task(payload: dict, moment: datetime, late: bool) -> None:
 	}
 	if payload.get("due_date"):
 		try:
-			due = frappe.utils.getdate(frappe.utils.cstr(payload.get("due_date"))[:10])
+			due = frappe.utils.getdate(_name(payload, "due_date")[:10])
 		except Exception:
 			frappe.throw(_("That due date could not be read."), frappe.ValidationError)
 		task["due_date"] = datetime.combine(due, datetime.min.time()).replace(hour=9)
 	if payload.get("reference_docname"):
 		task["reference_doctype"], task["reference_docname"] = _readable(
-			frappe.utils.cstr(payload.get("reference_doctype")),
-			frappe.utils.cstr(payload.get("reference_docname")),
+			_name(payload, "reference_doctype"),
+			_name(payload, "reference_docname"),
 			REFERENCE_DOCTYPES,
 		)
 	frappe.get_doc(task).insert()
 
 
 def _replay_close_task(payload: dict, moment: datetime, late: bool) -> None:
-	name = payload.get("task")
-	if not name or not frappe.db.exists("CRM Task", name):
-		frappe.throw(_("That task is no longer available."), frappe.DoesNotExistError)
-	task = frappe.get_doc("CRM Task", name)
-	# the pack only ever offered the caller their own tasks
-	if task.assigned_to != frappe.session.user or not task.has_permission("write"):
+	name = _name(payload, "task")
+	task = frappe.get_doc("CRM Task", name) if name and frappe.db.exists("CRM Task", name) else None
+	# The pack only ever offered the caller their own tasks. Missing and not
+	# yours get the same answer, for the reason _readable gives.
+	if not task or task.assigned_to != frappe.session.user or not task.has_permission("write"):
 		frappe.throw(_("That task is no longer available."), frappe.PermissionError)
 	if task.status == "Done":
 		frappe.throw(_("This task is already done."), frappe.ValidationError)

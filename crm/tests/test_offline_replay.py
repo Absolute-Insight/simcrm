@@ -132,6 +132,23 @@ class ExactlyOnceTest(ReplayTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			replay(request_id, "log_activity", {"activity_type": "Admin", "note": "Mine"})
 
+	def test_an_activity_at_another_reps_customer_is_refused_and_leaves_nothing(self):
+		request_id = new_id()
+		with self.assertRaises(frappe.PermissionError):
+			replay(request_id, "log_activity", self.visit(organization=self.foreign))
+		frappe.db.rollback()
+		self.assertFalse(frappe.db.exists("CRM Offline Receipt", request_id))
+		self.assertFalse(frappe.db.count("Event", {"owner": REP, "event_category": "Visit"}))
+
+	def test_a_rep_cannot_read_receipts(self):
+		replay(new_id(), "log_activity", self.visit())
+		self.assertFalse(frappe.has_permission("CRM Offline Receipt", "read"))
+		self.assertFalse(frappe.has_permission("CRM Offline Receipt", "create"))
+
+	def test_a_payload_nested_past_reading_is_refused_not_a_crash(self):
+		with self.assertRaises(frappe.ValidationError):
+			replay(new_id(), "log_activity", "[" * 5000)
+
 	def test_only_the_listed_actions_exist(self):
 		for action in ("frappe.client.delete", "save_plan", "", "get_pack"):
 			with self.assertRaises(frappe.ValidationError):
@@ -232,6 +249,26 @@ class PastLockTest(ReplayTestCase):
 		row = next(item for item in get_pack()["history"] if item["organization"] == self.org)
 		self.assertEqual((row["status"], row["captured_offline"]), ("Done", 1))
 
+	def test_a_visit_that_crossed_midnight_on_its_way_is_not_refused(self):
+		# captured at 23:52, delivered at 00:03: eleven minutes old, not "late",
+		# and already yesterday -- the day lock used to refuse it for good
+		from unittest.mock import patch
+
+		tomorrow = frappe.utils.getdate() + timedelta(days=1)
+		with (
+			patch(
+				"frappe.utils.getdate",
+				side_effect=lambda *a: frappe.utils.data.getdate(*a) if a else tomorrow,
+			),
+			patch("crm.api.rep_plan.MATCH_HORIZON_WEEKS", 520),
+		):
+			out = replay(new_id(), "log_activity", self.visit(), ago(seconds=30))
+		self.assertEqual(out["status"], "applied")
+		self.assertFalse(out["late"])
+		row = next(item for item in get_pack()["history"] if item["organization"] == self.org)
+		# and it is flagged: the server did not witness the day it is dated
+		self.assertEqual(row["captured_offline"], 1)
+
 	def test_past_the_grace_the_lock_stands(self):
 		with self.assertRaises(frappe.ValidationError):
 			replay(new_id(), "log_activity", self.visit(), ago(hours=OFFLINE_GRACE_HOURS + 2))
@@ -271,6 +308,12 @@ class PlannedItemTest(ReplayTestCase):
 		item = self.plan_one()
 		replay(new_id(), "cancel_item", {"item": item, "reason": "Plant shut"})
 		self.assertEqual(self.items()[0]["status"], "Cancelled")
+
+	def test_another_reps_item_cannot_be_cancelled_either(self):
+		item = self.plan_one()
+		frappe.set_user(OTHER)
+		with self.assertRaises(frappe.PermissionError):
+			replay(new_id(), "cancel_item", {"item": item, "reason": "Not mine"})
 
 	def test_another_reps_item_is_refused(self):
 		item = self.plan_one()
@@ -324,9 +367,52 @@ class NotesAndTasksTest(ReplayTestCase):
 			)
 
 	def test_a_note_cannot_be_hung_on_any_doctype(self):
-		with self.assertRaises(frappe.DoesNotExistError):
+		with self.assertRaises(frappe.PermissionError):
 			replay(
 				new_id(), "add_note", {"reference_doctype": "User", "reference_docname": REP, "content": "x"}
+			)
+
+	def test_missing_and_not_yours_are_the_same_answer(self):
+		# two different errors would tell a rep which customer names exist
+		for name in (self.foreign, "No Such Customer Anywhere"):
+			with self.assertRaises(frappe.PermissionError):
+				replay(
+					new_id(),
+					"add_note",
+					{"reference_doctype": "CRM Organization", "reference_docname": name, "content": "x"},
+				)
+		with self.assertRaises(frappe.PermissionError):
+			replay(new_id(), "close_task", {"task": "999999999", "closing_note": "x"})
+
+	def test_a_name_is_text_never_a_filter(self):
+		# frappe.db.exists reads a dict as filters, unscoped: a yes/no probe over
+		# every rep's tasks if a handler ever passed one through
+		frappe.set_user(OTHER)
+		replay(new_id(), "create_task", {"title": "Replay secret pricing"})
+		frappe.set_user(REP)
+		for probe in ({"title": ["like", "Replay secret%"]}, ["like", "%"], {"assigned_to": OTHER}):
+			with self.assertRaises(frappe.ValidationError):
+				replay(new_id(), "close_task", {"task": probe, "closing_note": "x"})
+			with self.assertRaises(frappe.ValidationError):
+				replay(new_id(), "complete_item", {"item": probe, "outcome": "x"})
+			with self.assertRaises(frappe.ValidationError):
+				replay(
+					new_id(),
+					"add_note",
+					{"reference_doctype": "CRM Organization", "reference_docname": probe, "content": "x"},
+				)
+
+	def test_a_task_about_a_deal_the_rep_cannot_read_is_refused(self):
+		frappe.set_user("Administrator")
+		deal = frappe.get_doc(
+			{"doctype": "CRM Deal", "organization": self.foreign, "deal_owner": OTHER}
+		).insert(ignore_permissions=True)
+		frappe.set_user(REP)
+		with self.assertRaises(frappe.PermissionError):
+			replay(
+				new_id(),
+				"create_task",
+				{"title": "Peek", "reference_doctype": "CRM Deal", "reference_docname": deal.name},
 			)
 
 	def test_a_task_is_created_for_the_caller(self):

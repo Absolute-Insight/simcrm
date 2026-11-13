@@ -131,7 +131,9 @@ never accepted in the future (five minutes of tolerance, then clamped).
 **It buys one thing**: with *Plan only for today or later* on, an activity
 captured offline is accepted up to `OFFLINE_GRACE_HOURS` (72) after the fact,
 where the online door refuses yesterday. Anything that took more than 15
-minutes to arrive is flagged `captured_offline` on its plan item — server-
+minutes to arrive, **or is dated on an earlier day than the one it arrived
+on** (a visit captured at 23:52 and delivered at 00:03), is flagged
+`captured_offline` on its plan item — server-
 owned like `manual_override`, shown in the Planner and the team week — so a
 manager can tell the device's word from the server's. The whitelisted
 `log_unplanned_visit` cannot pass that flag; only `log_activity`, which is
@@ -175,6 +177,10 @@ any list that hit its cap.
 - **QA needs a secure context and the `Service-Worker-Allowed: /crm` header**,
   which `bench serve` does not send. Put a proxy that adds it in front, on
   `localhost`, and drive it with Playwright's `context.setOffline(true)`.
+- **Every record name a handler looks up goes through `_name()`.** The
+  payload is JSON; `frappe.db.exists` and `get_value` read a dict as unscoped
+  filters, which turns "missing vs not yours" into a probe over other reps'
+  rows. For the same reason a handler raises **one** exception for both.
 - **A new offline action** needs four things: a handler in `ACTIONS`, a case
   in `entryProblem` and `applyOutbox` (`utils/fieldOutbox.js`), and a form in
   `FieldEntryDialog.vue`. Never route one to a whitelisted function that

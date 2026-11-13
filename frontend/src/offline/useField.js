@@ -12,6 +12,7 @@ import { applyOutbox } from '@/utils/fieldOutbox'
 import { indexPack, itemsByDate, packWeeks } from '@/utils/fieldPack'
 import { todayInTimeZone } from '@/utils/planner'
 import { outbox } from './outbox'
+import { serverNow } from './connectivity'
 import { fieldPack, packState } from './pack'
 
 const siteDate = (ms) =>
@@ -28,11 +29,15 @@ const days = computed(() => itemsByDate(view.value?.plans))
 const weeks = computed(() => packWeeks(view.value?.plans))
 
 export function useField() {
-  const today = ref(todayInTimeZone(getConfig('systemTimezone')))
+  // the same clock the outbox stamps entries with, so a phone whose own
+  // clock is out does not show a visit under a different day than "today"
+  const now = () =>
+    todayInTimeZone(getConfig('systemTimezone'), new Date(serverNow()))
+  const today = ref(now())
   // a phone left open across midnight, or brought back from the pocket
   const refreshToday = () => {
     if (document.visibilityState === 'visible') {
-      today.value = todayInTimeZone(getConfig('systemTimezone'))
+      today.value = now()
     }
   }
   onMounted(() => document.addEventListener('visibilitychange', refreshToday))
