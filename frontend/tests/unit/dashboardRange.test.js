@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// dashboard.ts takes dayjs from frappe-ui, whose entry drags in the whole
-// resource layer; the real dayjs is all the test needs.
-vi.mock('frappe-ui', async () => ({ dayjs: (await import('dayjs')).default }))
+// dashboard.ts asks frappe-ui for the site's timezone only; its entry drags in
+// the whole resource layer, so the test answers that one question itself.
+const site = vi.hoisted(() => ({ timezone: null }))
+vi.mock('frappe-ui', () => ({
+  getConfig: (key) => (key === 'systemTimezone' ? site.timezone : undefined),
+}))
 
-import { formatRange, getLastXDays, parseDateRange } from '@/utils/dashboard'
+import {
+  formatRange,
+  getLastXDays,
+  parseDateRange,
+  presetDaysFor,
+} from '@/utils/dashboard'
 
 /**
  * The server treats `[from, to]` as inclusive (`date_diff + 1` days, see
@@ -49,6 +57,55 @@ describe('getLastXDays', () => {
 
   it('"Last 30 Days" on 6 Sep starts on 8 Aug, not 7 Aug', () => {
     expect(getLastXDays(30)).toBe('2026-08-08,2026-09-06')
+  })
+})
+
+/**
+ * The period is sent to a server that reports on the site's calendar days, and
+ * the page's own "today" is the site's. Built from the browser clock, the
+ * window ended a day short of it for part of every day in another zone.
+ */
+describe('getLastXDays on the site calendar', () => {
+  const hostZone = process.env.TZ
+  beforeEach(() => {
+    vi.useFakeTimers()
+    site.timezone = 'Africa/Johannesburg' // +02:00
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    site.timezone = null
+    if (hostZone === undefined) delete process.env.TZ
+    else process.env.TZ = hostZone
+  })
+
+  it('ends on the site day when the browser is still on the day before', () => {
+    process.env.TZ = 'America/Los_Angeles'
+    // 23:30 UTC on the 13th: 01:30 on the 14th on site, 15:30 on the 13th in LA
+    vi.setSystemTime(new Date('2026-11-13T23:30:00Z'))
+    expect(getLastXDays(30)).toBe('2026-10-16,2026-11-14')
+  })
+
+  it('ends on the site day when the browser is already on the day after', () => {
+    process.env.TZ = 'Pacific/Auckland'
+    // 21:30 UTC on the 13th: 23:30 on the 13th on site, the 14th in Auckland
+    vi.setSystemTime(new Date('2026-11-13T21:30:00Z'))
+    expect(getLastXDays(7)).toBe('2026-11-07,2026-11-13')
+  })
+
+  it('crosses a month and a year end by the calendar', () => {
+    vi.setSystemTime(new Date('2027-01-02T10:00:00Z'))
+    expect(getLastXDays(7)).toBe('2026-12-27,2027-01-02')
+    expect(getLastXDays(90)).toBe('2026-10-05,2027-01-02')
+  })
+
+  it('names the preset a range is today, and none once the day has moved on', () => {
+    vi.setSystemTime(new Date('2026-11-13T10:00:00Z'))
+    const range = getLastXDays(30)
+    expect(presetDaysFor(range, [7, 30, 60, 90])).toBe(30)
+    expect(presetDaysFor(range.split(','), [7, 30, 60, 90])).toBe(30)
+    expect(presetDaysFor('2026-01-01,2026-01-05', [7, 30, 60, 90])).toBe(null)
+    vi.setSystemTime(new Date('2026-11-14T10:00:00Z'))
+    expect(presetDaysFor(range, [7, 30, 60, 90])).toBe(null)
   })
 })
 

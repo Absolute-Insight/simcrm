@@ -286,6 +286,31 @@ describe('Reports', () => {
   })
   /* The menu's Dropdown gives focus back to its trigger a tick or two after it
      closes; a picker opened before that is dismissed by the focus leaving it. */
+  it('keeps a preset a preset past midnight, and moves its dates on at the next fetch', async () => {
+    setConfig('systemTimezone', 'Africa/Johannesburg')
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-13T12:00:00Z')) // 14:00 on site
+    try {
+      const el = await openReports()
+      const range = ({ from_date, to_date }) => `${from_date},${to_date}`
+      const first = pending('crm.api.reports.get_report')[0]
+      expect(range(first.params)).toBe('2026-10-15,2026-11-13')
+      answer(first, payload('Visits by rep', []))
+      await flush()
+
+      // left open overnight: it is the 14th on site
+      vi.setSystemTime(new Date('2026-11-14T05:00:00Z'))
+      el.querySelector('#report-tab-rep_summary').click()
+      await flush()
+      expect(fp.dropdown.button.label).toBe('Last 30 Days')
+      const next = pending('crm.api.reports.get_report').at(-1)
+      expect(next.params.name).toBe('rep_summary')
+      expect(range(next.params)).toBe('2026-10-16,2026-11-14')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('opens the Custom Range picker only once the menu has let go of focus', async () => {
     await openReports()
     const menu = document.createElement('div')

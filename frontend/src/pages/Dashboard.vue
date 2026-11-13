@@ -682,6 +682,16 @@ const presetLabel = computed(() => {
   return value
 })
 
+/* A preset is "the last N days", not the dates it stood for when it was
+   chosen. The period was stored as those dates, so a tab left open overnight
+   went on asking for a window that ended yesterday under a label that said
+   "Last 30 Days", beside a plan that had moved on to the new day. Every reload
+   works the dates out again from the site's today (reloadAll). */
+const presetDays = computed(() => {
+  const lastNDays = /^Last (\d+) Days$/.exec(preset.value || '')
+  return lastNDays ? Number(lastNDays[1]) : null
+})
+
 const filters = reactive({
   period: getLastXDays(),
   user: null,
@@ -1254,6 +1264,8 @@ function onPeriodChange(value: DashboardDateRange) {
 }
 
 function reloadAll() {
+  // before anything reads fromDate/toDate for its request
+  if (presetDays.value) filters.period = getLastXDays(presetDays.value)
   quiet(heroTrend.reload())
   // the tiles this role sees: a rep has no Leads tile to refresh
   tiles.value.forEach((tile) => quiet(tile.resource.reload()))
