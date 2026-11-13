@@ -179,6 +179,12 @@ class NumbersTest(UnitTestCase):
 		row["cells"].pop()
 		self.assertIsNone(reference.verify("It is rated 0,125 kPa.", [row], [row])[0])
 
+	def test_thousands_dots_before_a_decimal_comma(self):
+		self.assertEqual(reference.numbers("1.234,56"), [{"1234.56"}])
+		self.assertEqual(reference.numbers("12.345.678,9 kPa"), [{"12345678.9"}])
+		# a plain decimal, and a decimal comma, are untouched
+		self.assertEqual(reference.numbers("1.234 and 51,33"), [{"1.234"}, {"51.33"}])
+
 	def test_a_thousands_comma_before_a_decimal_is_still_thousands(self):
 		"""Audit L-39: "1,270.0" read as 1.270 refused a correct answer."""
 		self.assertEqual(reference.numbers("1,270.0 mm"), [{"1270"}])
@@ -510,6 +516,101 @@ class NamingNumbersTest(UnitTestCase):
 		self.assertEqual(reference.numbers("this one, or one of the others"), [])
 		self.assertEqual(reference.numbers("one bolt"), [{"1"}])
 		self.assertIsNone(reference.verify("It takes one bolt.", [self.ROW], [self.ROW])[0])
+		for answer in ("Only one matches: OD 285.0 mm.", "Only one row matches: OD 285.0 mm."):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+
+	def test_one_before_the_thing_counted_is_a_count_whatever_precedes_it(self):
+		"""Review of PR #400: "the one" was read as a pronoun whatever followed."""
+		for answer in ("It has only the one bolt hole.", "It takes the one bolt."):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+		self.assertEqual(reference.numbers("the one bolt hole"), [{"1"}])
+
+	def test_a_lists_own_numbering_is_not_a_figure(self):
+		for answer in (
+			"1. The OD is 285.0 mm.",
+			"1. OD: 285.0 mm\n2. PCD: 240.0 mm\n3. Bolt holes: 8",
+			'1. 150 mm (6") SABS 1123 1600/3\n2) Flange OD: 285.0 mm',
+			"- 1) OD 285.0 mm",
+		):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+		self.assertEqual(reference.numbers("1. The OD\n2. The PCD"), [])
+		# not numbering: a figure that ends its line, or a decimal
+		self.assertEqual(reference.numbers("Bolt holes:\n8."), [{"8"}])
+		self.assertEqual(reference.numbers("285.0 mm"), [{"285"}])
+		self.assertIsNone(reference.verify("1. The OD is 150 mm.", [self.ROW], [self.ROW])[0])
+
+	def test_a_page_reference_with_a_full_stop_keeps_its_page(self):
+		"""Review of PR #400: the claim split at "p. " and left the 2 on its own."""
+		for answer in ("The OD is 285.0 mm (p. 2).", "See pg. 2: OD 285.0 mm", "OD 285.0 mm. See P. 2."):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+		self.assertIsNone(reference.verify("The OD is 150 mm (p. 2).", [self.ROW], [self.ROW])[0])
+		self.assertIsNone(reference.verify("The OD is 285.0 mm (p. 7).", [self.ROW], [self.ROW])[0])
+
+	def test_a_size_restated_after_a_column_is_still_the_rows(self):
+		"""Review of PR #400: correct answers the first cut of this rule refused."""
+		for answer in (
+			"OD (150 mm): 285.0 mm",
+			"PCD (150 mm): 240.0 mm",
+			'Number of bolt holes (6"): 8',
+			"The OD of 6 inch is 285.0 mm.",
+			'The OD of 6" is 285.0 mm.',
+		):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+		# with no value of the column's own after it, the size is the claimed value
+		for answer in ("OD (150 mm).", "The OD of 150 mm is correct.", "Flange OD (150 mm)"):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+
+	def test_any_verb_or_symbol_between_column_and_number_reads_like_is(self):
+		for answer in (
+			"The OD will be 150 mm",
+			"The OD should be 150 mm.",
+			"The OD would be 150 mm",
+			"The OD comes to 150 mm",
+			"OD → 150 mm",
+			"OD -> 150 mm",
+			"OD = 150 mm",
+			"The OD for a flange like this could be 150 mm",
+		):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+		for answer in ("The OD will be 285.0 mm.", "OD → 285.0 mm", 'The 6" OD comes to 285.0 mm'):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+
+	def test_known_limits(self):
+		"""What the rule does NOT catch -- pinned so a change here is a decision.
+
+		It reads wording, not meaning. A column called by another name is not
+		recognised as that column, and a figure that is another cell of the same
+		row is data whichever column the answer puts it under.
+		"""
+		for answer in (
+			"The flange is 150 mm thick.",  # a synonym: no column is named "thick"
+			"It weighs 150 kg.",  # likewise
+			"The PCD is 285.0 mm.",  # the OD's value given as the PCD: both are cells
+			"It has 22 bolt holes.",  # the hole diameter given as the count
+		):
+			with self.subTest(answer=answer):
+				self.assertIsNotNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+
+	def test_a_long_single_line_answer_is_checked_in_linear_time(self):
+		"""Review of PR #400: the look-behind patterns were searched from the start
+		of the claim for every figure. A looping model's 14 kB one-line reply
+		took 3.9 s in the web worker; 56 kB took over a minute."""
+		import time
+
+		for unit in ("6 bolt ", "the od is 150 mm and ", "one ", "p. 2 ", "od ( 150 mm ) : "):
+			answer = unit * (14_000 // len(unit))
+			started = time.perf_counter()
+			reference.verify(answer, ROWS, [self.ROW])
+			reference.trim_comparisons(answer, ROWS)
+			self.assertLess(time.perf_counter() - started, 2.0, unit)
 
 
 class TrimComparisonsTest(UnitTestCase):

@@ -696,6 +696,39 @@ permission scope), and `accounts_going_quiet` no longer takes the first 200
 rows of `_working_deal_rows()` — that list is in `modified desc` order, so
 the cap kept the deals touched most recently and dropped the quiet ones.
 
+## The reference-sheet number check (`reference.py`) and its limits
+
+An Assistant answer drawn from a reference sheet is shown only if every figure
+in it is supported by a row in the prompt (`reference.verify`); otherwise the
+rows themselves are shown. A row supports two kinds of number, kept apart:
+
+- **data** — its confirmed cell values. An answer may state these.
+- **naming** — the size, standard and class in its label, its section and
+  sheet title, its page, a digit in a column's name (`(d1)`). These say which
+  row is meant. They are accepted where the answer names the row (`the 6"
+  SABS 1123 flange`, `page 2`, `OD (150 mm): 285.0 mm`) and refused where one
+  stands as a column's value (`the OD is 150 mm`, `6 bolt holes`, `OD → 150`,
+  `the OD will be 150 mm`). A page number needs `page`/`pg.`/`p.`; a digit
+  written onto a column name needs that name.
+
+A list's own numbering at the start of a line is not a figure, and "one" is a
+count only before the thing counted ("the one bolt"), not as a pronoun ("only
+one matches").
+
+**Known limits** — the rule reads wording, not meaning. Pinned in
+`test_reference.NamingNumbersTest.test_known_limits`:
+
+- A column called by another word is not recognised as that column: "the
+  flange is 150 mm thick", "it weighs 150 kg" pass on a 150 mm row.
+- A figure that is another cell of the same row is data whichever column the
+  answer puts it under: "the PCD is 285.0 mm" passes when 285.0 is the OD. The
+  MBP drilling rows carry the nominal bore as a cell, so "the OD is 150 mm"
+  passes there for this reason. Closing it means binding each figure to its
+  column, which this check does not do.
+
+The check is linear in the answer's length: every look-behind is bounded
+(`_LOOK_BEHIND`), because a looping model writes one very long claim.
+
 ## What is not here yet
 
 MCP transport.

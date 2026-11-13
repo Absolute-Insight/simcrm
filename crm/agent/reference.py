@@ -368,19 +368,27 @@ _NUMBER_WORDS = {
 	"dozen": "12",
 }
 _WORD = re.compile(r"[a-z]+")
-# "which one", "this one", "one of them": a pronoun, not a count of 1
-_PRONOUN_BEFORE = re.compile(r"\b(?:which|this|that|the|each|either|neither|any|another|every|no)\s+$")
-_PRONOUN_AFTER = re.compile(r"\s+of\b|\s*[?]")
+# "one" is a count only before the thing counted ("one bolt", "the one bolt
+# hole"). Before a verb, "of", punctuation or the end it is a pronoun: "which
+# one do you need?", "only one matches", "one of them", "this one".
+_ONE_IS_PRONOUN = re.compile(
+	r"\s*(?:$|[^\sa-z]|(?:of|is|was|that|which|who|do|does|did|will|would|should|can|could|may|might|"
+	r"has|had|have|with|for|in|on|at|from|to|per|or|and|but|matches|match|matched|applies|apply|fits|fit|"
+	r"exists|remains|appears|shows|lists|listed|gives|covers|uses|takes|needs|requires|"
+	r"rows?|entry|entries|results?|options?|sheets?|tables?)\b)"
+)
+# A list's own numbering at the start of a line ("1. The OD is ...", "2) ...")
+# counts items, not anything on the sheet.
+_ORDINAL = re.compile(r"(?m)^([ \t]*(?:[-*•][ \t]+)?)(\d{1,2})(?=[.)][ \t]+\S)")
+# "1.234,56": thousands dots before a decimal comma
+_DOTTED_THOUSANDS = re.compile(r"[1-9]\d{0,2}(?:\.\d{3})+,\d+")
 
 
 def _number_word(match: re.Match) -> str:
 	word = match.group(0)
 	if word not in _NUMBER_WORDS:
 		return word
-	if word == "one" and (
-		_PRONOUN_BEFORE.search(match.string, 0, match.start())
-		or _PRONOUN_AFTER.match(match.string, match.end())
-	):
+	if word == "one" and _ONE_IS_PRONOUN.match(match.string, match.end()):
 		return word
 	return f" {_NUMBER_WORDS[word]} "
 
@@ -391,6 +399,8 @@ def _canonical(atom: str) -> str:
 		top, bottom = fraction.split("/")
 		fraction = f"{top.lstrip('0') or '0'}/{bottom.lstrip('0') or '0'}"
 		return f"{whole.lstrip('0') or '0'} {fraction}" if whole else fraction
+	if _DOTTED_THOUSANDS.fullmatch(atom):
+		atom = atom.replace(".", "").replace(",", ".")
 	if "," in atom:
 		# "1,000" and "12,500.5" are thousands; "51,33" is a decimal comma. The
 		# last group is three digits before any decimal point of its own, and
@@ -415,6 +425,8 @@ def _figures(text: str) -> tuple[str, list[tuple[set[str], int, int]]]:
 	for glyph, spelled in _FRACTIONS.items():
 		text = text.replace(glyph, spelled)
 	text = _WORD.sub(_number_word, text)
+	# blanked, not cut: every figure keeps its place in the text
+	text = _ORDINAL.sub(lambda m: m.group(1) + " " * len(m.group(2)), text)
 	found = []
 	for match in _NUMBER.finditer(text):
 		sign, atom = match.group(1), match.group(2)
@@ -457,16 +469,33 @@ _GLUED = re.compile(r"[a-z]$")
 _MARK = re.compile(r"\s*(?:[\"“”″ʺ]|''|(?:mm|cm|in|inch|inches|nb|dn|kpa|mpa|bar|psi|lbs?|kg|ºc|ºf|°c|°f)\b)")
 # what may stand between a column's name and its value: "OD is 150", "OD: 150",
 # "an OD of 150", "OD = 150", "| OD | 150 |"
+# "OD will be 150", "OD should be 150", "OD comes to 150", "OD → 150"
 _LINK_WORDS = frozenset(
-	"is are was were of equal equals measures measure about approximately approx roughly around".split()
+	(
+		"is are was were be been being of equal equals measures measure about approximately approx "
+		"roughly around will would shall should could might comes come to"
+	).split()
 )
-_LINK = re.compile(r"(?:[\s:=|*_~≈(\[-]|\b(?:" + "|".join(sorted(_LINK_WORDS)) + r")\b)*$")
+_LINK_CHARS = r"[\s:=|*_~≈(\[>→➔⇒-]"
+_LINK = re.compile(r"(?:" + _LINK_CHARS + r"|\b(?:" + "|".join(sorted(_LINK_WORDS)) + r")\b)*$")
+# How far back from a number its column or tag is looked for. The patterns
+# above end in "$" and were searched from the start of the claim for every
+# figure: quadratic in a claim's length, and a model that loops writes one
+# 14 kB claim. Nothing they look for is this far from the number.
+_LOOK_BEHIND = 160
 # the last word before a number -- past a figure the column's own name ends
 # in ("Body test @ 1.5 is ...")
 _LAST_WORD = re.compile(r"([a-z]+\d*|\d+[a-z]+)[)\]]*(?:\s*@?\s*[\d.,]+)?\s*$")
-_COPULA = re.compile(r"\b(?:is|are|was|were|equals?|measures?)\b")
+_COPULA = re.compile(r"\b(?:is|are|was|were|be|been|equals?|measures?|comes?)\b|[=>→➔⇒]")
 # a column's own value straight after its name: ": 240.0", " is M20"
-_VALUE_NEXT = re.compile(r"(?:[\s:=|*_~≈(\[-]|\b(?:" + "|".join(sorted(_LINK_WORDS)) + r")\b)*[a-z]?\d")
+_LINKS = r"(?:" + _LINK_CHARS + r"|\b(?:" + "|".join(sorted(_LINK_WORDS)) + r")\b){0,24}"
+_VALUE_NEXT = re.compile(_LINKS + r"[a-z]?\d")
+# ... and after a bracket that closed on the row's size: "OD (150 mm): 285.0",
+# "Bolt set (8\"): Off M20 x 75"
+_CLOSED_THEN_VALUE = re.compile(r"\s*[)\]]" + _LINKS + r"(?:[a-z]+\s+)?[a-z]?\d")
+# ... and after "of <size>": "the OD of 6 inch is 285.0 mm"
+_OF_THEN_VALUE = re.compile(r"\s*(?:is|are|was|=|:)\s*(?:[a-z]+\s+)?[a-z]?\d")
+_DIGIT = re.compile(r"\d")
 _NEXT_WORDS = re.compile(r"[\s-]*(?:[a-z]+[\s-]+){0,3}(?:[a-z]+)?")
 _LABEL_WORD = re.compile(r"[a-z]+")
 _LABEL_FILLER = frozenset({"of", "the", "a", "an", "at", "in", "per", "to", "and", "or", "for", "no"})
@@ -483,8 +512,8 @@ def _stem(word: str) -> str:
 
 def _tag(text: str, start: int) -> tuple[str, bool]:
 	"""The word the number at ``start`` hangs on, and whether it is written onto it."""
-	found = _TAG.search(text, 0, start)
-	return (found.group(1), bool(_GLUED.search(text, 0, start))) if found else ("", False)
+	found = _TAG.search(text, max(0, start - _LOOK_BEHIND), start)
+	return (found.group(1), bool(_GLUED.match(text, start - 1, start))) if found and start else ("", False)
 
 
 class _Support:
@@ -583,27 +612,41 @@ class _Support:
 					break
 				if word in self.heads:
 					return True
-		link = _LINK.search(text, 0, start)
-		if self._column_ends(text, link.start()):
-			# "the OD is 150 mm", "PCD: 1123" -- unless it goes on to name the
-			# row: "the PCD of 6\" SABS flanges"
-			return not (after and after[0] in self.named_by)
+		floor = max(0, start - _LOOK_BEHIND)
+		link = _LINK.search(text, floor, start)
+		if self._column_ends(text, link.start(), floor):
+			# "the OD is 150 mm", "PCD: 1123" -- unless the number goes on to
+			# name the row, or the column's own value follows it:
+			return not self._names_the_row(text, link.group(0), after, mark.end() if mark else end)
 		if _COPULA.search(link.group(0)):
 			# "the OD for this flange is 150 mm": the column anywhere since the
 			# figure before
-			since = max((found.end() for found in re.finditer(r"\d", text[: link.start()])), default=0)
+			since = max((found.end() for found in _DIGIT.finditer(text, floor, link.start())), default=floor)
 			for word in _LABEL_WORD.finditer(text, since, link.start()):
-				if self._column_ends(text, word.end()):
+				if self._column_ends(text, word.end(), floor):
 					return True
 		return False
 
-	def _column_ends(self, text: str, at: int) -> bool:
+	def _names_the_row(self, text: str, link: str, after: list[str], at: int) -> bool:
+		"""A number straight after a column's name that is still the row's, not the column's."""
+		if after and after[0] in self.named_by:
+			# "the PCD of 6\" SABS flanges"
+			return True
+		if "(" in link or "[" in link:
+			# "OD (150 mm): 285.0 mm" -- the size restated, then the value
+			return bool(_CLOSED_THEN_VALUE.match(text, at))
+		if link.strip() == "of":
+			# "the OD of 6 inch is 285.0 mm"
+			return bool(_OF_THEN_VALUE.match(text, at))
+		return False
+
+	def _column_ends(self, text: str, at: int, floor: int = 0) -> bool:
 		"""Whether the text up to ``at`` ends in the name of one of the row's columns."""
-		column = _LAST_WORD.search(text, 0, at)
+		column = _LAST_WORD.search(text, floor, at)
 		if not column or _stem(column.group(1)) not in self.heads:
 			return False
 		if column.group(1) in _GENERIC:
-			qualifier = _LAST_WORD.search(text, 0, column.start())
+			qualifier = _LAST_WORD.search(text, floor, column.start())
 			return bool(qualifier and _stem(qualifier.group(1)) in self.columns - _GENERIC)
 		return True
 
@@ -648,7 +691,9 @@ def _values_of(variants: set[str]) -> set[str]:
 
 # An answer splits into the claims it makes: lines, list items, sentences. A
 # full stop splits only after a word or a bracket, never inside "285.0".
-_CLAIM = re.compile(r"\n+|;\s+|(?<=[A-Za-z)\]])\.\s+")
+# Nor after "p." or "pg.": "(p. 2)" is a page, and the split left the 2 without
+# the word that makes it one.
+_CLAIM = re.compile(r"\n+|;\s+|(?<=[A-Za-z)\]])(?<!\b[Pp])(?<!\b[Pp][Gg])\.\s+")
 
 
 def trim_comparisons(answer: str, rows: list[dict]) -> str:
