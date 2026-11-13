@@ -230,7 +230,15 @@ jobs:
           # for the reason given above: no tag holds what we need, and bench
           # cannot be handed a commit. prepare-containerfile.sh copies it in.
           source scripts/frappe-whatsapp-pin.env
-          export APPS_JSON='[{"url": "https://github.com/'"$GITHUB_REPOSITORY"'","branch": "'"$GITHUB_REF_NAME"'"},{"url": "/home/frappe/app-src/frappe_whatsapp","branch": "'"$FRAPPE_WHATSAPP_PIN_BRANCH"'"}]'
+          # This repository by path too, and for a sharper reason. It used to
+          # be {"url": "https://github.com/<repo>", "branch": "<ref name>"}:
+          # bench cloned whatever that branch pointed at when the Containerfile
+          # ran, which is not necessarily the commit the guard above verified
+          # -- it can wait forty minutes, and main moves. The checkout IS the
+          # verified commit, so "Put the pinned frappe in the build context"
+          # stages it at app-src/crm and bench clones that. The branch keeps
+          # the ref's name, so sites/apps.json in the image reads as before.
+          export APPS_JSON='[{"url": "/home/frappe/app-src/crm","branch": "'"$GITHUB_REF_NAME"'"},{"url": "/home/frappe/app-src/frappe_whatsapp","branch": "'"$FRAPPE_WHATSAPP_PIN_BRANCH"'"}]'
           # Passed to the build as a secret, not a build-arg -- see the
           # `secrets:` block below for why that distinction was load-bearing.
           echo "APPS_JSON=$APPS_JSON" >> $GITHUB_ENV
@@ -305,6 +313,9 @@ jobs:
           bash scripts/fetch-frappe.sh builds/frappe-src
           git -C builds/frappe-src log -1 --format='context frappe: %H'
           bash scripts/fetch-frappe-whatsapp.sh builds/app-src/frappe_whatsapp
+          # And this repository, at the commit the guard verified -- not at
+          # wherever its branch points by the time the Containerfile runs.
+          bash .github/helper/stage-app-source.sh builds/app-src/crm "$GITHUB_REF_NAME" "$GITHUB_SHA"
 
       - name: Check the builder image can build the pinned frappe
         # The two pins move independently -- frappe by commit, the builder image
@@ -378,6 +389,17 @@ jobs:
             exit 1
           fi
           echo "$ref contains the crm app."
+          # ...and that it is THIS commit's. bench records what it cloned in
+          # sites/apps.json; .git itself does not survive the build. The image
+          # is tagged sha-<this commit> and promoted on this commit's checks,
+          # so anything else in it is a mislabelled, unverified build.
+          built_sha=$(docker run --rm --entrypoint sh "$ref" -c 'cat sites/apps.json' \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["crm"]["resolution"]["commit_hash"])')
+          if [ "$built_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::$ref was built from crm at '$built_sha', not from $GITHUB_SHA."
+            exit 1
+          fi
+          echo "$ref was built from $GITHUB_SHA."
           if ! echo "$apps" | grep -qx frappe_whatsapp; then
             echo "::error::$ref contains no 'frappe_whatsapp' app."
             exit 1

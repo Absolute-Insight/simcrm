@@ -69,6 +69,25 @@ jobs:
       - name: Fetch the pinned frappe_whatsapp
         run: bash scripts/fetch-frappe-whatsapp.sh builds/app-src/frappe_whatsapp
 
+      - name: Stage this commit as the app source
+        # The same call builds.yml makes. The image is built from the commit
+        # that was checked out and verified, not from wherever its branch
+        # points by the time the Containerfile runs -- and the script that
+        # arranges that is otherwise first run by a release.
+        run: |
+          set -euo pipefail
+          bash .github/helper/stage-app-source.sh builds/app-src/crm "$GITHUB_REF_NAME" "$GITHUB_SHA"
+          # What bench will do with it inside the builder.
+          git clone --quiet --depth 1 --branch "$GITHUB_REF_NAME" builds/app-src/crm "$RUNNER_TEMP/bench-clone"
+          [ "$(git -C "$RUNNER_TEMP/bench-clone" rev-parse HEAD)" = "$GITHUB_SHA" ]
+          # And a checkout that is not the commit asked for is refused. Its
+          # output is dropped: the refusal prints ::error:: lines, which would
+          # show as annotations on a step that passed.
+          if bash .github/helper/stage-app-source.sh "$RUNNER_TEMP/wrong/crm" x 0000000000000000000000000000000000000000 >/dev/null 2>&1; then
+            echo "::error::stage-app-source.sh staged a commit other than the one it was told to"
+            exit 1
+          fi
+
       - name: Check the builder image can build the pinned frappe
         run: bash .github/helper/check-build-toolchain.sh builds/frappe-src
 
