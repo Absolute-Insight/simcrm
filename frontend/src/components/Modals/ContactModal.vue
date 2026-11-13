@@ -63,6 +63,7 @@ import { usersStore } from '@/stores/users'
 import { isMobileView } from '@/composables/settings'
 import { showQuickEntryModal, quickEntryProps } from '@/composables/modals'
 import { useDocument } from '@/data/document'
+import { resetNewDocument } from '@/utils/newDocument'
 import { evaluateDependsOnValue } from '@/utils'
 import { useDoctypeModal } from '@/composables/doctypeModal'
 import { useTelemetry } from '@framework/ui/telemetry'
@@ -133,7 +134,7 @@ const insertContact = createResource({
   onSuccess: (doc) => {
     capture('contact_created')
     handleContactUpdate(doc)
-    _contact.doc = {}
+    resetNewDocument(_contact, 'Contact')
   },
   onError: (err) => {
     error.value = err.error?.messages?.[0]
@@ -220,7 +221,7 @@ const tabs = createResource({
 })
 
 onMounted(() => {
-  _contact.doc = {}
+  resetNewDocument(_contact, 'Contact')
   Object.assign(_contact.doc, props.contact.data || props.contact)
 })
 
