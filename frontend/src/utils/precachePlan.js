@@ -41,12 +41,23 @@
  * @param {RegExp[]} rules.heavy        module ids of the libraries to leave out
  * @param {RegExp[]} rules.offlineRoots module ids of the pages that run offline
  * @param {RegExp[]} rules.serverOnly   modules whose on-demand imports need a server
+ * @param {(message: string) => void} [rules.warn]  told of an on-demand import
+ *   that leads to no chunk (default console.warn)
  * @returns {{lazy: Set<string>, kept: Array<{fileName: string, via: string[]}>}}
  *   file names left out of the precache, and the heavy ones kept in it with
  *   the chain of chunks, nearest first, by which offline reaches them
  */
 export function planPrecache(chunks, rules) {
   const matches = (patterns, id) => patterns.some((p) => p.test(id))
+  const warned = new Set()
+  const warn = (from, target) => {
+    if (warned.has(target)) return
+    warned.add(target)
+    ;(rules.warn ?? console.warn)(
+      `precache plan: ${from} loads ${target} on demand, which is in no chunk; ` +
+        'it is not followed',
+    )
+  }
   const byName = new Map(chunks.map((chunk) => [chunk.fileName, chunk]))
   const chunkOf = new Map()
   for (const chunk of chunks) {
@@ -75,7 +86,12 @@ export function planPrecache(chunks, rules) {
       for (const dep of module.dynamicImports) {
         // the route table and the shell: only the offline pages are followed
         if (serverOnly && !matches(rules.offlineRoots, dep)) continue
-        visit(chunkOf.get(dep), chunk.fileName)
+        const target = chunkOf.get(dep)
+        // Nothing rendered under that id: an external, or a module that was
+        // tree-shaken to nothing. Said out loud, because a target this cannot
+        // place is one it cannot keep, and the build log is where that shows.
+        if (!target) warn(module.id, dep)
+        visit(target, chunk.fileName)
       }
     }
   }

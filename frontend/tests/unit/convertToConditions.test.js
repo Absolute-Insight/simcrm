@@ -140,6 +140,16 @@ describe('convertToConditions string values', () => {
     expect(evaluate(condition('==', typed), py(typed))).toBe('true')
   })
 
+  it('writes a number that is not one as text, not as a name Python lacks', () => {
+    for (const value of [NaN, Infinity, -Infinity]) {
+      const written = condition('==', value)
+      expect(written).toBe(`d == "${value}"`)
+      expect(evaluate(written, '5')).toBe('false')
+    }
+    expect(condition('>', 0)).toBe('d > 0')
+    expect(condition('==', -1.5)).toBe('d == -1.5')
+  })
+
   it('writes plain values as it always did', () => {
     expect(condition('==', 'Acme')).toBe('d == "Acme"')
     expect(condition('like', 'Acme')).toBe('(d and "Acme" in d)')

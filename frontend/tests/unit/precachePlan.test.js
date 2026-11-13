@@ -175,6 +175,29 @@ describe('planPrecache', () => {
   })
 })
 
+describe('planPrecache and an on-demand import it cannot place', () => {
+  it('says so once, and plans the rest as before', () => {
+    const warnings = []
+    const chunks = build({
+      fieldLoads: ['/somewhere/else/missing.js', '/somewhere/else/missing.js'],
+    })
+    const plan = planPrecache(chunks, {
+      ...RULES,
+      warn: (message) => warnings.push(message),
+    })
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('/somewhere/else/missing.js')
+    expect(warnings[0]).toContain('pages/Field.vue')
+    expect([...plan.lazy].sort()).toEqual(lazy(build()))
+  })
+
+  it('is silent for a build where every import lands in a chunk', () => {
+    const warnings = []
+    planPrecache(build(), { ...RULES, warn: (m) => warnings.push(m) })
+    expect(warnings).toEqual([])
+  })
+})
+
 describe('the precache rules against this codebase', () => {
   const root = path.resolve(import.meta.dirname, '../..')
   const router = fs.readFileSync(path.join(root, 'src/router.js'), 'utf8')

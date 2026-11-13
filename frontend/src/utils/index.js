@@ -705,6 +705,10 @@ export const convertToConditions = ({ conditions, fieldPrefix }) => {
 
       if (typeof value === 'string') {
         valueStr = pyString(value)
+      } else if (typeof value === 'number' && !Number.isFinite(value)) {
+        // "NaN" and "Infinity" are names Python does not have: written bare
+        // they make the whole expression fail. As text they compare false.
+        valueStr = pyString(value)
       } else if (typeof value === 'number' || typeof value === 'boolean') {
         valueStr = String(value)
       } else if (value === null || value === undefined) {
