@@ -95,6 +95,12 @@ function isOffline(error, status) {
   )
 }
 
+/** Whether `error` is a request that never reached the server. */
+export function isNetworkError(error) {
+  if (!error || typeof error !== 'object') return false
+  return isOffline(error, statusOf(error))
+}
+
 function classify(error) {
   const status = statusOf(error)
   const excType = String(error.exc_type || error.excType || '')
