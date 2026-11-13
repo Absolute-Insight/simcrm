@@ -194,7 +194,16 @@ async function createNewLead() {
     lead.doc.website = 'https://' + lead.doc.website
   }
 
-  await triggerOnBeforeCreate?.()
+  // Raised before the first await: a Form Script's onBeforeCreate can take a
+  // round trip, and a second click in that window created a second lead.
+  if (isLeadCreating.value) return
+  isLeadCreating.value = true
+  try {
+    await triggerOnBeforeCreate?.()
+  } catch (err) {
+    isLeadCreating.value = false
+    throw err
+  }
 
   createLead.submit(
     {
