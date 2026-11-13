@@ -13,7 +13,12 @@ from frappe.frappeclient import FrappeClient
 from frappe.model.document import Document
 from frappe.utils import get_url_to_form, get_url_to_list
 
-from crm.integrations.remote_url import RemoteHostNotAllowed, ensure_host_allowed, validate_url_field
+from crm.integrations.remote_url import (
+	RemoteHostNotAllowed,
+	ensure_host_allowed,
+	refuse_redirect,
+	validate_url_field,
+)
 from crm.utils import user_rate_limited
 
 # Per user and per minute on the endpoints that reach the remote ERPNext site.
@@ -167,7 +172,14 @@ class ERPNextCRMSettings(Document):
 		_create_custom_fields(custom_fields, ignore_validate=True)
 
 	def create_custom_fields_in_remote_site(self):
-		client = get_erpnext_site_client(self)
+		try:
+			client = get_erpnext_site_client(self)
+		except RemoteHostNotAllowed as e:
+			# Enabled and remote, this runs on every save. Left to propagate as raised,
+			# it carried no message for the browser: "Failed to save settings", for
+			# whichever field was being changed. Thrown, it says which host and where
+			# an administrator allows it.
+			frappe.throw(str(e), RemoteHostNotAllowed, title=_("Address not allowed"))
 		try:
 			client.post_api("erpnext.crm.frappe_crm_api.create_custom_fields_for_frappe_crm")
 		except Exception:
@@ -235,8 +247,8 @@ class ERPNextCRMSettings(Document):
 		try:
 			client = get_erpnext_site_client(self)
 			return client.get_list("Company", fields=["company_name"])
-		except RemoteHostNotAllowed:
-			raise
+		except RemoteHostNotAllowed as e:
+			frappe.throw(str(e), RemoteHostNotAllowed, title=_("Address not allowed"))
 		except Exception:
 			# Never the other side's words: FrappeClient raises the remote traceback,
 			# or whatever page the URL served, and the URL is a Sales Manager's to set.
@@ -405,11 +417,23 @@ def get_erpnext_site_client(erpnext_crm_settings):
 	api_secret = erpnext_crm_settings.get_password("api_secret", raise_exception=False)
 
 	client = FrappeClient(site_url, api_key=api_key, api_secret=api_secret)
-	# FrappeClient never passes a timeout, so an unresponsive remote site held a
-	# web worker indefinitely. 5s to connect, 30s per read, on every request the
-	# session makes.
-	client.session.request = functools.partial(client.session.request, timeout=(5, 30))
+	client.session.request = functools.partial(_bounded_request, client.session.request)
 	return client
+
+
+def _bounded_request(send, method, url, **kwargs):
+	"""Every request the FrappeClient session makes, with two things it never set.
+
+	A timeout: an unresponsive remote site held a web worker indefinitely. 5s to
+	connect, 30s per read. And no redirects: ``session.get`` and ``session.post``
+	ask for them to be followed, which would carry the API key to wherever the
+	checked host points next -- so they are refused here, whatever the caller says.
+	"""
+	kwargs.setdefault("timeout", (5, 30))
+	kwargs["allow_redirects"] = False
+	response = send(method, url, **kwargs)
+	refuse_redirect(response, _("SIMERP Site URL"))
+	return response
 
 
 def get_local_customer(crm_deal: str):

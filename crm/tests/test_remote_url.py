@@ -159,6 +159,41 @@ class TestRemoteURL(IntegrationTestCase):
 				with self.subTest(url=url), self.assertRaises(RemoteHostNotAllowed):
 					ensure_host_allowed(url, "Site URL")
 
+	def test_the_http_refusal_says_what_would_be_accepted(self):
+		with site(), resolving({"erp.example.com": PUBLIC}):
+			with self.assertRaises(frappe.ValidationError) as refused:
+				validate_remote_url("http://erp.example.com", "Site URL")
+		self.assertIn("https://", str(refused.exception))
+		self.assertIn(remote_url.TRUSTED_HOSTS_KEY, str(refused.exception))
+
+	def test_the_refusal_names_the_host_and_the_key_for_whoever_has_to_act(self):
+		with site(), resolving({"erpnext-frontend": "172.18.0.5"}):
+			with self.assertRaises(RemoteHostNotAllowed) as refused:
+				ensure_host_allowed("http://erpnext-frontend:8080", "Site URL")
+		self.assertIn("erpnext-frontend", str(refused.exception))
+		self.assertIn(remote_url.TRUSTED_HOSTS_KEY, str(refused.exception))
+		self.assertNotIn("172.18.0.5", str(refused.exception))
+
+	def test_a_name_the_resolver_cannot_even_encode_is_not_allowed(self):
+		"""An IDN error is not "does not resolve yet": nothing says the connection,
+		which encodes the name its own way, would fail the same."""
+		with site(), patch.object(remote_url, "_resolve", side_effect=UnicodeError("label too long")):
+			self.assertEqual(remote_url.host_state("x" * 70 + ".example"), "invalid")
+			with self.assertRaises(RemoteHostNotAllowed):
+				validate_remote_url("https://" + "x" * 70 + ".example", "Site URL")
+			with self.assertRaises(RemoteHostNotAllowed):
+				ensure_host_allowed("https://" + "x" * 70 + ".example", "Site URL")
+
+	def test_a_redirect_is_refused_rather_than_followed(self):
+		"""The host was checked; where it sends the request next was not."""
+		from unittest.mock import MagicMock
+
+		remote_url.refuse_redirect(MagicMock(status_code=200), "Site URL")
+		for status in (301, 302, 303, 307, 308):
+			with self.subTest(status=status), self.assertRaises(RemoteHostNotAllowed) as refused:
+				remote_url.refuse_redirect(MagicMock(status_code=status), "Site URL")
+			self.assertIn("redirect", str(refused.exception))
+
 	def test_what_counts_as_another_host(self):
 		same = (
 			("https://erp.example.com", "https://erp.example.com/"),

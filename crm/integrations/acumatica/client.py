@@ -231,6 +231,7 @@ class AcumaticaClient:
 			f"{self.base}/identity/connect/token",
 			data=data,
 			timeout=LOGIN_TIMEOUT,
+			allow_redirects=False,
 		)
 		if resp.status_code != 200:
 			raise AcumaticaAuthError(

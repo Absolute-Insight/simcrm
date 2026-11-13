@@ -35,7 +35,7 @@ from crm.agent.signals import (
 	_working_deal_rows,
 	cadence_ratio,
 )
-from crm.integrations.remote_url import ensure_host_allowed
+from crm.integrations.remote_url import ensure_host_allowed, refuse_redirect
 
 ERP_ROW_CAP = 5000
 ERP_TIMEOUT = 30
@@ -852,7 +852,9 @@ def _erpnext_get(doctype: str, fields: list[str], filters: list, deadline=None) 
 		},
 		headers={"Authorization": f"token {settings.api_key}:{secret}"},
 		timeout=_erpnext_timeout(deadline),
+		allow_redirects=False,
 	)
+	refuse_redirect(response, "SIMERP Site URL")
 	response.raise_for_status()
 	return response.json().get("data") or []
 

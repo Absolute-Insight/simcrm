@@ -626,6 +626,28 @@ class TestInstanceUrlAndItsSecrets(FrappeTestCase):
 				with self.assertRaises(frappe.ValidationError):
 					s.save()
 
+	def test_a_path_or_slash_edit_on_a_url_from_before_the_rules_is_not_re_judged(self):
+		"""Same scheme, host and port: the same server the secrets were entered for,
+		so neither the URL rules nor the re-entry rule has anything new to decide."""
+		frappe.db.set_single_value(SETTINGS, "instance_url", "http://10.0.0.5/acumatica")
+		for url, kept in (
+			("http://10.0.0.5/acumatica/", "http://10.0.0.5/acumatica"),
+			("http://10.0.0.5/AcumaticaLive", "http://10.0.0.5/AcumaticaLive"),
+			("http://10.0.0.5:80/AcumaticaLive", "http://10.0.0.5:80/AcumaticaLive"),
+		):
+			with self.subTest(url=url):
+				frappe.clear_document_cache(SETTINGS, SETTINGS)
+				s = frappe.get_doc(SETTINGS)
+				s.instance_url = url
+				s.save()
+				self.assertEqual(frappe.db.get_single_value(SETTINGS, "instance_url"), kept)
+				self.assertEqual(self.stored("password"), "stored-api-password")
+		# another host is still another host
+		s = frappe.get_doc(SETTINGS)
+		s.instance_url = "http://10.0.0.6/acumatica"
+		with self.assertRaises(frappe.ValidationError):
+			s.save()
+
 	def test_the_other_settings_still_save_beside_a_url_from_before_the_rules(self):
 		"""An existing site's URL is judged when it is used, not on every save of
 		something else -- or its admin could not change anything until it was fixed."""

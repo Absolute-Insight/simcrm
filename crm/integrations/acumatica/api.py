@@ -94,7 +94,13 @@ def test_connection() -> dict:
 		# Sales Manager saved, and relaying the body made this button a way to read
 		# the first lines of any page that URL serves. The reply goes to the Error
 		# Log, where a System Manager finds it.
-		if e.status_code:
+		if e.status_code and 300 <= int(e.status_code) < 400:
+			# not followed: the login would be re-posted to wherever it points
+			error = _(
+				"{0}: the Instance URL answered with a redirect. Enter the address the "
+				"instance answers on directly."
+			).format(e.status_code)
+		elif e.status_code:
 			_log_test_failure(f"{e}\n\n{e.detail(1000)}")
 			error = _("{0}: Acumatica refused the request. The reply is in the Error Log.").format(
 				e.status_code

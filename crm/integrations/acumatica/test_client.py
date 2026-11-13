@@ -90,6 +90,16 @@ class TestClient(FrappeTestCase):
 		self.assertEqual(rget.call_args.kwargs["headers"]["Authorization"], "Bearer tok")
 
 	@patch("crm.integrations.acumatica.client.requests.post")
+	def test_the_login_is_not_re_posted_to_wherever_a_redirect_points(self, rpost):
+		"""requests re-sends the body on a 307/308: client secret and password, to a
+		host nobody checked."""
+		rpost.return_value = _resp(307, {})
+		with self.assertRaises(AcumaticaError) as failed:
+			AcumaticaClient(_settings(), shared_session=False).get_page("Customer")
+		self.assertEqual(failed.exception.status_code, 307)
+		self.assertIs(rpost.call_args.kwargs["allow_redirects"], False)
+
+	@patch("crm.integrations.acumatica.client.requests.post")
 	def test_the_login_is_not_posted_to_an_internal_address(self, rpost):
 		"""The settings save checks the URL, but a name can be re-pointed afterwards
 		and a URL can predate the check: the secrets are not sent until the host has

@@ -816,13 +816,31 @@ docker compose exec backend bench --site <site> set-config -p \
 ```
 
 Exact hostnames (or IP literals), no wildcards. A listed host may be private and
-may be `http`. After an upgrade that introduces this check, an integration
-already pointed at a private address stops syncing until its host is listed; the
-reason is in the integration's last sync error and the Error Log. SIMERP
-installed on the *same site* as the CRM has no URL and is not affected.
+may be `http`. SIMERP installed on the *same site* as the CRM has no URL and is
+not affected.
+
+**The upgrade that introduces this check grandfathers what is already in use.**
+During `bench migrate`, the patch `trust_existing_internal_erp_hosts` reads the
+Instance URL and Site URL saved at that moment and adds each host that is on a
+private address — or that does not resolve from the migrate container — to
+`crm_erp_trusted_hosts` for you, keeping whatever the key already held. It
+prints one line per host it trusted (`crm_erp_trusted_hosts: trusted
+erpnext-frontend …`) in the migrate output and the `crm.integrations` log; a
+host that resolves to a public address is not added, because it needs no
+trust. So an integration that worked before the upgrade works after it. Read
+the key back afterwards and remove anything you do not recognise:
+
+```bash
+docker compose exec -T backend cat sites/<site>/site_config.json
+```
+
+Only that one upgrade does this. A private host entered *later* is refused by
+the pane, with a message naming the host and this key, until you list it.
 
 Changing either URL to a different host also asks for the credentials again: the
-ones stored for the old host are never sent to a new one.
+ones stored for the old host are never sent to a new one. Editing only the path
+of the URL does neither. A redirect from either server is not followed — enter
+the address it answers on directly.
 
 ## Lead syncing is off
 

@@ -167,6 +167,18 @@ class TestConnection(FrappeTestCase):
 		self.assertNotIn("refused", out["error"])
 
 	@patch("crm.integrations.acumatica.client.requests.post")
+	def test_a_redirecting_instance_is_reported_as_one(self, rpost):
+		from crm.integrations.acumatica.api import test_connection
+
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value("CRM Acumatica Settings", "instance_url", "https://t.acumatica.com")
+		rpost.return_value = MagicMock(status_code=308, text="", headers={"Location": "http://10.0.0.1/"})
+		out = test_connection()
+		self.assertFalse(out["ok"])
+		self.assertIn("redirect", out["error"])
+		self.assertNotIn("10.0.0.1", out["error"])
+
+	@patch("crm.integrations.acumatica.client.requests.post")
 	def test_a_stored_url_that_is_internal_is_never_sent_the_credentials(self, rpost):
 		from crm.integrations.acumatica.api import test_connection
 

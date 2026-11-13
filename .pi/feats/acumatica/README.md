@@ -394,11 +394,15 @@ with ERPNext CRM Settings' `erpnext_site_url`):
 - **Saved**: `https` only (`http` in developer mode), no credentials in the URL,
   and no host on a loopback, private or link-local address — unless the operator
   listed the host in the `crm_erp_trusted_hosts` site-config key, which also allows
-  `http`. Only a *changed* URL is judged, so an older site can still save its other
-  settings.
+  `http`. Only a URL that moves to another origin (scheme, host, port) is judged,
+  so an older site can still save its other settings or fix a path.
 - **Used**: `AcumaticaClient._token` asks again before the login is posted
   (`ensure_host_allowed`), because a name can be re-pointed after the save. A
-  refusal is an `AcumaticaAuthError`.
+  refusal is an `AcumaticaAuthError`. The login is posted with
+  `allow_redirects=False`: a 307 would re-post the secrets wherever it points.
+- **Upgraded**: patch `trust_existing_internal_erp_hosts` adds the hosts of the
+  URLs already saved to `crm_erp_trusted_hosts` when they are internal or do not
+  resolve, so the request-time check cannot stop an integration that was working.
 - **Moved**: a save that changes the scheme, host or port is refused while
   `client_secret` or `password` still hold their mask — they have to be typed
   again. Removing the URL clears them. A path change (Sandbox to live on one host)

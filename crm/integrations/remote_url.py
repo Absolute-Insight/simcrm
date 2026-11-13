@@ -92,24 +92,38 @@ def _resolve(host: str) -> list[str]:
 	return list({info[4][0] for info in socket.getaddrinfo(host, None)})
 
 
-def _host_is_internal(host: str) -> bool:
-	"""True when ``host`` is, or currently resolves to, an address that is not public.
+def host_state(host: str) -> str:
+	"""Where ``host`` leads right now.
 
-	A name that does not resolve is not internal: nothing can be sent to it, and
-	``ensure_host_allowed`` asks again before anything is."""
+	``public``     every address it resolves to is globally routable
+	``internal``   it is, or resolves to, a loopback, private or link-local address
+	``unresolved`` the resolver has no answer: nothing can be sent to it, and
+	               ``ensure_host_allowed`` asks again before anything is
+	``invalid``    the resolver could not even encode the name (an IDN error). Not
+	               "no answer": the connection encodes names its own way and might
+	               get one, so this is refused like an internal host
+	"""
 	if host == "localhost" or host.endswith(".localhost"):
-		return True
+		return "internal"
 	try:
 		ipaddress.ip_address(host)
 	except ValueError:
 		pass
 	else:
-		return _is_blocked_ip(host)
+		return "internal" if _is_blocked_ip(host) else "public"
 	try:
 		addresses = _resolve(host)
-	except (OSError, UnicodeError):
-		return False
-	return any(_is_blocked_ip(address) for address in addresses)
+	except UnicodeError:
+		return "invalid"
+	except OSError:
+		return "unresolved"
+	if not addresses:
+		return "unresolved"
+	return "internal" if any(_is_blocked_ip(address) for address in addresses) else "public"
+
+
+def _refused(host: str) -> bool:
+	return host_state(host) in ("internal", "invalid")
 
 
 def validate_remote_url(url: str | None, label: str) -> str:
@@ -125,20 +139,30 @@ def validate_remote_url(url: str | None, label: str) -> str:
 	if parts is None:
 		frappe.throw(_("{0} is not a valid http(s) URL").format(label), title=_("Invalid URL"))
 	scheme, host, _port = parts
+	_refuse_credentials_in_url(url, label)
+	trusted = host in trusted_hosts()
+	if scheme != "https" and not (trusted or _insecure_scheme_allowed()):
+		frappe.throw(
+			_(
+				"{0} must start with https://. Plain http is accepted only for a host an "
+				"administrator has added to {1} in the site config."
+			).format(label, TRUSTED_HOSTS_KEY),
+			title=_("Invalid URL"),
+		)
+	if not trusted and _refused(host):
+		frappe.throw(
+			_internal_host_message(host, label), RemoteHostNotAllowed, title=_("Address not allowed")
+		)
+	return url.rstrip("/")
+
+
+def _refuse_credentials_in_url(url: str, label: str) -> None:
 	parsed = urlparse(url)
 	if parsed.username or parsed.password:
 		frappe.throw(
 			_("{0} must not contain a username or password").format(label),
 			title=_("Invalid URL"),
 		)
-	trusted = host in trusted_hosts()
-	if scheme != "https" and not (trusted or _insecure_scheme_allowed()):
-		frappe.throw(_("{0} must start with https://").format(label), title=_("Invalid URL"))
-	if not trusted and _host_is_internal(host):
-		frappe.throw(
-			_internal_host_message(host, label), RemoteHostNotAllowed, title=_("Address not allowed")
-		)
-	return url.rstrip("/")
 
 
 def ensure_host_allowed(url: str | None, label: str) -> None:
@@ -155,39 +179,61 @@ def ensure_host_allowed(url: str | None, label: str) -> None:
 	host = parts[1]
 	if host in trusted_hosts():
 		return
-	if _host_is_internal(host):
+	if _refused(host):
 		# raised, not frappe.throw: this runs inside jobs and status panels, where a
 		# queued msgprint would surface on somebody's unrelated request
 		raise RemoteHostNotAllowed(_internal_host_message(host, label))
 
 
+def refuse_redirect(response, label: str) -> None:
+	"""Called on the answer to a request made with ``allow_redirects=False``.
+
+	The host was checked; where it sends the request next was not. Followed, a 307
+	re-posts the body -- the login -- to a host of the sender's choosing, and any
+	redirect reaches addresses the check exists to keep out of reach."""
+	if 300 <= int(response.status_code) < 400:
+		raise RemoteHostNotAllowed(
+			_(
+				"{0} answered with a redirect ({1}), which is not followed. "
+				"Enter the address the server answers on directly."
+			).format(label, response.status_code)
+		)
+
+
 def _internal_host_message(host: str, label: str) -> str:
-	# One answer for every internal target, and never the address: this reaches
-	# whoever typed the URL, and saying which names exist on the server's network
-	# maps it for them. The host goes to the server log.
+	# The host is the one whoever reads this typed or saved, so it is named: they
+	# have to pass it on to the administrator. What it resolved to is not -- one
+	# answer for every internal target, so the reply maps nothing of the server's
+	# network -- and goes to the server log instead.
 	frappe.logger("crm.integrations").info(f"refused {label}: {host} is not a public address")
 	return _(
-		"{0} must be a public address. To connect to a server on a private network, "
-		"an administrator has to add its host to {1} in the site config."
-	).format(label, TRUSTED_HOSTS_KEY)
+		"{0}: {1} is not a public address. To connect to a server on a private network, "
+		"an administrator has to add {1} to {2} in the site config."
+	).format(label, host, TRUSTED_HOSTS_KEY)
 
 
 def validate_url_field(doc, url_field: str, secret_fields: tuple[str, ...]) -> None:
 	"""Run from a settings controller's ``validate``, enabled or not.
 
-	Only a URL that is being changed is judged, so a site whose stored URL predates
-	these rules can still save its other settings; ``ensure_host_allowed`` is what
-	holds for a URL already stored. A changed URL is validated, and the secrets
-	stored for the old host do not follow it: the save is refused until they are
-	entered again, or -- when the URL is being removed -- they are cleared with it.
+	Only a URL that moves to another origin -- scheme, host or port -- is judged, so
+	a site whose stored URL predates these rules can still save its other settings,
+	fix a path or add a slash; ``ensure_host_allowed`` is what holds for a URL
+	already stored. A moved URL is validated, and the secrets stored for the old
+	host do not follow it: the save is refused until they are entered again, or --
+	when the URL is being removed -- they are cleared with it.
 	"""
 	before = doc.get_doc_before_save()
 	previous = ((before.get(url_field) if before else "") or "").strip()
 	current = (doc.get(url_field) or "").strip()
 	if current == previous:
 		return
-	carried = carried_secrets(doc, url_field, secret_fields)
 	label = _(doc.meta.get_label(url_field))
+	if not host_changed(previous, current):
+		# the same server the secrets were entered for; only the path is new
+		_refuse_credentials_in_url(current, label)
+		doc.set(url_field, current.rstrip("/"))
+		return
+	carried = carried_secrets(doc, url_field, secret_fields)
 	if not current:
 		doc.set(url_field, "")
 		for field in carried:
