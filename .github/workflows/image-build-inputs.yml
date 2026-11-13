@@ -26,6 +26,10 @@ on:
       - ".github/helper/set-image-tags.sh"
       - ".github/helper/test-set-image-tags.sh"
       - ".github/helper/test-promote-image.sh"
+      - ".github/helper/release-bump-parent.py"
+      - ".github/helper/test-release-bump-parent.sh"
+      - ".github/helper/stage-app-source.sh"
+      - ".github/helper/test-deploy-compose.sh"
   workflow_dispatch:
 
 permissions:
@@ -126,6 +130,20 @@ jobs:
             echo "::endgroup::"
           done
           echo "deploy/docker-compose.yml parses with only the required keys set."
+
+      - name: deploy/ keeps the properties a production host relies on
+        # Config only -- nothing is started. The memory ceilings and what
+        # sits under them, the backup healthchecks, what the offsite copy
+        # leaves out, how create-site tells a site from a directory; and a
+        # syntax check of every script embedded in the file, which are
+        # strings in YAML that no linter otherwise reads before a host does.
+        run: bash .github/helper/test-deploy-compose.sh
+
+      - name: Only a pure version bump inherits its parent's checks
+        # The build guard's one exemption, decided on the diff. builds.yml
+        # cannot be run from a PR, so this is where that rule is exercised
+        # before a release depends on it.
+        run: bash .github/helper/test-release-bump-parent.sh
 
       - name: Release tagging promotes what it verified
         # builds.yml runs only on a push to main or a tag, so until this
