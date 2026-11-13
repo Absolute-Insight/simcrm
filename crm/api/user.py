@@ -259,6 +259,7 @@ def update_user_role(user: str, new_role: str):
 	if new_role not in ["System Manager", "Sales Manager", "Sales User"]:
 		frappe.throw(_("Cannot assign this role"))
 
+	user = _stored_user_name(user)
 	_refuse_standard_user(user)
 	user_doc = frappe.get_doc("User", user)
 	target_roles = [d.role for d in user_doc.roles]
@@ -323,6 +324,7 @@ def remove_crm_roles_from_user(user: str):
 	"""
 	frappe.only_for(["System Manager", "Sales Manager"], True)
 
+	user = _stored_user_name(user)
 	if user == frappe.session.user:
 		frappe.throw(_("You cannot remove yourself."), frappe.PermissionError)
 
@@ -417,6 +419,17 @@ def rename_user_keyed_row(doctype: str, old: str, new: str) -> None:
 			show_alert=False,
 			rebuild_search=False,
 		)
+
+
+def _stored_user_name(user: str) -> str:
+	"""``user`` as the database spells it.
+
+	``frappe.get_doc("User", "administrator")`` loads Administrator: the lookup is
+	the database's, which ignores case, accents and trailing spaces. Every check
+	here that compares a name -- the standard users, the caller themselves, the
+	team -- has to be made on the name the document will be loaded by.
+	"""
+	return frappe.db.get_value("User", user, "name") or user
 
 
 def _refuse_standard_user(user: str) -> None:

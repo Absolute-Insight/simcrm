@@ -190,3 +190,39 @@ class StandardUserRoleChangeTest(IntegrationTestCase):
 
 		with self.assertRaises(frappe.PermissionError):
 			update_user_role("Administrator", "Sales User")
+
+	def test_a_differently_spelled_name_is_the_same_account(self):
+		"""``frappe.get_doc("User", "administrator")`` loads Administrator: the
+		database ignores case and trailing spaces, so the guard must as well."""
+		from crm.api.user import add_existing_users, remove_crm_roles_from_user, update_user_role
+
+		before = self.administrator_state()
+		frappe.set_user(MANAGER)
+		for name in ("administrator", "ADMINISTRATOR", "Administrator ", "guest"):
+			with self.subTest(name=name):
+				with self.assertRaises(frappe.PermissionError):
+					update_user_role(name, "Sales User")
+				with self.assertRaises(frappe.PermissionError):
+					remove_crm_roles_from_user(name)
+				with self.assertRaises(frappe.PermissionError):
+					add_existing_users([name], "Sales User")
+		frappe.set_user("Administrator")
+		self.assertEqual(self.administrator_state(), before)
+
+	def test_nobody_removes_themselves_under_another_spelling(self):
+		from crm.api.user import remove_crm_roles_from_user
+
+		frappe.set_user(MANAGER)
+		for name in (MANAGER.upper(), f"{MANAGER} "):
+			with self.subTest(name=name), self.assertRaises(frappe.PermissionError):
+				remove_crm_roles_from_user(name)
+		frappe.set_user("Administrator")
+		self.assertIn("Sales Manager", frappe.get_roles(MANAGER))
+
+	def test_a_differently_spelled_rep_is_still_managed(self):
+		"""The other direction: the name is resolved, not refused."""
+		from crm.api.user import update_user_role
+
+		ensure_user(PEER, "Peer", "Sales Manager", "Sales User")
+		update_user_role(PEER.upper(), "Sales User")
+		self.assertEqual(set(frappe.get_roles(PEER)) & {"Sales User", "Sales Manager"}, {"Sales User"})
