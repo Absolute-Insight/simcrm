@@ -1,6 +1,19 @@
 name: Build Container Image
 on:
   workflow_dispatch:
+    # Both default to off, and `gh workflow run builds.yml --ref vX.Y.Z` with no
+    # -f (which is what semantic-release runs) leaves them off. They exist so
+    # that breaking either rule in .github/helper/promote-image.sh is something
+    # a person does on purpose and leaves a record of -- see docs/RELEASING.md.
+    inputs:
+      overwrite_release_tag:
+        description: "Replace an already-published vX.Y.Z image tag. Hosts pinned to it get different bytes on their next pull."
+        type: boolean
+        default: false
+      allow_stable_downgrade:
+        description: "Let this build move :stable to a version older than the newest release tag."
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -41,8 +54,22 @@ jobs:
       #
       # A bump commit is safe to inherit from because of what it contains: one
       # sed of the version string in crm/__init__.py. The step verifies exactly
-      # that -- subject and file list both -- and refuses to walk the parent of
-      # anything else, so this cannot become a way to publish untested code.
+      # that, on the DIFF -- .github/helper/release-bump-parent.py -- and
+      # refuses to walk the parent of anything else, so this cannot become a
+      # way to publish untested code.
+      #
+      # It used to verify the subject and the list of files touched, which is
+      # not the same claim: crm/__init__.py is imported at every frappe start,
+      # so a commit titled `chore(release):` that added code to that one file
+      # inherited green checks from a parent that did not contain it.
+      #
+      # The checkout is for that helper and nothing else. No credentials are
+      # left behind: this job only reads.
+      - name: Checkout the guard's helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Wait for this commit's checks to pass
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -64,21 +91,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Resolve which commit's checks stand for this build. One API call,
-          # read through gh's own --jq so this needs no jq on the runner.
-          meta=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA" --jq '
-            [ (.commit.message | split("\n")[0]),
-              ([.files[]?.filename] | sort | join(",")),
-              (.parents[0].sha // "") ] | @tsv')
-          IFS=$'\t' read -r subject files parent <<<"$meta"
-
-          if [ "$files" = "crm/__init__.py" ] \
-             && printf '%s' "$subject" | grep -q '^chore(release):' \
-             && [ -n "$parent" ]; then
-            echo "$SHA is a release version bump ($subject)."
-            echo "It touches only crm/__init__.py, and a token-pushed commit never"
-            echo "gets its own test runs -- inheriting checks from parent $parent."
+          # Resolve which commit's checks stand for this build. One API call;
+          # the helper reads the JSON with python's stdlib, so this needs no jq
+          # on the runner. Exit 1 is "an ordinary commit" and falls through to
+          # that commit's own checks. Anything else is the helper failing to
+          # read its input, and a guard that cannot tell stops.
+          gh api "repos/$GITHUB_REPOSITORY/commits/$SHA" > "$RUNNER_TEMP/commit.json"
+          rc=0
+          parent=$(python3 .github/helper/release-bump-parent.py < "$RUNNER_TEMP/commit.json") || rc=$?
+          if [ "$rc" = "0" ] && [ -n "$parent" ]; then
+            echo "$SHA is a release version bump: its whole diff is the version"
+            echo "string in crm/__init__.py. A token-pushed commit never gets its"
+            echo "own test runs -- inheriting checks from parent $parent."
             SHA="$parent"
+          elif [ "$rc" != "1" ]; then
+            echo "::error::Could not decide whether $SHA is a release bump (exit $rc)."
+            exit 1
           fi
 
           deadline=$(( $(date +%s) + 40 * 60 ))
@@ -215,7 +243,15 @@ jobs:
           # for the reason given above: no tag holds what we need, and bench
           # cannot be handed a commit. prepare-containerfile.sh copies it in.
           source scripts/frappe-whatsapp-pin.env
-          export APPS_JSON='[{"url": "https://github.com/'"$GITHUB_REPOSITORY"'","branch": "'"$GITHUB_REF_NAME"'"},{"url": "/home/frappe/app-src/frappe_whatsapp","branch": "'"$FRAPPE_WHATSAPP_PIN_BRANCH"'"}]'
+          # This repository by path too, and for a sharper reason. It used to
+          # be {"url": "https://github.com/<repo>", "branch": "<ref name>"}:
+          # bench cloned whatever that branch pointed at when the Containerfile
+          # ran, which is not necessarily the commit the guard above verified
+          # -- it can wait forty minutes, and main moves. The checkout IS the
+          # verified commit, so "Put the pinned frappe in the build context"
+          # stages it at app-src/crm and bench clones that. The branch keeps
+          # the ref's name, so sites/apps.json in the image reads as before.
+          export APPS_JSON='[{"url": "/home/frappe/app-src/crm","branch": "'"$GITHUB_REF_NAME"'"},{"url": "/home/frappe/app-src/frappe_whatsapp","branch": "'"$FRAPPE_WHATSAPP_PIN_BRANCH"'"}]'
           # Passed to the build as a secret, not a build-arg -- see the
           # `secrets:` block below for why that distinction was load-bearing.
           echo "APPS_JSON=$APPS_JSON" >> $GITHUB_ENV
@@ -269,6 +305,17 @@ jobs:
             "${GITHUB_REPOSITORY,,}" "$GITHUB_REF" "$GITHUB_REF_NAME" \
             "$(git rev-parse --short HEAD)" | tee -a "$GITHUB_ENV"
 
+      - name: Refuse to rebuild a published release
+        # A version tag that already has an image is not rebuilt: the same
+        # commit built twice is two different images, and promoting the second
+        # would change what every host pinned to that tag pulls. The promotion
+        # step at the end refuses it too; asking here costs seconds instead of
+        # the hour the build takes. A branch build has no version tag and
+        # passes straight through.
+        env:
+          ALLOW_TAG_OVERWRITE: ${{ inputs.overwrite_release_tag && '1' || '0' }}
+        run: bash .github/helper/promote-image.sh --precheck "$IMAGE_RELEASE_TAGS"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: frappe/frappe_docker
@@ -290,6 +337,9 @@ jobs:
           bash scripts/fetch-frappe.sh builds/frappe-src
           git -C builds/frappe-src log -1 --format='context frappe: %H'
           bash scripts/fetch-frappe-whatsapp.sh builds/app-src/frappe_whatsapp
+          # And this repository, at the commit the guard verified -- not at
+          # wherever its branch points by the time the Containerfile runs.
+          bash .github/helper/stage-app-source.sh builds/app-src/crm "$GITHUB_REF_NAME" "$GITHUB_SHA"
 
       - name: Check the builder image can build the pinned frappe
         # The two pins move independently -- frappe by commit, the builder image
@@ -363,6 +413,31 @@ jobs:
             exit 1
           fi
           echo "$ref contains the crm app."
+          # ...and that it is THIS commit's. bench records what it cloned in
+          # sites/apps.json; .git itself does not survive the build. The image
+          # is tagged sha-<this commit> and promoted on this commit's checks,
+          # so anything else in it is a mislabelled, unverified build.
+          #
+          # The shape read here is what the published v3.30.0 image carries:
+          #   {"crm": {"is_repo": true, "resolution": {"commit_hash": "<sha>",
+          #    "branch": "v3.30.0"}, ...}, "frappe": {...}, ...}
+          # A bench that stops writing it must fail with a sentence, not a
+          # KeyError: this step first runs for real after a release tag exists.
+          built_sha=$(docker run --rm --entrypoint sh "$ref" -c 'cat sites/apps.json' \
+            | python3 -c '
+          import json, sys
+          try:
+              sha = json.load(sys.stdin)["crm"]["resolution"]["commit_hash"]
+          except Exception as e:
+              sha = "unreadable: %r" % (e,)
+          print(sha or "not recorded")') || built_sha="unreadable: could not run the image"
+          if [ "$built_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::$ref does not say it was built from $GITHUB_SHA."
+            echo "::error::sites/apps.json -> crm.resolution.commit_hash is: $built_sha"
+            echo "::error::If bench changed that file's shape, update this step; the image is not promoted meanwhile."
+            exit 1
+          fi
+          echo "$ref was built from $GITHUB_SHA."
           if ! echo "$apps" | grep -qx frappe_whatsapp; then
             echo "::error::$ref contains no 'frappe_whatsapp' app."
             exit 1
@@ -453,5 +528,12 @@ jobs:
       # point: it names a commit, nothing deploys it by default, and the smoke
       # test needs a pullable ref to test. What a failed run can no longer do is
       # move a version tag or `stable`.
+      #
+      # Two refusals live in the script, both overridable only by the dispatch
+      # inputs at the top of this file: a version tag that already exists is
+      # not re-pointed, and `stable` does not move to an older release.
       - name: Promote the verified image to its release tags
+        env:
+          ALLOW_TAG_OVERWRITE: ${{ inputs.overwrite_release_tag && '1' || '0' }}
+          ALLOW_STABLE_DOWNGRADE: ${{ inputs.allow_stable_downgrade && '1' || '0' }}
         run: bash .github/helper/promote-image.sh "$IMAGE_BUILD_TAG" "$IMAGE_RELEASE_TAGS"

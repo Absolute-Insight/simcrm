@@ -42,8 +42,25 @@ jobs:
         # 14 but its writer silently renders an empty body — v3.0.0 shipped
         # with headerless notes that way. Unpin only after a release dry-run
         # shows populated sections.
+        #
+        # Every package named here is at an exact version, semantic-release
+        # itself included -- it used to arrive through a bare `npx
+        # semantic-release` below, which ran whatever was newest that day.
+        # This is the one job that holds a token able to push to main, and the
+        # commit it pushes is the one commit the build guard lets through on
+        # its parent's checks: an unreviewed version of any of these is an
+        # unreviewed program with that token. These are the versions the
+        # v3.30.0 release ran on (2026-11-12). Their own dependencies still
+        # resolve at install time -- there is no lockfile for this step yet.
+        #
+        # Nothing bumps them: Dependabot reads manifests, and this is not one.
+        # Move them deliberately, one PR, and read the first release's notes.
         run: |
-          npm install @semantic-release/git @semantic-release/exec conventional-changelog-conventionalcommits@9 --no-save
+          npm install --no-save \
+            semantic-release@25.0.9 \
+            @semantic-release/git@11.0.1 \
+            @semantic-release/exec@7.1.0 \
+            conventional-changelog-conventionalcommits@9.3.1
       - name: Create Release
         # RELEASE_TOKEN (a PAT) is only needed once main is branch-protected;
         # until then the workflow token with contents:write does everything
@@ -56,4 +73,6 @@ jobs:
           GIT_AUTHOR_EMAIL: "developers@frappe.io"
           GIT_COMMITTER_NAME: "Frappe PR Bot"
           GIT_COMMITTER_EMAIL: "developers@frappe.io"
-        run: npx semantic-release
+        # --no-install: run the version installed above or fail, never fetch
+        # a different one.
+        run: npx --no-install semantic-release

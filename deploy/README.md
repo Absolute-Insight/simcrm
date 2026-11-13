@@ -44,12 +44,38 @@ correct, not stuck. Then browse `http://<host>:8080` (or your
 the CRM is at `/crm`. Log in as `Administrator` with the admin password from
 `.env`.
 
-`create-site` is idempotent: it skips the create when the site directory
-already exists, so `docker compose up -d` is always safe to re-run. What it
-does on *every* run is `bench enable-scheduler`: `bench new-site` writes
+`create-site` is idempotent: it skips the create when the site already exists
+— a `sites/<site>/site_config.json`, and no marker saying a create is still in
+flight — so `docker compose up -d` is always safe to re-run. What it does on
+*every* run is `bench enable-scheduler`: `bench new-site` writes
 `enable_scheduler: 0` into the new site's config, and a site left that way has
 every cron job in `crm/hooks.py` — the hourly signal run, deal-health scoring,
 the daily digest — silently not running, with nothing in any log to say so.
+
+**A first boot that dies partway repairs itself.** `create-site` leaves a marker
+(`sites/.creating-<site>`) for exactly as long as `bench new-site` is running.
+If the container is killed in that window — the 1 GB limit, a host reboot —
+the next start finds the marker, removes the half-made site directory and
+creates the site again; it used to find the directory, take it for a site, and
+restart for ever against a database that had never been made.
+
+Removal needs two things, not one: the marker, **and** the database itself
+saying there is nothing there — it does not exist, has no frappe tables, or
+does not record every app the create installs. A site with no marker is never
+touched. A marker beside a database that looks complete, or that could not be
+asked, removes nothing: `create-site` exits with the three commands that
+settle it (inspect, clear the marker, or remove the failed attempt), because a
+question that went unanswered is not grounds to delete a site and its
+encryption key. The one thing an automatic retry leaves behind is the
+abandoned attempt's database, whose name the log prints so it can be dropped
+by hand.
+
+**Keep other users off the host during first boot.** `bench new-site` takes
+the database root password and the administrator password as command-line
+options and has no other supported way to receive them, so for the minute the
+site takes to create both are readable in the host's process table (`ps`,
+`docker top`). After that they exist only in `.env` and the container
+environment.
 
 **Verify the first boot** before handing anyone the URL:
 
@@ -162,15 +188,16 @@ and corrected by the next `up -d` that passes `--env-file`.
 Two variables in that file are the ones that break the stack outright:
 
 **`SITE_NAME` decides whether `create-site` creates anything.** It skips only
-when `sites/${SITE_NAME}` exists. Inherit production's name and it looks for
-production's site in the QA volume, does not find it, and runs `bench new-site`
-— which fails at `install_db` with `Access denied for user '_<hash>'`, leaves a
-half-built site directory behind, and then loops, because the
-`bench enable-scheduler` after the skip branch runs unconditionally and cannot
-reach a database that was never created. `restart: on-failure` turns that into
-a restart loop, and every long-running service waits on `create-site`, so the
-whole stack stays down. Recovery is to delete the partial directory from the
-QA `sites` volume and bring it up again with the right name.
+when `sites/${SITE_NAME}/site_config.json` exists. Inherit production's name
+and it looks for production's site in the QA volume, does not find it, and runs
+`bench new-site` — which fails at `install_db` with `Access denied for user
+'_<hash>'`, because `DB_ROOT_PASSWORD` is production's too. `restart:
+on-failure` turns that into a restart loop, and every long-running service
+waits on `create-site`, so the whole stack stays down until it is brought up
+with the right env file. Each attempt now cleans up after itself (see [First
+boot](#first-boot)), so the right name is all the recovery there is; before
+that the first failure left a half-built directory that had to be deleted from
+the QA `sites` volume by hand.
 
 **`HTTP_PUBLISH_PORT` is a straight collision.** Both stacks want 8090;
 whichever starts first gets it and the other fails to bind with `port is
@@ -182,19 +209,44 @@ Pass the env file on *every* QA command, not only when you intend to recreate:
 `up -d` recreates whenever the resolved config changes, so the moment you get
 it wrong is rarely the moment you expected to.
 
-**And after any recreation, put the extra network back.** QA's backend and both
-queue workers are attached to production's network so the agent can reach
-`vectora-ollama-1`; `up -d` drops that attachment every time, and the agent
-surfaces then fail *silently* — they render normally and never answer. Verify
-rather than assume:
+**And after any recreation, put the model network back.** QA has no model
+server of its own; its backend and both queue workers reach production's
+`vectora-ollama-1` over a network that exists for that and nothing else. `up
+-d` drops the attachment every time, and the agent surfaces then fail
+*silently* — they render normally and never answer. Verify rather than assume:
 
 ```bash
+# once per host: a network with the model server on it and nothing else
+docker network create vectora-model-net 2>/dev/null || true
+docker network connect vectora-model-net vectora-ollama-1 2>/dev/null || true
+
 for c in vectora-qa-backend-1 vectora-qa-queue-short-1 vectora-qa-queue-long-1; do
-  docker network connect vectora_default "$c"
+  docker network connect vectora-model-net "$c" 2>/dev/null || true
   docker exec "$c" curl -s -o /dev/null -w "$c %{http_code}\n" \
     http://vectora-ollama-1:11434/v1/models        # expect 200
+  docker exec "$c" getent hosts db redis-cache redis-queue   # expect ONE address each
 done
 ```
+
+**Do not attach QA to `vectora_default`**, which is what this section used to
+say. That is production's whole network, and both stacks are the same compose
+file: every service answers to the same alias (`db`, `redis-cache`,
+`redis-queue`) on its own project network. A QA container joined to both
+networks resolves each of those names to *two* addresses, and which one a
+connection gets is up to Docker's resolver. Redis here has no password, so
+nothing refuses the wrong one: a QA worker can take jobs off production's
+queue — and drop them, because they name a site it does not have — while QA's
+own enqueues land in production. The `getent` line above is the check: two
+addresses for any of the three means a container is still on production's
+network, and `docker network disconnect vectora_default <container>` is the
+fix. On `vectora-model-net` the only production name QA can resolve is the model
+server's.
+
+`vectora-ollama-1` loses the attachment when it is recreated — which needs
+`--profile local-model`, so a routine `up -d` does not do it. Re-run the two
+"once per host" lines after any upgrade that did. On a host that runs the
+`gpu-model` profile instead, the container is `vectora-llm-1` and the URL is
+`http://vectora-llm-1:8086/v1/models`.
 
 Sharing the tag is fine and deliberate: QA should run the same version as
 production. Stage an upgrade by setting `VECTORA_TAG` once, recreating
@@ -269,6 +321,39 @@ acceptance) become one shared bucket for the whole company. Changing it needs
 `docker compose up -d`, not just a restart, so the container picks up the new
 environment.
 
+### `host_name`, and the Host header
+
+**Your proxy must refuse Host headers that are not yours.** The `frontend`
+container does not route on Host at all: it names the site to the backend
+itself (`FRAPPE_SITE_NAME_HEADER`), so a request for any hostname that reaches
+the port is served as this site. That is convenient for a rehearsal and it
+means nothing in this stack filters Host. Frappe, meanwhile, builds the
+absolute links it emails — password resets, invitations, share links — from
+`host_name` in the site's config if there is one, and otherwise from the Host
+header of the request that triggered the email. So with neither a filtering
+proxy nor a `host_name`, anyone who can reach the proxy can ask for a password
+reset for a real user with a Host header of their own, and the email that user
+receives carries a link to the attacker's server.
+
+Close both ends:
+
+- On the proxy, serve only the real hostname and reject or drop everything
+  else — a default server that returns 444 in nginx, a `Host()` rule and no
+  catch-all router in Traefik, an explicit site address in Caddy.
+- In `.env`, set `SITE_HOST_NAME` to the public URL, scheme included:
+
+  ```bash
+  SITE_HOST_NAME=https://crm.example.com
+  ```
+
+  `create-site` writes it to the site's `host_name` on the next `docker compose
+  up -d`, and links stop depending on what a request claimed. It is optional
+  and unset by default: unset, nothing is written, and a `host_name` you set by
+  hand (the [WhatsApp](#whatsapp) steps have you do that) stays as it is. Once
+  set it is re-applied on every `up -d`, so `.env` is then where to change it.
+  A value without `http://` or `https://` is refused with a line in the
+  `create-site` log rather than written.
+
 ## Installing it as an app (PWA)
 
 Vectora ships a web app manifest and a service worker, so a browser can install
@@ -329,6 +414,23 @@ docker compose exec backend bench --site all migrate
 # 3. reopen. Give it a minute -- see "Maintenance mode lags by a minute"
 docker compose exec backend bench --site <site> set-maintenance-mode off
 ```
+
+**The first `up -d` on a release after v3.30.0 also restarts the database and both
+redis containers**, once, because their definitions changed: `db` gained an
+InnoDB buffer pool size (see [Sizing the database](#sizing-the-database)), and
+both redis images are now pinned by digest — the same 6.2.24 they already run,
+and nothing else about either service changed. No data changes: the database
+comes back on the same volume, the queue replays its append-only file, and the
+cache reloads the snapshot it wrote on the way down, from the `/data` volume
+that follows it across the recreate. It is a cold restart of MariaDB all the
+same, so let it happen here, inside the maintenance window of step 2, and not
+as a surprise the next time somebody runs `up -d` to change a proxy setting.
+
+**If you run the off-host copy, say so too** — `docker compose --profile
+offsite up -d`. `backup-offsite` is behind a profile like the model servers
+below, so a plain `up -d` leaves the old container running the old script:
+still uploading `site_config_backup.json`, and without the new healthcheck.
+See [Getting them off the host](#getting-them-off-the-host).
 
 **If you run the local model, say so on every `pull` and `up`** —
 `docker compose --profile local-model pull` and
@@ -410,7 +512,85 @@ the host that holds the data.
 
 The same digest is pinned in `.devcontainer/docker-compose.yml` and in the
 three CI workflows that run a database. Bump all five together, or a schema bug
-gets to hide behind "works on my machine".
+gets to hide behind "works on my machine". Dependabot now proposes digest and
+patch bumps for the two compose files (`.github/dependabot.yml`); it does not
+edit the three workflows, so finish those in the same PR, and treat the PR as
+the start of the procedure above, not as a routine merge.
+
+**MariaDB 10.6 is past its upstream end of life** (July 2026), so the series
+will receive no further fixes and the patch bump above has nowhere left to go.
+The way out is the minor bump to an LTS series (10.11 or 11.4), which is the
+`mariadb-upgrade` case just described: rehearse it on a restore of a real
+backup, then schedule it. It is deliberately not something Dependabot will
+propose.
+
+### Sizing the database
+
+`db` runs with a 384 MB InnoDB buffer pool inside a 1 GB container. Both are
+settings in `.env`:
+
+| Key | Default | What it is |
+|---|---|---|
+| `DB_INNODB_BUFFER_POOL_SIZE` | `384M` | Memory InnoDB may use to cache table and index pages |
+| `DB_MEMORY_LIMIT` | `1g` | The container's ceiling; the kernel kills MariaDB if it gets there |
+
+Up to v3.30.0 the pool was InnoDB's stock 128 MB, with most of the container's
+gigabyte unused: every read past the hottest 128 MB of pages went to disk. The
+default is conservative on purpose. The pool is not all MariaDB allocates —
+each connection brings sort and join buffers and in-memory temporary tables,
+and the table cache grows with frappe's several hundred tables — and a
+database that is OOM-killed mid-write is a far worse outcome than one that
+reads from disk. **Keep the pool at or below about half of the limit**, and
+raise the two together.
+
+Measure before raising either:
+
+```bash
+# how big the data is -- the most a pool could usefully hold
+docker compose exec backend bench --site <site> mariadb -e "
+  SELECT ROUND(SUM(data_length + index_length) / 1048576) AS data_mb
+  FROM information_schema.tables WHERE table_schema = DATABASE();"
+
+# how often a read misses the pool: reads / read_requests, since the last start
+docker compose exec backend bench --site <site> mariadb -e "
+  SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool_read%';"
+
+# what the container is actually using against its limit
+docker stats --no-stream $(docker compose ps -q db)
+```
+
+If the data is smaller than the pool, there is nothing to gain. If
+`Innodb_buffer_pool_reads` is more than a percent or so of
+`Innodb_buffer_pool_read_requests` after a normal working day, the working set
+does not fit: on a host with memory to spare set, for example,
+`DB_MEMORY_LIMIT=2g` and `DB_INNODB_BUFFER_POOL_SIZE=1G`.
+
+Changing either value recreates the `db` container on the next `docker compose
+up -d` — a cold restart of the database, so do it in a maintenance window, with
+a backup in front of it. Nothing on disk changes, and going back is the same
+edit reversed. (The pool is also a dynamic variable — `SET GLOBAL
+innodb_buffer_pool_size = ...` as the MariaDB root user resizes it on a running
+server — but that does not survive a restart and does not move the container's
+limit, so it is for trying a value, not for keeping one.)
+
+**`redis-cache` is not bounded, and that is deliberate for now.** It has a
+256 MB container limit and no `maxmemory` of its own, so in principle it can
+grow until the kernel kills it rather than evict. The obvious fix — a ceiling
+with `allkeys-lru` and no snapshots, which is what bench configures for its
+own cache — is unsafe on this stack, because this redis does not hold only
+cache. The Acumatica in-flight markers live there for thirty days and are the
+one thing that stops a retried quote being written to the ERP twice; the
+event-reminder ledger is there as well. Evicting a marker, or losing it on a
+restart, is a duplicate sales order in a customer's live system. Bounding the
+cache therefore waits on moving those keys somewhere durable; until then,
+watch it instead:
+
+```bash
+docker stats --no-stream $(docker compose ps -q redis-cache)     # against the 256MiB limit
+```
+
+`redis-queue` is left alone for the same kind of reason: no ceiling and no
+eviction, because a key evicted there is a queued job that never runs.
 
 ### Maintenance mode lags by a minute
 
@@ -571,7 +751,73 @@ verbatim copy of `site_config.json` (`frappe/utils/backups.py:382`), so the
 `site_config_backup.json` sitting beside every dump carries that site's
 `db_password` and `encryption_key` in plaintext. The encryption key is what
 decrypts stored passwords, so a leaked backup directory is not only a data
-disclosure.
+disclosure. That is why the off-host copy leaves this one file behind — see
+[Getting them off the host](#getting-them-off-the-host) — and why the key has
+to be kept somewhere else as well.
+
+### Restoring onto a new host
+
+The restore above runs on the host that took the backup, where
+`site_config.json` is still in the `sites` volume. Losing the host is a
+different restore, and it needs one thing a dump does not contain: **the
+site's `encryption_key`.**
+
+Frappe encrypts every Password field with it — the Acumatica credentials,
+WhatsApp tokens and App Secrets, mail account passwords. They are in the dump,
+encrypted. A site created fresh gets a fresh key, so a dump restored into it
+restores every one of those values as ciphertext nothing can read: the site
+comes up, users log in (login passwords are hashed, not encrypted), and each
+integration then fails at its first call with a decryption error.
+
+**Do this once, today, while the host is healthy:** put the key in whatever
+holds your other operational secrets — a password manager, not the bucket the
+backups go to.
+
+```bash
+docker compose exec -T backend cat sites/${SITE_NAME}/site_config.json | grep encryption_key
+```
+
+It does not change for the life of the site, so once is enough. (If it is ever
+missing from that file, frappe generates one the first time it encrypts
+something; check again after the first integration is configured.)
+
+Then the new-host restore is:
+
+```bash
+# 1. a fresh stack: .env with the same SITE_NAME, then first boot as usual
+docker compose up -d
+docker compose logs -f create-site
+
+# 2. the backup, from wherever it was kept, into the sites volume
+docker compose cp ./<stamp>-database.sql.gz      backend:/home/frappe/frappe-bench/sites/<site>/private/backups/
+docker compose cp ./<stamp>-files.tar            backend:/home/frappe/frappe-bench/sites/<site>/private/backups/
+docker compose cp ./<stamp>-private-files.tar    backend:/home/frappe/frappe-bench/sites/<site>/private/backups/
+
+# 3. the old key, BEFORE the restore, so nothing is ever read with the new one
+docker compose exec backend bench --site <site> set-config encryption_key '<the key you kept>'
+
+# 4. restore exactly as in "Rolling back" above, then migrate
+: "${DB_ROOT_PASSWORD:?set it in .env before restoring}"
+docker compose exec -T backend bench --site <site> restore --force \
+  --db-root-username root --db-root-password "$DB_ROOT_PASSWORD" \
+  /home/frappe/frappe-bench/sites/<site>/private/backups/<stamp>-database.sql.gz \
+  --with-public-files /home/frappe/frappe-bench/sites/<site>/private/backups/<stamp>-files.tar \
+  --with-private-files /home/frappe/frappe-bench/sites/<site>/private/backups/<stamp>-private-files.tar
+docker compose exec backend bench --site all migrate
+docker compose restart backend queue-short queue-long scheduler websocket
+```
+
+Do **not** carry `db_name` or `db_password` over from the old config: those
+belong to the database the new stack just created, and the new
+`site_config.json` already has the right ones. `encryption_key` is the only
+value that must come from the old host. Everything else the old
+`site_config.json` held — `host_name`, the keys in [site_config
+keys](#site_config-keys) — is configuration to re-apply by hand, as the restore
+notes above say.
+
+Check it worked the way a user would find out it had not: open **CRM Agent
+Settings**, or an Email Account, and save it; or run one ERP sync. A wrong key
+fails there, immediately, with a decryption error.
 
 If `migrate` fails partway, do not roll the image back and carry on — the site
 is between schemas. Read the error (`docker compose logs backend`, and frappe's
@@ -589,6 +835,41 @@ docker compose exec backend ls -lh sites/$SITE_NAME/private/backups
 
 `BACKUP_HOUR` (default `2`) is the hour it runs, container local time.
 
+### Knowing when a backup did not happen
+
+The loop can only log a failure and sleep until the next night, and nobody
+reads that log. So the `backup` container carries a healthcheck: it is
+`healthy` while the newest `*-database*.sql.gz` in the backups directory is
+younger than `BACKUP_MAX_AGE_HOURS` (default `26` — one nightly run plus slack;
+whole hours only, anything else is ignored in favour of 26 with a line in the
+`backup` log) and `unhealthy` once it is not. A night that failed — a full volume, a database
+that was down at 02:00 — shows up about two hours later:
+
+```bash
+docker compose ps backup                     # healthy / unhealthy / starting
+docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q backup)"
+```
+
+`starting` is the honest answer on a site that has not had its first night
+yet: there is no backup to be late. It lasts until the first dump exists, or
+26 hours, whichever comes first; a site with a recent backup goes `healthy`
+within a minute of the container starting.
+
+**Nothing in this stack tells anyone.** Docker records the state and restarts
+nothing — restarting would not help — so an unhealthy `backup` is visible only
+to something that looks. Point whatever already watches this host at it. With
+nothing else to hand, a cron line on the host that mails when either backup
+container is not healthy is enough:
+
+```bash
+# /etc/cron.d/vectora-backup-health  (needs a working local `mail`)
+0 8 * * * root cd /path/to/deploy && for s in backup backup-offsite; do id=$(docker compose ps -q $s 2>/dev/null); [ -n "$id" ] || continue; st=$(docker inspect --format '{{.State.Health.Status}}' "$id"); [ "$st" = healthy ] || echo "$s is $st" | mail -s "Vectora backup: $s $st" ops@example.com; done
+```
+
+An uptime monitor that can run a command, or a metrics agent that exports
+container health, does the same job better. The point is only that one of them
+exists.
+
 ### Getting them off the host
 
 A backup that only exists on the machine it protects survives a bad delete,
@@ -601,13 +882,18 @@ docker compose --profile offsite up -d backup-offsite
 docker compose logs -f backup-offsite        # first copy, then hourly
 ```
 
-Three `.env` keys, all documented in `.env.example`:
+Three `.env` keys are required, and the rest are optional; all are documented
+in `.env.example`:
 
 | Key | What it is |
 |---|---|
 | `B2_ACCOUNT_ID` | The application key's **keyID** |
 | `B2_APPLICATION_KEY` | The application key itself, shown once at creation |
 | `BACKUP_TARGET` | The bucket as an rclone destination, e.g. `offsite:vecmbp` |
+| `OFFSITE_CRYPT_PASSWORD`, `OFFSITE_CRYPT_SALT` | Optional. Encrypt the copies before they leave the host — [below](#encrypting-the-copies) |
+| `OFFSITE_INCLUDE_SITE_CONFIG` | Optional, default `0`. Also copy `site_config_backup.json`; honoured only when the copies are encrypted |
+| `OFFSITE_RETENTION_DAYS` | Optional, default `0` (never delete). Prune the destination — [below](#how-long-the-copies-are-kept) |
+| `OFFSITE_MAX_AGE_HOURS` | Optional, default `28`. How stale the newest copy may be before the container is unhealthy |
 
 Make an **application key scoped to the one bucket** (Backblaze → App Keys →
 Add a New Application Key), never the master key. It needs `listBuckets`,
@@ -623,13 +909,141 @@ later. Re-copying costs nothing — rclone skips what is already there.
 Check it is still working, rather than assuming:
 
 ```bash
-docker compose ps backup-offsite             # healthy == the key still opens the bucket
-docker compose exec backup-offsite rclone ls "$BACKUP_TARGET/$SITE_NAME" | tail
+docker compose ps backup-offsite             # healthy == the key works AND a recent dump is there
+docker compose exec backup-offsite sh -c 'rclone ls "$(cat /tmp/offsite.dest)"' | tail
 ```
 
-The healthcheck lists the bucket every five minutes, so an expired or revoked
-key shows up as unhealthy instead of as an archive that quietly stopped weeks
-ago.
+The healthcheck asks two things every five minutes. Can the key still open
+the bucket — so an expired or revoked key shows up as unhealthy instead of as
+an archive that quietly stopped weeks ago. And is the newest database dump *at
+the destination* younger than `OFFSITE_MAX_AGE_HOURS` (default `28`: the
+backup's own 26 plus time to upload) — because a key that opens the bucket
+says nothing about whether anything has arrived lately, and the old check
+stayed green while copying nothing. Like `backup`, it is only a state; see
+[Knowing when a backup did not happen](#knowing-when-a-backup-did-not-happen)
+for having something watch it.
+
+**After changing any of these settings, or upgrading**, recreate the service by
+name — it is behind a profile, so a plain `docker compose up -d` does not touch
+it:
+
+```bash
+docker compose --profile offsite up -d backup-offsite
+```
+
+#### What is not copied
+
+`*-site_config_backup.json`. Frappe writes one beside every dump and it is
+`site_config.json` verbatim: `db_password` and `encryption_key`, in plaintext.
+The dump next to it holds every stored integration secret, encrypted with that
+key. Together in a third party's bucket they are the whole CRM — every
+customer record and every ERP, WhatsApp and mail credential — to anyone who
+can read the bucket, and an application key scoped to write does not make the
+bucket unreadable to a Backblaze account compromise.
+
+So the copy leaves that file on the host, which means **the encryption key has
+to be kept somewhere else** for a restore onto a new host to be complete —
+[Restoring onto a new host](#restoring-onto-a-new-host) is the procedure, and
+it is one line to do today.
+
+Until this changed the file *was* copied, so a bucket that has been in use
+holds one per night already, and `rclone copy` never deletes. Remove them
+once, from somewhere that holds a key allowed to delete (the Backblaze web
+console, or `rclone delete` with your own credentials — not this service's
+key, which should not have that right):
+
+```bash
+rclone delete --include "*site_config_backup*" <remote>:<bucket>/<site> --dry-run   # then without --dry-run
+```
+
+Whether to also rotate what those files exposed is a judgement about who could
+have read the bucket. The database password is cheap to change; the encryption
+key is not — every stored secret has to be re-entered under the new one.
+
+#### Encrypting the copies
+
+Off by default. Set a passphrase in `.env` and every copy goes through an
+rclone [`crypt`](https://rclone.org/crypt/) remote, so the bucket only ever
+receives ciphertext:
+
+```bash
+OFFSITE_CRYPT_PASSWORD=<long random value: openssl rand -base64 32>
+#OFFSITE_CRYPT_SALT=<optional second value>
+docker compose --profile offsite up -d backup-offsite
+```
+
+- Encrypted copies go to **`<site>.crypt/`**, beside the plaintext `<site>/`
+  that earlier runs wrote. Nothing already there is touched or re-encrypted;
+  delete the plaintext prefix yourself once the encrypted one has a full set.
+- File *contents* are encrypted; file *names* are not (they gain a `.bin`
+  suffix), so the bucket's console still shows which nights are present.
+- With a passphrase set, `OFFSITE_INCLUDE_SITE_CONFIG=1` also copies
+  `site_config_backup.json`, which makes the archive self-contained. Without
+  one that setting is ignored, and the log says so.
+
+**The passphrase is the archive.** There is no recovery if it is lost, and the
+archive exists for the day this host — and its `.env` — are gone. Keep it where
+you keep the encryption key: outside this host. Changing the passphrase or the
+salt later makes everything already encrypted unreadable under the new values.
+
+**It is not protected on this host, and is not meant to be.** It sits in `.env`
+in the clear, shows in `docker inspect` of the container like every other
+variable there, and the copy the service writes into rclone's config is only
+*obscured* — rclone's word for a reversible encoding that stops a glance, not
+a reader. Encryption here protects the bucket from whoever can read the
+bucket. Anyone who can read this host's `.env` already has the database.
+
+Reading an encrypted archive back, on any machine with rclone and the two
+secrets:
+
+```bash
+export RCLONE_CONFIG_OFFSITE_TYPE=b2 RCLONE_CONFIG_OFFSITE_ACCOUNT=<keyID> RCLONE_CONFIG_OFFSITE_KEY=<key>
+export RCLONE_CONFIG_ARCHIVE_TYPE=crypt
+export RCLONE_CONFIG_ARCHIVE_REMOTE=offsite:<bucket>/<site>.crypt
+export RCLONE_CONFIG_ARCHIVE_FILENAME_ENCRYPTION=off
+export RCLONE_CONFIG_ARCHIVE_DIRECTORY_NAME_ENCRYPTION=false
+export RCLONE_CONFIG_ARCHIVE_PASSWORD=$(rclone obscure -)     # type the passphrase, then Ctrl-D
+# and RCLONE_CONFIG_ARCHIVE_PASSWORD2 the same way, if a salt was set
+rclone ls archive:
+rclone copy archive: ./restore --include "<stamp>-*"
+```
+
+Do that once after turning encryption on, and compare a file with the
+original. An encrypted backup nobody has ever decrypted is the same kind of
+object as a backup nobody has ever restored.
+
+#### How long the copies are kept
+
+For ever, unless you decide otherwise: the service only adds. Every night is a
+full database dump and two full file archives, so the bucket grows by that much
+a day, and a record deleted from the CRM stays in the archive for as long as
+the archive does.
+
+The place to bound it is **the bucket, not this service**. A Backblaze
+lifecycle rule (Bucket → Lifecycle Settings → custom) with, for example,
+`daysFromUploadingToHiding: 35` and `daysFromHidingToDeleting: 1` keeps five
+weeks and needs nothing from this stack. It also keeps the property that makes
+the off-host copy worth having: the key on this host can write and cannot
+delete, so whoever takes over the host cannot take the archive with it. S3 and
+most other stores have an equivalent.
+
+Where the store has no such rule, the service can prune instead:
+
+```bash
+OFFSITE_RETENTION_DAYS=35      # 0 or unset = never delete (the default)
+```
+
+That deletes, at the destination, files last modified more than that many days
+ago. It is off by default because it is destructive and because it needs an
+application key that may also `deleteFiles` — which is a key that can destroy
+the archive. Three limits are built in: values under 14 are refused (the host
+keeps a week, and a shorter window would delete files only for the next hourly
+copy to upload them again); it runs only straight after a copy that succeeded;
+and it does not run at all unless a dump newer than `OFFSITE_MAX_AGE_HOURS` is
+at the destination — an archive that has stopped receiving is the last copy
+there is, and is not aged away. On Backblaze a delete *hides* a file rather
+than removing it; pair it with "keep only the last version" on the bucket, or
+the storage is not actually released.
 
 ### Why this is a service and not a note in a runbook
 

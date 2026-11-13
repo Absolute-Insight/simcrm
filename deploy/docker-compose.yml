@@ -93,6 +93,18 @@ services:
       - --collation-server=utf8mb4_unicode_ci
       - --skip-character-set-client-handshake
       - --skip-innodb-read-only-compressed
+      # The stock image leaves InnoDB on its 128 MB default, so in a 1 GB
+      # container nine tenths of the memory it was given sat unused while every
+      # read past the first 128 MB of hot pages went to disk. 384M is well
+      # under half the limit on purpose: the pool is not all MariaDB allocates
+      # (per-connection sort and join buffers, the table cache, in-memory
+      # temporary tables), and a database that is OOM-killed is a far worse
+      # outcome than one that reads from disk. Raise it together with
+      # DB_MEMORY_LIMIT, keeping the pool at or below about half of the limit
+      # -- see "Sizing the database" in README.md for what to measure first.
+      # It changes no data on disk; it takes effect when the container is next
+      # recreated.
+      - --innodb-buffer-pool-size=${DB_INNODB_BUFFER_POOL_SIZE:-384M}
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
     volumes:
@@ -100,13 +112,32 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1g
+          memory: ${DB_MEMORY_LIMIT:-1g}
           cpus: "1.5"
 
   redis-cache:
-    image: redis:6.2-alpine
+    # By digest, for the reason `db` is: `6.2-alpine` is a moving tag, and a
+    # tag that moved is an unannounced recreate on the next `up -d`. Resolved
+    # 2026-11-13 (6.2.24) with
+    #   docker buildx imagetools inspect redis:6.2-alpine --format '{{.Manifest.Digest}}'
+    image: redis:6.2-alpine@sha256:3f9c6e23ed6bea3b41d0ef709fc164c1a0b7c00d5a21a60e0e9c33ada5496881
     logging: *logging
     restart: unless-stopped
+    # No `command`, on purpose: the image's bare redis-server, which means no
+    # maxmemory, no eviction, and the default snapshots to /data. It looks like
+    # an oversight in a service called "cache" -- bench's own redis_cache.conf
+    # sets a ceiling with allkeys-lru and turns snapshots off -- and it is not
+    # one here. This instance does not hold only disposable data. The Acumatica
+    # in-flight markers (crm/integrations/acumatica/outbound.py; listed as
+    # persistent keys in crm/hooks.py) live in it for thirty days, and a marker
+    # is the only thing that stops a retried quote being written to the
+    # customer's ERP a second time; the event-reminder ledger is here too. An
+    # evicted or unpersisted marker is a duplicate sales order.
+    #
+    # So until those keys live somewhere durable (the database, or
+    # redis-queue), this service must not get a maxmemory-policy that evicts
+    # and must keep writing snapshots. .github/helper/test-deploy-compose.sh
+    # fails if either changes.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -120,13 +151,17 @@ services:
           cpus: "0.5"
 
   redis-queue:
-    image: redis:6.2-alpine
+    image: redis:6.2-alpine@sha256:3f9c6e23ed6bea3b41d0ef709fc164c1a0b7c00d5a21a60e0e9c33ada5496881
     logging: *logging
     restart: unless-stopped
     # Append-only, not the default snapshot rules. This instance holds the job
     # queue and the socketio channel: with RDB alone a crash or an OOM at the
     # 256m ceiling silently drops up to a minute of enqueued work -- queued
     # email, automation actions, an ERP sync somebody pressed Sync Now for.
+    #
+    # No maxmemory and no eviction policy here, deliberately: on this instance
+    # an evicted key is a job that never runs. (redis-cache has neither as
+    # well, for its own reason -- see the comment on that service.)
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-queue-data:/data
@@ -184,10 +219,26 @@ services:
         condition: service_healthy
       redis-queue:
         condition: service_healthy
-    # Secrets reach the shell through the environment, not the command line:
-    # `docker compose config` and `docker inspect` print the command verbatim,
-    # and the environment is at least not in the process table of the host.
+    # Secrets reach the shell through the environment, not this file's command:
+    # `docker compose config` and `docker inspect` print the command verbatim.
+    #
+    # That is as far as it goes, and this comment used to claim more. The shell
+    # then expands both passwords into `bench new-site`'s argv, where they are
+    # readable in the host's process table (`ps`, `docker top`) for as long as
+    # the site takes to create -- once, on first boot. bench offers no other
+    # supported way in: neither option reads an environment variable, and the
+    # alternatives are a prompt answered over stdin or `root_password` /
+    # `admin_password` written into common_site_config.json, which puts the
+    # database root password on the sites volume every service mounts. So
+    # first boot is a moment to keep other users off the host, and README.md
+    # says so.
     environment:
+      SITE_NAME: ${SITE_NAME:?set SITE_NAME in .env}
+      # Optional. The public URL frappe builds absolute links from -- password
+      # resets, invitations, share links. Unset, frappe takes it from the Host
+      # header of whichever request triggered the email. See "host_name" in
+      # README.md.
+      SITE_HOST_NAME: ${SITE_HOST_NAME:-}
       DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
       # Read by crm.agent.install.apply_endpoint_defaults during after_install,
@@ -213,27 +264,140 @@ services:
         wait-for-it -t 120 db:3306
         wait-for-it -t 120 redis-cache:6379
         wait-for-it -t 120 redis-queue:6379
-        if [ -d "sites/${SITE_NAME}" ]; then
-          echo "Site ${SITE_NAME} already exists — skipping create"
+
+        site="$$SITE_NAME"
+        # This script removes a directory by this name in one branch below, so
+        # the name is checked first: empty, a path, or a dotfile would aim that
+        # at the sites volume itself.
+        case "$$site" in
+          ""|.*|*/*|assets)
+            echo "[create-site] refusing: SITE_NAME '$$site' is not a usable site name" >&2
+            exit 1 ;;
+        esac
+        config="sites/$$site/site_config.json"
+        # Present from just before `bench new-site` until just after it
+        # succeeds, and at no other time. It is what tells an unfinished first
+        # boot from a real site: the test used to be "does the directory
+        # exist", and new-site makes the directory first -- so a create that
+        # was killed partway (the 1g limit, a host reboot) left a directory
+        # that every retry mistook for a site. It skipped the create, failed
+        # at enable-scheduler against a database that was never made, and
+        # restarted into the same thing for ever, with the whole stack waiting
+        # on it.
+        marker="sites/.creating-$$site"
+
+        # What the DATABASE says about a site whose create was interrupted.
+        # Prints one word:
+        #   absent     no such database, or one without frappe's tables
+        #   partial    frappe's tables, but not every app this create installs
+        #   installed  every app is recorded as installed
+        #   unknown    could not be asked -- the server did not answer, or the
+        #              config names no database
+        # Only the first two are evidence that nothing of value exists. A
+        # question that was not answered is not an answer: an earlier version
+        # of this asked `bench list-apps`, discarded its errors, and removed
+        # the site directory -- encryption key included -- when a healthy site
+        # merely failed to reply.
+        # The root password travels in MYSQL_PWD, not in argv.
+        db_verdict() {
+          db=$$(sed -n 's/.*"db_name": *"\([A-Za-z0-9_]*\)".*/\1/p' "$$config" | head -n 1)
+          if [ -z "$$db" ]; then echo unknown; return; fi
+          has_tables=$$(MYSQL_PWD="$$DB_ROOT_PASSWORD" mariadb --host db --port 3306 --user root \
+            --batch --skip-column-names --execute \
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$$db' AND table_name = 'tabDefaultValue'" \
+            2>/dev/null) || { echo unknown; return; }
+          case "$$has_tables" in
+            0) echo absent; return ;;
+            1) ;;
+            *) echo unknown; return ;;
+          esac
+          apps=$$(MYSQL_PWD="$$DB_ROOT_PASSWORD" mariadb --host db --port 3306 --user root \
+            --batch --skip-column-names --execute \
+            "SELECT defvalue FROM \`$$db\`.tabDefaultValue WHERE parent = '__global' AND defkey = 'installed_apps'" \
+            2>/dev/null) || { echo unknown; return; }
+          for app in crm $$expected_apps; do
+            case "$$apps" in
+              *"\"$$app\""*) ;;
+              *) echo partial; return ;;
+            esac
+          done
+          echo installed
+        }
+
+        # frappe_whatsapp is inert until a WhatsApp Account is set Active.
+        # Tested for so that this file still boots an older image, which
+        # does not contain it.
+        whatsapp=""
+        expected_apps=""
+        if [ -d apps/frappe_whatsapp ]; then
+          whatsapp="--install-app frappe_whatsapp"
+          expected_apps="frappe_whatsapp"
+        fi
+
+        if [ -e "$$marker" ] && [ -e "sites/$$site" ]; then
+          verdict=absent
+          if [ -f "$$config" ]; then verdict=$$(db_verdict); fi
+          case "$$verdict" in
+            absent|partial)
+              echo "[create-site] an earlier first boot of $$site never finished (its database is $$verdict) -- removing its partial directory and creating it again"
+              if [ -f "$$config" ]; then
+                echo "[create-site] the abandoned database, if any, is left in MariaDB under this name; drop it by hand once the site is up:"
+                sed -n 's/.*"db_name": *"\([^"]*\)".*/[create-site]   \1/p' "$$config"
+              fi
+              rm -rf "sites/$$site"
+              ;;
+            *)
+              # Either the create finished and was killed before the marker
+              # was cleared, or it was killed in its last step, or the database
+              # could not be asked. None of those is grounds to delete.
+              echo "[create-site] sites/$$site carries the marker of an unfinished create ($$marker), but its database is '$$verdict', not provably missing or incomplete. Nothing was removed." >&2
+              echo "[create-site] Look at it: docker compose run --rm --no-deps --entrypoint bench create-site --site $$site list-apps" >&2
+              echo "[create-site] If the site is good, clear the marker:" >&2
+              echo "[create-site]   docker compose run --rm --no-deps --entrypoint rm create-site $$marker" >&2
+              echo "[create-site] If it is a failed first boot, remove both and bring the stack up again:" >&2
+              echo "[create-site]   docker compose run --rm --no-deps --entrypoint rm create-site -rf sites/$$site $$marker" >&2
+              exit 1
+              ;;
+          esac
+        fi
+
+        if [ -f "$$config" ]; then
+          echo "Site $$site already exists — skipping create"
+        elif [ -e "sites/$$site" ]; then
+          # A directory with no site_config.json and no marker: this stack did
+          # not start it, so it is not this stack's to delete -- it may hold
+          # files somebody put there for a restore. Say so, rather than fail
+          # at enable-scheduler with an error about a missing database.
+          echo "[create-site] sites/$$site exists but holds no site_config.json, so it is not a site, and bench new-site refuses a directory that already exists." >&2
+          echo "[create-site] If nothing in it is wanted, remove it and bring the stack up again:" >&2
+          echo "[create-site]   docker compose run --rm --no-deps --entrypoint rm create-site -rf sites/$$site" >&2
+          exit 1
         else
-          # frappe_whatsapp is inert until a WhatsApp Account is set Active.
-          # Tested for so that this file still boots an older image, which
-          # does not contain it.
-          whatsapp=""
-          if [ -d apps/frappe_whatsapp ]; then whatsapp="--install-app frappe_whatsapp"; fi
-          bench new-site "${SITE_NAME}" \
+          : > "$$marker"
+          bench new-site "$$site" \
             --mariadb-user-host-login-scope='%' \
             --db-root-password="$$DB_ROOT_PASSWORD" \
             --admin-password="$$ADMIN_PASSWORD" \
             --install-app crm $$whatsapp
+          rm -f "$$marker"
         fi
-        bench --site "${SITE_NAME}" enable-scheduler
+        bench --site "$$site" enable-scheduler
         # Frappe deletes backups older than keep_backups_for_hours on every
         # `bench backup`, and the default is 23 -- so the pre-upgrade backup
         # step in the runbook silently destroyed yesterday's. A week is the
         # floor worth having: long enough that a Monday mistake is still
         # recoverable on Friday.
-        bench --site "${SITE_NAME}" set-config -p keep_backups_for_hours 168
+        bench --site "$$site" set-config -p keep_backups_for_hours 168
+        # Only when the operator asked for it; an unset variable leaves
+        # whatever the site already has, including a host_name set by hand.
+        if [ -n "$${SITE_HOST_NAME:-}" ]; then
+          case "$$SITE_HOST_NAME" in
+            http://*|https://*)
+              bench --site "$$site" set-config host_name "$${SITE_HOST_NAME%/}" ;;
+            *)
+              echo "[create-site] SITE_HOST_NAME must start with http:// or https:// -- host_name left as it was" >&2 ;;
+          esac
+        fi
     deploy:
       resources:
         limits:
@@ -257,10 +421,54 @@ services:
         condition: service_completed_successfully
     environment:
       BACKUP_HOUR: ${BACKUP_HOUR:-2}
+      SITE_NAME: ${SITE_NAME:?set SITE_NAME in .env}
+      BACKUP_MAX_AGE_HOURS: ${BACKUP_MAX_AGE_HOURS:-26}
+    # Is there a database dump younger than a day and a bit? The loop below can
+    # only log a failure and sleep until tomorrow, and nothing reads that log
+    # -- a full volume or a database that was down at 02:00 left the container
+    # `Up` and the newest backup quietly ageing. This turns that into a state
+    # something can see: `docker compose ps` shows `unhealthy` about two hours
+    # after a missed night. 26 hours is one nightly run plus slack for a slow
+    # dump; a dump still being written counts, which is the direction to err.
+    #
+    # start_period is the same length on purpose. A site created today has no
+    # backup until its first BACKUP_HOUR, and that is not a failure: until the
+    # period ends a failing check reads `starting`, and the first passing one
+    # ends it early. So an existing site goes healthy within a minute, and a
+    # new one the morning after.
+    #
+    # Nothing in this stack alerts on it. See "Knowing when a backup did not
+    # happen" in README.md for how to have something watch.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        # Whole hours only. Anything else -- 26.5, 26h, empty -- would be a
+        # syntax error in the arithmetic and so a container that is unhealthy
+        # for ever for a reason no log shows; it falls back to 26, and the
+        # loop below says so once at start.
+        - |
+          h="$${BACKUP_MAX_AGE_HOURS:-26}"
+          case "$$h" in ""|*[!0-9]*) h=26 ;; esac
+          # "08" is all digits and still a syntax error below: a leading zero
+          # makes the shell read it as octal.
+          while [ "$${h#0}" != "$$h" ]; do h="$${h#0}"; done
+          [ -n "$$h" ] || h=26
+          find"/home/frappe/frappe-bench/sites/$$SITE_NAME/private/backups" -name "*-database*.sql.gz" -mmin "-$$(( h * 60 ))" 2>/dev/null | grep -q .
+      interval: 300s
+      timeout: 30s
+      retries: 3
+      # Fixed rather than derived from BACKUP_MAX_AGE_HOURS: compose parses this
+      # as a duration, and a value it cannot parse would break every command
+      # in this directory, not just this check.
+      start_period: 26h
     entrypoint: ["bash", "-c"]
     command:
       - |
         set -u
+        case "$${BACKUP_MAX_AGE_HOURS:-26}" in
+          ""|*[!0-9]*)
+            echo "[backup] BACKUP_MAX_AGE_HOURS='$${BACKUP_MAX_AGE_HOURS:-}' is not a whole number of hours; the healthcheck is using 26" >&2 ;;
+        esac
         while true; do
           # Sleep until the next BACKUP_HOUR, recomputed each pass so the
           # schedule survives a restart at any time of day.
@@ -310,6 +518,15 @@ services:
   # at the destination, so the seven-day local retention does not propagate to
   # the archive, and a copy that failed at 02:00 is retried at 03:00 instead of
   # waiting a day. Re-copying is free -- rclone skips files already there.
+  #
+  # What it does NOT copy, unless told to: the `*-site_config_backup.json`
+  # frappe writes beside every dump. That file is site_config.json verbatim --
+  # `db_password` and `encryption_key` in plaintext -- and the dump next to it
+  # holds every stored integration secret encrypted with that same key. Shipped
+  # together to a third party's bucket they are the whole CRM to anyone who
+  # can read the bucket. The price is that the encryption key must be kept
+  # somewhere else for a restore onto a new host to be complete; README.md,
+  # "Restoring onto a new host", is the procedure.
   backup-offsite:
     image: rclone/rclone:1.68.2@sha256:74c51b8817e5431bd6d7ed27cb2a50d8ee78d77f6807b72a41ef6f898845942b
     logging: *logging
@@ -343,6 +560,22 @@ services:
       # hold more than one deployment without them overwriting each other.
       BACKUP_TARGET: ${BACKUP_TARGET:-offsite:vecmbp}
       SITE_NAME: ${SITE_NAME:?}
+      # Everything below is opt-in and off when unset; .env.example and the
+      # README's "Getting them off the host" describe each.
+      #
+      # Client-side encryption: set a passphrase and the copies go through an
+      # rclone `crypt` remote, so the bucket only ever holds ciphertext.
+      OFFSITE_CRYPT_PASSWORD: ${OFFSITE_CRYPT_PASSWORD:-}
+      OFFSITE_CRYPT_SALT: ${OFFSITE_CRYPT_SALT:-}
+      # 1 = also copy site_config_backup.json. Honoured only when the copies
+      # are encrypted.
+      OFFSITE_INCLUDE_SITE_CONFIG: ${OFFSITE_INCLUDE_SITE_CONFIG:-0}
+      # Days to keep at the destination; 0 = never delete there (the default).
+      OFFSITE_RETENTION_DAYS: ${OFFSITE_RETENTION_DAYS:-0}
+      # How old the newest dump at the destination may be before this service
+      # reports unhealthy. Two hours more than the backup's own 26: the copy
+      # runs hourly and a night's files take a while to upload.
+      OFFSITE_MAX_AGE_HOURS: ${OFFSITE_MAX_AGE_HOURS:-28}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -355,11 +588,96 @@ services:
         fi
         src="/data/sites/$${SITE_NAME}/private/backups"
         dest="$${BACKUP_TARGET}/$${SITE_NAME}"
-        echo "[offsite] copying $$src -> $$dest, hourly"
+
+        # Opt-in client-side encryption. The crypt remote is written to
+        # rclone's own config file rather than exported, so that `docker
+        # compose exec backup-offsite rclone ...` and the healthcheck see the
+        # same remote this loop does. The passphrase goes to `rclone obscure`
+        # on stdin, never as an argument. Encrypted copies get a prefix of
+        # their own (<site>.crypt): a directory holding both would hide the
+        # plaintext half from every listing made through the crypt remote.
+        encrypted=0
+        if [ -n "$${OFFSITE_CRYPT_PASSWORD}" ]; then
+          umask 077
+          pass=$$(printf '%s' "$${OFFSITE_CRYPT_PASSWORD}" | rclone obscure -) || pass=""
+          if [ -z "$$pass" ]; then
+            echo "[offsite] refusing to start: could not prepare OFFSITE_CRYPT_PASSWORD, and copying unencrypted instead is not what was asked for" >&2
+            exit 1
+          fi
+          salt=""
+          if [ -n "$${OFFSITE_CRYPT_SALT}" ]; then
+            salt=$$(printf '%s' "$${OFFSITE_CRYPT_SALT}" | rclone obscure -) || salt=""
+            if [ -z "$$salt" ]; then
+              echo "[offsite] refusing to start: could not prepare OFFSITE_CRYPT_SALT" >&2
+              exit 1
+            fi
+          fi
+          conf="$$(rclone config file | tail -n 1)"
+          mkdir -p "$$(dirname "$$conf")"
+          {
+            echo "[offsitecrypt]"
+            echo "type = crypt"
+            echo "remote = $${dest}.crypt"
+            echo "password = $$pass"
+            if [ -n "$$salt" ]; then echo "password2 = $$salt"; fi
+            # Contents are encrypted; names are not, so the bucket's own
+            # console still shows which nights are there.
+            echo "filename_encryption = off"
+            echo "directory_name_encryption = false"
+          } > "$$conf" || { echo "[offsite] refusing to start: cannot write $$conf" >&2; exit 1; }
+          dest="offsitecrypt:"
+          encrypted=1
+        fi
+        # For the healthcheck, and for anyone looking by hand:
+        #   docker compose exec backup-offsite sh -c 'rclone ls "$$(cat /tmp/offsite.dest)"'
+        printf '%s\n' "$$dest" > /tmp/offsite.dest
+
+        # The filter, as the positional parameters: sh has no arrays.
+        set -- --exclude "*site_config_backup*"
+        if [ "$${OFFSITE_INCLUDE_SITE_CONFIG}" = "1" ]; then
+          if [ "$$encrypted" = "1" ]; then
+            set --
+          else
+            echo "[offsite] OFFSITE_INCLUDE_SITE_CONFIG=1 ignored: site_config_backup.json holds the encryption key and is only copied when OFFSITE_CRYPT_PASSWORD is set" >&2
+          fi
+        fi
+
+        # Opt-in pruning. Whole days only, and never fewer than 14: the host
+        # keeps a week of backups, so anything shorter deletes a file here
+        # that the next hourly copy would upload again.
+        keep="$${OFFSITE_RETENTION_DAYS}"
+        case "$$keep" in
+          ""|*[!0-9]*)
+            echo "[offsite] OFFSITE_RETENTION_DAYS='$$keep' is not a whole number of days; nothing will be deleted at the destination" >&2
+            keep=0 ;;
+        esac
+        if [ "$$keep" -gt 0 ] && [ "$$keep" -lt 14 ]; then
+          echo "[offsite] OFFSITE_RETENTION_DAYS=$$keep is below the minimum of 14; nothing will be deleted at the destination" >&2
+          keep=0
+        fi
+
+        echo "[offsite] copying $$src -> $$dest, hourly (encrypted=$$encrypted, retention=$${keep}d, 0 = keep everything)"
+        if [ "$$#" -gt 0 ]; then
+          echo "[offsite] NOT copied: *site_config_backup.json (it holds the site's encryption_key and db_password). Keep the key somewhere else -- deploy/README.md, 'What is not copied' and 'Restoring onto a new host'."
+        fi
         while true; do
           if [ -d "$$src" ]; then
-            if rclone copy "$$src" "$$dest" --log-level NOTICE --stats 0; then
+            if rclone copy "$$src" "$$dest" "$$@" --log-level NOTICE --stats 0; then
               echo "[offsite] $$(date -Is) ok"
+              if [ "$$keep" -gt 0 ]; then
+                # Only behind a copy that just succeeded, and only while fresh
+                # dumps are arriving: an archive that has stopped receiving is
+                # the last copy there is, and must not be aged away.
+                if rclone lsf "$$dest" --files-only --max-age "$${OFFSITE_MAX_AGE_HOURS}h" --include "*-database*.sql.gz" 2>/dev/null | grep -q .; then
+                  if rclone delete "$$dest" --min-age "$${keep}d" --log-level NOTICE --stats 0; then
+                    echo "[offsite] $$(date -Is) pruned files older than $${keep}d"
+                  else
+                    echo "[offsite] $$(date -Is) PRUNE FAILED (does the key allow deleteFiles?)"
+                  fi
+                else
+                  echo "[offsite] $$(date -Is) not pruning: no dump newer than $${OFFSITE_MAX_AGE_HOURS}h at the destination"
+                fi
+              fi
             else
               echo "[offsite] $$(date -Is) COPY FAILED"
             fi
@@ -369,14 +687,29 @@ services:
           sleep 3600
         done
     healthcheck:
-      # Can this service still reach the bucket with the key it was given? A
-      # silent credential expiry is the failure that leaves an operator
-      # believing they have off-host copies when they stopped weeks ago.
-      test: ["CMD-SHELL", 'rclone lsd "$$BACKUP_TARGET" >/dev/null 2>&1']
+      # Two questions. Can this service still reach the bucket with the key it
+      # was given? A silent credential expiry is the failure that leaves an
+      # operator believing they have off-host copies when they stopped weeks
+      # ago. And is the newest dump THERE recent? The key opening the bucket
+      # says nothing about whether anything has arrived lately -- this used to
+      # stay green while copying nothing.
+      #
+      # A host with no dump yet has nothing to be late with, so the second
+      # question is only asked once the first local backup exists.
+      test:
+        - CMD-SHELL
+        - |
+          rclone lsd "$$BACKUP_TARGET" >/dev/null 2>&1 || exit 1
+          ls "/data/sites/$$SITE_NAME/private/backups"/*-database*.sql.gz >/dev/null 2>&1 || exit 0
+          dest=$$(cat /tmp/offsite.dest 2>/dev/null)
+          [ -n "$$dest" ] || exit 1
+          rclone lsf "$$dest" --files-only --max-age "$${OFFSITE_MAX_AGE_HOURS:-28}h" --include "*-database*.sql.gz" 2>/dev/null | grep -q .
       interval: 300s
-      timeout: 30s
+      timeout: 60s
       retries: 3
-      start_period: 60s
+      # Long enough for the first copy of a week of backups to land before a
+      # missing dump counts against it. A passing check ends it early.
+      start_period: 1h
     deploy:
       resources:
         limits:
