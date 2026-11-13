@@ -5,7 +5,7 @@ import EventModal from '@/components/Modals/EventModal.vue'
 
 // The real EventModal and composables/event (time rules, validation); the
 // Event list resource records what is saved.
-const S = vi.hoisted(() => ({ insert: [], setValue: [] }))
+const S = vi.hoisted(() => ({ insert: [], setValue: [], gates: [] }))
 
 vi.mock('frappe-ui', async (importOriginal) => {
   const none = (name) => ({ name, render: () => null })
@@ -19,6 +19,8 @@ vi.mock('frappe-ui', async (importOriginal) => {
   })
   return {
     ...(await importOriginal()),
+    // the Contact lookups for typed attendees stay pending until released
+    call: () => new Promise((resolve) => S.gates.push(resolve)),
     createListResource: events,
     createResource: events,
     Switch: none('Switch'),
@@ -71,6 +73,7 @@ async function open(event) {
 beforeEach(() => {
   S.insert.length = 0
   S.setValue.length = 0
+  S.gates.length = 0
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(2026, 9, 30, 23, 10)) // 30 Oct, 23:10 local
 })
@@ -149,5 +152,59 @@ describe('EventModal dates', () => {
     expect(m.error).toBe('End Time Should Be After Start Time')
     expect(m._event.toTime).toBe('10:00')
     expect(m._event.toDate).toBe('2026-10-28')
+  })
+})
+
+describe('EventModal save re-entry', () => {
+  const typedAttendee = {
+    email: 'new.person@example.com',
+    reference_doctype: 'Contact',
+    reference_docname: 'new',
+  }
+  async function release() {
+    for (let i = 0; i < 20; i++) {
+      while (S.gates.length) S.gates.shift()({ name: 'CT-1' })
+      await flush()
+    }
+  }
+
+  it('a second Save while the attendee Contacts resolve creates one event', async () => {
+    const m = await open()
+    m._event.title = 'Site visit'
+    m._event.event_participants = [typedAttendee]
+    m.update() // parks on the Contact lookup
+    expect(m.saving).toBe(true)
+    m.update() // the second click
+    await release()
+    expect(S.insert).toHaveLength(1)
+    expect(S.insert[0].event_participants[0].reference_docname).toBe('CT-1')
+    expect(m.saving).toBe(false)
+  })
+
+  it('a second Update while the attendee Contacts resolve saves once', async () => {
+    const m = await open({
+      name: 'EV-9',
+      subject: 'Call',
+      starts_on: '2026-10-28 09:00:00',
+      ends_on: '2026-10-28 10:00:00',
+      all_day: 0,
+      event_participants: [typedAttendee],
+    })
+    m._event.title = 'Call (moved)'
+    m.update()
+    m.update()
+    await release()
+    expect(S.setValue).toHaveLength(1)
+    expect(m.saving).toBe(false)
+  })
+
+  it('a refused save leaves the form usable', async () => {
+    const m = await open()
+    m._event.title = 'Site visit'
+    m._event.toDate = '2026-10-29' // ends before it starts
+    m.update()
+    expect(m.error).toBeTruthy()
+    expect(m.saving).toBe(false)
+    expect(S.insert).toHaveLength(0)
   })
 })

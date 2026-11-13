@@ -212,9 +212,10 @@
             "
             :disabled="!dirty"
             :loading="
-              mode === 'edit'
+              saving ||
+              (mode === 'edit'
                 ? eventsResource.setValue.loading
-                : eventsResource.insert.loading
+                : eventsResource.insert.loading)
             "
             @click="update"
           />
@@ -276,6 +277,7 @@ const loadedTables = ref({ event_participants: true, notifications: true })
 
 const title = ref(null)
 const error = ref(null)
+const saving = ref(false)
 const mode = computed(() => {
   return _event.value.id == 'duplicate'
     ? 'duplicate'
@@ -405,7 +407,7 @@ function updateTime(t, fromTime = false) {
   }
 }
 
-function update() {
+async function update() {
   error.value = null
   if (!_event.value.title) {
     error.value = __('Title is required')
@@ -425,10 +427,19 @@ function update() {
     return
   }
 
-  if (_event.value.id && _event.value.id !== 'duplicate') {
-    updateEvent()
-  } else {
-    createEvent()
+  // Both paths await the attendees' Contacts before they submit, and the
+  // resource's own `loading` is false until then: without this flag a second
+  // click in that window saves a second event (and a second Contact).
+  if (saving.value) return
+  saving.value = true
+  try {
+    if (_event.value.id && _event.value.id !== 'duplicate') {
+      await updateEvent()
+    } else {
+      await createEvent()
+    }
+  } finally {
+    saving.value = false
   }
 }
 
