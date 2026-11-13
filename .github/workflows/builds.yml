@@ -417,10 +417,24 @@ jobs:
           # sites/apps.json; .git itself does not survive the build. The image
           # is tagged sha-<this commit> and promoted on this commit's checks,
           # so anything else in it is a mislabelled, unverified build.
+          #
+          # The shape read here is what the published v3.30.0 image carries:
+          #   {"crm": {"is_repo": true, "resolution": {"commit_hash": "<sha>",
+          #    "branch": "v3.30.0"}, ...}, "frappe": {...}, ...}
+          # A bench that stops writing it must fail with a sentence, not a
+          # KeyError: this step first runs for real after a release tag exists.
           built_sha=$(docker run --rm --entrypoint sh "$ref" -c 'cat sites/apps.json' \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin)["crm"]["resolution"]["commit_hash"])')
+            | python3 -c '
+          import json, sys
+          try:
+              sha = json.load(sys.stdin)["crm"]["resolution"]["commit_hash"]
+          except Exception as e:
+              sha = "unreadable: %r" % (e,)
+          print(sha or "not recorded")') || built_sha="unreadable: could not run the image"
           if [ "$built_sha" != "$GITHUB_SHA" ]; then
-            echo "::error::$ref was built from crm at '$built_sha', not from $GITHUB_SHA."
+            echo "::error::$ref does not say it was built from $GITHUB_SHA."
+            echo "::error::sites/apps.json -> crm.resolution.commit_hash is: $built_sha"
+            echo "::error::If bench changed that file's shape, update this step; the image is not promoted meanwhile."
             exit 1
           fi
           echo "$ref was built from $GITHUB_SHA."
