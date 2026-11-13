@@ -18,6 +18,15 @@ import { packStore } from '@/offline/db'
 
 const OWNER_KEY = OFFLINE_OWNER_KEY
 
+/** The user this device's offline stores are claimed for, or null. */
+export function offlineOwner() {
+  try {
+    return localStorage.getItem(OWNER_KEY)
+  } catch {
+    return null
+  }
+}
+
 /**
  * Empty the store and forget its owner, so the next load starts clean even
  * for the same user (a response still in flight can land after the clear).

@@ -16,13 +16,22 @@ from datetime import timedelta
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from crm.api.offline import HISTORY_DAYS, TEXT_LIMIT, get_pack, handshake
+from crm.api.auth import forget_field_user
+from crm.api.offline import (
+	FIELD_USER_COOKIE,
+	HISTORY_DAYS,
+	PACK_MAX_AGE_DAYS,
+	TEXT_LIMIT,
+	get_pack,
+	handshake,
+)
 from crm.api.rep_plan import complete_item, save_plan
 from crm.install import ensure_visit_event_category
 
 REP = "pack-rep@crmtest.test"
 OTHER = "pack-other@crmtest.test"
 OUTSIDER = "pack-outsider@crmtest.test"
+MANAGER = "pack-manager@crmtest.test"
 
 
 def make_user(email: str, role: str | None) -> None:
@@ -47,6 +56,7 @@ class FieldPackTest(IntegrationTestCase):
 		make_user(REP, "Sales User")
 		make_user(OTHER, "Sales User")
 		make_user(OUTSIDER, None)
+		make_user(MANAGER, "Sales Manager")
 		# committed: each test rolls back, and the users must outlive the first
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
@@ -109,6 +119,55 @@ class FieldPackTest(IntegrationTestCase):
 		names = {row["name"] for row in self.pack()["contacts"]}
 		self.assertIn(mine, names)
 		self.assertNotIn(theirs, names)
+
+	def test_a_contact_filed_under_the_customers_display_name_comes_along(self):
+		frappe.db.set_value("CRM Organization", self.mine, "organization_name", "Pack Renamed Mining")
+		contact = self.contact("Packrenamed", "Pack Renamed Mining")
+		self.assertIn(contact, {row["name"] for row in self.pack()["contacts"]})
+
+	def test_people_at_no_customer_stay_off_the_phone(self):
+		# a rep can read these online; a phone at a site has no use for them
+		blank = self.contact("Packblank", "")
+		typed = self.contact("Packtyped", "Some Company Nobody Recorded")
+		names = {row["name"] for row in self.pack()["contacts"]}
+		self.assertNotIn(blank, names)
+		self.assertNotIn(typed, names)
+
+	def test_a_deal_on_another_reps_customer_follows_the_apps_own_rule_for_its_people(self):
+		deal = self.deal(self.theirs, REP)
+		colleague = self.contact("Packcolleague", self.theirs)
+		pack = self.pack()
+		self.assertIn(deal, {row["name"] for row in pack["deals"]})
+		self.assertIn(self.theirs, {row["name"] for row in pack["organizations"]})
+		# the customer is the rep's to see through the deal, and so are the people
+		# at it: this pins that the pack follows the app's own rule, either way
+		online = frappe.get_list("Contact", filters={"name": colleague}, pluck="name", user=REP)
+		self.assertEqual(colleague in {row["name"] for row in pack["contacts"]}, bool(online))
+
+	def test_a_note_on_another_reps_deal_stays_off_the_phone(self):
+		foreign_deal = self.deal(self.theirs, OTHER)
+		frappe.set_user(OTHER)
+		frappe.get_doc(
+			{
+				"doctype": "FCRM Note",
+				"title": "Pack private pricing",
+				"content": "Do not share",
+				"reference_doctype": "CRM Deal",
+				"reference_docname": foreign_deal,
+			}
+		).insert()
+		self.assertNotIn("Pack private pricing", {row["title"] for row in self.pack()["notes"]})
+
+	def test_with_all_customers_visible_the_pack_follows(self):
+		frappe.db.set_single_value("CRM Access Settings", "rep_customer_scope", "All customers")
+		names = {row["name"] for row in self.pack()["organizations"]}
+		self.assertTrue({self.mine, self.theirs} <= names)
+
+	def test_a_manager_carries_what_a_manager_sees(self):
+		make_user(MANAGER, "Sales Manager")
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		names = {row["name"] for row in self.pack(MANAGER)["organizations"]}
+		self.assertTrue({self.mine, self.theirs} <= names)
 
 	def test_open_deals_come_along_and_closed_ones_do_not(self):
 		won = frappe.get_all("CRM Deal Status", filters={"type": "Won"}, pluck="name", limit=1)
@@ -270,3 +329,35 @@ class FieldPackTest(IntegrationTestCase):
 		self.assertEqual(out["user"], REP)
 		self.assertEqual(out["csrf_token"], frappe.sessions.get_csrf_token())
 		self.assertAlmostEqual(out["server_epoch"], frappe.utils.now_datetime().timestamp(), delta=86400)
+
+
+class FieldUserCookieTest(IntegrationTestCase):
+	"""The cookie that tells a cached shell whose saved copy to show."""
+
+	def setUp(self):
+		super().setUp()
+		from frappe.auth import CookieManager
+
+		make_user(REP, "Sales User")
+		frappe.local.cookie_manager = CookieManager()
+		self.addCleanup(frappe.set_user, "Administrator")
+
+	def test_rendering_the_app_names_the_user_for_as_long_as_a_pack_lasts(self):
+		from crm.www.crm import remember_field_user
+
+		frappe.set_user(REP)
+		remember_field_user()
+		cookie = frappe.local.cookie_manager.cookies[FIELD_USER_COOKIE]
+		self.assertEqual(cookie["value"], REP)
+		self.assertEqual(cookie["max_age"], PACK_MAX_AGE_DAYS * 86400)
+
+	def test_logout_deletes_it(self):
+		forget_field_user()
+		self.assertIn(FIELD_USER_COOKIE, frappe.local.cookie_manager.to_delete)
+
+	def test_logout_is_wired_to_every_way_out(self):
+		self.assertIn("crm.api.auth.forget_field_user", frappe.get_hooks("on_logout"))
+
+	def test_a_logout_with_no_request_does_not_fail(self):
+		del frappe.local.cookie_manager
+		forget_field_user()

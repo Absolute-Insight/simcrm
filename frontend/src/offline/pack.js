@@ -10,6 +10,7 @@
 import { reactive, shallowRef } from 'vue'
 import { call } from 'frappe-ui'
 import { isMobileView } from '@/composables/settings'
+import { offlineOwner } from '@/utils/offlineCache'
 import { getSessionUser } from '@/utils/session'
 import { packExpired } from '@/utils/fieldPack'
 import { connectivity, onOnline } from './connectivity'
@@ -32,6 +33,8 @@ export const packState = reactive({
   syncedAt: null,
   /* The last sync's failure, cleared by the next success. */
   error: null,
+  /* The pack's shelf life in days, as the server set it. */
+  maxAgeDays: null,
   /* The server refused: this user has no sales role. Stop asking. */
   refused: false,
 })
@@ -54,6 +57,7 @@ export function loadPack() {
       ) {
         fieldPack.value = stored.pack
         packState.syncedAt = stored.syncedAt
+        packState.maxAgeDays = stored.pack.max_age_days
       } else if (stored) {
         await packStore.del(PACK_KEY)
       }
@@ -78,12 +82,21 @@ export function syncPack() {
   syncing ||= (async () => {
     await loadPack()
     packState.syncing = true
+    const user = getSessionUser()
     try {
       const answer = await call('crm.api.offline.get_pack', {
         known_hash: fieldPack.value?.hash || undefined,
       })
-      // a sync that outlived a logout must not write the old user's rows back
-      if (answer.user !== getSessionUser()) return false
+      // A sync that outlived a logout must not write the old user's rows back.
+      // The owner key is what a logout clears, in a shell too -- where the
+      // session user is read from the page and would still say the old name.
+      if (
+        answer.user !== user ||
+        answer.user !== getSessionUser() ||
+        offlineOwner() !== user
+      ) {
+        return false
+      }
       const syncedAt = Date.now()
       const pack = answer.unchanged
         ? {
@@ -94,6 +107,7 @@ export function syncPack() {
         : answer
       fieldPack.value = pack
       packState.syncedAt = syncedAt
+      packState.maxAgeDays = pack.max_age_days
       packState.error = null
       if (hasIndexedDB()) {
         await packStore.set(PACK_KEY, { pack, syncedAt }).catch((error) => {
@@ -118,7 +132,24 @@ export function syncPack() {
 function due() {
   if (packState.refused || !connectivity.online) return false
   if (document.visibilityState === 'hidden') return false
-  return !packState.syncedAt || Date.now() - packState.syncedAt > REFRESH_MS
+  // a little under the interval: the timer that asks fires every REFRESH_MS,
+  // and a sync stamped just after one tick must not be skipped by the next
+  return (
+    !packState.syncedAt || Date.now() - packState.syncedAt > REFRESH_MS * 0.9
+  )
+}
+
+/**
+ * Drop a pack that has outlived its shelf life while the app stayed open.
+ * loadPack checks once, at start; a phone left on Field for a fortnight with
+ * no signal would otherwise show its customers for as long as it stayed open.
+ */
+export function dropExpiredPack() {
+  if (!fieldPack.value) return
+  if (!packExpired(packState.syncedAt, packState.maxAgeDays)) return
+  fieldPack.value = null
+  packState.syncedAt = null
+  if (hasIndexedDB()) packStore.del(PACK_KEY).catch(() => {})
 }
 
 /** This device uses field mode: keep its pack fresh from now on. */
@@ -149,6 +180,7 @@ export function startFieldSync() {
   if (started || !getSessionUser()) return
   started = true
   const refresh = () => {
+    dropExpiredPack()
     if (wantsPack() && due()) syncPack()
   }
   loadPack().then(refresh)

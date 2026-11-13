@@ -47,6 +47,11 @@ HISTORY_DAYS = 90
 # the pack so the client and the server cannot disagree about the number.
 PACK_MAX_AGE_DAYS = 14
 
+# Set by crm/www/crm.py on every page render, deleted on logout: the user a
+# cached shell may show a saved copy for. Mirrored in the frontend's
+# offline/bootSnapshot.js.
+FIELD_USER_COOKIE = "crm_field_user"
+
 # Row caps. Far above what one rep carries (MBP's busiest holds a few hundred
 # customers); they bound the payload for a manager on a large site, and
 # `truncated` says so rather than letting a short list pass for a complete one.
@@ -110,7 +115,7 @@ def _pack_body() -> dict:
 	since = today - timedelta(days=HISTORY_DAYS)
 
 	organizations = _organizations()
-	contacts = _contacts()
+	contacts = _contacts(organizations)
 	deals = _deals()
 	history = _history(since)
 	notes = _notes(since)
@@ -181,9 +186,23 @@ def _addresses(names: set[str]) -> dict[str, dict]:
 	return {row.pop("name"): row for row in rows}
 
 
-def _contacts() -> list[dict]:
+def _contacts(organizations: list[dict]) -> list[dict]:
+	"""The people at the customers being carried, and nobody else.
+
+	A rep can read more contacts than these online -- anyone with no company,
+	or a company typed as free text -- but a phone has no use for them at a
+	site, and what is not on it cannot be lost with it. ``company_name`` holds
+	the customer's record name on most rows and its display name on some, so
+	both are matched, as the row scoping does.
+	"""
+	companies = {row.name for row in organizations} | {
+		row.organization_name for row in organizations if row.organization_name
+	}
+	if not companies:
+		return []
 	return frappe.get_list(
 		"Contact",
+		filters={"company_name": ("in", sorted(companies))},
 		fields=["name", "full_name", "company_name", "designation", "email_id", "mobile_no", "phone"],
 		order_by="full_name asc",
 		limit=MAX_CONTACTS,

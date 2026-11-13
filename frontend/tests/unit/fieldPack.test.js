@@ -35,6 +35,12 @@ describe('packExpired', () => {
     expect(packExpired(now, undefined, now)).toBe(true)
     expect(packExpired(now, 0, now)).toBe(true)
   })
+
+  it('does not let a clock moved back keep a pack alive', () => {
+    expect(packExpired(now + 3 * DAY, 14, now)).toBe(true)
+    // an hour of drift is a device clock, not a trick
+    expect(packExpired(now + 3600000, 14, now)).toBe(false)
+  })
 })
 
 describe('indexPack', () => {

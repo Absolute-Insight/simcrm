@@ -11,14 +11,17 @@ const DAY_MS = 86400000
  *
  * A phone that has not reached the server for `maxAgeDays` drops what it
  * holds: the customer may have moved to another rep since, and a lost phone
- * should not carry a customer list indefinitely. An unreadable timestamp
- * counts as expired -- the safe side.
+ * should not carry a customer list indefinitely. An unreadable timestamp, or
+ * one more than a day ahead of the clock, counts as expired -- the safe side.
  */
 export function packExpired(syncedAt, maxAgeDays, now = Date.now()) {
   const at = Number(syncedAt)
   const days = Number(maxAgeDays)
   if (!Number.isFinite(at) || at <= 0) return true
   if (!Number.isFinite(days) || days <= 0) return true
+  // Saved "in the future" means the device clock was moved back since, which
+  // is also how one would try to keep a pack past its date.
+  if (at > now + DAY_MS) return true
   return now - at > days * DAY_MS
 }
 
