@@ -109,7 +109,7 @@ def _hidden_organizations(org_cond, column="name"):
 	return frappe.qb.from_(Org).select(Org[column]).where(Org[column].isnotnull()).where(~org_cond)
 
 
-def visible_contact_condition(user: str | None = None, for_write: bool = False):
+def visible_contact_condition(user: str | None = None, for_write: bool = False, own: bool = True):
 	"""Contacts at a customer the user cannot see are hidden with it.
 
 	``company_name`` is free text, so it is matched on the display name as well as
@@ -117,6 +117,9 @@ def visible_contact_condition(user: str | None = None, for_write: bool = False):
 	company names no organization stays visible, as does one the user created or
 	one on a deal they can read. ``for_write`` holds the contact to the customer
 	being theirs, as for the customer itself: a deal there gives read only.
+	``own=False`` leaves out "one the user created", for the address rule's write
+	side: having added a person at a customer does not make their address the
+	user's to move once the customer is somebody else's.
 	"""
 	user = user or frappe.session.user
 	org_cond = visible_organization_condition(user, for_write)
@@ -124,14 +127,15 @@ def visible_contact_condition(user: str | None = None, for_write: bool = False):
 		return None
 	Contact = frappe.qb.DocType("Contact")
 	cond = (
-		(Contact.owner == user)
-		| Contact.company_name.isnull()
+		Contact.company_name.isnull()
 		| (Contact.company_name == "")
 		| (
 			Contact.company_name.notin(_hidden_organizations(org_cond))
 			& Contact.company_name.notin(_hidden_organizations(org_cond, "organization_name"))
 		)
 	)
+	if own:
+		cond = (Contact.owner == user) | cond
 	if for_write:
 		return cond
 	Row = frappe.qb.DocType("CRM Contacts").as_("_cust_row")
@@ -178,7 +182,7 @@ def visible_address_condition(user: str | None = None, for_write: bool = False):
 	on_record = frappe.qb.from_(Org).select(Org.address).where(Org.address.isnotnull()).where(~org_cond)
 	Contact = frappe.qb.DocType("Contact")
 	ContactLink = frappe.qb.DocType("Dynamic Link").as_("_cust_contact_link")
-	hidden_contact = ~visible_contact_condition(user, for_write)
+	hidden_contact = ~visible_contact_condition(user, for_write, own=not for_write)
 	# isnotnull, as in _hidden_organizations: most contacts have no address, and
 	# one NULL in a NOT IN subquery would hide every address there is
 	on_contact = (
@@ -196,12 +200,20 @@ def visible_address_condition(user: str | None = None, for_write: bool = False):
 			& ContactLink.link_name.isin(frappe.qb.from_(Contact).select(Contact.name).where(hidden_contact))
 		)
 	)
-	return (Address.owner == user) | (
+	tied_to_nothing_hidden = (
 		Address.name.notin(linked)
 		& Address.name.notin(on_record)
 		& Address.name.notin(on_contact)
 		& Address.name.notin(linked_to_contact)
 	)
+	if for_write:
+		# Having written an address is not a claim on it, any more than having
+		# read it: once the customer it is at is another rep's, its author could
+		# still name it on a record of their own, which hid it from that rep and
+		# would have pushed it to the ERP as the wrong customer's street. One
+		# just written names nothing yet, so it passes on the clauses alone.
+		return tied_to_nothing_hidden
+	return (Address.owner == user) | tied_to_nothing_hidden
 
 
 def visible_event_condition(user: str | None = None):

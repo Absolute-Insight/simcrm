@@ -627,6 +627,67 @@ class TestCustomerScope(IntegrationTestCase):
 		doc.save(ignore_permissions=True)
 		self.assertEqual(frappe.db.get_value("CRM Organization", self.org_a, "address"), theirs.name)
 
+	def _address_by(self, user, **fields):
+		address = self._address("Written by a rep", **fields)
+		frappe.db.set_value("Address", address.name, "owner", user)
+		return address
+
+	def test_having_written_an_address_is_not_a_claim_on_it(self):
+		"""Rep A wrote the address of a customer that is now rep B's. Naming it on
+		a customer of their own hid it from B, and the push would have sent it to
+		the ERP as that customer's street."""
+		address = self._address_by(REP_A)
+		frappe.db.set_value("CRM Organization", self.org_b, "address", address.name)
+		mine = self._contact(self.org_a)
+		self.assertTrue(has_address_permission(address, "read", REP_A), "control: still theirs to read")
+		self.assertFalse(has_address_permission(address, "write", REP_A))
+		frappe.set_user(REP_A)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Organization", self.org_a, "address", address.name)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("Contact", mine.name, "address", address.name)
+		frappe.set_user("Administrator")
+		self.assertFalse(frappe.db.get_value("CRM Organization", self.org_a, "address"))
+		self.assertIn(address.name, self.addresses_for(REP_B))
+		self.assertTrue(has_address_permission(address, "write", REP_B))
+
+	def test_having_added_a_contact_is_not_a_claim_on_their_address(self):
+		"""The same, by way of a contact rep A added at what is now B's customer."""
+		contact, address = self._contact_with_address(self.org_b)
+		frappe.db.set_value("Contact", contact.name, "owner", REP_A)
+		self.assertTrue(
+			has_contact_permission(contact, "write", REP_A), "control: the contact is still theirs"
+		)
+		self.assertFalse(has_address_permission(address, "write", REP_A))
+		frappe.set_user(REP_A)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Organization", self.org_a, "address", address.name)
+		frappe.set_user("Administrator")
+		self.assertIn(address.name, self.addresses_for(REP_B))
+
+	def test_an_address_a_rep_just_wrote_is_still_theirs_to_assign_and_edit(self):
+		"""The modal's flow, through the document API: the Address is inserted with
+		no links, then a customer and a contact are pointed at it, then it is edited."""
+		mine = self._contact(self.org_a)
+		frappe.set_user(REP_A)
+		for target, name in (("CRM Organization", self.org_a), ("Contact", mine.name)):
+			with self.subTest(target=target):
+				address = frappe.get_doc(
+					{
+						"doctype": "Address",
+						"address_title": f"Fresh for {target}",
+						"address_type": "Office",
+						"address_line1": "1 Road",
+						"city": "Boksburg",
+						"country": "South Africa",
+					}
+				).insert()
+				self.assertTrue(frappe.has_permission("Address", "write", doc=address.name))
+				frappe.client.set_value(target, name, "address", address.name)
+				self.assertEqual(frappe.db.get_value(target, name, "address"), address.name)
+				frappe.client.set_value("Address", address.name, "address_line1", "2 Road")
+				self.assertEqual(frappe.db.get_value("Address", address.name, "address_line1"), "2 Road")
+
 	def test_contacts_without_an_address_do_not_hide_every_address(self):
 		"""One NULL in a NOT IN subquery makes the whole test NULL."""
 		self._contact(self.org_b)
