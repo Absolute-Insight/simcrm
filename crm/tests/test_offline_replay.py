@@ -572,6 +572,21 @@ class PlanOfflineTest(ReplayTestCase):
 		self.assertNotIn(gone, {row["name"] for row in rows})
 		self.assertEqual([row["activity_type"] for row in rows], ["Admin"])
 
+	def test_a_plan_with_no_day_is_refused_not_put_on_today(self):
+		for missing in ({}, {"planned_date": ""}, {"planned_date": None}):
+			with self.assertRaises(frappe.ValidationError):
+				replay(new_id(), "plan_item", {"activity_type": "Admin", **missing})
+		self.assertEqual(self.items(), [])
+
+	def test_a_visit_needs_a_customer_that_exists(self):
+		for organization in (None, "", "A Customer Deleted While Offline"):
+			with self.assertRaises(frappe.ValidationError):
+				replay(
+					new_id(),
+					"plan_item",
+					{"activity_type": "Visit", "planned_date": self.tomorrow(), "organization": organization},
+				)
+
 	def test_the_same_plan_entry_sent_twice_plans_once(self):
 		request_id = new_id()
 		payload = {"activity_type": "Admin", "planned_date": self.tomorrow(), "note": "Paperwork"}

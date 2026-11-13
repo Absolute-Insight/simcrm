@@ -72,7 +72,7 @@
 <script setup>
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { connectivity } from '@/offline/connectivity'
-import { savedPages } from '@/offline/sheets'
+import { isSheetFileUrl, savedPages } from '@/offline/sheets'
 import { useField } from '@/offline/useField'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import LucideChevronLeft from '~icons/lucide/chevron-left'
@@ -89,8 +89,12 @@ const meta = computed(() =>
   (pack.value?.sheets ?? []).find((row) => row.name === props.sheet),
 )
 
+let gone = false
+
 onMounted(async () => {
   const kept = await savedPages(props.sheet)
+  // left before the pages were read: no URL is made that nothing will revoke
+  if (gone) return
   if (kept?.length) {
     pages.value = kept.map((page) => {
       const src = URL.createObjectURL(page.blob)
@@ -98,16 +102,22 @@ onMounted(async () => {
       return { page: page.page, width: page.width, height: page.height, src }
     })
   } else if (connectivity.online) {
-    pages.value = (meta.value?.pages ?? []).map((page) => ({
-      page: page.page,
-      width: page.width,
-      height: page.height,
-      src: page.image,
-    }))
+    // the same rule the download applies: only the site's own files are shown
+    pages.value = (meta.value?.pages ?? [])
+      .filter((page) => isSheetFileUrl(page.image))
+      .map((page) => ({
+        page: page.page,
+        width: page.width,
+        height: page.height,
+        src: page.image,
+      }))
   }
   loading.value = false
 })
 
 // a blob URL holds its blob in memory until it is revoked
-onBeforeUnmount(() => objectUrls.forEach((url) => URL.revokeObjectURL(url)))
+onBeforeUnmount(() => {
+  gone = true
+  objectUrls.forEach((url) => URL.revokeObjectURL(url))
+})
 </script>

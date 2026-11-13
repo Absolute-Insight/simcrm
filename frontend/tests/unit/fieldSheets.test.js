@@ -54,9 +54,10 @@ describe('keeping a sheet', () => {
     const { keepSheet, savedSheets, savedPages } = await load()
     await keepSheet(sheet())
     expect(fetch).toHaveBeenCalledTimes(2)
-    expect(fetch).toHaveBeenCalledWith('/private/files/flanges-p1.png', {
-      credentials: 'same-origin',
-    })
+    expect(fetch).toHaveBeenCalledWith(
+      '/private/files/flanges-p1.png',
+      expect.objectContaining({ credentials: 'same-origin' }),
+    )
     expect(savedSheets.byName.flanges).toEqual({
       modified: '2026-11-01 10:00:00',
       pages: 2,
@@ -103,6 +104,11 @@ describe('keeping a sheet', () => {
       '//elsewhere.example/p1.png',
       '/api/method/frappe.client.get_list?doctype=User',
       '/files/../private/backups/site.sql',
+      '/files/..',
+      '/files/%2e%2e',
+      '/private/files/..%2f..%2fapi%2fmethod%2fx',
+      '/private/files/a%5cb.png',
+      '/private/files/%zz.png',
       '',
     ]) {
       await expect(
@@ -110,6 +116,27 @@ describe('keeping a sheet', () => {
       ).rejects.toThrow()
     }
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('accepts the names the server actually stores', async () => {
+    const { isSheetFileUrl } = await load()
+    expect(isSheetFileUrl('/private/files/flanges-p1.png')).toBe(true)
+    expect(isSheetFileUrl('/files/Valve%20chart%202.png')).toBe(true)
+    expect(
+      isSheetFileUrl('/private/files/qa-offline-flanges-p1a3f2c.png'),
+    ).toBe(true)
+  })
+
+  it('a download that stalls is given up, and the tab is usable again', async () => {
+    const { keepSheet, savedSheets } = await load(
+      vi.fn(async (_url, { signal }) => {
+        expect(signal).toBeDefined()
+        throw new DOMException('timed out', 'TimeoutError')
+      }),
+    )
+    await expect(keepSheet(sheet())).rejects.toThrow(/could not be downloaded/)
+    expect(savedSheets.saving).toBeNull()
+    expect(savedSheets.byName).toEqual({})
   })
 
   it('refuses a page too large to keep', async () => {

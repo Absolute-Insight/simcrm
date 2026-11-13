@@ -16,10 +16,38 @@ const sheetKey = (name) => `sheet:${name}`
 /* A page image is a scan of one PDF page. This is far past that and exists so
    a mistake on the server cannot fill a phone. */
 const MAX_PAGE_BYTES = 8 * 1024 * 1024
-/* Only the site's own file URLs are fetched, whatever the pack says: one file
-   name directly under /files or /private/files. No further path, so no `..`
-   for the browser to resolve into somewhere else on the site. */
-const FILE_URL = /^\/(private\/)?files\/[^/?#\\]+$/
+/* How long one page may take before the download is given up. Without it a
+   connection that stalls mid-sheet leaves "saving" set for good, and every
+   button on the Sheets tab disabled with it. */
+const PAGE_TIMEOUT_MS = 30000
+
+/**
+ * Whether `url` is one of the site's own stored files: a plain file name
+ * directly under /files or /private/files. The pack comes from the server,
+ * but what the phone fetches and shows is checked here all the same -- no
+ * other origin, no further path, no `..` (spelled out or percent-encoded) for
+ * the browser to resolve into somewhere else on the site.
+ */
+export function isSheetFileUrl(url) {
+  const match = /^\/(?:private\/)?files\/([^/?#\\]+)$/.exec(String(url ?? ''))
+  if (!match) return false
+  let name
+  try {
+    name = decodeURIComponent(match[1])
+  } catch {
+    return false
+  }
+  return name !== '.' && name !== '..' && !/[/\\]/.test(name)
+}
+
+function pageSignal() {
+  if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
+    return AbortSignal.timeout(PAGE_TIMEOUT_MS)
+  }
+  const controller = new AbortController()
+  setTimeout(() => controller.abort(), PAGE_TIMEOUT_MS)
+  return controller.signal
+}
 
 export const savedSheets = reactive({
   loaded: false,
@@ -69,10 +97,18 @@ export async function keepSheet(sheet) {
     const pages = []
     let bytes = 0
     for (const page of sheet.pages ?? []) {
-      if (!FILE_URL.test(String(page.image ?? ''))) {
+      if (!isSheetFileUrl(page.image)) {
         throw new Error(__('A page of this sheet has no file.'))
       }
-      const response = await fetch(page.image, { credentials: 'same-origin' })
+      let response
+      try {
+        response = await fetch(page.image, {
+          credentials: 'same-origin',
+          signal: pageSignal(),
+        })
+      } catch {
+        throw new Error(__('A page of this sheet could not be downloaded.'))
+      }
       const type = response.headers.get('content-type') || ''
       if (!response.ok || !type.startsWith('image/')) {
         throw new Error(__('A page of this sheet could not be downloaded.'))

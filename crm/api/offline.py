@@ -616,8 +616,12 @@ def _replay_plan_item(payload: dict, moment: datetime, late: bool) -> None:
 	every rule the Planner's own save does (the horizon, the day lock, the
 	customer's owner).
 	"""
+	planned_date = _name(payload, "planned_date")[:10]
+	if not planned_date:
+		# getdate("") is today: a missing day must not quietly become one
+		frappe.throw(_("Choose the day."), frappe.ValidationError)
 	try:
-		day = frappe.utils.getdate(_name(payload, "planned_date")[:10])
+		day = frappe.utils.getdate(planned_date)
 	except Exception:
 		frappe.throw(_("That date could not be read."), frappe.ValidationError)
 	activity_type = _name(payload, "activity_type")
@@ -627,12 +631,20 @@ def _replay_plan_item(payload: dict, moment: datetime, late: bool) -> None:
 		# planned for a day that had already passed when the rep planned it
 		frappe.throw(_("Activities are planned for today or later."), frappe.ValidationError)
 
+	organization = _name(payload, "organization") or None
+	if activity_type in EVENT_KINDS and not (
+		organization and frappe.db.exists("CRM Organization", organization)
+	):
+		# save_plan drops a customer that no longer exists and keeps the row. A
+		# visit to nobody is not what the rep planned; say so instead.
+		frappe.throw(_("Choose the customer for this {0}.").format(_(activity_type)), frappe.ValidationError)
+
 	monday, _sunday = week_of(day)
 	row = {
 		"activity_type": activity_type,
 		"planned_date": str(day),
 		"note": _text(payload.get("note"), TITLE_LIMIT),
-		"organization": _name(payload, "organization") or None,
+		"organization": organization,
 	}
 	for attempt in range(2):
 		current = get_plan(str(monday))
