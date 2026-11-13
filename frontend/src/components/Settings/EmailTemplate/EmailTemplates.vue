@@ -24,22 +24,24 @@
       </div>
     </div>
 
-    <!-- loading state -->
-    <div
-      v-if="templates.loading"
-      class="flex mt-28 justify-between w-full h-full"
-    >
-      <Button
-        :loading="templates.loading"
-        variant="ghost"
-        class="w-full"
-        size="2xl"
-      />
+    <!-- loading state. A list resource keeps its request state on `.list`;
+         `templates.loading` is undefined, so this never showed and a slow or
+         failed load read as "no templates yet". First load only: a reload
+         (the filter, a save) keeps the list and its search box on screen. -->
+    <div v-if="firstLoad" class="flex mt-28 justify-between w-full h-full">
+      <Button :loading="true" variant="ghost" class="w-full" size="2xl" />
     </div>
+
+    <ErrorState
+      v-else-if="templates.list.error && !templates.data?.length && !filtering"
+      :error="templates.list.error"
+      :title="__('Could not load the email templates')"
+      :retry="() => templates.reload()"
+    />
 
     <!-- Empty State -->
     <EmptyState
-      v-else-if="!templates.loading && !templates.data?.length && !filtering"
+      v-else-if="!templates.data?.length && !filtering"
       name="Email Templates"
       :description="__('Add one to get started.')"
       :icon="EmailTemplateIcon"
@@ -47,7 +49,7 @@
 
     <!-- Email template list -->
     <div
-      v-if="!templates.loading && (templates.data?.length || filtering)"
+      v-if="!firstLoad && (templates.data?.length || filtering)"
       class="flex flex-col overflow-hidden"
     >
       <div
@@ -138,13 +140,10 @@
           {{ __('No templates match the current filter.') }}
         </li>
         <!-- Load More Button -->
-        <div
-          v-if="!templates.loading && templates.hasNextPage"
-          class="flex justify-center"
-        >
+        <div v-if="templates.hasNextPage" class="flex justify-center">
           <Button
             class="mt-3.5 p-2"
-            :loading="templates.loading"
+            :loading="templates.list.loading"
             :label="__('Load More')"
             icon-left="lucide-refresh-cw"
             @click="() => templates.next()"
@@ -158,6 +157,7 @@
 import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import EmailTemplateIcon from '@/components/Icons/EmailTemplateIcon.vue'
 import EmptyState from '../../ListViews/EmptyState.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
 import { useBroadcast } from '@/composables/useBroadcast'
 import { describeError } from '@/utils/describeError'
 import { TextInput, Select, Dropdown, toast } from 'frappe-ui'
@@ -176,6 +176,11 @@ const confirmDelete = ref(false)
 
 const filtering = computed(
   () => Boolean(search.value) || currentDoctype.value !== 'All',
+)
+// The first load, with nothing to show yet: the only time the list gives way
+// to a spinner.
+const firstLoad = computed(
+  () => templates.list.loading && !templates.data && !filtering.value,
 )
 
 // The list is paged on the server (EmailTemplatePage asks for 20), so the

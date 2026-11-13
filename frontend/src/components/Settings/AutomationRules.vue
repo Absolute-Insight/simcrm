@@ -24,9 +24,12 @@
     </div>
 
     <!-- The rule list is a table, so it gets the table skeleton rather than a
-         centred spinner: title, what it does, enabled, and the row actions. -->
+         centred spinner: title, what it does, enabled, and the row actions.
+         A list resource keeps its request state on `.list`; read off the
+         resource itself it is undefined, and neither branch below rendered.
+         First load only: a reload keeps the rows it has on screen. -->
     <SkeletonTable
-      v-if="rules.loading"
+      v-if="rules.list.loading && !rules.data"
       :columns="4"
       :rows="4"
       density="compact"
@@ -38,9 +41,9 @@
          fetch rejects with, so a dropped connection put the literal words
          "Failed to fetch" on screen with nothing to do about it. -->
     <ErrorState
-      v-else-if="rules.error"
+      v-else-if="rules.list.error && !rules.data?.length"
       class="flex-1"
-      :error="rules.error"
+      :error="rules.list.error"
       :title="__('Could not load the automation rules')"
       :retry="rules.reload"
     />

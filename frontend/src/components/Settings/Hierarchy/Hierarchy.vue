@@ -91,12 +91,23 @@
         </TextInput>
       </div>
       <div class="flex-1 min-h-0 overflow-y-auto">
+        <!-- `.list`: a list resource has no `loading` or `error` of its
+             own, so the spinner never showed and a failed load read as an
+             empty hierarchy. First load only: a move reloads the tree, and it
+             stays where it is while that runs. -->
         <div
-          v-if="nodes.loading"
+          v-if="nodes.list.loading && !nodes.data"
           class="flex items-center justify-center py-12"
         >
           <LoadingIndicator class="size-6" />
         </div>
+        <ErrorState
+          v-else-if="nodes.list.error && !nodes.data?.length"
+          compact
+          :error="nodes.list.error"
+          :title="__('Could not load the hierarchy')"
+          :retry="() => nodes.reload()"
+        />
         <EmptyState
           v-else-if="!visibleRoots.length"
           name="Users in Hierarchy"
@@ -253,6 +264,7 @@
 <script setup>
 import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
 import EmptyState from '@/components/ListViews/EmptyState.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
 import HierarchyRow from './HierarchyRow.vue'
 import HierarchyTree from './HierarchyTree.vue'
 import UserMultiSelect from './UserMultiSelect.vue'
@@ -483,7 +495,7 @@ function getCandidates(parent) {
 }
 
 const candidatesLoading = computed(
-  () => !!(usersResource.loading || nodes.loading),
+  () => !!(usersResource.loading || nodes.list.loading),
 )
 
 async function reparent(name, newParent) {
