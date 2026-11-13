@@ -584,6 +584,17 @@ const isDateValue = (value) =>
 const compareDate = (fieldAccess, op, value) =>
   `f"{${fieldAccess}}"[:${value.length}] ${op} "${value}"`
 
+/**
+ * A value as a Python string literal for the server's safe_eval.
+ *
+ * JSON's string syntax is a subset of Python's: `"` and `\` are escaped and a
+ * control character becomes \n, \t or \uXXXX, all of which Python reads the
+ * same way. Written by hand per branch, a value holding a quote or ending in
+ * a backslash made the whole expression a SyntaxError -- which an Assignment
+ * Rule swallows, so the rule silently never matched.
+ */
+const pyString = (value) => JSON.stringify(String(value))
+
 export const convertToConditions = ({ conditions, fieldPrefix }) => {
   if (!conditions || conditions.length === 0) {
     return ''
@@ -652,10 +663,10 @@ export const convertToConditions = ({ conditions, fieldPrefix }) => {
       }
 
       if (op === 'like') {
-        return `(${fieldAccess} and "${value}" in ${fieldAccess})`
+        return `(${fieldAccess} and ${pyString(value)} in ${fieldAccess})`
       }
       if (op === 'not like') {
-        return `(${fieldAccess} and "${value}" not in ${fieldAccess})`
+        return `(${fieldAccess} and ${pyString(value)} not in ${fieldAccess})`
       }
 
       if (op === 'between') {
@@ -669,7 +680,7 @@ export const convertToConditions = ({ conditions, fieldPrefix }) => {
           if (isDateValue(start) && isDateValue(end)) {
             return `(${fieldAccess} and ${compareDate(fieldAccess, '>=', start)} and ${compareDate(fieldAccess, '<=', end)})`
           }
-          return `(${fieldAccess} >= "${start}" and ${fieldAccess} <= "${end}")`
+          return `(${fieldAccess} >= ${pyString(start)} and ${fieldAccess} <= ${pyString(end)})`
         }
       }
 
@@ -682,24 +693,24 @@ export const convertToConditions = ({ conditions, fieldPrefix }) => {
       if (op === 'in' || op === 'not in') {
         let items
         if (Array.isArray(value)) {
-          items = value.map((v) => `"${String(v).trim()}"`)
+          items = value.map((v) => pyString(String(v).trim()))
         } else if (typeof value === 'string') {
-          items = value.split(',').map((v) => `"${v.trim()}"`)
+          items = value.split(',').map((v) => pyString(v.trim()))
         } else {
-          items = [`"${String(value).trim()}"`]
+          items = [pyString(String(value).trim())]
         }
         valueStr = `[${items.join(', ')}]`
         return `(${fieldAccess} and ${fieldAccess} ${op} ${valueStr})`
       }
 
       if (typeof value === 'string') {
-        valueStr = `"${value.replace(/"/g, '\\"')}"`
+        valueStr = pyString(value)
       } else if (typeof value === 'number' || typeof value === 'boolean') {
         valueStr = String(value)
       } else if (value === null || value === undefined) {
         return op === '==' || op === 'is' ? `not ${fieldAccess}` : fieldAccess
       } else {
-        valueStr = `"${String(value).replace(/"/g, '\\"')}"`
+        valueStr = pyString(value)
       }
 
       return `${fieldAccess} ${op} ${valueStr}`

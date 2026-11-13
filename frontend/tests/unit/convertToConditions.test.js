@@ -97,3 +97,53 @@ describe('convertToConditions between', () => {
     },
   )
 })
+
+describe('convertToConditions string values', () => {
+  const condition = (op, value) =>
+    convertToConditions({ conditions: [['d', op, value]] })
+  // a Python literal for the field's value, to compare against
+  const py = (text) => JSON.stringify(text)
+
+  it('a value ending in a backslash still compares equal', () => {
+    const typed = 'C:\\Temp\\'
+    expect(condition('==', typed)).toBe('d == "C:\\\\Temp\\\\"')
+    expect(evaluate(condition('==', typed), py(typed))).toBe('true')
+    expect(evaluate(condition('!=', typed), py(typed))).toBe('false')
+  })
+
+  it('a quote in the value does not end the literal', () => {
+    expect(evaluate(condition('==', 'say "hi"'), py('say "hi"'))).toBe('true')
+    expect(evaluate(condition('like', 'say "hi"'), py('say "hi" now'))).toBe(
+      'true',
+    )
+    expect(
+      evaluate(condition('not like', 'say "hi"'), py('say "hi" now')),
+    ).toBe('false')
+    expect(evaluate(condition('in', 'a"b, c\\'), py('a"b'))).toBe('true')
+    expect(evaluate(condition('in', ['a"b', 'c\\']), py('c\\'))).toBe('true')
+    expect(evaluate(condition('not in', 'a"b, c'), py('a"b'))).toBe('false')
+  })
+
+  it('a value cannot close the literal and add to the expression', () => {
+    // were the quote to end the string, this would be `d == "" or True or ""`
+    const typed = '" or True or "'
+    for (const op of ['==', 'like', 'in']) {
+      expect(evaluate(condition(op, typed), py('other'))).toBe('false')
+    }
+    expect(evaluate(condition('between', `a,${typed}`), py('other'))).toBe(
+      'false',
+    )
+  })
+
+  it('a line break or tab in the value stays inside the literal', () => {
+    const typed = 'line one\nline\ttwo'
+    expect(evaluate(condition('==', typed), py(typed))).toBe('true')
+  })
+
+  it('writes plain values as it always did', () => {
+    expect(condition('==', 'Acme')).toBe('d == "Acme"')
+    expect(condition('like', 'Acme')).toBe('(d and "Acme" in d)')
+    expect(condition('in', 'a, b')).toBe('(d and d in ["a", "b"])')
+    expect(condition('like', 4521)).toBe('(d and "4521" in d)')
+  })
+})
