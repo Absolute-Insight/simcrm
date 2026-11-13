@@ -644,3 +644,38 @@ class QuotaScopeTest(IntegrationTestCase):
 		frappe.client.set_value("CRM Quota", name, "amount", 72_000)
 		frappe.set_user("Administrator")
 		self.assertEqual(frappe.db.get_value("CRM Quota", name, "amount"), 72_000)
+
+	def test_a_see_all_manager_cannot_write_their_own_target_under_another_spelling(self):
+		"""Permission is checked before link validation rewrites ``user`` to the
+		stored spelling, so the caller's own address in capitals has to be read as
+		their own here."""
+		saved_scope = frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy")
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		self.addCleanup(
+			frappe.db.set_single_value,
+			"CRM Access Settings",
+			"manager_outside_hierarchy",
+			saved_scope or "All records",
+		)
+		frappe.db.delete("CRM Sales Hierarchy", {"user": self.MANAGER})
+		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
+		frappe.db.delete("CRM Visit Target", {"user": self.MANAGER})
+		frappe.set_user(self.MANAGER)
+		for spelling in (self.MANAGER.upper(), f"{self.MANAGER} "):
+			with (
+				self.subTest(spelling=spelling, doctype="CRM Quota"),
+				self.assertRaises(frappe.PermissionError),
+			):
+				frappe.get_doc(
+					{"doctype": "CRM Quota", "user": spelling, "period_start": "2026-05-01", "amount": 1}
+				).insert()
+			with (
+				self.subTest(spelling=spelling, doctype="CRM Visit Target"),
+				self.assertRaises(frappe.PermissionError),
+			):
+				frappe.get_doc(
+					{"doctype": "CRM Visit Target", "user": spelling, "visits_per_week": 99}
+				).insert()
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.count("CRM Quota", {"user": self.MANAGER}), 0)
+		self.assertEqual(frappe.db.count("CRM Visit Target", {"user": self.MANAGER}), 0)

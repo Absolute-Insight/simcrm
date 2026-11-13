@@ -84,7 +84,7 @@ def has_permission(doc, ptype="read", user=None):
 	# both the rep the row is stored against and the one the caller has put on
 	# it: the first decides whether they may touch the row at all, the second
 	# whether they may give it to that person
-	targets = {_stored_user(doc), doc.user}
+	targets = {_stored_user(doc), _named_user(doc)}
 	# Nobody writes their own target -- checked before the see-everyone shortcut,
 	# because visible_users() is None for an out-of-tree Sales Manager on the
 	# see-all setting too, not only for a System Manager, and that let such a
@@ -121,6 +121,17 @@ def _stored_user(doc) -> str | None:
 		if stored:
 			return stored
 	return doc.user
+
+
+def _named_user(doc) -> str | None:
+	"""The user on the document in hand, as the database spells them.
+
+	Permission is checked before links are validated, and link validation then
+	rewrites ``user`` to the stored spelling, which the database matches without
+	regard to case. Compared as typed, a manager's own address in capitals was
+	not "their own target" here and was saved as theirs a moment later.
+	"""
+	return (doc.user and frappe.db.get_value("User", doc.user, "name")) or doc.user
 
 
 def _sets_any_target(user: str) -> bool:
