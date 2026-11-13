@@ -200,7 +200,20 @@ lapsed session — stops the run with the rest still pending, in order.
   answer, `STALL_LIMIT` times running for the same entry, means it is the
   entry (or a firewall that minds its text): it is set aside as refused, for
   the rep to send again or discard, as a refusal already lets later entries
-  pass. A rate limit is never counted.
+  pass. A rate limit is never counted. Nor is a second failure inside the
+  window the first one opened (`entry.stall_at`, 1 / 3 / 7 / 15 minutes): a
+  rep who logs five things in a minute sets off five runs, and that is one
+  failure seen five times. Setting aside therefore takes the whole schedule
+  — about 26 minutes at the least — however often a run is started.
+
+  **The limit of that test.** In a partial outage — the handshake answers and
+  `replay` fails for everyone — the probe cannot tell, and entries are set
+  aside one at a time on that schedule. Nothing is lost: each waits in the
+  outbox for *Send again*. **Send again is always safe; typing it in again
+  is not.** An entry that was slow (a gateway's 504) may well have been
+  applied; sent again under its own id it is answered `duplicate`, while a
+  fresh entry with the same words is a second note. The set-aside message
+  says so, and never suggests discarding.
 
 A sent
 entry stays as `sent`, still laid over the pack (`applyOutbox`), until the
