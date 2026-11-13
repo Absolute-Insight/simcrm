@@ -1,0 +1,106 @@
+# Field mode (offline)
+
+> Reps drive to sites with no reception. Field mode is the part of Vectora
+> that still opens there: their week, their customers, their tasks, read from
+> a copy on the phone. It is deliberately **not** the whole CRM offline.
+
+## What the user sees
+
+- **Field mode** (`/crm/field`, in the nav as "Field mode"): three tabs — *My
+  week*, *Customers*, *Tasks* — with its own header and tab bar. The header
+  pill shows when the copy was last saved and syncs on tap; offline it reads
+  "Offline" and a band says what time the copy is from.
+- **Offline, every other page lands here.** The router sends any route that
+  needs the server to `Field` while the server cannot be reached.
+- **A cold start with no network works**, including after the phone has
+  closed the app, once the device has loaded Vectora online a single time.
+  A device that never has shows "open it once with a connection".
+- Everything else — dashboard, reports, assistant, e-mail, WhatsApp, deal
+  editing, team week, settings — is online only, by decision.
+
+## The three pieces
+
+### 1. The shell (`frontend/offlineShell.js`, `frontend/public/field-sw.js`)
+
+`/crm` is a Jinja template: Frappe inlines the session's boot and CSRF token.
+That is why `index.html` is never precached (it took production down once —
+see the VitePWA comment in `vite.config.js`), and why the app could not open
+offline at all.
+
+`shell.html` is the built page with the Jinja boot block replaced by a loader.
+It has no template syntax and nothing from any session, so it is precached.
+`field-sw.js` (imported into the generated worker) answers a navigation under
+`/crm` **network-first**, falling back to the shell only when the fetch fails
+or takes longer than 6 s. `navigateFallback` stays off — it is cache-first.
+
+The loader (`loadOfflineBoot` in `src/offline/bootSnapshot.js`) restores the
+boot the last online page load saved to localStorage, **minus `csrf_token`**,
+which is never kept at rest. `BOOT_KEYS` mirrors `get_boot()`; a unit test
+reads `crm/www/crm.py` and fails when they drift.
+
+**Who the shell is for.** `user_id` is a session cookie, and a phone drops it
+when it closes the app. So the shell takes the cookie when there is one, and
+otherwise the *offline owner* — the user `utils/offlineCache.js` last claimed
+this device's stores for. A `Guest` cookie is the server saying "logged out"
+and is honoured. `getSessionUser()` and `offlineCacheGuard.js` both follow the
+loader's answer in shell mode; outside it nothing changed.
+
+### 2. Connectivity (`src/offline/connectivity.js`)
+
+`navigator.onLine` is not trusted to say "online" (one bar at a mine gate says
+yes and every request hangs); it *is* trusted to say "offline". The app is
+offline when a request fails the way a dead line fails, and online again only
+when a probe returns.
+
+The probe is `GET crm.api.offline.handshake`: it proves the server is there,
+hands a shell its CSRF token, and carries the server clock (`skewMs`).
+`throughGate()` wraps **both** ways a request leaves the app — the resource
+fetcher (`main.js`) and `call()` (`lib/frappe-ui-compat/call.js`) — so
+offline a request fails at once as `offline` instead of hanging, and a shell
+never POSTs without a token. A 401/403 from the probe is the server
+answering: online, and off to the login page.
+
+### 3. The pack (`crm/api/offline.py`, `src/offline/pack.js`)
+
+`get_pack()` is the snapshot: three weeks of the caller's plan, the customers
+they may see with address, contacts and open deals, 90 days of their own
+visit history and notes, their open tasks. **Every list is `frappe.get_list`**,
+so `crm/permissions` scopes the pack exactly as it scopes the app; the pack
+is not a second access path. Rich text is stripped to plain text and clipped
+server-side — the phone never renders stored markup.
+
+It is a full snapshot, not a diff: a cursor would have to get deletions and
+reassigned customers right, and getting that wrong shows a rep a customer
+they no longer have. `known_hash` skips the download when nothing changed.
+
+On the device it lives in its own IndexedDB database (`offline/db.js`) and is
+read by the Field screens through `offline/useField.js` — online and offline
+alike, so the offline path is the everyday path. It syncs on start, on
+reconnect, when the tab comes back, and every 10 minutes; automatically only
+on a phone-width layout or a device that has opened field mode.
+
+## What is on the device, and when it goes
+
+| Store | Holds | Cleared |
+|---|---|---|
+| localStorage `crm-offline-boot` | boot values, no token | logout, lost session, another user |
+| IndexedDB `vectora-field-pack` | the pack | the same, and after `PACK_MAX_AGE_DAYS` (14) without a sync |
+| IndexedDB `vectora-field-outbox` | work the server has not seen (phase 2) | only by a successful sync or the rep discarding it |
+
+All three clears go through `clearOfflineCache()` / `claimOfflineCache()`.
+Caps and windows (`HISTORY_DAYS`, `PACK_MAX_AGE_DAYS`, row limits) are
+constants at the top of `crm/api/offline.py`; `truncated` in the pack names
+any list that hit its cap.
+
+## Traps
+
+- **Do not precache `index.html`, and do not turn on `navigateFallback`.**
+- **A new boot key** goes in `get_boot()` *and* `BOOT_KEYS`; the test says so.
+- **A new route that must work offline** needs `meta.offline`, and must read
+  nothing but the pack — the guard lets it through without the users, access
+  or views requests.
+- **QA needs a secure context and the `Service-Worker-Allowed: /crm` header**,
+  which `bench serve` does not send. Put a proxy that adds it in front, on
+  `localhost`, and drive it with Playwright's `context.setOffline(true)`.
+- iOS evicts storage for sites not added to the home screen: iPhone reps must
+  install the app.
