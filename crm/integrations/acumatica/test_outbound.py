@@ -892,6 +892,31 @@ class TestCreateSalesQuote(FrappeTestCase):
 
 		self.assertEqual(commits, [0])
 
+	def test_a_redirect_is_explained_to_the_rep_not_shown_as_an_empty_reason(self):
+		"""A redirect has no reason in its body -- nothing, or a proxy's HTML -- so
+		"Acumatica refused the sales quote: " ended there. The error's own text says
+		what happened and what to change."""
+		from crm.integrations.acumatica.client import AcumaticaError
+
+		for body in ("", "<html><h1>301 Moved Permanently</h1></html>"):
+			for status in (301, 302, 303, 307, 308):
+				reason = outbound._reason(AcumaticaError("Acumatica PUT x", status_code=status, body=body))
+				self.assertIn("redirect", reason)
+				self.assertIn("Instance URL", reason)
+				self.assertNotIn("<html>", reason)
+		# anything else is still Acumatica's own reason
+		refused = AcumaticaError("PUT -> 422", status_code=422, body='{"message": "No."}')
+		self.assertEqual(outbound._reason(refused), "No.")
+
+	def test_a_303_to_a_write_is_not_a_clean_refusal(self):
+		"""See Other is what a server answers once it has acted on a write. The other
+		redirects were not acted on; this one may have been, so the marker stays."""
+		from crm.integrations.acumatica.client import AcumaticaError
+
+		self.assertTrue(outbound._outcome_unknown(AcumaticaError("PUT x", status_code=303)))
+		for status in (301, 302, 307, 308, 422):
+			self.assertFalse(outbound._outcome_unknown(AcumaticaError("PUT x", status_code=status)), status)
+
 	def test_a_push_failure_with_nothing_to_add_is_said_once(self):
 		from crm.integrations.acumatica.client import AcumaticaAuthError, AcumaticaError
 

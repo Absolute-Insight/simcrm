@@ -1,7 +1,9 @@
 # Copyright (c) 2024, Frappe Technologies Pvt. Ltd. and Contributors
 # See license.txt
 
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -12,6 +14,7 @@ from crm.integrations.api import (
 	_recording_host_is_provider,
 	add_note_to_call_log,
 	add_task_to_call_log,
+	get_contact,
 	get_contact_by_phone_number,
 	get_contact_lead_or_deal_from_number,
 	get_recording_url,
@@ -518,9 +521,14 @@ class TestRecordingProxyCredentials(IntegrationTestCase):
 	"""
 
 	CREDENTIALS = ("ACxxxxxxxx", "twilio_secret")
+	ACCOUNT = "AC" + "0123456789abcdef" * 2
+	TWILIO_RECORDING = f"https://api.twilio.com/2010-04-01/Accounts/{ACCOUNT}/Recordings/RE{'ab' * 16}"
 
 	def tearDown(self):
 		frappe.db.rollback()
+
+	def _twilio_account(self):
+		return patch.object(integrations_api, "_provider_account_sid", return_value=self.ACCOUNT)
 
 	def _fake_upstream(self):
 		resp = MagicMock()
@@ -547,9 +555,77 @@ class TestRecordingProxyCredentials(IntegrationTestCase):
 		self.assertIsNone(safe_get.call_args[0][1])
 
 	def test_the_provider_host_gets_the_credentials(self):
-		safe_get = self._proxy("https://api.twilio.com/2010-04-01/Accounts/AC1/Recordings/RE1.mp3")
+		with self._twilio_account():
+			safe_get = self._proxy(self.TWILIO_RECORDING + ".mp3")
 		safe_get.assert_called_once()
 		self.assertEqual(safe_get.call_args[0][1], self.CREDENTIALS)
+
+	def test_another_path_on_the_provider_host_gets_no_credentials(self):
+		"""The host check alone left the path to whoever wrote the call log: with the
+		account's key attached, ``/Calls.json`` on api.twilio.com answers with every
+		rep's calls. Only the recording itself is fetched as the account."""
+		for url in (
+			f"https://api.twilio.com/2010-04-01/Accounts/{self.ACCOUNT}/Calls.json",
+			f"https://api.twilio.com/2010-04-01/Accounts/{self.ACCOUNT}/Recordings.json",
+			f"https://api.twilio.com/2010-04-01/Accounts/{self.ACCOUNT}",
+		):
+			with self.subTest(url=url), self._twilio_account():
+				safe_get = self._proxy(url)
+				safe_get.assert_called_once()
+				self.assertIsNone(safe_get.call_args[0][1])
+
+	def test_only_a_recording_of_the_configured_account_is_the_providers(self):
+		recording = integrations_api._is_provider_recording
+		with self._twilio_account():
+			for url in (
+				self.TWILIO_RECORDING,
+				self.TWILIO_RECORDING + ".mp3",
+				self.TWILIO_RECORDING + ".wav",
+			):
+				self.assertTrue(recording("Twilio", url), url)
+			other_account = self.TWILIO_RECORDING.replace(self.ACCOUNT, "AC" + "f" * 32)
+			for url in (
+				# metadata and listings, not media
+				self.TWILIO_RECORDING + ".json",
+				self.TWILIO_RECORDING + "/Transcriptions.json",
+				# a recording, but walked back out of
+				self.TWILIO_RECORDING + "/../../Calls.json",
+				self.TWILIO_RECORDING + "/%2e%2e/%2e%2e/Calls.json",
+				# anything that changes what the path means on the way out
+				self.TWILIO_RECORDING + "?PageSize=1000",
+				self.TWILIO_RECORDING + ";x",
+				self.TWILIO_RECORDING + "\n",
+				self.TWILIO_RECORDING.replace("https://", "http://"),
+				self.TWILIO_RECORDING.replace("api.twilio.com", "api.twilio.com:8443"),
+				self.TWILIO_RECORDING.replace("api.twilio.com", "user:pw@api.twilio.com"),
+				self.TWILIO_RECORDING.replace("api.twilio.com", "attacker.example\\.api.twilio.com"),
+				self.TWILIO_RECORDING.replace("api.twilio.com", "attacker.example"),
+				other_account,
+			):
+				self.assertFalse(recording("Twilio", url), url)
+			self.assertFalse(recording("Manual", self.TWILIO_RECORDING))
+			self.assertFalse(recording("Exotel", self.TWILIO_RECORDING))
+		# no account configured: nothing can be said to be its recording
+		with patch.object(integrations_api, "_provider_account_sid", return_value=""):
+			self.assertFalse(recording("Twilio", self.TWILIO_RECORDING))
+
+	def test_an_exotel_recording_is_the_accounts_media_path(self):
+		recording = integrations_api._is_provider_recording
+		with (
+			patch.object(integrations_api, "_provider_account_sid", return_value="acme1"),
+			patch.object(integrations_api, "_configured_exotel_host", return_value="api.exotel.com"),
+		):
+			self.assertTrue(
+				recording("Exotel", "https://recordings.exotel.com/exotelrecordings/acme1/ab12cd.mp3")
+			)
+			for url in (
+				"https://api.exotel.com/v1/Accounts/acme1/Calls.json",
+				"https://recordings.exotel.com/exotelrecordings/other/ab12cd.mp3",
+				"https://recordings.exotel.com/exotelrecordings/acme1/../../v1/Accounts/acme1/Calls.json",
+				"http://recordings.exotel.com/exotelrecordings/acme1/ab12cd.mp3",
+				"https://attacker.example/exotelrecordings/acme1/ab12cd.mp3",
+			):
+				self.assertFalse(recording("Exotel", url), url)
 
 	def test_host_matching_is_per_provider(self):
 		self.assertTrue(_recording_host_is_provider("Twilio", "https://api.twilio.com/x.mp3"))
@@ -688,6 +764,200 @@ class TestRecordingProxyCredentials(IntegrationTestCase):
 				# sandboxed either way: nothing an audio player needs is lost to it
 				self.assertEqual(response.headers["Content-Security-Policy"], "sandbox")
 				self.assertTrue(response.headers["Content-Disposition"].startswith("inline"))
+
+
+class _Trickle(BaseHTTPRequestHandler):
+	"""A host that never stops and never hurries: one byte every 0.2s, for 8s."""
+
+	trickle_headers = False
+
+	def do_GET(self):
+		end = time.monotonic() + 8
+		try:
+			self.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\n")
+			if not self.trickle_headers:
+				self.wfile.write(b"\r\n")
+			self.wfile.flush()
+			while time.monotonic() < end:
+				self.wfile.write(b"x")
+				self.wfile.flush()
+				time.sleep(0.2)
+		except OSError:
+			pass  # the proxy hung up, which is the point
+
+	def log_message(self, *args):
+		pass
+
+
+class _TrickleHeaders(_Trickle):
+	trickle_headers = True
+
+
+class TestRecordingProxyDeadline(IntegrationTestCase):
+	"""The wall-clock bound, against a real socket.
+
+	A deadline checked between chunks does nothing while a read is in progress:
+	``iter_content(64 KiB)`` blocks until 64 KiB have arrived and every byte restarts
+	requests' per-read timeout, so a host dribbling bytes held the worker for as long
+	as it liked. A fake upstream that yields empty chunks cannot show that -- only a
+	socket that is slow does.
+	"""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _serve(self, handler):
+		server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+		server.daemon_threads = True
+		threading.Thread(target=server.serve_forever, daemon=True).start()
+		self.addCleanup(server.server_close)
+		self.addCleanup(server.shutdown)
+		return f"http://127.0.0.1:{server.server_address[1]}/rec.mp3"
+
+	def _proxy(self, url):
+		log = create_test_call_log(recording_url=url, telephony_medium="Manual")
+		with (
+			# the SSRF guard rightly refuses loopback; the test host lives there
+			patch.object(integrations_api, "_resolve_validated_ip", return_value="127.0.0.1"),
+			patch.object(integrations_api, "user_rate_limited", return_value=False),
+			patch.object(integrations_api, "MAX_RECORDING_SECONDS", 1),
+			patch.object(frappe, "get_request_header", return_value=None),
+		):
+			response = get_recording_url(log.name)
+			return b"".join(response.response)
+
+	def test_a_body_trickled_a_byte_at_a_time_is_cut_off_at_the_deadline(self):
+		started = time.monotonic()
+		self._proxy(self._serve(_Trickle))
+		self.assertLess(time.monotonic() - started, 4, "the stream outlived its 1s deadline")
+
+	def test_headers_trickled_a_byte_at_a_time_are_cut_off_too(self):
+		"""The status line and headers are read before any of the proxy's own code
+		runs, so the bound has to be on the socket there as well."""
+		started = time.monotonic()
+		with self.assertRaises(frappe.ValidationError):
+			self._proxy(self._serve(_TrickleHeaders))
+		self.assertLess(time.monotonic() - started, 4, "the fetch outlived its 1s deadline")
+
+	def test_a_recording_that_arrives_in_time_is_passed_through_whole(self):
+		class Quick(BaseHTTPRequestHandler):
+			def do_GET(self):
+				self.send_response(200)
+				self.send_header("Content-Type", "audio/mpeg")
+				self.send_header("Content-Length", "5")
+				self.end_headers()
+				self.wfile.write(b"audio")
+
+			def log_message(self, *args):
+				pass
+
+		self.assertEqual(self._proxy(self._serve(Quick)), b"audio")
+
+
+class TestPhoneLookupBounds(IntegrationTestCase):
+	"""``get_contact_by_phone_number`` is any rep's to call with any string."""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _contact(self, name, phone):
+		return frappe.get_doc(
+			{
+				"doctype": "Contact",
+				"first_name": name,
+				"phone_nos": [{"phone": phone, "is_primary_mobile_no": 1}],
+			}
+		).insert(ignore_permissions=True)
+
+	def test_a_needle_with_no_digits_matches_nothing_and_queries_nothing(self):
+		"""Every character of "+" is stripped, which left ``LIKE '%%'``: every contact
+		on the site, and one more query for each of them."""
+		self._contact("Bounds One", "+27 82 555 0161")
+		for needle in ("+", "-", "()", " + ", "%", "__", "anonymous", "a1", "x-2"):
+			with self.subTest(needle=needle), patch.object(frappe.qb, "from_") as from_:
+				self.assertEqual(get_contact(needle), {"mobile_no": needle})
+				from_.assert_not_called()
+
+	def test_a_short_extension_is_matched_exactly_or_not_at_all(self):
+		"""One or two digits is an internal extension, not a fragment to search for:
+		it finds the contact stored under exactly that, never one containing it."""
+		extension = self._contact("Front Desk", "12")
+		self._contact("Has Twelve In It", "+27 82 512 0161")
+		self.assertEqual(get_contact("12").get("name"), extension.name)
+		self.assertEqual(get_contact(" 12 ").get("name"), extension.name)
+		self.assertEqual(get_contact("21"), {"mobile_no": "21"})
+		self.assertEqual(get_contact("1"), {"mobile_no": "1"})
+		sql = self._queries(lambda: get_contact("12"))
+		self.assertTrue(sql)
+		for query in sql:
+			self.assertNotIn(" like ", query.lower())
+
+	def test_the_match_is_found_behind_more_newer_lookalikes_than_the_limit(self):
+		"""The limit cut the newest 200 rows the LIKE returned, before the check that
+		a row really is this number: a caller whose digits also sit inside 200 newer
+		numbers was no longer found."""
+		caller = self._contact("The Caller", "+27 82 555 0147")
+		caller.db_set("modified", "2026-01-01 00:00:00", update_modified=False)
+		lead = frappe.get_doc(
+			{"doctype": "CRM Lead", "first_name": "Caller Lead", "mobile_no": "+27 82 555 0199"}
+		).insert(ignore_permissions=True)
+		lead.db_set("modified", "2026-01-01 00:00:00", update_modified=False)
+		for i in range(integrations_api.NUMBER_MATCH_LIMIT + 5):
+			# newer, and holding the caller's national digits without being the number
+			self._contact(f"Lookalike {i}", f"+1 825550147{i:04d}")
+		for i in range(4):
+			frappe.get_doc(
+				{"doctype": "CRM Lead", "first_name": f"Lookalike {i}", "mobile_no": f"+1 825550199{i:04d}"}
+			).insert(ignore_permissions=True)
+
+		self.assertEqual(lookup_contact_by_phone_number("+27825550147").get("name"), caller.name)
+		with patch.object(integrations_api, "NUMBER_MATCH_LIMIT", 3):
+			self.assertEqual(lookup_contact_by_phone_number("+27825550199").get("lead"), lead.name)
+
+	def test_the_lookup_reads_a_bounded_number_of_rows(self):
+		for i in range(4):
+			self._contact(f"Bounds {i}", f"+27 82 555 01{70 + i}")
+		with patch.object(integrations_api, "NUMBER_MATCH_LIMIT", 2):
+			sql = self._queries(lambda: get_contact("555"))
+		self.assertTrue(sql, "the lookup ran no query")
+		for query in sql:
+			self.assertIn("limit 2", query.lower())
+
+	def test_the_deal_check_is_one_query_however_many_contacts_match(self):
+		"""Twelve contacts on one switchboard number used to cost twelve ``exists``."""
+		for i in range(12):
+			self._contact(f"Switchboard {i}", "+27 11 555 0180")
+		with patch.object(frappe.db, "exists", wraps=frappe.db.exists) as exists:
+			sql = self._queries(lambda: lookup_contact_by_phone_number("+27115550180"))
+		exists.assert_not_called()
+		self.assertLessEqual(len([q for q in sql if "tabCRM Contacts" in q]), 1)
+
+	def test_a_contact_on_a_deal_still_wins(self):
+		plain = self._contact("No Deal", "+27 11 555 0190")
+		on_deal = self._contact("On A Deal", "+27 11 555 0190")
+		plain.db_set("modified", "2026-06-01 00:00:00", update_modified=False)
+		on_deal.db_set("modified", "2026-01-01 00:00:00", update_modified=False)
+		deal = frappe.get_doc(
+			{"doctype": "CRM Deal", "contacts": [{"contact": on_deal.name, "is_primary": 1}]}
+		).insert(ignore_permissions=True)
+
+		found = lookup_contact_by_phone_number("+27115550190")
+
+		self.assertEqual(found.get("name"), on_deal.name)
+		self.assertEqual(found.get("deal"), deal.name)
+
+	def _queries(self, fn) -> list[str]:
+		"""The SELECTs ``fn`` ran against the contact and lead tables."""
+		seen = []
+		real = frappe.db.sql
+
+		def sql(query, *args, **kwargs):
+			seen.append(str(query))
+			return real(query, *args, **kwargs)
+
+		with patch.object(frappe.db, "sql", side_effect=sql):
+			fn()
+		return [q for q in seen if "tabContact" in q or "tabCRM Lead" in q or "tabCRM Contacts" in q]
 
 
 def create_test_call_log(**kwargs):

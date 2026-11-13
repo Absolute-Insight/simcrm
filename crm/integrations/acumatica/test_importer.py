@@ -875,6 +875,9 @@ class TestBackfill(ImporterTestCase):
 			requests.ReadTimeout("read timed out"),
 			AcumaticaError("Acumatica GET Customer -> 503", status_code=503),
 			AcumaticaError("Acumatica GET Customer -> 429", status_code=429),
+			# a redirecting Instance URL is not followed, and is every record's failure
+			AcumaticaError("Acumatica GET Customer -> 301", status_code=301),
+			AcumaticaError("Acumatica GET Customer -> 307", status_code=307),
 		)
 		for outage in outages:
 			client.get_by_id.side_effect = outage

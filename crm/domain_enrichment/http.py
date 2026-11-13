@@ -323,6 +323,7 @@ class _Deadline:
 		self._lock = threading.Lock()
 		self._timer = threading.Timer(max(seconds, 0), self._expire)
 		self._timer.daemon = True
+		self._started = False
 
 	def remaining(self) -> float:
 		return self.at - time.monotonic()
@@ -347,16 +348,37 @@ class _Deadline:
 			_shutdown(handle)
 
 	def __enter__(self):
-		self._outer = _active_deadline()
-		_local.deadline = self
-		self._timer.start()
+		self.attach()
 		return self
 
 	def __exit__(self, *exc_info):
+		self.detach()
+		self.release()
+
+	# The three steps of the ``with`` block, apart, for a caller whose read outlives
+	# the function that opened the connection: the recording proxy returns a streamed
+	# response, so it attaches while it connects, detaches before it returns, and
+	# releases when the stream ends -- the timer runs the whole time between.
+
+	def attach(self) -> None:
+		"""Start the clock; sockets this thread opens from here on are watched."""
+		self._outer = _active_deadline()
+		_local.deadline = self
+		self._started = True
+		self._timer.start()
+
+	def detach(self) -> None:
+		"""Stop collecting this thread's new sockets. The ones already watched stay
+		watched, and the timer keeps running, until ``release``."""
+		if _active_deadline() is self:
+			_local.deadline = self._outer
+
+	def release(self) -> None:
+		"""Stop the timer and give back the duplicate descriptors. Safe to repeat."""
 		self._timer.cancel()
-		# a shutdown already under way finishes before its handles are closed
-		self._timer.join()
-		_local.deadline = self._outer
+		if self._started:
+			# a shutdown already under way finishes before its handles are closed
+			self._timer.join()
 		with self._lock:
 			handles, self._handles = self._handles, []
 		for handle in handles:

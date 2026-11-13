@@ -14,7 +14,7 @@ class FacebookPage(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		access_token: DF.SmallText | None
+		access_token: DF.Password | None
 		account_id: DF.Data | None
 		category: DF.Data | None
 		id: DF.Data | None

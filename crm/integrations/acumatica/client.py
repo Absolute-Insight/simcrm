@@ -6,6 +6,9 @@ from contextlib import contextmanager, suppress
 import frappe
 import redis
 import requests
+from frappe import _
+
+from crm.integrations.remote_url import RemoteHostNotAllowed, ensure_host_allowed
 
 TOKEN_CACHE_PREFIX = "acumatica_token::"
 
@@ -49,6 +52,13 @@ _DETAIL_KEYS = ("error", "exceptionMessage", "message")
 
 class AcumaticaError(Exception):
 	def __init__(self, message, status_code=None, body=None):
+		if status_code and 300 <= int(status_code) < 400:
+			# No call follows one (the host was checked, where it points was not), so
+			# this is the whole reason -- and the text a sync run records as its error.
+			message = (
+				f"{message}: the Instance URL answered with a redirect ({status_code}), which is "
+				"not followed. Set it to the address the instance answers on directly"
+			)
 		super().__init__(message)
 		self.status_code = status_code
 		self.body = body
@@ -206,6 +216,13 @@ class AcumaticaClient:
 
 	def _login(self):
 		s = self.settings
+		# Asked here, where the secrets are about to leave: the URL was checked when
+		# it was saved, but a name can be re-pointed since, and a URL saved before
+		# that check existed was never looked at.
+		try:
+			ensure_host_allowed(self.base, _("Instance URL"))
+		except RemoteHostNotAllowed as e:
+			raise AcumaticaAuthError(str(e)) from e
 		data = {
 			"grant_type": "password",
 			"client_id": s.client_id,
@@ -221,6 +238,7 @@ class AcumaticaClient:
 			f"{self.base}/identity/connect/token",
 			data=data,
 			timeout=LOGIN_TIMEOUT,
+			allow_redirects=False,
 		)
 		if resp.status_code != 200:
 			raise AcumaticaAuthError(
@@ -259,12 +277,12 @@ class AcumaticaClient:
 				# the API user's default branch.
 				headers["PX-CbApiBranch"] = branch
 			fn = getattr(requests, method)
-			resp = fn(url, headers=headers, timeout=timeout, **dict(kw))
+			resp = fn(url, headers=headers, timeout=timeout, allow_redirects=False, **dict(kw))
 			if resp.status_code == 401 and attempt == 0:
 				# _token drops it, unless another worker has already logged in again
 				rejected = token
 				continue
-			if resp.status_code >= 400:
+			if resp.status_code >= 300:
 				raise AcumaticaError(
 					f"Acumatica {method.upper()} {url} -> {resp.status_code}",
 					status_code=resp.status_code,
@@ -293,6 +311,7 @@ class AcumaticaClient:
 					f"{self.base}/entity/auth/logout",
 					headers={"Authorization": f"Bearer {token}"},
 					timeout=TIMEOUT,
+					allow_redirects=False,
 				)
 			except Exception:
 				# the session then expires on its own, which is where we were before

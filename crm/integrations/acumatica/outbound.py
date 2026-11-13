@@ -74,7 +74,10 @@ def _outcome_unknown(e) -> bool:
 	if isinstance(e, AcumaticaAuthError):
 		return False
 	if isinstance(e, AcumaticaError) and e.status_code:
-		return e.status_code in (502, 503, 504)
+		# 303 See Other is what a server sends after acting on a write; it is not
+		# followed, so whether this one was acted on is not known. The other
+		# redirects ask for the request to be sent again somewhere: not acted on.
+		return e.status_code in (303, 502, 503, 504)
 	return True
 
 
@@ -1103,6 +1106,10 @@ def _held_here(customer_id) -> bool:
 
 
 def _reason(e) -> str:
+	if isinstance(e, AcumaticaError) and e.status_code and 300 <= e.status_code < 400:
+		# A redirect carries no reason in its body -- nothing, or a proxy's page.
+		# The error itself says what happened and what to change.
+		return str(e)
 	return e.detail() if isinstance(e, AcumaticaError) else str(e)
 
 
