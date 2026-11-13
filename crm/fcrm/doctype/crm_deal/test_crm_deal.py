@@ -310,6 +310,35 @@ class TestCRMDeal(IntegrationTestCase):
 		self.assertEqual(contacts[0]["is_primary"], 1)
 		self.assertEqual([c["name"] for c in contacts[1:]], [contact1.name, contact2.name])
 
+	def test_get_deal_contacts_reads_all_contacts_in_one_query(self):
+		"""It was a get_doc per contact -- the row and each child table -- so the
+		query count grew with the contacts on the deal."""
+		names = []
+		deal = create_test_deal(organization="Contact Batch Org")
+		for index in range(5):
+			contact = create_test_contact(first_name=f"Batch{index}", email=f"batch{index}@example.com")
+			names.append(contact.name)
+			deal.append("contacts", {"contact": contact.name, "is_primary": 1 if index == 0 else 0})
+		deal.save()
+		get_deal_contacts(deal.name)  # warm the permission and meta caches
+
+		# the child rows and the contacts; the permission check may add its own
+		with self.assertQueryCount(4):
+			contacts = get_deal_contacts(deal.name)
+
+		self.assertEqual([c["name"] for c in contacts], names)
+		self.assertEqual(
+			contacts[0],
+			{
+				"name": names[0],
+				"image": None,
+				"full_name": frappe.db.get_value("Contact", names[0], "full_name"),
+				"email": "batch0@example.com",
+				"mobile_no": frappe.db.get_value("Contact", names[0], "mobile_no"),
+				"is_primary": 1,
+			},
+		)
+
 	def test_create_deal_api(self):
 		"""Test create_deal API function"""
 		deal_name = create_deal(
