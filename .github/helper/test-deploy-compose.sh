@@ -106,12 +106,28 @@ check("redis-queue has no maxmemory and no eviction policy", "maxmemory" not in 
 check("redis-queue is append-only", "--appendonly yes" in queue, queue)
 
 # infra-2: a stale backup is a visible state.
-health = services["backup"].get("healthcheck", {}).get("test") or []
+health = [a.replace("$$", "$") for a in services["backup"].get("healthcheck", {}).get("test") or []]
 check(
 	"backup has a healthcheck on the age of the newest dump",
 	bool(health) and "private/backups" in health[-1] and "-mmin" in health[-1],
 	str(health),
 )
+if health:
+	for value, want in (("26", 0), ("26.5", 0), ("abc", 0), ("", 0)):
+		# No dump exists in this throwaway directory, so a healthy parse is
+		# "ran find, found nothing": exit 1 with nothing on stderr. A broken
+		# expression is a shell error instead.
+		result = subprocess.run(
+			["sh", "-c", health[-1]],
+			env={"PATH": "/usr/bin:/bin", "SITE_NAME": "none.invalid", "BACKUP_MAX_AGE_HOURS": value},
+			capture_output=True,
+			text=True,
+		)
+		check(
+			f"the backup healthcheck survives BACKUP_MAX_AGE_HOURS={value!r}",
+			result.returncode == 1 and not result.stderr.strip(),
+			f"exit {result.returncode}: {result.stderr.strip()}",
+		)
 offsite_health = services["backup-offsite"]["healthcheck"]["test"][-1]
 check("backup-offsite's healthcheck asks how old the newest copy is", "--max-age" in offsite_health)
 

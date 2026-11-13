@@ -441,19 +441,29 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - >-
-          find "/home/frappe/frappe-bench/sites/$$SITE_NAME/private/backups"
-          -name "*-database*.sql.gz"
-          -mmin "-$$(( $${BACKUP_MAX_AGE_HOURS:-26} * 60 ))" 2>/dev/null
-          | grep -q .
+        # Whole hours only. Anything else -- 26.5, 26h, empty -- would be a
+        # syntax error in the arithmetic and so a container that is unhealthy
+        # for ever for a reason no log shows; it falls back to 26, and the
+        # loop below says so once at start.
+        - |
+          h="$${BACKUP_MAX_AGE_HOURS:-26}"
+          case "$$h" in ""|*[!0-9]*) h=26 ;; esac
+          find "/home/frappe/frappe-bench/sites/$$SITE_NAME/private/backups" -name "*-database*.sql.gz" -mmin "-$$(( h * 60 ))" 2>/dev/null | grep -q .
       interval: 300s
       timeout: 30s
       retries: 3
-      start_period: ${BACKUP_MAX_AGE_HOURS:-26}h
+      # Fixed rather than derived from BACKUP_MAX_AGE_HOURS: compose parses this
+      # as a duration, and a value it cannot parse would break every command
+      # in this directory, not just this check.
+      start_period: 26h
     entrypoint: ["bash", "-c"]
     command:
       - |
         set -u
+        case "$${BACKUP_MAX_AGE_HOURS:-26}" in
+          ""|*[!0-9]*)
+            echo "[backup] BACKUP_MAX_AGE_HOURS='$${BACKUP_MAX_AGE_HOURS:-}' is not a whole number of hours; the healthcheck is using 26" >&2 ;;
+        esac
         while true; do
           # Sleep until the next BACKUP_HOUR, recomputed each pass so the
           # schedule survives a restart at any time of day.
@@ -642,6 +652,9 @@ services:
         fi
 
         echo "[offsite] copying $$src -> $$dest, hourly (encrypted=$$encrypted, retention=$${keep}d, 0 = keep everything)"
+        if [ "$$#" -gt 0 ]; then
+          echo "[offsite] NOT copied: *site_config_backup.json (it holds the site's encryption_key and db_password). Keep the key somewhere else -- deploy/README.md, 'What is not copied' and 'Restoring onto a new host'."
+        fi
         while true; do
           if [ -d "$$src" ]; then
             if rclone copy "$$src" "$$dest" "$$@" --log-level NOTICE --stats 0; then

@@ -840,8 +840,9 @@ docker compose exec backend ls -lh sites/$SITE_NAME/private/backups
 The loop can only log a failure and sleep until the next night, and nobody
 reads that log. So the `backup` container carries a healthcheck: it is
 `healthy` while the newest `*-database*.sql.gz` in the backups directory is
-younger than `BACKUP_MAX_AGE_HOURS` (default `26` — one nightly run plus slack)
-and `unhealthy` once it is not. A night that failed — a full volume, a database
+younger than `BACKUP_MAX_AGE_HOURS` (default `26` — one nightly run plus slack;
+whole hours only, anything else is ignored in favour of 26 with a line in the
+`backup` log) and `unhealthy` once it is not. A night that failed — a full volume, a database
 that was down at 02:00 — shows up about two hours later:
 
 ```bash
@@ -984,6 +985,13 @@ docker compose --profile offsite up -d backup-offsite
 archive exists for the day this host — and its `.env` — are gone. Keep it where
 you keep the encryption key: outside this host. Changing the passphrase or the
 salt later makes everything already encrypted unreadable under the new values.
+
+**It is not protected on this host, and is not meant to be.** It sits in `.env`
+in the clear, shows in `docker inspect` of the container like every other
+variable there, and the copy the service writes into rclone's config is only
+*obscured* — rclone's word for a reversible encoding that stops a glance, not
+a reader. Encryption here protects the bucket from whoever can read the
+bucket. Anyone who can read this host's `.env` already has the database.
 
 Reading an encrypted archive back, on any machine with rclone and the two
 secrets:
