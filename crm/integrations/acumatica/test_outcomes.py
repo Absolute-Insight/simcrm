@@ -85,6 +85,24 @@ class PullOutcomesTest(OutcomesTestCase):
 		self.assertEqual(outcomes.local_date_of("2026-10-31 garbage"), date(2026, 10, 31))
 		self.assertIsNone(outcomes.local_date_of(None))
 
+	def test_closes_are_committed_in_batches(self):
+		"""Every close is a whole-document save; one transaction for all of them kept
+		each closed deal locked until the run ended, and lost them all if it died."""
+		quotes = []
+		for n in range(5):
+			self._deal(f"QT0003{n}")
+			quotes.append(Q(OrderNbr=f"QT0003{n}", Status="Completed" if n % 2 else "Canceled"))
+		self._deal("QT000039")
+		quotes.append(Q(OrderNbr="QT000039", Status="Open"))
+		with (
+			patch.object(outcomes, "COMMIT_EVERY", 2),
+			patch.object(outcomes, "_keep_transaction_short") as commit,
+		):
+			counts = outcomes.pull_quote_outcomes(self._client(quotes), None)
+		self.assertEqual(counts, {"won": 2, "lost": 3, "unchanged": 1})
+		# after the 2nd and the 4th close; a quote that closes nothing is not counted
+		self.assertEqual(commit.call_count, 2)
+
 	def test_a_canceled_or_rejected_quote_loses_the_deal_with_the_reason(self):
 		a = self._deal("QT000002")
 		b = self._deal("QT000003")
@@ -211,6 +229,25 @@ class ExpireStaleQuotesTest(OutcomesTestCase):
 		self.assertEqual(status, "Expired")
 		self.assertFalse(lost_reason, "an expired quote is not a lost deal")
 		self.assertEqual(frappe.db.get_value("CRM Deal Status", "Expired", "type"), "On Hold")
+
+	def test_expiries_are_committed_in_batches(self):
+		"""The first night of the rule expires every stale deal the tenant has."""
+		mine = [self._deal(f"QT0004{n}", closes_in=-45, modified_days_ago=40) for n in range(4)]
+		done_at_commit = []
+
+		def commit():
+			done_at_commit.append(
+				frappe.db.count("CRM Deal", {"name": ["in", mine], "status": outcomes.EXPIRED})
+			)
+
+		with (
+			patch.object(outcomes, "COMMIT_EVERY", 2),
+			patch.object(outcomes, "_keep_transaction_short", side_effect=commit),
+		):
+			outcomes.expire_stale_quotes(grace_days=30)
+		# not once at the end: some of these deals were still to do at the first commit
+		self.assertGreaterEqual(len(done_at_commit), 2)
+		self.assertLess(done_at_commit[0], 4)
 
 	def test_an_expired_deal_is_not_expired_again(self):
 		stale = self._deal("QT000014", closes_in=-45, modified_days_ago=40)

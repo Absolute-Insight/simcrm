@@ -51,6 +51,8 @@ WON_STATUSES = ("Completed",)
 LOST_STATUSES = {"Canceled": LOST_CANCELLED, "Rejected": LOST_REJECTED}
 
 PAGE = 500
+# importer.COMMIT_EVERY, which this module cannot import (the importer imports it).
+COMMIT_EVERY = 50
 # A rep who edited the deal this recently is working it; the expiry rule waits.
 RECENT_TOUCH_DAYS = 14
 
@@ -127,6 +129,16 @@ def _log_close_failure(deal_name: str, detail: str) -> None:
 	except Exception:
 		# losing the ability to log one bad deal must not abort the rest of the run
 		frappe.log_error(frappe.get_traceback(), "Acumatica sync issue recording failed")
+
+
+def _keep_transaction_short() -> None:
+	"""Commit what the close loops have done so far, as the entity and new-quote loops
+	do. The first night of the expiry rule closes every stale deal the tenant has --
+	some two thousand whole-document saves -- and in one transaction each of those
+	deals stayed locked until the run ended, and a run that died lost them all. Called
+	between deals only, so never inside a deal's savepoint."""
+	if not frappe.flags.in_test:
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 
 def date_of(value) -> date | None:
@@ -206,6 +218,7 @@ def _apply_outcomes(client, by_quote: dict[str, str], modified_since: str | None
 	filter_ = quote_filter(client, modified_since)
 	pause = float(getattr(client.settings, "request_pause", 0) or 0)
 	skip = 0
+	attempted = 0
 	while True:
 		page = client.get_page(
 			"SalesOrder", top=PAGE, skip=skip, filter=filter_, select="OrderNbr,Status,LastModified"
@@ -225,6 +238,10 @@ def _apply_outcomes(client, by_quote: dict[str, str], modified_since: str | None
 					counts["lost"] += 1
 			else:
 				counts["unchanged"] += 1
+				continue
+			attempted += 1
+			if attempted % COMMIT_EVERY == 0:
+				_keep_transaction_short()
 		skip += len(page)
 		if pause:
 			time.sleep(pause)
@@ -261,7 +278,9 @@ def expire_stale_quotes(grace_days: int) -> dict:
 		limit=100000,
 	)
 	expired = 0
-	for name in stale:
+	for attempted, name in enumerate(stale, start=1):
 		if _try_close(name, expired_status):
 			expired += 1
+		if attempted % COMMIT_EVERY == 0:
+			_keep_transaction_short()
 	return {"expired": expired}
