@@ -413,7 +413,7 @@ class TestSharedLogin(FrappeTestCase):
 		with self.assertRaises(AcumaticaAuthError) as ctx:
 			AcumaticaClient(_settings())._token()
 		rpost.assert_not_called()
-		self.assertIn("still logging in", ctx.exception.detail())
+		self.assertIn("still signing in", ctx.exception.detail())
 
 	@patch("crm.integrations.acumatica.client.LOGIN_WAIT_IN_JOB", 0.3)
 	@patch("crm.integrations.acumatica.client.requests.post")
@@ -437,7 +437,56 @@ class TestSharedLogin(FrappeTestCase):
 	def test_the_lock_outlasts_the_slowest_login_and_a_request_stays_inside_its_token_budget(self):
 		from crm.integrations.acumatica import client
 
-		# requests applies TIMEOUT to the connect and to the read separately
-		self.assertGreater(client.LOGIN_LOCK_SECONDS, 2 * client.TIMEOUT)
+		# a login is a connect and a read, each with its own timeout
+		login = sum(client.LOGIN_TIMEOUT)
+		self.assertGreater(client.LOGIN_LOCK_SECONDS, login)
 		# what outbound._quote_write_timeout keeps back for the token: TIMEOUT + 15
-		self.assertLessEqual(client.LOGIN_WAIT_IN_REQUEST + client.TIMEOUT, client.TIMEOUT + 15)
+		self.assertLessEqual(client.LOGIN_WAIT_IN_REQUEST + login, client.TIMEOUT + 15)
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	def test_the_token_request_is_bounded_on_the_connect_and_on_the_read(self, rpost):
+		"""A bare number is applied to each in turn: "30" was up to 60 seconds."""
+		from crm.integrations.acumatica import client
+
+		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": 3600})
+		AcumaticaClient(_settings())._token()
+		self.assertEqual(rpost.call_args.kwargs["timeout"], client.LOGIN_TIMEOUT)
+		self.assertEqual(len(client.LOGIN_TIMEOUT), 2)
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_with_redis_away_a_client_logs_in_once_and_logout_ends_that_login(self, rget, rpost):
+		"""No lock to take and nowhere to cache the token: every call of a run logged
+		in again -- three pages are the API user's three logins -- and logout() found
+		none of them to end, so the user was locked out until they expired."""
+		import redis
+
+		logins = []
+
+		def post(url, **kwargs):
+			if url.endswith("/identity/connect/token"):
+				logins.append(url)
+				return _resp(200, {"access_token": f"tok{len(logins)}", "expires_in": 3600})
+			return _resp(204)
+
+		rpost.side_effect = post
+		rget.return_value = _resp(200, [])
+		cache = frappe.cache()
+		with (
+			patch.object(cache, "lock", side_effect=redis.exceptions.ConnectionError("down")),
+			patch.object(cache, "get_value", return_value=None),  # frappe swallows the error
+			patch.object(cache, "set_value"),
+			patch.object(cache, "delete_value"),
+		):
+			c = AcumaticaClient(_settings())
+			for _ in range(3):
+				c.get_page("Customer")
+			self.assertEqual(len(logins), 1)
+			self.assertEqual(rget.call_args.kwargs["headers"]["Authorization"], "Bearer tok1")
+
+			c.logout()
+			self.assertEqual(rpost.call_args[0][0], "https://t.acumatica.com/entity/auth/logout")
+			self.assertEqual(rpost.call_args.kwargs["headers"]["Authorization"], "Bearer tok1")
+			# and it is gone: the next call logs in afresh rather than send a dead token
+			c.get_page("Customer")
+			self.assertEqual(len(logins), 2)
