@@ -791,10 +791,38 @@ Unset means off for all of them.
 | `demo_username` / `demo_password` | Together they make `crm.api.live_demo.login` log any visitor in as that user **without a password** (the endpoint returns immediately unless both are set) | **Never set these on production.** They are a password-less login for that account, by design, for the public demo site only |
 | `enable_scheduler` | Whether cron jobs run; `create-site` sets it to 1 every boot | Must be 1 — check with `bench doctor` |
 | `pulse_api_key` | Telemetry destination; absent means off — see [Telemetry](#telemetry) | Your call |
+| `crm_erp_trusted_hosts` | A list of hostnames the Acumatica **Instance URL** and the SIMERP **Site URL** may point at even though they are on a private, loopback or link-local address, and may reach over plain `http` — see [below](#an-erp-on-a-private-address) | Only for an ERP you host on the same private network. Never a public name |
 
 `site_config.json` is a file in the `sites` volume, so it survives image
 upgrades and does not travel with a backup — see the restore notes above. Read
 it back with `docker compose exec -T backend cat sites/<site>/site_config.json`.
+
+### An ERP on a private address
+
+The Acumatica and SIMERP settings panes each hold a URL and the credentials the
+CRM sends to it, and a Sales Manager can edit both. So the URL has to be
+`https://` and has to resolve to a public address: otherwise the pane would be a
+way to post the stored secrets to, or probe, anything on the server's own
+network. A URL that fails either test is refused when it is saved, and a stored
+one is checked again every time the credentials are about to be sent.
+
+A SIMERP or Acumatica you host yourself, reachable only on a private network —
+another compose stack on this host, a VPN address — is the legitimate exception,
+and it is yours to grant, not the pane's:
+
+```bash
+docker compose exec backend bench --site <site> set-config -p \
+  crm_erp_trusted_hosts '["erpnext.internal"]'
+```
+
+Exact hostnames (or IP literals), no wildcards. A listed host may be private and
+may be `http`. After an upgrade that introduces this check, an integration
+already pointed at a private address stops syncing until its host is listed; the
+reason is in the integration's last sync error and the Error Log. SIMERP
+installed on the *same site* as the CRM has no URL and is not affected.
+
+Changing either URL to a different host also asks for the credentials again: the
+ones stored for the old host are never sent to a new one.
 
 ## Lead syncing is off
 

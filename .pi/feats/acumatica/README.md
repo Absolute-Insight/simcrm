@@ -385,6 +385,28 @@ The panel also lists open sync issues with a **Dismiss** button per row
 **Run backfill** disables itself while a sync is `running`, and polls
 `get_sync_status` every 5s after queuing until it stops.
 
+### Where the credentials may go
+
+`instance_url` and the secrets posted to it sit in one document a Sales Manager
+can write, so three rules hold on the URL (`crm/integrations/remote_url.py`, shared
+with ERPNext CRM Settings' `erpnext_site_url`):
+
+- **Saved**: `https` only (`http` in developer mode), no credentials in the URL,
+  and no host on a loopback, private or link-local address — unless the operator
+  listed the host in the `crm_erp_trusted_hosts` site-config key, which also allows
+  `http`. Only a *changed* URL is judged, so an older site can still save its other
+  settings.
+- **Used**: `AcumaticaClient._token` asks again before the login is posted
+  (`ensure_host_allowed`), because a name can be re-pointed after the save. A
+  refusal is an `AcumaticaAuthError`.
+- **Moved**: a save that changes the scheme, host or port is refused while
+  `client_secret` or `password` still hold their mask — they have to be typed
+  again. Removing the URL clears them. A path change (Sandbox to live on one host)
+  keeps them.
+
+`test_connection` answers with the status and a fixed sentence; the instance's
+reply goes to the Error Log, never to the browser.
+
 ## Operational notes
 
 - Acumatica licences cap API request rates; `request_pause` throttles paging.

@@ -6,6 +6,9 @@ from contextlib import contextmanager, suppress
 import frappe
 import redis
 import requests
+from frappe import _
+
+from crm.integrations.remote_url import RemoteHostNotAllowed, ensure_host_allowed
 
 TOKEN_CACHE_PREFIX = "acumatica_token::"
 
@@ -206,6 +209,13 @@ class AcumaticaClient:
 
 	def _login(self):
 		s = self.settings
+		# Asked here, where the secrets are about to leave: the URL was checked when
+		# it was saved, but a name can be re-pointed since, and a URL saved before
+		# that check existed was never looked at.
+		try:
+			ensure_host_allowed(self.base, _("Instance URL"))
+		except RemoteHostNotAllowed as e:
+			raise AcumaticaAuthError(str(e)) from e
 		data = {
 			"grant_type": "password",
 			"client_id": s.client_id,

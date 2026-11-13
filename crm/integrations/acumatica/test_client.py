@@ -90,6 +90,26 @@ class TestClient(FrappeTestCase):
 		self.assertEqual(rget.call_args.kwargs["headers"]["Authorization"], "Bearer tok")
 
 	@patch("crm.integrations.acumatica.client.requests.post")
+	def test_the_login_is_not_posted_to_an_internal_address(self, rpost):
+		"""The settings save checks the URL, but a name can be re-pointed afterwards
+		and a URL can predate the check: the secrets are not sent until the host has
+		been looked at again."""
+		from crm.integrations import remote_url
+		from crm.integrations.acumatica.client import AcumaticaAuthError
+
+		for url, resolves_to in (
+			("https://127.0.0.1", None),
+			("https://t.acumatica.com", ["10.0.3.7"]),
+			("http://169.254.169.254", None),
+		):
+			settings = _settings()
+			settings.instance_url = url
+			with self.subTest(url=url), patch.object(remote_url, "_resolve", return_value=resolves_to):
+				with self.assertRaises(AcumaticaAuthError):
+					AcumaticaClient(settings, shared_session=False).get_page("Customer")
+		rpost.assert_not_called()
+
+	@patch("crm.integrations.acumatica.client.requests.post")
 	@patch("crm.integrations.acumatica.client.requests.get")
 	def test_get_page_orderby_is_overridable(self, rget, rpost):
 		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": 3600})

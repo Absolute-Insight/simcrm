@@ -847,6 +847,21 @@ class RowCapTest(IntegrationTestCase):
 			analyst_data.erpnext_invoices("2026-01-01", "2026-01-31")
 		self.assertEqual(get.call_args.kwargs["params"]["limit_page_length"], self.CAP + 1)
 
+	def test_the_erpnext_secret_is_not_sent_to_an_internal_address(self):
+		"""The analyst reads the remote site with the stored API secret too: the same
+		check as the settings pane's client, before the request is made."""
+		for url in ("https://127.0.0.1:8000", "http://169.254.169.254", "https://localhost"):
+			settings = mock.Mock(erpnext_site_url=url, api_key="key")
+			settings.get_password.return_value = "secret"
+			with (
+				self.subTest(url=url),
+				mock.patch.object(frappe, "get_cached_doc", return_value=settings),
+				mock.patch.object(analyst_data.requests, "get") as get,
+			):
+				with self.assertRaises(frappe.ValidationError):
+					analyst_data.erpnext_invoices("2026-01-01", "2026-01-31")
+				get.assert_not_called()
+
 	def test_a_capped_table_says_its_figures_are_a_floor(self):
 		with mock.patch.object(analyst_data, "_acumatica_client", return_value=self.acumatica(self.CAP + 3)):
 			(table,) = analyst_data.run_plan(

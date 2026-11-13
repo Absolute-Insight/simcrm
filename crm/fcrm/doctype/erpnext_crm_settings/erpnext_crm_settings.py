@@ -13,6 +13,7 @@ from frappe.frappeclient import FrappeClient
 from frappe.model.document import Document
 from frappe.utils import get_url_to_form, get_url_to_list
 
+from crm.integrations.remote_url import RemoteHostNotAllowed, ensure_host_allowed, validate_url_field
 from crm.utils import user_rate_limited
 
 # Per user and per minute on the endpoints that reach the remote ERPNext site.
@@ -68,6 +69,9 @@ class ERPNextCRMSettings(Document):
 	# end: auto-generated types
 
 	def validate(self):
+		# First, and enabled or not: everything below may call the other site, and
+		# the secret stored for one host is not sent to another.
+		validate_url_field(self, "erpnext_site_url", ("api_secret",))
 		old = self.get_doc_before_save()
 		was_active = bool(old and old.enabled and not old.is_erpnext_in_different_site)
 		if self.enabled:
@@ -228,8 +232,21 @@ class ERPNextCRMSettings(Document):
 		frappe.only_for(["System Manager", "Sales Manager"], True)
 		if not self.erpnext_site_url or not self.api_key or not self.api_secret:
 			return []
-		client = get_erpnext_site_client(self)
-		return client.get_list("Company", fields=["company_name"])
+		try:
+			client = get_erpnext_site_client(self)
+			return client.get_list("Company", fields=["company_name"])
+		except RemoteHostNotAllowed:
+			raise
+		except Exception:
+			# Never the other side's words: FrappeClient raises the remote traceback,
+			# or whatever page the URL served, and the URL is a Sales Manager's to set.
+			frappe.log_error(frappe.get_traceback(), "Could not read companies from the SIMERP site")
+			frappe.throw(
+				_(
+					"Could not read the companies from the SIMERP site. Check the site URL, "
+					"API key and API secret; the details are in the Error Log."
+				)
+			)
 
 	@frappe.whitelist()
 	def is_erpnext_installed(self):
@@ -381,6 +398,9 @@ def _can_read_items():
 
 def get_erpnext_site_client(erpnext_crm_settings):
 	site_url = erpnext_crm_settings.erpnext_site_url
+	# Asked every time the secret is about to be sent: a name can be re-pointed
+	# after the settings were saved, and a URL may predate the save-time check.
+	ensure_host_allowed(site_url, _("SIMERP Site URL"))
 	api_key = erpnext_crm_settings.api_key
 	api_secret = erpnext_crm_settings.get_password("api_secret", raise_exception=False)
 

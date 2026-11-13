@@ -90,16 +90,42 @@ def test_connection() -> dict:
 	try:
 		return client.ping()
 	except AcumaticaError as e:
+		# The status and a fixed sentence, never the reply: the URL is whatever a
+		# Sales Manager saved, and relaying the body made this button a way to read
+		# the first lines of any page that URL serves. The reply goes to the Error
+		# Log, where a System Manager finds it.
 		if e.status_code:
-			error = f"{e.status_code}: {e.detail(300)}"
+			_log_test_failure(f"{e}\n\n{e.detail(1000)}")
+			error = _("{0}: Acumatica refused the request. The reply is in the Error Log.").format(
+				e.status_code
+			)
 		else:
-			error = str(e)
+			error = str(e)  # raised by the client itself, in its own words
 		return {"ok": False, "error": error}
 	except Exception as e:
-		return {"ok": False, "error": str(e)}
+		# requests' own text names the address and says whether the port answered
+		_log_test_failure(frappe.get_traceback())
+		return {"ok": False, "error": _connection_failure(e)}
 	finally:
 		# one click, one login, released -- not a session held for an hour
 		client.logout()
+
+
+def _log_test_failure(detail: str) -> None:
+	frappe.log_error(title="Acumatica test connection failed", message=detail)
+
+
+def _connection_failure(exc: Exception) -> str:
+	"""What kind of failure it was, in a sentence of ours."""
+	if isinstance(exc, requests.exceptions.Timeout):
+		return _("The Acumatica instance did not answer in time.")
+	if isinstance(exc, requests.exceptions.SSLError):
+		return _("The Acumatica instance's certificate could not be verified.")
+	if isinstance(exc, requests.exceptions.ConnectionError | ConnectionError):
+		return _("Could not connect to the Acumatica instance. Check the Instance URL.")
+	return _(
+		"The Acumatica instance gave an answer that could not be read. The details are in the Error Log."
+	)
 
 
 @frappe.whitelist()

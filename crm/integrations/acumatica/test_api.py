@@ -139,6 +139,45 @@ class TestConnection(FrappeTestCase):
 		self.assertIn("401", out["error"])
 
 	@patch("crm.integrations.acumatica.api.AcumaticaClient")
+	def test_what_the_instance_answered_is_not_relayed(self, MockClient):
+		"""The button reaches whatever URL a Sales Manager saved. Echoing the first
+		300 characters of the reply made it a reader for any page that URL served."""
+		from crm.integrations.acumatica.api import test_connection
+		from crm.integrations.acumatica.client import AcumaticaError
+
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value("CRM Acumatica Settings", "instance_url", "https://t.acumatica.com")
+		MockClient.return_value.ping.side_effect = AcumaticaError(
+			"Acumatica GET https://t.acumatica.com/x -> 403",
+			status_code=403,
+			body="<html>internal admin page: token=abc</html>",
+		)
+		out = test_connection()
+		self.assertFalse(out["ok"])
+		self.assertIn("403", out["error"])
+		self.assertNotIn("internal admin page", out["error"])
+		self.assertNotIn("token=abc", out["error"])
+
+		MockClient.return_value.ping.side_effect = ConnectionError(
+			"HTTPSConnectionPool(host='10.0.3.7', port=6379): Connection refused"
+		)
+		out = test_connection()
+		self.assertFalse(out["ok"])
+		self.assertNotIn("10.0.3.7", out["error"])
+		self.assertNotIn("refused", out["error"])
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	def test_a_stored_url_that_is_internal_is_never_sent_the_credentials(self, rpost):
+		from crm.integrations.acumatica.api import test_connection
+
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value("CRM Acumatica Settings", "instance_url", "https://127.0.0.1:8443")
+		out = test_connection()
+		self.assertFalse(out["ok"])
+		self.assertIn("public address", out["error"])
+		rpost.assert_not_called()
+
+	@patch("crm.integrations.acumatica.api.AcumaticaClient")
 	def test_success_returns_the_sample(self, MockClient):
 		from crm.integrations.acumatica.api import test_connection
 
