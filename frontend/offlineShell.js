@@ -30,18 +30,20 @@ export function shellFromIndex(html) {
         'frappe-ui changed what jinjaBootData injects; update JINJA_BOOT.',
     )
   }
-  const shell = html.replace(
-    JINJA_BOOT,
-    () => `<script>${shellLoaderScript()}</script>`,
-  )
   // Anything Jinja left in the page would be served raw: the failure that
-  // took production down when index.html itself was precached.
-  if (/\{%|\{\{/.test(shell.replace(/<script>[\s\S]*?<\/script>/g, ''))) {
+  // took production down when index.html itself was precached. Checked on
+  // the page with the boot block taken out and before the loader goes in,
+  // so the loader's own braces are not part of the question.
+  if (/\{%|\{\{/.test(html.replace(JINJA_BOOT, ''))) {
     throw new Error(
       'offline shell: template syntax remains outside the boot block; ' +
         'the shell would be served unrendered.',
     )
   }
+  const shell = html.replace(
+    JINJA_BOOT,
+    () => `<script>${shellLoaderScript()}</script>`,
+  )
   return shell
 }
 

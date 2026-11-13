@@ -207,7 +207,7 @@ describe('field mode shares the same owner', () => {
     // the phone closed the app: the session cookie is gone, the shell's
     // loader matched the owner against the saved boot
     vi.resetModules()
-    document.cookie = 'user_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT'
+    setUserCookie('')
     window.__crm_offline_shell = true
     window.__crm_offline_user = 'rep.a@example.com'
     try {
