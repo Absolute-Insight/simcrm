@@ -9,7 +9,7 @@ Pattern, CRM Enrichment Field Mapping) so a sales-ops admin owns the knowledge.
 
 Wired into both ``after_install`` and ``after_migrate``, and seeded once per
 ``SEED_VERSION``: a default an admin deleted or renamed after it was seeded stays
-deleted or renamed.
+deleted or renamed -- until they press Restore Defaults, which asks for them back.
 """
 
 import frappe
@@ -281,7 +281,7 @@ FIELD_MAPPINGS = [
 ]
 
 
-def seed_default_rules_and_mappings():
+def seed_default_rules_and_mappings(restore: bool = False):
 	"""Create the default enrichment rules, field mappings and industries -- once.
 
 	Runs on every install and migrate, but seeds only what the site has not been
@@ -289,7 +289,22 @@ def seed_default_rules_and_mappings():
 	on a name an admin can change, so every upgrade put back the industries, rules and
 	mappings an admin had deleted, and a renamed rule came back as a duplicate whose
 	hits were counted twice.
+
+	``restore`` is the Restore Defaults button (``crm.install.restore_defaults``): an
+	administrator asking for the defaults back. The marker does not apply -- with it,
+	the button did nothing on any site already seeded, and the marker is hidden, so
+	nothing else could bring a deleted default back. Every default that is missing is
+	created; nothing that exists is touched, and a default whose industry or network
+	another rule already covers (the renamed one) is left out rather than doubled.
 	"""
+	if restore:
+		_seed_industry_rules(skip_covered=True)
+		_seed_social_rules(skip_covered=True)
+		_seed_field_mappings()
+		_seed_settings_defaults()
+		frappe.db.set_single_value("CRM Enrichment Settings", "seed_version", SEED_VERSION)
+		return
+
 	seeded = cint(frappe.db.get_singles_dict("CRM Enrichment Settings").get("seed_version"))
 	if seeded >= SEED_VERSION:
 		return
@@ -342,6 +357,7 @@ def _make_rule(
 	weight=1,
 	match_scope="Full Text",
 	is_regex=False,
+	skip_covered=False,
 ):
 	# Match on the rule_name field, not the document name: the autoname
 	# ("{rule_type}.-.####") means name != rule_name, so a bare-string exists()
@@ -350,6 +366,12 @@ def _make_rule(
 	# name because it is free text (colons/spaces) that a naming series rejects.
 	if frappe.db.exists("CRM Enrichment Rule", {"rule_name": rule_name}):
 		return
+	if skip_covered:
+		# a restore: the default an admin renamed still does this rule's job, and
+		# a second rule for the same industry or network counts every hit twice
+		covered = {"industry": industry} if industry else {"target_value": target_value}
+		if frappe.db.exists("CRM Enrichment Rule", {"rule_type": rule_type, **covered}):
+			return
 	doc = frappe.get_doc(
 		{
 			"doctype": "CRM Enrichment Rule",
@@ -366,7 +388,7 @@ def _make_rule(
 	doc.insert(ignore_permissions=True)
 
 
-def _seed_industry_rules():
+def _seed_industry_rules(skip_covered=False):
 	for industry, keywords in INDUSTRY_KEYWORDS.items():
 		_ensure_industry(industry)
 		_make_rule(
@@ -375,10 +397,11 @@ def _seed_industry_rules():
 			keywords,
 			industry=industry,
 			match_scope="Headline",
+			skip_covered=skip_covered,
 		)
 
 
-def _seed_social_rules():
+def _seed_social_rules(skip_covered=False):
 	for network, patterns in SOCIAL_PATTERNS.items():
 		_make_rule(
 			f"Social: {network}",
@@ -387,6 +410,7 @@ def _seed_social_rules():
 			target_value=network,
 			match_scope="HTML",
 			is_regex=True,
+			skip_covered=skip_covered,
 		)
 
 
