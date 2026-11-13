@@ -9,6 +9,7 @@ from frappe import _
 from frappe.query_builder import Order
 from frappe.rate_limiter import rate_limit
 from pypika.functions import Replace
+from pypika.terms import Case
 from werkzeug.wrappers import Response
 
 from crm.domain_enrichment.http import _Deadline, _is_blocked_ip, _WatchedHTTPPool, _WatchedHTTPSPool
@@ -294,8 +295,9 @@ def lookup_contact_lead_or_deal_from_number(number: str, prefer_user: str | None
 #: switchboard number can sit on many records; the newest are the ones that matter.
 NUMBER_MATCH_LIMIT = 200
 
-#: Fewer digits than this is not a number to look up. The needle goes into a
-#: ``LIKE '%...%'``, so "+" (no digits at all) matched every contact on the site.
+#: A needle shorter than this is matched exactly, never searched for: one or two
+#: digits is an internal extension, and inside a ``LIKE '%...%'`` it is most of the
+#: table. (With no digit at all -- "+" -- the LIKE was '%%': every contact.)
 MIN_LOOKUP_DIGITS = 3
 
 CLOSED_STATUS_TYPES = ("Won", "Lost")
@@ -619,6 +621,7 @@ def get_recording_url(call_log_name: str):
 	# every few seconds held the worker for as long as it cared to.
 	deadline = _Deadline(MAX_RECORDING_SECONDS)
 	upstream = None
+	opened = False
 	deadline.attach()
 	try:
 		# stream instead of buffering the whole file: the provider's Content-Length
@@ -637,18 +640,22 @@ def get_recording_url(call_log_name: str):
 			# Shut while the headers were still arriving, which http.client reads as
 			# a complete response with no body: out of time, not an empty recording.
 			frappe.throw(_("The recording took too long to arrive"), frappe.ValidationError)
+		opened = True
 	except Exception:
-		deadline.detach()
-		deadline.release()
-		if upstream is not None:
-			_close_upstream(upstream)
 		if deadline.expired:
 			# whatever broke, it broke because the deadline shut the socket under it
 			frappe.throw(_("The recording took too long to arrive"), frappe.ValidationError)
 		raise
-	# The body is read after this function returns. The sockets already opened stay
-	# under the clock; this thread's later connections are none of its business.
-	deadline.detach()
+	finally:
+		# However this block is left -- a job timeout and an interrupt included --
+		# the thread stops reporting its sockets here. On success the body is read
+		# after this function returns: the sockets already opened stay under the
+		# clock, and this thread's later connections are none of its business.
+		deadline.detach()
+		if not opened:
+			deadline.release()
+			if upstream is not None:
+				_close_upstream(upstream)
 
 	def _release():
 		_close_upstream(upstream)
@@ -726,10 +733,32 @@ def get_contact(phone_number: str, country: str = "IN", exact_match: bool = Fals
 		.replace("_", "")
 	)
 	# Reachable by any rep with any string. With nothing left ("+", "()") the LIKE
-	# below is '%%', and with a digit or two it is nearly that: no such needle is a
-	# phone number, so it matches nothing rather than everything.
-	if sum(character.isdigit() for character in cleaned_number) < MIN_LOOKUP_DIGITS:
+	# below is '%%': a needle with no digit in it is not a number, and matches
+	# nothing rather than everything.
+	if not any(character.isdigit() for character in cleaned_number):
 		return {"mobile_no": phone_number}
+	# A digit or two is an extension. It is matched as the whole stored number, or
+	# not at all -- as a fragment it is in nearly every number there is.
+	short = len(cleaned_number) < MIN_LOOKUP_DIGITS
+	if short and not cleaned_number.isdigit():
+		return {"mobile_no": phone_number}
+
+	def matching(column):
+		return column == cleaned_number if short else column.like(f"%{cleaned_number}%")
+
+	def ends_with_it_first(column):
+		# The limit below must not cut the real match: the LIKE also returns every
+		# number that merely contains these digits, and when those were newer and
+		# more than the limit, the number itself was never looked at. A stored
+		# number ends with its national digits, so those rows go first.
+		# (An extension is matched whole: every row it returns is the match.)
+		return (
+			Case().when(column == cleaned_number if short else column.like(f"%{cleaned_number}"), 0).else_(1)
+		)
+
+	def same_number(stored):
+		# phonenumbers cannot parse an extension; the query already matched it whole
+		return short or are_same_phone_number(stored, phone_number, country, validate=not exact_match)
 
 	# Check if the number is associated with a contact.
 	# Search all of a contact's numbers (phone_nos child table) and not just the
@@ -752,18 +781,15 @@ def get_contact(phone_number: str, country: str = "IN", exact_match: bool = Fals
 			ContactPhone.phone.as_("matched_phone"),
 		)
 		.where(ContactPhone.parenttype == "Contact")
-		.where(normalized_phone.like(f"%{cleaned_number}%"))
+		.where(matching(normalized_phone))
+		.orderby(ends_with_it_first(normalized_phone))
 		.orderby(Contact.modified, order=Order.desc)
 		.limit(NUMBER_MATCH_LIMIT)
 	)
 	# The LIKE also catches numbers that merely contain these digits (a +44 number
 	# holding a +27 one's national digits), so only the rows that are this number
-	# go on -- newest first, as the query returned them.
-	contacts = [
-		contact
-		for contact in query.run(as_dict=True)
-		if are_same_phone_number(contact.matched_phone, phone_number, country, validate=not exact_match)
-	]
+	# go on -- newest first within those that end with it.
+	contacts = [contact for contact in query.run(as_dict=True) if same_number(contact.matched_phone)]
 
 	if contacts:
 		# A contact who is the primary on a deal wins. One query for all of them: it
@@ -792,15 +818,16 @@ def get_contact(phone_number: str, country: str = "IN", exact_match: bool = Fals
 		frappe.qb.from_(Lead)
 		.select(Lead.name, Lead.lead_name, Lead.image, Lead.mobile_no)
 		.where(Lead.converted == 0)
-		.where(normalized_phone.like(f"%{cleaned_number}%"))
-		.orderby("modified", order=Order.desc)
+		.where(matching(normalized_phone))
+		.orderby(ends_with_it_first(normalized_phone))
+		.orderby(Lead.modified, order=Order.desc)
 		.limit(NUMBER_MATCH_LIMIT)
 	)
 	leads = query.run(as_dict=True)
 
 	if len(leads):
 		for lead in leads:
-			if are_same_phone_number(lead.mobile_no, phone_number, country, validate=not exact_match):
+			if same_number(lead.mobile_no):
 				lead["lead"] = lead.name
 				lead["full_name"] = lead.lead_name
 				return lead

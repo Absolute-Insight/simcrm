@@ -873,10 +873,46 @@ class TestPhoneLookupBounds(IntegrationTestCase):
 		"""Every character of "+" is stripped, which left ``LIKE '%%'``: every contact
 		on the site, and one more query for each of them."""
 		self._contact("Bounds One", "+27 82 555 0161")
-		for needle in ("+", "-", "()", " + ", "%", "__", "12", "+1", "anonymous"):
+		for needle in ("+", "-", "()", " + ", "%", "__", "anonymous", "a1", "x-2"):
 			with self.subTest(needle=needle), patch.object(frappe.qb, "from_") as from_:
 				self.assertEqual(get_contact(needle), {"mobile_no": needle})
 				from_.assert_not_called()
+
+	def test_a_short_extension_is_matched_exactly_or_not_at_all(self):
+		"""One or two digits is an internal extension, not a fragment to search for:
+		it finds the contact stored under exactly that, never one containing it."""
+		extension = self._contact("Front Desk", "12")
+		self._contact("Has Twelve In It", "+27 82 512 0161")
+		self.assertEqual(get_contact("12").get("name"), extension.name)
+		self.assertEqual(get_contact(" 12 ").get("name"), extension.name)
+		self.assertEqual(get_contact("21"), {"mobile_no": "21"})
+		self.assertEqual(get_contact("1"), {"mobile_no": "1"})
+		sql = self._queries(lambda: get_contact("12"))
+		self.assertTrue(sql)
+		for query in sql:
+			self.assertNotIn(" like ", query.lower())
+
+	def test_the_match_is_found_behind_more_newer_lookalikes_than_the_limit(self):
+		"""The limit cut the newest 200 rows the LIKE returned, before the check that
+		a row really is this number: a caller whose digits also sit inside 200 newer
+		numbers was no longer found."""
+		caller = self._contact("The Caller", "+27 82 555 0147")
+		caller.db_set("modified", "2026-01-01 00:00:00", update_modified=False)
+		lead = frappe.get_doc(
+			{"doctype": "CRM Lead", "first_name": "Caller Lead", "mobile_no": "+27 82 555 0199"}
+		).insert(ignore_permissions=True)
+		lead.db_set("modified", "2026-01-01 00:00:00", update_modified=False)
+		for i in range(integrations_api.NUMBER_MATCH_LIMIT + 5):
+			# newer, and holding the caller's national digits without being the number
+			self._contact(f"Lookalike {i}", f"+1 825550147{i:04d}")
+		for i in range(4):
+			frappe.get_doc(
+				{"doctype": "CRM Lead", "first_name": f"Lookalike {i}", "mobile_no": f"+1 825550199{i:04d}"}
+			).insert(ignore_permissions=True)
+
+		self.assertEqual(lookup_contact_by_phone_number("+27825550147").get("name"), caller.name)
+		with patch.object(integrations_api, "NUMBER_MATCH_LIMIT", 3):
+			self.assertEqual(lookup_contact_by_phone_number("+27825550199").get("lead"), lead.name)
 
 	def test_the_lookup_reads_a_bounded_number_of_rows(self):
 		for i in range(4):
