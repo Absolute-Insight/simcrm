@@ -459,3 +459,81 @@ class NotesAndTasksTest(ReplayTestCase):
 		frappe.set_user(REP)
 		replay(new_id(), "close_task", {"task": name, "closing_note": "Sent"})
 		self.assertEqual(frappe.db.get_value("CRM Task", name, ["status", "closing_note"]), ("Done", "Sent"))
+
+
+class PlanOfflineTest(ReplayTestCase):
+	def tomorrow(self) -> str:
+		return str(frappe.utils.getdate() + timedelta(days=1))
+
+	def planned(self, day: str) -> list[dict]:
+		monday = frappe.utils.getdate(day) - timedelta(days=frappe.utils.getdate(day).weekday())
+		return [row for row in self.items(str(monday)) if str(row["planned_date"]) == day]
+
+	def test_a_visit_is_added_to_the_week_without_replacing_it(self):
+		existing = self.plan_one("Call")
+		day = str(frappe.utils.getdate())
+		replay(
+			new_id(),
+			"plan_item",
+			{"activity_type": "Visit", "planned_date": day, "organization": self.org, "note": "Quote"},
+		)
+		rows = self.planned(day)
+		self.assertEqual(sorted(row["activity_type"] for row in rows), ["Call", "Visit"])
+		# the row that was already there is the same row, not a copy
+		self.assertIn(existing, {row["name"] for row in rows})
+		self.assertEqual([row["status"] for row in rows], ["Planned", "Planned"])
+
+	def test_what_the_week_already_held_keeps_its_outcome(self):
+		done = self.plan_one()
+		replay(new_id(), "complete_item", {"item": done, "outcome": "Seen"})
+		replay(new_id(), "plan_item", {"activity_type": "Admin", "planned_date": str(frappe.utils.getdate())})
+		kept = next(row for row in self.items() if row["name"] == done)
+		self.assertEqual((kept["status"], kept["outcome"]), ("Done", "Seen"))
+
+	def test_another_reps_customer_cannot_be_planned(self):
+		with self.assertRaises(frappe.PermissionError):
+			replay(
+				new_id(),
+				"plan_item",
+				{"activity_type": "Visit", "planned_date": self.tomorrow(), "organization": self.foreign},
+			)
+
+	def test_a_day_that_had_passed_when_it_was_planned_is_refused(self):
+		yesterday = str(frappe.utils.getdate() - timedelta(days=1))
+		with self.assertRaises(frappe.ValidationError):
+			replay(new_id(), "plan_item", {"activity_type": "Admin", "planned_date": yesterday})
+
+	def test_an_unplanned_meeting_is_by_definition_not_planned(self):
+		for kind in ("Unplanned Meeting", "Nonsense", ""):
+			with self.assertRaises(frappe.ValidationError):
+				replay(new_id(), "plan_item", {"activity_type": kind, "planned_date": self.tomorrow()})
+
+	def test_the_same_plan_entry_sent_twice_plans_once(self):
+		request_id = new_id()
+		payload = {"activity_type": "Admin", "planned_date": self.tomorrow(), "note": "Paperwork"}
+		replay(request_id, "plan_item", payload)
+		replay(request_id, "plan_item", payload)
+		self.assertEqual(len(self.planned(self.tomorrow())), 1)
+
+
+class SheetsInThePackTest(ReplayTestCase):
+	def test_the_pack_lists_sheets_by_page_and_nothing_more(self):
+		frappe.set_user("Administrator")
+		frappe.get_doc(
+			{
+				"doctype": "CRM Reference Sheet",
+				"sheet_key": "replay-test-sheet",
+				"title": "Replay flange table",
+				"pages": frappe.as_json(
+					[{"page": 1, "image": "/private/files/replay-p1.png", "width": 800, "height": 1100}]
+				),
+			}
+		).insert(ignore_permissions=True)
+		frappe.set_user(REP)
+		sheet = next(row for row in get_pack()["sheets"] if row["name"] == "replay-test-sheet")
+		self.assertEqual(sheet["title"], "Replay flange table")
+		self.assertEqual(
+			sheet["pages"],
+			[{"page": 1, "image": "/private/files/replay-p1.png", "width": 800, "height": 1100}],
+		)
+		self.assertEqual(set(sheet), {"name", "title", "note", "modified", "pages"})

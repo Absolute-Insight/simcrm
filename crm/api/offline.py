@@ -43,6 +43,7 @@ import frappe
 from frappe import _
 
 from crm.api.rep_plan import (
+	EDITABLE_ITEM_FIELDS,
 	ITEM_FIELDS,
 	LOGGABLE_TYPES,
 	REFERENCE_DOCTYPES,
@@ -51,6 +52,7 @@ from crm.api.rep_plan import (
 	get_plan,
 	log_activity,
 	past_days_locked,
+	save_plan,
 )
 from crm.rep_planning import ACTIVITY_TYPES, EVENT_KINDS, MATCH_HORIZON_WEEKS, week_of
 from crm.utils import sales_user_only, user_rate_limited
@@ -185,8 +187,10 @@ def _pack_body() -> dict:
 			"horizon_weeks": MATCH_HORIZON_WEEKS,
 			"history_days": HISTORY_DAYS,
 			"offline_grace_hours": OFFLINE_GRACE_HOURS,
+			"plannable_types": [kind for kind in ACTIVITY_TYPES if kind != "Unplanned Meeting"],
 		},
 		"plans": _plans(today),
+		"sheets": _sheets(),
 		"organizations": organizations,
 		"contacts": contacts,
 		"deals": deals,
@@ -202,6 +206,40 @@ def _plans(today) -> list[dict]:
 	monday, _sunday = week_of(today)
 	weeks = [monday + timedelta(weeks=offset) for offset in (-1, 0, 1)]
 	return [get_plan(str(week)) for week in weeks]
+
+
+def _sheets() -> list[dict]:
+	"""The reference sheets, by name and page: what a rep may keep on the phone.
+
+	Only the list travels in the pack. The page images are fetched by the
+	phone for the sheets the rep chooses to keep, through the ordinary file
+	URLs and their ordinary permission check.
+	"""
+	from crm.api.reference import list_sheets
+
+	try:
+		rows = list_sheets()["sheets"]
+	except frappe.PermissionError:
+		return []
+	return [
+		{
+			"name": row["name"],
+			"title": row["title"],
+			"note": row.get("note") or "",
+			"modified": str(row["modified"]),
+			"pages": [
+				{
+					"page": page.get("page"),
+					"image": page.get("image"),
+					"width": page.get("width"),
+					"height": page.get("height"),
+				}
+				for page in row.get("pages") or []
+				if isinstance(page, dict) and page.get("image")
+			],
+		}
+		for row in rows
+	]
 
 
 def _organizations() -> list[dict]:
@@ -563,6 +601,47 @@ def _replay_cancel_item(payload: dict, moment: datetime, late: bool) -> None:
 	_flag_offline(item, late)
 
 
+def _replay_plan_item(payload: dict, moment: datetime, late: bool) -> None:
+	"""Add one planned activity to the caller's week.
+
+	The Planner saves a whole week at a time, guarded by "nobody changed it
+	since you loaded it". A phone that was offline for two days cannot make
+	that promise, and losing the week to a conflict is the wrong price for
+	adding one visit. So offline planning only ever *adds*: the week as the
+	server holds it now, plus this row, through ``save_plan`` -- which applies
+	every rule the Planner's own save does (the horizon, the day lock, the
+	customer's owner).
+	"""
+	try:
+		day = frappe.utils.getdate(_name(payload, "planned_date")[:10])
+	except Exception:
+		frappe.throw(_("That date could not be read."), frappe.ValidationError)
+	activity_type = _name(payload, "activity_type")
+	if activity_type not in ACTIVITY_TYPES or activity_type == "Unplanned Meeting":
+		frappe.throw(_("{0} cannot be planned.").format(activity_type or _("That")), frappe.ValidationError)
+	if day < moment.date():
+		# planned for a day that had already passed when the rep planned it
+		frappe.throw(_("Activities are planned for today or later."), frappe.ValidationError)
+
+	monday, _sunday = week_of(day)
+	current = get_plan(str(monday))
+	kept = [
+		{"name": row["name"], **{f: row.get(f) for f in EDITABLE_ITEM_FIELDS}} for row in current["items"]
+	]
+	save_plan(
+		str(monday),
+		[
+			*kept,
+			{
+				"activity_type": activity_type,
+				"planned_date": str(day),
+				"note": _text(payload.get("note"), TITLE_LIMIT),
+				"organization": _name(payload, "organization") or None,
+			},
+		],
+	)
+
+
 def _parent_of(item: str) -> str | None:
 	return frappe.db.get_value("CRM Rep Plan Item", item, "parent") if item else None
 
@@ -654,4 +733,5 @@ ACTIONS = {
 	"add_note": _replay_add_note,
 	"create_task": _replay_create_task,
 	"close_task": _replay_close_task,
+	"plan_item": _replay_plan_item,
 }
