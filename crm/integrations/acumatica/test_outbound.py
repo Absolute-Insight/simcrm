@@ -792,6 +792,44 @@ class TestCreateSalesQuote(FrappeTestCase):
 		self.assertIsNone(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_the_row_lock_is_let_go_before_the_put_once_the_marker_is_set(self, ClientCls):
+		"""Held to the end of the request, the lock made every other save of the deal
+		wait out the PUT. The marker has to be there first: it is what a second click
+		that then gets the lock is refused by (test_a_retry_waits_out_acumatica...)."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		_org, deal = _mapped_deal()
+		inflight = outbound._inflight_key("SalesOrder", deal.name)
+		order = []
+
+		def put(*args, **kwargs):
+			order.append("put")
+			return _wrapped(OrderNbr="QT000140")
+
+		client.put.side_effect = put
+		with patch.object(
+			outbound,
+			"_release_row_lock",
+			side_effect=lambda: order.append(("release", bool(frappe.cache().get_value(inflight)))),
+		):
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertEqual(order, [("release", True), "put"])
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_refusal_before_the_put_releases_nothing(self, ClientCls):
+		"""The release is a commit; a request that is about to throw must not make one."""
+		_enable()
+		ClientCls.return_value = MagicMock()
+		_org, deal = _mapped_deal()
+		frappe.db.set_value("CRM Deal", deal.name, "acumatica_sales_quote", "QT000141")
+		with patch.object(outbound, "_release_row_lock") as release:
+			with self.assertRaises(frappe.ValidationError):
+				outbound.create_sales_quote_from_deal(deal.name)
+		release.assert_not_called()
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_the_put_gives_up_before_the_proxy_does(self, ClientCls):
 		"""At WRITE_TIMEOUT (120s) behind nginx's 120s PROXY_READ_TIMEOUT the proxy
 		answered first: the rep got a bare gateway error, never the warning that the

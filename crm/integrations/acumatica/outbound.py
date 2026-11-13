@@ -79,6 +79,14 @@ def _enqueue_push(deal: str, organization: str, job_suffix: str = "") -> None:
 	)
 
 
+def _release_row_lock() -> None:
+	"""End the transaction a ``for_update`` read opened, before a call to Acumatica
+	that the in-flight marker -- already set -- guards on its own. Only where nothing
+	else has been written: this commits whatever the request has done so far."""
+	if not frappe.flags.in_test:
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
+
+
 def _commit() -> None:
 	"""A customer now exists in the client's ERP and its link is written: make that
 	durable before anything else in the job can fail and roll it back. The follow-ups
@@ -1268,6 +1276,13 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 			)
 
 	_mark_inflight(inflight)
+	# The marker is the guard from here on, and the row lock has done its work: a second
+	# click that gets the lock now finds the marker, looks for this order and -- inside
+	# QUOTE_SETTLE_SECONDS, which outlasts the PUT -- refuses. Held until the request
+	# ended, the lock made every other save of the deal (a rep's edit, the sweep closing
+	# it) wait out the PUT, and fail on the lock wait when Acumatica took its time.
+	# Nothing has been written yet, so there is nothing else for this to commit.
+	_release_row_lock()
 	try:
 		created = client.put("SalesOrder", payload, timeout=_quote_write_timeout())
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
