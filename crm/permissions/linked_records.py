@@ -32,6 +32,11 @@ read but a manager who sees everything.
 The document check reads the *stored* row, not the in-memory document: frappe
 checks write on the mutated document, so a check against ``doc.reference_docname``
 would let a rep re-point a hidden note at their own deal and read it.
+
+The in-memory document is read for one thing only, and it is the opposite
+question: where the row is being *put*. A new row, or one whose reference the
+caller has changed, has to name a record they can read -- otherwise a rep files
+a note, a task or a call onto a colleague's deal by typing its name.
 """
 
 from __future__ import annotations
@@ -61,6 +66,14 @@ OPEN_WHEN_UNSCOPED = ("CRM Enrichment Run",)
 
 #: The referenced doctypes that carry row scoping of their own.
 SCOPED_REFERENCES = ("CRM Lead", "CRM Deal")
+
+#: The doctypes a row may only be filed onto when the user can read the record:
+#: the two above, and the customer and the people there, which
+#: :mod:`crm.permissions.customers` scopes.
+FILED_ON = (*SCOPED_REFERENCES, "CRM Organization", "Contact")
+
+#: What only looks at a row. Anything else may be carrying a changed reference.
+READ_PTYPES = ("read", "select", "print", "email", "export", "report")
 
 
 def _visible(user: str, reference: str):
@@ -123,17 +136,62 @@ def has_permission(doc, ptype: str, user: str | None, doctype: str) -> bool:
 	user = user or frappe.session.user
 	if sees_everything(user):
 		return True
-	if ptype == "create" or not doc.name:
-		return True
+	if ptype == "create" or not doc.name or doc.get("__islocal"):
+		return _may_file_on(_references(doc, doctype), user)
 
 	DT = frappe.qb.DocType(doctype)
-	return bool(
+	visible = bool(
 		frappe.qb.from_(DT)
 		.select(DT.name)
 		.where(DT.name == doc.name)
 		.where(_conditions(user, doctype))
 		.limit(1)
 		.run()
+	)
+	if not visible or ptype in READ_PTYPES:
+		return visible
+	# a write is judged on the document as the caller has changed it
+	# (frappe.client.set_value updates, then saves), so this is where a row
+	# being moved onto another record is caught
+	moved_to = _references(doc, doctype)
+	return not moved_to or _may_file_on(moved_to - _stored_references(doc.name, doctype), user)
+
+
+def _references(doc, doctype: str) -> set[tuple[str, str]]:
+	"""The scoped records ``doc`` names: its reference, and a call log's links."""
+	found = {(doc.get("reference_doctype"), doc.get(REFERENCE_FIELD.get(doctype, "reference_docname")))}
+	if doctype == "CRM Call Log":
+		found |= {(row.get("link_doctype"), row.get("link_name")) for row in doc.get("links") or []}
+	return {(dt, str(name)) for dt, name in found if dt in FILED_ON and name}
+
+
+def _stored_references(name, doctype: str) -> set[tuple[str, str]]:
+	stored = frappe.db.get_value(
+		doctype, name, ["reference_doctype", REFERENCE_FIELD.get(doctype, "reference_docname")]
+	)
+	found = {tuple(stored)} if stored else set()
+	if doctype == "CRM Call Log":
+		found |= {
+			(row.link_doctype, row.link_name)
+			for row in frappe.get_all(
+				"Dynamic Link",
+				filters={"parenttype": doctype, "parent": name},
+				fields=["link_doctype", "link_name"],
+			)
+		}
+	return {(dt, str(ref)) for dt, ref in found if dt and ref}
+
+
+def _may_file_on(references: set[tuple[str, str]], user: str) -> bool:
+	"""Whether ``user`` can read every record in ``references``.
+
+	Read, as for a comment (``frappe.desk.form.utils.add_comment``). A record
+	that does not exist is left to frappe's link validation, which says so.
+	"""
+	return all(
+		frappe.has_permission(reference_doctype, "read", doc=name, user=user)
+		for reference_doctype, name in references
+		if frappe.db.exists(reference_doctype, name)
 	)
 
 
