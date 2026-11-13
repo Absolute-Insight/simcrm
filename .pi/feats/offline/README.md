@@ -179,17 +179,28 @@ lapsed session — stops the run with the rest still pending, in order.
 - **A `CSRFTokenError`** means the session was re-created under the open page.
   The outbox asks for the session's token (`renewToken`, the one case where a
   rendered page's token is replaced) and sends the same entry again, once a
-  run. Because the cookie jar is shared between tabs, the run only ever sends
-  entries captured by the user the session cookie names *now*.
+  run.
+- **A page belongs to the person it was loaded for** (`pageUser`, read once in
+  `connectivity.js`). The cookie jar is shared between tabs, so the live
+  cookie can come to name someone else while the page still shows the first
+  rep's customers. Entries are stamped with `pageUser`, never the live
+  cookie; a token is never taken from a handshake that names anyone else
+  (`connectivity.otherUser`); and a run sends nothing while the cookie or the
+  handshake says the session is another's. The outbox screen says to reload.
 - **The entry a run stopped at keeps the reason** (`entry.error`, with
-  `attempts`), and the outbox screen shows it; the entries behind it say they
-  are waiting for it. The once-a-minute timer backs off while runs keep
-  stopping (`BACKOFF_MS`); anything the rep or the network does sends at once.
-- **Order holds, with one exception.** An entry the server *itself* fails on
-  (a 5xx carrying Frappe's exception, not a gateway's) `FAULT_LIMIT` times is
-  set aside as refused, for the rep to send again or discard — as a refusal
-  already lets later entries pass. Otherwise one bad entry held every later
-  one for ever.
+  `attempts`), and the outbox screen shows it while there is a connection;
+  the entries behind it say they are waiting for it. Everything automatic —
+  the minute timer, the tab or the line coming back — waits out a backoff
+  while runs keep stopping (`BACKOFF_MS`); only a new entry or *Send again*
+  sends at once.
+- **Order holds, with one exception.** A status cannot tell a server that is
+  down for everyone from one that fails on this entry alone, so the outbox
+  asks: after a failure that is not a verdict it probes. No answer is an
+  outage — the app goes offline and nothing is held against the entry. An
+  answer, `STALL_LIMIT` times running for the same entry, means it is the
+  entry (or a firewall that minds its text): it is set aside as refused, for
+  the rep to send again or discard, as a refusal already lets later entries
+  pass. A rate limit is never counted.
 
 A sent
 entry stays as `sent`, still laid over the pack (`applyOutbox`), until the
@@ -225,7 +236,7 @@ pack says, and only an `image/*` response is kept. All pages or none.
 |---|---|---|
 | localStorage `crm-offline-boot` | boot values, no token | logout from the app, lost session, another user, a refused handshake |
 | cookie `crm_field_user` | the signed-in user's id | any logout (server hook); expires after 14 days |
-| IndexedDB `vectora-field-pack` | the pack, and the page images of kept sheets | the same, after `PACK_MAX_AGE_DAYS` (14) without a sync, and when `get_pack` itself refuses (Frappe's `PermissionError`: the sales role was taken away) |
+| IndexedDB `vectora-field-pack` | the pack, and the page images of kept sheets | the same, after `PACK_MAX_AGE_DAYS` (14) without a sync, and when `get_pack` answers `NotAFieldUser` (the sales role was taken away). Not on any other `PermissionError`: one from inside the pack is a server fault, and must not empty every phone |
 | IndexedDB `vectora-field-outbox` | work the server has not seen | only by a confirmed send or the rep discarding it; never by logout, and another user's entries are neither shown nor sent |
 
 The store clears go through `clearOfflineCache()` / `claimOfflineCache()`.
