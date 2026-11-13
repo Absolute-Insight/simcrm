@@ -4,6 +4,7 @@ import vueJsx from '@vitejs/plugin-vue-jsx'
 import fs from 'node:fs'
 import path from 'path'
 import { VitePWA } from 'vite-plugin-pwa'
+import { offlineShell } from './offlineShell.js'
 import { fontDestination } from './scripts/cssFontRefs.mjs'
 
 /**
@@ -127,8 +128,26 @@ export default defineConfig(async ({ mode }) => {
           // worker's cache was cleared by hand. Observed on production within
           // hours of the worker first claiming /crm. The shell must always
           // come from the server; only the hashed assets are cacheable.
+          //
+          // Offline is a separate page for that reason: shell.html, the same
+          // markup with the Jinja boot block replaced by a loader
+          // (offlineShell.js). It is precached like any other asset -- the
+          // default glob picks it up -- and field-sw.js serves it only when a
+          // navigation could not reach the server. navigateFallback stays
+          // off: it would answer from the cache *first*.
           navigateFallback: null,
           globIgnores: ['**/index.html'],
+          // The default is js, css and html. Without the two brand typefaces
+          // the offline shell falls back to whatever the phone has, and the
+          // app a rep opens at a mine does not look like the one they know.
+          // Only the cuts the UI actually sets text in: the italics and the
+          // Vietnamese subset are another 300 KB nobody would see.
+          globPatterns: [
+            '**/*.{js,css,html}',
+            '**/plus-jakarta-sans-latin*.woff2',
+            '**/Inter.var*.woff2',
+          ],
+          importScripts: ['field-sw.js'],
         },
         devOptions: {
           enabled: true,
@@ -187,6 +206,7 @@ export default defineConfig(async ({ mode }) => {
           ],
         },
       }),
+      offlineShell(),
     ],
     resolve: {
       alias: {

@@ -12,13 +12,26 @@ import {
 // (idb-keyval) and replays it into the resource on the next page load, before
 // the server answers. idb-keyval is replaced by a map that, like IndexedDB,
 // outlives a page load; each "page load" below is a fresh module graph.
-const { idb } = vi.hoisted(() => ({ idb: new Map() }))
-vi.mock('idb-keyval', () => ({
-  get: async (key) => idb.get(key),
-  set: async (key, value) => void idb.set(key, value),
-  del: async (key) => void idb.delete(key),
-  clear: async () => idb.clear(),
+//
+// Field mode keeps its pack in a second idb-keyval store (offline/db.js), so
+// the mock tells the stores apart: a call that names a store goes to that
+// store's own map, and the default store stays the one frappe-ui replays.
+const { idb, packIdb } = vi.hoisted(() => ({
+  idb: new Map(),
+  packIdb: new Map(),
 }))
+vi.mock('idb-keyval', () => {
+  const of = (store) => store ?? idb
+  return {
+    createStore: (database) =>
+      database === 'vectora-field-pack' ? packIdb : new Map(),
+    get: async (key, store) => of(store).get(key),
+    set: async (key, value, store) => void of(store).set(key, value),
+    del: async (key, store) => void of(store).delete(key),
+    clear: async (store) => of(store).clear(),
+    entries: async (store) => [...of(store).entries()],
+  }
+})
 vi.mock('@/router', () => ({ default: { replace() {} } }))
 
 const hadIndexedDB = 'indexedDB' in globalThis
@@ -143,5 +156,88 @@ describe('the offline cache belongs to one user', () => {
     idb.set(JSON.stringify(LEADS), JSON.stringify(repAsLeads))
     const leads = await openLeads('rep.a@example.com', onTheWire)
     expect(leads.data).toBeNull()
+  })
+})
+
+describe('field mode shares the same owner', () => {
+  beforeEach(() => {
+    idb.clear()
+    packIdb.clear()
+    mem.clear()
+    vi.resetModules()
+  })
+
+  it('drops the pack and the saved boot when another user takes the device', async () => {
+    setUserCookie('rep.a@example.com')
+    await import('@/offlineCacheGuard')
+    await settle()
+    packIdb.set('pack', { pack: { user: 'rep.a@example.com' } })
+    storage.setItem('crm-offline-boot', '{"user":"rep.a@example.com"}')
+
+    vi.resetModules()
+    setUserCookie('rep.b@example.com')
+    await import('@/offlineCacheGuard')
+    await settle()
+
+    expect(packIdb.size).toBe(0)
+    expect(storage.getItem('crm-offline-boot')).toBeNull()
+  })
+
+  it('keeps both for the same rep coming back', async () => {
+    setUserCookie('rep.a@example.com')
+    await import('@/offlineCacheGuard')
+    await settle()
+    packIdb.set('pack', { pack: { user: 'rep.a@example.com' } })
+    storage.setItem('crm-offline-boot', '{"user":"rep.a@example.com"}')
+
+    vi.resetModules()
+    await import('@/offlineCacheGuard')
+    await settle()
+
+    expect(packIdb.size).toBe(1)
+    expect(storage.getItem('crm-offline-boot')).not.toBeNull()
+  })
+
+  it('a cached shell with no cookie keeps the stores of the user it booted as', async () => {
+    setUserCookie('rep.a@example.com')
+    await import('@/offlineCacheGuard')
+    await settle()
+    packIdb.set('pack', { pack: { user: 'rep.a@example.com' } })
+
+    // the phone closed the app: the session cookie is gone, the shell's
+    // loader matched the owner against the saved boot
+    vi.resetModules()
+    document.cookie = 'user_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT'
+    window.__crm_offline_shell = true
+    window.__crm_offline_user = 'rep.a@example.com'
+    try {
+      await import('@/offlineCacheGuard')
+      await settle()
+      expect(packIdb.size).toBe(1)
+      expect(storage.getItem('crm-offline-cache-owner')).toBe(
+        'rep.a@example.com',
+      )
+    } finally {
+      delete window.__crm_offline_shell
+      delete window.__crm_offline_user
+    }
+  })
+
+  it('a cached shell that says Guest is a logout, and clears', async () => {
+    setUserCookie('rep.a@example.com')
+    await import('@/offlineCacheGuard')
+    await settle()
+    packIdb.set('pack', { pack: { user: 'rep.a@example.com' } })
+
+    vi.resetModules()
+    setUserCookie('Guest')
+    window.__crm_offline_shell = true
+    try {
+      await import('@/offlineCacheGuard')
+      await settle()
+      expect(packIdb.size).toBe(0)
+    } finally {
+      delete window.__crm_offline_shell
+    }
   })
 })

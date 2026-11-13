@@ -1,4 +1,6 @@
 import { clear } from 'idb-keyval'
+import { clearBootSnapshot, OFFLINE_OWNER_KEY } from '@/offline/bootSnapshot'
+import { packStore } from '@/offline/db'
 
 /**
  * frappe-ui keeps the last response of every `cache:` resource in IndexedDB
@@ -14,7 +16,7 @@ import { clear } from 'idb-keyval'
  * simply expired, where this app never got the chance to clear it.
  */
 
-const OWNER_KEY = 'crm-offline-cache-owner'
+const OWNER_KEY = OFFLINE_OWNER_KEY
 
 /**
  * Empty the store and forget its owner, so the next load starts clean even
@@ -27,8 +29,19 @@ export function clearOfflineCache() {
   } catch {
     // no storage: claimOfflineCache clears on every load instead
   }
+  // Field mode's copies go with it: the boot a cached shell starts from and
+  // the pack of customers it shows. The outbox does not -- it is work the
+  // server has not seen, and belongs to whoever typed it (offline/db.js).
+  try {
+    clearBootSnapshot(localStorage)
+  } catch {
+    // no storage, nothing kept
+  }
   if (typeof indexedDB === 'undefined') return Promise.resolve()
-  return clear().catch(() => {})
+  return Promise.all([
+    clear().catch(() => {}),
+    packStore.clear().catch(() => {}),
+  ]).then(() => {})
 }
 
 /**
