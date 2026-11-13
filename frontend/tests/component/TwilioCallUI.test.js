@@ -271,6 +271,47 @@ describe('TwilioCallUI: one Device for as long as it is mounted', () => {
     expect(devices.map((d) => d.state)).toEqual(['destroyed'])
   })
 
+  it('does not hang up an answered call when the layout swaps mid-call', async () => {
+    const w = mountCallUI()
+    w.vm.setup()
+    await flush()
+    const [leg] = await ring({ From: '+27115550001', CallSid: 'CA-LIVE' })
+    button(w.el, 'label', 'Accept').click()
+    await flush()
+
+    w.unmount() // the window crossed the mobile breakpoint
+
+    // kept, but no longer rung: the next header's Device takes new calls
+    expect(devices[0].state).toBe('unregistered')
+    leg.emit('disconnect') // the customer hangs up
+    expect(devices[0].state).toBe('destroyed')
+  })
+
+  it('does not hang up a call the rep is placing when the layout swaps', async () => {
+    const w = mountCallUI()
+    w.vm.setup()
+    await flush()
+    await w.vm.makeOutgoingCall('+27115550002')
+    await flush()
+
+    w.unmount()
+
+    expect(devices[0].state).toBe('unregistered')
+    devices[0].lastCall.emit('disconnect')
+    expect(devices[0].state).toBe('destroyed')
+  })
+
+  it('still releases a Device whose call is only ringing in', async () => {
+    const w = mountCallUI()
+    w.vm.setup()
+    await flush()
+    await ring({ From: '+27115550001', CallSid: 'CA-RING' })
+
+    w.unmount()
+
+    expect(devices[0].state).toBe('destroyed')
+  })
+
   it('a second setup() keeps one Device, so an accepted call stays up', async () => {
     const w = mountCallUI()
     w.vm.setup()

@@ -57,6 +57,11 @@ export class Device extends Emitter {
     this.state = 'registered'
     return Promise.resolve()
   }
+  unregister() {
+    this.state = 'unregistered'
+    return Promise.resolve()
+  }
+  // The real destroy() disconnects every call the Device holds.
   destroy() {
     this.state = 'destroyed'
   }

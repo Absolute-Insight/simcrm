@@ -397,7 +397,7 @@ function hangUpCall() {
     title: '',
     content: '',
   }
-  counterUp.value.stop()
+  counterUp.value?.stop()
 }
 
 function handleDisconnectedIncomingCall() {
@@ -407,7 +407,7 @@ function handleDisconnectedIncomingCall() {
   _call = null
   muted.value = false
   onCall.value = false
-  counterUp.value.stop()
+  counterUp.value?.stop()
 }
 
 async function makeOutgoingCall(number) {
@@ -460,7 +460,7 @@ async function makeOutgoingCall(number) {
         _call = null
         callStatus.value = ''
         muted.value = false
-        counterUp.value.stop()
+        counterUp.value?.stop()
         note.value = {
           name: '',
           title: '',
@@ -481,7 +481,7 @@ async function makeOutgoingCall(number) {
           title: '',
           content: '',
         }
-        counterUp.value.stop()
+        counterUp.value?.stop()
       })
     } catch (error) {
       log.value = `Could not connect call: ${error.message}`
@@ -519,6 +519,22 @@ onBeforeUnmount(() => {
   // The layout swaps headers at the mobile breakpoint; a Device left registered
   // keeps ringing for an instance nobody can see.
   started = false
+  // destroy() also hangs up, and the swap happens under a rep who is talking:
+  // a window dragged across the breakpoint, a phone turned on its side. A
+  // Device carrying an answered or outgoing call is left until that call
+  // ends. A call that is only ringing in is not kept: the next instance's
+  // Device rings for it too, and that one can be seen.
+  const live = _call && (onCall.value || calling.value || callStatus.value)
+  if (live) {
+    const orphan = device
+    // no more incoming calls for a Device nobody can see
+    Promise.resolve(orphan.unregister?.()).catch(() => {})
+    for (const ended of ['disconnect', 'cancel', 'reject']) {
+      _call.on(ended, () => orphan.destroy())
+    }
+    device = null
+    return
+  }
   device?.destroy()
   device = null
 })
