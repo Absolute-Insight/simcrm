@@ -300,25 +300,87 @@ def get_file_permission_query_conditions(user=None):
 	Every doctype this app scopes with a ``permission_query_conditions`` hook is
 	covered, read from the hooks themselves so that one added later is covered on
 	the day it is added. A file attached to anything else, or to nothing, is left
-	to frappe's rule, which lists an unattached file to its owner only.
+	to frappe's rule, as is one that names a doctype and no record. The uploader
+	keeps their own: frappe's File check opens a file to its owner whatever became
+	of the record, and a list that left it out would disagree with that.
+
+	Each doctype's clause is the same for every File query a request makes, so it
+	is built once per request and user. Never across requests: it is made of who
+	is on whose team and what the access settings say, right now. Which doctypes
+	have files at all is asked every time, in the transaction the list itself
+	runs in, so a file cannot arrive between the question and the list.
 	"""
 	import crm.hooks
 
 	user = user or frappe.session.user
+	scoped = [doctype for doctype in crm.hooks.permission_query_conditions if doctype != "File"]
+	built = _request_memo(user)
 	clauses = []
-	for doctype, methods in crm.hooks.permission_query_conditions.items():
-		if doctype == "File":
+	for doctype in _doctypes_with_files(scoped):
+		if doctype not in built:
+			built[doctype] = _file_clauses(doctype, user)
+		clauses += built[doctype]
+	if not clauses:
+		return ""
+	return f"(`tabFile`.`owner` = {frappe.db.escape(user)} or ({' and '.join(clauses)}))"
+
+
+def _request_memo(user: str) -> dict:
+	"""This request's clauses for ``user``, by doctype; a fresh dict outside one.
+
+	A scheduler job or a test has no request and ``frappe.local`` outlives the
+	settings there, so nothing is kept.
+	"""
+	request = _current_request()
+	if request is None:
+		return {}
+	memo = getattr(frappe.local, "crm_file_clauses", None)
+	if not memo or memo["request"] is not request:
+		memo = frappe.local.crm_file_clauses = {"request": request, "by_user": {}}
+	return memo["by_user"].setdefault(user, {})
+
+
+def _current_request():
+	return getattr(frappe.local, "request", None)
+
+
+def _file_clauses(doctype: str, user: str) -> list[str]:
+	import crm.hooks
+
+	if doctype in OPTIONAL_DOCTYPES and not frappe.db.exists("DocType", doctype, cache=True):
+		return []
+	methods = crm.hooks.permission_query_conditions[doctype]
+	clauses = []
+	for method in [methods] if isinstance(methods, str) else methods:
+		# nosemgrep: frappe-semgrep-rules.rules.security.frappe-codeinjection-eval -- dotted paths from crm.hooks, never caller input
+		conditions = frappe.call(frappe.get_attr(method), user, doctype=doctype)
+		if not conditions:
 			continue
-		if doctype in OPTIONAL_DOCTYPES and not frappe.db.exists("DocType", doctype, cache=True):
-			continue
-		for method in [methods] if isinstance(methods, str) else methods:
-			conditions = frappe.call(frappe.get_attr(method), user, doctype=doctype)
-			if not conditions:
-				continue
-			table = f"`tab{doctype}`"
-			clauses.append(
-				f"(ifnull(`tabFile`.`attached_to_doctype`, '') != {frappe.db.escape(doctype)}"
-				" or `tabFile`.`attached_to_name` in"
-				f" (select {table}.`name` from {table} where {conditions}))"
-			)
-	return " and ".join(clauses)
+		table = f"`tab{doctype}`"
+		clauses.append(
+			f"(ifnull(`tabFile`.`attached_to_doctype`, '') != {frappe.db.escape(doctype)}"
+			# NULL IN (...) is NULL, which would unlist the file from everyone
+			" or ifnull(`tabFile`.`attached_to_name`, '') = ''"
+			" or `tabFile`.`attached_to_name` in"
+			f" (select {table}.`name` from {table} where {conditions}))"
+		)
+	return clauses
+
+
+def _doctypes_with_files(doctypes: list[str]) -> list[str]:
+	"""Those of ``doctypes`` that have a file attached at all, in the order given.
+
+	Most scoped doctypes never carry an attachment -- a quota, a notification, a
+	saved view -- and a clause for one costs its hook's lookups and a sub-select
+	the database then has to plan, to hide nothing. One read of the
+	(attached_to_doctype, attached_to_name) index frappe keeps on File says which.
+	"""
+	File = frappe.qb.DocType("File")
+	present = set(
+		frappe.qb.from_(File)
+		.select(File.attached_to_doctype)
+		.distinct()
+		.where(File.attached_to_doctype.isin(doctypes))
+		.run(pluck=True)
+	)
+	return [doctype for doctype in doctypes if doctype in present]

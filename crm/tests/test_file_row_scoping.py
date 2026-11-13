@@ -18,6 +18,8 @@ been added for WhatsApp Message alone.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
@@ -151,7 +153,9 @@ class FileRowScopingTest(IntegrationTestCase):
 		from crm import hooks
 		from crm.permissions.linked_records import OPTIONAL_DOCTYPES, get_file_permission_query_conditions
 
-		conditions = get_file_permission_query_conditions(OTHER)
+		# as if every one of them had a file attached
+		with patch("crm.permissions.linked_records._doctypes_with_files", side_effect=lambda dts: dts):
+			conditions = get_file_permission_query_conditions(OTHER)
 		for doctype in hooks.permission_query_conditions:
 			if doctype == "File" or (
 				doctype in OPTIONAL_DOCTYPES and not frappe.db.exists("DocType", doctype)
@@ -225,3 +229,128 @@ class FileRowScopingTest(IntegrationTestCase):
 		listed = self.listed_to(OTHER)
 		for file in (unattached, on_own_deal, by_a_manager):
 			self.assertIn(file, listed)
+
+	def test_a_rep_keeps_their_upload_after_the_record_is_reassigned(self):
+		"""frappe's File check opens a file to its owner whatever became of the
+		record. A list that left it out disagreed: it opened by URL and was gone
+		from every list."""
+		deal = self.make({"doctype": "CRM Deal", "deal_owner": OTHER})
+		mine = self.attach("my-quote.txt", deal, user=OTHER)
+		theirs = self.attach("the-managers-notes.txt", deal)
+		frappe.db.set_value("CRM Deal", deal.name, "deal_owner", OWNER)
+		# the insert assigned it to its owner as well, and assigning shares it
+		frappe.db.delete("ToDo", {"reference_type": "CRM Deal", "reference_name": deal.name})
+		frappe.db.delete("DocShare", {"share_doctype": "CRM Deal", "share_name": deal.name})
+		self.assertFalse(frappe.has_permission("CRM Deal", "read", doc=deal.name, user=OTHER), "control")
+		listed = self.listed_to(OTHER)
+		self.assertIn(mine, listed)
+		self.assertTrue(self.opens_for(OTHER, mine))
+		# only their own: the rest of the deal's files went with the deal
+		self.assertNotIn(theirs, listed)
+		self.assertFalse(self.opens_for(OTHER, theirs))
+
+	def test_a_file_that_names_a_doctype_and_no_record_is_left_to_frappe(self):
+		"""``NULL IN (...)`` is NULL: it was unlisted from everyone, its uploader included."""
+		nameless = self.attach("no-record.txt", self.deal)
+		frappe.db.set_value("File", nameless, "attached_to_name", None)
+		for user in (OTHER, OWNER):
+			with self.subTest(user=user):
+				self.assertIn(nameless, self.listed_to(user))
+
+	# --- a manager outside the tree, on the default setting ---------------------
+
+	def test_an_own_records_manager_lists_what_a_rep_would(self):
+		"""A new install's default: such a manager is scoped as a rep is."""
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		own_deal = self.make({"doctype": "CRM Deal", "deal_owner": OUTSIDE_MANAGER})
+		on_own_deal = self.attach("the-managers-own.txt", own_deal)
+		listed = self.listed_to(OUTSIDE_MANAGER)
+		for doctype, file in self.files.items():
+			with self.subTest(attached_to=doctype):
+				self.assertNotIn(file, listed)
+				self.assertFalse(self.opens_for(OUTSIDE_MANAGER, file))
+		self.assertIn(on_own_deal, listed)
+
+	# --- what the clause costs -------------------------------------------------
+
+	def in_a_request(self):
+		"""As a web request sees it; called again, a new one."""
+		request = patch("crm.permissions.linked_records._current_request", return_value=object())
+		request.start()
+		self.addCleanup(request.stop)
+
+	def clause_doctypes(self, user: str) -> set[str]:
+		from crm import hooks
+		from crm.permissions.linked_records import get_file_permission_query_conditions
+
+		conditions = get_file_permission_query_conditions(user)
+		return {doctype for doctype in hooks.permission_query_conditions if f"!= '{doctype}'" in conditions}
+
+	def test_only_doctypes_with_a_file_attached_get_a_clause(self):
+		from crm import hooks
+
+		scoped = [doctype for doctype in hooks.permission_query_conditions if doctype != "File"]
+		with_files = set(
+			frappe.get_all(
+				"File",
+				filters={"attached_to_doctype": ("in", scoped)},
+				pluck="attached_to_doctype",
+				distinct=True,
+			)
+		)
+		self.assertTrue(set(self.files) <= with_files, "control: the fixture's own attachments")
+		self.assertEqual(self.clause_doctypes(OTHER), with_files)
+
+	def test_a_doctypes_first_file_is_scoped_from_the_moment_it_exists(self):
+		"""Which doctypes have files is asked on every call, never remembered."""
+		if frappe.db.exists("File", {"attached_to_doctype": "CRM Suggestion"}):
+			self.skipTest("this site already has a file on a CRM Suggestion")
+		suggestion = self.make(
+			{
+				"doctype": "CRM Suggestion",
+				"signal": "file_scope_test",
+				"title": "Call this deal",
+				"reference_doctype": "CRM Deal",
+				"user": OWNER,
+				"suggested_action": "create_task",
+				"status": "Open",
+			}
+		)
+		self.in_a_request()
+		self.assertNotIn("CRM Suggestion", self.clause_doctypes(OTHER))
+		first = self.attach("first-ever-suggestion-file.txt", suggestion)
+		self.assertIn("CRM Suggestion", self.clause_doctypes(OTHER))
+		self.assertNotIn(first, self.listed_to(OTHER))
+		self.assertIn(first, self.listed_to(OWNER))
+
+	def test_the_clause_is_built_once_per_request(self):
+		"""One grouped read of File says which doctypes need a clause; the hooks'
+		own lookups (team membership, the access settings) run once per request."""
+		from crm.permissions.linked_records import get_file_permission_query_conditions
+
+		self.in_a_request()
+		with patch(
+			"crm.permissions.linked_records._doctypes_with_files", return_value=["CRM Deal", "CRM Lead"]
+		):
+			with self.assertQueryCount(12):
+				first = get_file_permission_query_conditions(OTHER)
+			with self.assertQueryCount(0):
+				self.assertEqual(get_file_permission_query_conditions(OTHER), first)
+		# unpatched: the presence read is the only query a repeat costs
+		get_file_permission_query_conditions(OTHER)
+		with self.assertQueryCount(1):
+			get_file_permission_query_conditions(OTHER)
+		# another user is not handed this one's clause
+		self.assertNotEqual(get_file_permission_query_conditions(OWNER), first)
+		# and a new request starts again
+		self.in_a_request()
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		self.assertIn("!= 'CRM Deal'", get_file_permission_query_conditions(OUTSIDE_MANAGER))
+
+	def test_nothing_is_remembered_outside_a_request(self):
+		"""A scheduler job's ``frappe.local`` outlives a change of settings."""
+		from crm.permissions.linked_records import get_file_permission_query_conditions
+
+		self.assertNotIn("!= 'CRM Deal'", get_file_permission_query_conditions(OUTSIDE_MANAGER))
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		self.assertIn("!= 'CRM Deal'", get_file_permission_query_conditions(OUTSIDE_MANAGER))
