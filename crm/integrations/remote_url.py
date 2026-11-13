@@ -32,7 +32,7 @@ from frappe import _
 
 from crm.domain_enrichment.http import _is_blocked_ip
 
-TRUSTED_HOSTS_KEY = "crm_erp_trusted_hosts"
+TRUSTED_HOSTS_CONFIG = "crm_erp_trusted_hosts"
 
 # Characters urlparse drops or passes through that another parser reads otherwise.
 _URL_NOISE = re.compile(r"[\s\x00-\x20\x7f\\]")
@@ -45,7 +45,7 @@ class RemoteHostNotAllowed(frappe.ValidationError):
 
 def trusted_hosts() -> set[str]:
 	"""Hosts the operator allowed in the site config, lower-cased."""
-	configured = frappe.conf.get(TRUSTED_HOSTS_KEY) or []
+	configured = frappe.conf.get(TRUSTED_HOSTS_CONFIG) or []
 	if isinstance(configured, str):
 		configured = configured.split(",")
 	return {str(host).strip().lower().rstrip(".") for host in configured if str(host).strip()}
@@ -146,7 +146,7 @@ def validate_remote_url(url: str | None, label: str) -> str:
 			_(
 				"{0} must start with https://. Plain http is accepted only for a host an "
 				"administrator has added to {1} in the site config."
-			).format(label, TRUSTED_HOSTS_KEY),
+			).format(label, TRUSTED_HOSTS_CONFIG),
 			title=_("Invalid URL"),
 		)
 	if not trusted and _refused(host):
@@ -209,7 +209,7 @@ def _internal_host_message(host: str, label: str) -> str:
 	return _(
 		"{0}: {1} is not a public address. To connect to a server on a private network, "
 		"an administrator has to add {1} to {2} in the site config."
-	).format(label, host, TRUSTED_HOSTS_KEY)
+	).format(label, host, TRUSTED_HOSTS_CONFIG)
 
 
 def validate_url_field(doc, url_field: str, secret_fields: tuple[str, ...]) -> None:

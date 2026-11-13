@@ -99,6 +99,40 @@ class TestClient(FrappeTestCase):
 		self.assertEqual(failed.exception.status_code, 307)
 		self.assertIs(rpost.call_args.kwargs["allow_redirects"], False)
 
+	@patch("crm.integrations.acumatica.client.requests.put")
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_no_call_follows_a_redirect(self, rget, rpost, rput):
+		"""The instance host was checked; where it redirects was not. Followed, a 302
+		reads an internal address back through the sample Test connection shows, and
+		a 307 re-sends the body of a PUT."""
+		rpost.return_value = _resp(200, {"access_token": "tok", "expires_in": 3600})
+		client = AcumaticaClient(_settings(), shared_session=False)
+		for method, mocked, call in (
+			("get", rget, lambda: client.get_page("Customer")),
+			("put", rput, lambda: client.put("Customer", {"CustomerID": "A"})),
+		):
+			for status in (301, 302, 307, 308):
+				mocked.return_value = _resp(status, {})
+				with self.subTest(method=method, status=status), self.assertRaises(AcumaticaError) as failed:
+					call()
+				self.assertEqual(failed.exception.status_code, status)
+				self.assertIn("redirect", str(failed.exception))
+				self.assertIs(mocked.call_args.kwargs["allow_redirects"], False)
+		client.logout()
+		logout = rpost.call_args
+		self.assertTrue(logout.args[0].endswith("/entity/auth/logout"))
+		self.assertIs(logout.kwargs["allow_redirects"], False)
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	def test_a_redirected_login_says_that_is_what_it_was(self, rpost):
+		"""This text is what a sync run records as its last error."""
+		rpost.return_value = _resp(308, {})
+		with self.assertRaises(AcumaticaError) as failed:
+			AcumaticaClient(_settings(), shared_session=False).get_page("Customer")
+		self.assertIn("redirect", str(failed.exception))
+		self.assertIn("Instance URL", str(failed.exception))
+
 	@patch("crm.integrations.acumatica.client.requests.post")
 	def test_the_login_is_not_posted_to_an_internal_address(self, rpost):
 		"""The settings save checks the URL, but a name can be re-pointed afterwards

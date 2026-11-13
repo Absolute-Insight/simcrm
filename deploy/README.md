@@ -821,14 +821,29 @@ not affected.
 
 **The upgrade that introduces this check grandfathers what is already in use.**
 During `bench migrate`, the patch `trust_existing_internal_erp_hosts` reads the
-Instance URL and Site URL saved at that moment and adds each host that is on a
-private address — or that does not resolve from the migrate container — to
-`crm_erp_trusted_hosts` for you, keeping whatever the key already held. It
-prints one line per host it trusted (`crm_erp_trusted_hosts: trusted
-erpnext-frontend …`) in the migrate output and the `crm.integrations` log; a
-host that resolves to a public address is not added, because it needs no
-trust. So an integration that worked before the upgrade works after it. Read
-the key back afterwards and remove anything you do not recognise:
+Instance URL and Site URL saved at that moment and adds the host to
+`crm_erp_trusted_hosts` for you, keeping whatever the key already held, when:
+
+- it is on a private address (10.x, 172.16–31.x, 192.168.x, an IPv6 ULA, a
+  CGNAT/VPN range), or
+- it does not resolve from the migrate container **and** its name is private —
+  a compose service name with no dot (`erpnext-frontend`), or one under
+  `.internal`, `.local`, `.lan` or `.test`.
+
+It does **not** add, and says so with the command that would:
+
+- a loopback or link-local address (`127.0.0.1`, `localhost`,
+  `169.254.169.254`) — if a saved URL really points there, list it yourself;
+- a public-looking name that merely failed to resolve during the migrate;
+- a host that resolves to a public address, which needs no trust.
+
+Every decision is one line in the migrate output and the `crm.integrations`
+log, prefixed `crm_erp_trusted_hosts:`. **Read them after the upgrade**: a line
+ending in `NOT trusted … run: bench --site … set-config -p crm_erp_trusted_hosts
+'[…]'` is an integration that will be refused until you run that command. If
+`site_config.json` is read-only the patch does not fail the migrate; it prints
+the same command for you to apply. Read the key back afterwards and remove
+anything you do not recognise:
 
 ```bash
 docker compose exec -T backend cat sites/<site>/site_config.json
@@ -839,8 +854,14 @@ the pane, with a message naming the host and this key, until you list it.
 
 Changing either URL to a different host also asks for the credentials again: the
 ones stored for the old host are never sent to a new one. Editing only the path
-of the URL does neither. A redirect from either server is not followed — enter
-the address it answers on directly.
+of the URL does neither.
+
+**A redirect from either server is not followed.** The usual case is a stored
+`http://` URL on a public host whose proxy answers `301` to `https://`: it used
+to work by being followed, and after this upgrade every read and write through
+it is refused with "answered with a redirect". Change the saved URL to
+`https://` — before the upgrade, or after it (the scheme is part of the host
+the credentials belong to, so the pane asks for them again).
 
 ## Lead syncing is off
 

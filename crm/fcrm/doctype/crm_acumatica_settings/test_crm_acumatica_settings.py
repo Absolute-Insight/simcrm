@@ -534,7 +534,7 @@ class TestInstanceUrlAndItsSecrets(FrappeTestCase):
 
 		for patcher in (
 			patch.object(remote_url, "_resolve", side_effect=resolve),
-			patch.dict(frappe.local.conf, {"developer_mode": 0, remote_url.TRUSTED_HOSTS_KEY: []}),
+			patch.dict(frappe.local.conf, {"developer_mode": 0, remote_url.TRUSTED_HOSTS_CONFIG: []}),
 		):
 			patcher.start()
 			self.addCleanup(patcher.stop)

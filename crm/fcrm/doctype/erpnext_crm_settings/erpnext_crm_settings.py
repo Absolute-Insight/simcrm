@@ -37,6 +37,16 @@ def _log_and_throw(message: str, title: str | None = None):
 	frappe.throw(_(message))
 
 
+def _throw_refusal(refusal: Exception):
+	"""A host or a redirect the CRM will not send the API secret to, said to the user.
+
+	``ensure_host_allowed`` and ``refuse_redirect`` raise it bare, because they also
+	run in jobs. Caught by the catch-alls here it became "check the Error Log"; left
+	alone it reached the browser with no message at all. The text is ours and names
+	what to change, so it is thrown as it is."""
+	frappe.throw(str(refusal), RemoteHostNotAllowed, title=_("SIMERP site not reachable as configured"))
+
+
 def _check_user_rate_limit() -> None:
 	if user_rate_limited(ERPNEXT_LINK_RATE_SCOPE, ERPNEXT_LINK_RATE_LIMIT):
 		frappe.throw(_("Too many ERPNext requests. Try again shortly."), frappe.ValidationError)
@@ -179,9 +189,12 @@ class ERPNextCRMSettings(Document):
 			# it carried no message for the browser: "Failed to save settings", for
 			# whichever field was being changed. Thrown, it says which host and where
 			# an administrator allows it.
-			frappe.throw(str(e), RemoteHostNotAllowed, title=_("Address not allowed"))
+			_throw_refusal(e)
 		try:
 			client.post_api("erpnext.crm.frappe_crm_api.create_custom_fields_for_frappe_crm")
+		except RemoteHostNotAllowed as e:
+			# a redirect: not "enable Data Synchronization", and not in the Error Log
+			_throw_refusal(e)
 		except Exception:
 			frappe.log_error(
 				frappe.get_traceback(),
@@ -248,7 +261,7 @@ class ERPNextCRMSettings(Document):
 			client = get_erpnext_site_client(self)
 			return client.get_list("Company", fields=["company_name"])
 		except RemoteHostNotAllowed as e:
-			frappe.throw(str(e), RemoteHostNotAllowed, title=_("Address not allowed"))
+			_throw_refusal(e)
 		except Exception:
 			# Never the other side's words: FrappeClient raises the remote traceback,
 			# or whatever page the URL served, and the URL is a Sales Manager's to set.
@@ -453,8 +466,8 @@ def get_customer_link(crm_deal: str):
 		customer = get_local_customer(crm_deal)
 		return get_url_to_form("Customer", customer) if customer else ""
 
-	client = get_erpnext_site_client(erpnext_crm_settings)
 	try:
+		client = get_erpnext_site_client(erpnext_crm_settings)
 		customer = client.get_list("Customer", filters={"crm_deal": crm_deal})
 		customer = customer[0].get("name") if customer else None
 
@@ -464,6 +477,8 @@ def get_customer_link(crm_deal: str):
 		if customer:
 			return f"{erpnext_crm_settings.erpnext_site_url}/app/customer/{customer}"
 		return ""
+	except RemoteHostNotAllowed as e:
+		_throw_refusal(e)
 	except Exception:
 		_log_and_throw(
 			"Error while fetching customer in ERPNext, check error log for more details",
@@ -540,6 +555,8 @@ def create_prospect_in_remote_site(crm_deal, erpnext_crm_settings):
 				"address": json.dumps(address) if address else None,
 			},
 		)
+	except RemoteHostNotAllowed as e:
+		_throw_refusal(e)
 	except Exception:
 		_log_and_throw(
 			"Error while creating prospect in ERPNext, check error log for more details",

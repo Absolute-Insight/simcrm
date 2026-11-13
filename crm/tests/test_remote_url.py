@@ -34,7 +34,7 @@ def resolving(mapping: dict):
 
 
 def site(developer_mode=False, trusted=None):
-	conf = {"developer_mode": 1 if developer_mode else 0, remote_url.TRUSTED_HOSTS_KEY: trusted or []}
+	conf = {"developer_mode": 1 if developer_mode else 0, remote_url.TRUSTED_HOSTS_CONFIG: trusted or []}
 	return patch.dict(frappe.local.conf, conf)
 
 
@@ -120,7 +120,7 @@ class TestRemoteURL(IntegrationTestCase):
 			with self.assertRaises(RemoteHostNotAllowed) as refused:
 				validate_remote_url("https://db.internal", "Site URL")
 		self.assertNotIn("10.0.3.7", str(refused.exception))
-		self.assertIn(remote_url.TRUSTED_HOSTS_KEY, str(refused.exception))
+		self.assertIn(remote_url.TRUSTED_HOSTS_CONFIG, str(refused.exception))
 
 	def test_a_host_the_operator_trusts_may_be_private_and_plain_http(self):
 		"""A self-hosted ERPNext sits on a private address, usually on http inside a
@@ -164,14 +164,14 @@ class TestRemoteURL(IntegrationTestCase):
 			with self.assertRaises(frappe.ValidationError) as refused:
 				validate_remote_url("http://erp.example.com", "Site URL")
 		self.assertIn("https://", str(refused.exception))
-		self.assertIn(remote_url.TRUSTED_HOSTS_KEY, str(refused.exception))
+		self.assertIn(remote_url.TRUSTED_HOSTS_CONFIG, str(refused.exception))
 
 	def test_the_refusal_names_the_host_and_the_key_for_whoever_has_to_act(self):
 		with site(), resolving({"erpnext-frontend": "172.18.0.5"}):
 			with self.assertRaises(RemoteHostNotAllowed) as refused:
 				ensure_host_allowed("http://erpnext-frontend:8080", "Site URL")
 		self.assertIn("erpnext-frontend", str(refused.exception))
-		self.assertIn(remote_url.TRUSTED_HOSTS_KEY, str(refused.exception))
+		self.assertIn(remote_url.TRUSTED_HOSTS_CONFIG, str(refused.exception))
 		self.assertNotIn("172.18.0.5", str(refused.exception))
 
 	def test_a_name_the_resolver_cannot_even_encode_is_not_allowed(self):

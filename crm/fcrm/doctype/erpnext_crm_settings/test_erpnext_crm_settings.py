@@ -264,7 +264,7 @@ class SiteUrlAndItsSecretTest(IntegrationTestCase):
 
 		for patcher in (
 			patch.object(remote_url, "_resolve", side_effect=resolve),
-			patch.dict(frappe.local.conf, {"developer_mode": 0, remote_url.TRUSTED_HOSTS_KEY: []}),
+			patch.dict(frappe.local.conf, {"developer_mode": 0, remote_url.TRUSTED_HOSTS_CONFIG: []}),
 		):
 			patcher.start()
 			self.addCleanup(patcher.stop)
@@ -333,7 +333,7 @@ class SiteUrlAndItsSecretTest(IntegrationTestCase):
 		names it, and then the pane can be pointed at it."""
 		from crm.integrations import remote_url
 
-		with patch.dict(frappe.local.conf, {remote_url.TRUSTED_HOSTS_KEY: ["erpnext.internal"]}):
+		with patch.dict(frappe.local.conf, {remote_url.TRUSTED_HOSTS_CONFIG: ["erpnext.internal"]}):
 			frappe.client.set_value(
 				SETTINGS,
 				SETTINGS,
@@ -379,7 +379,7 @@ class SiteUrlAndItsSecretTest(IntegrationTestCase):
 
 		settings = self.enabled_remote()
 		with (
-			patch.dict(frappe.local.conf, {remote_url.TRUSTED_HOSTS_KEY: ["erpnext-frontend.internal"]}),
+			patch.dict(frappe.local.conf, {remote_url.TRUSTED_HOSTS_CONFIG: ["erpnext-frontend.internal"]}),
 			patch.object(erp, "FrappeClient") as client,
 		):
 			settings.save()
@@ -402,6 +402,43 @@ class SiteUrlAndItsSecretTest(IntegrationTestCase):
 				client.get_list("Company", fields=["company_name"])
 		self.assertIs(request.call_args.kwargs["allow_redirects"], False)
 		self.assertEqual(request.call_args.kwargs["timeout"], (5, 30))
+
+	def _redirecting_client(self):
+		from unittest.mock import MagicMock
+
+		from crm.integrations.remote_url import refuse_redirect
+
+		def refused(*args, **kwargs):
+			refuse_redirect(MagicMock(status_code=301), "SIMERP Site URL")
+
+		client = MagicMock()
+		client.post_api.side_effect = refused
+		client.get_list.side_effect = refused
+		return patch.object(erp, "get_erpnext_site_client", return_value=client)
+
+	def test_a_redirecting_site_is_named_as_one_wherever_it_is_called(self):
+		"""An http:// URL whose proxy answers 301 to https used to work by being
+		followed. Refused, it has to say so: "check the Error Log" and "enable Data
+		Synchronization" send an admin looking in the wrong place."""
+		settings = self.enabled_remote()
+		deal = _won_deal()
+		calls = {
+			"saving the settings": settings.save,
+			"refreshing companies": settings.get_external_companies,
+			"the customer link": lambda: erp.get_customer_link(deal.name),
+			"creating a prospect": lambda: erp.create_prospect_in_remote_site(deal.name, settings),
+		}
+		for name, call in calls.items():
+			frappe.clear_messages()
+			with (
+				self.subTest(call=name),
+				self._redirecting_client(),
+				patch.object(erp, "_check_user_rate_limit"),
+				self.assertRaises(frappe.ValidationError) as refused,
+			):
+				call()
+			self.assertIn("redirect", str(refused.exception))
+			self.assertIn("redirect", str(frappe.local.message_log))
 
 	def test_what_the_other_site_answers_is_not_relayed(self):
 		"""Refresh companies raised whatever the remote said -- its traceback, or the
