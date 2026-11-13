@@ -19,10 +19,11 @@ is only ever Acumatica's word (Canceled, Rejected) or a person's.
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import frappe
-from frappe.utils import add_days, getdate, nowdate
+from frappe.utils import add_days, get_system_timezone, getdate, nowdate
 
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import record_sync_issue
 from crm.fcrm.doctype.crm_deal_status.crm_deal_status import (
@@ -128,13 +129,37 @@ def _log_close_failure(deal_name: str, detail: str) -> None:
 		frappe.log_error(frappe.get_traceback(), "Acumatica sync issue recording failed")
 
 
-def date_of(value) -> datetime | None:
+def date_of(value) -> date | None:
+	"""The calendar date a value is written with: for a date, or a timestamp whose
+	own day is the one meant. A moment in time wants :func:`local_date_of`."""
 	if not value:
 		return None
 	try:
 		return getdate(str(value)[:10])
 	except Exception:
 		return None
+
+
+def local_time(value) -> datetime | None:
+	"""An Acumatica timestamp as naive site-local time, which is what ``creation`` holds."""
+	if not value:
+		return None
+	try:
+		parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+	except ValueError:
+		return None
+	if parsed.tzinfo:
+		parsed = parsed.astimezone(ZoneInfo(get_system_timezone())).replace(tzinfo=None)
+	return parsed
+
+
+def local_date_of(value) -> date | None:
+	"""The site's date at an Acumatica timestamp. Acumatica answers in UTC, and the
+	first ten characters of that are yesterday for the first two hours of a South
+	African day: a quote completed at 00:30 on the 1st closed its deal on the last
+	day of the month before, in that month's revenue."""
+	local = local_time(value)
+	return local.date() if local else date_of(value)
 
 
 def pull_quote_outcomes(client, modified_since: str | None) -> dict:
@@ -193,7 +218,7 @@ def _apply_outcomes(client, by_quote: dict[str, str], modified_since: str | None
 				continue
 			status = v(quote, "Status")
 			if status in WON_STATUSES:
-				if _try_close(deal, "Won", closed_on=date_of(v(quote, "LastModified"))):
+				if _try_close(deal, "Won", closed_on=local_date_of(v(quote, "LastModified"))):
 					counts["won"] += 1
 			elif status in LOST_STATUSES:
 				if _try_close(deal, "Lost", lost_reason=LOST_STATUSES[status]):

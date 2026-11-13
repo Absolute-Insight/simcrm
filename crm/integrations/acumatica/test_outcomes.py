@@ -70,6 +70,21 @@ class PullOutcomesTest(OutcomesTestCase):
 			frappe.db.get_value("CRM Deal", deal, ["status", "closed_date"]), ("Won", date(2026, 9, 10))
 		)
 
+	@patch("crm.integrations.acumatica.outcomes.get_system_timezone", return_value="Africa/Johannesburg")
+	def test_a_quote_completed_just_after_midnight_wins_the_deal_on_the_sites_date(self, _tz):
+		"""Acumatica answers in UTC. 22:30 on 31 October there is 00:30 on 1 November in
+		Johannesburg: the first ten characters put the deal in October's revenue."""
+		deal = self._deal("QT000021")
+		client = self._client(
+			[Q(OrderNbr="QT000021", Status="Completed", LastModified="2026-10-31T22:30:00+00:00")]
+		)
+		outcomes.pull_quote_outcomes(client, None)
+		self.assertEqual(frappe.db.get_value("CRM Deal", deal, "closed_date"), date(2026, 11, 1))
+
+	def test_a_timestamp_that_cannot_be_read_still_gives_its_written_date(self):
+		self.assertEqual(outcomes.local_date_of("2026-10-31 garbage"), date(2026, 10, 31))
+		self.assertIsNone(outcomes.local_date_of(None))
+
 	def test_a_canceled_or_rejected_quote_loses_the_deal_with_the_reason(self):
 		a = self._deal("QT000002")
 		b = self._deal("QT000003")
