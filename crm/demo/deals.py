@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta
 
 import frappe
-from frappe.query_builder import DocType
 
 from crm.demo.utils import (
 	backdate,
@@ -379,11 +378,10 @@ def delete_demo_deals(deal_data, lead_names):
 		frappe.delete_doc("CRM Deal", name, ignore_permissions=True, force=True)
 		for contact in contact_names:
 			if contact and frappe.db.exists("Contact", contact):
-				for child_doctype in ("Contact Email", "Contact Phone", "Dynamic Link"):
-					Child = DocType(child_doctype)
-					frappe.qb.from_(Child).delete().where(Child.parent == contact).run()
-				Contact = DocType("Contact")
-				frappe.qb.from_(Contact).delete().where(Contact.name == contact).run()
+				# kept when a real deal has come to use it. Raw DELETEs took the
+				# contact from under that deal, whose contacts row (and cached
+				# primary email and phone) then pointed at nothing.
+				delete_unless_linked("Contact", contact)
 		if org and frappe.db.exists("CRM Organization", org):
 			# kept when a real deal or contact has come to use it
 			delete_unless_linked("CRM Organization", org)

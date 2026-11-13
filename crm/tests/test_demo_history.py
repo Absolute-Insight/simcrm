@@ -210,6 +210,47 @@ class DemoSeedingGuardsTest(IntegrationTestCase):
 		self.assertTrue(frappe.db.exists("CRM Organization", org.name))
 		frappe.get_doc("CRM Deal", real_deal.name).save(ignore_permissions=True)
 
+	def test_clearing_base_demo_deals_keeps_a_contact_a_real_deal_uses(self):
+		"""Audit be_patches-1: contacts were still removed with raw DELETEs, with
+		no link check, after organizations moved to ``delete_unless_linked``."""
+
+		def contact(first_name, email):
+			return frappe.get_doc(
+				{
+					"doctype": "Contact",
+					"first_name": first_name,
+					"email_ids": [{"email_id": email, "is_primary": 1}],
+					"phone_nos": [{"phone": "+27110000000", "is_primary_phone": 1}],
+				}
+			).insert(ignore_permissions=True)
+
+		def deal(*contacts):
+			return frappe.get_doc(
+				{
+					"doctype": "CRM Deal",
+					"status": "Qualification",
+					"contacts": [{"contact": c.name, "is_primary": i == 0} for i, c in enumerate(contacts)],
+				}
+			).insert(ignore_permissions=True)
+
+		shared = contact("Demo Shared Contact", "demo.shared.contact@crmtest.test")
+		demo_only = contact("Demo Only Contact", "demo.only.contact@crmtest.test")
+		demo_deal = deal(shared, demo_only)
+		second_demo_deal = deal(demo_only)
+		real_deal = deal(shared)
+
+		delete_demo_deals({"deals": [demo_deal.name, second_demo_deal.name]}, [])
+
+		self.assertFalse(frappe.db.exists("CRM Deal", demo_deal.name))
+		self.assertTrue(frappe.db.exists("Contact", shared.name))
+		self.assertTrue(frappe.db.exists("Contact Email", {"parent": shared.name}))
+		self.assertTrue(frappe.db.exists("CRM Contacts", {"parent": real_deal.name, "contact": shared.name}))
+		frappe.get_doc("CRM Deal", real_deal.name).save(ignore_permissions=True)
+		# a contact only the demo used goes, with its rows
+		self.assertFalse(frappe.db.exists("Contact", demo_only.name))
+		for child in ("Contact Email", "Contact Phone", "Dynamic Link"):
+			self.assertFalse(frappe.db.exists(child, {"parent": demo_only.name, "parenttype": "Contact"}))
+
 	def test_clearing_disables_a_demo_user_a_real_record_adopted(self):
 		"""Deleting the user under a real lead it owns would leave that lead
 		unsaveable; the fake user is disabled instead, so it still cannot sign in."""
