@@ -132,6 +132,59 @@ export function oneLine(value) {
     : `${line.slice(0, NOTE_LINE - 1).trimEnd()}…`
 }
 
+/* RECEIPT_DAYS in crm/fcrm/doctype/crm_offline_receipt: how long the server
+   remembers that it applied an entry. One older than that could be applied a
+   second time, so neither side sends or takes it without a person's say. A
+   unit test reads the Python and fails when the two drift. */
+export const OUTBOX_MAX_AGE_DAYS = 90
+
+/** Captured too long ago for the server to still know whether it applied it. */
+export function entryExpired(entry, now = Date.now()) {
+  const at = Number(entry?.captured_at)
+  if (!Number.isFinite(at)) return false
+  return now - at > OUTBOX_MAX_AGE_DAYS * 24 * 60 * 60 * 1000
+}
+
+const REFUSAL_STATUS = [403, 404, 409, 417]
+const REFUSAL_EXC = /Validation|Permission|DoesNotExist|Mandatory|Duplicate/
+
+/**
+ * Why a send failed. One of:
+ *
+ * - `refused`: Frappe read the entry and said no. Only an answer Frappe wrote
+ *   -- one that names its exception -- counts. A bare 403 or 404 is a captive
+ *   portal at a site gate, a firewall page, a proxy mid-deploy: it says
+ *   nothing about the entry, exactly as a bare 403 says nothing about the
+ *   session to the handshake (offline/connectivity.js).
+ * - `between`: that bare 403 / 404 / 409 / 417. Something answered, and it was
+ *   not the server.
+ * - `token`: the page's CSRF token is not this session's any more.
+ * - `network`: it never left, or no answer came.
+ * - `limited`: the server said to slow down.
+ * - `busy`: anything else that may pass next time -- a 5xx, whoever wrote it,
+ *   a record that changed under the entry.
+ *
+ * Nothing here blames the entry for a `between` or a `busy`. The same answer
+ * comes from a server that is down for everyone and from one that falls over
+ * on this entry alone; the outbox tells those apart by asking the server
+ * whether it is there (offline/outbox.js).
+ */
+export function failureCause(error) {
+  const status = Number(error?.status ?? error?.httpStatus)
+  const exc = String(error?.exc_type ?? '')
+  if (exc === 'CSRFTokenError') return 'token'
+  if (exc === 'TooManyRequestsError' || status === 429) return 'limited'
+  // The record changed while this entry was being applied -- a week edited on
+  // the desktop in the same instant. Nothing is wrong with the entry; the
+  // next attempt is a new request and sees the record as it now is.
+  if (exc === 'TimestampMismatchError') return 'busy'
+  if (status >= 500) return 'busy'
+  if (REFUSAL_STATUS.includes(status)) return exc ? 'refused' : 'between'
+  if (REFUSAL_EXC.test(exc)) return 'refused'
+  if (!Number.isFinite(status) || status === 0) return 'network'
+  return 'busy'
+}
+
 /**
  * What a failed send means for the entry.
  *
@@ -146,19 +199,7 @@ export function oneLine(value) {
  * a lapsed session is also a 403, which the caller tells apart first.
  */
 export function failureKind(error) {
-  const status = Number(error?.status ?? error?.httpStatus)
-  const exc = String(error?.exc_type ?? '')
-  if (exc === 'CSRFTokenError' || exc === 'TooManyRequestsError') return 'retry'
-  // The record changed while this entry was being applied -- a week edited on
-  // the desktop in the same instant. Nothing is wrong with the entry; the
-  // next attempt is a new request and sees the record as it now is.
-  if (exc === 'TimestampMismatchError') return 'retry'
-  if (status === 429 || status >= 500) return 'retry'
-  if ([403, 404, 409, 417].includes(status)) return 'rejected'
-  if (/Validation|Permission|DoesNotExist|Mandatory|Duplicate/.test(exc)) {
-    return 'rejected'
-  }
-  return 'retry'
+  return failureCause(error) === 'refused' ? 'rejected' : 'retry'
 }
 
 /**

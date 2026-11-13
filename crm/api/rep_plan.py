@@ -1019,8 +1019,11 @@ def log_activity(
 		frappe.throw(_("{0} cannot be logged here.").format(activity_type), frappe.ValidationError)
 	if activity_type in EVENT_KINDS and not organization:
 		frappe.throw(_("Choose the customer for this {0}.").format(_(activity_type)), frappe.ValidationError)
-	if organization and not frappe.db.exists("CRM Organization", organization):
-		frappe.throw(_("Organization {0} not found.").format(organization), frappe.DoesNotExistError)
+	if organization and not _customer_available(organization):
+		# One answer for "no such customer" and "another rep's customer". Two
+		# -- DoesNotExistError here, PermissionError from the plan's save --
+		# told a rep which customer names exist outside their own book.
+		frappe.throw(_("That customer is not available to you."), frappe.PermissionError)
 	if reference_doctype and reference_doctype not in REFERENCE_DOCTYPES:
 		frappe.throw(_("{0} cannot be the subject of a visit.").format(reference_doctype))
 	if not reference_doctype:
@@ -1085,6 +1088,17 @@ def log_activity(
 			if attempt:
 				raise
 	return get_plan(str(monday), user)
+
+
+def _customer_available(organization: str) -> bool:
+	"""Whether the caller may log against this customer: it exists and is in their book.
+
+	The same predicate the plan's own save applies (``assert_customer_allowed``),
+	asked first so that the refusal does not depend on which of the two failed.
+	"""
+	from crm.permissions.customers import customer_visible
+
+	return bool(frappe.db.exists("CRM Organization", organization)) and customer_visible(organization)
 
 
 def _one_line(text: str) -> str:
