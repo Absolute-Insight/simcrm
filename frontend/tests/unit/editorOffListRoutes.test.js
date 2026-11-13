@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { parse } from '@vue/compiler-sfc'
 import { describe, expect, it } from 'vitest'
 
 /**
@@ -35,9 +36,9 @@ function resolve(spec, from) {
 function scriptOf(file) {
   const text = fs.readFileSync(file, 'utf8')
   if (!file.endsWith('.vue')) return text
-  return [...text.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)]
-    .map((m) => m[1])
-    .join('\n')
+  // the compiler's own reading of the file, both script blocks
+  const { script, scriptSetup } = parse(text, { filename: file }).descriptor
+  return [script, scriptSetup].map((block) => block?.content ?? '').join('\n')
 }
 
 /** Every module statically reachable from `start`, with how it was reached. */

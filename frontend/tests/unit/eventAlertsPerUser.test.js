@@ -33,6 +33,9 @@ vi.mock('idb-keyval', () => ({
   clear: async () => {},
   entries: async () => [],
 }))
+// Who the page is for: the app reads the user_id cookie through this helper.
+const session = vi.hoisted(() => ({ user: null }))
+vi.mock('@/utils/session', () => ({ getSessionUser: () => session.user }))
 vi.mock('@/stores/session', () => ({
   sessionStore: () => ({ user: null }),
 }))
@@ -52,7 +55,7 @@ const reminder = (subject) => ({
 /** A page load for `user`: the guard first, then the app's modules. */
 async function load(user, { guard = true } = {}) {
   vi.resetModules()
-  document.cookie = `user_id=${encodeURIComponent(user)}`
+  session.user = user
   const cache = await import('@/utils/offlineCache')
   if (guard) await cache.claimOfflineCache(user)
   const { useEventNotificationAlert } = await import('@/data/notifications')
