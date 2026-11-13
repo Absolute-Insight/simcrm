@@ -90,3 +90,37 @@ class TestNotifyUser(FrappeTestCase):
 		notify_user({**payload, "message": "<p>second</p>"})
 
 		self.assertEqual(frappe.db.count("CRM Notification", {"notification_type_doc": lead.name}), 2)
+
+	def test_a_repeat_after_the_first_was_read_is_delivered(self):
+		"""The guard matched read rows too, so once B had read "A assigned D to
+		you", the same assigner giving B the same record again notified nobody."""
+		lead = frappe.get_doc({"doctype": "CRM Lead", "first_name": "Repeat Assign Probe"}).insert(
+			ignore_permissions=True
+		)
+		payload = {
+			"owner": SYSTEM_MANAGER,
+			"assigned_to": USER1,
+			"notification_type": "Assignment",
+			"message": f"A assigned a CRM Lead {lead.name} to you",
+			"notification_text": "<div>A assigned a lead to you</div>",
+			"reference_doctype": "CRM Lead",
+			"reference_docname": lead.name,
+			"redirect_to_doctype": "CRM Lead",
+			"redirect_to_docname": lead.name,
+		}
+
+		notify_user(payload)
+		[first] = frappe.get_all("CRM Notification", {"notification_type_doc": lead.name}, pluck="name")
+		frappe.db.set_value("CRM Notification", first, "read", 1)
+
+		notify_user(payload)
+		# and the double fire the guard exists for is still one notification
+		notify_user(payload)
+
+		self.assertEqual(
+			frappe.db.count(
+				"CRM Notification", {"notification_type_doc": lead.name, "read": 0, "to_user": USER1}
+			),
+			1,
+		)
+		self.assertEqual(frappe.db.count("CRM Notification", {"notification_type_doc": lead.name}), 2)
