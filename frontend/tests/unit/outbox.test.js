@@ -113,12 +113,12 @@ describe('capturing', () => {
     try {
       await enqueue('create_task', { title: 'x' })
       expect(server.calls).toHaveLength(1)
-      // and when the server would not take it, the rep is told, not "saved"
+      // and when the server refuses it, the rep is told why, not "saved"
       server.replay = async () => {
-        throw new TypeError('Failed to fetch')
+        throw refusal('Give the task a title.')
       }
       await expect(enqueue('create_task', { title: 'y' })).rejects.toThrow(
-        /cannot save work offline/,
+        'Give the task a title.',
       )
       expect(outbox.entries.some((e) => e.payload.title === 'y')).toBe(false)
     } finally {
@@ -266,6 +266,67 @@ describe('timing', () => {
     // one that began after does, whoever started it
     backgroundSync(outbox.entries[0].sent_at + 1)
     expect(outbox.entries).toEqual([])
+  })
+
+  it('something sent while the confirming sync was in flight gets a sync of its own', async () => {
+    const { enqueue, flushOutbox, outbox } = await load()
+    await enqueue('create_task', { title: 'first' })
+    // lands after the first confirming download began
+    const second = enqueue('create_task', { title: 'second' })
+    await second
+    await flushOutbox()
+    await settle()
+    expect(outbox.entries).toEqual([])
+    expect(server.syncs).toBeGreaterThanOrEqual(1)
+  })
+
+  it('a refused entry sent again during a run is not left behind', async () => {
+    let release
+    let refuse = true
+    server.replay = async ({ payload }) => {
+      if (payload.title === 'slow') {
+        await new Promise((resolve) => (release = resolve))
+        return { status: 'applied' }
+      }
+      if (refuse) throw refusal('No.')
+      return { status: 'applied' }
+    }
+    const { enqueue, flushOutbox, retryEntry, outbox } = await load()
+    const bad = await enqueue('create_task', { title: 'bad' })
+    await flushOutbox()
+    expect(outbox.entries[0].status).toBe('rejected')
+    refuse = false
+    await enqueue('create_task', { title: 'slow' })
+    await settle()
+    const retried = retryEntry(bad.id)
+    release()
+    await retried
+    expect(outbox.entries).toEqual([])
+  })
+
+  it('with nowhere to store it and no answer, the entry is kept and goes again under the same id', async () => {
+    const { enqueue, flushOutbox, outbox } = await load()
+    disk.set = () => {
+      throw new Error('QuotaExceeded')
+    }
+    try {
+      // the request left, the answer never came: the server may have it
+      server.replay = async () => {
+        throw Object.assign(new Error('Gateway Timeout'), { status: 504 })
+      }
+      const entry = await enqueue('create_task', { title: 'x' })
+      expect(outbox.entries).toHaveLength(1)
+      expect(outbox.entries[0].unsaved).toBe(true)
+      server.replay = async () => ({ status: 'duplicate' })
+      await flushOutbox()
+      expect(server.calls.map((c) => c.request_id)).toEqual([
+        entry.id,
+        entry.id,
+      ])
+      expect(outbox.entries).toEqual([])
+    } finally {
+      delete disk.set
+    }
   })
 
   it('an entry discarded while it is on the wire stays discarded', async () => {

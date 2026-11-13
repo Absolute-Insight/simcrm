@@ -415,15 +415,25 @@ def replay(
 		frappe.db.rollback(save_point="offline_replay")
 		# a locking read: the plain one would see this transaction's snapshot,
 		# taken before the other copy committed, and find no receipt to check
-		_already_applied(request_id, for_update=True)
+		_already_applied(request_id, current=True)
 		return {"request_id": request_id, "status": "duplicate"}
 
 	handler(payload, moment, late)
 	return {"request_id": request_id, "status": "applied", "late": late}
 
 
-def _already_applied(request_id: str, for_update: bool = False) -> bool:
-	owner = frappe.db.get_value(RECEIPT, request_id, "user", for_update=for_update)
+def _already_applied(request_id: str, current: bool = False) -> bool:
+	if current:
+		# A shared lock, not FOR UPDATE: the failed insert left this
+		# transaction a shared lock on the row already, and so did any third
+		# copy of the entry. Each asking for an exclusive one is a deadlock.
+		rows = frappe.db.sql(
+			"select `user` from `tabCRM Offline Receipt` where name = %s lock in share mode",
+			(request_id,),
+		)
+		owner = rows[0][0] if rows else None
+	else:
+		owner = frappe.db.get_value(RECEIPT, request_id, "user")
 	if not owner:
 		return False
 	if owner != frappe.session.user:

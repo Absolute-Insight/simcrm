@@ -165,7 +165,11 @@ const rows = computed(() =>
           ? __('Sent, updating')
           : entry.sending
             ? __('Sending')
-            : __('Waiting to send'),
+            : entry.unsaved
+              ? __(
+                  'Not saved on this device. Keep the app open until it is sent.',
+                )
+              : __('Waiting to send'),
       icon: entry.status === 'sent' ? LucideRefreshCw : LucideCloudUpload,
     })),
 )

@@ -149,6 +149,28 @@ class ExactlyOnceTest(ReplayTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			replay(new_id(), "log_activity", "[" * 5000)
 
+	def test_the_copy_that_loses_the_race_is_told_duplicate(self):
+		# Two copies at once: both pass the first look, one insert wins. The
+		# loser's second look has to see the winner's row, and its owner.
+		from unittest.mock import patch
+
+		from crm.api import offline
+
+		request_id = new_id()
+		replay(request_id, "log_activity", self.visit())
+		real = offline._already_applied
+		looks = []
+
+		def first_look_misses(rid, current=False):
+			looks.append(current)
+			return False if len(looks) == 1 else real(rid, current)
+
+		with patch.object(offline, "_already_applied", side_effect=first_look_misses):
+			out = replay(request_id, "log_activity", self.visit())
+		self.assertEqual(out["status"], "duplicate")
+		self.assertEqual(looks, [False, True])
+		self.assertEqual(len(self.items()), 1)
+
 	def test_only_the_listed_actions_exist(self):
 		for action in ("frappe.client.delete", "save_plan", "", "get_pack"):
 			with self.assertRaises(frappe.ValidationError):

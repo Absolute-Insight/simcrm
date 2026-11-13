@@ -105,10 +105,16 @@ export async function enqueue(action, payload) {
   // Not on the device, so "saved" has to mean the server has it.
   await flushOutbox()
   const now = live()
-  if (now && now.status !== 'sent') {
+  if (!now || now.status === 'sent') return entry
+  if (now.status === 'rejected' || now.attempts === 0) {
     outbox.entries = outbox.entries.filter((other) => other.id !== entry.id)
     throw now.status === 'rejected' ? new Error(now.error) : unsavedError()
   }
+  // Sent, and no answer: the server may well have it. Taking it back here
+  // would have the rep type it again under a new id, and then it is there
+  // twice. It stays, in memory only, and goes again under the same id for as
+  // long as this page is open.
+  now.unsaved = true
   return entry
 }
 
@@ -213,9 +219,14 @@ let confirming = null
    must not each download a pack to confirm the same entry. */
 function confirmSent() {
   confirming ||= (async () => {
-    if (!connectivity.online) return
-    if (!outbox.entries.some((entry) => entry.status === 'sent')) return
-    await syncPackFresh()
+    const waiting = () =>
+      connectivity.online &&
+      outbox.entries.some((entry) => entry.status === 'sent')
+    // Twice at most: something sent while the first download was in flight
+    // is not in it, and would otherwise wait for the ten-minute refresh.
+    for (let round = 0; round < 2 && waiting(); round++) {
+      if (!(await syncPackFresh())) break
+    }
   })().finally(() => {
     confirming = null
   })
@@ -229,6 +240,9 @@ export async function retryEntry(id) {
   entry.status = 'pending'
   entry.error = null
   await persist(entry).catch(() => {})
+  // a run already under way has been past this entry once and will not look
+  // at it again: let it finish, then start one that will
+  if (sending) await sending.catch(() => {})
   return flushOutbox()
 }
 
