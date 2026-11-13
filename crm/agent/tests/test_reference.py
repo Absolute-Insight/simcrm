@@ -156,6 +156,29 @@ class NumbersTest(UnitTestCase):
 		self.assertEqual(reference.numbers("51,33 Bar"), [{"51.33"}])
 		self.assertEqual(reference.numbers("285.0 mm"), [{"285"}])
 
+	def test_a_comma_after_a_leading_zero_is_a_decimal(self):
+		"""Audit be_agent-2: "0,125 mm" read as 125 -- a thousands group never
+		follows a leading zero. A right answer was refused and "0,125 kPa" passed
+		against a row holding 125 kPa."""
+		self.assertEqual(reference.numbers("0,125 mm"), reference.numbers("0.125 mm"))
+		self.assertEqual(reference.numbers("0,125 mm"), [{".125"}])
+		self.assertEqual(reference.numbers("00,500"), [{".5"}])
+		# four digits before the comma are not a thousands group either
+		self.assertEqual(reference.numbers("1234,567"), [{"1234.567"}])
+		self.assertEqual(reference.numbers("1,234,567"), [{"1234567"}])
+		self.assertNotIn("0125", reference.normalise("0,125 mm"))
+		self.assertIn("1234567", reference.normalise("1,234,567 kPa"))
+		row = {
+			**ROWS[7],
+			"cells": [
+				{"label": "Rated pressure", "value": "125", "unit": "kPa", "status": "ok"},
+				{"label": "Gasket", "value": "0.125", "unit": "mm", "status": "ok"},
+			],
+		}
+		self.assertEqual(reference.verify("The gasket is 0,125 mm.", [row], [row])[0], [row])
+		row["cells"].pop()
+		self.assertIsNone(reference.verify("It is rated 0,125 kPa.", [row], [row])[0])
+
 	def test_a_thousands_comma_before_a_decimal_is_still_thousands(self):
 		"""Audit L-39: "1,270.0" read as 1.270 refused a correct answer."""
 		self.assertEqual(reference.numbers("1,270.0 mm"), [{"1270"}])
@@ -399,6 +422,94 @@ class ReviewBypassTest(UnitTestCase):
 	def test_a_unicode_minus_keeps_its_sign(self):
 		self.assertEqual(reference.numbers("\u221229 \u00baC"), [{"-29"}])
 		self.assertEqual(reference.numbers("15\u201320 bar"), [{"15"}, {"20"}])
+
+
+class NamingNumbersTest(UnitTestCase):
+	"""Audit be_agent-1 (A3-3): the numbers that say which row is meant -- its
+	size, standard, class, page, a digit in a column's name -- vouched for any
+	figure. They name the row; only a confirmed cell is what a column says."""
+
+	ROW = ROWS[0] | {
+		"cells": [
+			*ROWS[0]["cells"],
+			{"label": "Bolt hole diameter (d1)", "value": "22.0", "unit": "mm", "status": "ok"},
+		]
+	}
+
+	def test_a_naming_number_is_not_a_columns_value(self):
+		for answer in (
+			"The flange OD is 150 mm.",  # the nominal bore
+			'The 6" flange has 6 bolt holes.',  # the inch size
+			"It takes 2 bolts.",  # the page
+			"The PCD is 1123 mm.",  # SABS 1123
+			"Bolt holes are 1 mm.",  # the 1 of "(d1)"
+			"It has an OD of 150 mm.",
+			"OD: 150 mm",
+			"| Flange OD | 150 mm |",
+			'The 6" flange has a 150 mm OD.',
+			"The OD for this flange is approximately 150 mm.",
+			"The PCD (bolt circle diameter) is 150 mm.",
+			"Bolt hole diameter (d1): 6 mm",
+			"The 150 mm flange has 3 bolt holes.",  # the 3 of 1600/3
+			"Flange OD 1600 mm",
+			"PCD 150 mm, 8 holes",
+			"The bolt size is 6.",
+		):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+
+	def test_an_answer_may_still_name_its_row(self):
+		for answer in (
+			'The 150 mm (6") SABS 1123 1600/3 flange has an OD of 285.0 mm and 8 bolt holes (d1 22.0 mm).',
+			"Flange Drilling Tables, page 2: the 150 mm flange OD is 285.0 mm.",
+			'The PCD of the 6" SABS 1123 flange is 240.0 mm.',
+			'PCD of 6" SABS flange is 240.0 mm',
+			'6" PCD: 240.0 mm',
+			"OD (150 mm flange): 285.0 mm",
+			'Nominal size: 150 mm (6")\nFlange OD: 285.0 mm',
+			"The OD is 285.0 mm for the 150 mm size.",
+			'For a flange of 150 mm (6"), the OD is 285.0 mm.',
+			"| Size | OD | PCD |\n| 150 mm | 285.0 | 240.0 |",
+			"This is the 1600/3 row.\nBolt hole diameter (d1): 22.0 mm",
+			"- 1600 kPa: 8 bolts, M20",
+			'The sheet does not give a mass for the 6" 1600/3 flange.',
+			'**150 mm (6") · SABS 1123 1600/3**\n\n- Flange OD: 285.0 mm\n- PCD (bolt circle diameter): '
+			"240.0 mm\n- Number of bolt holes: 8\n- Bolt hole diameter (d1): 22.0 mm\n- Bolt size: M20",
+		):
+			with self.subTest(answer=answer):
+				used, missing = reference.verify(answer, [self.ROW], [self.ROW])
+				self.assertEqual((used, missing), ([self.ROW], []))
+
+	def test_a_number_that_is_both_is_data(self):
+		# the line-size row's label and its cells hold the same two figures
+		used, _ = reference.verify('A 2 1/2" line is 65 mm.', [ROWS[6]], [])
+		self.assertEqual(used, [ROWS[6]])
+
+	def test_a_page_number_or_a_column_digit_needs_its_word(self):
+		self.assertIsNotNone(reference.verify("See page 2.", [self.ROW], [self.ROW])[0])
+		self.assertIsNone(reference.verify("Use 2 gaskets.", [self.ROW], [self.ROW])[0])
+		self.assertIsNone(reference.verify("Use 1 gasket.", [self.ROW], [self.ROW])[0])
+
+	def test_a_column_whose_name_ends_in_a_figure(self):
+		rating = {
+			**ROWS[7],
+			"label": "PN16",
+			"cells": [
+				{"label": "Body test @ 1.5", "value": "2.4 MPa", "status": "ok"},
+				{"label": "Seat test @ 1.1", "value": "1.76 MPa", "status": "ok"},
+			],
+		}
+		self.assertIsNotNone(reference.verify("PN16: body test @ 1.5 is 2.4 MPa.", [rating], [])[0])
+		self.assertIsNone(reference.verify("PN16: body test @ 1.5 is 1.1 MPa.", [rating], [])[0])
+		self.assertIsNone(reference.verify("The seat test @ 1.1 is 16 MPa.", [rating], [])[0])
+
+	def test_one_as_a_pronoun_is_not_a_count(self):
+		# the "(d1)" of a column's name used to vouch for it by accident
+		answer = 'Which one do you need? The 6" 1600/3 flange has 8 holes.'
+		self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+		self.assertEqual(reference.numbers("this one, or one of the others"), [])
+		self.assertEqual(reference.numbers("one bolt"), [{"1"}])
+		self.assertIsNone(reference.verify("It takes one bolt.", [self.ROW], [self.ROW])[0])
 
 
 class TrimComparisonsTest(UnitTestCase):

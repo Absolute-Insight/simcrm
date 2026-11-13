@@ -84,7 +84,9 @@ _FRACTIONS = {
 	"⅞": " 7/8",
 }
 _QUOTES = re.compile(r"[“”″ʺ]|''")
-_THOUSANDS = re.compile(r"(\d),(\d{3})\b")
+# "1,000" and "1,234,567" -- never "0,125", which is a decimal comma: no
+# thousands group follows a leading zero.
+_THOUSANDS = re.compile(r"(?<![\d.,])([1-9]\d{0,2})((?:,\d{3})+)\b")
 
 # An inch size in any of the ways a rep types one: 6", 6 inch, 1 1/2", 1-1/2in.
 # A bare "in" is the word, not the mark, before a unit no inch converts to
@@ -137,7 +139,7 @@ def normalise(text: str) -> str:
 	for glyph, spelled in _FRACTIONS.items():
 		text = text.replace(glyph, spelled)
 	text = _QUOTES.sub('"', text)
-	text = _THOUSANDS.sub(r"\1\2", text)
+	text = _THOUSANDS.sub(lambda m: m.group(1) + m.group(2).replace(",", ""), text)
 	text = _INCH.sub(_inch, text)
 	# the tagged token and the bare number both: "SABS 1600" must still find
 	# the row a sheet labels "1600 kPa"
@@ -296,7 +298,7 @@ def withhold(text: str, entry: dict) -> str:
 	still printed it. A value is cut where the text spells it with its unit,
 	or where it is more than a bare number. A bare number is left -- the 12
 	of a 12" flange's label is its size, not its questioned bolt count -- and
-	:func:`_supported_values` keeps it from vouching for the questioned one.
+	:class:`_Support` keeps it from vouching for the questioned one.
 	"""
 	text = text or ""
 	for cell in entry.get("cells") or []:
@@ -366,6 +368,21 @@ _NUMBER_WORDS = {
 	"dozen": "12",
 }
 _WORD = re.compile(r"[a-z]+")
+# "which one", "this one", "one of them": a pronoun, not a count of 1
+_PRONOUN_BEFORE = re.compile(r"\b(?:which|this|that|the|each|either|neither|any|another|every|no)\s+$")
+_PRONOUN_AFTER = re.compile(r"\s+of\b|\s*[?]")
+
+
+def _number_word(match: re.Match) -> str:
+	word = match.group(0)
+	if word not in _NUMBER_WORDS:
+		return word
+	if word == "one" and (
+		_PRONOUN_BEFORE.search(match.string, 0, match.start())
+		or _PRONOUN_AFTER.match(match.string, match.end())
+	):
+		return word
+	return f" {_NUMBER_WORDS[word]} "
 
 
 def _canonical(atom: str) -> str:
@@ -376,11 +393,13 @@ def _canonical(atom: str) -> str:
 		return f"{whole.lstrip('0') or '0'} {fraction}" if whole else fraction
 	if "," in atom:
 		# "1,000" and "12,500.5" are thousands; "51,33" is a decimal comma. The
-		# last group is three digits before any decimal point of its own.
+		# last group is three digits before any decimal point of its own, and
+		# the first is one to three with no leading zero: "0,125" is 0.125.
 		groups = atom.split(",")
-		if all(len(group) == 3 for group in [*groups[1:-1], groups[-1].split(".")[0]]):
+		grouped = all(len(group) == 3 for group in [*groups[1:-1], groups[-1].split(".")[0]])
+		if grouped and re.fullmatch(r"[1-9]\d{0,2}", groups[0]):
 			atom = "".join(groups)
-		elif len(groups) == 2:
+		elif len(groups) == 2 and "." not in atom:
 			atom = ".".join(groups)
 		else:
 			atom = "".join(groups)
@@ -389,44 +408,204 @@ def _canonical(atom: str) -> str:
 	return atom.lstrip("0") or "0"
 
 
-def numbers(text: str) -> list[set[str]]:
-	"""Every number in ``text``, each as the set of values it stands for."""
+def _figures(text: str) -> tuple[str, list[tuple[set[str], int, int]]]:
+	"""``text`` as the number check reads it, and each figure with where it stands."""
 	# a PDF's minus is often U+2212 or an en dash
 	text = (text or "").lower().replace("\u2212", "-").replace("\u2013", "-")
 	for glyph, spelled in _FRACTIONS.items():
 		text = text.replace(glyph, spelled)
-	text = _WORD.sub(
-		lambda m: f" {_NUMBER_WORDS[m.group(0)]} " if m.group(0) in _NUMBER_WORDS else m.group(0), text
-	)
+	text = _WORD.sub(_number_word, text)
 	found = []
-	for sign, atom in _NUMBER.findall(text):
-		parts = [atom]
+	for match in _NUMBER.finditer(text):
+		sign, atom = match.group(1), match.group(2)
+		start, end = match.span(2)
+		parts = [(atom, start, end)]
 		mixed = re.fullmatch(r"(\d+)[ -]+(\d+)/(\d+)", atom)
 		if mixed and int(mixed.group(2)) >= int(mixed.group(3) or 0):
 			# not a mixed fraction: "SABS 1123 1600/3" is a standard and a class
-			parts = [mixed.group(1), f"{mixed.group(2)}/{mixed.group(3)}"]
-		for index, part in enumerate(parts):
+			parts = [
+				(mixed.group(1), start, start + mixed.end(1)),
+				(f"{mixed.group(2)}/{mixed.group(3)}", start + mixed.start(2), end),
+			]
+		for index, (part, part_start, part_end) in enumerate(parts):
 			value = _canonical(part)
-			found.append({f"-{value}" if sign and index == 0 and value != "0" else value})
-	return found
+			signed = f"-{value}" if sign and index == 0 and value != "0" else value
+			found.append(({signed}, part_start, part_end))
+	return text, found
 
 
-def _supported_values(entries: list[dict], extra_texts: list[str]) -> set[str]:
-	texts = list(extra_texts)
-	confirmed = []
-	for entry in entries:
-		texts.extend(
-			[public_label(entry), withhold(entry.get("section", ""), entry), str(entry.get("page", ""))]
-		)
-		texts.append(entry.get("sheet_title", ""))
+def numbers(text: str) -> list[set[str]]:
+	"""Every number in ``text``, each as the set of values it stands for."""
+	return [variants for variants, _start, _end in _figures(text)[1]]
+
+
+# --- what a row vouches for ----------------------------------------------------
+#
+# A row holds two kinds of number. Its **data** -- the confirmed cell values --
+# is what an answer may state. Its **naming** numbers -- the size, standard and
+# class of its label, its section and sheet title, its page, a digit in a
+# column's name ("(d1)") -- say which row is meant and nothing about it: the
+# 150 of a 150 mm flange is not its OD, and the 6 of a 6" flange is not its
+# bolt count. A naming number is accepted only where the answer uses it to
+# name the row, never where it stands as a column's value.
+
+_PAGE_TAGS = ("page", "pg", "p")
+# the word a number hangs on: "class 150", "PN16", "d1", "page 2"
+_TAG = re.compile(r"([a-z]+)[\s.-]*$")
+_GLUED = re.compile(r"[a-z]$")
+# a unit or an inch mark straight after a number: a size, not a count
+_MARK = re.compile(r"\s*(?:[\"“”″ʺ]|''|(?:mm|cm|in|inch|inches|nb|dn|kpa|mpa|bar|psi|lbs?|kg|ºc|ºf|°c|°f)\b)")
+# what may stand between a column's name and its value: "OD is 150", "OD: 150",
+# "an OD of 150", "OD = 150", "| OD | 150 |"
+_LINK_WORDS = frozenset(
+	"is are was were of equal equals measures measure about approximately approx roughly around".split()
+)
+_LINK = re.compile(r"(?:[\s:=|*_~≈(\[-]|\b(?:" + "|".join(sorted(_LINK_WORDS)) + r")\b)*$")
+# the last word before a number -- past a figure the column's own name ends
+# in ("Body test @ 1.5 is ...")
+_LAST_WORD = re.compile(r"([a-z]+\d*|\d+[a-z]+)[)\]]*(?:\s*@?\s*[\d.,]+)?\s*$")
+_COPULA = re.compile(r"\b(?:is|are|was|were|equals?|measures?)\b")
+# a column's own value straight after its name: ": 240.0", " is M20"
+_VALUE_NEXT = re.compile(r"(?:[\s:=|*_~≈(\[-]|\b(?:" + "|".join(sorted(_LINK_WORDS)) + r")\b)*[a-z]?\d")
+_NEXT_WORDS = re.compile(r"[\s-]*(?:[a-z]+[\s-]+){0,3}(?:[a-z]+)?")
+_LABEL_WORD = re.compile(r"[a-z]+")
+_LABEL_FILLER = frozenset({"of", "the", "a", "an", "at", "in", "per", "to", "and", "or", "for", "no"})
+# "size" is what every row is named by ("nominal size: 150 mm", "the 150 mm
+# size"): it names a column only with that column's other words ("bolt size")
+_GENERIC = frozenset({"size"})
+
+Figure = tuple[set[str], int, int]
+
+
+def _stem(word: str) -> str:
+	return word[:-1] if len(word) > 3 and word.endswith("s") else word
+
+
+def _tag(text: str, start: int) -> tuple[str, bool]:
+	"""The word the number at ``start`` hangs on, and whether it is written onto it."""
+	found = _TAG.search(text, 0, start)
+	return (found.group(1), bool(_GLUED.search(text, 0, start))) if found else ("", False)
+
+
+class _Support:
+	"""What one row vouches for: its data, and the numbers that only name it."""
+
+	__slots__ = ("columns", "data", "heads", "named_by", "naming")
+
+	def __init__(self, entry: dict):
+		# value -> how the row writes it: (the word it hangs on, whether an
+		# answer must write that word too)
+		naming: dict[str, set[tuple[str, bool]]] = {}
+
+		def name(text: str, column: bool = False, tags: tuple[str, ...] = ()) -> None:
+			prepared, figures = _figures(text)
+			for variants, start, _end in figures:
+				tag, glued = _tag(prepared, start)
+				# a digit written onto a column's name ("d1") is that name and
+				# nothing else; a page number is only ever "page 2"
+				written = {(word, True) for word in tags} or {(tag, column and glued)}
+				for value in _values_of(variants):
+					naming.setdefault(value, set()).update(written)
+
+		for text in (
+			public_label(entry),
+			withhold(entry.get("section", ""), entry),
+			entry.get("sheet_title"),
+		):
+			name(str(text or ""))
+		name(str(entry.get("page", "")), tags=_PAGE_TAGS)
+		self.columns: set[str] = set()
+		self.heads: set[str] = set()
+		confirmed = []
 		for cell in entry.get("cells") or []:
-			texts.append(cell.get("label", ""))
+			label = str(cell.get("label", "")).lower()
+			name(label, column=True)
+			for phrase in re.split(r"[()]", label):
+				words = [word for word in _LABEL_WORD.findall(phrase) if word not in _LABEL_FILLER]
+				self.columns.update(_stem(word) for word in words)
+				if words:
+					self.heads.add(_stem(words[-1]))
+				self.heads.update(re.findall(r"[a-z]+\d+|\d+[a-z]+", phrase))
 			if cell.get("status") != QUESTIONED:
 				confirmed.append(str(cell.get("value", "")))
-	confirmed_values = _values(confirmed)
-	# a figure the row questions is support only where a confirmed cell holds
-	# it: the label's own 12" does not vouch for a questioned count of 12
-	return (_values(texts) | confirmed_values) - (_withheld_values(entries) - confirmed_values)
+		self.data = _values(confirmed)
+		# a figure the row questions is support only where a confirmed cell holds
+		# it: the label's own 12" does not vouch for a questioned count of 12
+		withheld = _withheld_values([entry]) - self.data
+		self.naming = {value: written for value, written in naming.items() if value not in withheld}
+		# the words that say what the row is ("flange", "class", "line"): a
+		# number followed by one is naming the row
+		described = " ".join(
+			str(entry.get(key) or "") for key in ("label", "section", "sheet_title", "search")
+		)
+		self.named_by = {_stem(word) for word in _LABEL_WORD.findall(described.lower())} - self.heads
+
+	@property
+	def known(self) -> set[str]:
+		"""Every number on the row, whatever it may be used for."""
+		return self.data | set(self.naming)
+
+	def holds(self, text: str, figure: Figure) -> bool:
+		"""Whether the row supports ``figure`` as the claim ``text`` uses it.
+
+		``text`` is the claim as :func:`_figures` prepared it.
+		"""
+		variants, start, end = figure
+		if variants & self.data:
+			return True
+		written = set().union(*(self.naming.get(value, ()) for value in variants))
+		if not written:
+			return False
+		tag, _glued = _tag(text, start)
+		if tag and tag not in _LINK_WORDS and any(tag == word for word, _required in written):
+			# "class 150", "SABS 1123", "page 2", "d1": the row's own name for it
+			return True
+		if all(required for _word, required in written):
+			return False
+		return not self._stands_as_value(text, start, end)
+
+	def _stands_as_value(self, text: str, start: int, end: int) -> bool:
+		"""Whether the number at ``start`` is given as the value of one of the row's columns."""
+		mark = _MARK.match(text, end)
+		following = _NEXT_WORDS.match(text, mark.end() if mark else end)
+		after = [_stem(word) for word in _LABEL_WORD.findall(following.group(0))]
+		if mark:
+			# "a 150 mm OD" -- not "6\" PCD: 240.0 mm", where the column has its
+			# own value and the 6" is whose it is
+			if after and after[0] in self.heads - _GENERIC:
+				first = _LABEL_WORD.search(text, mark.end())
+				if not _VALUE_NEXT.match(text, first.end()):
+					return True
+		else:
+			# a bare number counts what follows it: "6 bolt holes"
+			for word in after:
+				if word not in self.columns:
+					break
+				if word in self.heads:
+					return True
+		link = _LINK.search(text, 0, start)
+		if self._column_ends(text, link.start()):
+			# "the OD is 150 mm", "PCD: 1123" -- unless it goes on to name the
+			# row: "the PCD of 6\" SABS flanges"
+			return not (after and after[0] in self.named_by)
+		if _COPULA.search(link.group(0)):
+			# "the OD for this flange is 150 mm": the column anywhere since the
+			# figure before
+			since = max((found.end() for found in re.finditer(r"\d", text[: link.start()])), default=0)
+			for word in _LABEL_WORD.finditer(text, since, link.start()):
+				if self._column_ends(text, word.end()):
+					return True
+		return False
+
+	def _column_ends(self, text: str, at: int) -> bool:
+		"""Whether the text up to ``at`` ends in the name of one of the row's columns."""
+		column = _LAST_WORD.search(text, 0, at)
+		if not column or _stem(column.group(1)) not in self.heads:
+			return False
+		if column.group(1) in _GENERIC:
+			qualifier = _LAST_WORD.search(text, 0, column.start())
+			return bool(qualifier and _stem(qualifier.group(1)) in self.columns - _GENERIC)
+		return True
 
 
 def _withheld_values(rows: list[dict]) -> set[str]:
@@ -452,13 +631,18 @@ def _values(texts: list[str]) -> set[str]:
 	found: set[str] = set()
 	for text in texts:
 		for variants in numbers(text):
-			found |= variants
-			for value in variants:
-				if "/" in value and " " not in value:
-					top, bottom = (part.lstrip("-") for part in value.split("/"))
-					# 1600/3 is a class; 5/8 is an inch size whose digits are not figures
-					if int(top or 0) >= int(bottom or 0):
-						found.update((top, bottom))
+			found |= _values_of(variants)
+	return found
+
+
+def _values_of(variants: set[str]) -> set[str]:
+	found = set(variants)
+	for value in variants:
+		if "/" in value and " " not in value:
+			top, bottom = (part.lstrip("-") for part in value.split("/"))
+			# 1600/3 is a class; 5/8 is an inch size whose digits are not figures
+			if int(top or 0) >= int(bottom or 0):
+				found.update((top, bottom))
 	return found
 
 
@@ -479,14 +663,15 @@ def trim_comparisons(answer: str, rows: list[dict]) -> str:
 	"""
 	labels = [_values([public_label(row)]) for row in rows]
 	every_label = set().union(*labels) if labels else set()
-	supports = [_supported_values([row], []) for row in rows]
+	supports = [_Support(row) for row in rows]
 	pieces = re.split(f"({_CLAIM.pattern})", answer or "")
 	kept: list[str] = []
 	for index in range(0, len(pieces), 2):
 		claim = pieces[index]
 		separator = pieces[index + 1] if index + 1 < len(pieces) else ""
-		figures = numbers(claim)
-		one_row = any(all(v & allowed for v in figures) for allowed in supports)
+		text, placed = _figures(claim)
+		figures = [variants for variants, _start, _end in placed]
+		one_row = any(all(support.holds(text, figure) for figure in placed) for support in supports)
 		if figures and not one_row and all(v & every_label for v in figures):
 			continue
 		kept.append(claim + separator)
@@ -522,7 +707,8 @@ def verify(
 	withheld_cited = _withheld_values(cited or [])
 	withheld = _withheld_values(rows)
 	order = list(cited or []) + [row for row in rows if row not in (cited or [])]
-	supports = [_supported_values([row], []) for row in order]
+	supports = [_Support(row) for row in order]
+	known = [support.known for support in supports]
 	labels = [_values([public_label(row)]) for row in order]
 	used: list[dict] = []
 	# The rows the previous claim resolved to. Prose carries its subject on:
@@ -535,12 +721,17 @@ def verify(
 	# and a new paragraph about another row names that row.
 	context: set[int] | None = None
 	for claim in _CLAIM.split(answer or ""):
-		figures = numbers(claim)
+		text, placed = _figures(claim)
+		figures = [variants for variants, _start, _end in placed]
 		if figures:
 			guessed = [v for v in figures if v & withheld_cited]
 			if guessed:
 				return None, [min(v) for v in guessed]
-			holders = [j for j in range(len(order)) if all(v & supports[j] for v in figures)]
+			# a row holds a claim when each figure is one of its cell values, or
+			# names the row: its size or page is never what a column says
+			holders = [
+				j for j in range(len(order)) if all(supports[j].holds(text, figure) for figure in placed)
+			]
 			if context:
 				shared = set.intersection(*(labels[j] for j in context))
 				named = [j for j in holders if any(v & labels[j] and not v & shared for v in figures)]
@@ -549,10 +740,11 @@ def verify(
 				if order[holders[0]] not in used:
 					used.append(order[holders[0]])
 				context = set(holders)
-			elif any(v & allowed for allowed in supports for v in figures):
+			elif any(v & allowed for allowed in known for v in figures):
 				# on a row, but not on one this claim may be read as: a bolt set
-				# no row holds, or a line read under another row's heading
-				return None, [min(v) for v in figures if not any(v & allowed for allowed in supports)] or [
+				# no row holds, a line read under another row's heading, or a
+				# row's size given as one of its values
+				return None, [min(v) for v in figures if not any(v & allowed for allowed in known)] or [
 					min(figures[0])
 				]
 			else:
