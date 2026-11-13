@@ -380,33 +380,40 @@ _ONE_IS_PRONOUN = re.compile(
 # A list's own numbering at the start of a line ("1. The OD is ...", "2) ...")
 # counts items, not anything on the sheet.
 _ORDINAL = re.compile(r"(?m)^([ \t]*(?:[-*•][ \t]+)?)(\d{1,2})(?=[.)][ \t]+\S)")
-_SENTENCE_END = re.compile(r"[.!?][\s*_)\]\"']*$")
 # "1.234,56": thousands dots before a decimal comma
 _DOTTED_THOUSANDS = re.compile(r"0*[1-9]\d{0,2}(?:\.\d{3})+,\d+")
 
 
-def _blank_ordinals(text: str) -> str:
+def _blank_ordinals(text: str, is_column=None) -> str:
 	"""``text`` with a list's own numbering blanked out, every other character in place.
 
-	A number at the start of a line is numbering only where it reads as such:
-	"1." then "2." then "3.", in that order -- or a lone "1." that opens the
-	answer or follows a finished sentence. Anything else is a figure:
-	"Number of bolt holes:" followed by a line "12. Bolt size M20" says twelve.
+	A number at the start of a line is numbering where it reads as such: "1."
+	then "2." then "3.", in that order, each list starting again at "1." -- or
+	a lone "1.", unless the line above it is a column's name waiting for its
+	value (``is_column``, when the caller knows the columns). Anything else is
+	a figure: "Number of bolt holes:" followed by "12. Bolt size M20" says
+	twelve.
 	"""
 	text = text or ""
-	markers = list(_ORDINAL.finditer(text))
-	run = []
-	for marker in markers:
-		if int(marker.group(2)) == len(run) + 1:
-			run.append(marker)
-	if len(run) == 1:
-		before = text[max(0, run[0].start() - _LOOK_BEHIND) : run[0].start()].rstrip()
-		if before and not _SENTENCE_END.search(before):
-			run = []
-	if not run:
+	runs: list[list[re.Match]] = []
+	for marker in _ORDINAL.finditer(text):
+		value = int(marker.group(2))
+		if value == 1:
+			runs.append([marker])
+		elif runs and value == len(runs[-1]) + 1:
+			runs[-1].append(marker)
+	numbering = []
+	for run in runs:
+		if len(run) == 1 and is_column is not None:
+			above = text[max(0, run[0].start() - _LOOK_BEHIND) : run[0].start()].rstrip()
+			above = above.rsplit("\n", 1)[-1]
+			if above and is_column(*_figures(above)):
+				continue
+		numbering.extend(run)
+	if not numbering:
 		return text
 	pieces, at = [], 0
-	for marker in run:
+	for marker in numbering:
 		pieces.append(text[at : marker.start(2)])
 		pieces.append(" " * len(marker.group(2)))
 		at = marker.end(2)
@@ -530,6 +537,12 @@ _OF_THEN_VALUE = re.compile(r"\s*(?:is|are|was|=|:)\s*(?:[a-z]+\s+)?[a-z]?\d")
 _RESTATED = re.compile(
 	r"(?:\s*[(\[][^()\[\]]{0,40}[)\]]|\s+of\s+[\d./ -]{1,12}(?:" + _MARK.pattern + r")?)\s*$"
 )
+# where a column's name is the end of what a size describes: the end of the
+# claim, punctuation, or a word that carries the sentence on
+_PHRASE_ENDS = re.compile(
+	r"\s*(?:$|[^\sa-z0-9]|(?:is|are|was|were|and|or|but|for|on|with|has|have|of|in|at|to|as|which|that|"
+	r"will|would|should|so|not)\b)"
+)
 _NEXT_WORDS = re.compile(r"[\s-]*(?:[a-z]+[\s-]+){0,3}(?:[a-z]+)?")
 _LABEL_WORD = re.compile(r"[a-z]+")
 _LABEL_FILLER = frozenset({"of", "the", "a", "an", "at", "in", "per", "to", "and", "or", "for", "no"})
@@ -638,9 +651,11 @@ class _Support:
 
 		``text`` is the claim as :func:`_figures` prepared it.
 		"""
+		return bool(figure[0] & self.data) or self.names(text, figure)
+
+	def names(self, text: str, figure: Figure) -> bool:
+		"""Whether ``figure`` is one of the row's naming numbers, written as a name."""
 		variants, start, end = figure
-		if variants & self.data:
-			return True
 		written = set().union(*(self.naming.get(value, ()) for value in variants))
 		if not written:
 			return False
@@ -668,7 +683,10 @@ class _Support:
 					if _stem(word.group(0)) not in self.columns:
 						break
 					last = word.end()
-				if not _VALUE_NEXT.match(text, last):
+				# ... nor "a 150 mm bolt pattern", "the 1600 kPa pressure rating
+				# flange": a column's word in front of another noun describes
+				# that noun
+				if not _VALUE_NEXT.match(text, last) and _PHRASE_ENDS.match(text, last):
 					return True
 		else:
 			# a bare number counts what follows it: "6 bolt holes"
@@ -686,6 +704,10 @@ class _Support:
 		if self._column_ends(text, link.start(), floor):
 			# "the OD is 150 mm", "PCD: 1123" -- unless the number goes on to
 			# name the row, or the column's own value follows it:
+			if mark and not _LABEL_WORD.search(link.group(0)) and _VALUE_NEXT.match(text, mark.end()):
+				# "Flange OD: 150 mm: 285.0 mm" -- a column's name on the line
+				# above, then "size: value" under it
+				return False
 			return not self._names_the_row(text, link.group(0), after, mark.end() if mark else end)
 		if _COPULA.search(link.group(0)):
 			# "the OD for this flange is 150 mm", "the OD of the 6 inch flange
@@ -791,10 +813,13 @@ def _values_of(variants: set[str]) -> set[str]:
 
 # An answer splits into the claims it makes: lines, list items, sentences. A
 # full stop splits only after a word or a bracket, never inside "285.0".
-# Nor after an abbreviation -- a single letter, "pg." or "no.": "(p. 2)" is a
-# page and "API trim no. is 5" one claim, and a split there left the figure
-# without the word that says what it is.
-_CLAIM = re.compile(r"\n+|;\s+|(?<=[A-Za-z)\]])(?<!\b[A-Za-z])(?<!\b[Pp][Gg])(?<!\b[Nn][Oo])\.\s+")
+# Nor after an abbreviation -- "pg.", "no.", or a single letter before a number
+# or "No." ("p. 2", "DIN W. No."): "(p. 2)" is a page and "API trim no. is 5"
+# one claim, and a split there left the figure without the word that says
+# what it is. "... type B. The 150 mm flange ..." is still two sentences.
+_CLAIM = re.compile(
+	r"\n+|;\s+|(?<=[A-Za-z)\]])(?<!\b[Pp][Gg])(?<!\b[Nn][Oo])\.\s+(?!(?<=\b[A-Za-z]\.\s)(?:\d|[Nn]o\b))"
+)
 
 
 def trim_comparisons(answer: str, rows: list[dict]) -> str:
@@ -812,7 +837,8 @@ def trim_comparisons(answer: str, rows: list[dict]) -> str:
 	supports = _Support.of(rows)
 	pieces = re.split(f"({_CLAIM.pattern})", answer or "")
 	# numbering blanked for the check only: the split falls in the same places
-	checked = re.split(f"({_CLAIM.pattern})", _blank_ordinals(answer or ""))
+	is_column = supports[0].is_column if supports else None
+	checked = re.split(f"({_CLAIM.pattern})", _blank_ordinals(answer or "", is_column))
 	kept: list[str] = []
 	for index in range(0, len(pieces), 2):
 		claim = pieces[index]
@@ -864,7 +890,8 @@ def verify(
 	# flange has a PCD of 269.9 mm."), "PCD 241.3 mm" or "It takes 8 bolts"
 	# is read as Class 300's. So a claim must resolve within the rows the one
 	# before it did, unless it names another row by a label figure the current
-	# rows do not share (150 against 300; not the 6 both are). A blank line
+	# rows do not share (150 against 300; not the 6 both are), written as a
+	# name and not as some column's value. A blank line
 	# does not start afresh: markdown puts one between a heading and its body,
 	# and a new paragraph about another row names that row.
 	context: set[int] | None = None
@@ -872,7 +899,8 @@ def verify(
 	# by the line under it, so the two are read as one claim: on its own line
 	# a 150 would be the row's size, under "Flange OD:" it is given as the OD.
 	heading = ""
-	for claim in _CLAIM.split(_blank_ordinals(answer or "")):
+	is_column = supports[0].is_column if supports else None
+	for claim in _CLAIM.split(_blank_ordinals(answer or "", is_column)):
 		text, placed = _figures(heading + claim)
 		heading = ""
 		if supports and supports[0].is_column(text, placed):
@@ -890,7 +918,16 @@ def verify(
 			]
 			if context:
 				shared = set.intersection(*(labels[j] for j in context))
-				named = [j for j in holders if any(v & labels[j] and not v & shared for v in figures)]
+				# ... nor by a figure the claim gives as a value: the 4 of
+				# "Number of bolts: 4" is a count, not the 4" row's size
+				named = [
+					j
+					for j in holders
+					if any(
+						figure[0] & labels[j] and not figure[0] & shared and supports[j].names(text, figure)
+						for figure in placed
+					)
+				]
 				holders = named or [j for j in holders if j in context]
 			if holders:
 				if order[holders[0]] not in used:
