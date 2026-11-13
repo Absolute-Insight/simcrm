@@ -541,6 +541,8 @@ after_migrate = [
 	"crm.fcrm.doctype.fcrm_note.fcrm_note.on_doctype_update",
 	"crm.fcrm.doctype.crm_status_change_log.crm_status_change_log.on_doctype_update",
 	"crm.fcrm.doctype.crm_forecast_snapshot.crm_forecast_snapshot.on_doctype_update",
+	# frappe's table: the rep scoping sub-select filters it by assignee
+	"crm.permissions.org_hierarchy.ensure_todo_index",
 ]
 
 # frappe.clear_cache() deletes every other key on the site -- and frappe.rename_doc
