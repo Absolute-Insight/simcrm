@@ -187,16 +187,21 @@ describe('failureCause', () => {
     expect(failureCause({ status: 400, exc_type: 'CSRFTokenError' })).toBe(
       'token',
     )
+    expect(failureCause({ status: 429 })).toBe('limited')
+    expect(
+      failureCause({ status: 417, exc_type: 'TooManyRequestsError' }),
+    ).toBe('limited')
     expect(failureCause({ status: 502 })).toBe('busy')
-    expect(failureCause({ status: 429 })).toBe('busy')
     expect(
       failureCause({ status: 409, exc_type: 'TimestampMismatchError' }),
     ).toBe('busy')
   })
 
-  it('tells the server falling over on an entry from the server being busy', () => {
-    expect(failureCause({ status: 500, exc_type: 'TypeError' })).toBe('fault')
-    expect(failureCause({ status: 500, exc_type: 'QueryDeadlockError' })).toBe(
+  it('never reads a 5xx as the entry’s fault, whoever wrote it', () => {
+    // redis down for everyone and a handler that crashes on this entry both
+    // answer 500 with an exception named: the status cannot tell them apart
+    expect(failureCause({ status: 500, exc_type: 'TypeError' })).toBe('busy')
+    expect(failureCause({ status: 500, exc_type: 'ConnectionError' })).toBe(
       'busy',
     )
     expect(failureCause({ status: 500 })).toBe('busy')

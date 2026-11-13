@@ -8,9 +8,8 @@ vi.mock('@/offline/outbox', () => ({
   retryEntry: vi.fn(),
   discardEntry: vi.fn(),
 }))
-vi.mock('@/offline/connectivity', () => ({
-  connectivity: reactive({ online: true }),
-}))
+const connectivity = reactive({ online: true, otherUser: false })
+vi.mock('@/offline/connectivity', () => ({ connectivity }))
 vi.mock('@/offline/useField', () => ({
   useField: () => ({
     pack: ref({ tasks: [] }),
@@ -62,6 +61,37 @@ describe('the outbox screen', () => {
     // the blocking entry can be thrown away from here
     expect(head.textContent).toContain('Discard')
     unmount()
+  })
+
+  it('with the line gone the last try’s reason goes too', () => {
+    outbox.entries = [
+      task('head', 1000, { error: 'The connection here answered instead.' }),
+      task('behind', 2000),
+    ]
+    connectivity.online = false
+    try {
+      const { el, unmount } = mount(FieldOutbox, { stubs })
+      expect(el.querySelector('[role="status"]')).toBe(null)
+      expect(el.textContent).not.toContain('answered instead')
+      expect(el.textContent).not.toContain('earlier entry')
+      unmount()
+    } finally {
+      connectivity.online = true
+    }
+  })
+
+  it('says so when the session is someone else’s and nothing is being sent', () => {
+    outbox.entries = [task('mine', 1000)]
+    connectivity.otherUser = true
+    try {
+      const { el, unmount } = mount(FieldOutbox, { stubs })
+      const notice = el.querySelector('[role="alert"]')
+      expect(notice.textContent).toContain('Someone else has signed in')
+      expect(notice.className).toContain('text-ink-orange-9')
+      unmount()
+    } finally {
+      connectivity.otherUser = false
+    }
   })
 
   it('an ordinary wait says only that', () => {

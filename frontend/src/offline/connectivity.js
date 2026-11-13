@@ -38,6 +38,17 @@ const UNRENDERED_TOKEN = '{{ csrf_token }}'
 
 const shell = typeof window !== 'undefined' && !!window.__crm_offline_shell
 
+/**
+ * Who this page was loaded for, read once. `getSessionUser()` reads the live
+ * cookie, and the cookie jar is shared between tabs: when someone else signs
+ * in in another tab it names *them*, while this page still shows the first
+ * person's week and customers. Whatever is written from this page -- an
+ * outbox entry, the token its requests carry -- belongs to the person it was
+ * loaded for, never to whoever the cookie names by then.
+ */
+export const pageUser =
+  typeof document !== 'undefined' ? getSessionUser() : null
+
 export const connectivity = reactive({
   /* A shell start is offline until the server says otherwise: the worker only
      serves the shell when the page itself could not be fetched. */
@@ -49,6 +60,9 @@ export const connectivity = reactive({
   skewMs: null,
   /* Where the person was going when offline sent them to field mode. */
   intended: null,
+  /* The session is no longer `pageUser`'s: someone else signed in in another
+     tab. This page must be reloaded before it sends anything more. */
+  otherUser: false,
 })
 
 const onlineListeners = new Set()
@@ -171,7 +185,16 @@ async function runProbe({ renew = false } = {}) {
       handOver()
       return false
     }
-    if (message?.csrf_token && (renew || connectivity.shell || !hasToken())) {
+    // A token is only ever taken for the person this page was loaded for.
+    // Another user's, put behind this page's requests, would have the server
+    // apply what is typed here -- under the first person's customers -- as
+    // them.
+    connectivity.otherUser = !!message?.user && message.user !== pageUser
+    if (
+      message?.csrf_token &&
+      !connectivity.otherUser &&
+      (renew || connectivity.shell || !hasToken())
+    ) {
       window.csrf_token = message.csrf_token
     }
     if (Number.isFinite(message?.server_epoch)) {
@@ -211,6 +234,8 @@ let renewing = null
  *
  * Not what `probe()` does on its own: a page Frappe rendered keeps its token
  * unless the server has said that token is no good.
+ * It never takes a token for anyone but `pageUser`: if the session is someone
+ * else's now, this says no and `connectivity.otherUser` says why.
  * @returns {Promise<boolean>} true when the page now holds this user's current token
  */
 export function renewToken() {
@@ -221,7 +246,7 @@ export function renewToken() {
     probing = runProbe({ renew: true }).finally(() => {
       probing = null
     })
-    return (await probing) && hasToken()
+    return (await probing) && !connectivity.otherUser && hasToken()
   })().finally(() => {
     renewing = null
   })
@@ -241,6 +266,8 @@ function refusedError() {
   const error = new Error('Not permitted')
   error.status = 403
   error.exc_type = 'PermissionError'
+  // ...and marked as this gate's, not the server's answer to the request
+  error.gate = true
   return error
 }
 

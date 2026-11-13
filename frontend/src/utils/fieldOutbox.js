@@ -147,8 +147,6 @@ export function entryExpired(entry, now = Date.now()) {
 
 const REFUSAL_STATUS = [403, 404, 409, 417]
 const REFUSAL_EXC = /Validation|Permission|DoesNotExist|Mandatory|Duplicate/
-/* A 5xx Frappe wrote for these is the database being busy, not this entry. */
-const PASSING_EXC = /Deadlock|Timeout|Timed|Operational|Interface|TooMany/
 
 /**
  * Why a send failed. One of:
@@ -162,23 +160,25 @@ const PASSING_EXC = /Deadlock|Timeout|Timed|Operational|Interface|TooMany/
  *   not the server.
  * - `token`: the page's CSRF token is not this session's any more.
  * - `network`: it never left, or no answer came.
- * - `fault`: the server itself fell over on this entry (a 5xx carrying
- *   Frappe's exception). Once is a bad moment; every time is the entry.
- * - `busy`: anything else that may pass next time -- a gateway's 502, a rate
- *   limit, a record that changed under the entry.
+ * - `limited`: the server said to slow down.
+ * - `busy`: anything else that may pass next time -- a 5xx, whoever wrote it,
+ *   a record that changed under the entry.
+ *
+ * Nothing here blames the entry for a `between` or a `busy`. The same answer
+ * comes from a server that is down for everyone and from one that falls over
+ * on this entry alone; the outbox tells those apart by asking the server
+ * whether it is there (offline/outbox.js).
  */
 export function failureCause(error) {
   const status = Number(error?.status ?? error?.httpStatus)
   const exc = String(error?.exc_type ?? '')
   if (exc === 'CSRFTokenError') return 'token'
+  if (exc === 'TooManyRequestsError' || status === 429) return 'limited'
   // The record changed while this entry was being applied -- a week edited on
   // the desktop in the same instant. Nothing is wrong with the entry; the
   // next attempt is a new request and sees the record as it now is.
-  if (exc === 'TooManyRequestsError' || exc === 'TimestampMismatchError') {
-    return 'busy'
-  }
-  if (status === 429) return 'busy'
-  if (status >= 500) return exc && !PASSING_EXC.test(exc) ? 'fault' : 'busy'
+  if (exc === 'TimestampMismatchError') return 'busy'
+  if (status >= 500) return 'busy'
   if (REFUSAL_STATUS.includes(status)) return exc ? 'refused' : 'between'
   if (REFUSAL_EXC.test(exc)) return 'refused'
   if (!Number.isFinite(status) || status === 0) return 'network'

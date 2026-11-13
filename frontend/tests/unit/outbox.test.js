@@ -78,6 +78,21 @@ beforeEach(() => {
   vi.spyOn(document, 'cookie', 'get').mockReturnValue(
     'user_id=rep%40example.com',
   )
+  // the server is there and the session is the rep's, unless a test says not
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        message: { user: 'rep@example.com', csrf_token: 'tok' },
+      }),
+    })),
+  )
+})
+afterEach(() => {
+  vi.unstubAllGlobals()
+  delete window.csrf_token
 })
 
 describe('capturing', () => {
@@ -429,12 +444,10 @@ const handshake = (message) =>
     json: async () => ({ message }),
   }))
 
-describe('a stale CSRF token', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    delete window.csrf_token
-  })
+const serverDown = () =>
+  vi.fn(async () => ({ ok: false, status: 503, json: async () => null }))
 
+describe('a stale CSRF token', () => {
   const staleUntilRenewed = async () => {
     if (window.csrf_token !== 'fresh') {
       throw failure(400, { exc_type: 'CSRFTokenError' })
@@ -458,7 +471,7 @@ describe('a stale CSRF token', () => {
     expect(outbox.entries).toEqual([])
   })
 
-  it('is asked for once a run, and the entry says why it is still waiting', async () => {
+  it('is asked for once a run, and the entry says to reload', async () => {
     const fetch = handshake({ user: 'rep@example.com', csrf_token: 'no-good' })
     vi.stubGlobal('fetch', fetch)
     window.csrf_token = 'the-old-sessions'
@@ -469,15 +482,68 @@ describe('a stale CSRF token', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(server.calls).toHaveLength(2)
     expect(outbox.entries[0]).toMatchObject({ status: 'pending' })
-    expect(outbox.entries[0].error).toMatch(/sign-in is out of date/)
+    expect(outbox.entries[0].error).toMatch(/Reload the app/)
+  })
+
+  it('a renewal that could not be had leaves no reason behind', async () => {
+    vi.stubGlobal('fetch', serverDown())
+    window.csrf_token = 'the-old-sessions'
+    server.replay = staleUntilRenewed
+    const { enqueue, flushOutbox, outbox } = await load()
+    await enqueue('create_task', { title: 'x' })
+    await flushOutbox()
+    expect(outbox.entries[0]).toMatchObject({ status: 'pending', error: null })
+  })
+})
+
+describe('someone else signs in in another tab', () => {
+  const OTHER = 'someone.else@example.com'
+
+  it('what is typed on the first rep’s page is theirs, and is not sent as the other', async () => {
+    // the page was loaded for the rep and shows the rep's customers
+    const fetch = handshake({ user: OTHER, csrf_token: 'theirs' })
+    vi.stubGlobal('fetch', fetch)
+    window.csrf_token = 'the-reps'
+    const { enqueue, flushOutbox, outbox, connectivity } = await load()
+    // the cookie jar is shared: from here the cookie names the other user
+    server.user = OTHER
+    server.replay = async () => {
+      throw failure(400, { exc_type: 'CSRFTokenError' })
+    }
+    const entry = await enqueue('add_note', { content: 'for my customer' })
+    await flushOutbox()
+    expect(entry.user).toBe('rep@example.com')
+    expect(disk.get(entry.id).user).toBe('rep@example.com')
+    expect(server.calls).toEqual([])
+    expect(window.csrf_token).toBe('the-reps')
+    expect(outbox.entries[0].status).toBe('pending')
+    expect(connectivity.otherUser).toBe(true)
+  })
+
+  it('nor when the cookie has not caught up and only the server knows', async () => {
+    const fetch = handshake({ user: OTHER, csrf_token: 'theirs' })
+    vi.stubGlobal('fetch', fetch)
+    window.csrf_token = 'the-reps'
+    server.replay = async () => {
+      if (window.csrf_token === 'theirs') return { status: 'applied' }
+      throw failure(400, { exc_type: 'CSRFTokenError' })
+    }
+    const { enqueue, flushOutbox, outbox, connectivity } = await load()
+    await enqueue('add_note', { content: 'for my customer' })
+    await flushOutbox()
+    await flushOutbox()
+    // refused once with the old token, and never sent with theirs
+    expect(server.calls).toHaveLength(1)
+    expect(window.csrf_token).toBe('the-reps')
+    expect(outbox.entries[0].status).toBe('pending')
+    expect(connectivity.otherUser).toBe(true)
   })
 
   it('work captured as one rep is not sent on a session that is now another’s', async () => {
     const { enqueue, flushOutbox, outbox } = await load({ online: false })
     await enqueue('create_task', { title: 'mine' })
     const { connectivity } = await import('@/offline/connectivity')
-    // someone else signed in in another tab: the cookie jar is shared
-    server.user = 'someone.else@example.com'
+    server.user = OTHER
     connectivity.online = true
     await flushOutbox()
     expect(server.calls).toEqual([])
@@ -486,8 +552,6 @@ describe('a stale CSRF token', () => {
 })
 
 describe('an answer the server did not write', () => {
-  afterEach(() => vi.unstubAllGlobals())
-
   it('a bare 403 pauses the run and refuses nothing', async () => {
     // a captive portal at the site gate: it blocks the handshake as well
     vi.stubGlobal(
@@ -502,13 +566,42 @@ describe('an answer the server did not write', () => {
     await offline.enqueue('create_task', { title: 'b' })
     const { flushOutbox, outbox, rejectedCount, connectivity } = await load()
     await flushOutbox()
-    await settle()
     expect(server.calls).toHaveLength(1)
     expect(outbox.entries.map((e) => e.status)).toEqual(['pending', 'pending'])
     expect(rejectedCount.value).toBe(0)
-    expect(outbox.entries[0].error).toMatch(/instead of the server/)
-    // and the probe it started found the server is not there
+    // the probe found the server is not there: the app is offline, and that
+    // is all the entry has to say
     expect(connectivity.online).toBe(false)
+    expect(outbox.entries[0]).toMatchObject({ error: null })
+    expect(outbox.entries[0].stalls ?? 0).toBe(0)
+  })
+
+  it('one entry a firewall will not pass does not hold the rest for ever', async () => {
+    // the handshake gets through; this note's text does not
+    server.replay = async ({ payload }) => {
+      if (payload.title === 'blocked') throw failure(403)
+      return { status: 'applied' }
+    }
+    const offline = await load({ online: false })
+    const blocked = await offline.enqueue('create_task', { title: 'blocked' })
+    await offline.enqueue('create_task', { title: 'fine' })
+    const { flushOutbox, retryEntry, outbox, rejectedCount } = await load()
+    for (let run = 0; run < 4; run++) await flushOutbox()
+    expect(outbox.entries.map((e) => e.status)).toEqual(['pending', 'pending'])
+    expect(outbox.entries[0].error).toMatch(/instead of the server/)
+    await flushOutbox()
+    expect(outbox.entries).toHaveLength(1)
+    expect(outbox.entries[0]).toMatchObject({
+      id: blocked.id,
+      status: 'rejected',
+    })
+    expect(outbox.entries[0].error).toMatch(/set aside to let the rest go/)
+    expect(rejectedCount.value).toBe(1)
+    expect(server.calls.at(-1).payload.title).toBe('fine')
+    // and it can still be sent: nothing was thrown away
+    server.replay = async () => ({ status: 'applied' })
+    await retryEntry(blocked.id)
+    expect(outbox.entries).toEqual([])
   })
 })
 
@@ -558,6 +651,20 @@ describe('a server error at the head of the outbox', () => {
     expect(outbox.entries[0]).toMatchObject({ status: 'pending', error: null })
   })
 
+  it('a reason kept from an earlier try goes when the line does', async () => {
+    server.replay = async () => {
+      throw failure(502)
+    }
+    const { enqueue, flushOutbox, outbox } = await load()
+    const entry = await enqueue('create_task', { title: 'x' })
+    await flushOutbox()
+    expect(disk.get(entry.id).error).toBeTruthy()
+    vi.stubGlobal('fetch', serverDown())
+    await flushOutbox()
+    expect(outbox.entries[0]).toMatchObject({ status: 'pending', error: null })
+    expect(disk.get(entry.id).error).toBe(null)
+  })
+
   it('the reason goes when the entry does', async () => {
     server.replay = async () => {
       throw failure(502)
@@ -595,7 +702,35 @@ describe('a server error at the head of the outbox', () => {
     }
   })
 
-  it('an entry the server itself keeps failing on is set aside for the rep, and the rest go', async () => {
+  it('looking at the tab, or the line coming back, does not jump the wait', async () => {
+    vi.useFakeTimers()
+    try {
+      server.replay = async () => {
+        throw failure(500, { exc_type: 'TypeError' })
+      }
+      const { enqueue, flushOutbox, startOutbox, outbox, connectivity } =
+        await load()
+      startOutbox()
+      await enqueue('create_task', { title: 'x' })
+      await flushOutbox()
+      await flushOutbox()
+      const before = server.calls.length
+      // five tab switches and a reconnect inside the same minute
+      for (let i = 0; i < 5; i++) {
+        document.dispatchEvent(new Event('visibilitychange'))
+        await vi.advanceTimersByTimeAsync(1000)
+      }
+      connectivity.online = false
+      window.dispatchEvent(new Event('online'))
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(server.calls.length).toBe(before)
+      expect(outbox.entries[0].status).toBe('pending')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('an entry that keeps failing while the server answers is set aside, and the rest go', async () => {
     server.replay = async ({ payload }) => {
       if (payload.title === 'poison') {
         throw failure(500, { exc_type: 'TypeError' })
@@ -615,19 +750,84 @@ describe('a server error at the head of the outbox', () => {
       id: poison.id,
       status: 'rejected',
     })
-    expect(outbox.entries[0].error).toMatch(/failed on this entry 5 times/)
+    expect(outbox.entries[0].error).toMatch(/set aside to let the rest go/)
     expect(rejectedCount.value).toBe(1)
     expect(server.calls.at(-1).payload.title).toBe('fine')
   })
 
-  it('a gateway that is down is never the entry’s fault', async () => {
+  it('an outage is never held against the entries, whatever the server names', async () => {
+    // redis is down: every request answers 500 with an exception, the
+    // handshake included
+    vi.stubGlobal('fetch', serverDown())
     server.replay = async () => {
-      throw failure(503)
+      throw failure(500, { exc_type: 'ConnectionError' })
+    }
+    const offline = await load({ online: false })
+    await offline.enqueue('create_task', { title: 'a' })
+    await offline.enqueue('create_task', { title: 'b' })
+    const { flushOutbox, outbox, connectivity } = await load()
+    for (let run = 0; run < 8; run++) {
+      // the rep keeps coming back to the tab; each time the app thinks it
+      // may be online again
+      connectivity.online = true
+      await flushOutbox()
+    }
+    expect(outbox.entries.map((e) => e.status)).toEqual(['pending', 'pending'])
+    expect(outbox.entries[0].stalls ?? 0).toBe(0)
+    // and when it is over, both go
+    vi.stubGlobal(
+      'fetch',
+      handshake({ user: 'rep@example.com', csrf_token: 'tok' }),
+    )
+    server.replay = async () => ({ status: 'applied' })
+    connectivity.online = true
+    await flushOutbox()
+    expect(outbox.entries).toEqual([])
+  })
+
+  it('failures are counted in a row, per entry: a success in between starts again', async () => {
+    let failing = true
+    server.replay = async () => {
+      if (failing) throw failure(500, { exc_type: 'TypeError' })
+      return { status: 'applied' }
+    }
+    const { enqueue, flushOutbox, outbox, rejectedCount } = await load()
+    const fourFailures = async () => {
+      // bounded: a run or two may be shared with the one enqueue started
+      for (let run = 0; run < 6; run++) {
+        if ((outbox.entries[0].stalls ?? 0) >= 4) break
+        await flushOutbox()
+      }
+      expect(outbox.entries[0].stalls).toBe(4)
+    }
+    await enqueue('create_task', { title: 'first' })
+    await fourFailures()
+    expect(outbox.entries[0].status).toBe('pending')
+    // it gets through
+    failing = false
+    await flushOutbox()
+    expect(outbox.entries).toEqual([])
+    // the next one starts from nothing: four more failures set nothing aside
+    failing = true
+    await enqueue('create_task', { title: 'second' })
+    await fourFailures()
+    expect(outbox.entries[0]).toMatchObject({ status: 'pending', stalls: 4 })
+    expect(rejectedCount.value).toBe(0)
+    // and Send again after being set aside starts from nothing too
+    await flushOutbox()
+    expect(outbox.entries[0].status).toBe('rejected')
+    expect(outbox.entries[0].stalls).toBe(0)
+  })
+
+  it('a rate limit waits and is not held against the entry', async () => {
+    server.replay = async () => {
+      throw failure(429, { exc_type: 'TooManyRequestsError' })
     }
     const { enqueue, flushOutbox, outbox } = await load()
     await enqueue('create_task', { title: 'x' })
     for (let run = 0; run < 8; run++) await flushOutbox()
     expect(outbox.entries[0].status).toBe('pending')
+    expect(outbox.entries[0].stalls ?? 0).toBe(0)
   })
 })
 

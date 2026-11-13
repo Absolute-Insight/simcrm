@@ -15,7 +15,21 @@
       {{ __('My week') }}
     </router-link>
 
-    <p class="text-p-base text-ink-gray-6">
+    <!-- The session is someone else's now (they signed in in another tab).
+         Nothing leaves this page until it is reloaded: what is typed here is
+         this rep's, and must not be sent as theirs. -->
+    <p
+      v-if="connectivity.otherUser"
+      class="rounded-5 bg-surface-orange-1 px-3 py-2 text-p-base text-ink-orange-9"
+      role="alert"
+    >
+      {{
+        __(
+          'Someone else has signed in on this device, so nothing is being sent. Reload the app and sign in as yourself. What is waiting here stays saved.',
+        )
+      }}
+    </p>
+    <p v-else class="text-p-base text-ink-gray-6">
       {{
         connectivity.online
           ? __('Entries are sent as soon as they are saved.')
@@ -163,6 +177,10 @@ function whenLabel(ms) {
 /* The oldest entry still waiting, when its last try failed for a reason worth
    saying. Everything else waiting is queued behind it: entries go in order. */
 const blocker = computed(() => {
+  // Only while there is a connection. The reason was true of the last try;
+  // with the line gone the wait is the ordinary one, and "the server could
+  // not take this" under "No connection" would be about something else.
+  if (!connectivity.online) return null
   const head = outbox.entries.find((entry) => entry.status === 'pending')
   return head?.error && !head.sending ? head.id : null
 })
