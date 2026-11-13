@@ -3,6 +3,9 @@
 
 """Kanban cards say how much activity a record has, and asking costs no query per card."""
 
+from contextlib import contextmanager
+from unittest.mock import patch
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
@@ -70,6 +73,27 @@ def add_note(lead):
 			"reference_docname": lead.name,
 		}
 	).insert(ignore_permissions=True)
+
+
+@contextmanager
+def counted_queries():
+	"""The SQL statements run inside the block, as assertQueryCount collects them."""
+	queries = []
+	original = frappe.db.__class__.sql
+
+	def sql(*args, **kwargs):
+		result = original(*args, **kwargs)
+		queries.append(str(args[0].last_query))
+		return result
+
+	frappe.db.__class__.sql = sql
+	try:
+		yield queries
+	finally:
+		frappe.db.__class__.sql = original
+
+
+COUNT_KEYS = ("_email_count", "_note_count", "_task_count", "_comment_count")
 
 
 class TestKanbanActivityCounts(IntegrationTestCase):
@@ -199,3 +223,128 @@ class TestKanbanActivityCounts(IntegrationTestCase):
 
 		[card, *_] = result["data"][0]["data"]
 		self.assertNotIn("_comment_count", card)
+
+
+class TestKanbanBoardCountsAreBatched(IntegrationTestCase):
+	"""The counts were read column by column: five queries for each stage of the
+	board. They are read once for the whole board, and nothing a card shows moved.
+	"""
+
+	def setUp(self):
+		ensure_rep(ALICE, "Alice")
+		ensure_rep(BOB, "Bob")
+		frappe.set_user("Administrator")
+		# a lost lead wants a reason to save; the other stages are board enough
+		self.statuses = frappe.get_all(
+			"CRM Lead Status", filters={"type": ("!=", "Lost")}, pluck="name", order_by="position asc"
+		)
+		self.assertGreaterEqual(len(self.statuses), 4)
+		self.marker = f"Batch {frappe.generate_hash(length=8)}"
+		# Alice's and Bob's leads in every column, each with its own mix of activity
+		for index, status in enumerate(self.statuses):
+			for owner in (ALICE, BOB):
+				lead = make_lead(owner.split("@")[0], owner, status=status, job_title=self.marker)
+				for _ in range(index % 3):
+					add_comment(lead)
+				for _ in range((index + 1) % 2):
+					add_note(lead)
+				if owner == ALICE:
+					add_task(lead)
+					add_email(lead)
+			# and a second card of Alice's, so a column holds more than one
+			add_comment(make_lead("second", ALICE, status=status, job_title=self.marker))
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def board(self, statuses=None, **kwargs):
+		return get_data(
+			"CRM Lead",
+			{"job_title": self.marker},
+			"modified desc",
+			column_field="status",
+			title_field="lead_name",
+			rows=["name", "lead_name", "status"],
+			kanban_columns=[{"name": status} for status in statuses or self.statuses],
+			kanban_fields=["lead_name"],
+			view={"view_type": "kanban"},
+			**kwargs,
+		)
+
+	def test_a_board_shows_what_counting_each_column_alone_showed(self):
+		for user, cards_per_column in ((ALICE, 2), ("Administrator", 3)):
+			frappe.set_user(user)
+			result = self.board()
+
+			self.assertEqual([column["column"]["name"] for column in result["data"]], self.statuses)
+			for column in result["data"]:
+				cards = column["data"]
+				self.assertEqual(len(cards), cards_per_column, (user, column["column"]["name"]))
+				self.assertEqual(column["column"]["all_count"], cards_per_column)
+				# the old code: this column's cards, counted on their own
+				alone = set_activity_counts([{"name": card["name"]} for card in cards], "CRM Lead")
+				for card, expected in zip(cards, alone, strict=True):
+					self.assertEqual(
+						{key: card[key] for key in COUNT_KEYS},
+						{key: expected[key] for key in COUNT_KEYS},
+						(user, card["name"]),
+					)
+			# and the board is not all zeroes
+			totals = [
+				sum(card[key] for column in result["data"] for card in column["data"]) for key in COUNT_KEYS
+			]
+			self.assertTrue(all(totals), totals)
+
+	def test_a_capped_column_page_is_still_counted_card_by_card(self):
+		frappe.set_user("Administrator")
+		result = get_data(
+			"CRM Lead",
+			{"job_title": self.marker},
+			"modified desc",
+			column_field="status",
+			title_field="lead_name",
+			rows=["name", "lead_name", "status"],
+			kanban_columns=[{"name": status, "page_length": 1} for status in self.statuses],
+			kanban_fields=["lead_name"],
+			view={"view_type": "kanban"},
+		)
+
+		for column in result["data"]:
+			[card] = column["data"]
+			self.assertEqual(column["column"]["all_count"], 3)
+			[expected] = set_activity_counts([{"name": card["name"]}], "CRM Lead")
+			self.assertEqual(card["_comment_count"], expected["_comment_count"])
+
+	def test_the_counts_are_read_once_for_the_board(self):
+		frappe.set_user(ALICE)
+		with patch("crm.api.doc.set_activity_counts", wraps=set_activity_counts) as counts:
+			self.board()
+
+		self.assertEqual(counts.call_count, 1)
+
+	def test_another_column_costs_its_page_and_nothing_else(self):
+		frappe.set_user(ALICE)
+		self.board()  # warm the caches both runs below then share
+
+		with counted_queries() as narrow:
+			self.board(self.statuses[:2])
+		with counted_queries() as wide:
+			self.board()
+
+		# A rep's page read is three statements: the two row-scope lookups frappe
+		# and the hierarchy make, and the page. It was ten a column: that, the
+		# same again to re-read the names, and the four counts.
+		extra_columns = len(self.statuses) - 2
+		self.assertLessEqual(
+			len(wide) - len(narrow), 3 * extra_columns, msg="Queries executed: \n" + "\n\n".join(wide)
+		)
+		activity = [
+			query
+			for query in wide
+			if any(
+				f"`tab{table}`" in query.split("where")[0].split("WHERE")[0]
+				for table in ("Communication", "Comment", "CRM Task", "FCRM Note")
+			)
+		]
+		self.assertEqual(len(activity), 4, msg="\n\n".join(activity))

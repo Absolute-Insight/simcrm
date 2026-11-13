@@ -562,14 +562,13 @@ def get_data(
 		kanban_columns = capped_columns
 		all_counts = kanban_column_counts(doctype, column_field, filters) if column_field else None
 
+		# The board's own filters are the same for every column: converted once.
+		base_filters = convert_filter_to_tuple(doctype, filters) if filters else []
+		counted_cards = []
+
 		for kc in kanban_columns:
 			# Start with base filters
-			column_filters = []
-
-			# Convert and add the main filters first
-			if filters:
-				base_filters = convert_filter_to_tuple(doctype, filters)
-				column_filters.extend(base_filters)
+			column_filters = [list(base_filter) for base_filter in base_filters]
 
 			# Add the column-specific filter. A Select field's blank first option is
 			# a column too, the records with no value; giving it no filter at all
@@ -616,8 +615,7 @@ def get_data(
 				kc["all_count"] = all_count
 				kc["count"] = len(column_data)
 
-				if doctype in KANBAN_COUNTED_DOCTYPES:
-					set_activity_counts(column_data, doctype)
+				counted_cards.extend(column_data)
 
 			if order:
 				column_data = sorted(
@@ -626,6 +624,12 @@ def get_data(
 				)
 
 			data.append({"column": kc, "fields": kanban_fields, "data": column_data})
+
+		# Once for the board, not once per column: the counts are five queries
+		# however many cards they cover, and a ten-stage board paid fifty. The
+		# cards are the same dicts the columns hold, so they are filled in place.
+		if doctype in KANBAN_COUNTED_DOCTYPES:
+			set_activity_counts(counted_cards, doctype)
 
 	fields = frappe.get_meta(doctype).fields
 	fields = [field for field in fields if field.fieldtype not in no_value_fields]
