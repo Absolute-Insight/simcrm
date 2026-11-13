@@ -31,7 +31,8 @@
 </template>
 
 <script setup>
-import EditValueModal from '@/components/Modals/EditValueModal.vue'
+import ModalLoading from '@/components/ui/ModalLoading.vue'
+import { lazyComponent } from '@/utils/lazyComponent'
 import AssignmentModal from '@/components/Modals/AssignmentModal.vue'
 import { setupListCustomizations } from '@/utils'
 import { globalStore } from '@/stores/global'
@@ -40,6 +41,14 @@ import { call, toast } from 'frappe-ui'
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { reportActionError } from '@/utils/reportActionError'
+
+/* Loaded when Edit is first chosen. Imported here, the bulk-edit dialog made
+   its rich-text editor -- 284 KB gzipped -- part of every list page, for a
+   dialog most visits never open. */
+const EditValueModal = lazyComponent(
+  () => import('@/components/Modals/EditValueModal.vue'),
+  ModalLoading,
+)
 
 const props = defineProps({
   doctype: { type: String, default: '' },
