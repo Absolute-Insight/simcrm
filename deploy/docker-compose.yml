@@ -221,10 +221,26 @@ services:
         condition: service_healthy
       redis-queue:
         condition: service_healthy
-    # Secrets reach the shell through the environment, not the command line:
-    # `docker compose config` and `docker inspect` print the command verbatim,
-    # and the environment is at least not in the process table of the host.
+    # Secrets reach the shell through the environment, not this file's command:
+    # `docker compose config` and `docker inspect` print the command verbatim.
+    #
+    # That is as far as it goes, and this comment used to claim more. The shell
+    # then expands both passwords into `bench new-site`'s argv, where they are
+    # readable in the host's process table (`ps`, `docker top`) for as long as
+    # the site takes to create -- once, on first boot. bench offers no other
+    # supported way in: neither option reads an environment variable, and the
+    # alternatives are a prompt answered over stdin or `root_password` /
+    # `admin_password` written into common_site_config.json, which puts the
+    # database root password on the sites volume every service mounts. So
+    # first boot is a moment to keep other users off the host, and README.md
+    # says so.
     environment:
+      SITE_NAME: ${SITE_NAME:?set SITE_NAME in .env}
+      # Optional. The public URL frappe builds absolute links from -- password
+      # resets, invitations, share links. Unset, frappe takes it from the Host
+      # header of whichever request triggered the email. See "host_name" in
+      # README.md.
+      SITE_HOST_NAME: ${SITE_HOST_NAME:-}
       DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
       # Read by crm.agent.install.apply_endpoint_defaults during after_install,
@@ -250,27 +266,90 @@ services:
         wait-for-it -t 120 db:3306
         wait-for-it -t 120 redis-cache:6379
         wait-for-it -t 120 redis-queue:6379
-        if [ -d "sites/${SITE_NAME}" ]; then
-          echo "Site ${SITE_NAME} already exists — skipping create"
+
+        site="$$SITE_NAME"
+        # This script removes a directory by this name in one branch below, so
+        # the name is checked first: empty, a path, or a dotfile would aim that
+        # at the sites volume itself.
+        case "$$site" in
+          ""|.*|*/*|assets)
+            echo "[create-site] refusing: SITE_NAME '$$site' is not a usable site name" >&2
+            exit 1 ;;
+        esac
+        config="sites/$$site/site_config.json"
+        # Present from just before `bench new-site` until just after it
+        # succeeds, and at no other time. It is what tells an unfinished first
+        # boot from a real site: the test used to be "does the directory
+        # exist", and new-site makes the directory first -- so a create that
+        # was killed partway (the 1g limit, a host reboot) left a directory
+        # that every retry mistook for a site. It skipped the create, failed
+        # at enable-scheduler against a database that was never made, and
+        # restarted into the same thing for ever, with the whole stack waiting
+        # on it.
+        marker="sites/.creating-$$site"
+
+        site_has_crm() {
+          bench --site "$$site" list-apps 2>/dev/null | grep -qE '^crm([[:space:]]|$$)'
+        }
+
+        if [ -e "$$marker" ]; then
+          if [ -f "$$config" ] && site_has_crm; then
+            # Killed in the instant between new-site finishing and the marker
+            # being removed. The site is whole; never rebuild it.
+            echo "[create-site] $$site finished creating on an earlier run"
+            rm -f "$$marker"
+          elif [ -e "sites/$$site" ]; then
+            echo "[create-site] an earlier first boot of $$site never finished -- removing its partial directory and creating it again"
+            if [ -f "$$config" ]; then
+              echo "[create-site] its half-made database, if any, is left in MariaDB under the db_name below; drop it by hand once this site is up:"
+              sed -n 's/.*"db_name": *"\([^"]*\)".*/[create-site]   \1/p' "$$config"
+            fi
+            rm -rf "sites/$$site"
+          fi
+        fi
+
+        if [ -f "$$config" ]; then
+          echo "Site $$site already exists — skipping create"
+        elif [ -e "sites/$$site" ]; then
+          # A directory with no site_config.json and no marker: this stack did
+          # not start it, so it is not this stack's to delete -- it may hold
+          # files somebody put there for a restore. Say so, rather than fail
+          # at enable-scheduler with an error about a missing database.
+          echo "[create-site] sites/$$site exists but holds no site_config.json, so it is not a site, and bench new-site refuses a directory that already exists." >&2
+          echo "[create-site] If nothing in it is wanted, remove it and bring the stack up again:" >&2
+          echo "[create-site]   docker compose run --rm --no-deps --entrypoint rm create-site -rf sites/$$site" >&2
+          exit 1
         else
           # frappe_whatsapp is inert until a WhatsApp Account is set Active.
           # Tested for so that this file still boots an older image, which
           # does not contain it.
           whatsapp=""
           if [ -d apps/frappe_whatsapp ]; then whatsapp="--install-app frappe_whatsapp"; fi
-          bench new-site "${SITE_NAME}" \
+          : > "$$marker"
+          bench new-site "$$site" \
             --mariadb-user-host-login-scope='%' \
             --db-root-password="$$DB_ROOT_PASSWORD" \
             --admin-password="$$ADMIN_PASSWORD" \
             --install-app crm $$whatsapp
+          rm -f "$$marker"
         fi
-        bench --site "${SITE_NAME}" enable-scheduler
+        bench --site "$$site" enable-scheduler
         # Frappe deletes backups older than keep_backups_for_hours on every
         # `bench backup`, and the default is 23 -- so the pre-upgrade backup
         # step in the runbook silently destroyed yesterday's. A week is the
         # floor worth having: long enough that a Monday mistake is still
         # recoverable on Friday.
-        bench --site "${SITE_NAME}" set-config -p keep_backups_for_hours 168
+        bench --site "$$site" set-config -p keep_backups_for_hours 168
+        # Only when the operator asked for it; an unset variable leaves
+        # whatever the site already has, including a host_name set by hand.
+        if [ -n "$${SITE_HOST_NAME:-}" ]; then
+          case "$$SITE_HOST_NAME" in
+            http://*|https://*)
+              bench --site "$$site" set-config host_name "$${SITE_HOST_NAME%/}" ;;
+            *)
+              echo "[create-site] SITE_HOST_NAME must start with http:// or https:// -- host_name left as it was" >&2 ;;
+          esac
+        fi
     deploy:
       resources:
         limits:

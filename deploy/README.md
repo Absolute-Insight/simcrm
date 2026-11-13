@@ -44,12 +44,31 @@ correct, not stuck. Then browse `http://<host>:8080` (or your
 the CRM is at `/crm`. Log in as `Administrator` with the admin password from
 `.env`.
 
-`create-site` is idempotent: it skips the create when the site directory
-already exists, so `docker compose up -d` is always safe to re-run. What it
-does on *every* run is `bench enable-scheduler`: `bench new-site` writes
+`create-site` is idempotent: it skips the create when the site already exists
+— a `sites/<site>/site_config.json`, and no marker saying a create is still in
+flight — so `docker compose up -d` is always safe to re-run. What it does on
+*every* run is `bench enable-scheduler`: `bench new-site` writes
 `enable_scheduler: 0` into the new site's config, and a site left that way has
 every cron job in `crm/hooks.py` — the hourly signal run, deal-health scoring,
 the daily digest — silently not running, with nothing in any log to say so.
+
+**A first boot that dies partway repairs itself.** `create-site` leaves a marker
+(`sites/.creating-<site>`) for exactly as long as `bench new-site` is running.
+If the container is killed in that window — the 1 GB limit, a host reboot —
+the next start finds the marker, removes the half-made site directory and
+creates the site again; it used to find the directory, take it for a site, and
+restart for ever against a database that had never been made. The marker is
+the only thing that licenses the removal: a site with no marker is never
+touched, and a marker beside a site that did finish (`bench list-apps` shows
+`crm`) is simply cleared. The one thing left behind is the abandoned attempt's
+empty database, whose name the log prints so it can be dropped by hand.
+
+**Keep other users off the host during first boot.** `bench new-site` takes
+the database root password and the administrator password as command-line
+options and has no other supported way to receive them, so for the minute the
+site takes to create both are readable in the host's process table (`ps`,
+`docker top`). After that they exist only in `.env` and the container
+environment.
 
 **Verify the first boot** before handing anyone the URL:
 
@@ -162,15 +181,16 @@ and corrected by the next `up -d` that passes `--env-file`.
 Two variables in that file are the ones that break the stack outright:
 
 **`SITE_NAME` decides whether `create-site` creates anything.** It skips only
-when `sites/${SITE_NAME}` exists. Inherit production's name and it looks for
-production's site in the QA volume, does not find it, and runs `bench new-site`
-— which fails at `install_db` with `Access denied for user '_<hash>'`, leaves a
-half-built site directory behind, and then loops, because the
-`bench enable-scheduler` after the skip branch runs unconditionally and cannot
-reach a database that was never created. `restart: on-failure` turns that into
-a restart loop, and every long-running service waits on `create-site`, so the
-whole stack stays down. Recovery is to delete the partial directory from the
-QA `sites` volume and bring it up again with the right name.
+when `sites/${SITE_NAME}/site_config.json` exists. Inherit production's name
+and it looks for production's site in the QA volume, does not find it, and runs
+`bench new-site` — which fails at `install_db` with `Access denied for user
+'_<hash>'`, because `DB_ROOT_PASSWORD` is production's too. `restart:
+on-failure` turns that into a restart loop, and every long-running service
+waits on `create-site`, so the whole stack stays down until it is brought up
+with the right env file. Each attempt now cleans up after itself (see [First
+boot](#first-boot)), so the right name is all the recovery there is; before
+that the first failure left a half-built directory that had to be deleted from
+the QA `sites` volume by hand.
 
 **`HTTP_PUBLISH_PORT` is a straight collision.** Both stacks want 8090;
 whichever starts first gets it and the other fails to bind with `port is
@@ -268,6 +288,39 @@ with the same address, so the per-IP rate limits (login attempts, invitation
 acceptance) become one shared bucket for the whole company. Changing it needs
 `docker compose up -d`, not just a restart, so the container picks up the new
 environment.
+
+### `host_name`, and the Host header
+
+**Your proxy must refuse Host headers that are not yours.** The `frontend`
+container does not route on Host at all: it names the site to the backend
+itself (`FRAPPE_SITE_NAME_HEADER`), so a request for any hostname that reaches
+the port is served as this site. That is convenient for a rehearsal and it
+means nothing in this stack filters Host. Frappe, meanwhile, builds the
+absolute links it emails — password resets, invitations, share links — from
+`host_name` in the site's config if there is one, and otherwise from the Host
+header of the request that triggered the email. So with neither a filtering
+proxy nor a `host_name`, anyone who can reach the proxy can ask for a password
+reset for a real user with a Host header of their own, and the email that user
+receives carries a link to the attacker's server.
+
+Close both ends:
+
+- On the proxy, serve only the real hostname and reject or drop everything
+  else — a default server that returns 444 in nginx, a `Host()` rule and no
+  catch-all router in Traefik, an explicit site address in Caddy.
+- In `.env`, set `SITE_HOST_NAME` to the public URL, scheme included:
+
+  ```bash
+  SITE_HOST_NAME=https://crm.example.com
+  ```
+
+  `create-site` writes it to the site's `host_name` on the next `docker compose
+  up -d`, and links stop depending on what a request claimed. It is optional
+  and unset by default: unset, nothing is written, and a `host_name` you set by
+  hand (the [WhatsApp](#whatsapp) steps have you do that) stays as it is. Once
+  set it is re-applied on every `up -d`, so `.env` is then where to change it.
+  A value without `http://` or `https://` is refused with a line in the
+  `create-site` log rather than written.
 
 ## Installing it as an app (PWA)
 
