@@ -158,11 +158,18 @@ def has_permission(doc, ptype: str, user: str | None, doctype: str) -> bool:
 
 
 def _references(doc, doctype: str) -> set[tuple[str, str]]:
-	"""The scoped records ``doc`` names: its reference, and a call log's links."""
+	"""The scoped records ``doc`` names: its reference, and a call log's links.
+
+	By their stored names. frappe checks permission *before* it validates links,
+	and link validation then rewrites what the caller typed to the stored
+	spelling -- which the database matches without regard to case, accents or
+	trailing spaces. Compared as typed, ``crm deal`` named no scoped doctype
+	here and was saved as ``CRM Deal`` a moment later.
+	"""
 	found = {(doc.get("reference_doctype"), doc.get(REFERENCE_FIELD.get(doctype, "reference_docname")))}
 	if doctype == "CRM Call Log":
 		found |= {(row.get("link_doctype"), row.get("link_name")) for row in doc.get("links") or []}
-	return {(dt, str(name)) for dt, name in found if dt in FILED_ON and name}
+	return _stored_names(found)
 
 
 def _stored_references(name, doctype: str) -> set[tuple[str, str]]:
@@ -179,20 +186,62 @@ def _stored_references(name, doctype: str) -> set[tuple[str, str]]:
 				fields=["link_doctype", "link_name"],
 			)
 		}
-	return {(dt, str(ref)) for dt, ref in found if dt and ref}
+	return _stored_names(found)
+
+
+def _stored_names(references) -> set[tuple[str, str]]:
+	"""``references`` as the database spells them, less what is not scoped.
+
+	The lookup is the database's own comparison, the one link validation will
+	make: lower-casing here would be a second opinion on what it treats as equal.
+	A doctype or a record that does not exist is dropped, and left to link
+	validation to refuse.
+	"""
+	canonical = set()
+	for reference_doctype, name in references:
+		if not reference_doctype or not name:
+			continue
+		reference_doctype = frappe.db.get_value("DocType", str(reference_doctype), "name")
+		if reference_doctype not in FILED_ON:
+			continue
+		name = frappe.db.get_value(reference_doctype, str(name), "name")
+		if name:
+			canonical.add((reference_doctype, str(name)))
+	return canonical
 
 
 def _may_file_on(references: set[tuple[str, str]], user: str) -> bool:
 	"""Whether ``user`` can read every record in ``references``.
 
-	Read, as for a comment (``frappe.desk.form.utils.add_comment``). A record
-	that does not exist is left to frappe's link validation, which says so.
+	Read, as for a comment (``frappe.desk.form.utils.add_comment``).
 	"""
 	return all(
 		frappe.has_permission(reference_doctype, "read", doc=name, user=user)
 		for reference_doctype, name in references
-		if frappe.db.exists(reference_doctype, name)
 	)
+
+
+def validate_filing(doc, method=None) -> None:
+	"""The same question as the permission hook, asked again at validate.
+
+	By then frappe has validated the links and written the stored spelling back
+	onto the document, so this sees exactly what is about to be saved. The hook
+	refuses first and reads the same names; this is here so that the two cannot
+	drift apart -- whatever the hook is one day talked past, the row still does
+	not land. Server code that files on a rep's behalf is trusted, as it is by
+	the hook, which ``ignore_permissions`` never reaches.
+	"""
+	user = frappe.session.user
+	if doc.flags.ignore_permissions or sees_everything(user):
+		return
+	named = _references(doc, doc.doctype)
+	before = None if doc.is_new() else doc.get_doc_before_save()
+	if before:
+		named -= _references(before, doc.doctype)
+	if not _may_file_on(named, user):
+		frappe.throw(
+			frappe._("You cannot file this on a record you do not have access to."), frappe.PermissionError
+		)
 
 
 def get_note_permission_query_conditions(user=None):

@@ -399,6 +399,116 @@ class FilingOnARecordTest(IntegrationTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			doc.save()
 
+	# --- the same, spelled the way the database forgives -----------------------
+
+	#: frappe checks permission before it validates links, and the database
+	#: matches all of these to "CRM Deal": its collation ignores case and trailing
+	#: spaces. The pinned frappe happens to fail on them further on, inside link
+	#: validation; the check does not lean on that.
+	SPELLINGS = ("crm deal", "CRM DEAL", "CRM Deal ", "Crm Deal")
+
+	def assert_nothing_filed_on_the_hidden_deal(self):
+		frappe.set_user("Administrator")
+		for doctype in PAYLOADS:
+			self.assertEqual(self.filed_on(doctype, self.deal), 0, doctype)
+		self.assertFalse(
+			frappe.db.exists("Dynamic Link", {"parenttype": "CRM Call Log", "link_name": self.deal.name})
+		)
+		frappe.set_user(self.MALLORY)
+
+	def test_a_differently_spelled_doctype_does_not_get_past_the_check(self):
+		frappe.set_user(self.MALLORY)
+		for doctype in PAYLOADS:
+			for spelling in self.SPELLINGS:
+				with self.subTest(doctype=doctype, spelling=spelling):
+					with self.assertRaises(frappe.PermissionError):
+						self.new(
+							doctype, reference_doctype=spelling, reference_docname=self.deal.name
+						).insert()
+		self.assert_nothing_filed_on_the_hidden_deal()
+
+	def test_a_differently_spelled_docname_does_not_get_past_the_check(self):
+		frappe.set_user(self.MALLORY)
+		for name in (self.deal.name.lower(), f"{self.deal.name} "):
+			with self.subTest(name=name), self.assertRaises(frappe.PermissionError):
+				self.new("FCRM Note", reference_doctype="CRM Deal", reference_docname=name).insert()
+		self.assert_nothing_filed_on_the_hidden_deal()
+
+	def test_a_differently_spelled_doctype_does_not_move_a_row_either(self):
+		frappe.set_user(self.MALLORY)
+		for doctype in PAYLOADS:
+			row = self._keep(self.new(doctype).insert())
+			for spelling in self.SPELLINGS:
+				with self.subTest(doctype=doctype, spelling=spelling):
+					with self.assertRaises(frappe.PermissionError):
+						frappe.client.set_value(
+							doctype,
+							row.name,
+							{"reference_doctype": spelling, "reference_docname": self.deal.name},
+						)
+		self.assert_nothing_filed_on_the_hidden_deal()
+
+	def test_a_differently_spelled_link_row_does_not_get_past_the_check(self):
+		frappe.set_user(self.MALLORY)
+		for spelling in self.SPELLINGS:
+			with self.subTest(spelling=spelling, on="insert"), self.assertRaises(frappe.PermissionError):
+				self.new(
+					"CRM Call Log", links=[{"link_doctype": spelling, "link_name": self.deal.name}]
+				).insert()
+		call = self._keep(self.new("CRM Call Log", self.own_deal).insert())
+		for spelling in self.SPELLINGS:
+			with self.subTest(spelling=spelling, on="save"), self.assertRaises(frappe.PermissionError):
+				doc = frappe.get_doc("CRM Call Log", call.name)
+				doc.append("links", {"link_doctype": spelling, "link_name": self.deal.name})
+				doc.save()
+		self.assert_nothing_filed_on_the_hidden_deal()
+
+	def test_the_validate_hook_refuses_on_its_own(self):
+		"""The second lock: with the permission hook talked past, the row still
+		does not land. It runs after frappe has normalised the links."""
+		from unittest.mock import patch
+
+		frappe.set_user(self.MALLORY)
+		with patch("crm.permissions.linked_records.has_permission", return_value=True):
+			for doctype in PAYLOADS:
+				with self.subTest(doctype=doctype, on="insert"), self.assertRaises(frappe.PermissionError):
+					self.new(doctype, self.deal).insert()
+			note = self._keep(self.new("FCRM Note", self.own_deal).insert())
+			with self.assertRaises(frappe.PermissionError):
+				frappe.client.set_value("FCRM Note", note.name, "reference_docname", self.deal.name)
+			# and lets through what the hook lets through
+			frappe.client.set_value("FCRM Note", note.name, "title", "Edited")
+		self.assert_nothing_filed_on_the_hidden_deal()
+
+	def test_the_validate_hook_is_registered_for_all_three(self):
+		from crm import hooks
+
+		for doctype in PAYLOADS:
+			self.assertIn(
+				"crm.permissions.linked_records.validate_filing", hooks.doc_events[doctype]["validate"]
+			)
+
+	# --- a manager outside the tree, on the default setting ------------------------
+
+	def test_an_own_records_manager_files_on_their_own_records_only(self):
+		"""A new install's default: such a manager is scoped as a rep is."""
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		own = self._keep(
+			frappe.get_doc({"doctype": "CRM Deal", "deal_owner": self.OUTSIDE_MANAGER}).insert(
+				ignore_permissions=True
+			)
+		)
+		frappe.set_user(self.OUTSIDE_MANAGER)
+		for doctype in PAYLOADS:
+			with self.subTest(doctype=doctype):
+				with self.assertRaises(frappe.PermissionError):
+					self.new(doctype, self.deal).insert()
+				with self.assertRaises(frappe.PermissionError):
+					self.new(doctype, reference_doctype="crm deal", reference_docname=self.deal.name).insert()
+				row = self._keep(self.new(doctype, own).insert())
+				with self.assertRaises(frappe.PermissionError):
+					frappe.client.set_value(doctype, row.name, "reference_docname", self.deal.name)
+
 	# --- what still works ---------------------------------------------------
 
 	def assert_files_on(self, user: str, *references):

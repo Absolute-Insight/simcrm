@@ -251,6 +251,11 @@ doc_events = {
 	"Event": {
 		"validate": ["crm.permissions.customers.validate_event_participants"],
 	},
+	# a note, a task or a call goes onto a record its author can read; asked
+	# here as well as in has_permission, after frappe has normalised the links
+	"FCRM Note": {"validate": ["crm.permissions.linked_records.validate_filing"]},
+	"CRM Task": {"validate": ["crm.permissions.linked_records.validate_filing"]},
+	"CRM Call Log": {"validate": ["crm.permissions.linked_records.validate_filing"]},
 	"Event Participants": {
 		"validate": ["crm.permissions.customers.refuse_direct_participant_save"],
 	},
