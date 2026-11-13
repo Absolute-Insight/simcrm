@@ -12,6 +12,7 @@ import {
 import { FakeCall, connect, devices } from './telephony/twilioSdk.js'
 import { useDoctypeModal } from '@/composables/doctypeModal'
 import TwilioCallUI from '@/components/Telephony/TwilioCallUI.vue'
+import { twilioHandover } from '@/components/Telephony/twilioHandover'
 
 vi.mock('frappe-ui', () => import('./telephony/frappeUi.js'))
 vi.mock('@twilio/voice-sdk', () => import('./telephony/twilioSdk.js'))
@@ -61,6 +62,7 @@ async function ring(params) {
 
 beforeEach(() => {
   resetRecorders()
+  twilioHandover.current = null
   devices.length = 0
   connect.fail = null
   answers.call = (method) =>
@@ -299,6 +301,143 @@ describe('TwilioCallUI: one Device for as long as it is mounted', () => {
     expect(devices[0].state).toBe('unregistered')
     devices[0].lastCall.emit('disconnect')
     expect(devices[0].state).toBe('destroyed')
+  })
+
+  it('gives the next popup the surviving call, with a Hang Up that ends it', async () => {
+    const first = mountCallUI()
+    first.vm.setup()
+    await flush()
+    const [leg] = await ring({ From: '+27115550001', CallSid: 'CA-LIVE' })
+    button(first.el, 'label', 'Accept').click()
+    await flush()
+    first.unmount() // the layout swapped
+
+    const second = mountCallUI()
+    second.vm.setup()
+    await flush()
+    // the caller, and the controls of a call that is up
+    expect(second.el.textContent).toContain('Alice First')
+    const hangUp = button(second.el, 'tooltip', 'Hang Up')
+    expect(hangUp && visible(hangUp)).toBe(true)
+    expect(button(second.el, 'label', 'Accept')).toBeUndefined()
+
+    let ended = 0
+    leg.on('disconnect', () => ended++)
+    hangUp.click()
+    await flush()
+    expect(ended).toBe(1)
+    const after = button(second.el, 'tooltip', 'Hang Up')
+    expect(!after || !visible(after)).toBe(true)
+    // the Device that carried it goes with it; the new one is untouched
+    expect(devices.map((d) => d.state)).toEqual(['destroyed', 'registered'])
+    expect(twilioHandover.current).toBe(null)
+  })
+
+  it('can mute the surviving call from the next popup', async () => {
+    const first = mountCallUI()
+    first.vm.setup()
+    await flush()
+    const [leg] = await ring({ From: '+27115550001', CallSid: 'CA-LIVE' })
+    button(first.el, 'label', 'Accept').click()
+    await flush()
+    first.unmount()
+
+    const second = mountCallUI()
+    await flush()
+    second.vm.$.setupState.toggleMute()
+    expect(leg.isMuted()).toBe(true)
+  })
+
+  it('carries a call the rep is still placing over, and follows it to answered', async () => {
+    const first = mountCallUI()
+    first.vm.setup()
+    await flush()
+    await first.vm.makeOutgoingCall('+27115550002')
+    await flush()
+    const leg = devices[0].lastCall
+    first.unmount()
+
+    const second = mountCallUI()
+    await flush()
+    const cancel = button(second.el, 'label', 'Cancel')
+    expect(cancel && visible(cancel)).toBe(true)
+    leg.emit('messageReceived', { content: { CallStatus: 'in-progress' } })
+    await flush()
+    const hangUp = button(second.el, 'tooltip', 'Hang Up')
+    expect(hangUp && visible(hangUp)).toBe(true)
+  })
+
+  it('survives a second swap: the call is handed on again, its Device kept', async () => {
+    const first = mountCallUI()
+    first.vm.setup()
+    await flush()
+    const [leg] = await ring({ From: '+27115550001', CallSid: 'CA-LIVE' })
+    button(first.el, 'label', 'Accept').click()
+    await flush()
+    first.unmount()
+    const second = mountCallUI()
+    second.vm.setup()
+    await flush()
+    second.unmount() // swapped back
+
+    // the idle Device of the second popup is released; the call's is not
+    expect(devices.map((d) => d.state)).toEqual(['unregistered', 'destroyed'])
+    const third = mountCallUI()
+    await flush()
+    const hangUp = button(third.el, 'tooltip', 'Hang Up')
+    expect(hangUp && visible(hangUp)).toBe(true)
+    leg.emit('disconnect')
+    expect(devices[0].state).toBe('destroyed')
+  })
+
+  it('destroys the kept Device when the call errors out, and only once', async () => {
+    const w = mountCallUI()
+    w.vm.setup()
+    await flush()
+    const [leg] = await ring({ From: '+27115550001', CallSid: 'CA-LIVE' })
+    button(w.el, 'label', 'Accept').click()
+    await flush()
+    w.unmount()
+
+    let destroyed = 0
+    const destroy = devices[0].destroy.bind(devices[0])
+    devices[0].destroy = () => (destroyed++, destroy())
+    leg.emit('error', new Error('31005 connection error'))
+    leg.emit('disconnect')
+    expect(devices[0].state).toBe('destroyed')
+    expect(destroyed).toBe(1)
+    expect(twilioHandover.current).toBe(null)
+  })
+
+  it('refreshes the token of a Device kept for a live call without throwing', async () => {
+    const rejections = []
+    const onRejection = (reason) => rejections.push(reason)
+    process.on('unhandledRejection', onRejection)
+    try {
+      const w = mountCallUI()
+      w.vm.setup()
+      await flush()
+      await ring({ From: '+27115550001', CallSid: 'CA-LIVE' })
+      button(w.el, 'label', 'Accept').click()
+      await flush()
+      w.unmount()
+
+      answers.call = () => Promise.resolve({ token: 'token-2' })
+      devices[0].emit('tokenWillExpire')
+      await flush()
+      expect(devices[0].token).toBe('token-2')
+
+      // and a refresh that fails is reported, not thrown
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+      answers.call = () => Promise.reject(new Error('503'))
+      devices[0].emit('tokenWillExpire')
+      await flush()
+      expect(logged).toHaveBeenCalled()
+      logged.mockRestore()
+      expect(rejections).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onRejection)
+    }
   })
 
   it('still releases a Device whose call is only ringing in', async () => {
