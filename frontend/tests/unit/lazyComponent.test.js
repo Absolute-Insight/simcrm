@@ -15,12 +15,16 @@ const Real = {
 }
 const Loading = { render: () => h('p', { id: 'loading' }, 'loading') }
 const Failed = {
-  props: ['error'],
+  props: ['error', 'retrying'],
   emits: ['retry'],
   render() {
     return h(
       'button',
-      { id: 'failed', onClick: () => this.$emit('retry') },
+      {
+        id: 'failed',
+        'data-retrying': String(this.retrying),
+        onClick: () => this.$emit('retry'),
+      },
       this.error.message,
     )
   },
@@ -29,6 +33,7 @@ const Failed = {
 function mount(component, props = {}) {
   const el = document.createElement('div')
   const app = createApp({ render: () => h(component, props, () => ' slot') })
+  app.config.globalProperties.__ = globalThis.__
   el.errors = []
   app.config.errorHandler = (error) => el.errors.push(error.message)
   app.mount(el)
@@ -114,11 +119,150 @@ describe('lazyComponent', () => {
     el.querySelector('#failed').click()
     await settle()
     expect(loads).toHaveLength(2)
-    expect(el.querySelector('#failed')).toBeNull()
+    // the button stays while the retry runs, and says it is running
+    expect(el.querySelector('#failed').dataset.retrying).toBe('true')
     loads[1].resolve({ default: Real })
     await settle()
+    expect(el.querySelector('#failed')).toBeNull()
     expect(el.querySelector('#real')).not.toBeNull()
     expect(el.errors).toEqual([])
+  })
+
+  it('a retry that fails again leaves the retry there, no longer running', async () => {
+    const { loads, loader } = gate()
+    const el = mount(lazyComponent(loader, { failed: Failed }))
+    await settle()
+    loads[0].reject(new Error('first'))
+    await settle()
+    el.querySelector('#failed').click()
+    await settle()
+    loads[1].reject(new Error('second'))
+    await settle()
+    expect(el.querySelector('#failed').textContent).toBe('second')
+    expect(el.querySelector('#failed').dataset.retrying).toBe('false')
+  })
+
+  it('moves focus into what loaded when the retry was started from the keyboard', async () => {
+    const { loads, loader } = gate()
+    const Field = { render: () => h('div', [h('input', { id: 'field' })]) }
+    const el = mount(lazyComponent(loader, { failed: Failed }))
+    document.body.appendChild(el) // focus needs a document
+    try {
+      await settle()
+      loads[0].reject(new Error('offline'))
+      await settle()
+      const retry = el.querySelector('#failed')
+      retry.focus()
+      retry.click()
+      await settle()
+      expect(document.activeElement).toBe(retry) // not dropped to <body>
+      loads[1].resolve({ default: Field })
+      await settle()
+      expect(document.activeElement).toBe(el.querySelector('#field'))
+    } finally {
+      el.remove()
+    }
+  })
+
+  it('focuses the root of what loaded when nothing inside takes focus', async () => {
+    const { loads, loader } = gate()
+    const el = mount(lazyComponent(loader, { failed: Failed }))
+    document.body.appendChild(el)
+    try {
+      await settle()
+      loads[0].reject(new Error('offline'))
+      await settle()
+      el.querySelector('#failed').focus()
+      el.querySelector('#failed').click()
+      await settle()
+      loads[1].resolve({ default: Real })
+      await settle()
+      expect(document.activeElement).toBe(el.querySelector('#real'))
+    } finally {
+      el.remove()
+    }
+  })
+
+  it('leaves focus alone when it was somewhere else', async () => {
+    const { loads, loader } = gate()
+    const el = mount(lazyComponent(loader, { failed: Failed }))
+    const elsewhere = document.createElement('input')
+    document.body.append(el, elsewhere)
+    try {
+      await settle()
+      loads[0].reject(new Error('offline'))
+      await settle()
+      el.querySelector('#failed').click()
+      elsewhere.focus() // the user moved on while it loaded
+      await settle()
+      loads[1].resolve({ default: Real })
+      await settle()
+      expect(document.activeElement).toBe(elsewhere)
+    } finally {
+      el.remove()
+      elsewhere.remove()
+    }
+  })
+
+  it('shows a plain failure of its own when the caller named none', async () => {
+    const el = mount(lazyComponent(() => Promise.reject(new Error('offline'))))
+    await settle()
+    const alert = el.querySelector('[role="alert"]')
+    expect(alert.textContent).toContain('Could not load this part of the page')
+    expect(
+      [...alert.querySelectorAll('button')].some((b) =>
+        b.textContent.includes('Try again'),
+      ),
+    ).toBe(true)
+  })
+
+  it('draws nothing for a caller that takes the failure on itself', async () => {
+    const failures = []
+    const el = mount(
+      lazyComponent(() => Promise.reject(new Error('offline')), {
+        onFail: (error) => failures.push(error.message),
+      }),
+    )
+    await settle()
+    expect(failures).toEqual(['offline'])
+    expect(el.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it.each([
+    ['undefined', undefined],
+    ['a module with no default', { default: undefined }],
+    ['null', null],
+  ])('treats a loader that resolves %s as a failed load', async (_, value) => {
+    const el = mount(lazyComponent(async () => value, { failed: Failed }))
+    await settle()
+    expect(el.querySelector('#failed').textContent).toBe(
+      'The lazy component loaded as nothing',
+    )
+  })
+
+  it('hands a template ref through to what the loaded component exposes', async () => {
+    const { loads, loader } = gate()
+    const Exposing = {
+      setup(_, { expose }) {
+        const count = ref(0)
+        expose({ count, bump: () => ++count.value })
+        return () => h('p', { id: 'exposing' }, count.value)
+      },
+    }
+    const Lazy = lazyComponent(loader)
+    const handle = ref(null)
+    const el = document.createElement('div')
+    createApp({ render: () => h(Lazy, { ref: handle }) }).mount(el)
+    await settle()
+    // not loaded yet: nothing behind the ref, and no throw for asking
+    expect(handle.value.bump).toBeUndefined()
+    expect('bump' in handle.value).toBe(false)
+    loads[0].resolve({ default: Exposing })
+    await settle()
+    expect('bump' in handle.value).toBe(true)
+    expect(handle.value.bump()).toBe(1)
+    await settle()
+    expect(el.querySelector('#exposing').textContent).toBe('1')
   })
 
   it('never reloads the page, whatever the failure looks like', async () => {

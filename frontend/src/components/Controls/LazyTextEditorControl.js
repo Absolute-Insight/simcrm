@@ -18,12 +18,16 @@ export default lazyComponent(
     },
     failed: {
       name: 'TextEditorFailed',
-      props: { error: { type: null, default: null } },
+      props: {
+        error: { type: null, default: null },
+        retrying: { type: Boolean, default: false },
+      },
       emits: ['retry'],
       render() {
         return h(LazyLoadFailed, {
           what: __('the text editor'),
           error: this.error,
+          retrying: this.retrying,
           onRetry: () => this.$emit('retry'),
         })
       },

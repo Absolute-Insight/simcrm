@@ -11,7 +11,8 @@
       failed: { render: () => h(LazyLoadFailed, { what: __('the editor') }) },
     })
 
-  lazyComponent passes `error` and `onRetry`.
+  lazyComponent passes `error`, `retrying` and `onRetry`, and draws this by
+  itself ("this part of the page") when a caller names no stand-in of its own.
 -->
 <template>
   <div
@@ -28,7 +29,12 @@
         {{ __('If trying again does not help, reload the page.') }}
       </span>
     </span>
-    <Button size="sm" :label="__('Try again')" @click="emit('retry')" />
+    <Button
+      size="sm"
+      :label="__('Try again')"
+      :loading="retrying"
+      @click="emit('retry')"
+    />
   </div>
 </template>
 
@@ -39,6 +45,8 @@ defineProps({
   // the thing that did not load, as it reads mid-sentence: "the editor"
   what: { type: String, required: true },
   error: { type: [Object, String], default: null },
+  // true while a retry is being fetched: the button stays, and stays focused
+  retrying: { type: Boolean, default: false },
 })
 const emit = defineEmits(['retry'])
 
