@@ -382,6 +382,7 @@ def _retry_pending(client, pending: dict, counts: dict) -> None:
 def run_backfill(modified_since: str | None = None) -> dict:
 	"""Import everything (or everything modified since the high-water mark).
 	Records that fail land in the sync-issues table instead of aborting the run."""
+	_run_as_the_system()
 	try:
 		# The lock comes before everything, the settings read included: a second sync
 		# has nothing useful to do, and two importers over the same pages write the
@@ -513,6 +514,18 @@ def _import_entities(client, filter_, pending: dict, counts: dict) -> None:
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 
+def _run_as_the_system() -> None:
+	"""A sync is the system's, whatever woke it. rq runs a job as whoever enqueued it:
+	the webhook enqueues from a guest request, and every record that sweep wrote and
+	every deal it closed was Guest's; the Backfill button enqueues as the manager who
+	pressed it, and a manager who sees only their own team's customers had every other
+	rep's quote refused as "another rep's customer" and logged as an import failure.
+	Here rather than in the entry points, so the next one cannot miss it. Only ever
+	reached from a job or the bench -- never call a sync inside a user's request."""
+	if frappe.session.user != "Administrator":
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser
+
+
 def schedule_sweep() -> None:
 	"""Scheduler entry. It only enqueues: run inline it would hold a scheduler worker
 	for the hours a first sync takes, and it would not be sharing the sync job id with
@@ -532,11 +545,7 @@ def nightly_sweep() -> None:
 	"""Scheduler entry. Webhooks are the latency mechanism; this is the
 	correctness mechanism -- Acumatica keeps failed push notifications for
 	only 2 days, so the sweep must always run."""
-	if frappe.session.user != "Administrator":
-		# rq runs a job as whoever enqueued it, and the webhook enqueues from a guest
-		# request: every record that sweep wrote and every deal it closed was Guest's.
-		# The sweep is the system's, whatever woke it.
-		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser
+	_run_as_the_system()
 	settings = get_settings()
 	if not settings.enabled:
 		return
