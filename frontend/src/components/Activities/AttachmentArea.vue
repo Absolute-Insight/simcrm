@@ -22,6 +22,7 @@
               height="44"
               loading="lazy"
               decoding="async"
+              @error="useOriginal($event, attachment)"
             />
             <component
               :is="fileIcon(attachment.file_type)"
@@ -98,6 +99,15 @@ defineProps({
 const emit = defineEmits(['reload'])
 
 const { $dialog } = globalStore()
+
+// A thumbnail that will not load (removed, or written where the private file
+// route does not look) falls back to the file itself, once.
+function useOriginal(event, attachment) {
+  const img = event.target
+  if (!attachment.file_url || img.dataset.fellBack) return
+  img.dataset.fellBack = '1'
+  img.src = attachment.file_url
+}
 
 function openFile(attachment) {
   window.open(attachment.file_url, '_blank', 'noopener')

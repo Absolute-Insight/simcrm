@@ -32,6 +32,10 @@ describe('attachmentThumbnail', () => {
       'data:image/png;base64,AAAA',
       '/api/method/logout',
       '/files/',
+      '/files/../api/method/ping',
+      '/private/files/a/../../../api/method/ping',
+      '/files/./x.jpg',
+      '/files/..\\api\\method\\ping',
       42,
     ]) {
       expect(attachmentThumbnail(file(foreign))).toBe(
