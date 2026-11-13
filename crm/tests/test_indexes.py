@@ -74,17 +74,32 @@ class ToDoScopeIndexTest(UnitTestCase):
 
 		self.assertIn("crm.permissions.org_hierarchy.ensure_todo_index", hooks.after_migrate)
 
-	def test_the_index_leads_with_the_assignee_and_covers_the_filter(self):
-		"""``allocated_to`` first: it is the one column that narrows to a rep's own
-		rows. The other two are the rest of the sub-select's WHERE."""
-		from crm.permissions.org_hierarchy import _permission_query_conditions, ensure_todo_index
+	def test_install_adds_it_too(self):
+		"""A new site has no migrate until its first upgrade."""
+		import inspect
 
-		with patch.object(frappe.db, "add_index") as add_index:
-			ensure_todo_index()
-		add_index.assert_called_once()
-		doctype, columns = add_index.call_args.args
-		self.assertEqual(doctype, "ToDo")
-		self.assertEqual(columns[0], "allocated_to")
+		from crm import install
+
+		self.assertIn("ensure_todo_index()", inspect.getsource(install.after_install))
+
+	def test_the_index_is_on_the_table_and_covers_the_filter(self):
+		"""Asked of the database: ``add_index`` is idempotent, so calling it here
+		creates the index on a site that has not migrated since and is a no-op on
+		one that has. ``allocated_to`` leads -- it is the one column that narrows
+		to a rep's own rows -- and the rest is the sub-select's WHERE."""
+		from crm.permissions.org_hierarchy import (
+			TODO_SCOPE_INDEX,
+			_permission_query_conditions,
+			ensure_todo_index,
+		)
+
+		ensure_todo_index()
+		indexes: dict[str, list[str]] = {}
+		for row in frappe.db.sql("show index from `tabToDo`", as_dict=True):
+			indexes.setdefault(row.Key_name, []).append((row.Seq_in_index, row.Column_name))
+		columns = [[name for _seq, name in sorted(parts)] for parts in indexes.values()]
+		self.assertIn(TODO_SCOPE_INDEX, columns)
+		self.assertEqual(TODO_SCOPE_INDEX[0], "allocated_to")
 
 		with (
 			patch("crm.permissions.org_hierarchy.sees_everything", return_value=False),
@@ -92,6 +107,6 @@ class ToDoScopeIndexTest(UnitTestCase):
 		):
 			sql = _permission_query_conditions("index-rep@crmtest.test", "CRM Deal").get_sql(quote_char="`")
 		assigned = sql[sql.index("FROM `tabToDo`") :]
-		for column in columns:
+		for column in TODO_SCOPE_INDEX:
 			with self.subTest(column=column):
 				self.assertIn(f"`{column}`", assigned)

@@ -13,6 +13,7 @@ from crm.fcrm.doctype.crm_dashboard.crm_dashboard import create_default_manager_
 from crm.fcrm.doctype.crm_products.crm_products import create_product_details_script
 from crm.integrations.acumatica.install import ensure_custom_fields as ensure_acumatica_fields
 from crm.permissions.customers import stop_frappe_event_digest
+from crm.permissions.org_hierarchy import ensure_todo_index
 
 
 def before_install():
@@ -27,6 +28,9 @@ def after_install(force=False):
 	ensure_access_defaults()
 	# after_migrate also does this, but a new site has no migrate until its first upgrade
 	stop_frappe_event_digest()
+	# likewise: the scoping sub-select should not wait for an upgrade to be indexed.
+	# DDL, so it commits what is above with it -- which the next line does anyway.
+	ensure_todo_index()
 	# install/migrate runs outside a request, so nothing else will commit the
 	# fixtures created above.
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
