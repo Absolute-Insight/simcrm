@@ -110,6 +110,20 @@ export async function dropSheet(name) {
   await writeIndex().catch(() => {})
 }
 
+/**
+ * Remove kept sheets the pack no longer lists: withdrawn by an administrator,
+ * or deleted. Called with each new pack. A sheet taken off the server must
+ * not live on as a copy on a phone.
+ * @param {string[]} listed the names in the current pack
+ */
+export async function dropUnlistedSheets(listed) {
+  await loadSavedSheets()
+  const keep = new Set(listed)
+  for (const name of Object.keys(savedSheets.byName)) {
+    if (!keep.has(name)) await dropSheet(name)
+  }
+}
+
 /** The stored pages of a sheet, `[{page, width, height, blob}]`, or null. */
 export async function savedPages(name) {
   if (!hasIndexedDB()) return null

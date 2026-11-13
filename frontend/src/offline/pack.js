@@ -15,7 +15,7 @@ import { getSessionUser } from '@/utils/session'
 import { packExpired } from '@/utils/fieldPack'
 import { connectivity, onOnline } from './connectivity'
 import { hasIndexedDB, packStore } from './db'
-import { forgetSavedSheets } from './sheets'
+import { dropUnlistedSheets, forgetSavedSheets } from './sheets'
 
 const PACK_KEY = 'pack'
 /* Background refreshes are no closer together than this. A rep's customers do
@@ -131,6 +131,13 @@ export function syncPack() {
         })
       }
       for (const fn of syncedListeners) fn(startedAt)
+      // only on a pack that carries the list: an "unchanged" answer keeps the
+      // old one, and a pack from before sheets existed has none to compare
+      if (Array.isArray(pack.sheets)) {
+        dropUnlistedSheets(pack.sheets.map((sheet) => sheet.name)).catch(
+          () => {},
+        )
+      }
       return true
     } catch (error) {
       packState.error = error

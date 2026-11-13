@@ -117,6 +117,16 @@ describe('keeping a sheet', () => {
     await expect(keepSheet(sheet())).rejects.toThrow(/too large/)
   })
 
+  it('a sheet the server no longer lists is dropped from the device', async () => {
+    const { keepSheet, dropUnlistedSheets, savedSheets } = await load()
+    await keepSheet(sheet())
+    await keepSheet(sheet({ name: 'withdrawn' }))
+    await dropUnlistedSheets(['flanges'])
+    expect(Object.keys(savedSheets.byName)).toEqual(['flanges'])
+    expect(disk.has('sheet:withdrawn')).toBe(false)
+    expect(disk.has('sheet:flanges')).toBe(true)
+  })
+
   it('can be removed', async () => {
     const { keepSheet, dropSheet, savedSheets, savedPages } = await load()
     await keepSheet(sheet())

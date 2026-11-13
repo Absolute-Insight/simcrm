@@ -239,6 +239,10 @@ def _sheets() -> list[dict]:
 			],
 		}
 		for row in rows
+		# The switch an administrator uses to withdraw a sheet -- one with an
+		# error in it, say. Everywhere else a rep meets sheet content honours
+		# it; a copy kept on a phone must not be the way round.
+		if row.get("available_to_assistant")
 	]
 
 
@@ -624,22 +628,28 @@ def _replay_plan_item(payload: dict, moment: datetime, late: bool) -> None:
 		frappe.throw(_("Activities are planned for today or later."), frappe.ValidationError)
 
 	monday, _sunday = week_of(day)
-	current = get_plan(str(monday))
-	kept = [
-		{"name": row["name"], **{f: row.get(f) for f in EDITABLE_ITEM_FIELDS}} for row in current["items"]
-	]
-	save_plan(
-		str(monday),
-		[
-			*kept,
-			{
-				"activity_type": activity_type,
-				"planned_date": str(day),
-				"note": _text(payload.get("note"), TITLE_LIMIT),
-				"organization": _name(payload, "organization") or None,
-			},
-		],
-	)
+	row = {
+		"activity_type": activity_type,
+		"planned_date": str(day),
+		"note": _text(payload.get("note"), TITLE_LIMIT),
+		"organization": _name(payload, "organization") or None,
+	}
+	for attempt in range(2):
+		current = get_plan(str(monday))
+		kept = [
+			{"name": item["name"], **{f: item.get(f) for f in EDITABLE_ITEM_FIELDS}}
+			for item in current["items"]
+		]
+		try:
+			# With the week's own timestamp, as the Planner sends it: if the
+			# week changed between the read and the write -- a row deleted on
+			# the desktop in that instant -- writing back what was read would
+			# put the row back. Read again and add to what is there now.
+			save_plan(str(monday), [*kept, row], str(current["modified"] or ""))
+			return
+		except frappe.TimestampMismatchError:
+			if attempt:
+				raise
 
 
 def _parent_of(item: str) -> str | None:

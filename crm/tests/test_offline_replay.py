@@ -508,6 +508,70 @@ class PlanOfflineTest(ReplayTestCase):
 			with self.assertRaises(frappe.ValidationError):
 				replay(new_id(), "plan_item", {"activity_type": kind, "planned_date": self.tomorrow()})
 
+	def test_a_week_holding_a_customer_since_reassigned_still_takes_a_new_row(self):
+		existing = self.plan_one()
+		frappe.set_user("Administrator")
+		frappe.db.set_value("CRM Organization", self.org, "account_owner", OTHER)
+		mine_now = self.make_org(REP)
+		frappe.set_user(REP)
+		replay(
+			new_id(),
+			"plan_item",
+			{"activity_type": "Visit", "planned_date": self.tomorrow(), "organization": mine_now},
+		)
+		rows = self.items(
+			str(
+				frappe.utils.getdate(self.tomorrow())
+				- timedelta(days=frappe.utils.getdate(self.tomorrow()).weekday())
+			)
+		)
+		kept = [row for row in self.items() if row["name"] == existing]
+		# the old visit is still there, still at the customer it was planned for
+		self.assertEqual([row["organization"] for row in kept], [self.org])
+		self.assertTrue(any(row["organization"] == mine_now for row in rows))
+
+	def test_with_past_days_locked_today_can_be_planned_and_yesterday_cannot(self):
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value("FCRM Settings", "lock_past_plans", 1)
+		frappe.set_user(REP)
+		today = str(frappe.utils.getdate())
+		replay(new_id(), "plan_item", {"activity_type": "Admin", "planned_date": today})
+		self.assertEqual(len(self.planned(today)), 1)
+		# a capture time forged into last week does not open last week
+		with self.assertRaises(frappe.ValidationError):
+			replay(
+				new_id(),
+				"plan_item",
+				{"activity_type": "Admin", "planned_date": str(frappe.utils.getdate() - timedelta(days=2))},
+				ago(hours=60),
+			)
+
+	def test_a_week_that_changed_under_the_replay_is_read_again_not_overwritten(self):
+		from unittest.mock import patch
+
+		from crm.api import offline
+
+		gone = self.plan_one("Call")
+		real_get_plan = offline.get_plan
+		reads = []
+
+		def stale_first(week):
+			plan = real_get_plan(week)
+			reads.append(week)
+			if len(reads) == 1:
+				# between this read and the write, the desktop removes the call
+				save_plan(week, [], str(plan["modified"]))
+			return plan
+
+		with patch.object(offline, "get_plan", side_effect=stale_first):
+			replay(
+				new_id(), "plan_item", {"activity_type": "Admin", "planned_date": str(frappe.utils.getdate())}
+			)
+		rows = self.items()
+		self.assertEqual(len(reads), 2)
+		self.assertNotIn(gone, {row["name"] for row in rows})
+		self.assertEqual([row["activity_type"] for row in rows], ["Admin"])
+
 	def test_the_same_plan_entry_sent_twice_plans_once(self):
 		request_id = new_id()
 		payload = {"activity_type": "Admin", "planned_date": self.tomorrow(), "note": "Paperwork"}
@@ -537,3 +601,17 @@ class SheetsInThePackTest(ReplayTestCase):
 			[{"page": 1, "image": "/private/files/replay-p1.png", "width": 800, "height": 1100}],
 		)
 		self.assertEqual(set(sheet), {"name", "title", "note", "modified", "pages"})
+
+	def test_a_sheet_an_administrator_switched_off_stays_off_the_phone(self):
+		frappe.set_user("Administrator")
+		frappe.get_doc(
+			{
+				"doctype": "CRM Reference Sheet",
+				"sheet_key": "replay-withdrawn-sheet",
+				"title": "Replay table with an error in it",
+				"available_to_assistant": 0,
+				"pages": frappe.as_json([{"page": 1, "image": "/private/files/replay-w1.png"}]),
+			}
+		).insert(ignore_permissions=True)
+		frappe.set_user(REP)
+		self.assertNotIn("replay-withdrawn-sheet", {row["name"] for row in get_pack()["sheets"]})
