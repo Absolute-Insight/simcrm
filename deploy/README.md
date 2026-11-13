@@ -202,19 +202,44 @@ Pass the env file on *every* QA command, not only when you intend to recreate:
 `up -d` recreates whenever the resolved config changes, so the moment you get
 it wrong is rarely the moment you expected to.
 
-**And after any recreation, put the extra network back.** QA's backend and both
-queue workers are attached to production's network so the agent can reach
-`vectora-ollama-1`; `up -d` drops that attachment every time, and the agent
-surfaces then fail *silently* — they render normally and never answer. Verify
-rather than assume:
+**And after any recreation, put the model network back.** QA has no model
+server of its own; its backend and both queue workers reach production's
+`vectora-ollama-1` over a network that exists for that and nothing else. `up
+-d` drops the attachment every time, and the agent surfaces then fail
+*silently* — they render normally and never answer. Verify rather than assume:
 
 ```bash
+# once per host: a network with the model server on it and nothing else
+docker network create vectora-model-net 2>/dev/null || true
+docker network connect vectora-model-net vectora-ollama-1 2>/dev/null || true
+
 for c in vectora-qa-backend-1 vectora-qa-queue-short-1 vectora-qa-queue-long-1; do
-  docker network connect vectora_default "$c"
+  docker network connect vectora-model-net "$c" 2>/dev/null || true
   docker exec "$c" curl -s -o /dev/null -w "$c %{http_code}\n" \
     http://vectora-ollama-1:11434/v1/models        # expect 200
+  docker exec "$c" getent hosts db redis-cache redis-queue   # expect ONE address each
 done
 ```
+
+**Do not attach QA to `vectora_default`**, which is what this section used to
+say. That is production's whole network, and both stacks are the same compose
+file: every service answers to the same alias (`db`, `redis-cache`,
+`redis-queue`) on its own project network. A QA container joined to both
+networks resolves each of those names to *two* addresses, and which one a
+connection gets is up to Docker's resolver. Redis here has no password, so
+nothing refuses the wrong one: a QA worker can take jobs off production's
+queue — and drop them, because they name a site it does not have — while QA's
+own enqueues land in production. The `getent` line above is the check: two
+addresses for any of the three means a container is still on production's
+network, and `docker network disconnect vectora_default <container>` is the
+fix. On `vectora-model-net` the only production name QA can resolve is the model
+server's.
+
+`vectora-ollama-1` loses the attachment when it is recreated — which needs
+`--profile local-model`, so a routine `up -d` does not do it. Re-run the two
+"once per host" lines after any upgrade that did. On a host that runs the
+`gpu-model` profile instead, the container is `vectora-llm-1` and the URL is
+`http://vectora-llm-1:8086/v1/models`.
 
 Sharing the tag is fine and deliberate: QA should run the same version as
 production. Stage an upgrade by setting `VECTORA_TAG` once, recreating
