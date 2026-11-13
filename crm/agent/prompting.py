@@ -26,6 +26,8 @@ and the Analyst share one implementation instead of two that drift.
 from __future__ import annotations
 
 import math
+import re
+from itertools import pairwise
 
 # Characters per token. BPE on English prose runs about four; 3.5 keeps the
 # estimate on the high side of the true token count, which is the safe side.
@@ -98,6 +100,30 @@ def neutralise(content, markers) -> str:
 	hiding it.
 	"""
 	text = str(content or "")
-	for marker in markers:
-		text = text.replace(marker, NEUTRALISED_MARKER)
-	return text
+	if not markers:
+		return text
+	return _marker_pattern(tuple(markers)).sub(NEUTRALISED_MARKER, text)
+
+
+_MARKER_PATTERNS: dict[tuple, re.Pattern] = {}
+
+
+def _marker_pattern(markers: tuple) -> re.Pattern:
+	"""One pattern for ``markers`` and the spellings a model reads as the same thing.
+
+	The fence is a convention a model honours, not syntax it parses: ``thread>>>``
+	or ``THREAD >>>`` closes the quoted region for it as well as the exact
+	string does. So a marker matches in any case, with any whitespace between
+	its brackets and between them and its word.
+	"""
+	pattern = _MARKER_PATTERNS.get(markers)
+	if pattern is None:
+		spellings = []
+		for marker in markers:
+			parts = [re.escape(marker[0])]
+			for before, char in pairwise(marker):
+				loose = not (before.isalnum() and char.isalnum())
+				parts.append((r"\s*" if loose else "") + re.escape(char))
+			spellings.append("".join(parts))
+		pattern = _MARKER_PATTERNS[markers] = re.compile("|".join(spellings), re.IGNORECASE)
+	return pattern

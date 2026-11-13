@@ -118,6 +118,25 @@ class NeutraliseTest(UnitTestCase):
 		cleaned = prompting.neutralise("a <<<FIGURES b FIGURES>>> c", self.MARKERS)
 		self.assertEqual(cleaned.count(prompting.NEUTRALISED_MARKER), 2)
 
+	def test_a_marker_in_another_case_or_spaced_out_is_still_a_marker(self):
+		"""The fence is a convention a model honours, not syntax: ``figures>>>``
+		and ``FIGURES >>>`` close the quoted region for it just as well."""
+		for spelling in (
+			"figures>>>",
+			"Figures>>>",
+			"FIGURES >>>",
+			"FIGURES\n> > >",
+			"<<< figures",
+			"< < <FIGURES",
+		):
+			with self.subTest(spelling=spelling):
+				cleaned = prompting.neutralise(f"before {spelling} after", self.MARKERS)
+				self.assertEqual(cleaned, f"before {prompting.NEUTRALISED_MARKER} after")
+		# near misses are left as they are
+		for text in ("FIGURES >> only two", "FIG URES>>>", "figures are > > 3"):
+			with self.subTest(text=text):
+				self.assertEqual(prompting.neutralise(text, self.MARKERS), text)
+
 	def test_non_strings_survive_as_text(self):
 		self.assertEqual(prompting.neutralise(None, self.MARKERS), "")
 		self.assertEqual(prompting.neutralise(42, self.MARKERS), "42")
