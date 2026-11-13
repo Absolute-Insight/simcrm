@@ -41,8 +41,22 @@ jobs:
       #
       # A bump commit is safe to inherit from because of what it contains: one
       # sed of the version string in crm/__init__.py. The step verifies exactly
-      # that -- subject and file list both -- and refuses to walk the parent of
-      # anything else, so this cannot become a way to publish untested code.
+      # that, on the DIFF -- .github/helper/release-bump-parent.py -- and
+      # refuses to walk the parent of anything else, so this cannot become a
+      # way to publish untested code.
+      #
+      # It used to verify the subject and the list of files touched, which is
+      # not the same claim: crm/__init__.py is imported at every frappe start,
+      # so a commit titled `chore(release):` that added code to that one file
+      # inherited green checks from a parent that did not contain it.
+      #
+      # The checkout is for that helper and nothing else. No credentials are
+      # left behind: this job only reads.
+      - name: Checkout the guard's helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Wait for this commit's checks to pass
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -64,21 +78,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Resolve which commit's checks stand for this build. One API call,
-          # read through gh's own --jq so this needs no jq on the runner.
-          meta=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA" --jq '
-            [ (.commit.message | split("\n")[0]),
-              ([.files[]?.filename] | sort | join(",")),
-              (.parents[0].sha // "") ] | @tsv')
-          IFS=$'\t' read -r subject files parent <<<"$meta"
-
-          if [ "$files" = "crm/__init__.py" ] \
-             && printf '%s' "$subject" | grep -q '^chore(release):' \
-             && [ -n "$parent" ]; then
-            echo "$SHA is a release version bump ($subject)."
-            echo "It touches only crm/__init__.py, and a token-pushed commit never"
-            echo "gets its own test runs -- inheriting checks from parent $parent."
+          # Resolve which commit's checks stand for this build. One API call;
+          # the helper reads the JSON with python's stdlib, so this needs no jq
+          # on the runner. Exit 1 is "an ordinary commit" and falls through to
+          # that commit's own checks. Anything else is the helper failing to
+          # read its input, and a guard that cannot tell stops.
+          gh api "repos/$GITHUB_REPOSITORY/commits/$SHA" > "$RUNNER_TEMP/commit.json"
+          rc=0
+          parent=$(python3 .github/helper/release-bump-parent.py < "$RUNNER_TEMP/commit.json") || rc=$?
+          if [ "$rc" = "0" ] && [ -n "$parent" ]; then
+            echo "$SHA is a release version bump: its whole diff is the version"
+            echo "string in crm/__init__.py. A token-pushed commit never gets its"
+            echo "own test runs -- inheriting checks from parent $parent."
             SHA="$parent"
+          elif [ "$rc" != "1" ]; then
+            echo "::error::Could not decide whether $SHA is a release bump (exit $rc)."
+            exit 1
           fi
 
           deadline=$(( $(date +%s) + 40 * 60 ))
