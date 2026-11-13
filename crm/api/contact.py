@@ -118,6 +118,32 @@ def set_as_primary(contact: str, field: str, value: str):
 
 
 @frappe.whitelist()
+def find_by_email(email: str) -> str | None:
+	"""The Contact the caller can read that carries ``email``, primary or not.
+
+	The calendar gives a typed attendee a Contact before it saves the event. It
+	looked one up on ``Contact.email_id``, which holds the primary address only,
+	so a person invited at their second address got a second Contact. This reads
+	the address rows themselves, and prefers the contact it is primary on.
+
+	Through ``get_list``, so it answers for the contacts the caller's own list
+	shows and no others: a contact at another rep's customer is not found here,
+	or an address would be a way to ask whether a colleague's customer has it.
+	"""
+	email = (email or "").strip()
+	if not email:
+		return None
+	found = frappe.get_list(
+		"Contact",
+		filters=[["Contact Email", "email_id", "=", email]],
+		fields=["name"],
+		order_by="`tabContact Email`.`is_primary` desc, `tabContact`.`creation` asc",
+		limit_page_length=1,
+	)
+	return found[0].name if found else None
+
+
+@frappe.whitelist()
 def search_emails(txt: str):
 	doctype = "Contact"
 	meta = frappe.get_meta(doctype)

@@ -386,6 +386,64 @@ class TestCustomerScope(IntegrationTestCase):
 		address = self._address("Nobody's")
 		self.assertIn(address.name, self.addresses_for(REP_A))
 
+	# --- the attendee lookup ---------------------------------------------------
+
+	def _contact_with_emails(self, company, *emails):
+		"""The first address is the primary one, as frappe keeps ``email_id``."""
+		return frappe.get_doc(
+			{
+				"doctype": "Contact",
+				"first_name": "Attendee",
+				"company_name": company,
+				"email_ids": [
+					{"email_id": email, "is_primary": 1 if idx == 0 else 0}
+					for idx, email in enumerate(emails)
+				],
+			}
+		).insert(ignore_permissions=True)
+
+	def find(self, user, email):
+		from crm.api.contact import find_by_email
+
+		frappe.set_user(user)
+		try:
+			return find_by_email(email)
+		finally:
+			frappe.set_user("Administrator")
+
+	def test_an_attendee_is_found_by_a_secondary_address(self):
+		"""``Contact.email_id`` is the primary address only; looking there made a
+		second Contact for somebody invited at their other one."""
+		contact = self._contact_with_emails(self.org_a, "first@attendee.test", "second@attendee.test")
+		self.assertEqual(frappe.db.get_value("Contact", {"email_id": "second@attendee.test"}), None)
+		self.assertEqual(self.find(REP_A, "first@attendee.test"), contact.name)
+		self.assertEqual(self.find(REP_A, "second@attendee.test"), contact.name)
+		self.assertEqual(self.find(REP_A, " second@attendee.test "), contact.name)
+
+	def test_the_contact_an_address_is_primary_on_is_preferred(self):
+		self._contact_with_emails(self.org_a, "other@attendee.test", "shared@attendee.test")
+		primary = self._contact_with_emails(self.org_a, "shared@attendee.test")
+		self.assertEqual(self.find(REP_A, "shared@attendee.test"), primary.name)
+
+	def test_the_lookup_does_not_find_a_contact_at_a_hidden_customer(self):
+		"""Or an address would be a way to ask whether a colleague's customer has it."""
+		hidden = self._contact_with_emails(self.org_b, "buyer@hidden.test", "also@hidden.test")
+		for email in ("buyer@hidden.test", "also@hidden.test"):
+			with self.subTest(email=email):
+				self.assertIsNone(self.find(REP_A, email))
+				self.assertEqual(self.find(REP_B, email), hidden.name)
+				self.assertEqual(self.find(MANAGER, email), hidden.name)
+				self.assertEqual(self.find("Administrator", email), hidden.name)
+
+	def test_the_lookup_finds_nothing_for_an_unknown_or_blank_address(self):
+		self.assertIsNone(self.find(REP_A, "nobody@attendee.test"))
+		self.assertIsNone(self.find(REP_A, ""))
+
+	def test_the_lookup_needs_read_on_contacts(self):
+		frappe.set_user("Guest")
+		with self.assertRaises(frappe.PermissionError):
+			frappe.call("crm.api.contact.find_by_email", email="first@attendee.test")
+
 	def test_an_enrichment_run_on_a_hidden_customer_is_hidden_with_it(self):
 		from crm.permissions.linked_records import get_enrichment_run_permission_query_conditions
 

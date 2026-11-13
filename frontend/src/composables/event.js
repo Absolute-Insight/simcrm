@@ -251,6 +251,11 @@ export function normalizeParticipants(list = []) {
  * hands over an address that matches no Contact as `reference_docname: 'new'`
  * (or none at all, for a comma-separated paste), which the server refuses.
  * An existing Contact with that email is used; otherwise one is created.
+ *
+ * "With that email" is any of the Contact's addresses: `Contact.email_id` is
+ * the primary one only, so looking there gave somebody invited at their second
+ * address a second Contact. The server looks, and only among the Contacts this
+ * user can read.
  */
 export async function ensureParticipantContacts(participants) {
   if (!Array.isArray(participants) || !participants.length) return participants
@@ -263,13 +268,11 @@ export async function ensureParticipantContacts(participants) {
         UNRESOLVED_DOCNAMES.has(p.reference_docname || '') &&
         p.email
       ) {
-        const existing = await call('frappe.client.get_value', {
-          doctype: 'Contact',
-          filters: { email_id: p.email },
-          fieldname: 'name',
+        const existing = await call('crm.api.contact.find_by_email', {
+          email: p.email,
         })
-        if (existing?.name) {
-          p.reference_docname = existing.name
+        if (existing) {
+          p.reference_docname = existing
         } else {
           const firstName = p.email.split('@')[0] || p.email
           const contactDoc = await call('frappe.client.insert', {
