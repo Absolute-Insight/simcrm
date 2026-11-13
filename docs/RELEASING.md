@@ -69,8 +69,36 @@ pushing to it _is_ cutting a release. Nothing else triggers one.
    longer named — both builds were green and smoke-tested, so nothing looked
    wrong anywhere. The `build` job's `concurrency` queues same-ref runs rather
    than cancelling them -- on purpose, so a release build is never killed by a
-   main push behind it -- which means a duplicate waits its turn and then
-   overwrites the tag regardless. Not dispatching twice is the only defence.
+   main push behind it -- which meant a duplicate waited its turn and then
+   overwrote the tag regardless.
+
+   **The build now refuses that**, in two places
+   (`.github/helper/promote-image.sh`):
+
+   - **A published `vX.Y.Z` tag is never re-pointed.** A build whose version
+     tag already has an image stops within a minute of starting ("Refuse to
+     rebuild a published release"), and the promotion step at the end checks
+     again. So the duplicate dispatch above now fails red instead of silently
+     replacing the release. That red run is the refusal working; the release
+     is the first run.
+   - **`stable` only moves forward.** A build of a tag older than the newest
+     `v*` tag in the repository publishes its own version tag — if it does not
+     exist yet — and leaves `stable` where it is, with a warning in the log.
+     This is the case of going back to build an image a past release never
+     got.
+
+   Both can be overridden, deliberately and on the record, from a dispatch:
+
+   ```bash
+   # replace an existing release image. Every host pinned to the tag gets
+   # different bytes on its next pull -- say so wherever that matters.
+   gh workflow run builds.yml --ref vX.Y.Z -f overwrite_release_tag=true
+   # let an older release take `stable`
+   gh workflow run builds.yml --ref vX.Y.Z -f allow_stable_downgrade=true
+   ```
+
+   Neither input exists on the automatic dispatch or on a push, so neither
+   can happen by accident.
 
    To ask what a host is _actually_ running, and to pin it:
 
@@ -173,12 +201,27 @@ itself. It waits for these, by name, on the commit being built:
 - `Playwright E2E Tests`
 - `Server Tests`
 - `Unit Tests & Coverage`
+- `Upgrade base branch -> PR`
 
 A release bump commit is the deliberate exception. It contains one `sed` of the version
 string, and the token that pushed it suppressed the workflows that would have tested it —
-so the guard verifies the commit really is a bump (subject starts `chore(release):`, and
-`crm/__init__.py` is the only file touched) and inherits its parent's checks. It refuses
-to walk the parent of anything else.
+so the guard verifies the commit really is a bump and inherits its parent's checks. It
+refuses to walk the parent of anything else.
+
+"Really is a bump" is decided on the **diff** (`.github/helper/release-bump-parent.py`):
+one parent, `crm/__init__.py` the only file, and the whole change exactly one
+`__version__ = "X.Y.Z"` line replaced by another. It used to be decided on the subject and
+the file list alone, which let any code added to `crm/__init__.py` under a
+`chore(release):` subject be published on checks that never ran against it — and that
+file is imported every time frappe starts. A commit that fails the test is not refused;
+it is treated as an ordinary commit and has to have green checks of its own.
+
+**What gets built is the commit the guard verified.** The image used to take the app by
+cloning the *branch name* from GitHub inside the build, so a push landing during the
+guard's wait (up to 40 minutes) was built, labelled `sha-<the verified commit>` and
+promoted on the other commit's checks. The build now stages its own checkout
+(`.github/helper/stage-app-source.sh`) and afterwards reads the commit bench recorded in
+the image's `sites/apps.json`, refusing to promote an image that names any other.
 
 The practical consequence: **the parent's checks must be green at the moment you promote,
 and nothing on it may be red.** The gate refuses on _any_ failing check-run on the commit,
@@ -194,6 +237,27 @@ ended up as a release with no image, and why the fix had to ship as v3.2.1.
 `develop`'s HEAD when it runs, so a failed security update (on 2026-11-01, a low `glob`
 alert with no patched version) stops a release whose code is fine. Re-running does not
 clear it. Land an ordinary commit so HEAD moves past it, then release.
+
+## What is pinned, and who moves it
+
+A release is vetoed by any red check on the commit, so everything a check downloads at run
+time is something that can veto a release without a change in this repository. These are
+pinned, and each moves only when somebody moves it:
+
+| What | Where the pin lives | Moved by |
+|---|---|---|
+| Actions (`uses:`), by commit SHA with the release in a comment | every workflow and `.github/actions/*` | Dependabot (`github-actions`) |
+| semgrep, and the commit of `frappe/semgrep-rules` | `.github/helper/install-semgrep.sh` | by hand — the steps are in the file |
+| The `frappe-bench` CLI the test lanes install | `scripts/frappe-pin.env` (`FRAPPE_BENCH_VERSION`) | by hand, in a PR of its own |
+| wkhtmltopdf for the server tests (commit and sha256) | `.github/helper/install.sh` | by hand |
+| semantic-release and its plugins | `.github/workflows/on_release.yml` | by hand — a bad one is found by the next release, so read its notes |
+| frappe, frappe_whatsapp, frappe_docker, the build and base images | `scripts/*-pin.env`, `.github/helper/image-pins.env` | by hand |
+| Images in `deploy/` and `.devcontainer/` | the compose files, by digest | Dependabot (`docker-compose`) proposes; see `deploy/README.md` before merging one |
+
+Still floating, because nothing versions it: the `r/python.lang.correctness` rule pack
+semgrep fetches from its registry, and the transitive dependencies of semantic-release
+(there is no lockfile for that step). Either can still turn a commit red; the remedy is
+the one above for any red check on the commit: land a commit that moves HEAD past it.
 
 ## Things that make a check look green when it never ran
 
