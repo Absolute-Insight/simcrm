@@ -23,6 +23,7 @@ class CRMRepPlanItem(Document):
 		activity_type: DF.Literal[
 			"Visit", "Unplanned Meeting", "Delivery", "Call", "Email", "Meeting", "Task", "Admin", "Reports"
 		]
+		captured_offline: DF.Check
 		fulfilled_by: DF.DynamicLink | None
 		fulfilled_by_doctype: DF.Link | None
 		manual_override: DF.Check

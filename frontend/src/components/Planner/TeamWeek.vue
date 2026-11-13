@@ -118,6 +118,11 @@
                     >
                       {{ __(activityLabel(item.activity_type)) }} ·
                       {{ statusLabel(item.status) }}
+                      <!-- the manager's view is where this matters: a visit
+                           the server did not witness the time of -->
+                      <template v-if="item.captured_offline">
+                        · {{ __('offline') }}
+                      </template>
                     </div>
                   </div>
                 </div>
@@ -221,6 +226,7 @@ function itemTitle(item) {
     item.note,
     item.outcome,
     statusLabel(item.status),
+    item.captured_offline ? __('Captured offline, synced later') : '',
   ]
     .filter(Boolean)
     .join(' · ')

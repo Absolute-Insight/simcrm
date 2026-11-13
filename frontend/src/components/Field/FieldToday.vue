@@ -31,7 +31,7 @@
         role="tab"
         :aria-selected="day.date === selected"
         :aria-label="dayAria(day)"
-        class="relative flex min-h-14 flex-col items-center justify-center gap-0.5 rounded-5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+        class="relative flex min-h-16 flex-col items-center justify-center gap-0.5 rounded-5 pb-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
         :class="
           day.date === selected
             ? 'v-glass text-ink-gray-9'
@@ -47,7 +47,7 @@
           {{ Number(day.date.slice(8, 10)) }}
         </span>
         <span
-          class="h-1 text-[0.625rem] leading-none tabular-nums text-ink-gray-5"
+          class="h-2.5 text-[0.625rem] leading-none tabular-nums text-ink-gray-5"
         >
           {{ day.count || '' }}
         </span>
@@ -60,6 +60,20 @@
       </button>
     </div>
 
+    <!-- The thing a rep on site came to do. Always today's: an activity is
+         logged when it happens, whichever day is being looked at. -->
+    <Button
+      variant="solid"
+      size="md"
+      class="w-full"
+      :label="__('Log activity')"
+      @click="openFieldDialog('log')"
+    >
+      <template #prefix>
+        <LucideMapPinPlus class="size-4" aria-hidden="true" />
+      </template>
+    </Button>
+
     <div class="flex flex-col gap-2" role="tabpanel">
       <div class="flex items-baseline justify-between">
         <h2 class="text-base font-medium text-ink-gray-8">
@@ -70,7 +84,12 @@
         </span>
       </div>
 
-      <FieldPlanItem v-for="item in items" :key="item.name" :item="item" />
+      <FieldPlanItem
+        v-for="item in items"
+        :key="item.name"
+        :item="item"
+        actions
+      />
 
       <div
         v-if="!items.length"
@@ -99,11 +118,13 @@
 
 <script setup>
 import FieldPlanItem from '@/components/Field/FieldPlanItem.vue'
+import { openFieldDialog } from '@/offline/fieldDialog'
 import { useField } from '@/offline/useField'
 import { shortDate, weekdayName } from '@/utils/fieldPack'
 import { addDays, mondayOf, weekDayCells } from '@/utils/planner'
 import { computed, ref, watch } from 'vue'
 import LucideCalendarDays from '~icons/lucide/calendar-days'
+import LucideMapPinPlus from '~icons/lucide/map-pin-plus'
 
 const { days, weeks, today } = useField()
 

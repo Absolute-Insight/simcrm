@@ -3,7 +3,11 @@
 
 """Field mode: what a rep's phone carries to a site with no reception.
 
-Two reads, and nothing here writes.
+Two reads, and one write.
+
+:func:`replay` is the write: it applies one entry from the phone's outbox --
+a visit logged, an outcome, a note, a task -- exactly once, however many
+times the phone sends it. See the function for the rules.
 
 :func:`get_pack` is the snapshot the phone keeps: the caller's weeks, the
 customers they may see with the people and open deals at them, what happened
@@ -30,14 +34,26 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import re
 import time
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import frappe
+from frappe import _
 
-from crm.api.rep_plan import ITEM_FIELDS, LOGGABLE_TYPES, get_plan, past_days_locked
+from crm.api.rep_plan import (
+	ITEM_FIELDS,
+	LOGGABLE_TYPES,
+	REFERENCE_DOCTYPES,
+	cancel_item,
+	complete_item,
+	get_plan,
+	log_activity,
+	past_days_locked,
+)
 from crm.rep_planning import ACTIVITY_TYPES, EVENT_KINDS, MATCH_HORIZON_WEEKS, week_of
-from crm.utils import sales_user_only
+from crm.utils import sales_user_only, user_rate_limited
 
 # How far back a phone carries what happened at a customer. Also the window a
 # lost phone exposes, which is why it is not "everything".
@@ -64,6 +80,32 @@ MAX_TASKS = 500
 
 # Long text is cut on the way out: the phone shows a note, it does not edit one.
 TEXT_LIMIT = 2000
+
+# --- replay ---------------------------------------------------------------------------
+
+RECEIPT = "CRM Offline Receipt"
+
+# With "plan only for today or later" on, an activity is logged on the day it
+# happens. A phone with no signal cannot, so one captured offline is accepted
+# this long after the fact -- and flagged. Past it, the lock stands.
+OFFLINE_GRACE_HOURS = 72
+
+# An entry that took longer than this to arrive was captured without a
+# connection, and its time is the device's word. Shorter is just a slow line.
+LATE_AFTER_SECONDS = 15 * 60
+
+# A device clock a little ahead of the server is a device clock, not a visit
+# from the future.
+CLOCK_TOLERANCE_SECONDS = 5 * 60
+
+# A flush after a week away is a few dozen entries sent one after another.
+REPLAY_RATE_SCOPE = "offline_replay"
+REPLAY_RATE_LIMIT = 240
+
+MAX_PAYLOAD_BYTES = 20_000
+NOTE_TEXT_LIMIT = 5000
+TITLE_LIMIT = 140
+_REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{15,63}$")
 
 CLOSED_DEAL_TYPES = ("Won", "Lost")
 OPEN_TASK_STATUSES = ("Backlog", "Todo", "In Progress", "Rescheduled")
@@ -142,6 +184,7 @@ def _pack_body() -> dict:
 			"lock_past_plans": bool(past_days_locked()),
 			"horizon_weeks": MATCH_HORIZON_WEEKS,
 			"history_days": HISTORY_DAYS,
+			"offline_grace_hours": OFFLINE_GRACE_HOURS,
 		},
 		"plans": _plans(today),
 		"organizations": organizations,
@@ -308,3 +351,307 @@ def _clip(text: str | None) -> str:
 def _stamp(moment) -> str:
 	"""A site-clock datetime as text the phone can compare with its own."""
 	return moment.strftime("%Y-%m-%d %H:%M:%S")
+
+
+# --- replay ---------------------------------------------------------------------------
+
+
+@frappe.whitelist(methods=["POST"])
+@sales_user_only
+def replay(
+	request_id: str,
+	action: str,
+	payload: dict | str | None = None,
+	captured_at: int | float | str | None = None,
+) -> dict:
+	"""Apply one entry from a device's outbox, exactly once.
+
+	``request_id`` is chosen by the device when the entry is captured and sent
+	with every attempt. The receipt row carrying it is inserted in the same
+	transaction as the work, so there are only two outcomes: both are stored,
+	or the action refused and neither is. A second copy -- the phone lost the
+	answer and sent it again, or two tabs flushed at once -- finds the receipt,
+	or loses the race for its primary key, and is told ``duplicate``.
+
+	``captured_at`` is when the rep did it, in ms since the epoch, by the
+	device's clock corrected for the skew the last handshake measured. It is
+	never trusted to be in the future, and it only earns a rep anything -- a
+	way past "activities are logged on the day they happen" -- inside
+	``OFFLINE_GRACE_HOURS``, with the row flagged ``captured_offline``.
+
+	The action is one of ``ACTIONS`` and nothing else: this is not a generic
+	method dispatcher. Each handler does its own permission check as the
+	session user, exactly as the endpoint it stands in for.
+	"""
+	if user_rate_limited(REPLAY_RATE_SCOPE, REPLAY_RATE_LIMIT):
+		frappe.throw(_("Too many requests. Try again shortly."), frappe.TooManyRequestsError)
+
+	request_id = frappe.utils.cstr(request_id).strip()
+	if not _REQUEST_ID.match(request_id):
+		frappe.throw(_("That entry has no usable id."), frappe.ValidationError)
+	handler = ACTIONS.get(frappe.utils.cstr(action))
+	if not handler:
+		frappe.throw(_("That cannot be done offline."), frappe.ValidationError)
+	payload = _payload(payload)
+	moment, late = _captured(captured_at)
+
+	if _already_applied(request_id):
+		return {"request_id": request_id, "status": "duplicate"}
+
+	frappe.db.savepoint("offline_replay")
+	try:
+		frappe.get_doc(
+			{
+				"doctype": RECEIPT,
+				"request_id": request_id,
+				"user": frappe.session.user,
+				"action": action,
+				"captured_at": moment,
+				"late": 1 if late else 0,
+			}
+		).insert(ignore_permissions=True)
+	except (frappe.UniqueValidationError, frappe.DuplicateEntryError):
+		# the other copy of this entry got there between the check and the insert
+		frappe.db.rollback(save_point="offline_replay")
+		# a locking read: the plain one would see this transaction's snapshot,
+		# taken before the other copy committed, and find no receipt to check
+		_already_applied(request_id, current=True)
+		return {"request_id": request_id, "status": "duplicate"}
+
+	handler(payload, moment, late)
+	return {"request_id": request_id, "status": "applied", "late": late}
+
+
+def _already_applied(request_id: str, current: bool = False) -> bool:
+	if current:
+		# A shared lock, not FOR UPDATE: the failed insert left this
+		# transaction a shared lock on the row already, and so did any third
+		# copy of the entry. Each asking for an exclusive one is a deadlock.
+		rows = frappe.db.sql(
+			"select `user` from `tabCRM Offline Receipt` where name = %s lock in share mode",
+			(request_id,),
+		)
+		owner = rows[0][0] if rows else None
+	else:
+		owner = frappe.db.get_value(RECEIPT, request_id, "user")
+	if not owner:
+		return False
+	if owner != frappe.session.user:
+		# Someone else's id. Not a duplicate, and not something to describe.
+		frappe.throw(_("That entry has no usable id."), frappe.ValidationError)
+	return True
+
+
+def _payload(payload) -> dict:
+	if isinstance(payload, str):
+		if len(payload.encode()) > MAX_PAYLOAD_BYTES:
+			frappe.throw(_("That entry is too large to send."), frappe.ValidationError)
+		try:
+			payload = json.loads(payload or "{}")
+		except (ValueError, RecursionError):
+			# RecursionError: a few kilobytes of nothing but "[[[[" is valid
+			# JSON to start reading and a 500 to finish
+			payload = None
+	if not isinstance(payload, dict):
+		frappe.throw(_("That entry could not be read."), frappe.ValidationError)
+	if len(json.dumps(payload, default=str).encode()) > MAX_PAYLOAD_BYTES:
+		frappe.throw(_("That entry is too large to send."), frappe.ValidationError)
+	return payload
+
+
+def _captured(captured_at) -> tuple[datetime, bool]:
+	"""When the entry was captured, on the site's clock, and whether it arrived late."""
+	now = time.time()
+	try:
+		captured = float(captured_at) / 1000 if captured_at not in (None, "") else now
+	except (TypeError, ValueError):
+		frappe.throw(_("That entry has no usable time."), frappe.ValidationError)
+	if not math.isfinite(captured):
+		# float("nan") parses, compares false with everything, and would get
+		# as far as fromtimestamp before failing as a server error
+		frappe.throw(_("That entry has no usable time."), frappe.ValidationError)
+	if captured > now + CLOCK_TOLERANCE_SECONDS or captured <= 0:
+		frappe.throw(_("That entry is dated in the future. Check the date on this device."))
+	captured = min(captured, now)
+	moment = frappe.utils.convert_utc_to_system_timezone(datetime.fromtimestamp(captured, tz=UTC))
+	return moment.replace(tzinfo=None, microsecond=0), (now - captured) > LATE_AFTER_SECONDS
+
+
+def _name(payload: dict, key: str) -> str:
+	"""A record name from the payload, as text and nothing else.
+
+	The payload is JSON, so a value can arrive as a dict or a list -- and
+	``frappe.db.exists`` and ``get_value`` read a dict as *filters*, with no row
+	scoping. Handed one, a handler would answer "is there a task of Thabo's
+	whose title starts with Impala" by which error it raised. Every name a
+	handler looks up comes through here.
+	"""
+	value = payload.get(key)
+	if value is None:
+		return ""
+	if not isinstance(value, str | int):
+		frappe.throw(_("That entry could not be read."), frappe.ValidationError)
+	return frappe.utils.cstr(value).strip()
+
+
+def _text(value, limit: int) -> str:
+	if value is not None and not isinstance(value, str | int | float):
+		frappe.throw(_("That entry could not be read."), frappe.ValidationError)
+	text = frappe.utils.cstr(value).strip()
+	if len(text) > limit:
+		frappe.throw(_("That is too long. Keep it under {0} characters.").format(limit))
+	return text
+
+
+def _as_html(text: str) -> str:
+	"""Plain text typed on a phone, as the rich-text fields store it."""
+	return frappe.utils.escape_html(text).replace("\n", "<br>")
+
+
+def _flag_offline(item: str, late: bool) -> None:
+	if late:
+		frappe.db.set_value("CRM Rep Plan Item", item, "captured_offline", 1)
+
+
+def _replay_log_activity(payload: dict, moment: datetime, late: bool) -> None:
+	# On an earlier day than today, by the site's calendar. Asked of the date,
+	# not of `late`: a visit captured at 23:52 and delivered at 00:03 is eleven
+	# minutes old and already "yesterday", and without this the day lock
+	# refused it for good.
+	past = moment.date() < frappe.utils.getdate()
+	if (
+		past
+		and past_days_locked()
+		and frappe.utils.now_datetime() - moment > timedelta(hours=OFFLINE_GRACE_HOURS)
+	):
+		frappe.throw(
+			_(
+				"This was captured more than {0} hours ago. Activities are logged on the day they happen."
+			).format(OFFLINE_GRACE_HOURS),
+			frappe.ValidationError,
+		)
+	log_activity(
+		organization=_name(payload, "organization") or None,
+		note=_text(payload.get("note"), NOTE_TEXT_LIMIT),
+		when=moment,
+		reference_doctype=_name(payload, "reference_doctype") or None,
+		reference_docname=_name(payload, "reference_docname") or None,
+		activity_type=_name(payload, "activity_type") or "Unplanned Meeting",
+		# flagged whenever the server did not witness the day it is dated
+		captured_offline=late or past,
+	)
+
+
+def _replay_complete_item(payload: dict, moment: datetime, late: bool) -> None:
+	item = _name(payload, "item")
+	# complete_item wants a time inside the item's own week. A Friday visit
+	# closed on Monday falls outside it, and then the planned day stands, as it
+	# does when the Planner is given no time at all.
+	week_start = frappe.db.get_value("CRM Rep Plan", _parent_of(item), "week_start")
+	when = None
+	if week_start:
+		start, end = week_of(frappe.utils.getdate(week_start))
+		if start <= moment.date() <= end:
+			when = str(moment)
+	complete_item(item, _text(payload.get("outcome"), NOTE_TEXT_LIMIT), when)
+	_flag_offline(item, late)
+
+
+def _replay_cancel_item(payload: dict, moment: datetime, late: bool) -> None:
+	item = _name(payload, "item")
+	cancel_item(item, _text(payload.get("reason"), NOTE_TEXT_LIMIT))
+	_flag_offline(item, late)
+
+
+def _parent_of(item: str) -> str | None:
+	return frappe.db.get_value("CRM Rep Plan Item", item, "parent") if item else None
+
+
+def _readable(doctype: str, name: str, allowed: tuple[str, ...]) -> tuple[str, str]:
+	"""A record the caller may attach something to, or a refusal that names nothing.
+
+	One exception for "no such record" and "not yours": two would tell a rep
+	which customer names exist outside their own book.
+	"""
+	if (
+		doctype not in allowed
+		or not name
+		or not frappe.db.exists(doctype, name)
+		or not frappe.has_permission(doctype, "read", name)
+	):
+		frappe.throw(_("That record is no longer available."), frappe.PermissionError)
+	return doctype, name
+
+
+def _replay_add_note(payload: dict, moment: datetime, late: bool) -> None:
+	doctype, name = _readable(
+		_name(payload, "reference_doctype"),
+		_name(payload, "reference_docname"),
+		NOTE_DOCTYPES,
+	)
+	content = _text(payload.get("content"), NOTE_TEXT_LIMIT)
+	if not content:
+		frappe.throw(_("Write the note first."), frappe.ValidationError)
+	title = _text(payload.get("title"), TITLE_LIMIT) or content.splitlines()[0][:TITLE_LIMIT]
+	frappe.get_doc(
+		{
+			"doctype": "FCRM Note",
+			"title": title,
+			"content": _as_html(content),
+			"reference_doctype": doctype,
+			"reference_docname": name,
+		}
+	).insert()
+
+
+def _replay_create_task(payload: dict, moment: datetime, late: bool) -> None:
+	title = _text(payload.get("title"), TITLE_LIMIT)
+	if not title:
+		frappe.throw(_("Give the task a title."), frappe.ValidationError)
+	task = {
+		"doctype": "CRM Task",
+		"title": title,
+		"status": "Todo",
+		"assigned_to": frappe.session.user,
+		"description": _as_html(_text(payload.get("description"), NOTE_TEXT_LIMIT)),
+	}
+	if payload.get("due_date"):
+		try:
+			due = frappe.utils.getdate(_name(payload, "due_date")[:10])
+		except Exception:
+			frappe.throw(_("That due date could not be read."), frappe.ValidationError)
+		task["due_date"] = datetime.combine(due, datetime.min.time()).replace(hour=9)
+	if payload.get("reference_docname"):
+		task["reference_doctype"], task["reference_docname"] = _readable(
+			_name(payload, "reference_doctype"),
+			_name(payload, "reference_docname"),
+			REFERENCE_DOCTYPES,
+		)
+	frappe.get_doc(task).insert()
+
+
+def _replay_close_task(payload: dict, moment: datetime, late: bool) -> None:
+	name = _name(payload, "task")
+	task = frappe.get_doc("CRM Task", name) if name and frappe.db.exists("CRM Task", name) else None
+	# The pack only ever offered the caller their own tasks. Missing and not
+	# yours get the same answer, for the reason _readable gives.
+	if not task or task.assigned_to != frappe.session.user or not task.has_permission("write"):
+		frappe.throw(_("That task is no longer available."), frappe.PermissionError)
+	if task.status == "Done":
+		frappe.throw(_("This task is already done."), frappe.ValidationError)
+	note = _text(payload.get("closing_note"), NOTE_TEXT_LIMIT)
+	if not note:
+		frappe.throw(_("Say how it was finished."), frappe.ValidationError)
+	task.status = "Done"
+	task.closing_note = note
+	task.save()
+
+
+ACTIONS = {
+	"log_activity": _replay_log_activity,
+	"complete_item": _replay_complete_item,
+	"cancel_item": _replay_cancel_item,
+	"add_note": _replay_add_note,
+	"create_task": _replay_create_task,
+	"close_task": _replay_close_task,
+}

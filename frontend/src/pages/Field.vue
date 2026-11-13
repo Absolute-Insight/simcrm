@@ -18,7 +18,9 @@
         class="mx-auto flex w-full max-w-2xl items-center justify-between gap-3 px-4 py-3"
       >
         <div class="min-w-0">
-          <div class="v-kpi-label">{{ __('Field mode') }}</div>
+          <div class="v-kpi-label whitespace-nowrap">
+            {{ __('Field mode') }}
+          </div>
           <h1
             class="truncate font-display text-xl font-semibold leading-tight tracking-tight text-ink-gray-9"
           >
@@ -26,6 +28,22 @@
           </h1>
         </div>
         <div class="flex shrink-0 items-center gap-1.5">
+          <!-- Only there when something is: unsent work, or work the server
+               refused. The second is the one that must not be missed. -->
+          <router-link
+            v-if="outboxPill"
+            :to="{ name: 'FieldOutbox' }"
+            class="flex min-h-9 items-center gap-1.5 rounded-full px-3 text-sm font-medium tabular-nums focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            :class="outboxPill.tone"
+            :aria-label="outboxPill.hint"
+          >
+            <component
+              :is="outboxPill.icon"
+              class="size-3.5 shrink-0"
+              aria-hidden="true"
+            />
+            <span>{{ outboxPill.label }}</span>
+          </router-link>
           <button
             type="button"
             class="v-glass flex min-h-9 items-center gap-1.5 rounded-full px-3 text-sm tabular-nums focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-default"
@@ -125,6 +143,8 @@
       </div>
     </main>
 
+    <FieldEntryDialog />
+
     <nav
       class="shrink-0 border-t bg-surface-base"
       :aria-label="__('Field mode')"
@@ -157,9 +177,11 @@
 </template>
 
 <script setup>
+import FieldEntryDialog from '@/components/Field/FieldEntryDialog.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { connectivity, probe } from '@/offline/connectivity'
+import { rejectedCount, waitingCount } from '@/offline/outbox'
 import { markFieldModeUsed, syncPack } from '@/offline/pack'
 import { useField } from '@/offline/useField'
 import { savedWhen } from '@/utils/fieldPack'
@@ -168,6 +190,7 @@ import { useRoute, useRouter } from 'vue-router'
 import LucideBuilding2 from '~icons/lucide/building-2'
 import LucideCalendarDays from '~icons/lucide/calendar-days'
 import LucideCloudAlert from '~icons/lucide/cloud-alert'
+import LucideCloudUpload from '~icons/lucide/cloud-upload'
 import LucideLayoutGrid from '~icons/lucide/layout-grid'
 import LucideListChecks from '~icons/lucide/list-checks'
 import LucideRefreshCw from '~icons/lucide/refresh-cw'
@@ -182,6 +205,7 @@ const SECTIONS = {
   FieldCustomers: 'FieldCustomers',
   FieldCustomer: 'FieldCustomers',
   FieldTasks: 'FieldTasks',
+  FieldOutbox: 'Field',
 }
 
 const tabs = computed(() =>
@@ -192,8 +216,37 @@ const tabs = computed(() =>
   ].map((tab) => ({ ...tab, active: SECTIONS[route.name] === tab.name })),
 )
 
-const title = computed(
-  () => tabs.value.find((tab) => tab.active)?.label ?? __('Field mode'),
+const outboxPill = computed(() => {
+  if (rejectedCount.value) {
+    return {
+      // short: on a phone it shares one line with the title and the sync
+      // pill. The outbox screen it opens says the rest.
+      label: __('{0} not sent', [rejectedCount.value]),
+      hint:
+        rejectedCount.value === 1
+          ? __('1 entry was not accepted and needs your attention')
+          : __('{0} entries were not accepted and need your attention', [
+              rejectedCount.value,
+            ]),
+      icon: LucideCloudAlert,
+      tone: 'bg-surface-red-1 text-ink-red-9',
+    }
+  }
+  if (waitingCount.value) {
+    return {
+      label: __('{0} to send', [waitingCount.value]),
+      hint: __('{0} waiting to be sent', [waitingCount.value]),
+      icon: LucideCloudUpload,
+      tone: 'bg-surface-orange-1 text-ink-orange-9',
+    }
+  }
+  return null
+})
+
+const title = computed(() =>
+  route.name === 'FieldOutbox'
+    ? __('To send')
+    : tabs.value.find((tab) => tab.active)?.label ?? __('Field mode'),
 )
 
 function whenText(when) {

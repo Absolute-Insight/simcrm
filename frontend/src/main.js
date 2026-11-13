@@ -11,6 +11,7 @@ import { redirectIfSessionGone } from './utils/sessionExpiry'
 import { throughGate, watchConnectivity } from './offline/connectivity'
 import { saveBootSnapshot } from './offline/bootSnapshot'
 import { startFieldSync } from './offline/pack'
+import { startOutbox } from './offline/outbox'
 import { getSessionUser } from './utils/session'
 import { initSocket } from './socket'
 import router from './router'
@@ -109,6 +110,7 @@ function startOfflineSupport() {
   }
   watchConnectivity()
   startFieldSync()
+  startOutbox()
 }
 
 function showConnectOnceNotice() {

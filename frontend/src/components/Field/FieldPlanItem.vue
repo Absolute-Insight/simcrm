@@ -52,17 +52,51 @@
         >
           {{ text.detail }}
         </p>
+        <div
+          v-if="item.pending || item.captured_offline"
+          class="mt-2 flex items-center gap-1.5 text-sm text-ink-gray-6"
+        >
+          <component
+            :is="item.pending ? LucideCloudUpload : LucideCloudOff"
+            class="size-3.5"
+            aria-hidden="true"
+          />
+          {{ item.pending ? __('Waiting to send') : __('Logged offline') }}
+        </div>
+        <!-- Only an item still open, and only where the screen asked: a
+             customer's history is a record, not a to-do list. -->
+        <div
+          v-if="actions && item.status === 'Planned' && !item.pending"
+          class="mt-2.5 flex flex-wrap gap-2"
+        >
+          <!-- Not for a week that has not begun: the server closes an item
+               at a time inside its own week, and there is none yet. It can
+               still be cancelled. -->
+          <Button
+            v-if="hasBegun"
+            :label="__('Log outcome')"
+            @click="openFieldDialog('complete', { item })"
+          />
+          <Button
+            variant="ghost"
+            :label="__('Cancel')"
+            @click="openFieldDialog('cancel', { item })"
+          />
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
+import { openFieldDialog } from '@/offline/fieldDialog'
 import { useField } from '@/offline/useField'
 import { planItemText, shortDate } from '@/utils/fieldPack'
-import { activityLabel } from '@/utils/planner'
+import { activityLabel, mondayOf } from '@/utils/planner'
 import { statusColor, statusLabel, typeIcon } from '@/utils/plannerDisplay'
 import { computed } from 'vue'
+import LucideCloudOff from '~icons/lucide/cloud-off'
+import LucideCloudUpload from '~icons/lucide/cloud-upload'
 
 const props = defineProps({
   item: { type: Object, required: true },
@@ -70,9 +104,16 @@ const props = defineProps({
   showCustomer: { type: Boolean, default: true },
   /* On where rows from different days share a list. */
   showDate: { type: Boolean, default: false },
+  /* Offer "Log outcome" and "Cancel" on an item that is still open. */
+  actions: { type: Boolean, default: false },
 })
 
-const { index } = useField()
+const { index, today } = useField()
+
+const hasBegun = computed(
+  () =>
+    !props.item.week_start || props.item.week_start <= mondayOf(today.value),
+)
 
 const customer = computed(() => index.value.byName.get(props.item.organization))
 const known = computed(() => !!customer.value)

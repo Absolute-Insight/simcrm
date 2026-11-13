@@ -46,6 +46,7 @@ ITEM_FIELDS = (
 	"fulfilled_by_doctype",
 	"fulfilled_by",
 	"manual_override",
+	"captured_offline",
 	"suggestion",
 )
 
@@ -219,6 +220,7 @@ def _stage_items(plan, items: list[dict]) -> set[str]:
 				"fulfilled_by_doctype": existing.fulfilled_by_doctype,
 				"fulfilled_by": existing.fulfilled_by,
 				"manual_override": existing.manual_override,
+				"captured_offline": existing.captured_offline,
 			}
 		staged.append(clean)
 
@@ -636,6 +638,8 @@ def clear_override(item: str):
 		{
 			"status": "Planned",
 			"manual_override": 0,
+			# what was captured offline was the outcome being withdrawn here
+			"captured_offline": 0,
 			"outcome": None,
 			"fulfilled_by_doctype": None,
 			"fulfilled_by": None,
@@ -979,8 +983,30 @@ def log_unplanned_visit(
 	reference_docname: str | None = None,
 	activity_type: str = "Visit",
 ):
+	"""Record an activity that was never planned, as already done. See :func:`log_activity`."""
+	return log_activity(organization, note, when, reference_doctype, reference_docname, activity_type)
+
+
+def log_activity(
+	organization: str | None = None,
+	note: str | None = None,
+	when=None,
+	reference_doctype: str | None = None,
+	reference_docname: str | None = None,
+	activity_type: str = "Visit",
+	*,
+	captured_offline: bool = False,
+):
 	"""Record an activity that was never planned -- a rep called to site for a
 	breakdown, a delivery dropped off, a phone call -- as already done, in one step.
+
+	Not whitelisted, and ``captured_offline`` is why: it marks an entry a device
+	captured with no connection and is replaying now (``crm.api.offline.replay``,
+	which has already bounded how old ``when`` may be). Such an entry is let past
+	"activities are logged on the day they happen" -- the rep did log it on the
+	day, on a phone that could not say so -- and the row is flagged, so a manager
+	reading the week can tell the device's word from the server's. A request can
+	never set it: the whitelisted door above does not pass it.
 
 	A visit, delivery or unplanned meeting creates the calendar Event the matcher
 	would have looked for, against the customer; every kind gets a plan item that
@@ -1008,7 +1034,7 @@ def log_unplanned_visit(
 		# was written straight in as Done and inflated adherence until its date
 		# came round
 		frappe.throw(_("A visit cannot be logged before it happens."), frappe.ValidationError)
-	if past_days_locked() and when_dt.date() < frappe.utils.getdate():
+	if past_days_locked() and not captured_offline and when_dt.date() < frappe.utils.getdate():
 		frappe.throw(
 			_("Activities are logged on the day they happen. {0} has passed.").format(
 				frappe.utils.formatdate(when_dt.date())
@@ -1044,6 +1070,7 @@ def log_unplanned_visit(
 				"reference_docname": reference_docname,
 				"status": "Done",
 				"manual_override": 1,
+				"captured_offline": 1 if captured_offline else 0,
 				"fulfilled_by_doctype": "Event" if event else None,
 				"fulfilled_by": event,
 			},

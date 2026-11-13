@@ -15,6 +15,14 @@
 - **A cold start with no network works**, including after the phone has
   closed the app, once the device has loaded Vectora online a single time.
   A device that never has shows "open it once with a connection".
+- **Capture works offline.** *Log activity* (on My week and on a customer),
+  *Log outcome* / *Cancel* on a planned item, *Add note* on a customer or one
+  of its open deals, *New task*, *Mark as done* on a task. Each is saved on
+  the device at once and shows where it belongs immediately, marked "Waiting
+  to send"; it is sent when there is a connection. A header pill counts what
+  is waiting, and turns red for anything the server refused.
+- **To send** (`/crm/field/outbox`): what is waiting and what was refused,
+  with the server's reason, and *Send again* / *Discard* for each.
 - Everything else — dashboard, reports, assistant, e-mail, WhatsApp, deal
   editing, team week, settings — is online only, by decision.
 
@@ -103,6 +111,42 @@ alike, so the offline path is the everyday path. It syncs on start, on
 reconnect, when the tab comes back, and every 10 minutes; automatically only
 on a phone-width layout or a device that has opened field mode.
 
+### 4. The outbox (`src/offline/outbox.js`, `crm.api.offline.replay`)
+
+Every write the Field screens make goes through the outbox, **online too** —
+stored, then sent — so the path that runs at a mine is the one that runs
+every day. An entry is `{id, action, payload, captured_at}`; the id is made
+once on the device and sent with every attempt.
+
+`replay()` applies an entry **exactly once**. It inserts a `CRM Offline
+Receipt` named by the id in the same transaction as the work: both are
+stored, or the handler threw and neither is. A second copy finds the receipt
+(or loses the race for its primary key) and is answered `duplicate`. The
+action is one of six in `ACTIONS` — it is not a method dispatcher — and each
+handler checks permission as the session user, as the endpoint it stands in
+for does. Receipts are purged after 90 days.
+
+`captured_at` is the device's clock corrected by the handshake's skew. It is
+never accepted in the future (five minutes of tolerance, then clamped).
+**It buys one thing**: with *Plan only for today or later* on, an activity
+captured offline is accepted up to `OFFLINE_GRACE_HOURS` (72) after the fact,
+where the online door refuses yesterday. Anything that took more than 15
+minutes to arrive, **or is dated on an earlier day than the one it arrived
+on** (a visit captured at 23:52 and delivered at 00:03), is flagged
+`captured_offline` on its plan item — server-
+owned like `manual_override`, shown in the Planner and the team week — so a
+manager can tell the device's word from the server's. The whitelisted
+`log_unplanned_visit` cannot pass that flag; only `log_activity`, which is
+not whitelisted, takes it.
+
+On the device, a failed send is one of two things (`failureKind`): a
+**refusal** (403/404/409/417) marks the entry `rejected` with the server's
+message and the run moves on; **anything else** — no network, 5xx, 429, a
+lapsed session — stops the run with the rest still pending, in order. A sent
+entry stays as `sent`, still laid over the pack (`applyOutbox`), until the
+next pack sync brings the server's own version; then it is deleted. Rejected
+entries are never shown as done anywhere but the outbox.
+
 ## What is on the device, and when it goes
 
 | Store | Holds | Cleared |
@@ -110,7 +154,7 @@ on a phone-width layout or a device that has opened field mode.
 | localStorage `crm-offline-boot` | boot values, no token | logout from the app, lost session, another user, a refused handshake |
 | cookie `crm_field_user` | the signed-in user's id | any logout (server hook); expires after 14 days |
 | IndexedDB `vectora-field-pack` | the pack | the same, and after `PACK_MAX_AGE_DAYS` (14) without a sync |
-| IndexedDB `vectora-field-outbox` | work the server has not seen (phase 2) | only by a successful sync or the rep discarding it |
+| IndexedDB `vectora-field-outbox` | work the server has not seen | only by a confirmed send or the rep discarding it; never by logout, and another user's entries are neither shown nor sent |
 
 The store clears go through `clearOfflineCache()` / `claimOfflineCache()`.
 A logout from the **desk** runs none of that: the data stays on disk until
@@ -133,5 +177,15 @@ any list that hit its cap.
 - **QA needs a secure context and the `Service-Worker-Allowed: /crm` header**,
   which `bench serve` does not send. Put a proxy that adds it in front, on
   `localhost`, and drive it with Playwright's `context.setOffline(true)`.
+- **Every record name a handler looks up goes through `_name()`.** The
+  payload is JSON; `frappe.db.exists` and `get_value` read a dict as unscoped
+  filters, which turns "missing vs not yours" into a probe over other reps'
+  rows. For the same reason a handler raises **one** exception for both.
+- **A new offline action** needs four things: a handler in `ACTIONS`, a case
+  in `entryProblem` and `applyOutbox` (`utils/fieldOutbox.js`), and a form in
+  `FieldEntryDialog.vue`. Never route one to a whitelisted function that
+  takes a client-settable "captured offline" argument.
+- **`captured_offline` is server-owned**: it is in `SERVER_ITEM_FIELDS`, and
+  `_stage_items` must carry it across a `save_plan` like `manual_override`.
 - iOS evicts storage for sites not added to the home screen: iPhone reps must
   install the app.

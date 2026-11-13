@@ -81,12 +81,16 @@ gotcha, not a location, and it stays in `AGENTS.md`.
 ### Field mode (offline)
 | File | Role |
 |---|---|
-| `crm/api/offline.py` | `get_pack` — the permission-scoped snapshot a phone carries; `handshake` — CSRF token + server clock for a cached shell |
+| `crm/api/offline.py` | `get_pack` — the permission-scoped snapshot a phone carries; `handshake` — CSRF token + server clock for a cached shell; `replay` — applies one outbox entry exactly once |
 | `frontend/offlineShell.js` | Vite plugin: writes `shell.html`, the built page with the Jinja boot block replaced by a loader |
 | `frontend/public/field-sw.js` | Service-worker fragment: network-first navigations under `/crm`, falling back to the precached shell |
 | `frontend/src/offline/bootSnapshot.js` | The boot a shell starts from (no CSRF token), and the inline loader that restores it |
 | `frontend/src/offline/connectivity.js` | `connectivity.online`, `probe()`, `throughGate()` — wraps the resource fetcher and `call()` |
 | `frontend/src/offline/pack.js` | The pack on the device: load, sync, expiry, background refresh |
+| `frontend/src/offline/outbox.js` | The outbox: `enqueue`, `flushOutbox`, retry/discard; every Field write goes through it |
+| `frontend/src/utils/fieldOutbox.js` | Pure outbox rules: validation, `applyOutbox` overlay, `failureKind` |
+| `frontend/src/components/Field/FieldEntryDialog.vue` | The one capture dialog (log, outcome, cancel, note, task) |
+| `crm/fcrm/doctype/crm_offline_receipt/` | One row per replayed entry: what makes a retry a no-op |
 | `frontend/src/offline/db.js` | The two IndexedDB stores (pack, outbox) and when each is cleared |
 | `frontend/src/utils/fieldPack.js` | Pure helpers: index by customer, search, expiry, display |
 | `frontend/src/pages/Field.vue` + `components/Field/` | The standalone Field surface: week, customers, customer, tasks |
