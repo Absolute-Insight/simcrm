@@ -93,6 +93,18 @@ services:
       - --collation-server=utf8mb4_unicode_ci
       - --skip-character-set-client-handshake
       - --skip-innodb-read-only-compressed
+      # The stock image leaves InnoDB on its 128 MB default, so in a 1 GB
+      # container nine tenths of the memory it was given sat unused while every
+      # read past the first 128 MB of hot pages went to disk. 384M is well
+      # under half the limit on purpose: the pool is not all MariaDB allocates
+      # (per-connection sort and join buffers, the table cache, in-memory
+      # temporary tables), and a database that is OOM-killed is a far worse
+      # outcome than one that reads from disk. Raise it together with
+      # DB_MEMORY_LIMIT, keeping the pool at or below about half of the limit
+      # -- see "Sizing the database" in README.md for what to measure first.
+      # It changes no data on disk; it takes effect when the container is next
+      # recreated.
+      - --innodb-buffer-pool-size=${DB_INNODB_BUFFER_POOL_SIZE:-384M}
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
     volumes:
@@ -100,13 +112,35 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1g
+          memory: ${DB_MEMORY_LIMIT:-1g}
           cpus: "1.5"
 
   redis-cache:
-    image: redis:6.2-alpine
+    # By digest, for the reason `db` is: `6.2-alpine` is a moving tag, and a
+    # tag that moved is an unannounced recreate on the next `up -d`. Resolved
+    # 2026-11-13 (6.2.24) with
+    #   docker buildx imagetools inspect redis:6.2-alpine --format '{{.Manifest.Digest}}'
+    image: redis:6.2-alpine@sha256:3f9c6e23ed6bea3b41d0ef709fc164c1a0b7c00d5a21a60e0e9c33ada5496881
     logging: *logging
     restart: unless-stopped
+    # Bounded, and allowed to evict. A bare redis-server has no maxmemory, so
+    # the cache grew until it met the 256m ceiling below and was OOM-killed --
+    # a cold cache and a burst of errors where an eviction would have done.
+    # This is what bench's own generated redis_cache.conf does: a ceiling,
+    # allkeys-lru, and no snapshots (a cache is disposable, and the fork a
+    # snapshot takes is memory this container does not have to spare). The
+    # ceiling has to stay below the container limit; redis needs room above
+    # its data for client buffers and fragmentation.
+    #
+    # Never copy this to redis-queue: evicting there deletes queued jobs.
+    command:
+      - redis-server
+      - --maxmemory
+      - ${REDIS_CACHE_MAXMEMORY:-192mb}
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -120,13 +154,16 @@ services:
           cpus: "0.5"
 
   redis-queue:
-    image: redis:6.2-alpine
+    image: redis:6.2-alpine@sha256:3f9c6e23ed6bea3b41d0ef709fc164c1a0b7c00d5a21a60e0e9c33ada5496881
     logging: *logging
     restart: unless-stopped
     # Append-only, not the default snapshot rules. This instance holds the job
     # queue and the socketio channel: with RDB alone a crash or an OOM at the
     # 256m ceiling silently drops up to a minute of enqueued work -- queued
     # email, automation actions, an ERP sync somebody pressed Sync Now for.
+    #
+    # No maxmemory and no eviction policy here, deliberately: redis-cache has
+    # both, and on this instance an evicted key is a job that never runs.
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-queue-data:/data

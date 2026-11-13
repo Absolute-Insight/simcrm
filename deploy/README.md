@@ -410,7 +410,74 @@ the host that holds the data.
 
 The same digest is pinned in `.devcontainer/docker-compose.yml` and in the
 three CI workflows that run a database. Bump all five together, or a schema bug
-gets to hide behind "works on my machine".
+gets to hide behind "works on my machine". Dependabot now proposes digest and
+patch bumps for the two compose files (`.github/dependabot.yml`); it does not
+edit the three workflows, so finish those in the same PR, and treat the PR as
+the start of the procedure above, not as a routine merge.
+
+**MariaDB 10.6 is past its upstream end of life** (July 2026), so the series
+will receive no further fixes and the patch bump above has nowhere left to go.
+The way out is the minor bump to an LTS series (10.11 or 11.4), which is the
+`mariadb-upgrade` case just described: rehearse it on a restore of a real
+backup, then schedule it. It is deliberately not something Dependabot will
+propose.
+
+### Sizing the database
+
+`db` runs with a 384 MB InnoDB buffer pool inside a 1 GB container. Both are
+settings in `.env`:
+
+| Key | Default | What it is |
+|---|---|---|
+| `DB_INNODB_BUFFER_POOL_SIZE` | `384M` | Memory InnoDB may use to cache table and index pages |
+| `DB_MEMORY_LIMIT` | `1g` | The container's ceiling; the kernel kills MariaDB if it gets there |
+
+Up to v3.30.0 the pool was InnoDB's stock 128 MB, with most of the container's
+gigabyte unused: every read past the hottest 128 MB of pages went to disk. The
+default is conservative on purpose. The pool is not all MariaDB allocates —
+each connection brings sort and join buffers and in-memory temporary tables,
+and the table cache grows with frappe's several hundred tables — and a
+database that is OOM-killed mid-write is a far worse outcome than one that
+reads from disk. **Keep the pool at or below about half of the limit**, and
+raise the two together.
+
+Measure before raising either:
+
+```bash
+# how big the data is -- the most a pool could usefully hold
+docker compose exec backend bench --site <site> mariadb -e "
+  SELECT ROUND(SUM(data_length + index_length) / 1048576) AS data_mb
+  FROM information_schema.tables WHERE table_schema = DATABASE();"
+
+# how often a read misses the pool: reads / read_requests, since the last start
+docker compose exec backend bench --site <site> mariadb -e "
+  SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool_read%';"
+
+# what the container is actually using against its limit
+docker stats --no-stream $(docker compose ps -q db)
+```
+
+If the data is smaller than the pool, there is nothing to gain. If
+`Innodb_buffer_pool_reads` is more than a percent or so of
+`Innodb_buffer_pool_read_requests` after a normal working day, the working set
+does not fit: on a host with memory to spare set, for example,
+`DB_MEMORY_LIMIT=2g` and `DB_INNODB_BUFFER_POOL_SIZE=1G`.
+
+Changing either value recreates the `db` container on the next `docker compose
+up -d` — a cold restart of the database, so do it in a maintenance window, with
+a backup in front of it. Nothing on disk changes, and going back is the same
+edit reversed. (The pool is also a dynamic variable — `SET GLOBAL
+innodb_buffer_pool_size = ...` as the MariaDB root user resizes it on a running
+server — but that does not survive a restart and does not move the container's
+limit, so it is for trying a value, not for keeping one.)
+
+`redis-cache` is bounded the same way: `REDIS_CACHE_MAXMEMORY` (default
+`192mb`, under the container's 256 MB) is where it starts evicting the least
+recently used keys instead of growing until the kernel kills it. It no longer
+writes snapshots, so it starts empty after a restart — which is what a cache is
+for, and what `bench migrate` does to it on every upgrade anyway. `redis-queue`
+is deliberately left alone: it has no ceiling of its own and no eviction,
+because a key evicted there is a queued job that never runs.
 
 ### Maintenance mode lags by a minute
 
