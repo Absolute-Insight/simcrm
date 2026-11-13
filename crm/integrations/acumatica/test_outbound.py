@@ -774,6 +774,24 @@ class TestCreateSalesQuote(FrappeTestCase):
 		client.put.assert_not_called()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_line_with_no_quantity_refuses_the_quote_instead_of_sending_one_unit(self, ClientCls):
+		"""Qty is a Float with no minimum, and `row.qty or 1` sent a line the rep had
+		zeroed as one unit at the full price -- in a document that goes to a customer."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		_org, deal = _mapped_deal()
+		for qty in (0, -2):
+			with self.subTest(qty=qty):
+				frappe.db.set_value("CRM Products", deal.products[0].name, "qty", qty)
+				with self.assertRaises(frappe.ValidationError) as ctx:
+					outbound.create_sales_quote_from_deal(deal.name)
+				self.assertIn("Widget", str(ctx.exception))
+				self.assertIn("quantity", str(ctx.exception))
+		client.put.assert_not_called()
+		self.assertIsNone(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_the_put_gives_up_before_the_proxy_does(self, ClientCls):
 		"""At WRITE_TIMEOUT (120s) behind nginx's 120s PROXY_READ_TIMEOUT the proxy
 		answered first: the rep got a bare gateway error, never the warning that the

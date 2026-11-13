@@ -7,7 +7,7 @@ import frappe
 import requests
 from frappe import _
 from frappe.query_builder.functions import Max
-from frappe.utils import add_days, cint, now_datetime
+from frappe.utils import add_days, cint, flt, now_datetime
 
 from crm.agent.doctype.crm_agent_settings.crm_agent_settings import DEFAULT_PROXY_READ_TIMEOUT
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
@@ -1152,6 +1152,7 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 	products = deal.get("products") or []
 	details = []
 	unlinked = []
+	unquantified = []
 	# CRM Deal's child table is `products` (CRM Products rows); the row's link to
 	# the CRM Product is `product_code`, the quantity field is `qty`.
 	for row in products:
@@ -1166,9 +1167,15 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 			# what the rep typed: a None in the list crashed the join below.
 			unlinked.append(row.product_code or row.product_name or _("a line with no product"))
 			continue
+		if row.qty is not None and flt(row.qty) <= 0:
+			# `row.qty or 1` sent a line the rep had zeroed as one unit at full price.
+			# Leaving it out is the partial order refused above, and what Acumatica
+			# makes of a quantity of 0 is its own affair: the rep says which they meant.
+			unquantified.append(row.product_name or row.product_code)
+			continue
 		line = {
 			"InventoryID": inventory_id,
-			"OrderQty": row.qty or 1,
+			"OrderQty": 1 if row.qty is None else row.qty,
 			"UnitPrice": row.rate,
 			"DiscountPercent": row.discount_percentage,
 		}
@@ -1182,6 +1189,13 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 				"These products are not linked to Acumatica inventory items: {0}. "
 				"Run a backfill or link them, then try again."
 			).format(", ".join(unlinked))
+		)
+	if unquantified:
+		frappe.throw(
+			_(
+				"These lines have no quantity: {0}. Give each a quantity above zero, or remove "
+				"the line from the deal, then try again."
+			).format(", ".join(unquantified))
 		)
 
 	# Acumatica books a quote in its customer's currency and reads every UnitPrice in
