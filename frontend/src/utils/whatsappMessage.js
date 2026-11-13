@@ -22,10 +22,22 @@ const HELD = new RegExp(`${HELD_OPEN}(\\d+)${HELD_CLOSE}`, 'g')
 const CODE = /```([\s\S]+?)```|`([^`\n]+)`/g
 // A link, as typed: http(s):// or www. up to the next space. An underscore or
 // tilde in a path is part of the address, not markup -- formatted, the link a
-// rep copies out of the thread is not the one that was sent.
-const URL = /\b(?:https?:\/\/|www\.)\S+/gi
+// rep copies out of the thread is not the one that was sent. It stops at a
+// stand-in as well: code typed straight after a link is its own span, and a
+// stand-in swallowed into a held link would never be put back.
+const URL = new RegExp(
+  `\\b(?:https?:\\/\\/|www\\.)[^\\s${HELD_OPEN}${HELD_CLOSE}]+`,
+  'gi',
+)
 // ...less what sentence punctuation or a closing marker left on its end.
-const URL_TAIL = /[.,;:!?)*_~]+$/
+const URL_TAIL = new Set('.,;:!?)*_~')
+
+/** `url` and the punctuation after it, split by walking back from the end. */
+function splitLink(url) {
+  let end = url.length
+  while (end > 0 && URL_TAIL.has(url[end - 1])) end--
+  return [url.slice(0, end), url.slice(end)]
+}
 
 const TAGS = { '*': 'b', _: 'i', '~': 's' }
 const WORD = /[\p{L}\p{N}]/u
@@ -45,43 +57,58 @@ const isSpace = (char) => char === undefined || /\s/.test(char)
  * Read left to right, and a pair's inside is formatted on its own: a marker
  * that opens inside a pair and closes outside it (`*a _b* c_`) stays text, so
  * the tags written are always properly nested. Nothing written is read again.
+ *
+ * One pass over the line. Where each marker can close is worked out once, up
+ * front, and each marker keeps its place in that list as the line is read --
+ * looking ahead for a closer from every opener made a long line of openers
+ * that never close (" *a *a *a ...") quadratic, seconds for a message of a
+ * hundred kilobytes. A pair nests at most three deep, one per marker: the
+ * inside of a pair holds no closer of its own marker.
  */
 function inline(text) {
-  let out = ''
-  let from = 0
-  for (let i = 0; i < text.length; i++) {
-    const marker = text[i]
-    if (!TAGS[marker]) continue
-    const opens =
-      !isWord(text[i - 1]) &&
-      text[i - 1] !== marker &&
-      !isSpace(text[i + 1]) &&
-      text[i + 1] !== marker
-    if (!opens) continue
-    const close = closing(text, marker, i + 2)
-    if (close === -1) continue
-    const tag = TAGS[marker]
-    out += `${text.slice(from, i)}<${tag}>${inline(text.slice(i + 1, close))}</${tag}>`
-    from = close + 1
-    i = close
-  }
-  return out + text.slice(from)
-}
-
-/** Where the pair `marker` opened closes, at or after `start`, or -1. */
-function closing(text, marker, start) {
-  for (let j = start; j < text.length; j++) {
+  const closers = { '*': [], _: [], '~': [] }
+  for (let j = 1; j < text.length; j++) {
+    const marker = text[j]
     if (
-      text[j] === marker &&
+      TAGS[marker] &&
       !isSpace(text[j - 1]) &&
       text[j - 1] !== marker &&
       text[j + 1] !== marker &&
       !isWord(text[j + 1])
     ) {
-      return j
+      closers[marker].push(j)
     }
   }
-  return -1
+  // per marker, the first closer not yet behind the reader
+  const next = { '*': 0, _: 0, '~': 0 }
+
+  const span = (start, end) => {
+    let out = ''
+    let from = start
+    for (let i = start; i < end; i++) {
+      const marker = text[i]
+      if (!TAGS[marker]) continue
+      const opens =
+        !isWord(text[i - 1]) &&
+        text[i - 1] !== marker &&
+        !isSpace(text[i + 1]) &&
+        text[i + 1] !== marker
+      if (!opens) continue
+      const places = closers[marker]
+      let at = next[marker]
+      while (at < places.length && places[at] < i + 2) at++
+      next[marker] = at
+      // none left, or the next one is outside the pair being read
+      if (at === places.length || places[at] >= end) continue
+      const close = places[at]
+      const tag = TAGS[marker]
+      out += `${text.slice(from, i)}<${tag}>${span(i + 1, close)}</${tag}>`
+      from = close + 1
+      i = close
+    }
+    return out + text.slice(from, end)
+  }
+  return span(0, text.length)
 }
 
 /**
@@ -107,8 +134,8 @@ export function formatWhatsAppMessage(message) {
     hold(`<code>${(block ?? span).replace(/\n/g, '<br>')}</code>`),
   )
   message = message.replace(URL, (url) => {
-    const tail = url.match(URL_TAIL)?.[0] ?? ''
-    return hold(url.slice(0, url.length - tail.length)) + tail
+    const [link, tail] = splitLink(url)
+    return hold(link) + tail
   })
 
   const lines = message.split('\n').map((line) => {

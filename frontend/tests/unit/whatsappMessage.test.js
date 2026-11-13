@@ -50,6 +50,10 @@ function shownText(html) {
 const OPEN = String.fromCharCode(0xe000)
 const CLOSE = String.fromCharCode(0xe001)
 const STAND_IN = new RegExp(`[${OPEN}${CLOSE}]`)
+const STAND_IN_ALL = new RegExp(`[${OPEN}${CLOSE}]`, 'g')
+// A message or its shown text with everything a rule may consume taken out:
+// the markers, the bullet and quote prefixes, and white space.
+const letters = (text) => text.replace(/[*_~`\->\s]/g, '')
 
 describe('formatWhatsAppMessage', () => {
   it("shows a stranger's markup as text", () => {
@@ -145,6 +149,31 @@ describe('formatWhatsAppMessage', () => {
     )
   })
 
+  it('keeps code typed straight after a link, and shows no stand-in', () => {
+    expect(formatWhatsAppMessage('https://x.com/`code`')).toBe(
+      'https://x.com/<code>code</code>',
+    )
+    expect(formatWhatsAppMessage('www.x.com/`a` and `b`')).toBe(
+      'www.x.com/<code>a</code> and <code>b</code>',
+    )
+    expect(formatWhatsAppMessage('`a`https://x.com/_b_`c`')).toBe(
+      '<code>a</code>https://x.com/_b_<code>c</code>',
+    )
+    expect(formatWhatsAppMessage('https://x.com/```a\nb```')).toBe(
+      'https://x.com/<code>a<br>b</code>',
+    )
+  })
+
+  it('trims only the punctuation after a link, however much there is', () => {
+    expect(formatWhatsAppMessage('(https://x.com/a_b_c)...!')).toBe(
+      '(https://x.com/a_b_c)...!',
+    )
+    expect(formatWhatsAppMessage('_see https://x.com/a_b_')).toBe(
+      '<i>see https://x.com/a_b</i>',
+    )
+    expect(formatWhatsAppMessage('https://...')).toBe('https://...')
+  })
+
   it('does not make half a pair of a doubled marker', () => {
     for (const plain of ['**bold**', '__x__', '~~gone~~', '***', '** a **']) {
       expect(formatWhatsAppMessage(plain)).toBe(plain)
@@ -224,6 +253,10 @@ describe('formatWhatsAppMessage', () => {
       '0',
       CLOSE,
       '<script>',
+      'https://x.com/',
+      'www.a.b/c',
+      'b',
+      '.',
       '"',
       "'",
     ]
@@ -246,6 +279,11 @@ describe('formatWhatsAppMessage', () => {
       box.innerHTML = html
       expect(box.innerHTML).toBe(html)
       expect(html).not.toMatch(STAND_IN)
+      // every character the sender typed is still there to read: the text
+      // shown is the text sent, less markers, line breaks and stand-ins
+      expect(letters(shownText(html))).toBe(
+        letters(message.replace(STAND_IN_ALL, '')),
+      )
     }
   })
 
@@ -262,5 +300,36 @@ describe('formatWhatsAppMessage', () => {
   it('takes an empty message', () => {
     expect(formatWhatsAppMessage(null)).toBe('')
     expect(formatWhatsAppMessage('')).toBe('')
+  })
+
+  // WhatsApp caps a message at 4,096 characters, but an imported or system
+  // body can be far longer, and the thread formats every bubble it draws.
+  // The bound is generous on purpose: these took seconds when the formatter
+  // looked ahead from every marker, and take a few milliseconds now.
+  describe('on a very long message', () => {
+    const KB150 = 150 * 1024
+    const fill = (piece) => piece.repeat(Math.ceil(KB150 / piece.length))
+    it.each([
+      ['openers that never close', fill(' *a')],
+      ['every marker, never closing', fill(' *a _b ~c')],
+      ['closers that never opened', fill('a* ')],
+      ['pairs, one after another', fill('*a* _b_ ~c~ ')],
+      ['a run of one marker', fill('*')],
+      ['a run of mixed markers', fill('*_~')],
+      ['backticks that never pair', fill('` ')],
+      ['a run of backticks', fill('`')],
+      ['code fences that never close', fill('``` a ')],
+      ['a link ending in a long run of punctuation', `https://${fill('.')}a`],
+      ['a link made of markers', `https://x.com/${fill('_a*')}`],
+      ['links, one after another', fill('www.a.b/_c_ ')],
+      ['many short lines', fill('- *a\n> _b\n')],
+      ['one long quoted line', `> ${fill(' *a')}`],
+    ])('%s', (_, message) => {
+      const started = performance.now()
+      const html = formatWhatsAppMessage(message)
+      expect(performance.now() - started).toBeLessThan(1000)
+      expect(html).not.toMatch(STAND_IN)
+      expect(letters(shownText(html))).toBe(letters(message))
+    })
   })
 })
