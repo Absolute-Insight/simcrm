@@ -256,7 +256,7 @@ SITEMAP_MAX_URLS = 200  # total <loc> entries collected across all fetched sitem
 
 def max_fetches(max_pages: int) -> int:
 	"""The most fetches one full enrichment run can make: robots.txt, the sitemaps, the
-	pages themselves, and -- when the crawl came up short -- ``probe_about_pages``'
+	pages themselves (``crawl`` stops at ``max_pages`` page fetches, kept or not), and -- when the crawl came up short -- ``probe_about_pages``'
 	second robots.txt and its About probes. The job's timeout is sized from this."""
 	return 1 + SITEMAP_MAX_SITEMAPS + max_pages + 1 + len(ABOUT_PROBE_PATHS)
 
@@ -393,8 +393,13 @@ def crawl(start_url, cfg, session=None, progress=None):
 			queued_from_sitemap.add(link)
 			queue.append((link, 1, ""))
 
+	# Fetches, not results: a page dropped after its fetch (a redirect onto one
+	# already crawled) has still cost a request, and the job's timeout is sized
+	# on ``max_fetches(max_pages)``. Counting results let a homepage of links
+	# that all redirect to "/" be fetched one by one until rq killed the job.
+	fetches = 0
 	try:
-		while queue and len(results) < max_pages:
+		while queue and fetches < max_pages:
 			# Pick the highest-priority queued URL (homepage first, then by keyword).
 			queue = deque(
 				sorted(
@@ -413,6 +418,7 @@ def crawl(start_url, cfg, session=None, progress=None):
 
 			if progress:
 				progress(f"Crawling {url}")
+			fetches += 1
 			page, soup = crawl_page(url, cfg, session=session)
 			resolved = normalize_url(page.url) if page.url else ""
 
@@ -423,7 +429,7 @@ def crawl(start_url, cfg, session=None, progress=None):
 					base_netloc = urlparse(page.url).netloc or base_netloc
 			else:
 				# A redirect can land here under a different requested URL (e.g.
-				# /contact.html -> /contact) -- drop the duplicate, no budget spent.
+				# /contact.html -> /contact) -- drop the duplicate. Its fetch is spent.
 				if resolved and resolved in visited_resolved:
 					continue
 				if soup is not None and page.url and not same_site(page.url, base_netloc):
