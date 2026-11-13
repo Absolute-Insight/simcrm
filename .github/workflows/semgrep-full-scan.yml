@@ -25,6 +25,7 @@ on:
         paths:
             - "**.py"
             - ".github/workflows/semgrep-full-scan.yml"
+            - ".github/helper/install-semgrep.sh"
 
 permissions:
     contents: read
@@ -47,11 +48,14 @@ jobs:
                   python-version: "3.14"
                   cache: pip
 
-            - name: Install Semgrep
-              run: pip install --upgrade semgrep
-
-            - name: Download Semgrep rules
-              run: git clone --depth 1 https://github.com/frappe/semgrep-rules.git frappe-semgrep-rules
+            # semgrep and frappe's rules, both pinned. This check runs on the
+            # commit a release is cut from, and the build guard refuses a
+            # commit with any failed check -- so an unpinned scanner or rule
+            # set could veto a release with no change in this repository. The
+            # pins and how to move them are in the helper, which linters.yml
+            # shares.
+            - name: Install Semgrep and fetch the rules
+              run: bash .github/helper/install-semgrep.sh frappe-semgrep-rules
 
             # `scan`, not `ci` -- `ci` diffs against the merge base and would
             # reproduce exactly the blind spot this job exists to cover.
