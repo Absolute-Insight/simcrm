@@ -78,6 +78,17 @@ class ReplayTestCase(IntegrationTestCase):
 		frappe.db.set_value("CRM Organization", doc.name, "account_owner", owner)
 		return doc.name
 
+	def refusal(self, call, *args) -> tuple[str, str]:
+		"""What a refused call answers: the exception and its words, nothing kept."""
+		frappe.db.savepoint("refusal")
+		try:
+			call(*args)
+		except Exception as exc:
+			frappe.db.rollback(save_point="refusal")
+			frappe.clear_messages()
+			return type(exc).__name__, str(exc)
+		self.fail("was not refused")
+
 	def visit(self, **overrides) -> dict:
 		return {
 			"activity_type": "Visit",
@@ -243,6 +254,37 @@ class CapturedTimeTest(ReplayTestCase):
 			with self.assertRaises(frappe.ValidationError):
 				replay(new_id(), "log_activity", self.visit(), rubbish)
 
+	def test_the_flag_is_the_servers_whatever_the_payload_says(self):
+		out = replay(new_id(), "log_activity", self.visit(captured_offline=0), ago(hours=3))
+		self.assertEqual(out["status"], "applied")
+		self.assertEqual(self.items()[0]["captured_offline"], 1)
+
+	def note(self) -> dict:
+		return {"reference_doctype": "CRM Organization", "reference_docname": self.org, "content": "x"}
+
+	def test_an_entry_older_than_the_receipts_is_refused(self):
+		# the receipt that would have said "already applied" is purged by now,
+		# so the server cannot tell this retry from a new entry
+		with self.assertRaises(frappe.ValidationError):
+			replay(new_id(), "add_note", self.note(), ago(days=RECEIPT_DAYS + 1))
+		self.assertFalse(frappe.db.count("FCRM Note", {"reference_docname": self.org}))
+
+	def test_an_entry_just_inside_the_receipts_is_taken(self):
+		out = replay(new_id(), "add_note", self.note(), ago(days=RECEIPT_DAYS - 1))
+		self.assertEqual(out["status"], "applied")
+
+	def test_an_old_entry_whose_receipt_is_still_there_is_a_duplicate_not_a_refusal(self):
+		from unittest.mock import patch
+
+		request_id, captured = new_id(), ago(days=3)
+		replay(request_id, "add_note", self.note(), captured)
+		with patch("crm.api.offline.RECEIPT_DAYS", 2):
+			again = replay(request_id, "add_note", self.note(), captured)
+			with self.assertRaises(frappe.ValidationError):
+				replay(new_id(), "add_note", self.note(), captured)
+		self.assertEqual(again["status"], "duplicate")
+		self.assertEqual(frappe.db.count("FCRM Note", {"reference_docname": self.org}), 1)
+
 	def test_the_flag_cannot_be_set_from_the_online_door(self):
 		# the whitelisted function takes no such argument: a request cannot pass it
 		with self.assertRaises(TypeError):
@@ -322,6 +364,35 @@ class PlannedItemTest(ReplayTestCase):
 		)
 		self.assertEqual(self.items()[0]["captured_offline"], 1)
 
+	def test_an_outcome_dated_an_earlier_day_is_flagged_however_fast_it_arrived(self):
+		# captured at 23:52, delivered at 00:03: not "late", and yesterday's
+		from unittest.mock import patch
+
+		today = str(frappe.utils.getdate())
+		done, dropped = (
+			row["name"]
+			for row in save_plan(
+				this_monday(),
+				[
+					{"activity_type": "Visit", "planned_date": today, "organization": self.org},
+					{"activity_type": "Call", "planned_date": today, "organization": self.org},
+				],
+			)["items"]
+		)
+		tomorrow = frappe.utils.getdate() + timedelta(days=1)
+		with (
+			patch(
+				"frappe.utils.getdate",
+				side_effect=lambda *a: frappe.utils.data.getdate(*a) if a else tomorrow,
+			),
+			patch("crm.api.rep_plan.MATCH_HORIZON_WEEKS", 520),
+		):
+			out = replay(new_id(), "complete_item", {"item": done, "outcome": "x"}, ago(seconds=30))
+			replay(new_id(), "cancel_item", {"item": dropped, "reason": "x"}, ago(seconds=30))
+		self.assertFalse(out["late"])
+		flags = {row["name"]: row["captured_offline"] for row in self.items()}
+		self.assertEqual((flags[done], flags[dropped]), (1, 1))
+
 	def test_a_cancellation_needs_its_reason(self):
 		item = self.plan_one()
 		with self.assertRaises(frappe.ValidationError):
@@ -345,8 +416,19 @@ class PlannedItemTest(ReplayTestCase):
 			replay(new_id(), "complete_item", {"item": item, "outcome": "Not mine"})
 
 	def test_an_item_that_is_gone_is_refused_not_fatal(self):
-		with self.assertRaises(frappe.exceptions.ValidationError):
+		with self.assertRaises(frappe.PermissionError):
 			replay(new_id(), "complete_item", {"item": "no-such-item", "outcome": "x"})
+
+	def test_an_item_that_is_gone_and_one_that_is_not_yours_are_the_same_answer(self):
+		item = self.plan_one()
+		frappe.set_user(OTHER)
+		for action, payload in (
+			("complete_item", {"outcome": "x"}),
+			("cancel_item", {"reason": "x"}),
+		):
+			gone = self.refusal(replay, new_id(), action, {"item": "no-such-item", **payload})
+			not_yours = self.refusal(replay, new_id(), action, {"item": item, **payload})
+			self.assertEqual(gone, not_yours)
 
 	def test_handing_it_back_to_the_matcher_clears_the_flag(self):
 		from crm.api.rep_plan import clear_override
@@ -406,6 +488,28 @@ class NotesAndTasksTest(ReplayTestCase):
 				)
 		with self.assertRaises(frappe.PermissionError):
 			replay(new_id(), "close_task", {"task": "999999999", "closing_note": "x"})
+
+	def test_an_activity_tells_no_more_about_a_customer_than_a_note_does(self):
+		# README trap: one exception for both. Two would let a rep work out
+		# which customer names and ids exist outside their own book.
+		for kind in ("Visit", "Call"):
+			missing = self.refusal(
+				replay,
+				new_id(),
+				"log_activity",
+				self.visit(activity_type=kind, organization="No Such Customer"),
+			)
+			not_yours = self.refusal(
+				replay, new_id(), "log_activity", self.visit(activity_type=kind, organization=self.foreign)
+			)
+			self.assertEqual(missing, not_yours)
+			self.assertNotIn(self.foreign, not_yours[1])
+
+	def test_nor_does_the_online_door(self):
+		missing = self.refusal(log_unplanned_visit, "No Such Customer", "x")
+		not_yours = self.refusal(log_unplanned_visit, self.foreign, "x")
+		self.assertEqual(missing, not_yours)
+		self.assertNotIn(self.foreign, not_yours[1])
 
 	def test_a_name_is_text_never_a_filter(self):
 		# frappe.db.exists reads a dict as filters, unscoped: a yes/no probe over
@@ -575,14 +679,26 @@ class PlanOfflineTest(ReplayTestCase):
 				replay(new_id(), "plan_item", {"activity_type": "Admin", **missing})
 		self.assertEqual(self.items(), [])
 
-	def test_a_visit_needs_a_customer_that_exists(self):
-		for organization in (None, "", "A Customer Deleted While Offline"):
+	def test_a_visit_needs_a_customer(self):
+		for organization in (None, ""):
 			with self.assertRaises(frappe.ValidationError):
 				replay(
 					new_id(),
 					"plan_item",
 					{"activity_type": "Visit", "planned_date": self.tomorrow(), "organization": organization},
 				)
+
+	def test_a_customer_that_is_gone_and_one_that_is_not_yours_are_the_same_answer(self):
+		# a call too: save_plan drops a customer that no longer exists and
+		# keeps the row, which told the two apart by succeeding
+		for kind in ("Visit", "Call"):
+			plan = {"activity_type": kind, "planned_date": self.tomorrow()}
+			gone = self.refusal(
+				replay, new_id(), "plan_item", plan | {"organization": "A Customer Deleted While Offline"}
+			)
+			not_yours = self.refusal(replay, new_id(), "plan_item", plan | {"organization": self.foreign})
+			self.assertEqual(gone, not_yours)
+			self.assertEqual(gone[0], "PermissionError")
 
 	def test_the_same_plan_entry_sent_twice_plans_once(self):
 		request_id = new_id()
