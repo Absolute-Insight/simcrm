@@ -39,31 +39,51 @@ which is never kept at rest. `BOOT_KEYS` mirrors `get_boot()`; a unit test
 reads `crm/www/crm.py` and fails when they drift.
 
 **Who the shell is for.** `user_id` is a session cookie, and a phone drops it
-when it closes the app. So the shell takes the cookie when there is one, and
-otherwise the *offline owner* — the user `utils/offlineCache.js` last claimed
-this device's stores for. A `Guest` cookie is the server saying "logged out"
-and is honoured. `getSessionUser()` and `offlineCacheGuard.js` both follow the
-loader's answer in shell mode; outside it nothing changed.
+when it closes the app. So the server also sets a persistent cookie,
+`crm_field_user`, on every `/crm` render (`remember_field_user` in
+`crm/www/crm.py`, 14 days) and deletes it in an `on_logout` hook
+(`crm.api.auth.forget_field_user`) — which runs for a logout from the desk
+too, where none of the app's code does. The shell takes `user_id` when there
+is one (`Guest` is honoured as logged out); otherwise `crm_field_user`,
+*provided* it matches the offline owner `utils/offlineCache.js` last claimed
+this device's stores for. Neither cookie authenticates anything: they decide
+whose saved copy to show until the server can be asked, and the first
+handshake settles it — a refusal, or a session that belongs to someone else,
+empties the stores and reloads (`handOver` in `connectivity.js`). The loader
+restores only `BOOT_KEYS`, never arbitrary keys from storage.
+
+A shell that cannot establish a user mounts nothing and shows "open it once
+with a connection"; the router guard does not send it to `/login`, which
+offline is the browser's error page.
 
 ### 2. Connectivity (`src/offline/connectivity.js`)
 
 `navigator.onLine` is not trusted to say "online" (one bar at a mine gate says
-yes and every request hangs); it *is* trusted to say "offline". The app is
-offline when a request fails the way a dead line fails, and online again only
-when a probe returns.
+yes and every request hangs); it *is* trusted to say "offline". **Only a
+probe changes the answer**: a request that dies starts one, and the app goes
+offline if that fails too. One dropped fetch on a laptop waking from sleep
+must not bounce someone into field mode.
 
 The probe is `GET crm.api.offline.handshake`: it proves the server is there,
-hands a shell its CSRF token, and carries the server clock (`skewMs`).
-`throughGate()` wraps **both** ways a request leaves the app — the resource
-fetcher (`main.js`) and `call()` (`lib/frappe-ui-compat/call.js`) — so
-offline a request fails at once as `offline` instead of hanging, and a shell
-never POSTs without a token. A 401/403 from the probe is the server
-answering: online, and off to the login page.
+hands a shell its CSRF token, carries the server clock (`skewMs`), and names
+the session's user. `throughGate()` wraps **both** ways a request leaves the
+app — the resource fetcher (`main.js`) and `call()`
+(`lib/frappe-ui-compat/call.js`) — so offline a request fails at once as
+`offline` instead of hanging, and a shell never POSTs without a token. After
+a failed probe requests fail fast for a few seconds rather than each probing.
+A 401/403 is the server answering: it surfaces as a permission error, not as
+offline, and is not retried.
+
+The router asks through `reachableForNavigation()`, which waits up to 2.5 s
+for a probe: a slow line that answers keeps the page that was asked for; a
+dead one lands on Field, with the intended route kept for "Open the full app".
 
 ### 3. The pack (`crm/api/offline.py`, `src/offline/pack.js`)
 
 `get_pack()` is the snapshot: three weeks of the caller's plan, the customers
-they may see with address, contacts and open deals, 90 days of their own
+they may see with address and open deals, the contacts *at those customers*
+(not every contact the rep can read — a phone has no use for the rest, and
+what is not on it cannot be lost with it), 90 days of their own
 visit history and notes, their open tasks. **Every list is `frappe.get_list`**,
 so `crm/permissions` scopes the pack exactly as it scopes the app; the pack
 is not a second access path. Rich text is stripped to plain text and clipped
@@ -83,11 +103,18 @@ on a phone-width layout or a device that has opened field mode.
 
 | Store | Holds | Cleared |
 |---|---|---|
-| localStorage `crm-offline-boot` | boot values, no token | logout, lost session, another user |
+| localStorage `crm-offline-boot` | boot values, no token | logout from the app, lost session, another user, a refused handshake |
+| cookie `crm_field_user` | the signed-in user's id | any logout (server hook); expires after 14 days |
 | IndexedDB `vectora-field-pack` | the pack | the same, and after `PACK_MAX_AGE_DAYS` (14) without a sync |
 | IndexedDB `vectora-field-outbox` | work the server has not seen (phase 2) | only by a successful sync or the rep discarding it |
 
-All three clears go through `clearOfflineCache()` / `claimOfflineCache()`.
+The store clears go through `clearOfflineCache()` / `claimOfflineCache()`.
+A logout from the **desk** runs none of that: the data stays on disk until
+the next `/crm` load or the 14-day expiry, but the shell will not open for
+it, because the cookie is gone. A manager who sees every record carries
+every record, up to the caps — that is the app's own rule, not narrowed here.
+The expiry is re-checked whenever the tab comes back, and a `syncedAt` ahead
+of the clock counts as expired.
 Caps and windows (`HISTORY_DAYS`, `PACK_MAX_AGE_DAYS`, row limits) are
 constants at the top of `crm/api/offline.py`; `truncated` in the pack names
 any list that hit its cap.
