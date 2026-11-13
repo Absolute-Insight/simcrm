@@ -6,7 +6,7 @@ import { viewsStore } from '@/stores/views'
 import { accessStore } from '@/stores/access'
 import { reloadOnceForStaleChunk } from '@/utils/staleChunk'
 import { MOBILE_BREAKPOINT_PX } from '@/composables/settings'
-import { connectivity } from '@/offline/connectivity'
+import { connectivity, reachableForNavigation } from '@/offline/connectivity'
 
 let personaChecked = false
 export const PERSONA_DONE_KEY = 'crm_persona_captured'
@@ -261,6 +261,14 @@ async function viewsLoaded(views) {
 router.beforeEach(async (to, from, next) => {
   router.previousRoute = from
 
+  // A cached shell that could not establish a user has put up its "open it
+  // once with a connection" notice (main.js) and mounts nothing. Sending it to
+  // /login, as a logged-out page normally is, leaves the worker's scope: with
+  // no network that is the browser's own error page in place of the notice.
+  if (window.__crm_offline_shell && !window.__crm_offline_user) {
+    return next(false)
+  }
+
   const { isLoggedIn, user } = sessionStore()
   const { users, isCrmUser, isAdmin } = usersStore()
   const {
@@ -275,9 +283,19 @@ router.beforeEach(async (to, from, next) => {
   // routes read only what is on the device, so they are let through as they
   // are and everything else is sent to them. What they show was scoped by the
   // server when the pack was built; no role check here adds to that.
-  if (isLoggedIn && !connectivity.online) {
-    return to.meta.offline ? next() : next({ name: 'Field' })
+  //
+  // "No server" is asked, not assumed: one dropped request, or a shell on a
+  // slow line that does answer, must not cost someone the page they wanted.
+  // Where they were going is kept, so "Open the full app" can take them there.
+  const toField = () => {
+    if (to.meta.offline) return next()
+    connectivity.intended = to.fullPath
+    return next({ name: 'Field' })
   }
+  if (isLoggedIn && !to.meta.offline && !(await reachableForNavigation())) {
+    return toField()
+  }
+  if (isLoggedIn && to.meta.offline && !connectivity.online) return next()
 
   if (isLoggedIn && !users.fetched) {
     try {
@@ -287,9 +305,7 @@ router.beforeEach(async (to, from, next) => {
     } catch (error) {
       console.error('Error loading users', error)
       // the line dropped under this very request: same answer as above
-      if (!connectivity.online) {
-        return to.meta.offline ? next() : next({ name: 'Field' })
-      }
+      if (!(await reachableForNavigation())) return toField()
       // Only a PermissionError means "not a CRM user". Anything else (a timeout,
       // a 502 during a deploy) left isCrmUser() false for a real CRM user and
       // sent them to Not Permitted; stay put instead.

@@ -48,7 +48,7 @@
             :icon="LucideLayoutGrid"
             :aria-label="__('Open the full app')"
             :tooltip="__('Open the full app')"
-            @click="router.push({ name: 'Home' })"
+            @click="openFullApp"
           />
         </div>
       </div>
@@ -245,6 +245,13 @@ const status = computed(() => {
     tone: 'text-ink-gray-7',
   }
 })
+
+/* Back to where offline interrupted them, when it did; otherwise home. */
+function openFullApp() {
+  const intended = connectivity.intended
+  connectivity.intended = null
+  router.push(intended || { name: 'Home' })
+}
 
 async function retry() {
   if (await probe()) syncPack()

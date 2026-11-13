@@ -3,22 +3,35 @@
  *
  * `navigator.onLine` answers a different question -- "is there a network
  * interface" -- and says yes on one bar of signal at a mine gate, where every
- * request then hangs. So the answer here is earned: a request that fails the
- * way an unreachable server fails marks the app offline, and only a probe that
- * comes back marks it online again.
+ * request then hangs. So "online" is earned: only a probe that comes back
+ * makes it true, and only a probe that fails makes it false. A single request
+ * that died is a reason to ask, not an answer: a laptop waking from sleep
+ * drops one fetch and is back before the next click.
  *
- * The probe is `crm.api.offline.handshake`, which does two more jobs on the
+ * The probe is `crm.api.offline.handshake`, which does three more jobs on the
  * way: it hands a shell that booted from the cache the session's CSRF token
- * (the cached page has none), and it carries the server's clock, so a visit
- * logged offline can be stamped in time the server will agree with.
+ * (the cached page has none), it carries the server's clock, so a visit logged
+ * offline can be stamped in time the server will agree with, and it says who
+ * the session belongs to -- which a shell that picked its user from what was
+ * on the device has to check before showing anything more.
  */
 import { reactive } from 'vue'
 import { isNetworkError } from '@/utils/describeError'
+import { clearOfflineCache } from '@/utils/offlineCache'
 import { redirectIfSessionGone } from '@/utils/sessionExpiry'
+import { getSessionUser } from '@/utils/session'
 
 const HANDSHAKE_URL = '/api/method/crm.api.offline.handshake'
 const PROBE_TIMEOUT_MS = 8000
 const RETRY_MS = [5000, 10000, 20000, 40000, 60000]
+/* After a probe failed, requests fail at once for this long instead of each
+   starting a probe of its own: a screen that keeps asking would otherwise keep
+   the radio lit and make every request wait out the full timeout. */
+const FAIL_FAST_MS = 4000
+/* How long a navigation waits to learn whether the server is there before it
+   settles for field mode. Short: on a dead line the alternative is a blank
+   page, and the full app is one tap away once the probe does return. */
+const NAVIGATION_PATIENCE_MS = 2500
 /* The Jinja placeholder a page served raw still carries. frappe-ui skips it
    too. */
 const UNRENDERED_TOKEN = '{{ csrf_token }}'
@@ -34,12 +47,19 @@ export const connectivity = reactive({
   shell,
   /* Server clock minus device clock, in ms; null until a handshake measured it. */
   skewMs: null,
+  /* Where the person was going when offline sent them to field mode. */
+  intended: null,
 })
 
 const onlineListeners = new Set()
 let probing = null
 let retryTimer = null
 let attempt = 0
+let lastFailureAt = 0
+/* The server answered, and the answer was no: not signed in, or no sales
+   role. Distinct from offline -- retrying will not change it. */
+let refused = false
+let leaving = false
 
 /** Run `fn` each time the server becomes reachable again. Returns an unsubscribe. */
 export function onOnline(fn) {
@@ -64,6 +84,12 @@ function setOnline(value) {
   }
 }
 
+function stopRetrying() {
+  clearTimeout(retryTimer)
+  retryTimer = null
+  attempt = 0
+}
+
 function scheduleRetry() {
   if (retryTimer || connectivity.online) return
   const delay = RETRY_MS[Math.min(attempt, RETRY_MS.length - 1)]
@@ -76,14 +102,33 @@ function scheduleRetry() {
   }, delay)
 }
 
+function failed() {
+  lastFailureAt = Date.now()
+  connectivity.online = false
+  scheduleRetry()
+  return false
+}
+
+/**
+ * What this device holds belongs to someone the server does not recognise as
+ * the session's user. Empty it and load the real page, which will be the
+ * login form, Not Permitted, or the app for whoever is signed in.
+ *
+ * Only a shell can get here. A page Frappe rendered was rendered for the
+ * session's user; a shell chose its user from what was on the device.
+ */
+function handOver() {
+  if (leaving) return
+  leaving = true
+  clearOfflineCache().then(() => window.location.reload())
+}
+
 async function runProbe() {
   // The browser is sure there is no network: believe it, and do not light up
   // the radio (or the console) with a request that cannot leave the device.
   // The reverse is not true -- "online" is only a claim, hence the request.
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-    connectivity.online = false
-    scheduleRetry()
-    return false
+    return failed()
   }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
@@ -100,26 +145,36 @@ async function runProbe() {
     })
     if (response.status === 401 || response.status === 403) {
       // The server answered, so this is not an outage: the session lapsed
-      // while the phone was away, or the user has no sales role.
+      // while the phone was away, or this user has no sales role.
+      refused = true
+      stopRetrying()
       setOnline(true)
-      redirectIfSessionGone({ status: response.status })
+      if (connectivity.shell) handOver()
+      else redirectIfSessionGone({ status: response.status })
       return false
     }
     if (!response.ok) throw new Error(`handshake ${response.status}`)
     const { message } = await response.json()
+    if (connectivity.shell && message?.user !== getSessionUser()) {
+      // signed in, as somebody else: the pack on screen is not theirs
+      refused = true
+      stopRetrying()
+      setOnline(true)
+      handOver()
+      return false
+    }
     if (message?.csrf_token && (connectivity.shell || !hasToken())) {
       window.csrf_token = message.csrf_token
     }
     if (Number.isFinite(message?.server_epoch)) {
       connectivity.skewMs = message.server_epoch * 1000 - Date.now()
     }
-    attempt = 0
+    refused = false
+    stopRetrying()
     setOnline(true)
     return true
   } catch {
-    connectivity.online = false
-    scheduleRetry()
-    return false
+    return failed()
   } finally {
     clearTimeout(timer)
   }
@@ -145,6 +200,14 @@ function offlineError() {
   return error
 }
 
+function refusedError() {
+  // the server's own shape for "not for you", so it reads as permission
+  const error = new Error('Not permitted')
+  error.status = 403
+  error.exc_type = 'PermissionError'
+  return error
+}
+
 /**
  * Send a request through the connectivity gate.
  *
@@ -153,22 +216,45 @@ function offlineError() {
  * them is a page full of spinners. A shell with no CSRF token waits for the
  * handshake for the same reason a POST without one would be refused.
  *
+ * A request that dies on the way is not proof of anything. It starts a probe,
+ * and the probe decides.
+ *
  * @param {() => Promise<any>} send
  */
 export async function throughGate(send) {
   if (!connectivity.online || (connectivity.shell && !hasToken())) {
+    if (refused) throw refusedError()
+    if (Date.now() - lastFailureAt < FAIL_FAST_MS) throw offlineError()
     const reached = await probe()
+    if (refused) throw refusedError()
     if (!reached || !hasToken()) throw offlineError()
   }
   try {
     return await send()
   } catch (error) {
-    if (isNetworkError(error)) {
-      connectivity.online = false
-      scheduleRetry()
-    }
+    if (isNetworkError(error)) probe()
     throw error
   }
+}
+
+/**
+ * For the router: is the server there, as far as a navigation can afford to
+ * find out? Online is yes. Otherwise ask, and wait a moment for the answer --
+ * a slow line that does answer keeps the page the person asked for, and a dead
+ * one costs them a couple of seconds, not a blank screen.
+ * @returns {Promise<boolean>}
+ */
+export function reachableForNavigation() {
+  if (connectivity.online) return Promise.resolve(true)
+  if (refused || Date.now() - lastFailureAt < FAIL_FAST_MS) {
+    return Promise.resolve(false)
+  }
+  return Promise.race([
+    probe(),
+    new Promise((resolve) =>
+      setTimeout(() => resolve(false), NAVIGATION_PATIENCE_MS),
+    ),
+  ])
 }
 
 /** Server time now, as ms since the epoch, corrected for this device's clock. */
@@ -182,7 +268,10 @@ let watching = false
 export function watchConnectivity() {
   if (watching || typeof window === 'undefined') return
   watching = true
-  window.addEventListener('online', () => probe())
+  window.addEventListener('online', () => {
+    lastFailureAt = 0
+    probe()
+  })
   window.addEventListener('offline', () => {
     connectivity.online = false
   })

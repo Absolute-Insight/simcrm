@@ -8,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/utils/sessionExpiry', () => ({
   redirectIfSessionGone: vi.fn(() => true),
 }))
+vi.mock('@/utils/offlineCache', () => ({
+  clearOfflineCache: vi.fn(async () => {}),
+}))
 
 const HANDSHAKE = '/api/method/crm.api.offline.handshake'
 const ok = (message) => ({
@@ -16,24 +19,41 @@ const ok = (message) => ({
   json: async () => ({ message }),
 })
 
+const REP = 'rep@example.com'
+
 async function load({ shell = false, onLine = true, fetch } = {}) {
   vi.resetModules()
-  if (shell) window.__crm_offline_shell = true
-  else delete window.__crm_offline_shell
+  if (shell) {
+    window.__crm_offline_shell = true
+    window.__crm_offline_user = REP
+  } else {
+    delete window.__crm_offline_shell
+    delete window.__crm_offline_user
+  }
   delete window.csrf_token
   vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(onLine)
-  vi.stubGlobal('fetch', fetch ?? vi.fn(async () => ok({ csrf_token: 'tok' })))
+  vi.stubGlobal(
+    'fetch',
+    fetch ?? vi.fn(async () => ok({ csrf_token: 'tok', user: REP })),
+  )
+  const reload = vi.fn()
+  vi.stubGlobal('location', { hostname: 'crm.test', reload })
   const mod = await import('@/offline/connectivity')
   const { redirectIfSessionGone } = await import('@/utils/sessionExpiry')
-  return { ...mod, redirectIfSessionGone }
+  const { clearOfflineCache } = await import('@/utils/offlineCache')
+  return { ...mod, redirectIfSessionGone, clearOfflineCache, reload }
 }
 
-beforeEach(() => vi.useFakeTimers())
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.useFakeTimers()
+})
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   delete window.__crm_offline_shell
+  delete window.__crm_offline_user
   delete window.csrf_token
 })
 
@@ -46,15 +66,50 @@ describe('the connectivity gate', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('marks the app offline when a request fails the way a dead line does', async () => {
+  it('a request that died is a reason to ask, not proof: the probe decides', async () => {
     const { throughGate, connectivity } = await load()
+    window.csrf_token = 'rendered-by-frappe'
+    const dropped = () =>
+      throughGate(async () => {
+        throw new TypeError('Failed to fetch')
+      })
+    // a laptop waking from sleep: one fetch lost, the server is there
+    await expect(dropped()).rejects.toThrow('Failed to fetch')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(connectivity.online).toBe(true)
+  })
+
+  it('goes offline when the probe that follows fails too', async () => {
+    const { throughGate, connectivity } = await load({
+      fetch: vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      }),
+    })
     window.csrf_token = 'rendered-by-frappe'
     await expect(
       throughGate(async () => {
         throw new TypeError('Failed to fetch')
       }),
     ).rejects.toThrow('Failed to fetch')
+    await vi.advanceTimersByTimeAsync(0)
     expect(connectivity.online).toBe(false)
+  })
+
+  it('after a failed probe, requests fail at once instead of each probing', async () => {
+    const { throughGate, probe } = await load({
+      fetch: vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      }),
+    })
+    await probe()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    for (let i = 0; i < 5; i++) {
+      await expect(throughGate(vi.fn())).rejects.toMatchObject({
+        code: 'ERR_NETWORK',
+      })
+    }
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
 
   it('leaves it online when the server answered with an error', async () => {
@@ -101,7 +156,7 @@ describe('the connectivity gate', () => {
   it('never sends a POST from a shell that could not get a token', async () => {
     const { throughGate } = await load({
       shell: true,
-      fetch: vi.fn(async () => ok({})),
+      fetch: vi.fn(async () => ok({ user: REP })),
     })
     const send = vi.fn()
     await expect(throughGate(send)).rejects.toMatchObject({
@@ -142,7 +197,6 @@ describe('the probe', () => {
 
   it('a refusal is the server answering: online, and off to log in', async () => {
     const { probe, connectivity, redirectIfSessionGone } = await load({
-      shell: true,
       fetch: vi.fn(async () => ({ ok: false, status: 403 })),
     })
     expect(await probe()).toBe(false)
@@ -150,12 +204,52 @@ describe('the probe', () => {
     expect(redirectIfSessionGone).toHaveBeenCalledWith({ status: 403 })
   })
 
+  it('a refused request reads as permission, not as offline', async () => {
+    const { probe, throughGate } = await load({
+      shell: true,
+      fetch: vi.fn(async () => ({ ok: false, status: 403 })),
+    })
+    await probe()
+    await expect(throughGate(vi.fn())).rejects.toMatchObject({
+      status: 403,
+      exc_type: 'PermissionError',
+    })
+    // and it does not ask again for every request that follows
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('a shell the server refuses gives up what it holds and reloads', async () => {
+    const { probe, clearOfflineCache, reload } = await load({
+      shell: true,
+      fetch: vi.fn(async () => ({ ok: false, status: 403 })),
+    })
+    await probe()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(clearOfflineCache).toHaveBeenCalledOnce()
+    expect(reload).toHaveBeenCalledOnce()
+  })
+
+  it('a shell showing one rep while the session is another’s does the same', async () => {
+    const { probe, clearOfflineCache, reload } = await load({
+      shell: true,
+      fetch: vi.fn(async () =>
+        ok({ csrf_token: 'tok', user: 'someone.else@example.com' }),
+      ),
+    })
+    expect(await probe()).toBe(false)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(clearOfflineCache).toHaveBeenCalledOnce()
+    expect(reload).toHaveBeenCalledOnce()
+    // and it never took the other session's token
+    expect(window.csrf_token).toBeUndefined()
+  })
+
   it('a failed probe stays offline and tries again later', async () => {
     let up = false
     const { probe, connectivity } = await load({
       fetch: vi.fn(async () => {
         if (!up) throw new TypeError('Failed to fetch')
-        return ok({ csrf_token: 'tok' })
+        return ok({ csrf_token: 'tok', user: REP })
       }),
     })
     expect(await probe()).toBe(false)
@@ -163,6 +257,29 @@ describe('the probe', () => {
     up = true
     await vi.advanceTimersByTimeAsync(5000)
     expect(connectivity.online).toBe(true)
+  })
+
+  it('a navigation waits a moment for the answer, then settles for field mode', async () => {
+    let answer
+    const { reachableForNavigation } = await load({
+      shell: true,
+      fetch: vi.fn(() => new Promise((resolve) => (answer = resolve))),
+    })
+    // a slow line that does answer keeps the page that was asked for
+    const quick = reachableForNavigation()
+    await vi.advanceTimersByTimeAsync(1000)
+    answer(ok({ csrf_token: 'tok', user: REP }))
+    expect(await quick).toBe(true)
+  })
+
+  it('a navigation does not wait out a dead line', async () => {
+    const { reachableForNavigation } = await load({
+      shell: true,
+      fetch: vi.fn(() => new Promise(() => {})),
+    })
+    const slow = reachableForNavigation()
+    await vi.advanceTimersByTimeAsync(2500)
+    expect(await slow).toBe(false)
   })
 
   it('tells whoever is listening when the server is back', async () => {
