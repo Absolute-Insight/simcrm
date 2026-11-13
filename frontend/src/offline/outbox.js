@@ -52,32 +52,32 @@ export const rejectedCount = computed(
 )
 
 const RETRY_PENDING_MS = 60 * 1000
-/* How long anything automatic -- the once-a-minute timer, the tab coming
-   back, the line coming back -- leaves a run that stopped at an entry the
-   server would not take, by how many runs in a row have: the next chance,
-   then further apart. A server in trouble is not helped by every phone
-   asking it every minute, and still less by one asking each time its owner
-   looks at it. Only what the rep does on purpose -- a new entry, Send again
-   -- sends at once. */
-const BACKOFF_MS = [0, 1, 3, 7, 15].map((minutes) => minutes * 60 * 1000)
-/* The same entry failed this many times running while the server answered
-   the handshake each time: it is the entry (or something on the way that
-   minds this entry -- a firewall that dislikes its text), not the moment. It
-   is set aside for the rep, as a refusal is, so the entries behind it are
-   not held for ever. A failure while the server cannot be reached at all is
-   not counted: that is an outage, and nothing is wrong with the entry. */
+/* After the same entry has failed once, twice, ... while the server was
+   answering, how long before it is worth asking again -- and before another
+   failure of it means anything. Two things wait this out:
+
+   - anything automatic: the once-a-minute timer, the tab coming back, the
+     line coming back. A server in trouble is not helped by every phone
+     asking it every minute, and still less by one asking each time its owner
+     looks at it. What the rep does on purpose -- a new entry, Send again --
+     still sends at once.
+   - the count itself. A run the rep set off inside the window may fail too,
+     and that is the same failure seen again, not a new one: five things
+     logged in a minute while replay is down for everyone must not set the
+     first of them aside in that minute. */
+const BACKOFF_MS = [1, 3, 7, 15].map((minutes) => minutes * 60 * 1000)
+/* The same entry failed in this many windows running while the server
+   answered the handshake each time: it is the entry (or something on the way
+   that minds this entry -- a firewall that dislikes its text), not the
+   moment. It is set aside for the rep, as a refusal is, so the entries
+   behind it are not held for ever. A failure while the server cannot be
+   reached at all is not counted: that is an outage, and nothing is wrong
+   with the entry. */
 const STALL_LIMIT = 5
 
-let stalls = 0
 let retryAt = 0
 
-function stalled() {
-  retryAt = Date.now() + BACKOFF_MS[Math.min(stalls, BACKOFF_MS.length - 1)]
-  stalls += 1
-}
-
 function flowing() {
-  stalls = 0
   retryAt = 0
 }
 
@@ -202,6 +202,7 @@ async function setAside(entry, reason) {
   entry.status = 'rejected'
   entry.error = reason
   entry.stalls = 0
+  entry.stall_at = 0
   await persist(entry).catch(() => {})
 }
 
@@ -216,7 +217,6 @@ async function sendPending() {
   outbox.flushing = true
   const tried = new Set()
   let renewed = false
-  let backOff = false
   try {
     // Asked again each time round, not listed once at the start: something
     // captured while the first entry was on the wire goes out in this run.
@@ -298,7 +298,7 @@ async function sendPending() {
         }
         if (cause === 'limited') {
           await leave(entry, stallReason(cause, error))
-          backOff = true
+          retryAt = Math.max(retryAt, Date.now() + BACKOFF_MS[0])
           break
         }
         // Something answered, and it was not a verdict on the entry. Is the
@@ -309,20 +309,27 @@ async function sendPending() {
           await leave(entry)
           break
         }
-        // It is there, and still this entry did not go.
-        entry.stalls = (entry.stalls ?? 0) + 1
-        if (entry.stalls >= STALL_LIMIT) {
-          await setAside(
-            entry,
-            __(
-              'This could not be sent {0} times running while the server was answering, so it was set aside to let the rest go. Send it again, or discard it.',
-              [STALL_LIMIT],
-            ),
-          )
-          continue
+        // It is there, and still this entry did not go. Counted once a
+        // window: a failure inside the window the last one opened is that
+        // failure again (see BACKOFF_MS).
+        if (Date.now() >= (entry.stall_at ?? 0)) {
+          entry.stalls = (entry.stalls ?? 0) + 1
+          if (entry.stalls >= STALL_LIMIT) {
+            await setAside(
+              entry,
+              __(
+                'This could not be sent after {0} tries spread over time, while the server was answering, so it was set aside to let the rest go. Send again is safe: the server applies an entry only once, even if an earlier try got through. Do not type it in again.',
+                [STALL_LIMIT],
+              ),
+            )
+            continue
+          }
+          entry.stall_at =
+            Date.now() +
+            BACKOFF_MS[Math.min(entry.stalls, BACKOFF_MS.length) - 1]
         }
+        retryAt = entry.stall_at
         await leave(entry, stallReason(cause, error))
-        backOff = true
         break
       }
       entry.sending = false
@@ -335,11 +342,11 @@ async function sendPending() {
       entry.sent_at = Date.now()
       entry.error = null
       entry.stalls = 0
+      entry.stall_at = 0
       await persist(entry).catch(() => {})
     }
   } finally {
     outbox.flushing = false
-    if (backOff) stalled()
   }
 }
 
@@ -402,6 +409,7 @@ export async function retryEntry(id) {
   entry.status = 'pending'
   entry.error = null
   entry.stalls = 0
+  entry.stall_at = 0
   await persist(entry).catch(() => {})
   // a run already under way has been past this entry once and will not look
   // at it again: let it finish, then start one that will

@@ -91,6 +91,7 @@ beforeEach(() => {
   )
 })
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   delete window.csrf_token
 })
@@ -444,6 +445,18 @@ const handshake = (message) =>
     json: async () => ({ message }),
   }))
 
+/* Runs of the outbox with the clock moved on between them: far enough that
+   each failure falls in a window of its own. Only the date is faked, so the
+   awaits inside a run still resolve. */
+const WINDOW = 16 * 60 * 1000
+async function spacedRuns(flushOutbox, runs) {
+  for (let run = 0; run < runs; run++) {
+    vi.setSystemTime(Date.now() + WINDOW)
+    await flushOutbox()
+  }
+}
+const fakeDate = () => vi.useFakeTimers({ toFake: ['Date'] })
+
 const serverDown = () =>
   vi.fn(async () => ({ ok: false, status: 503, json: async () => null }))
 
@@ -585,17 +598,20 @@ describe('an answer the server did not write', () => {
     const offline = await load({ online: false })
     const blocked = await offline.enqueue('create_task', { title: 'blocked' })
     await offline.enqueue('create_task', { title: 'fine' })
+    fakeDate()
     const { flushOutbox, retryEntry, outbox, rejectedCount } = await load()
-    for (let run = 0; run < 4; run++) await flushOutbox()
+    await spacedRuns(flushOutbox, 4)
     expect(outbox.entries.map((e) => e.status)).toEqual(['pending', 'pending'])
     expect(outbox.entries[0].error).toMatch(/instead of the server/)
-    await flushOutbox()
+    await spacedRuns(flushOutbox, 1)
     expect(outbox.entries).toHaveLength(1)
     expect(outbox.entries[0]).toMatchObject({
       id: blocked.id,
       status: 'rejected',
     })
     expect(outbox.entries[0].error).toMatch(/set aside to let the rest go/)
+    // sending it again cannot double it; typing it in again can
+    expect(outbox.entries[0].error).toMatch(/Send again is safe/)
     expect(rejectedCount.value).toBe(1)
     expect(server.calls.at(-1).payload.title).toBe('fine')
     // and it can still be sent: nothing was thrown away
@@ -730,7 +746,31 @@ describe('a server error at the head of the outbox', () => {
     }
   })
 
-  it('an entry that keeps failing while the server answers is set aside, and the rest go', async () => {
+  it('five failures back to back are one failure seen five times: nothing is set aside', async () => {
+    // replay is down for everyone while the handshake answers, and the rep
+    // logs five things in a minute -- each one sets off a run
+    server.replay = async () => {
+      throw failure(500, { exc_type: 'TypeError' })
+    }
+    const { enqueue, flushOutbox, outbox, rejectedCount } = await load()
+    for (const title of ['a', 'b', 'c', 'd', 'e']) {
+      await enqueue('create_task', { title })
+      await flushOutbox()
+    }
+    for (let run = 0; run < 5; run++) await flushOutbox()
+    expect(server.calls.length).toBeGreaterThanOrEqual(5)
+    expect(rejectedCount.value).toBe(0)
+    expect(outbox.entries.map((e) => e.status)).toEqual(
+      Array(5).fill('pending'),
+    )
+    expect(outbox.entries[0].stalls).toBe(1)
+    // nothing passed the head, either
+    expect(new Set(server.calls.map((c) => c.payload.title))).toEqual(
+      new Set(['a']),
+    )
+  })
+
+  it('an entry that fails in five windows running while the server answers is set aside, and the rest go', async () => {
     server.replay = async ({ payload }) => {
       if (payload.title === 'poison') {
         throw failure(500, { exc_type: 'TypeError' })
@@ -740,11 +780,13 @@ describe('a server error at the head of the outbox', () => {
     const offline = await load({ online: false })
     const poison = await offline.enqueue('create_task', { title: 'poison' })
     await offline.enqueue('create_task', { title: 'fine' })
+    fakeDate()
     const { flushOutbox, outbox, rejectedCount } = await load()
-    for (let run = 0; run < 4; run++) await flushOutbox()
-    // four failures: still at the head, still holding the one behind it
+    await spacedRuns(flushOutbox, 4)
+    // four windows: still at the head, still holding the one behind it
     expect(outbox.entries.map((e) => e.status)).toEqual(['pending', 'pending'])
-    await flushOutbox()
+    expect(outbox.entries[0].stalls).toBe(4)
+    await spacedRuns(flushOutbox, 1)
     expect(outbox.entries).toHaveLength(1)
     expect(outbox.entries[0]).toMatchObject({
       id: poison.id,
@@ -791,32 +833,26 @@ describe('a server error at the head of the outbox', () => {
       if (failing) throw failure(500, { exc_type: 'TypeError' })
       return { status: 'applied' }
     }
+    fakeDate()
     const { enqueue, flushOutbox, outbox, rejectedCount } = await load()
-    const fourFailures = async () => {
-      // bounded: a run or two may be shared with the one enqueue started
-      for (let run = 0; run < 6; run++) {
-        if ((outbox.entries[0].stalls ?? 0) >= 4) break
-        await flushOutbox()
-      }
-      expect(outbox.entries[0].stalls).toBe(4)
-    }
     await enqueue('create_task', { title: 'first' })
-    await fourFailures()
-    expect(outbox.entries[0].status).toBe('pending')
+    await flushOutbox()
+    await spacedRuns(flushOutbox, 3)
+    expect(outbox.entries[0]).toMatchObject({ status: 'pending', stalls: 4 })
     // it gets through
     failing = false
-    await flushOutbox()
+    await spacedRuns(flushOutbox, 1)
     expect(outbox.entries).toEqual([])
     // the next one starts from nothing: four more failures set nothing aside
     failing = true
     await enqueue('create_task', { title: 'second' })
-    await fourFailures()
+    await flushOutbox()
+    await spacedRuns(flushOutbox, 3)
     expect(outbox.entries[0]).toMatchObject({ status: 'pending', stalls: 4 })
     expect(rejectedCount.value).toBe(0)
-    // and Send again after being set aside starts from nothing too
-    await flushOutbox()
-    expect(outbox.entries[0].status).toBe('rejected')
-    expect(outbox.entries[0].stalls).toBe(0)
+    // the fifth does, and Send again after that starts from nothing too
+    await spacedRuns(flushOutbox, 1)
+    expect(outbox.entries[0]).toMatchObject({ status: 'rejected', stalls: 0 })
   })
 
   it('a rate limit waits and is not held against the entry', async () => {

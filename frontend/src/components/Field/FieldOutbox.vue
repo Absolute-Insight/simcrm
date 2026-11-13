@@ -78,7 +78,10 @@
           {{ row.error }}
           {{
             row.attempts > 1
-              ? __('Tried {0} times. It will be tried again.', [row.attempts])
+              ? __(
+                  'Tried {0} times. It will be tried again; there is no need to type it in again.',
+                  [row.attempts],
+                )
               : __('It will be tried again.')
           }}
         </div>

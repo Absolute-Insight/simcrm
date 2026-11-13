@@ -218,7 +218,10 @@ def _held_sections(known_sections) -> dict[str, str]:
 	return {
 		key: value
 		for key, value in known_sections.items()
-		if isinstance(value, str) and len(value) <= HASH_LENGTH
+		if isinstance(key, str)
+		and len(key) <= HASH_LENGTH
+		and isinstance(value, str)
+		and len(value) <= HASH_LENGTH
 	}
 
 
