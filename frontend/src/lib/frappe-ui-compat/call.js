@@ -1,4 +1,5 @@
 import { call as frappeCall } from 'frappe-ui-actual'
+import { throughGate } from '@/offline/connectivity'
 import { redirectIfSessionGone } from '@/utils/sessionExpiry'
 
 /**
@@ -12,9 +13,13 @@ import { redirectIfSessionGone } from '@/utils/sessionExpiry'
  *
  * Wrapped here rather than at each of the call sites, so a new one cannot
  * forget it: every `import { call } from 'frappe-ui'` resolves to this shim.
+ *
+ * It goes through the connectivity gate for the same reason: offline, a call
+ * fails at once as "offline" instead of hanging on a dead line, and a shell
+ * that booted from the cache gets its CSRF token before the first POST.
  */
 export default function call(method, args, options) {
-  return frappeCall(method, args, options).catch((error) => {
+  return throughGate(() => frappeCall(method, args, options)).catch((error) => {
     redirectIfSessionGone(error)
     throw error
   })

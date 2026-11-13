@@ -8,6 +8,10 @@ import { createPinia } from 'pinia'
 import { createDialog } from './utils/dialogs'
 import { cleanUpSupersededWorkers } from './utils/staleServiceWorkers'
 import { redirectIfSessionGone } from './utils/sessionExpiry'
+import { throughGate, watchConnectivity } from './offline/connectivity'
+import { saveBootSnapshot } from './offline/bootSnapshot'
+import { startFieldSync } from './offline/pack'
+import { getSessionUser } from './utils/session'
 import { initSocket } from './socket'
 import router from './router'
 import translationPlugin from './translation'
@@ -72,7 +76,9 @@ app.provide('color', 'currentColor')
    surfaces as a permission error. `call()` bypasses this hook, so the
    'frappe-ui' compat shim wraps it with the same check. */
 setConfig('resourceFetcher', (options) =>
-  frappeRequest(options).catch((error) => {
+  // the gate: offline, a resource fails at once instead of hanging, and a
+  // shell that booted from the cache has its CSRF token before the first POST
+  throughGate(() => frappeRequest(options)).catch((error) => {
     redirectIfSessionGone(error)
     throw error
   }),
@@ -88,8 +94,41 @@ app.use(telemetryPlugin, { app_name: 'crm' })
 
 app.config.globalProperties.$dialog = createDialog
 
+/* Field mode's plumbing, started once the page has its boot.
+
+   A page Frappe rendered leaves its boot behind for the next start that has
+   no server to render one (offline/bootSnapshot.js). The cached shell is that
+   next start: it has nothing new to save, and a shell with no snapshot --
+   a phone that has never loaded the app with signal -- has nothing to run on,
+   so it says so instead of mounting an app with no site, no timezone and no
+   translations. */
+function startOfflineSupport() {
+  const user = getSessionUser()
+  if (!window.__crm_offline_shell) {
+    saveBootSnapshot(user, window, window.localStorage)
+  }
+  watchConnectivity()
+  startFieldSync()
+}
+
+function showConnectOnceNotice() {
+  const root = document.getElementById('app')
+  root.innerHTML = `
+    <div style="display:flex;height:100%;align-items:center;justify-content:center;padding:2rem;text-align:center;font-family:system-ui,sans-serif;color:#8b90a7">
+      <div style="max-width:22rem">
+        <div style="font-size:1.125rem;font-weight:600;color:inherit;margin-bottom:.5rem">You are offline</div>
+        <div style="font-size:.9375rem;line-height:1.5">Vectora has nothing saved on this device yet. Open it once with a connection and sign in; after that it opens without one.</div>
+        <button type="button" style="margin-top:1.25rem;padding:.5rem 1rem;border-radius:.5rem;border:1px solid currentColor;background:none;color:inherit;font:inherit" onclick="location.reload()">Try again</button>
+      </div>
+    </div>`
+  // the moment there is a network, the real page can say who this is
+  window.addEventListener('online', () => window.location.reload())
+}
+
 let socket
-if (import.meta.env.DEV) {
+if (window.__crm_offline_shell && !window.__crm_offline_user) {
+  showConnectOnceNotice()
+} else if (import.meta.env.DEV) {
   frappeRequest({ url: '/api/method/crm.www.crm.get_context_for_dev' }).then(
     (values) => {
       for (let key in values) {
@@ -98,12 +137,14 @@ if (import.meta.env.DEV) {
       socket = initSocket()
       app.config.globalProperties.$socket = socket
       app.mount('#app')
+      startOfflineSupport()
     },
   )
 } else {
   socket = initSocket()
   app.config.globalProperties.$socket = socket
   app.mount('#app')
+  startOfflineSupport()
 }
 
 if (import.meta.env.DEV) {

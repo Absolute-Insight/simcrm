@@ -78,6 +78,19 @@ gotcha, not a location, and it stays in `AGENTS.md`.
 | `frontend/src/components/Settings/KnowledgeSettings.vue` | Settings → Knowledge: what the Assistant may quote (`crm/api/knowledge.py`, `crm/knowledge/samples/`) |
 | `frontend/src/components/Settings/AccessControl.vue` | Settings → Access Control: admin-only data-access switches plus the role × surface visibility matrix (`crm/api/access.py`) |
 
+### Field mode (offline)
+| File | Role |
+|---|---|
+| `crm/api/offline.py` | `get_pack` — the permission-scoped snapshot a phone carries; `handshake` — CSRF token + server clock for a cached shell |
+| `frontend/offlineShell.js` | Vite plugin: writes `shell.html`, the built page with the Jinja boot block replaced by a loader |
+| `frontend/public/field-sw.js` | Service-worker fragment: network-first navigations under `/crm`, falling back to the precached shell |
+| `frontend/src/offline/bootSnapshot.js` | The boot a shell starts from (no CSRF token), and the inline loader that restores it |
+| `frontend/src/offline/connectivity.js` | `connectivity.online`, `probe()`, `throughGate()` — wraps the resource fetcher and `call()` |
+| `frontend/src/offline/pack.js` | The pack on the device: load, sync, expiry, background refresh |
+| `frontend/src/offline/db.js` | The two IndexedDB stores (pack, outbox) and when each is cleared |
+| `frontend/src/utils/fieldPack.js` | Pure helpers: index by customer, search, expiry, display |
+| `frontend/src/pages/Field.vue` + `components/Field/` | The standalone Field surface: week, customers, customer, tasks |
+
 ### Design system
 | File | Role |
 |---|---|

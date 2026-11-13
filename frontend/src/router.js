@@ -6,6 +6,7 @@ import { viewsStore } from '@/stores/views'
 import { accessStore } from '@/stores/access'
 import { reloadOnceForStaleChunk } from '@/utils/staleChunk'
 import { MOBILE_BREAKPOINT_PX } from '@/composables/settings'
+import { connectivity, reachableForNavigation } from '@/offline/connectivity'
 
 let personaChecked = false
 export const PERSONA_DONE_KEY = 'crm_persona_captured'
@@ -50,6 +51,38 @@ const routes = [
     path: '/planner',
     name: 'Planner',
     component: () => import('@/pages/Planner.vue'),
+  },
+  // Field mode: the week, the customers and the tasks, read from the pack on
+  // the device so they open at a site with no reception. `offline` marks the
+  // routes that need no server; `standalone` takes them out of the app shell,
+  // whose sidebar, notifications and settings all do.
+  {
+    path: '/field',
+    component: () => import('@/pages/Field.vue'),
+    meta: { offline: true, standalone: true },
+    children: [
+      {
+        path: '',
+        name: 'Field',
+        component: () => import('@/components/Field/FieldToday.vue'),
+      },
+      {
+        path: 'customers',
+        name: 'FieldCustomers',
+        component: () => import('@/components/Field/FieldCustomers.vue'),
+      },
+      {
+        path: 'customers/:organization',
+        name: 'FieldCustomer',
+        component: () => import('@/components/Field/FieldCustomer.vue'),
+        props: true,
+      },
+      {
+        path: 'tasks',
+        name: 'FieldTasks',
+        component: () => import('@/components/Field/FieldTasks.vue'),
+      },
+    ],
   },
   {
     path: '/reports',
@@ -228,6 +261,14 @@ async function viewsLoaded(views) {
 router.beforeEach(async (to, from, next) => {
   router.previousRoute = from
 
+  // A cached shell that could not establish a user has put up its "open it
+  // once with a connection" notice (main.js) and mounts nothing. Sending it to
+  // /login, as a logged-out page normally is, leaves the worker's scope: with
+  // no network that is the browser's own error page in place of the notice.
+  if (window.__crm_offline_shell && !window.__crm_offline_user) {
+    return next(false)
+  }
+
   const { isLoggedIn, user } = sessionStore()
   const { users, isCrmUser, isAdmin } = usersStore()
   const {
@@ -236,6 +277,26 @@ router.beforeEach(async (to, from, next) => {
     canSee,
   } = accessStore()
 
+  // No server, no guard that needs one. Everything below awaits a request --
+  // the users, the access settings, the views -- and offline each of them
+  // refuses the navigation, which on a cold start is a blank page. The field
+  // routes read only what is on the device, so they are let through as they
+  // are and everything else is sent to them. What they show was scoped by the
+  // server when the pack was built; no role check here adds to that.
+  //
+  // "No server" is asked, not assumed: one dropped request, or a shell on a
+  // slow line that does answer, must not cost someone the page they wanted.
+  // Where they were going is kept, so "Open the full app" can take them there.
+  const toField = () => {
+    if (to.meta.offline) return next()
+    connectivity.intended = to.fullPath
+    return next({ name: 'Field' })
+  }
+  if (isLoggedIn && !to.meta.offline && !(await reachableForNavigation())) {
+    return toField()
+  }
+  if (isLoggedIn && to.meta.offline && !connectivity.online) return next()
+
   if (isLoggedIn && !users.fetched) {
     try {
       // A failed fetch leaves its rejected promise behind, so retry rather than
@@ -243,6 +304,8 @@ router.beforeEach(async (to, from, next) => {
       await (users.error ? users.reload() : users.promise)
     } catch (error) {
       console.error('Error loading users', error)
+      // the line dropped under this very request: same answer as above
+      if (!(await reachableForNavigation())) return toField()
       // Only a PermissionError means "not a CRM user". Anything else (a timeout,
       // a 502 during a deploy) left isCrmUser() false for a real CRM user and
       // sent them to Not Permitted; stay put instead.

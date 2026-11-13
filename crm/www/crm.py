@@ -35,9 +35,17 @@ def get_context():
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	context = frappe._dict()
 	context.boot = get_boot()
+	remember_field_user()
 	if frappe.session.user != "Guest":
 		capture("active_site", "crm")
 	return context
+
+
+def remember_field_user() -> None:
+	"""Name the signed-in user for the cached shell. See ``crm.api.auth.name_field_user``."""
+	from crm.api.auth import name_field_user
+
+	name_field_user()
 
 
 # Guest access is required -- the vite dev server runs on its own origin and

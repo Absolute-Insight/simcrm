@@ -36,6 +36,7 @@ export const SURFACES = [
   { key: 'nav.assistant', group: 'nav', label: 'Assistant' },
   { key: 'nav.analyst', group: 'nav', label: 'Analyst', floor: ADMIN_ROLE },
   { key: 'nav.planner', group: 'nav', label: 'Planner' },
+  { key: 'nav.field', group: 'nav', label: 'Field mode' },
   { key: 'nav.leads', group: 'nav', label: 'Leads' },
   { key: 'nav.deals', group: 'nav', label: 'Deals' },
   { key: 'nav.reports', group: 'nav', label: 'Reports' },
