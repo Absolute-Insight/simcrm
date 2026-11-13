@@ -144,15 +144,18 @@ export function syncPack() {
       return true
     } catch (error) {
       packState.error = error
-      if (error?.exc_type === 'PermissionError') {
+      // `NotAFieldUser` is the server saying this user is not to carry a
+      // pack any more -- the sales role was taken away. What is already here
+      // goes now, not when its fourteen days are up.
+      if (error?.exc_type === 'NotAFieldUser') {
         packState.refused = true
-        // The server's own refusal (it names the exception; a proxy's bare
-        // 403 does not): this user is not to carry a pack any more -- the
-        // sales role was taken away, say. What is already here goes now, not
-        // when its fourteen days are up. A lapsed session is also refused
-        // this way, and is cleared the same (sessionExpiry.js).
         await dropPack()
       }
+      // The gate's own refusal (a handshake the server refused): stop
+      // asking. Any other PermissionError came from inside the pack -- a
+      // list that stopped being readable after someone edited a role. That
+      // is the server's to fix: the pack stays, and the next sync asks again.
+      if (error?.gate) packState.refused = true
       return false
     } finally {
       packState.syncing = false

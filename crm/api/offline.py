@@ -57,7 +57,7 @@ from crm.api.rep_plan import (
 )
 from crm.fcrm.doctype.crm_offline_receipt.crm_offline_receipt import RECEIPT_DAYS
 from crm.rep_planning import ACTIVITY_TYPES, EVENT_KINDS, MATCH_HORIZON_WEEKS, week_of
-from crm.utils import sales_user_only, user_rate_limited
+from crm.utils import is_sales_user, sales_user_only, user_rate_limited
 
 # How far back a phone carries what happened at a customer. Also the window a
 # lost phone exposes, which is why it is not "everything".
@@ -107,6 +107,8 @@ REPLAY_RATE_SCOPE = "offline_replay"
 REPLAY_RATE_LIMIT = 240
 
 MAX_PAYLOAD_BYTES = 20_000
+MAX_KNOWN_SECTIONS = 32
+HASH_LENGTH = 64
 NOTE_TEXT_LIMIT = 5000
 TITLE_LIMIT = 140
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{15,63}$")
@@ -131,8 +133,19 @@ def handshake() -> dict:
 	}
 
 
+class NotAFieldUser(frappe.PermissionError):
+	"""The caller has no sales role, so there is no pack for them -- any more, or ever.
+
+	Its own name because the name is what reaches the phone (``exc_type``),
+	and the phone acts on it: a pack already there is deleted at once. A plain
+	``PermissionError`` must not do that. One raised from *inside* the pack --
+	a list that stopped being readable because someone edited a role -- is a
+	fault to fix on the server, and would otherwise empty every rep's phone
+	on its next sync.
+	"""
+
+
 @frappe.whitelist()
-@sales_user_only
 def get_pack(known_hash: str | None = None, known_sections: dict | str | None = None) -> dict:
 	"""Everything the caller's phone needs to work a site visit offline.
 
@@ -148,6 +161,13 @@ def get_pack(known_hash: str | None = None, known_sections: dict | str | None = 
 	been sent, from its own copy. The rows are still read to know that; this
 	saves the line, not the queries.
 	"""
+	# sales_user_only's test, with an answer of its own: see NotAFieldUser
+	if not is_sales_user():
+		frappe.throw(
+			_("You are not permitted to access this resource."),
+			NotAFieldUser,
+			title=_("Not Allowed"),
+		)
 	body = _pack_body()
 	sections = {key: _digest(rows) for key, rows in body.items()}
 	digest = _digest(sections)
@@ -191,9 +211,15 @@ def _held_sections(known_sections) -> dict[str, str]:
 			known_sections = json.loads(known_sections or "{}")
 		except (ValueError, RecursionError):
 			return {}
-	if not isinstance(known_sections, dict):
+	# the pack has ten lists and a hash is 64 characters: a claim far past
+	# that is not a pack's, whichever way it was sent
+	if not isinstance(known_sections, dict) or len(known_sections) > MAX_KNOWN_SECTIONS:
 		return {}
-	return {key: value for key, value in known_sections.items() if isinstance(value, str)}
+	return {
+		key: value
+		for key, value in known_sections.items()
+		if isinstance(value, str) and len(value) <= HASH_LENGTH
+	}
 
 
 def _pack_body() -> dict:

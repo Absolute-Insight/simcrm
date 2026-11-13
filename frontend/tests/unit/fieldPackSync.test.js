@@ -132,21 +132,54 @@ describe('syncing the pack', () => {
 })
 
 describe('a pack the server will not give any more', () => {
+  const refusal = (exc_type, extra = {}) =>
+    Object.assign(new Error('Not permitted'), {
+      status: 403,
+      exc_type,
+      ...extra,
+    })
+
   it('is taken off the device at once, not when its fourteen days are up', async () => {
     const { syncPack, fieldPack, packState } = await load()
     await syncPack()
     expect(disk.has('pack')).toBe(true)
-    // Frappe's own refusal: the sales role was taken away
+    // the server's word for "no sales role any more"
     server.answer = async () => {
-      throw Object.assign(new Error('Not permitted'), {
-        status: 403,
-        exc_type: 'PermissionError',
-      })
+      throw refusal('NotAFieldUser')
     }
     expect(await syncPack()).toBe(false)
     expect(packState.refused).toBe(true)
     expect(fieldPack.value).toBe(null)
     expect(disk.size).toBe(0)
+  })
+
+  it('a permission error from inside the pack is the server’s to fix: the pack stays and syncing goes on', async () => {
+    const { syncPack, fieldPack, packState } = await load()
+    await syncPack()
+    // someone edited role permissions and a list stopped being readable
+    server.answer = async () => {
+      throw refusal('PermissionError')
+    }
+    expect(await syncPack()).toBe(false)
+    expect(fieldPack.value.organizations).toEqual([{ name: 'Impala' }])
+    expect(disk.has('pack')).toBe(true)
+    expect(packState.refused).toBe(false)
+    expect(packState.error).toBeTruthy()
+    // and once it is fixed the next sync works
+    server.answer = async () => full()
+    expect(await syncPack()).toBe(true)
+    expect(packState.error).toBe(null)
+  })
+
+  it('the gate’s refusal stops the asking and keeps the pack, as before', async () => {
+    const { syncPack, fieldPack, packState } = await load()
+    await syncPack()
+    server.answer = async () => {
+      throw refusal('PermissionError', { gate: true })
+    }
+    expect(await syncPack()).toBe(false)
+    expect(packState.refused).toBe(true)
+    expect(fieldPack.value.organizations).toEqual([{ name: 'Impala' }])
   })
 
   it('a 403 that is not Frappe’s, or a server error, leaves it where it is', async () => {
