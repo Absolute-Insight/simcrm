@@ -408,3 +408,122 @@ class ProductMasterDataPermissionTest(IntegrationTestCase):
 		frappe.set_user(self.MANAGER)
 		self.assertTrue(frappe.has_permission("CRM Product", doc=self.product.name, ptype="write"))
 		self.assertTrue(frappe.has_permission("CRM Product", ptype="create"))
+
+
+class SuggestionStoredOwnerTest(IntegrationTestCase):
+	"""The record door judges the suggestion as stored, and where it is being sent.
+
+	``frappe.client.set_value`` updates the document and then asks for write on
+	it, so a check of ``doc.user`` alone let an in-tree manager put one of their
+	own reps on another team's suggestion: the response carried its rationale and
+	payload, and it left the queue it was in.
+
+	  suggestion-manager  (in the tree, over suggestion-rep)
+	  suggestion-other    (a rep on nobody's team)
+	"""
+
+	MANAGER = "suggestion-manager@crmtest.test"
+	REP = "suggestion-rep@crmtest.test"
+	OTHER = "suggestion-other@crmtest.test"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		self.addCleanup(frappe.set_user, "Administrator")
+		people = [self.MANAGER, self.REP, self.OTHER]
+		for email in people:
+			ensure_rep(email, email.split("@")[0])
+		frappe.get_doc("User", self.MANAGER).add_roles("Sales Manager")
+
+		for doctype, field, value in (
+			("CRM Access Settings", "manager_outside_hierarchy", "All records"),
+			("FCRM Settings", "enable_sales_hierarchy", 1),
+		):
+			saved = frappe.db.get_single_value(doctype, field)
+			frappe.db.set_single_value(doctype, field, value)
+			self.addCleanup(frappe.db.set_single_value, doctype, field, saved or value)
+		frappe.db.delete("CRM Sales Hierarchy", {"user": ("in", people)})
+		self.addCleanup(frappe.db.delete, "CRM Sales Hierarchy", {"user": ("in", people)})
+		top = frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": self.MANAGER}).insert(
+			ignore_permissions=True
+		)
+		frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": self.REP, "reports_to": top.name}).insert(
+			ignore_permissions=True
+		)
+		frappe.db.delete("CRM Suggestion", {"signal": "stored_owner_test"})
+		self.addCleanup(frappe.db.delete, "CRM Suggestion", {"signal": "stored_owner_test"})
+		self.others = self.suggest(self.OTHER)
+		self.reps = self.suggest(self.REP)
+		self.unowned = self.suggest(None)
+
+	def suggest(self, user):
+		return frappe.get_doc(
+			{
+				"doctype": "CRM Suggestion",
+				"signal": "stored_owner_test",
+				"title": "Call this deal",
+				"rationale": "Their budget was approved on Friday",
+				"reference_doctype": "CRM Deal",
+				"user": user,
+				"suggested_action": "create_task",
+				"status": "Open",
+			}
+		).insert(ignore_permissions=True)
+
+	def stored_user(self, doc):
+		return frappe.db.get_value("CRM Suggestion", doc.name, "user")
+
+	def test_an_in_tree_manager_cannot_take_another_teams_suggestion_for_their_rep(self):
+		frappe.set_user(self.MANAGER)
+		self.assertFalse(frappe.has_permission("CRM Suggestion", doc=self.others.name, ptype="read"))
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Suggestion", self.others.name, {"user": self.REP})
+		doc = frappe.get_doc("CRM Suggestion", self.others.name)
+		doc.user = self.REP
+		for ptype in ("read", "write"):
+			with self.subTest(ptype=ptype):
+				self.assertFalse(doc.has_permission(ptype))
+		frappe.set_user("Administrator")
+		self.assertEqual(self.stored_user(self.others), self.OTHER)
+
+	def test_an_in_tree_manager_cannot_claim_an_unowned_suggestion(self):
+		frappe.set_user(self.MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Suggestion", self.unowned.name, {"user": self.REP})
+		frappe.set_user("Administrator")
+		self.assertIsNone(self.stored_user(self.unowned))
+
+	def test_an_in_tree_manager_cannot_send_their_reps_suggestion_outside_the_team(self):
+		frappe.set_user(self.MANAGER)
+		for target in (self.OTHER, None):
+			with self.subTest(target=target), self.assertRaises(frappe.PermissionError):
+				frappe.client.set_value("CRM Suggestion", self.reps.name, {"user": target})
+		frappe.set_user("Administrator")
+		self.assertEqual(self.stored_user(self.reps), self.REP)
+
+	def test_an_in_tree_manager_still_works_their_teams_suggestions(self):
+		frappe.set_user(self.MANAGER)
+		self.assertIn(self.reps.name, frappe.get_list("CRM Suggestion", pluck="name"))
+		self.assertTrue(frappe.has_permission("CRM Suggestion", doc=self.reps.name, ptype="read"))
+		frappe.client.set_value("CRM Suggestion", self.reps.name, "status", "Dismissed")
+		# and may pass it to themselves: both ends are inside the team
+		frappe.client.set_value("CRM Suggestion", self.reps.name, {"user": self.MANAGER})
+		frappe.set_user("Administrator")
+		self.assertEqual(self.stored_user(self.reps), self.MANAGER)
+
+	def test_a_rep_still_reads_their_own_suggestion_only(self):
+		frappe.set_user(self.REP)
+		self.assertTrue(frappe.has_permission("CRM Suggestion", doc=self.reps.name, ptype="read"))
+		self.assertFalse(frappe.has_permission("CRM Suggestion", doc=self.others.name, ptype="read"))
+		self.assertFalse(frappe.has_permission("CRM Suggestion", doc=self.unowned.name, ptype="read"))
+
+	def test_an_unrestricted_viewer_still_moves_any_suggestion(self):
+		"""A System Manager, and a Sales Manager outside the tree at "All records"."""
+		frappe.client.set_value("CRM Suggestion", self.others.name, {"user": self.REP})
+		self.assertEqual(self.stored_user(self.others), self.REP)
+		frappe.db.delete("CRM Sales Hierarchy", {"user": self.MANAGER})
+		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
+		frappe.set_user(self.MANAGER)
+		frappe.client.set_value("CRM Suggestion", self.unowned.name, {"user": self.OTHER})
+		frappe.set_user("Administrator")
+		self.assertEqual(self.stored_user(self.unowned), self.OTHER)

@@ -564,3 +564,83 @@ class QuotaScopeTest(IntegrationTestCase):
 
 	def test_an_administrator_still_sets_a_managers_target(self):
 		self.assertEqual(quota_api.set_quota(self.MANAGER, "2026-03-01", 300_000), {"amount": 300_000})
+
+	# --- the stored owner decides, not the one on the document in hand ------
+
+	def test_an_in_tree_manager_cannot_take_another_teams_quota_for_their_rep(self):
+		"""set_value updates the document and then asks for write on it, so judging
+		``doc.user`` granted a manager write on another team's row once they had
+		put their own rep on it. Refused as a permission, not further on."""
+		name = frappe.db.get_value("CRM Quota", {"user": OTHER, "period_start": "2026-03-01"})
+		frappe.set_user(self.MANAGER)
+		self.assertFalse(frappe.has_permission("CRM Quota", doc=name, ptype="read"))
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Quota", name, {"user": USER})
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value("CRM Quota", name, {"user": USER, "amount": 1})
+		doc = frappe.get_doc("CRM Quota", name)
+		doc.user = USER
+		for ptype in ("read", "write", "delete"):
+			with self.subTest(ptype=ptype):
+				self.assertFalse(doc.has_permission(ptype))
+		frappe.set_user("Administrator")
+		self.assertEqual(
+			frappe.db.get_value("CRM Quota", name, ["user", "amount"], as_dict=True),
+			{"user": OTHER, "amount": 70_000},
+		)
+
+	def test_an_in_tree_manager_cannot_hand_their_reps_quota_to_someone_outside(self):
+		"""The new value is judged too: moving a row out of the team loses it."""
+		self.make_quota(USER, "2026-03-01", 40_000)
+		name = frappe.db.get_value("CRM Quota", {"user": USER, "period_start": "2026-03-01"})
+		frappe.set_user(self.MANAGER)
+		for target in (OTHER, self.MANAGER):
+			with self.subTest(target=target), self.assertRaises(frappe.PermissionError):
+				frappe.client.set_value("CRM Quota", name, {"user": target})
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("CRM Quota", name, "user"), USER)
+
+	def test_an_in_tree_manager_still_edits_their_reps_quota_through_the_client_api(self):
+		self.make_quota(USER, "2026-03-01", 40_000)
+		name = frappe.db.get_value("CRM Quota", {"user": USER, "period_start": "2026-03-01"})
+		frappe.set_user(self.MANAGER)
+		self.assertTrue(frappe.has_permission("CRM Quota", doc=name, ptype="read"))
+		frappe.client.set_value("CRM Quota", name, "amount", 45_000)
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("CRM Quota", name, "amount"), 45_000)
+
+	def test_a_rep_still_reads_their_own_quota_and_nobody_elses(self):
+		self.make_quota(USER, "2026-03-01", 40_000)
+		own = frappe.db.get_value("CRM Quota", {"user": USER, "period_start": "2026-03-01"})
+		other = frappe.db.get_value("CRM Quota", {"user": OTHER, "period_start": "2026-03-01"})
+		frappe.set_user(USER)
+		self.assertTrue(frappe.has_permission("CRM Quota", doc=own, ptype="read"))
+		self.assertFalse(frappe.has_permission("CRM Quota", doc=other, ptype="read"))
+
+	def test_a_system_manager_still_edits_any_quota_but_nobody_moves_one(self):
+		"""``user`` is set-only-once: the name is the rep and the month."""
+		name = frappe.db.get_value("CRM Quota", {"user": OTHER, "period_start": "2026-03-01"})
+		with self.assertRaises(frappe.CannotChangeConstantError):
+			frappe.client.set_value("CRM Quota", name, {"user": USER})
+		frappe.client.set_value("CRM Quota", name, "amount", 71_000)
+		self.assertEqual(
+			frappe.db.get_value("CRM Quota", name, ["user", "amount"], as_dict=True),
+			{"user": OTHER, "amount": 71_000},
+		)
+
+	def test_a_manager_outside_the_tree_still_edits_any_reps_quota(self):
+		saved_scope = frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy")
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		self.addCleanup(
+			frappe.db.set_single_value,
+			"CRM Access Settings",
+			"manager_outside_hierarchy",
+			saved_scope or "All records",
+		)
+		frappe.db.delete("CRM Sales Hierarchy", {"user": self.MANAGER})
+		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
+		name = frappe.db.get_value("CRM Quota", {"user": OTHER, "period_start": "2026-03-01"})
+		frappe.set_user(self.MANAGER)
+		frappe.client.set_value("CRM Quota", name, "amount", 72_000)
+		frappe.set_user("Administrator")
+		self.assertEqual(frappe.db.get_value("CRM Quota", name, "amount"), 72_000)
