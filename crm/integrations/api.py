@@ -1,6 +1,6 @@
 import ipaddress
+import re
 import socket
-import time
 from urllib.parse import urlparse, urlunparse
 
 import frappe
@@ -11,6 +11,7 @@ from frappe.rate_limiter import rate_limit
 from pypika.functions import Replace
 from werkzeug.wrappers import Response
 
+from crm.domain_enrichment.http import _Deadline, _is_blocked_ip, _WatchedHTTPPool, _WatchedHTTPSPool
 from crm.utils import (
 	are_same_phone_number,
 	default_phone_region,
@@ -40,6 +41,21 @@ MAX_RECORDING_SECONDS = 600
 
 TWILIO_RECORDING_DOMAIN = ".twilio.com"
 EXOTEL_RECORDING_DOMAIN = ".exotel.com"
+
+# The one resource on each provider the account's key is attached for: the recording
+# itself. Group 1 is the account it belongs to. Twilio's is the media form of the
+# Recording resource (no extension, .mp3 or .wav -- ``.json`` is its metadata, and
+# everything else under the account is the REST API). Exotel serves recordings from
+# /exotelrecordings/<account sid>/<file>, apart from its /v1/Accounts/... API.
+_PROVIDER_RECORDING_PATHS = {
+	"Twilio": re.compile(r"/2010-04-01/Accounts/(AC[0-9a-f]{32})/Recordings/RE[0-9a-f]{32}(?:\.mp3|\.wav)?"),
+	"Exotel": re.compile(r"/exotelrecordings/([A-Za-z0-9_-]+)/[A-Za-z0-9_-]+\.(?:mp3|wav)"),
+}
+_PROVIDER_SETTINGS = {"Twilio": "CRM Twilio Settings", "Exotel": "CRM Exotel Settings"}
+_PLAIN_HOST = re.compile(r"[a-z0-9.-]+")
+# urlparse drops tabs and newlines and leaves a backslash in place; other parsers
+# do neither. A URL holding any of them is not one to reason about.
+_URL_NOISE = re.compile(r"[\s\x00-\x20\x7f\\]")
 
 
 def _configured_exotel_host() -> str:
@@ -73,6 +89,46 @@ def _recording_host_is_provider(telephony_medium: str, url: str) -> bool:
 		configured = _configured_exotel_host()
 		return (bool(configured) and host == configured) or host.endswith(EXOTEL_RECORDING_DOMAIN)
 	return False
+
+
+def _provider_account_sid(telephony_medium: str) -> str:
+	doctype = _PROVIDER_SETTINGS.get(telephony_medium)
+	if not doctype:
+		return ""
+	return (frappe.db.get_single_value(doctype, "account_sid") or "").strip()
+
+
+def _is_provider_recording(telephony_medium: str, url: str) -> bool:
+	"""True when ``url`` is a recording of the configured account, on its provider.
+
+	The host is not enough. ``recording_url`` and ``telephony_medium`` are both
+	writable by anyone who can edit a call log, and the key the proxy attaches is
+	the account's: sent to ``/Accounts/<sid>/Calls.json`` on the same host it
+	returns every rep's calls and numbers to whoever wrote the log. So the key goes
+	only to the recording-media path of the account in the settings, over https, on
+	the default port, and only when the URL is nothing but that path -- no query,
+	no parameters, no credentials of its own, no character that one URL parser
+	reads differently from another.
+	"""
+	pattern = _PROVIDER_RECORDING_PATHS.get(telephony_medium)
+	if not pattern or not url or _URL_NOISE.search(url):
+		return False
+	try:
+		if not _recording_host_is_provider(telephony_medium, url):
+			return False
+		parsed = urlparse(url)
+		port = parsed.port
+	except ValueError:
+		return False
+	if parsed.scheme != "https" or port not in (None, 443):
+		return False
+	if parsed.username or parsed.password or parsed.params or parsed.query or parsed.fragment:
+		return False
+	if not _PLAIN_HOST.fullmatch(parsed.hostname or "") or "?" in url or "#" in url:
+		return False
+	match = pattern.fullmatch(parsed.path)
+	account = _provider_account_sid(telephony_medium)
+	return bool(match and account and match.group(1) == account)
 
 
 def _get_recording_credentials(telephony_medium: str) -> tuple | None:
@@ -237,6 +293,10 @@ def lookup_contact_lead_or_deal_from_number(number: str, prefer_user: str | None
 #: At most this many rows per table are examined for one number. A shared
 #: switchboard number can sit on many records; the newest are the ones that matter.
 NUMBER_MATCH_LIMIT = 200
+
+#: Fewer digits than this is not a number to look up. The needle goes into a
+#: ``LIKE '%...%'``, so "+" (no digits at all) matched every contact on the site.
+MIN_LOOKUP_DIGITS = 3
 
 CLOSED_STATUS_TYPES = ("Won", "Lost")
 
@@ -427,8 +487,6 @@ def _resolve_validated_ip(hostname: str, port: int) -> str:
 	# the two drifted: the enrichment helper documents that is_global does NOT
 	# cover multicast and rejects it explicitly, while this path did not. A
 	# duplicated security check is a check that will disagree with itself.
-	from crm.domain_enrichment.http import _is_blocked_ip
-
 	for ip in ips:
 		if _is_blocked_ip(ip):
 			frappe.throw(_("Recording URL is not allowed"), frappe.ValidationError)
@@ -447,6 +505,12 @@ class _PinnedIPAdapter(requests.adapters.HTTPAdapter):
 		self._pinned_ip = pinned_ip
 		self._hostname = hostname
 		super().__init__(**kwargs)
+
+	def init_poolmanager(self, *args, **kwargs):
+		super().init_poolmanager(*args, **kwargs)
+		# every socket this adapter opens reports to the proxy's deadline, which
+		# shuts it when the time is up (see domain_enrichment.http._Deadline)
+		self.poolmanager.pool_classes_by_scheme = {"http": _WatchedHTTPPool, "https": _WatchedHTTPSPool}
 
 	def send(self, request, **kwargs):
 		parsed = urlparse(request.url)
@@ -535,10 +599,11 @@ def get_recording_url(call_log_name: str):
 	if not log.recording_url:
 		frappe.throw(_("Recording URL not found"), frappe.DoesNotExistError)
 
-	# Credentials only for the provider's own host: a recording_url edited to point
-	# elsewhere is fetched anonymously rather than handing that host the API secret.
+	# Credentials only for a recording of the configured account on the provider's
+	# own host: a recording_url edited to point at another host, or at another
+	# resource on that one, is fetched anonymously rather than as the account.
 	auth = None
-	if _recording_host_is_provider(log.telephony_medium, log.recording_url):
+	if _is_provider_recording(log.telephony_medium, log.recording_url):
 		auth = _get_recording_credentials(log.telephony_medium)
 	# forward the browser's Range header so the provider (Twilio/Exotel CDN) can return
 	# just the requested bytes; falls back to the full file if it doesn't support ranges
@@ -547,22 +612,50 @@ def get_recording_url(call_log_name: str):
 	if range_header:
 		req_headers["Range"] = range_header
 
-	# stream instead of buffering the whole file: the provider's Content-Length reaches
-	# the browser immediately so the <audio> element can show the duration right away,
-	# rather than waiting for the entire recording to download server-side first
-	upstream = _fetch_recording(log.recording_url, auth, req_headers)
-	upstream.raise_for_status()
+	# One clock for the whole exchange -- redirects, headers and body -- enforced on
+	# the socket. Checked only between chunks it never ran: iter_content blocks until
+	# a whole 64 KiB chunk has arrived, the headers are read before any of this code,
+	# and each byte restarts requests' per-read timeout, so a host sending a byte
+	# every few seconds held the worker for as long as it cared to.
+	deadline = _Deadline(MAX_RECORDING_SECONDS)
+	upstream = None
+	deadline.attach()
+	try:
+		# stream instead of buffering the whole file: the provider's Content-Length
+		# reaches the browser immediately so the <audio> element can show the duration
+		# right away, rather than waiting for the entire recording to download
+		# server-side first
+		upstream = _fetch_recording(log.recording_url, auth, req_headers)
+		upstream.raise_for_status()
 
-	declared = upstream.headers.get("Content-Length") or ""
-	if declared.isdigit() and int(declared) > MAX_RECORDING_BYTES:
-		# Refuse before streaming a byte when the host says up front how big it is;
-		# the loop below is the bound for the ones that do not.
+		declared = upstream.headers.get("Content-Length") or ""
+		if declared.isdigit() and int(declared) > MAX_RECORDING_BYTES:
+			# Refuse before streaming a byte when the host says up front how big it
+			# is; the loop below is the bound for the ones that do not.
+			frappe.throw(_("Recording is too large to play through the CRM"), frappe.ValidationError)
+		if deadline.expired:
+			# Shut while the headers were still arriving, which http.client reads as
+			# a complete response with no body: out of time, not an empty recording.
+			frappe.throw(_("The recording took too long to arrive"), frappe.ValidationError)
+	except Exception:
+		deadline.detach()
+		deadline.release()
+		if upstream is not None:
+			_close_upstream(upstream)
+		if deadline.expired:
+			# whatever broke, it broke because the deadline shut the socket under it
+			frappe.throw(_("The recording took too long to arrive"), frappe.ValidationError)
+		raise
+	# The body is read after this function returns. The sockets already opened stay
+	# under the clock; this thread's later connections are none of its business.
+	deadline.detach()
+
+	def _release():
 		_close_upstream(upstream)
-		frappe.throw(_("Recording is too large to play through the CRM"), frappe.ValidationError)
+		deadline.release()
 
 	def _stream():
 		sent = 0
-		deadline = time.monotonic() + MAX_RECORDING_SECONDS
 		try:
 			for chunk in upstream.iter_content(chunk_size=64 * 1024):
 				if chunk:
@@ -571,12 +664,17 @@ def get_recording_url(call_log_name: str):
 						return
 					sent += len(chunk)
 					yield chunk
-				# checked on empty chunks too: keep-alive dribble is exactly what
-				# keeps the per-read timeout from ever firing
-				if time.monotonic() >= deadline:
+				# between chunks as well: a host that keeps whole chunks coming, or
+				# sends empty ones, never blocks a read long enough to be shut
+				if deadline.remaining() <= 0:
 					return
+		except Exception:
+			# a read the deadline shut is out of time, not broken: end the stream
+			# with what was sent, as the byte cap does
+			if not deadline.expired:
+				raise
 		finally:
-			_close_upstream(upstream)
+			_release()
 
 	response = Response(
 		_stream(),
@@ -594,6 +692,10 @@ def get_recording_url(call_log_name: str):
 	for header in ("Content-Length", "Content-Range"):
 		if upstream.headers.get(header):
 			response.headers[header] = upstream.headers[header]
+	# A generator that is closed before its first chunk never runs its ``finally``
+	# (a client that hangs up at once, a HEAD), so the release hangs off the
+	# response as well; both are safe to run twice.
+	response.call_on_close(_release)
 	return response
 
 
@@ -623,6 +725,11 @@ def get_contact(phone_number: str, country: str = "IN", exact_match: bool = Fals
 		.replace("%", "")
 		.replace("_", "")
 	)
+	# Reachable by any rep with any string. With nothing left ("+", "()") the LIKE
+	# below is '%%', and with a digit or two it is nearly that: no such needle is a
+	# phone number, so it matches nothing rather than everything.
+	if sum(character.isdigit() for character in cleaned_number) < MIN_LOOKUP_DIGITS:
+		return {"mobile_no": phone_number}
 
 	# Check if the number is associated with a contact.
 	# Search all of a contact's numbers (phone_nos child table) and not just the
@@ -647,21 +754,33 @@ def get_contact(phone_number: str, country: str = "IN", exact_match: bool = Fals
 		.where(ContactPhone.parenttype == "Contact")
 		.where(normalized_phone.like(f"%{cleaned_number}%"))
 		.orderby(Contact.modified, order=Order.desc)
+		.limit(NUMBER_MATCH_LIMIT)
 	)
-	contacts = query.run(as_dict=True)
+	# The LIKE also catches numbers that merely contain these digits (a +44 number
+	# holding a +27 one's national digits), so only the rows that are this number
+	# go on -- newest first, as the query returned them.
+	contacts = [
+		contact
+		for contact in query.run(as_dict=True)
+		if are_same_phone_number(contact.matched_phone, phone_number, country, validate=not exact_match)
+	]
 
-	if len(contacts):
-		# Check if the contact is associated with a deal
+	if contacts:
+		# A contact who is the primary on a deal wins. One query for all of them: it
+		# was an ``exists`` and a ``get_value`` per row the LIKE returned.
+		primary_on = {}
+		for row in frappe.get_all(
+			"CRM Contacts",
+			filters={"contact": ("in", list({contact.name for contact in contacts})), "is_primary": 1},
+			fields=["contact", "parent"],
+			order_by="modified desc",
+			limit=NUMBER_MATCH_LIMIT,
+		):
+			primary_on.setdefault(row.contact, row.parent)
 		for contact in contacts:
-			if frappe.db.exists("CRM Contacts", {"contact": contact.name, "is_primary": 1}):
-				deal = frappe.db.get_value(
-					"CRM Contacts", {"contact": contact.name, "is_primary": 1}, "parent"
-				)
-				if are_same_phone_number(
-					contact.matched_phone, phone_number, country, validate=not exact_match
-				):
-					contact["deal"] = deal
-					return contact
+			if contact.name in primary_on:
+				contact["deal"] = primary_on[contact.name]
+				return contact
 
 	# Else, Check if the number is associated with a lead
 	Lead = frappe.qb.DocType("CRM Lead")
@@ -675,6 +794,7 @@ def get_contact(phone_number: str, country: str = "IN", exact_match: bool = Fals
 		.where(Lead.converted == 0)
 		.where(normalized_phone.like(f"%{cleaned_number}%"))
 		.orderby("modified", order=Order.desc)
+		.limit(NUMBER_MATCH_LIMIT)
 	)
 	leads = query.run(as_dict=True)
 
@@ -685,18 +805,7 @@ def get_contact(phone_number: str, country: str = "IN", exact_match: bool = Fals
 				lead["full_name"] = lead.lead_name
 				return lead
 
-	# The LIKE above also catches numbers that merely contain these digits (a +44
-	# number holding a +27 one's national digits), so the newest row is not
-	# necessarily the match.
-	contact = next(
-		(
-			contact
-			for contact in contacts
-			if are_same_phone_number(contact.matched_phone, phone_number, country, validate=not exact_match)
-		),
-		None,
-	)
-	if contact:
-		return contact
+	if contacts:
+		return contacts[0]
 
 	return {"mobile_no": phone_number}
