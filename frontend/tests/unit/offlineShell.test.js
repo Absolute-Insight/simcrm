@@ -5,6 +5,7 @@ import { shellFromIndex } from '../../offlineShell.js'
 import {
   BOOT_KEYS,
   BOOT_SNAPSHOT_KEY,
+  FIELD_USER_COOKIE,
   loadOfflineBoot,
   OFFLINE_OWNER_KEY,
   saveBootSnapshot,
@@ -63,7 +64,9 @@ describe('the offline shell', () => {
       }),
     }
     // exactly the text the page runs, with the page's two globals supplied
-    new Function('window', 'document', shellLoaderScript())(win, { cookie: '' })
+    new Function('window', 'document', shellLoaderScript())(win, {
+      cookie: `${FIELD_USER_COOKIE}=rep%40example.com`,
+    })
     expect(win.__crm_offline_user).toBe('rep@example.com')
     expect(win.site_name).toBe('vectora')
   })
@@ -72,6 +75,7 @@ describe('the offline shell', () => {
 describe('the boot a shell starts from', () => {
   const snapshot = (user) =>
     JSON.stringify({ user, boot: { site_name: 'vectora', timezone: {} } })
+  const FIELD = `${FIELD_USER_COOKIE}=rep%40example.com`
   const load = (cookie, stored) => {
     const win = {}
     loadOfflineBoot(
@@ -80,8 +84,14 @@ describe('the boot a shell starts from', () => {
       memoryStorage(stored),
       BOOT_SNAPSHOT_KEY,
       OFFLINE_OWNER_KEY,
+      FIELD_USER_COOKIE,
+      BOOT_KEYS,
     )
     return win
+  }
+  const held = {
+    [OFFLINE_OWNER_KEY]: 'rep@example.com',
+    [BOOT_SNAPSHOT_KEY]: snapshot('rep@example.com'),
   }
 
   it('restores the boot for the user the cookie names', () => {
@@ -93,36 +103,53 @@ describe('the boot a shell starts from', () => {
     expect(win.site_name).toBe('vectora')
   })
 
-  it('falls back to the device’s offline owner when the session cookie is gone', () => {
-    const win = load('', {
-      [OFFLINE_OWNER_KEY]: 'rep@example.com',
-      [BOOT_SNAPSHOT_KEY]: snapshot('rep@example.com'),
-    })
-    expect(win.__crm_offline_user).toBe('rep@example.com')
+  it('opens for the signed-in user when the phone dropped the session cookie', () => {
+    expect(load(`sid=x; ${FIELD}`, held).__crm_offline_user).toBe(
+      'rep@example.com',
+    )
+  })
+
+  it('does not open on the stores alone: a logout deletes the cookie', () => {
+    // logged out from the desk, app closed before /crm was loaded again
+    const win = load('', held)
+    expect(win.__crm_offline_user).toBeUndefined()
+    expect(win.site_name).toBeUndefined()
+  })
+
+  it('does not open for a signed-in user whose stores these are not', () => {
+    const win = load(`${FIELD_USER_COOKIE}=other%40example.com`, held)
+    expect(win.__crm_offline_user).toBeUndefined()
   })
 
   it('gives another user nothing of the last one', () => {
-    const win = load('user_id=other%40example.com', {
-      [OFFLINE_OWNER_KEY]: 'rep@example.com',
-      [BOOT_SNAPSHOT_KEY]: snapshot('rep@example.com'),
-    })
+    const win = load('user_id=other%40example.com', held)
     expect(win.__crm_offline_user).toBeUndefined()
     expect(win.site_name).toBeUndefined()
   })
 
   it('honours a Guest cookie as logged out', () => {
-    const win = load('user_id=Guest', {
-      [OFFLINE_OWNER_KEY]: 'rep@example.com',
-      [BOOT_SNAPSHOT_KEY]: snapshot('rep@example.com'),
+    expect(load(`user_id=Guest; ${FIELD}`, held).__crm_offline_user).toBe(
+      undefined,
+    )
+  })
+
+  it('restores only the boot keys, whatever the snapshot holds', () => {
+    const win = load('user_id=rep%40example.com', {
+      [BOOT_SNAPSHOT_KEY]: JSON.stringify({
+        user: 'rep@example.com',
+        boot: { site_name: 'vectora', csrf_token: 'planted', location: 'x' },
+      }),
     })
-    expect(win.__crm_offline_user).toBeUndefined()
+    expect(win.site_name).toBe('vectora')
+    expect(win.csrf_token).toBeUndefined()
+    expect(win.location).toBeUndefined()
   })
 
   it('survives storage that throws or holds rubbish', () => {
     const win = {}
     loadOfflineBoot(
       win,
-      '',
+      FIELD,
       {
         getItem() {
           throw new Error('blocked')
@@ -130,8 +157,11 @@ describe('the boot a shell starts from', () => {
       },
       BOOT_SNAPSHOT_KEY,
       OFFLINE_OWNER_KEY,
+      FIELD_USER_COOKIE,
+      BOOT_KEYS,
     )
     expect(win.__crm_offline_shell).toBe(true)
+    expect(win.__crm_offline_user).toBeUndefined()
     expect(
       load('user_id=rep', { [BOOT_SNAPSHOT_KEY]: '{not json' })
         .__crm_offline_user,
@@ -148,6 +178,14 @@ describe('the boot a shell starts from', () => {
       timezone: { system: 'x' },
     })
     expect(BOOT_KEYS).not.toContain('csrf_token')
+  })
+
+  it('names the cookie the server sets', () => {
+    const source = readFileSync(
+      join(process.cwd(), '..', 'crm', 'api', 'offline.py'),
+      'utf8',
+    )
+    expect(source).toContain(`FIELD_USER_COOKIE = "${FIELD_USER_COOKIE}"`)
   })
 
   it('saves nothing for a page that has no boot or no user', () => {

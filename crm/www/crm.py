@@ -35,9 +35,29 @@ def get_context():
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	context = frappe._dict()
 	context.boot = get_boot()
+	remember_field_user()
 	if frappe.session.user != "Guest":
 		capture("active_site", "crm")
 	return context
+
+
+def remember_field_user() -> None:
+	"""Name the signed-in user in a cookie that outlives the browser session.
+
+	The cached shell that opens the app with no network has to know whose saved
+	copy to show, and ``user_id`` cannot tell it: frappe sets that as a session
+	cookie, and a phone drops those when it closes the app. This one lasts as
+	long as a pack does and is deleted on logout (``crm.api.auth.forget_field_user``),
+	including a logout from the desk, which the app's own code never sees.
+
+	It authenticates nothing -- the server never reads it. It is readable by
+	script, like ``user_id``, because the shell's loader is script.
+	"""
+	from crm.api.offline import FIELD_USER_COOKIE, PACK_MAX_AGE_DAYS
+
+	frappe.local.cookie_manager.set_cookie(
+		FIELD_USER_COOKIE, frappe.session.user, max_age=PACK_MAX_AGE_DAYS * 86400
+	)
 
 
 # Guest access is required -- the vite dev server runs on its own origin and

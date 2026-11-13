@@ -121,6 +121,8 @@ function showConnectOnceNotice() {
         <button type="button" style="margin-top:1.25rem;padding:.5rem 1rem;border-radius:.5rem;border:1px solid currentColor;background:none;color:inherit;font:inherit" onclick="location.reload()">Try again</button>
       </div>
     </div>`
+  // the moment there is a network, the real page can say who this is
+  window.addEventListener('online', () => window.location.reload())
 }
 
 let socket

@@ -81,29 +81,58 @@ export function clearBootSnapshot(storage) {
   }
 }
 
+/* A cookie crm/www/crm.py sets on every page it renders and logout deletes:
+   who this device is signed in as, kept for as long as a pack is. */
+export const FIELD_USER_COOKIE = 'crm_field_user'
+
 /**
  * Runs inline in the cached shell, before the app's modules.
  *
- * Who the shell is for: the `user_id` cookie when there is one, otherwise the
- * owner of this device's offline stores. `user_id` is a session cookie, and a
- * phone drops those when it closes the app -- exactly when a rep at a site
- * with no signal opens it again. An explicit Guest cookie is the server having
- * said "logged out", and is honoured.
+ * Who the shell is for. The `user_id` cookie when there is one; an explicit
+ * Guest there is the server having said "logged out", and is honoured. But
+ * `user_id` is a session cookie, and a phone drops those when it closes the
+ * app -- exactly when a rep at a site with no signal opens it again. So the
+ * server also sets a persistent cookie naming the signed-in user, and deletes
+ * it on logout, from the desk as much as from here. With no `user_id`, the
+ * shell is for that user, provided this device's offline stores are theirs.
+ * Neither cookie proves anything to the server; they only decide whose saved
+ * copy to show until the server can be asked (offline/connectivity.js).
+ *
+ * Only the listed boot keys are restored: what is in localStorage is not
+ * allowed to name the globals it lands on.
  *
  * Self-contained on purpose (no closures, no imports): its source is written
  * into the page as text.
  */
-export function loadOfflineBoot(win, cookie, storage, snapshotKey, ownerKey) {
+export function loadOfflineBoot(
+  win,
+  cookie,
+  storage,
+  snapshotKey,
+  ownerKey,
+  fieldCookie,
+  bootKeys,
+) {
   win.__crm_offline_shell = true
   try {
-    var match = /(?:^|; )user_id=([^;]*)/.exec(cookie || '')
-    var cookieUser = match ? decodeURIComponent(match[1]) : null
-    if (cookieUser === 'Guest') return
-    var user = cookieUser || storage.getItem(ownerKey)
-    if (!user) return
+    var read = function (name) {
+      var match = new RegExp('(?:^|; )' + name + '=([^;]*)').exec(cookie || '')
+      return match ? decodeURIComponent(match[1]) : null
+    }
+    var user = read('user_id')
+    if (user === 'Guest') return
+    if (!user) {
+      user = read(fieldCookie)
+      if (!user || storage.getItem(ownerKey) !== user) return
+    }
     var snapshot = JSON.parse(storage.getItem(snapshotKey) || 'null')
     if (!snapshot || snapshot.user !== user || !snapshot.boot) return
-    for (var key in snapshot.boot) win[key] = snapshot.boot[key]
+    for (var i = 0; i < bootKeys.length; i++) {
+      var key = bootKeys[i]
+      if (Object.prototype.hasOwnProperty.call(snapshot.boot, key)) {
+        win[key] = snapshot.boot[key]
+      }
+    }
     win.__crm_offline_user = user
   } catch {
     /* unreadable storage: the app shows its "connect once" notice */
@@ -112,8 +141,14 @@ export function loadOfflineBoot(win, cookie, storage, snapshotKey, ownerKey) {
 
 /** The inline `<script>` body that replaces the Jinja boot block. */
 export function shellLoaderScript() {
+  const args = [
+    BOOT_SNAPSHOT_KEY,
+    OFFLINE_OWNER_KEY,
+    FIELD_USER_COOKIE,
+    BOOT_KEYS,
+  ].map((value) => JSON.stringify(value))
   return (
-    `;(${loadOfflineBoot.toString()})(window, document.cookie, window.localStorage, ` +
-    `${JSON.stringify(BOOT_SNAPSHOT_KEY)}, ${JSON.stringify(OFFLINE_OWNER_KEY)})`
+    `;(${loadOfflineBoot.toString()})(window, document.cookie, ` +
+    `window.localStorage, ${args.join(', ')})`
   )
 }

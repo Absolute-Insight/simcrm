@@ -64,3 +64,18 @@ def land_in_crm(login_manager):
 	if "System Manager" in roles or not any(role in roles for role in CRM_ONLY_ROLES):
 		return
 	frappe.local.flags.home_page = "crm"
+
+
+def forget_field_user(login_manager=None):
+	"""Logout, from anywhere: the cached shell must stop opening for this user.
+
+	``crm/www/crm.py`` sets the cookie; see ``remember_field_user`` there. The
+	app's own logout also empties the device's stores, but a logout from the
+	desk runs none of the app's code -- this hook is the part that still runs.
+	"""
+	from crm.api.offline import FIELD_USER_COOKIE
+
+	# no cookie jar outside a request (a session cleared from a job or the console)
+	cookies = getattr(frappe.local, "cookie_manager", None)
+	if cookies:
+		cookies.delete_cookie(FIELD_USER_COOKIE)
