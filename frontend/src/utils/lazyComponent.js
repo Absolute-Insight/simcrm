@@ -153,7 +153,7 @@ export function lazyComponent(
 }
 
 /** What is drawn for a failure when the caller named nothing of its own. */
-const DefaultFailed = defineComponent({
+const DefaultFailed = {
   name: 'LazyFailed',
   props: {
     error: { type: null, default: null },
@@ -168,7 +168,7 @@ const DefaultFailed = defineComponent({
       onRetry: () => this.$emit('retry'),
     })
   },
-})
+}
 
 const FOCUSABLE =
   '[contenteditable="true"], input:not([disabled]), textarea:not([disabled]), ' +
