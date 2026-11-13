@@ -625,6 +625,18 @@ class SocialTest(UnitTestCase):
 		profiles = extractors.extract_social_profiles([page], {page.url: soup}, fixtures.social_rules())
 		self.assertEqual(profiles["linkedin"].value, "https://www.linkedin.com/company/acme")
 
+	def test_a_scheme_relative_link_with_no_base_is_https_not_dropped(self):
+		"""Review of PR #400: with no page URL to take a scheme from, the http(s)
+		check dropped ``//linkedin.com/...`` that was stored before it."""
+		profiles = extractors.extract_social_profiles(
+			[], {}, fixtures.social_rules(), extra_links=["//www.linkedin.com/company/acme"]
+		)
+		self.assertEqual(profiles["linkedin"].value, "https://www.linkedin.com/company/acme")
+		self.assertEqual(
+			extractors._safe_url("", "//cdn.acme.example/logo.png"), "https://cdn.acme.example/logo.png"
+		)
+		self.assertEqual(extractors._safe_url("", "javascript:alert(1)//linkedin.com/company/x"), "")
+
 	def test_protocol_relative_links_made_absolute(self):
 		page, soup = fixtures.make_page(
 			"https://bluedart.com",

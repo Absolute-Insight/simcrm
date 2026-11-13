@@ -90,7 +90,19 @@ class NormalizeWebsiteTest(UnitTestCase):
 		self.assertEqual(_normalize_website("localhost:8000"), "https://localhost:8000")
 
 	def test_what_is_not_a_web_address_is_still_refused(self):
-		for website in ("file:///etc/passwd", "javascript:alert(1)", "acme.co.za:port", "https://", "://x"):
+		for website in (
+			"file:///etc/passwd",
+			"javascript:alert(1)",
+			"acme.co.za:port",
+			"https://",
+			"://x",
+			# review of PR #400: these became https://mailto:... and host "http"
+			"mailto:info@acme.co.za",
+			"http:/acme.co.za",
+			"https:acme.co.za",
+			"tel:+27110000000",
+			"user:secret@acme.co.za",
+		):
 			with self.subTest(website=website):
 				with self.assertRaises(ValueError):
 					_normalize_website(website)

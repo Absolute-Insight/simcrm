@@ -13,6 +13,7 @@ errors/notes on the result.
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from urllib.parse import urlparse
 
@@ -45,6 +46,10 @@ PROGRESS_STEPS = [
 ]
 
 
+_SCHEME_LIKE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
+_HOST_AND_PORT = re.compile(r"[^/?#@:]+:\d+(?:[/?#]|$)")
+
+
 def _normalize_website(url: str) -> str:
 	url = (url or "").strip()
 	if not url:
@@ -53,6 +58,11 @@ def _normalize_website(url: str) -> str:
 	# as a scheme, and a website typed with its port was refused as "unsupported
 	# URL scheme: acme.co.za".
 	if "://" not in url:
+		# a bare host, with or without a port -- and nothing else that starts
+		# like a scheme: "mailto:info@acme.co.za" and "http:/acme.co.za" are
+		# not hosts to put "https://" in front of
+		if _SCHEME_LIKE.match(url) and not _HOST_AND_PORT.match(url):
+			raise ValueError(f"unsupported URL scheme: {url.split(':', 1)[0]}")
 		url = "https://" + url
 	parsed = urlparse(url)
 	if parsed.scheme not in ("http", "https"):

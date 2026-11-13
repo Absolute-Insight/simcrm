@@ -256,6 +256,10 @@ def _safe_url(base_url, raw):
 	if scheme and scheme not in ("http", "https"):
 		return ""
 	resolved = urljoin(base_url, raw)
+	if resolved.startswith("//"):
+		# scheme-relative with no base to take a scheme from (a JSON-LD sameAs
+		# link on a page whose URL is not known): https, not dropped
+		resolved = "https:" + resolved
 	return resolved if urlparse(resolved).scheme in ("http", "https") else ""
 
 
