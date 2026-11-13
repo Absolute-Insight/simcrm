@@ -123,24 +123,21 @@ services:
     image: redis:6.2-alpine@sha256:3f9c6e23ed6bea3b41d0ef709fc164c1a0b7c00d5a21a60e0e9c33ada5496881
     logging: *logging
     restart: unless-stopped
-    # Bounded, and allowed to evict. A bare redis-server has no maxmemory, so
-    # the cache grew until it met the 256m ceiling below and was OOM-killed --
-    # a cold cache and a burst of errors where an eviction would have done.
-    # This is what bench's own generated redis_cache.conf does: a ceiling,
-    # allkeys-lru, and no snapshots (a cache is disposable, and the fork a
-    # snapshot takes is memory this container does not have to spare). The
-    # ceiling has to stay below the container limit; redis needs room above
-    # its data for client buffers and fragmentation.
+    # No `command`, on purpose: the image's bare redis-server, which means no
+    # maxmemory, no eviction, and the default snapshots to /data. It looks like
+    # an oversight in a service called "cache" -- bench's own redis_cache.conf
+    # sets a ceiling with allkeys-lru and turns snapshots off -- and it is not
+    # one here. This instance does not hold only disposable data. The Acumatica
+    # in-flight markers (crm/integrations/acumatica/outbound.py; listed as
+    # persistent keys in crm/hooks.py) live in it for thirty days, and a marker
+    # is the only thing that stops a retried quote being written to the
+    # customer's ERP a second time; the event-reminder ledger is here too. An
+    # evicted or unpersisted marker is a duplicate sales order.
     #
-    # Never copy this to redis-queue: evicting there deletes queued jobs.
-    command:
-      - redis-server
-      - --maxmemory
-      - ${REDIS_CACHE_MAXMEMORY:-192mb}
-      - --maxmemory-policy
-      - allkeys-lru
-      - --save
-      - ""
+    # So until those keys live somewhere durable (the database, or
+    # redis-queue), this service must not get a maxmemory-policy that evicts
+    # and must keep writing snapshots. .github/helper/test-deploy-compose.sh
+    # fails if either changes.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s

@@ -82,17 +82,25 @@ if pool:
 		f"{pool[0]} is {share:.0%} of the limit",
 	)
 
-# infra-9: the cache evicts below its ceiling; the queue never evicts.
-cache = services["redis-cache"].get("command") or []
-flags = dict(zip(cache[1::2], cache[2::2]))
-check("redis-cache has a maxmemory", "--maxmemory" in flags, str(cache))
-if "--maxmemory" in flags:
-	check(
-		"redis-cache maxmemory is below its container limit",
-		size(flags["--maxmemory"]) < limit("redis-cache"),
-		f"{flags['--maxmemory']} against {limit('redis-cache')} bytes",
-	)
-check("redis-cache evicts with allkeys-lru", flags.get("--maxmemory-policy") == "allkeys-lru", str(cache))
+# infra-9, and why it is NOT fixed the obvious way. redis-cache also holds
+# keys that must outlive memory pressure and restarts: the Acumatica in-flight
+# markers that stop a retried quote being written to the ERP twice, and the
+# event-reminder ledger. So it must neither evict nor stop persisting, and a
+# well-meant "it is only a cache" edit has to fail here. Redis's defaults are
+# noeviction and RDB snapshots, so the safe states are: no flag at all, or the
+# flag set to exactly that.
+cache = " ".join(str(a) for a in services["redis-cache"].get("command") or []).lower()
+policy = re.search(r"--maxmemory-policy[ =]+(\S+)", cache)
+check(
+	"redis-cache never evicts (no maxmemory-policy, or noeviction)",
+	policy is None or policy.group(1) == "noeviction",
+	cache,
+)
+check(
+	"redis-cache keeps its snapshots (no --save override, RDB not disabled)",
+	"--save" not in cache and "--appendonly no" not in cache and ".conf" not in cache,
+	cache,
+)
 queue = " ".join(services["redis-queue"].get("command") or [])
 check("redis-queue has no maxmemory and no eviction policy", "maxmemory" not in queue, queue)
 check("redis-queue is append-only", "--appendonly yes" in queue, queue)

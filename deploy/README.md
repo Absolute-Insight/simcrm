@@ -410,11 +410,12 @@ docker compose exec backend bench --site <site> set-maintenance-mode off
 
 **The first `up -d` on a release after v3.30.0 also restarts the database and both
 redis containers**, once, because their definitions changed: `db` gained an
-InnoDB buffer pool size (see [Sizing the database](#sizing-the-database)),
-`redis-cache` a memory ceiling with eviction, and both redis images are now
-pinned by digest. No data changes — the database comes back on the same
-volume, the queue replays its append-only file, and the cache starts empty,
-as it does after every `migrate`. It is a cold restart of MariaDB all the
+InnoDB buffer pool size (see [Sizing the database](#sizing-the-database)), and
+both redis images are now pinned by digest — the same 6.2.24 they already run,
+and nothing else about either service changed. No data changes: the database
+comes back on the same volume, the queue replays its append-only file, and the
+cache reloads the snapshot it wrote on the way down, from the `/data` volume
+that follows it across the recreate. It is a cold restart of MariaDB all the
 same, so let it happen here, inside the maintenance window of step 2, and not
 as a surprise the next time somebody runs `up -d` to change a proxy setting.
 
@@ -565,13 +566,24 @@ innodb_buffer_pool_size = ...` as the MariaDB root user resizes it on a running
 server — but that does not survive a restart and does not move the container's
 limit, so it is for trying a value, not for keeping one.)
 
-`redis-cache` is bounded the same way: `REDIS_CACHE_MAXMEMORY` (default
-`192mb`, under the container's 256 MB) is where it starts evicting the least
-recently used keys instead of growing until the kernel kills it. It no longer
-writes snapshots, so it starts empty after a restart — which is what a cache is
-for, and what `bench migrate` does to it on every upgrade anyway. `redis-queue`
-is deliberately left alone: it has no ceiling of its own and no eviction,
-because a key evicted there is a queued job that never runs.
+**`redis-cache` is not bounded, and that is deliberate for now.** It has a
+256 MB container limit and no `maxmemory` of its own, so in principle it can
+grow until the kernel kills it rather than evict. The obvious fix — a ceiling
+with `allkeys-lru` and no snapshots, which is what bench configures for its
+own cache — is unsafe on this stack, because this redis does not hold only
+cache. The Acumatica in-flight markers live there for thirty days and are the
+one thing that stops a retried quote being written to the ERP twice; the
+event-reminder ledger is there as well. Evicting a marker, or losing it on a
+restart, is a duplicate sales order in a customer's live system. Bounding the
+cache therefore waits on moving those keys somewhere durable; until then,
+watch it instead:
+
+```bash
+docker stats --no-stream $(docker compose ps -q redis-cache)     # against the 256MiB limit
+```
+
+`redis-queue` is left alone for the same kind of reason: no ceiling and no
+eviction, because a key evicted there is a queued job that never runs.
 
 ### Maintenance mode lags by a minute
 
