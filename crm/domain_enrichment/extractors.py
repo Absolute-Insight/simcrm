@@ -600,7 +600,12 @@ def extract_social_profiles(pages, soups_by_url, social_rules, extra_links=None)
 	for href, source, method in candidates:
 		if not href or SOCIAL_NEGATIVE.search(href):
 			continue
-		url = urljoin(source, href.strip())
+		# http(s) only, like the logo and icon: the patterns are unanchored
+		# searches, so ``javascript:...//linkedin.com/company/x`` matched and was
+		# stored as the record's profile link
+		url = _safe_url(source, href)
+		if not url:
+			continue
 		for rule in social_rules:
 			network = rule.target_value
 			if profiles[network].value:

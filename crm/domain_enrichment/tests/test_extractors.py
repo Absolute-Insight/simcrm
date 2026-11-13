@@ -602,6 +602,29 @@ class SocialTest(UnitTestCase):
 				profiles = extractors.extract_social_profiles([page], {page.url: soup}, [rule])
 				self.assertTrue(profiles["twitter"].value)
 
+	def test_only_http_links_are_stored_as_profiles(self):
+		"""Audit be_enrichment-3: the patterns are unanchored searches, so a
+		``javascript:`` URL that mentions the network was stored as the profile."""
+		for href in (
+			"javascript:alert(document.domain)//linkedin.com/company/x",
+			"JavaScript:alert(1)//www.linkedin.com/company/x",
+			"data:text/html,<script>alert(1)</script>//linkedin.com/company/x",
+			"vbscript:msgbox(1)//linkedin.com/company/x",
+			"ftp://linkedin.com/company/x",
+		):
+			with self.subTest(href=href):
+				page, soup = fixtures.make_page("https://acme.example", f'<a href="{href}">in</a>')
+				for extra in ([], [href]):  # an <a href>, and a JSON-LD sameAs entry
+					profiles = extractors.extract_social_profiles(
+						[page], {page.url: soup}, fixtures.social_rules(), extra_links=extra
+					)
+					self.assertEqual(profiles["linkedin"].value, "")
+		page, soup = fixtures.make_page(
+			"https://acme.example", '<a href="https://www.linkedin.com/company/acme">in</a>'
+		)
+		profiles = extractors.extract_social_profiles([page], {page.url: soup}, fixtures.social_rules())
+		self.assertEqual(profiles["linkedin"].value, "https://www.linkedin.com/company/acme")
+
 	def test_protocol_relative_links_made_absolute(self):
 		page, soup = fixtures.make_page(
 			"https://bluedart.com",
