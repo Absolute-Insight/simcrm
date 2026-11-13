@@ -151,7 +151,14 @@ def visible_contact_condition(user: str | None = None, for_write: bool = False):
 
 
 def visible_address_condition(user: str | None = None, for_write: bool = False):
-	"""An address names its customer, and the import titles it with the name."""
+	"""An address names its customer, and the import titles it with the name.
+
+	A contact's own address goes with the contact. The contact page's address
+	modal writes a plain Address with no links at all and points ``Contact.address``
+	at it, so following organizations alone left the street, phone and email of
+	the people at a hidden customer listed to every rep. frappe's own shape, a
+	Dynamic Link to the Contact, is followed too.
+	"""
 	user = user or frappe.session.user
 	org_cond = visible_organization_condition(user, for_write)
 	if org_cond is None:
@@ -169,7 +176,32 @@ def visible_address_condition(user: str | None = None, for_write: bool = False):
 		)
 	)
 	on_record = frappe.qb.from_(Org).select(Org.address).where(Org.address.isnotnull()).where(~org_cond)
-	return (Address.owner == user) | (Address.name.notin(linked) & Address.name.notin(on_record))
+	Contact = frappe.qb.DocType("Contact")
+	ContactLink = frappe.qb.DocType("Dynamic Link").as_("_cust_contact_link")
+	hidden_contact = ~visible_contact_condition(user, for_write)
+	# isnotnull, as in _hidden_organizations: most contacts have no address, and
+	# one NULL in a NOT IN subquery would hide every address there is
+	on_contact = (
+		frappe.qb.from_(Contact)
+		.select(Contact.address)
+		.where(Contact.address.isnotnull())
+		.where(hidden_contact)
+	)
+	linked_to_contact = (
+		frappe.qb.from_(ContactLink)
+		.select(ContactLink.parent)
+		.where(
+			(ContactLink.parenttype == "Address")
+			& (ContactLink.link_doctype == "Contact")
+			& ContactLink.link_name.isin(frappe.qb.from_(Contact).select(Contact.name).where(hidden_contact))
+		)
+	)
+	return (Address.owner == user) | (
+		Address.name.notin(linked)
+		& Address.name.notin(on_record)
+		& Address.name.notin(on_contact)
+		& Address.name.notin(linked_to_contact)
+	)
 
 
 def visible_event_condition(user: str | None = None):
