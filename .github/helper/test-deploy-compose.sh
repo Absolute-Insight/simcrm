@@ -113,7 +113,7 @@ check(
 	str(health),
 )
 if health:
-	for value, want in (("26", 0), ("26.5", 0), ("abc", 0), ("", 0)):
+	for value, want in (("26", 0), ("26.5", 0), ("abc", 0), ("", 0), ("08", 0), ("00", 0)):
 		# No dump exists in this throwaway directory, so a healthy parse is
 		# "ran find, found nothing": exit 1 with nothing on stderr. A broken
 		# expression is a shell error instead.

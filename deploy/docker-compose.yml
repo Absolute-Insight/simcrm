@@ -159,8 +159,9 @@ services:
     # 256m ceiling silently drops up to a minute of enqueued work -- queued
     # email, automation actions, an ERP sync somebody pressed Sync Now for.
     #
-    # No maxmemory and no eviction policy here, deliberately: redis-cache has
-    # both, and on this instance an evicted key is a job that never runs.
+    # No maxmemory and no eviction policy here, deliberately: on this instance
+    # an evicted key is a job that never runs. (redis-cache has neither as
+    # well, for its own reason -- see the comment on that service.)
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-queue-data:/data
@@ -448,7 +449,11 @@ services:
         - |
           h="$${BACKUP_MAX_AGE_HOURS:-26}"
           case "$$h" in ""|*[!0-9]*) h=26 ;; esac
-          find "/home/frappe/frappe-bench/sites/$$SITE_NAME/private/backups" -name "*-database*.sql.gz" -mmin "-$$(( h * 60 ))" 2>/dev/null | grep -q .
+          # "08" is all digits and still a syntax error below: a leading zero
+          # makes the shell read it as octal.
+          while [ "$${h#0}" != "$$h" ]; do h="$${h#0}"; done
+          [ -n "$$h" ] || h=26
+          find"/home/frappe/frappe-bench/sites/$$SITE_NAME/private/backups" -name "*-database*.sql.gz" -mmin "-$$(( h * 60 ))" 2>/dev/null | grep -q .
       interval: 300s
       timeout: 30s
       retries: 3
