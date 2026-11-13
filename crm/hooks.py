@@ -248,9 +248,17 @@ doc_events = {
 			"crm.integrations.acumatica.install.guard_contact_identity",
 		],
 	},
+	"Address": {
+		"validate": ["crm.permissions.customers.validate_address_links"],
+	},
 	"Event": {
 		"validate": ["crm.permissions.customers.validate_event_participants"],
 	},
+	# a note, a task or a call goes onto a record its author can read; asked
+	# here as well as in has_permission, after frappe has normalised the links
+	"FCRM Note": {"validate": ["crm.permissions.linked_records.validate_filing"]},
+	"CRM Task": {"validate": ["crm.permissions.linked_records.validate_filing"]},
+	"CRM Call Log": {"validate": ["crm.permissions.linked_records.validate_filing"]},
 	"Event Participants": {
 		"validate": ["crm.permissions.customers.refuse_direct_participant_save"],
 	},
@@ -541,6 +549,8 @@ after_migrate = [
 	"crm.fcrm.doctype.fcrm_note.fcrm_note.on_doctype_update",
 	"crm.fcrm.doctype.crm_status_change_log.crm_status_change_log.on_doctype_update",
 	"crm.fcrm.doctype.crm_forecast_snapshot.crm_forecast_snapshot.on_doctype_update",
+	# frappe's table: the rep scoping sub-select filters it by assignee
+	"crm.permissions.org_hierarchy.ensure_todo_index",
 ]
 
 # frappe.clear_cache() deletes every other key on the site -- and frappe.rename_doc
@@ -548,9 +558,14 @@ after_migrate = [
 # state, not caches: dropping the shared API token leaves its login holding one of
 # the API user's concurrent-login slots until it expires (a logout needs the token),
 # and dropping an in-flight marker lets the next click send a second order.
+#
+# The event-reminder sent ledger is state too (crm.api.event.SENT_REMINDER_KEY): it
+# is the only record that a reminder has gone out, so a clear_cache inside the
+# catch-up hour mailed every participant, customers included, a second time.
 persistent_cache_keys = [
 	"acumatica_token::*",
 	"acumatica_inflight::*",
+	"crm:event_reminder_sent:*",
 ]
 
 standard_dropdown_items = [

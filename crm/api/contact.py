@@ -3,7 +3,26 @@ from frappe import _
 
 
 def validate(doc, method):
+	refuse_unreadable_address(doc)
 	update_deals_email_mobile_no(doc)
+
+
+def refuse_unreadable_address(doc):
+	"""A contact is given an address its editor can read.
+
+	An address goes with the contact that names it, so pointing one's own
+	contact at an address at a colleague's customer hid that address from the
+	colleague: link validation only asks whether it exists. Only an address that
+	is new on the contact is checked -- one a manager put there stays -- and
+	server code that saves on a rep's behalf is trusted.
+	"""
+	if doc.flags.ignore_permissions or not doc.address:
+		return
+	if not doc.is_new() and not doc.has_value_changed("address"):
+		return
+	from crm.permissions.customers import assert_address_allowed
+
+	assert_address_allowed(doc.address)
 
 
 def update_deals_email_mobile_no(doc):
@@ -115,6 +134,32 @@ def set_as_primary(contact: str, field: str, value: str):
 
 	contact.save()
 	return True
+
+
+@frappe.whitelist()
+def find_by_email(email: str) -> str | None:
+	"""The Contact the caller can read that carries ``email``, primary or not.
+
+	The calendar gives a typed attendee a Contact before it saves the event. It
+	looked one up on ``Contact.email_id``, which holds the primary address only,
+	so a person invited at their second address got a second Contact. This reads
+	the address rows themselves, and prefers the contact it is primary on.
+
+	Through ``get_list``, so it answers for the contacts the caller's own list
+	shows and no others: a contact at another rep's customer is not found here,
+	or an address would be a way to ask whether a colleague's customer has it.
+	"""
+	email = (email or "").strip()
+	if not email:
+		return None
+	found = frappe.get_list(
+		"Contact",
+		filters=[["Contact Email", "email_id", "=", email]],
+		fields=["name"],
+		order_by="`tabContact Email`.`is_primary` desc, `tabContact`.`creation` asc",
+		limit_page_length=1,
+	)
+	return found[0].name if found else None
 
 
 @frappe.whitelist()

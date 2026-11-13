@@ -109,7 +109,7 @@ def _hidden_organizations(org_cond, column="name"):
 	return frappe.qb.from_(Org).select(Org[column]).where(Org[column].isnotnull()).where(~org_cond)
 
 
-def visible_contact_condition(user: str | None = None, for_write: bool = False):
+def visible_contact_condition(user: str | None = None, for_write: bool = False, own: bool = True):
 	"""Contacts at a customer the user cannot see are hidden with it.
 
 	``company_name`` is free text, so it is matched on the display name as well as
@@ -117,6 +117,9 @@ def visible_contact_condition(user: str | None = None, for_write: bool = False):
 	company names no organization stays visible, as does one the user created or
 	one on a deal they can read. ``for_write`` holds the contact to the customer
 	being theirs, as for the customer itself: a deal there gives read only.
+	``own=False`` leaves out "one the user created", for the address rule's write
+	side: having added a person at a customer does not make their address the
+	user's to move once the customer is somebody else's.
 	"""
 	user = user or frappe.session.user
 	org_cond = visible_organization_condition(user, for_write)
@@ -124,14 +127,15 @@ def visible_contact_condition(user: str | None = None, for_write: bool = False):
 		return None
 	Contact = frappe.qb.DocType("Contact")
 	cond = (
-		(Contact.owner == user)
-		| Contact.company_name.isnull()
+		Contact.company_name.isnull()
 		| (Contact.company_name == "")
 		| (
 			Contact.company_name.notin(_hidden_organizations(org_cond))
 			& Contact.company_name.notin(_hidden_organizations(org_cond, "organization_name"))
 		)
 	)
+	if own:
+		cond = (Contact.owner == user) | cond
 	if for_write:
 		return cond
 	Row = frappe.qb.DocType("CRM Contacts").as_("_cust_row")
@@ -151,7 +155,14 @@ def visible_contact_condition(user: str | None = None, for_write: bool = False):
 
 
 def visible_address_condition(user: str | None = None, for_write: bool = False):
-	"""An address names its customer, and the import titles it with the name."""
+	"""An address names its customer, and the import titles it with the name.
+
+	A contact's own address goes with the contact. The contact page's address
+	modal writes a plain Address with no links at all and points ``Contact.address``
+	at it, so following organizations alone left the street, phone and email of
+	the people at a hidden customer listed to every rep. frappe's own shape, a
+	Dynamic Link to the Contact, is followed too.
+	"""
 	user = user or frappe.session.user
 	org_cond = visible_organization_condition(user, for_write)
 	if org_cond is None:
@@ -169,7 +180,40 @@ def visible_address_condition(user: str | None = None, for_write: bool = False):
 		)
 	)
 	on_record = frappe.qb.from_(Org).select(Org.address).where(Org.address.isnotnull()).where(~org_cond)
-	return (Address.owner == user) | (Address.name.notin(linked) & Address.name.notin(on_record))
+	Contact = frappe.qb.DocType("Contact")
+	ContactLink = frappe.qb.DocType("Dynamic Link").as_("_cust_contact_link")
+	hidden_contact = ~visible_contact_condition(user, for_write, own=not for_write)
+	# isnotnull, as in _hidden_organizations: most contacts have no address, and
+	# one NULL in a NOT IN subquery would hide every address there is
+	on_contact = (
+		frappe.qb.from_(Contact)
+		.select(Contact.address)
+		.where(Contact.address.isnotnull())
+		.where(hidden_contact)
+	)
+	linked_to_contact = (
+		frappe.qb.from_(ContactLink)
+		.select(ContactLink.parent)
+		.where(
+			(ContactLink.parenttype == "Address")
+			& (ContactLink.link_doctype == "Contact")
+			& ContactLink.link_name.isin(frappe.qb.from_(Contact).select(Contact.name).where(hidden_contact))
+		)
+	)
+	tied_to_nothing_hidden = (
+		Address.name.notin(linked)
+		& Address.name.notin(on_record)
+		& Address.name.notin(on_contact)
+		& Address.name.notin(linked_to_contact)
+	)
+	if for_write:
+		# Having written an address is not a claim on it, any more than having
+		# read it: once the customer it is at is another rep's, its author could
+		# still name it on a record of their own, which hid it from that rep and
+		# would have pushed it to the ERP as the wrong customer's street. One
+		# just written names nothing yet, so it passes on the clauses alone.
+		return tied_to_nothing_hidden
+	return (Address.owner == user) | tied_to_nothing_hidden
 
 
 def visible_event_condition(user: str | None = None):
@@ -312,6 +356,59 @@ def assert_contact_allowed(contact: str | None, user: str | None = None) -> None
 		_("This contact is at another rep's customer. Ask a manager to reassign it to you."),
 		frappe.PermissionError,
 	)
+
+
+def assert_address_allowed(address: str | None, user: str | None = None) -> None:
+	"""Refuse to point a contact or a customer at an address that is not the user's.
+
+	An address is hidden with whatever names it: the contact whose ``address`` it
+	is, the customer whose ``address`` it is. So a rep who named a colleague's
+	customer's address on a record of their own took it away from the people it
+	belongs to -- and the Acumatica push would have sent it to the ERP as their
+	own customer's street. Link validation only asks whether the address exists.
+
+	The write rule, not the read one: being able to read an address through a
+	deal at its customer is not a claim on it.
+	"""
+	if not address:
+		return
+	cond = visible_address_condition(user or frappe.session.user, for_write=True)
+	if cond is None or not frappe.db.exists("Address", address) or _row_visible("Address", address, cond):
+		return
+	frappe.throw(
+		_("This address is at another rep's customer. Ask a manager to reassign it to you."),
+		frappe.PermissionError,
+	)
+
+
+def validate_organization_address(doc) -> None:
+	"""``CRM Organization.address``, as ``crm.api.contact`` does for a contact's.
+
+	Only an address that is new on the customer is checked -- one a manager or
+	the import put there stays -- and server code is trusted."""
+	if doc.flags.ignore_permissions or not doc.address:
+		return
+	if not doc.is_new() and not doc.has_value_changed("address"):
+		return
+	assert_address_allowed(doc.address)
+
+
+def validate_address_links(doc, method=None) -> None:
+	"""The other way an address comes to name a contact: its own ``links`` rows.
+
+	A row that is new on the address has to name a contact, or a customer, its
+	editor can see -- as a deal's and an event's rows must."""
+	if doc.flags.ignore_permissions or not scope_applies():
+		return
+	before = doc.get_doc_before_save()
+	stored = {(row.link_doctype, row.link_name) for row in before.links} if before else set()
+	for row in doc.get("links") or []:
+		if (row.link_doctype, row.link_name) in stored:
+			continue
+		if row.link_doctype == "Contact":
+			assert_contact_allowed(row.link_name)
+		elif row.link_doctype == "CRM Organization":
+			assert_customer_allowed(row.link_name)
 
 
 def validate_event_participants(doc, method=None) -> None:
