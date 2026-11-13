@@ -235,20 +235,41 @@ def has_whatsapp_message_permission(doc, ptype, user):
 	return has_permission(doc, ptype, user, "WhatsApp Message")
 
 
+#: Scoped doctypes another app owns, which may not be installed.
+OPTIONAL_DOCTYPES = ("WhatsApp Message",)
+
+
 def get_file_permission_query_conditions(user=None):
-	"""A customer's WhatsApp file is listed only to those who can see its message.
+	"""A file is listed only to those who can see the record it is attached to.
 
 	Frappe's own rule lists a private file to anyone with read on the doctype it is
-	attached to, and every rep has read on WhatsApp Message: opening the file was
-	scoped, finding out it exists and what it is called was not.
+	attached to, and every rep has read on CRM Deal, CRM Lead, CRM Organization,
+	Contact and the rest: opening the file was scoped (frappe's File check follows
+	the attached record), finding out it exists and what it is called -- a quote
+	named after the customer and the amount -- was not.
+
+	Every doctype this app scopes with a ``permission_query_conditions`` hook is
+	covered, read from the hooks themselves so that one added later is covered on
+	the day it is added. A file attached to anything else, or to nothing, is left
+	to frappe's rule, which lists an unattached file to its owner only.
 	"""
-	if not frappe.db.exists("DocType", "WhatsApp Message"):
-		return ""
-	conditions = get_whatsapp_message_permission_query_conditions(user)
-	if not conditions:
-		return ""
-	return (
-		"(ifnull(`tabFile`.`attached_to_doctype`, '') != 'WhatsApp Message'"
-		" or `tabFile`.`attached_to_name` in"
-		f" (select `tabWhatsApp Message`.`name` from `tabWhatsApp Message` where {conditions}))"
-	)
+	import crm.hooks
+
+	user = user or frappe.session.user
+	clauses = []
+	for doctype, methods in crm.hooks.permission_query_conditions.items():
+		if doctype == "File":
+			continue
+		if doctype in OPTIONAL_DOCTYPES and not frappe.db.exists("DocType", doctype, cache=True):
+			continue
+		for method in [methods] if isinstance(methods, str) else methods:
+			conditions = frappe.call(frappe.get_attr(method), user, doctype=doctype)
+			if not conditions:
+				continue
+			table = f"`tab{doctype}`"
+			clauses.append(
+				f"(ifnull(`tabFile`.`attached_to_doctype`, '') != {frappe.db.escape(doctype)}"
+				" or `tabFile`.`attached_to_name` in"
+				f" (select {table}.`name` from {table} where {conditions}))"
+			)
+	return " and ".join(clauses)
