@@ -288,8 +288,26 @@ function updateValue(value) {
     condition.value[2] =
       range.length === 2 && range[0] && range[1] ? [range[0], range[1]] : ''
   } else {
-    condition.value[2] = isNaN(value) ? value : Number(value)
+    condition.value[2] = takesNumber() ? toNumber(value) : value
   }
+}
+
+// Only a numeric field compared as a number is one. Every control's change
+// lands here, and coercing them all turned the mobile number "0821234567"
+// into 821234567, a customer ID "00123" into 123 and a cleared box into 0,
+// so the saved rule matched nothing the admin had typed.
+function takesNumber() {
+  const [field, operator] = condition.value
+  if (['like', 'not like', 'in', 'not in', 'is'].includes(operator)) {
+    return false
+  }
+  const fieldData = filterableFields.data?.find((f) => f.fieldname == field)
+  return [...typeNumber, ...typeRating].includes(fieldData?.fieldtype)
+}
+
+function toNumber(value) {
+  if (typeof value !== 'string') return value
+  return value.trim() === '' || isNaN(value) ? value : Number(value)
 }
 
 function getSelectOptions(options) {
