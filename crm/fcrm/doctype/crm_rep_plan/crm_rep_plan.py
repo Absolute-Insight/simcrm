@@ -11,7 +11,14 @@ READABLE = ("read", "select", "report", "export", "print", "email")
 # What the matcher, complete_item and cancel_item write on an item. crm.api.rep_plan
 # never takes these from a client (its EDITABLE_ITEM_FIELDS); validate refuses them
 # from the generic document API, the other door into this doctype.
-SERVER_ITEM_FIELDS = ("status", "outcome", "fulfilled_by_doctype", "fulfilled_by", "manual_override")
+SERVER_ITEM_FIELDS = (
+	"status",
+	"outcome",
+	"fulfilled_by_doctype",
+	"fulfilled_by",
+	"manual_override",
+	"captured_offline",
+)
 
 
 def visible_users(user=None) -> list[str] | None:
@@ -217,7 +224,7 @@ class CRMRepPlan(Document):
 
 def _server_value(field: str, value):
 	"""A server-owned item field as compared by validate, with a new row's defaults."""
-	if field == "manual_override":
+	if field in ("manual_override", "captured_offline"):
 		return frappe.utils.cint(value)
 	if field == "status":
 		return value or "Planned"
