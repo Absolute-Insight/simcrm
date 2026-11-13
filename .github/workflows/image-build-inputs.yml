@@ -46,7 +46,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Clone
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Load image pins
         run: |
@@ -58,7 +58,7 @@ jobs:
           done
 
       - name: Check out frappe_docker at the pin
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: frappe/frappe_docker
           path: builds
