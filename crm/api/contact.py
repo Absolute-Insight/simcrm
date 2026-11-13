@@ -3,7 +3,26 @@ from frappe import _
 
 
 def validate(doc, method):
+	refuse_unreadable_address(doc)
 	update_deals_email_mobile_no(doc)
+
+
+def refuse_unreadable_address(doc):
+	"""A contact is given an address its editor can read.
+
+	An address goes with the contact that names it, so pointing one's own
+	contact at an address at a colleague's customer hid that address from the
+	colleague: link validation only asks whether it exists. Only an address that
+	is new on the contact is checked -- one a manager put there stays -- and
+	server code that saves on a rep's behalf is trusted.
+	"""
+	if doc.flags.ignore_permissions or not doc.address:
+		return
+	if not doc.is_new() and not doc.has_value_changed("address"):
+		return
+	from crm.permissions.customers import assert_address_allowed
+
+	assert_address_allowed(doc.address)
 
 
 def update_deals_email_mobile_no(doc):

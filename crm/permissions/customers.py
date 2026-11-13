@@ -346,6 +346,42 @@ def assert_contact_allowed(contact: str | None, user: str | None = None) -> None
 	)
 
 
+def assert_address_allowed(address: str | None, user: str | None = None) -> None:
+	"""Refuse to put a contact at an address the user cannot see.
+
+	The address rule hides an address with the contact that names it, so a rep who
+	named a colleague's customer's address on a contact of their own took it away
+	from the people it belongs to.
+	"""
+	if not address:
+		return
+	cond = visible_address_condition(user or frappe.session.user)
+	if cond is None or not frappe.db.exists("Address", address) or _row_visible("Address", address, cond):
+		return
+	frappe.throw(
+		_("This address is at another rep's customer. Ask a manager to reassign it to you."),
+		frappe.PermissionError,
+	)
+
+
+def validate_address_links(doc, method=None) -> None:
+	"""The other way an address comes to name a contact: its own ``links`` rows.
+
+	A row that is new on the address has to name a contact, or a customer, its
+	editor can see -- as a deal's and an event's rows must."""
+	if doc.flags.ignore_permissions or not scope_applies():
+		return
+	before = doc.get_doc_before_save()
+	stored = {(row.link_doctype, row.link_name) for row in before.links} if before else set()
+	for row in doc.get("links") or []:
+		if (row.link_doctype, row.link_name) in stored:
+			continue
+		if row.link_doctype == "Contact":
+			assert_contact_allowed(row.link_name)
+		elif row.link_doctype == "CRM Organization":
+			assert_customer_allowed(row.link_name)
+
+
 def validate_event_participants(doc, method=None) -> None:
 	"""An Event's save fills a participant's email in with no permission check, so
 	naming a hidden contact, or a hidden customer's default one, was a way to read it.

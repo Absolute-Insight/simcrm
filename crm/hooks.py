@@ -248,6 +248,9 @@ doc_events = {
 			"crm.integrations.acumatica.install.guard_contact_identity",
 		],
 	},
+	"Address": {
+		"validate": ["crm.permissions.customers.validate_address_links"],
+	},
 	"Event": {
 		"validate": ["crm.permissions.customers.validate_event_participants"],
 	},
