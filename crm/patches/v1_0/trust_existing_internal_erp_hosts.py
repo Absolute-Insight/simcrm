@@ -22,7 +22,12 @@ the operator set up:
   means it can say so; an upgrade does not say it for them;
 * a host that resolves to public addresses needs no trust and gets none.
 
-Whatever is not listed is logged with the exact command that would list it.
+Whatever is not listed is logged, followed by one command that would list all of
+it -- one, and built from the final list, because ``set-config`` replaces the
+value: a command per host would each undo the others, and this patch's own grant.
+The command is shell-quoted, and a saved URL whose host is not a hostname is
+neither trusted nor printed: the host is the saved URL's to choose, and the line
+is one an operator is told to paste.
 
 This runs inside ``bench migrate``, which is an operator's action: it is still the
 case that no application role can grant trust. Hosts already listed are kept, none
@@ -32,8 +37,8 @@ written is reported rather than allowed to stop the migrate.
 
 import ipaddress
 import json
+import shlex
 import threading
-from urllib.parse import urlsplit
 
 import frappe
 from frappe.installer import update_site_config
@@ -47,6 +52,11 @@ SAVED_URLS = (
 )
 #: Names nobody can register publicly: unresolved, they are still somebody's own.
 PRIVATE_SUFFIXES = (".internal", ".local", ".lan", ".test")
+#: Where a cloud serves an instance its own credentials, by name. Never trusted for
+#: the operator, resolved or not, private-looking suffix or not.
+METADATA_NAMES = frozenset(
+	{"metadata", "metadata.google.internal", "instance-data", "instance-data.ec2.internal"}
+)
 #: A dead resolver must not hold a migrate: getaddrinfo has no timeout of its own.
 DNS_TIMEOUT = 3
 
@@ -60,7 +70,7 @@ def execute():
 	hosts = [str(host).strip() for host in configured if str(host).strip()]
 	listed = {host.lower().rstrip(".") for host in hosts}
 
-	added = []
+	added, left = [], []
 	for doctype, field, label in SAVED_URLS:
 		host = _saved_host(doctype, field, label)
 		if not host or host in listed:
@@ -72,41 +82,54 @@ def execute():
 			listed.add(host)
 		elif verdict == LEAVE:
 			_log(
-				f"{host} ({label}) {reason} and was NOT trusted. Requests to it are refused "
-				f"until it is listed; if it is meant, run: {_command([*hosts, *added, host])}"
+				f"{host} ({label}) {reason} and was NOT trusted. Requests to it are refused until it is listed."
 			)
+			left.append(host)
+			listed.add(host)
 
-	if not added:
-		return
-	hosts += added
-	try:
-		update_site_config(CONFIG, hosts, validate=False)
-	except Exception as e:
-		# a read-only config (a mounted secret, an immutable image) is the operator's
-		# arrangement; the migrate goes on and they are told what to add
-		_log(f"could not write the site config ({type(e).__name__}). Add it by hand: {_command(hosts)}")
-		return
-	# the rest of this migrate sees it at once
-	frappe.local.conf[CONFIG] = hosts
+	written = True
+	if added:
+		try:
+			update_site_config(CONFIG, hosts + added, validate=False)
+			# the rest of this migrate sees it at once
+			frappe.local.conf[CONFIG] = hosts + added
+		except Exception as e:
+			# a read-only config (a mounted secret, an immutable image) is the
+			# operator's arrangement; the migrate goes on and they are told what to add
+			written = False
+			_log(f"could not write the site config ({type(e).__name__}); nothing was trusted")
+
+	# One command, from the final list: set-config replaces the value, so anything
+	# shorter would drop what is already there.
+	wanted = hosts + added + left
+	if not written and left:
+		_log(f"to trust {', '.join(added)}, and also {', '.join(left)} if meant, run: {_command(wanted)}")
+	elif not written:
+		_log(f"to trust {', '.join(added)}, run: {_command(wanted)}")
+	elif left:
+		_log(f"to also trust {', '.join(left)}, if that is meant, run: {_command(wanted)}")
 
 
 def _saved_host(doctype: str, field: str, label: str) -> str | None:
-	"""The host of the URL saved in ``field``, read from that one field."""
+	"""The host of the URL saved in ``field``, read from that one field -- or None,
+	when there is no URL or its host is not something to trust, log or print."""
 	url = (frappe.db.get_single_value(doctype, field, cache=False) or "").strip()
 	if not url:
 		return None
-	try:
-		parts = urlsplit(url)
-		scheme, host = parts.scheme.lower(), (parts.hostname or "").lower().rstrip(".")
-	except ValueError:
-		scheme, host = "", ""
-	if scheme not in ("http", "https") or not host:
-		_log(f"{label} is not an http(s) URL and was left alone; nothing was trusted for it")
+	parts = remote_url.origin(url)
+	if parts is None:
+		# said without the value: it is whatever was typed into the field
+		_log(
+			f"{label} is not an http(s) URL, or its host is not a valid hostname; "
+			"nothing was trusted for it"
+		)
 		return None
-	return host
+	return parts[1]
 
 
 def _verdict(host: str) -> tuple[str, str]:
+	if host in METADATA_NAMES:
+		return LEAVE, "is a cloud metadata name"
 	addresses = _addresses(host)
 	if addresses is None:
 		reason = "did not resolve during the upgrade"
@@ -153,7 +176,9 @@ def _addresses(host: str) -> list[str] | None:
 
 
 def _command(hosts: list[str]) -> str:
-	return f"bench --site {frappe.local.site} set-config -p {CONFIG} '{json.dumps(hosts)}'"
+	# quoted for the shell it is pasted into: neither the site name nor a host
+	# already in the config is this patch's to vouch for
+	return f"bench --site {shlex.quote(frappe.local.site)} set-config -p {CONFIG} {shlex.quote(json.dumps(hosts))}"
 
 
 def _log(message: str) -> None:

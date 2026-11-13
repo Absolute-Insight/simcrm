@@ -37,6 +37,8 @@ TRUSTED_HOSTS_CONFIG = "crm_erp_trusted_hosts"
 # Characters urlparse drops or passes through that another parser reads otherwise.
 _URL_NOISE = re.compile(r"[\s\x00-\x20\x7f\\]")
 _DEFAULT_PORTS = {"http": 80, "https": 443}
+# underscore included: compose service names have it, whatever DNS says
+_HOSTNAME = re.compile(r"[a-z0-9]([a-z0-9._-]{0,251}[a-z0-9])?")
 
 
 class RemoteHostNotAllowed(frappe.ValidationError):
@@ -67,9 +69,25 @@ def _parse(url: str):
 		return None
 	scheme = (parsed.scheme or "").lower()
 	host = (parsed.hostname or "").lower().rstrip(".")
-	if scheme not in _DEFAULT_PORTS or not host:
+	if scheme not in _DEFAULT_PORTS or not _is_hostname(host):
 		return None
 	return scheme, host, port or _DEFAULT_PORTS[scheme]
+
+
+def _is_hostname(host: str) -> bool:
+	"""An IP literal, or a name made of what names are made of.
+
+	urlparse returns whatever sat between ``//`` and the next ``/`` -- quotes,
+	semicolons, ``$(...)``. The host goes on into log lines, error messages and the
+	``set-config`` command an operator is told to run, so nothing else gets that far.
+	(An internationalised name is written in its ASCII form, ``xn--...``.)"""
+	if not host:
+		return False
+	try:
+		ipaddress.ip_address(host)
+		return True
+	except ValueError:
+		return bool(_HOSTNAME.fullmatch(host))
 
 
 def origin(url: str | None):

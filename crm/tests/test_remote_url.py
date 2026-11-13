@@ -71,6 +71,32 @@ class TestRemoteURL(IntegrationTestCase):
 				with self.subTest(url=url), self.assertRaises(frappe.ValidationError):
 					validate_remote_url(url, "Site URL")
 
+	def test_a_host_that_is_not_a_hostname_is_not_a_url(self):
+		"""urlparse hands back whatever sat between // and /: quotes, semicolons. The
+		host ends up in a log line and a command an operator is told to run."""
+		with site(developer_mode=True), resolving({}):
+			for url in (
+				"http://x';id;'.example",
+				"https://erp.example.com$(id)",
+				"https://erp.example.com`id`",
+				'https://erp"example.com',
+				"https://erp.example.com;id",
+				"https://erp.example.com|id",
+				"https://ерп.example",
+			):
+				with self.subTest(url=url):
+					self.assertIsNone(remote_url.origin(url))
+					with self.assertRaises(frappe.ValidationError):
+						validate_remote_url(url, "Site URL")
+			# what a hostname is made of still passes
+			for url in (
+				"https://erp-1.example.com",
+				"http://erpnext_frontend:8080",
+				"https://[fd00::1]",
+				"https://10.0.0.5",
+			):
+				self.assertIsNotNone(remote_url.origin(url), url)
+
 	def test_credentials_in_the_url_are_refused(self):
 		with site(), resolving({"erp.example.com": PUBLIC}):
 			for url in ("https://user:pw@erp.example.com", "https://user@erp.example.com"):

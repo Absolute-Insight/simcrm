@@ -132,6 +132,71 @@ class TrustExistingErpHostsTest(IntegrationTestCase):
 				# the line to run, whole
 				self.assertIn(f"set-config -p {CONFIG} '[\"{host}\"]'", "\n".join(self.logged))
 
+	def test_a_saved_url_cannot_put_a_command_in_the_operators_hands(self):
+		"""The log tells the operator what to run. A saved URL chooses the host, and
+		a host with a quote in it closed the argument and opened a command."""
+		for url in ("http://x' ; id ; '.example", "http://x';id;'.example", "https://a$(id).example"):
+			with self.subTest(url=url):
+				self.logged.clear()
+				self.assertEqual(self._trusted_after(erpnext=url), [])
+				logs = "\n".join(self.logged)
+				self.assertIn("not a valid hostname", logs)
+				for raw in ("id", "$(", "';"):
+					self.assertNotIn(raw, logs.replace("valid", ""))
+				self.assertNotIn("set-config", logs)
+
+	def test_the_command_is_quoted_for_a_shell(self):
+		import shlex
+
+		with patch.object(frappe.local, "site", "odd site'; id; '"):
+			self.logged.clear()
+			frappe.local.conf[CONFIG] = ["old'host"]
+			self.written.clear()
+			self._saved(erpnext="https://erp.customer.co.za")
+			trust.execute()
+		(command,) = [line.split("run: ", 1)[1] for line in self.logged if "run: " in line]
+		self.assertEqual(
+			shlex.split(command),
+			[
+				"bench",
+				"--site",
+				"odd site'; id; '",
+				"set-config",
+				"-p",
+				CONFIG,
+				'["old\'host", "erp.customer.co.za"]',
+			],
+		)
+
+	def test_one_command_lists_everything_so_running_it_undoes_nothing(self):
+		"""set-config replaces the list. A command per left-out host, each built from
+		the list as it stood, dropped the host trusted after it -- and the second
+		command erased the first."""
+		self.logged.clear()
+		self.assertEqual(
+			self._trusted_after(
+				acumatica="https://erp.vpn-only.example", erpnext="http://erpnext-frontend:8080"
+			),
+			["erpnext-frontend"],
+		)
+		commands = [line for line in self.logged if "set-config" in line]
+		self.assertEqual(len(commands), 1)
+		self.assertIn("""'["erpnext-frontend", "erp.vpn-only.example"]'""", commands[0])
+		self.assertIn("to also trust erp.vpn-only.example", commands[0])
+
+		self.logged.clear()
+		self._trusted_after(acumatica="https://erp.vpn-only.example", erpnext="http://169.254.169.254")
+		commands = [line for line in self.logged if "set-config" in line]
+		self.assertEqual(len(commands), 1)
+		self.assertIn("""'["erp.vpn-only.example", "169.254.169.254"]'""", commands[0])
+
+	def test_a_cloud_metadata_name_is_never_grandfathered(self):
+		for host in ("metadata.google.internal", "metadata", "instance-data"):
+			with self.subTest(host=host):
+				self.logged.clear()
+				self.assertEqual(self._trusted_after(erpnext=f"http://{host}/computeMetadata/v1"), [])
+				self.assertIn("NOT trusted", "\n".join(self.logged))
+
 	def test_a_resolver_that_never_answers_does_not_stall_the_migrate(self):
 		def hang(host):
 			time.sleep(5)

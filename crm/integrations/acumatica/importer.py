@@ -56,7 +56,11 @@ def _is_run_level(e: BaseException) -> bool:
 	down, a rate limit -- rather than one this record earned."""
 	if isinstance(e, AcumaticaAuthError | requests.ConnectionError | requests.Timeout):
 		return True
-	return isinstance(e, AcumaticaError) and e.status_code in _RUN_LEVEL_STATUSES
+	if not isinstance(e, AcumaticaError) or not e.status_code:
+		return False
+	# A redirect is not followed (client.py), and it is the Instance URL that
+	# redirects: every record gets the same answer, and none of them earned it.
+	return e.status_code in _RUN_LEVEL_STATUSES or 300 <= e.status_code < 400
 
 
 def _find_by_noteid(doctype, noteid):
