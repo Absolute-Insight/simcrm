@@ -66,12 +66,41 @@ def land_in_crm(login_manager):
 	frappe.local.flags.home_page = "crm"
 
 
+def name_field_user(login_manager=None):
+	"""Name the signed-in user in a cookie that outlives the browser session.
+
+	The cached shell that opens the app with no network has to know whose saved
+	copy to show, and ``user_id`` cannot tell it: frappe sets that as a session
+	cookie, and a phone drops those when it closes the app. This one lasts as
+	long as a pack does.
+
+	Set on every ``/crm`` render and on **every login**, wherever it lands. The
+	login matters on a shared device: someone who signs in and goes to the desk
+	never renders ``/crm``, and without this the cookie would go on naming the
+	last rep -- whose saved customers the shell would then open for the new
+	user. With it, the cookie names the new user, the device's stores are still
+	the old one's, and the shell opens for neither.
+
+	It authenticates nothing -- the server never reads it. It is readable by
+	script, like ``user_id``, because the shell's loader is script.
+	"""
+	from crm.api.offline import FIELD_USER_COOKIE, PACK_MAX_AGE_DAYS
+
+	cookies = getattr(frappe.local, "cookie_manager", None)
+	user = getattr(login_manager, "user", None) or frappe.session.user
+	if cookies and user and user != "Guest":
+		cookies.set_cookie(FIELD_USER_COOKIE, user, max_age=PACK_MAX_AGE_DAYS * 86400)
+
+
 def forget_field_user(login_manager=None):
 	"""Logout, from anywhere: the cached shell must stop opening for this user.
 
-	``crm/www/crm.py`` sets the cookie; see ``remember_field_user`` there. The
-	app's own logout also empties the device's stores, but a logout from the
+	The app's own logout also empties the device's stores, but a logout from the
 	desk runs none of the app's code -- this hook is the part that still runs.
+
+	frappe fires ``on_logout`` before it looks at whose session is ending, so an
+	administrator signing *someone else* out loses their own cookie here too.
+	That is the safe direction, and the next ``/crm`` render puts it back.
 	"""
 	from crm.api.offline import FIELD_USER_COOKIE
 

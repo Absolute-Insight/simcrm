@@ -13,6 +13,11 @@ vi.mock('@/utils/offlineCache', () => ({
 }))
 
 const HANDSHAKE = '/api/method/crm.api.offline.handshake'
+const refusal = () => ({
+  ok: false,
+  status: 403,
+  json: async () => ({ exc_type: 'PermissionError', session_expired: 1 }),
+})
 const ok = (message) => ({
   ok: true,
   status: 200,
@@ -197,17 +202,38 @@ describe('the probe', () => {
 
   it('a refusal is the server answering: online, and off to log in', async () => {
     const { probe, connectivity, redirectIfSessionGone } = await load({
-      fetch: vi.fn(async () => ({ ok: false, status: 403 })),
+      fetch: vi.fn(async () => refusal()),
     })
     expect(await probe()).toBe(false)
     expect(connectivity.online).toBe(true)
-    expect(redirectIfSessionGone).toHaveBeenCalledWith({ status: 403 })
+    expect(redirectIfSessionGone).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 403, session_expired: 1 }),
+    )
+  })
+
+  it('a 403 that is not Frappe’s is an unreachable server, not a refusal', async () => {
+    const { probe, connectivity, clearOfflineCache, reload } = await load({
+      shell: true,
+      // a proxy's block page: no JSON, nothing about the session
+      fetch: vi.fn(async () => ({
+        ok: false,
+        status: 403,
+        json: async () => {
+          throw new SyntaxError('Unexpected token <')
+        },
+      })),
+    })
+    expect(await probe()).toBe(false)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(connectivity.online).toBe(false)
+    expect(clearOfflineCache).not.toHaveBeenCalled()
+    expect(reload).not.toHaveBeenCalled()
   })
 
   it('a refused request reads as permission, not as offline', async () => {
     const { probe, throughGate } = await load({
       shell: true,
-      fetch: vi.fn(async () => ({ ok: false, status: 403 })),
+      fetch: vi.fn(async () => refusal()),
     })
     await probe()
     await expect(throughGate(vi.fn())).rejects.toMatchObject({
@@ -221,7 +247,7 @@ describe('the probe', () => {
   it('a shell the server refuses gives up what it holds and reloads', async () => {
     const { probe, clearOfflineCache, reload } = await load({
       shell: true,
-      fetch: vi.fn(async () => ({ ok: false, status: 403 })),
+      fetch: vi.fn(async () => refusal()),
     })
     await probe()
     await vi.advanceTimersByTimeAsync(0)

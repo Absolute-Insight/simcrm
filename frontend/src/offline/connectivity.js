@@ -144,13 +144,21 @@ async function runProbe() {
       signal: controller.signal,
     })
     if (response.status === 401 || response.status === 403) {
+      // Only Frappe's own refusal counts: it names the exception in a JSON
+      // body. A 403 from something in between -- a proxy, a firewall page --
+      // says nothing about the session, and must not empty a rep's pack at
+      // the one moment it is needed. That is an unreachable server.
+      const body = await response.json().catch(() => null)
+      if (!body || !(body.exc_type || body.session_expired || body.exc)) {
+        return failed()
+      }
       // The server answered, so this is not an outage: the session lapsed
       // while the phone was away, or this user has no sales role.
       refused = true
       stopRetrying()
       setOnline(true)
       if (connectivity.shell) handOver()
-      else redirectIfSessionGone({ status: response.status })
+      else redirectIfSessionGone({ status: response.status, ...body })
       return false
     }
     if (!response.ok) throw new Error(`handshake ${response.status}`)

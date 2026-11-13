@@ -16,7 +16,7 @@ from datetime import timedelta
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from crm.api.auth import forget_field_user
+from crm.api.auth import forget_field_user, name_field_user
 from crm.api.offline import (
 	FIELD_USER_COOKIE,
 	HISTORY_DAYS,
@@ -351,6 +351,19 @@ class FieldUserCookieTest(IntegrationTestCase):
 		self.assertEqual(cookie["value"], REP)
 		self.assertEqual(cookie["max_age"], PACK_MAX_AGE_DAYS * 86400)
 
+	def test_signing_in_names_the_new_user_wherever_they_land(self):
+		# a shared device: the next person signs in and goes to the desk, so
+		# /crm never renders -- the cookie must stop naming the last rep anyway
+		login_manager = frappe._dict(user=OTHER)
+		name_field_user(login_manager)
+		self.assertEqual(frappe.local.cookie_manager.cookies[FIELD_USER_COOKIE]["value"], OTHER)
+		self.assertIn("crm.api.auth.name_field_user", frappe.get_hooks("on_login"))
+
+	def test_a_guest_is_never_named(self):
+		frappe.set_user("Guest")
+		name_field_user()
+		self.assertNotIn(FIELD_USER_COOKIE, frappe.local.cookie_manager.cookies)
+
 	def test_logout_deletes_it(self):
 		forget_field_user()
 		self.assertIn(FIELD_USER_COOKIE, frappe.local.cookie_manager.to_delete)
@@ -358,6 +371,7 @@ class FieldUserCookieTest(IntegrationTestCase):
 	def test_logout_is_wired_to_every_way_out(self):
 		self.assertIn("crm.api.auth.forget_field_user", frappe.get_hooks("on_logout"))
 
-	def test_a_logout_with_no_request_does_not_fail(self):
+	def test_neither_fails_with_no_request(self):
 		del frappe.local.cookie_manager
 		forget_field_user()
+		name_field_user()

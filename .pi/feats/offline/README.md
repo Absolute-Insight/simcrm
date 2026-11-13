@@ -40,16 +40,20 @@ reads `crm/www/crm.py` and fails when they drift.
 
 **Who the shell is for.** `user_id` is a session cookie, and a phone drops it
 when it closes the app. So the server also sets a persistent cookie,
-`crm_field_user`, on every `/crm` render (`remember_field_user` in
-`crm/www/crm.py`, 14 days) and deletes it in an `on_logout` hook
+`crm_field_user`, on every `/crm` render and on **every login**
+(`crm.api.auth.name_field_user`, 14 days — the login hook is what stops it
+naming the last rep after someone else signs in and goes to the desk) and
+deletes it in an `on_logout` hook
 (`crm.api.auth.forget_field_user`) — which runs for a logout from the desk
 too, where none of the app's code does. The shell takes `user_id` when there
 is one (`Guest` is honoured as logged out); otherwise `crm_field_user`,
 *provided* it matches the offline owner `utils/offlineCache.js` last claimed
 this device's stores for. Neither cookie authenticates anything: they decide
 whose saved copy to show until the server can be asked, and the first
-handshake settles it — a refusal, or a session that belongs to someone else,
-empties the stores and reloads (`handOver` in `connectivity.js`). The loader
+handshake settles it — Frappe's own refusal (a JSON body naming the
+exception; a bare 403 from a proxy is treated as unreachable), or a session
+that belongs to someone else, empties the stores and reloads (`handOver` in
+`connectivity.js`). The loader
 restores only `BOOT_KEYS`, never arbitrary keys from storage.
 
 A shell that cannot establish a user mounts nothing and shows "open it once
