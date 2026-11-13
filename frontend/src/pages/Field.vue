@@ -84,6 +84,8 @@
       </div>
     </div>
 
+    <FieldInstallHint />
+
     <main class="min-h-0 flex-1 overflow-y-auto">
       <div class="mx-auto w-full max-w-2xl px-4 py-4">
         <router-view v-if="pack" />
@@ -150,7 +152,12 @@
       :aria-label="__('Field mode')"
       style="padding-bottom: env(safe-area-inset-bottom)"
     >
-      <div class="mx-auto grid w-full max-w-2xl grid-cols-3">
+      <div
+        class="mx-auto grid w-full max-w-2xl"
+        :style="{
+          gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))`,
+        }"
+      >
         <router-link
           v-for="tab in tabs"
           :key="tab.name"
@@ -178,6 +185,7 @@
 
 <script setup>
 import FieldEntryDialog from '@/components/Field/FieldEntryDialog.vue'
+import FieldInstallHint from '@/components/Field/FieldInstallHint.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { connectivity, probe } from '@/offline/connectivity'
@@ -191,6 +199,7 @@ import LucideBuilding2 from '~icons/lucide/building-2'
 import LucideCalendarDays from '~icons/lucide/calendar-days'
 import LucideCloudAlert from '~icons/lucide/cloud-alert'
 import LucideCloudUpload from '~icons/lucide/cloud-upload'
+import LucideFileText from '~icons/lucide/file-text'
 import LucideLayoutGrid from '~icons/lucide/layout-grid'
 import LucideListChecks from '~icons/lucide/list-checks'
 import LucideRefreshCw from '~icons/lucide/refresh-cw'
@@ -205,6 +214,8 @@ const SECTIONS = {
   FieldCustomers: 'FieldCustomers',
   FieldCustomer: 'FieldCustomers',
   FieldTasks: 'FieldTasks',
+  FieldSheets: 'FieldSheets',
+  FieldSheet: 'FieldSheets',
   FieldOutbox: 'Field',
 }
 
@@ -213,6 +224,10 @@ const tabs = computed(() =>
     { name: 'Field', label: __('My week'), icon: LucideCalendarDays },
     { name: 'FieldCustomers', label: __('Customers'), icon: LucideBuilding2 },
     { name: 'FieldTasks', label: __('Tasks'), icon: LucideListChecks },
+    // only where the company has loaded any: an empty fourth tab is noise
+    ...(pack.value?.sheets?.length
+      ? [{ name: 'FieldSheets', label: __('Sheets'), icon: LucideFileText }]
+      : []),
   ].map((tab) => ({ ...tab, active: SECTIONS[route.name] === tab.name })),
 )
 

@@ -62,17 +62,32 @@
 
     <!-- The thing a rep on site came to do. Always today's: an activity is
          logged when it happens, whichever day is being looked at. -->
-    <Button
-      variant="solid"
-      size="md"
-      class="w-full"
-      :label="__('Log activity')"
-      @click="openFieldDialog('log')"
-    >
-      <template #prefix>
-        <LucideMapPinPlus class="size-4" aria-hidden="true" />
-      </template>
-    </Button>
+    <div class="flex gap-2">
+      <Button
+        variant="solid"
+        size="md"
+        class="min-w-0 flex-1"
+        :label="__('Log activity')"
+        @click="openFieldDialog('log')"
+      >
+        <template #prefix>
+          <LucideMapPinPlus class="size-4" aria-hidden="true" />
+        </template>
+      </Button>
+      <!-- For the day being looked at, and only one that has not passed: a
+           plan is for today or later. -->
+      <Button
+        v-if="canPlan"
+        size="md"
+        class="shrink-0"
+        :label="__('Plan')"
+        @click="openFieldDialog('plan', { date: selected })"
+      >
+        <template #prefix>
+          <LucideCalendarPlus class="size-4" aria-hidden="true" />
+        </template>
+      </Button>
+    </div>
 
     <div class="flex flex-col gap-2" role="tabpanel">
       <div class="flex items-baseline justify-between">
@@ -124,6 +139,7 @@ import { shortDate, weekdayName } from '@/utils/fieldPack'
 import { addDays, mondayOf, weekDayCells } from '@/utils/planner'
 import { computed, ref, watch } from 'vue'
 import LucideCalendarDays from '~icons/lucide/calendar-days'
+import LucideCalendarPlus from '~icons/lucide/calendar-plus'
 import LucideMapPinPlus from '~icons/lucide/map-pin-plus'
 
 const { days, weeks, today } = useField()
@@ -144,6 +160,7 @@ const canGoForward = computed(
   () => position.value > -1 && position.value < reachable.value.length - 1,
 )
 const weekSaved = computed(() => weeks.value.includes(weekStart.value))
+const canPlan = computed(() => weekSaved.value && selected.value >= today.value)
 
 function shiftWeek(step) {
   const next = reachable.value[position.value + step]

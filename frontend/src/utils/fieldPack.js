@@ -286,3 +286,32 @@ export function planItemText(item, fallback) {
   }
   return { title: note, detail: outcome }
 }
+
+/**
+ * Whether to tell someone to add the app to their Home Screen.
+ *
+ * Only iOS, and only in a browser tab. There, Safari clears a site's storage
+ * after a week without a visit and gives the service worker no standing, so
+ * the copy field mode depends on is the first thing to go -- unless the app
+ * is on the Home Screen, where neither happens. Android keeps it either way.
+ * An iPad reports itself as a Mac; the touch points give it away.
+ */
+export function needsInstallHint({
+  userAgent = '',
+  platform = '',
+  maxTouchPoints = 0,
+  standalone = false,
+} = {}) {
+  const ios =
+    /iPad|iPhone|iPod/.test(userAgent) ||
+    (platform === 'MacIntel' && maxTouchPoints > 1)
+  return ios && !standalone
+}
+
+/** "1.2 MB", "340 KB": how much room a kept sheet takes. */
+export function sizeLabel(bytes) {
+  const n = Number(bytes)
+  if (!Number.isFinite(n) || n <= 0) return ''
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`
+  return `${Math.max(1, Math.round(n / 1024))} KB`
+}

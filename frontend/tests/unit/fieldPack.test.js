@@ -3,6 +3,7 @@ import {
   addressLine,
   indexPack,
   itemsByDate,
+  needsInstallHint,
   moneyLabel,
   orderTasks,
   packExpired,
@@ -12,6 +13,7 @@ import {
   searchCustomers,
   searchKey,
   shortDate,
+  sizeLabel,
   telHref,
   weekdayName,
 } from '@/utils/fieldPack'
@@ -288,5 +290,57 @@ describe('planItemText', () => {
       detail: 'Done',
     })
     expect(planItemText(null, 'Visit')).toEqual({ title: 'Visit', detail: '' })
+  })
+})
+
+describe('needsInstallHint', () => {
+  const iphone =
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15'
+
+  it('asks an iPhone in a browser tab', () => {
+    expect(needsInstallHint({ userAgent: iphone })).toBe(true)
+  })
+
+  it('does not ask once the app is on the Home Screen', () => {
+    expect(needsInstallHint({ userAgent: iphone, standalone: true })).toBe(
+      false,
+    )
+  })
+
+  it('knows an iPad that says it is a Mac', () => {
+    expect(
+      needsInstallHint({
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+        platform: 'MacIntel',
+        maxTouchPoints: 5,
+      }),
+    ).toBe(true)
+    // a real Mac has no touch points
+    expect(
+      needsInstallHint({
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+        platform: 'MacIntel',
+        maxTouchPoints: 0,
+      }),
+    ).toBe(false)
+  })
+
+  it('leaves Android and desktops alone', () => {
+    expect(
+      needsInstallHint({
+        userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/126',
+      }),
+    ).toBe(false)
+    expect(needsInstallHint()).toBe(false)
+  })
+})
+
+describe('sizeLabel', () => {
+  it('reads as a person would say it', () => {
+    expect(sizeLabel(1.25 * 1024 * 1024)).toBe('1.3 MB')
+    expect(sizeLabel(340 * 1024)).toBe('340 KB')
+    expect(sizeLabel(12)).toBe('1 KB')
+    expect(sizeLabel(0)).toBe('')
+    expect(sizeLabel(undefined)).toBe('')
   })
 })

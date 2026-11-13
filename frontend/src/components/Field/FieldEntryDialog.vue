@@ -15,7 +15,7 @@
         </p>
 
         <FormControl
-          v-if="kind === 'log'"
+          v-if="kind === 'log' || kind === 'plan'"
           v-model="values.activity_type"
           type="select"
           :label="__('Activity')"
@@ -24,7 +24,10 @@
 
         <!-- The customer: fixed when the screen already knew it, otherwise
              searched in the copy on the device -- no server to ask. -->
-        <div v-if="kind === 'log'" class="flex flex-col gap-1.5">
+        <div
+          v-if="kind === 'log' || kind === 'plan'"
+          class="flex flex-col gap-1.5"
+        >
           <span class="text-xs text-ink-gray-5">
             {{ needsCustomer ? __('Customer') : __('Customer (optional)') }}
           </span>
@@ -141,8 +144,8 @@ import { fieldDialog } from '@/offline/fieldDialog'
 import { enqueue } from '@/offline/outbox'
 import { useField } from '@/offline/useField'
 import { entryProblem } from '@/utils/fieldOutbox'
-import { searchCustomers } from '@/utils/fieldPack'
-import { activityLabel, LOGGABLE_TYPES } from '@/utils/planner'
+import { searchCustomers, shortDate, weekdayName } from '@/utils/fieldPack'
+import { activityLabel, LOGGABLE_TYPES, PLANNABLE_TYPES } from '@/utils/planner'
 import { Dialog, ErrorMessage, FormControl, TextInput, toast } from 'frappe-ui'
 import { computed, reactive, ref, watch } from 'vue'
 
@@ -169,7 +172,7 @@ watch(
   (open) => {
     if (!open) return
     Object.assign(values, {
-      activity_type: 'Unplanned Meeting',
+      activity_type: kind.value === 'plan' ? 'Visit' : 'Unplanned Meeting',
       organization: context.value.organization || '',
       about: context.value.organization
         ? `CRM Organization::${context.value.organization}`
@@ -191,10 +194,13 @@ function customerName(name) {
 /* What the server will accept as logged after the fact, in the Planner's own
    words for each (the pack carries the list; the labels are the app's). */
 const activityOptions = computed(() => {
-  const allowed = pack.value?.rules?.loggable_types
-  return LOGGABLE_TYPES.filter(
-    (type) => !allowed || allowed.includes(type.value),
-  ).map((type) => ({ label: __(type.label), value: type.value }))
+  const planning = kind.value === 'plan'
+  const allowed = planning
+    ? pack.value?.rules?.plannable_types
+    : pack.value?.rules?.loggable_types
+  return (planning ? PLANNABLE_TYPES : LOGGABLE_TYPES)
+    .filter((type) => !allowed || allowed.includes(type.value))
+    .map((type) => ({ label: __(type.label), value: type.value }))
 })
 
 const needsCustomer = computed(() =>
@@ -256,6 +262,16 @@ const form = computed(() => {
         textPlaceholder: __('Something worth knowing next time'),
         action: __('Save note'),
       }
+    case 'plan':
+      return {
+        title: __('Plan an activity'),
+        lead: __('For {0}', [
+          `${weekdayName(context.value.date)} ${shortDate(context.value.date)}`,
+        ]),
+        textLabel: __('Note (optional)'),
+        textPlaceholder: __('What it is for'),
+        action: __('Add to plan'),
+      }
     case 'task':
       return {
         title: __('New task'),
@@ -301,6 +317,16 @@ function entry() {
         { reference_doctype: doctype, reference_docname: name, content: text },
       ]
     }
+    case 'plan':
+      return [
+        'plan_item',
+        {
+          activity_type: values.activity_type,
+          planned_date: context.value.date,
+          organization: values.organization || null,
+          note: text,
+        },
+      ]
     case 'task':
       return [
         'create_task',
