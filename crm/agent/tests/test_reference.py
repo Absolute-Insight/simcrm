@@ -182,6 +182,7 @@ class NumbersTest(UnitTestCase):
 	def test_thousands_dots_before_a_decimal_comma(self):
 		self.assertEqual(reference.numbers("1.234,56"), [{"1234.56"}])
 		self.assertEqual(reference.numbers("12.345.678,9 kPa"), [{"12345678.9"}])
+		self.assertEqual(reference.numbers("001.234,5"), [{"1234.5"}])
 		# a plain decimal, and a decimal comma, are untouched
 		self.assertEqual(reference.numbers("1.234 and 51,33"), [{"1.234"}, {"51.33"}])
 
@@ -583,6 +584,132 @@ class NamingNumbersTest(UnitTestCase):
 			with self.subTest(answer=answer):
 				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
 
+	def test_a_restated_size_does_not_let_the_same_number_pass_as_the_value(self):
+		"""Final review of PR #400: the size in brackets was exempted, and the
+		number after it then had ")" or a unit where its column should be."""
+		for answer in (
+			"OD (150 mm): 150 mm",
+			'Flange OD (6"): 6 mm',
+			'PCD (6"): 6 mm',
+			"PCD [150]: 150",
+			'Bolt holes (6"): 6',
+			"The OD of 6 inch is 6 mm",
+			"The OD of 150 mm is 150 mm",
+			"Number of bolt holes of 6 inch is 6",
+			# a size on the way from the column to the value does not hide the column
+			"The OD of the 6 inch flange is 150 mm",
+			"The OD for the 150 mm flange is 150 mm",
+		):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+		for answer in ("The OD of the 6 inch flange is 285.0 mm", "The OD for the 150 mm flange is 285.0 mm"):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+
+	def test_a_column_out_of_sight_of_its_number_fails_closed(self):
+		"""The look-behind is bounded; what it cannot see is not taken for a name."""
+		long_winded = (
+			"The OD of the flange you asked about, going by the drilling table for this nominal size "
+			"and this pressure class as the sheet lists them under the SABS standard for flanges, is "
+		)
+		self.assertGreater(len(long_winded), 160)
+		for answer in (long_winded + "150 mm", "OD:" + " " * 200 + "150 mm", "OD" + "\t" * 400 + "150"):
+			with self.subTest(answer=answer[:40]):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+		self.assertEqual(reference.verify(long_winded + "285.0 mm", [self.ROW], [self.ROW])[0], [self.ROW])
+
+	def test_a_column_of_any_prompt_row_makes_the_number_a_value(self):
+		"""``The OD is 150 mm`` was refused against the drilling rows and accepted
+		once the prompt also held the 150 mm bolt-set row: that row has no OD, so
+		the 150 "named" it."""
+		bolt_set_row = ROWS[5]
+		self.assertNotIn("Flange OD", [cell["label"] for cell in bolt_set_row["cells"]])
+		for answer in (
+			"The OD is 150 mm",
+			"The flange OD is 150 mm.",
+			"The PCD is 150 mm.",
+			"OD (150 mm): 150 mm",
+		):
+			for rows, cited in (
+				([ROWS[0], ROWS[1]], [ROWS[0]]),
+				(ROWS, [ROWS[0]]),
+				(ROWS, []),
+				([ROWS[0], bolt_set_row], [bolt_set_row]),
+			):
+				with self.subTest(answer=answer, rows=len(rows), cited=bool(cited)):
+					self.assertIsNone(reference.verify(answer, rows, cited)[0])
+		# each row still answers for itself with the other in the prompt
+		self.assertEqual(reference.verify("- 1600/3 drilling: OD 285.0 mm", ROWS, [])[0], [ROWS[0]])
+		self.assertEqual(reference.verify("- 1600 kPa bolt set: 8 Off M20 x 75", ROWS, [])[0], [bolt_set_row])
+
+	def test_a_number_at_the_start_of_a_line_is_numbering_only_in_a_list(self):
+		"""Final review of PR #400: any line-start number was taken for numbering."""
+		for answer in (
+			"Number of bolt holes:\n12. Bolt size M20",
+			"Bolt holes\n16) M20",
+			"Number of bolt holes:\n1. Bolt size M20",
+			"Flange OD:\n3. M20 bolts",
+			"2. The OD is 285.0 mm.",
+		):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+		self.assertEqual(reference.numbers("Number of bolt holes:\n12. Bolt size M20"), [{"12"}, {"20"}])
+		for answer in (
+			"Here it is.\n1. OD 285.0 mm",
+			"The values are:\n1. OD 285.0 mm\n2. PCD 240.0 mm",
+			"1. OD 285.0 mm\n\n2. PCD 240.0 mm\n\n3. Bolt holes: 8",
+		):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+		# trimming keeps the numbering it was given
+		answer = "1. 1600 kPa: PCD 240.0 mm\n2. 1000 kPa: PCD 240.0 mm"
+		self.assertEqual(reference.trim_comparisons(answer, ROWS), answer)
+
+	def test_a_column_on_its_own_line_is_finished_by_the_line_under_it(self):
+		for answer in (
+			"Flange OD:\n150 mm",
+			"**PCD**\n\n150 mm",
+			"Number of bolt holes:\n6",
+			"Flange OD\n- 150 mm",
+			"Bolt hole diameter (d1):\n6 mm",
+		):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+		for answer in (
+			"Flange OD:\n285.0 mm",
+			"**PCD**\n\n240.0 mm",
+			'150 mm (6") SABS 1123 1600/3\nNumber of bolt holes:\n8',
+			"The flange drilling for this size:\nOD 285.0 mm",
+			"Bolt hole diameter (d1):\n22.0 mm",
+		):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+		# a column's name with its value on the same line is a claim, not a heading
+		self.assertIsNone(reference.verify("Bolt hole diameter (d1): 1 mm", [self.ROW], [self.ROW])[0])
+		self.assertIsNone(reference.verify("Bolt hole diameter (d1): 6", [self.ROW], [self.ROW])[0])
+
+	def test_a_size_before_a_columns_name_and_its_value_names_the_row(self):
+		bolt_set_row = ROWS[5]
+		for answer in (
+			"150 mm bolt set: 8 Off M20 x 75",
+			'The 6" bolt set is 8 Off M20 x 75.',
+			"1600 kPa bolt size: M20",
+		):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [bolt_set_row], [bolt_set_row])[0], [bolt_set_row])
+		for answer in ("It is a 150 mm bolt set.", "A 150 mm bolt length."):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [bolt_set_row], [bolt_set_row])[0])
+
+	def test_an_abbreviations_stop_does_not_end_the_claim(self):
+		row = {
+			**ROWS[7],
+			"label": "Trim 5",
+			"cells": [{"label": "API trim no.", "value": "8", "status": "ok"}],
+		}
+		self.assertEqual(reference.verify("The API trim no. is 8.", [row], [row])[0], [row])
+		self.assertIsNone(reference.verify("The API trim no. is 5.", [row], [row])[0])
+
 	def test_known_limits(self):
 		"""What the rule does NOT catch -- pinned so a change here is a decision.
 
@@ -598,6 +725,10 @@ class NamingNumbersTest(UnitTestCase):
 		):
 			with self.subTest(answer=answer):
 				self.assertIsNotNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+		# a column no row in the prompt has is not known to be a column at all
+		self.assertIsNotNone(reference.verify("The OD is 150 mm.", [ROWS[5]], [ROWS[5]])[0])
+		# another prompt row's cell: the claim is read as that row's, and cites it
+		self.assertEqual(reference.verify("The PCD is 190.5 mm.", ROWS, [ROWS[0]])[0], [ROWS[2]])
 
 	def test_a_long_single_line_answer_is_checked_in_linear_time(self):
 		"""Review of PR #400: the look-behind patterns were searched from the start
@@ -611,6 +742,26 @@ class NamingNumbersTest(UnitTestCase):
 			reference.verify(answer, ROWS, [self.ROW])
 			reference.trim_comparisons(answer, ROWS)
 			self.assertLess(time.perf_counter() - started, 2.0, unit)
+
+	def test_stripping_row_ids_is_linear_too(self):
+		"""It runs on the raw reply, before the check: a run of spaces or commas
+		was rescanned from every position in it (10 s at 60 kB)."""
+		import time
+
+		for answer in (
+			"OD" + " " * 60_000 + "150",
+			"OD" + "," * 60_000 + "150",
+			"(" + "R1 " * 20_000,
+			"see " * 15_000,
+			"OD (see R1)" + " " * 30_000 + ".",
+		):
+			started = time.perf_counter()
+			reference.strip_row_ids(answer)
+			self.assertLess(time.perf_counter() - started, 2.0, answer[:12])
+		self.assertEqual(reference.strip_row_ids("PCD is 190.5 mm   (see R3) ."), "PCD is 190.5 mm.")
+		self.assertEqual(
+			reference.strip_row_ids("OD 285.0 mm ,  PCD 240.0 mm ;"), "OD 285.0 mm, PCD 240.0 mm"
+		)
 
 
 class TrimComparisonsTest(UnitTestCase):

@@ -380,8 +380,38 @@ _ONE_IS_PRONOUN = re.compile(
 # A list's own numbering at the start of a line ("1. The OD is ...", "2) ...")
 # counts items, not anything on the sheet.
 _ORDINAL = re.compile(r"(?m)^([ \t]*(?:[-*•][ \t]+)?)(\d{1,2})(?=[.)][ \t]+\S)")
+_SENTENCE_END = re.compile(r"[.!?][\s*_)\]\"']*$")
 # "1.234,56": thousands dots before a decimal comma
-_DOTTED_THOUSANDS = re.compile(r"[1-9]\d{0,2}(?:\.\d{3})+,\d+")
+_DOTTED_THOUSANDS = re.compile(r"0*[1-9]\d{0,2}(?:\.\d{3})+,\d+")
+
+
+def _blank_ordinals(text: str) -> str:
+	"""``text`` with a list's own numbering blanked out, every other character in place.
+
+	A number at the start of a line is numbering only where it reads as such:
+	"1." then "2." then "3.", in that order -- or a lone "1." that opens the
+	answer or follows a finished sentence. Anything else is a figure:
+	"Number of bolt holes:" followed by a line "12. Bolt size M20" says twelve.
+	"""
+	text = text or ""
+	markers = list(_ORDINAL.finditer(text))
+	run = []
+	for marker in markers:
+		if int(marker.group(2)) == len(run) + 1:
+			run.append(marker)
+	if len(run) == 1:
+		before = text[max(0, run[0].start() - _LOOK_BEHIND) : run[0].start()].rstrip()
+		if before and not _SENTENCE_END.search(before):
+			run = []
+	if not run:
+		return text
+	pieces, at = [], 0
+	for marker in run:
+		pieces.append(text[at : marker.start(2)])
+		pieces.append(" " * len(marker.group(2)))
+		at = marker.end(2)
+	pieces.append(text[at:])
+	return "".join(pieces)
 
 
 def _number_word(match: re.Match) -> str:
@@ -425,8 +455,6 @@ def _figures(text: str) -> tuple[str, list[tuple[set[str], int, int]]]:
 	for glyph, spelled in _FRACTIONS.items():
 		text = text.replace(glyph, spelled)
 	text = _WORD.sub(_number_word, text)
-	# blanked, not cut: every figure keeps its place in the text
-	text = _ORDINAL.sub(lambda m: m.group(1) + " " * len(m.group(2)), text)
 	found = []
 	for match in _NUMBER.finditer(text):
 		sign, atom = match.group(1), match.group(2)
@@ -448,7 +476,7 @@ def _figures(text: str) -> tuple[str, list[tuple[set[str], int, int]]]:
 
 def numbers(text: str) -> list[set[str]]:
 	"""Every number in ``text``, each as the set of values it stands for."""
-	return [variants for variants, _start, _end in _figures(text)[1]]
+	return [variants for variants, _start, _end in _figures(_blank_ordinals(text))[1]]
 
 
 # --- what a row vouches for ----------------------------------------------------
@@ -466,7 +494,9 @@ _PAGE_TAGS = ("page", "pg", "p")
 _TAG = re.compile(r"([a-z]+)[\s.-]*$")
 _GLUED = re.compile(r"[a-z]$")
 # a unit or an inch mark straight after a number: a size, not a count
-_MARK = re.compile(r"\s*(?:[\"“”″ʺ]|''|(?:mm|cm|in|inch|inches|nb|dn|kpa|mpa|bar|psi|lbs?|kg|ºc|ºf|°c|°f)\b)")
+_MARK = re.compile(
+	r"\s*(?:[\"“”″ʺ]|''|(?:mm|cm|in|inch|inches|millimetres?|millimeters?|nb|dn|kpa|mpa|bar|psi|lbs?|kg|ºc|ºf|°c|°f)\b)"
+)
 # what may stand between a column's name and its value: "OD is 150", "OD: 150",
 # "an OD of 150", "OD = 150", "| OD | 150 |"
 # "OD will be 150", "OD should be 150", "OD comes to 150", "OD → 150"
@@ -484,8 +514,8 @@ _LINK = re.compile(r"(?:" + _LINK_CHARS + r"|\b(?:" + "|".join(sorted(_LINK_WORD
 # 14 kB claim. Nothing they look for is this far from the number.
 _LOOK_BEHIND = 160
 # the last word before a number -- past a figure the column's own name ends
-# in ("Body test @ 1.5 is ...")
-_LAST_WORD = re.compile(r"([a-z]+\d*|\d+[a-z]+)[)\]]*(?:\s*@?\s*[\d.,]+)?\s*$")
+# in ("Body test @ 1.5 is ...") or an abbreviation's stop ("API trim no. is ...")
+_LAST_WORD = re.compile(r"([a-z]+\d*|\d+[a-z]+)(?:\s+no)?[.)\]]*(?:\s*@?\s*[\d.,]+)?\s*$")
 _COPULA = re.compile(r"\b(?:is|are|was|were|be|been|equals?|measures?|comes?)\b|[=>→➔⇒]")
 # a column's own value straight after its name: ": 240.0", " is M20"
 _LINKS = r"(?:" + _LINK_CHARS + r"|\b(?:" + "|".join(sorted(_LINK_WORDS)) + r")\b){0,24}"
@@ -495,7 +525,11 @@ _VALUE_NEXT = re.compile(_LINKS + r"[a-z]?\d")
 _CLOSED_THEN_VALUE = re.compile(r"\s*[)\]]" + _LINKS + r"(?:[a-z]+\s+)?[a-z]?\d")
 # ... and after "of <size>": "the OD of 6 inch is 285.0 mm"
 _OF_THEN_VALUE = re.compile(r"\s*(?:is|are|was|=|:)\s*(?:[a-z]+\s+)?[a-z]?\d")
-_DIGIT = re.compile(r"\d")
+# a size restated after a column's name, up to where the value's link starts:
+# "(150 mm)", "[6\"]", "of 6 inch", "of 150 mm"
+_RESTATED = re.compile(
+	r"(?:\s*[(\[][^()\[\]]{0,40}[)\]]|\s+of\s+[\d./ -]{1,12}(?:" + _MARK.pattern + r")?)\s*$"
+)
 _NEXT_WORDS = re.compile(r"[\s-]*(?:[a-z]+[\s-]+){0,3}(?:[a-z]+)?")
 _LABEL_WORD = re.compile(r"[a-z]+")
 _LABEL_FILLER = frozenset({"of", "the", "a", "an", "at", "in", "per", "to", "and", "or", "for", "no"})
@@ -504,6 +538,10 @@ _LABEL_FILLER = frozenset({"of", "the", "a", "an", "at", "in", "per", "to", "and
 _GENERIC = frozenset({"size"})
 
 Figure = tuple[set[str], int, int]
+
+
+def _plain(text: str) -> str:
+	return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
 
 
 def _stem(word: str) -> str:
@@ -519,7 +557,24 @@ def _tag(text: str, start: int) -> tuple[str, bool]:
 class _Support:
 	"""What one row vouches for: its data, and the numbers that only name it."""
 
-	__slots__ = ("columns", "data", "heads", "named_by", "naming")
+	__slots__ = ("column_names", "columns", "data", "heads", "named_by", "naming")
+
+	@classmethod
+	def of(cls, rows: list[dict]) -> list[_Support]:
+		"""One per row, each knowing the columns of **every** row in the prompt.
+
+		"The OD is 150 mm" is a claim about an OD whichever row it is checked
+		against. Judged by its own columns alone, a 150 mm bolt-set row -- which
+		has no OD -- read the 150 as its size and took the claim.
+		"""
+		supports = [cls(row) for row in rows]
+		columns = set().union(*(support.columns for support in supports)) if supports else set()
+		heads = set().union(*(support.heads for support in supports)) if supports else set()
+		names = set().union(*(support.column_names for support in supports)) if supports else set()
+		for support in supports:
+			support.columns, support.heads, support.column_names = columns, heads, names
+			support.named_by = support.named_by - heads
+		return supports
 
 	def __init__(self, entry: dict):
 		# value -> how the row writes it: (the word it hangs on, whether an
@@ -545,10 +600,14 @@ class _Support:
 		name(str(entry.get("page", "")), tags=_PAGE_TAGS)
 		self.columns: set[str] = set()
 		self.heads: set[str] = set()
+		# each column's name as written, letters and digits only: "bolt hole
+		# diameter d1", "body test 1 5"
+		self.column_names: set[str] = set()
 		confirmed = []
 		for cell in entry.get("cells") or []:
 			label = str(cell.get("label", "")).lower()
 			name(label, column=True)
+			self.column_names.add(_plain(label))
 			for phrase in re.split(r"[()]", label):
 				words = [word for word in _LABEL_WORD.findall(phrase) if word not in _LABEL_FILLER]
 				self.columns.update(_stem(word) for word in words)
@@ -602,8 +661,14 @@ class _Support:
 			# "a 150 mm OD" -- not "6\" PCD: 240.0 mm", where the column has its
 			# own value and the 6" is whose it is
 			if after and after[0] in self.heads - _GENERIC:
-				first = _LABEL_WORD.search(text, mark.end())
-				if not _VALUE_NEXT.match(text, first.end()):
+				# ... nor "150 mm bolt set: 8 Off M20": to the end of the
+				# column's name, then its value
+				last = mark.end()
+				for word in _LABEL_WORD.finditer(text, mark.end(), mark.end() + 80):
+					if _stem(word.group(0)) not in self.columns:
+						break
+					last = word.end()
+				if not _VALUE_NEXT.match(text, last):
 					return True
 		else:
 			# a bare number counts what follows it: "6 bolt holes"
@@ -614,18 +679,46 @@ class _Support:
 					return True
 		floor = max(0, start - _LOOK_BEHIND)
 		link = _LINK.search(text, floor, start)
+		if floor and link.start() <= floor:
+			# nothing but filler as far back as is looked: what the number
+			# hangs on is out of sight, so it is not taken for a name
+			return True
 		if self._column_ends(text, link.start(), floor):
 			# "the OD is 150 mm", "PCD: 1123" -- unless the number goes on to
 			# name the row, or the column's own value follows it:
 			return not self._names_the_row(text, link.group(0), after, mark.end() if mark else end)
 		if _COPULA.search(link.group(0)):
-			# "the OD for this flange is 150 mm": the column anywhere since the
-			# figure before
-			since = max((found.end() for found in _DIGIT.finditer(text, floor, link.start())), default=floor)
+			# "the OD for this flange is 150 mm", "the OD of the 6 inch flange
+			# is 150 mm": the column anywhere since the last figure that was a
+			# value. A size on the way does not end the search.
+			since = None
+			for found in _NUMBER.finditer(text, floor, link.start()):
+				if _canonical(found.group(2)) in self.data:
+					since = found.end()
+			if since is None:
+				if floor:
+					# the claim began before the window: its column may have too
+					return True
+				since = 0
 			for word in _LABEL_WORD.finditer(text, since, link.start()):
 				if self._column_ends(text, word.end(), floor):
 					return True
 		return False
+
+	def is_column(self, text: str, figures: list[Figure]) -> bool:
+		"""Whether the claim ``text`` is a column's name and no more.
+
+		"Flange OD:", "**PCD**", "Bolt hole diameter (d1)", "Body test @ 1.5".
+		Not a table's header row, whose values sit under it cell by cell, nor a
+		sentence that happens to end on a column. A line with a figure in it is
+		one only if it is a column's name exactly.
+		"""
+		if "|" in text or len(text) > _LOOK_BEHIND:
+			return False
+		if figures:
+			return _plain(text) in self.column_names
+		words = [_stem(word) for word in _LABEL_WORD.findall(text) if word not in _LABEL_FILLER]
+		return bool(words) and all(word in self.columns for word in words) and words[-1] in self.heads
 
 	def _names_the_row(self, text: str, link: str, after: list[str], at: int) -> bool:
 		"""A number straight after a column's name that is still the row's, not the column's."""
@@ -641,7 +734,14 @@ class _Support:
 		return False
 
 	def _column_ends(self, text: str, at: int, floor: int = 0) -> bool:
-		"""Whether the text up to ``at`` ends in the name of one of the row's columns."""
+		"""Whether the text up to ``at`` ends in the name of one of the row's columns.
+
+		A size restated after the name is stepped over: in "OD (150 mm): 150 mm"
+		and "the OD of 6 inch is 6 mm" the last figure is still given as the OD.
+		"""
+		restated = _RESTATED.search(text, floor, at)
+		if restated and restated.start() > floor:
+			at = restated.start()
 		column = _LAST_WORD.search(text, floor, at)
 		if not column or _stem(column.group(1)) not in self.heads:
 			return False
@@ -691,9 +791,10 @@ def _values_of(variants: set[str]) -> set[str]:
 
 # An answer splits into the claims it makes: lines, list items, sentences. A
 # full stop splits only after a word or a bracket, never inside "285.0".
-# Nor after "p." or "pg.": "(p. 2)" is a page, and the split left the 2 without
-# the word that makes it one.
-_CLAIM = re.compile(r"\n+|;\s+|(?<=[A-Za-z)\]])(?<!\b[Pp])(?<!\b[Pp][Gg])\.\s+")
+# Nor after an abbreviation -- a single letter, "pg." or "no.": "(p. 2)" is a
+# page and "API trim no. is 5" one claim, and a split there left the figure
+# without the word that says what it is.
+_CLAIM = re.compile(r"\n+|;\s+|(?<=[A-Za-z)\]])(?<!\b[A-Za-z])(?<!\b[Pp][Gg])(?<!\b[Nn][Oo])\.\s+")
 
 
 def trim_comparisons(answer: str, rows: list[dict]) -> str:
@@ -708,13 +809,15 @@ def trim_comparisons(answer: str, rows: list[dict]) -> str:
 	"""
 	labels = [_values([public_label(row)]) for row in rows]
 	every_label = set().union(*labels) if labels else set()
-	supports = [_Support(row) for row in rows]
+	supports = _Support.of(rows)
 	pieces = re.split(f"({_CLAIM.pattern})", answer or "")
+	# numbering blanked for the check only: the split falls in the same places
+	checked = re.split(f"({_CLAIM.pattern})", _blank_ordinals(answer or ""))
 	kept: list[str] = []
 	for index in range(0, len(pieces), 2):
 		claim = pieces[index]
 		separator = pieces[index + 1] if index + 1 < len(pieces) else ""
-		text, placed = _figures(claim)
+		text, placed = _figures(checked[index] if len(checked) == len(pieces) else claim)
 		figures = [variants for variants, _start, _end in placed]
 		one_row = any(all(support.holds(text, figure) for figure in placed) for support in supports)
 		if figures and not one_row and all(v & every_label for v in figures):
@@ -752,7 +855,7 @@ def verify(
 	withheld_cited = _withheld_values(cited or [])
 	withheld = _withheld_values(rows)
 	order = list(cited or []) + [row for row in rows if row not in (cited or [])]
-	supports = [_Support(row) for row in order]
+	supports = _Support.of(order)
 	known = [support.known for support in supports]
 	labels = [_values([public_label(row)]) for row in order]
 	used: list[dict] = []
@@ -765,8 +868,16 @@ def verify(
 	# does not start afresh: markdown puts one between a heading and its body,
 	# and a new paragraph about another row names that row.
 	context: set[int] | None = None
-	for claim in _CLAIM.split(answer or ""):
-		text, placed = _figures(claim)
+	# A line that is only a column's name ("Flange OD:", "**PCD**") is finished
+	# by the line under it, so the two are read as one claim: on its own line
+	# a 150 would be the row's size, under "Flange OD:" it is given as the OD.
+	heading = ""
+	for claim in _CLAIM.split(_blank_ordinals(answer or "")):
+		text, placed = _figures(heading + claim)
+		heading = ""
+		if supports and supports[0].is_column(text, placed):
+			heading = claim.rstrip().rstrip(":") + ": "
+			continue
 		figures = [variants for variants, _start, _end in placed]
 		if figures:
 			guessed = [v for v in figures if v & withheld_cited]
@@ -819,15 +930,19 @@ def highlight(answer: str, entry: dict) -> list[int]:
 # "(see R3)", "(Row R1: ...)", "per R2". Ids are one or two digits; a UNS
 # number such as R30006 is not one.
 _ROW_REF = re.compile(
-	r"\s*\([^()]*\bR\d{1,2}\b[^()]*\)|\b(?:see\s+|per\s+|from\s+)?(?:rows?\s+)?R\d{1,2}\b(?!\w)", re.I
+	r"(?<!\s)\s*\([^()]{0,200}\bR\d{1,2}\b[^()]{0,200}\)"
+	r"|\b(?:see\s+|per\s+|from\s+)?(?:rows?\s+)?R\d{1,2}\b(?!\w)",
+	re.I,
 )
 
 
 def strip_row_ids(answer: str) -> str:
 	"""``answer`` without the prompt's row ids, which mean nothing to a rep."""
 	text = _ROW_REF.sub("", answer or "")
-	text = re.sub(r"[ \t]+([.,;:])", r"\1", text)
-	text = re.sub(r"[,;:]+(?=[.!?]|\s*$)", "", text)
+	# each run is tried once, from its first character: without the look-behinds
+	# a long run of spaces or commas is rescanned from every position in it
+	text = re.sub(r"(?<![ \t])[ \t]+([.,;:])", r"\1", text)
+	text = re.sub(r"(?<![,;:])[,;:]+(?=[.!?]|\s*$)", "", text)
 	return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
