@@ -774,6 +774,136 @@ class TestCreateSalesQuote(FrappeTestCase):
 		client.put.assert_not_called()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_line_with_no_quantity_refuses_the_quote_instead_of_sending_one_unit(self, ClientCls):
+		"""Qty is a Float with no minimum, and `row.qty or 1` sent a line the rep had
+		zeroed as one unit at the full price -- in a document that goes to a customer."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		_org, deal = _mapped_deal()
+		for qty in (0, -2):
+			with self.subTest(qty=qty):
+				frappe.db.set_value("CRM Products", deal.products[0].name, "qty", qty)
+				with self.assertRaises(frappe.ValidationError) as ctx:
+					outbound.create_sales_quote_from_deal(deal.name)
+				self.assertIn("Widget", str(ctx.exception))
+				self.assertIn("zero or negative quantity", str(ctx.exception))
+		client.put.assert_not_called()
+		self.assertIsNone(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_login_that_was_not_made_is_a_refusal_not_an_unanswered_quote(self, ClientCls):
+		"""Raised before the PUT is sent: the rep must not be told the quote may exist,
+		nor be held off for the settle window by a marker."""
+		from crm.integrations.acumatica.client import AcumaticaAuthError
+
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		message = "Another worker is still signing in to Acumatica; try again in a minute"
+		client.put.side_effect = AcumaticaAuthError(message, body=message)
+		_org, deal = _mapped_deal()
+
+		with self.assertRaises(frappe.ValidationError) as ctx:
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertIn("still signing in", str(ctx.exception))
+		self.assertIn("no quote was sent", str(ctx.exception))
+		self.assertNotIn("refused", str(ctx.exception))
+		self.assertNotIn("may still have been created", str(ctx.exception))
+		self.assertIsNone(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_quote_whose_number_could_not_be_stored_says_so_and_keeps_its_marker(self, ClientCls):
+		"""A lock wait or a deadlock on the deal when the answer arrives reached the rep
+		as a raw database error. They get the reason, and the retry adopts the order."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.return_value = _wrapped(OrderNbr="QT000143")
+		_org, deal = _mapped_deal()
+		real_set_value = frappe.db.set_value
+
+		def row_is_locked(doctype, name, field, *args, **kwargs):
+			if doctype == "CRM Deal" and field == "acumatica_sales_quote":
+				raise frappe.QueryTimeoutError("Lock wait timeout exceeded")
+			return real_set_value(doctype, name, field, *args, **kwargs)
+
+		with patch("crm.integrations.acumatica.outbound.frappe.db.set_value", side_effect=row_is_locked):
+			with self.assertRaises(frappe.ValidationError) as ctx:
+				outbound.create_sales_quote_from_deal(deal.name)
+		self.assertIn("QT000143 was created in Acumatica", str(ctx.exception))
+		self.assertTrue(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
+
+		client.get_page.return_value = [_wrapped(OrderNbr="QT000143")]
+		self.assertEqual(outbound.create_sales_quote_from_deal(deal.name), "QT000143")
+		client.put.assert_called_once()
+
+	def test_the_login_wait_and_the_put_fit_inside_the_proxys_deadline(self):
+		"""The rep gets Vectora's warning, not the proxy's bare gateway error, only if
+		everything the request can spend comes to less than the proxy allows."""
+		from crm.agent.doctype.crm_agent_settings.crm_agent_settings import DEFAULT_PROXY_READ_TIMEOUT
+		from crm.integrations.acumatica.client import LOGIN_TIMEOUT, LOGIN_WAIT_IN_REQUEST
+
+		with patch.dict(frappe.conf, {"crm_proxy_read_timeout": 0}):
+			# the wait for another worker's login, then one of its own: the connect
+			# and the read each get their timeout
+			spent = LOGIN_WAIT_IN_REQUEST + sum(LOGIN_TIMEOUT) + outbound._quote_write_timeout()
+		self.assertLess(spent, DEFAULT_PROXY_READ_TIMEOUT)
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_timed_out_quote_with_no_marker_does_not_promise_to_pick_it_up(self, ClientCls):
+		"""frappe's set_value swallows a redis connection error. With no marker the
+		retry looks for nothing and sends another order: say so instead."""
+		import requests
+
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.side_effect = requests.ReadTimeout("read timed out")
+		_org, deal = _mapped_deal()
+
+		with patch.object(outbound, "_mark_inflight"):  # redis blinked: nothing is stored
+			with self.assertRaises(frappe.ValidationError) as ctx:
+				outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertIn("may still have been created", str(ctx.exception))
+		self.assertIn("look for it in Acumatica", str(ctx.exception))
+		self.assertNotIn("pick it up", str(ctx.exception))
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_the_row_lock_is_held_across_the_put(self, ClientCls):
+		"""The in-flight marker lives in redis, and a redis that blinks reads as "no
+		marker": the row lock is the one guard against a second click that survives
+		that, so the request must not commit (and let it go) before Acumatica answers."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		_org, deal = _mapped_deal()
+		commits = []
+
+		def put(*args, **kwargs):
+			commits.append(commit.call_count)
+			return _wrapped(OrderNbr="QT000144")
+
+		client.put.side_effect = put
+		with patch("crm.integrations.acumatica.outbound.frappe.db.commit") as commit:
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertEqual(commits, [0])
+
+	def test_a_push_failure_with_nothing_to_add_is_said_once(self):
+		from crm.integrations.acumatica.client import AcumaticaAuthError, AcumaticaError
+
+		message = "Another worker is still signing in to Acumatica; try again in a minute"
+		self.assertEqual(outbound._failure(AcumaticaAuthError(message, body=message)), message)
+		self.assertEqual(
+			outbound._failure(AcumaticaError("PUT -> 422", status_code=422, body='{"message": "No."}')),
+			"PUT -> 422 :: No.",
+		)
+		self.assertEqual(outbound._failure(ValueError("not json")), "not json")
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_the_put_gives_up_before_the_proxy_does(self, ClientCls):
 		"""At WRITE_TIMEOUT (120s) behind nginx's 120s PROXY_READ_TIMEOUT the proxy
 		answered first: the rep got a bare gateway error, never the warning that the
@@ -1507,6 +1637,47 @@ class TestRetryTriggers(FrappeTestCase):
 		self.assertEqual(pushes[0].kwargs["deal"], deal.name)
 		self.assertEqual(pushes[0].kwargs["job_id"], f"acumatica_customer_{org.name}")
 		self.assertTrue(pushes[0].kwargs["enqueue_after_commit"])
+
+	@patch("crm.integrations.acumatica.outbound.frappe.enqueue")
+	def test_a_renamed_organization_keeps_its_waiting_push(self, enqueue):
+		"""The issue rows name the organization in a Data field, which a rename does not
+		follow: the push a rep renamed the organization to unblock was never re-queued,
+		and the row for the vanished name stayed open on the manager's panel."""
+		from frappe.model.rename_doc import rename_doc
+
+		from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
+			open_sync_issues,
+			record_sync_issue,
+		)
+
+		_enable()
+		org, deal = _complete_deal(with_address=False)
+		outbound.push_customer_for_deal(deal.name)  # Push Blocked: no address
+		old = org.name
+		record_sync_issue("Customer Salesperson", old, outbound.PUSH_FAILED, "salesperson 007 was not set")
+		# the importer's rows carry an Acumatica CustomerID in the same column: not ours
+		record_sync_issue("Customer", old, "Import Failed", "a customer whose ID reads like the name")
+
+		new = rename_doc(
+			"CRM Organization", old, f"{old} Renamed", force=True, ignore_permissions=True, show_alert=False
+		)
+
+		self.assertEqual(len(open_sync_issues("Customer", new, outbound.WAITING_KINDS)), 1)
+		self.assertEqual(open_sync_issues("Customer", old, outbound.WAITING_KINDS), [])
+		self.assertEqual(len(open_sync_issues("Customer Salesperson", new, (outbound.PUSH_FAILED,))), 1)
+		self.assertEqual(len(open_sync_issues("Customer", old, ("Import Failed",))), 1)
+		self.assertEqual(open_sync_issues("Customer", new, ("Import Failed",)), [])
+		# and the cached Single the panel reads shows the row under the new name
+		self.assertIn(
+			(new, outbound.PUSH_BLOCKED),
+			[(row.remote_id, row.kind) for row in outbound.get_settings().sync_issues],
+		)
+
+		enqueue.reset_mock()
+		frappe.get_doc("CRM Organization", new).save(ignore_permissions=True)
+		pushes = _pushes(enqueue)
+		self.assertEqual(len(pushes), 1)
+		self.assertEqual(pushes[0].kwargs["job_id"], f"acumatica_customer_{new}")
 
 	@patch("crm.integrations.acumatica.outbound.frappe.enqueue")
 	def test_editing_an_organization_with_an_old_won_deal_and_nothing_waiting_queues_nothing(self, enqueue):

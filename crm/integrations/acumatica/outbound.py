@@ -7,16 +7,25 @@ import frappe
 import requests
 from frappe import _
 from frappe.query_builder.functions import Max
-from frappe.utils import add_days, cint, now_datetime
+from frappe.utils import add_days, cint, flt, now_datetime
 
 from crm.agent.doctype.crm_agent_settings.crm_agent_settings import DEFAULT_PROXY_READ_TIMEOUT
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
+	ISSUE,
+	SETTINGS,
 	dismiss_sync_issues,
 	get_settings,
 	open_sync_issues,
 	upsert_sync_issue,
 )
-from crm.integrations.acumatica.client import TIMEOUT, AcumaticaClient, AcumaticaError, v, wrap
+from crm.integrations.acumatica.client import (
+	TIMEOUT,
+	AcumaticaAuthError,
+	AcumaticaClient,
+	AcumaticaError,
+	v,
+	wrap,
+)
 from crm.integrations.acumatica.matching import name_match, normalise_name, normalise_vat, state_code
 
 # A write Acumatica never answered may still have landed, and SalesOrder -- like a
@@ -48,10 +57,22 @@ def _settle_inflight(key: str) -> None:
 	frappe.db.after_commit.add(lambda: frappe.cache().delete_value(key))
 
 
+def _marker_stored(key: str) -> bool:
+	"""Whether redis really holds the marker. frappe's set_value swallows a redis
+	connection error, so a marker just "set" may not exist."""
+	try:
+		return bool(frappe.cache().get_value(key, use_local_cache=False))
+	except Exception:
+		return False
+
+
 def _outcome_unknown(e) -> bool:
 	"""Whether a failed write may have landed anyway. An error status from Acumatica
 	is its answer: the write was refused. A timeout, a dropped connection, a gateway
-	in front of it answering 502/503/504, or a body that is not JSON is no answer."""
+	in front of it answering 502/503/504, or a body that is not JSON is no answer.
+	A login that was not made is raised before the write is sent at all."""
+	if isinstance(e, AcumaticaAuthError):
+		return False
 	if isinstance(e, AcumaticaError) and e.status_code:
 		return e.status_code in (502, 503, 504)
 	return True
@@ -342,7 +363,7 @@ def push_customer_for_deal(deal: str) -> None:
 		except (AcumaticaError, requests.RequestException, ValueError) as e:
 			_issue(
 				org.name,
-				f"could not look for the customer an unanswered push may have created: {e} :: {_reason(e)}",
+				f"could not look for the customer an unanswered push may have created: {_failure(e)}",
 			)
 			return
 		if why_not:
@@ -381,7 +402,7 @@ def push_customer_for_deal(deal: str) -> None:
 		preexisting, candidates = _remote_duplicates(client, facts)
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
 		# same rule as the collision check: "the check failed" is not "there is none"
-		_issue(org.name, f"could not check Acumatica for an existing customer: {e} :: {_reason(e)}")
+		_issue(org.name, f"could not check Acumatica for an existing customer: {_failure(e)}")
 		return
 	candidates = [c for c in candidates if c["customer_id"] not in confirmed_past]
 	if candidates:
@@ -437,7 +458,7 @@ def push_customer_for_deal(deal: str) -> None:
 		# blip, a read timeout or an HTML error page from a proxy (json() raises
 		# ValueError/JSONDecodeError) must land in the sync-issues table like any
 		# other push failure rather than just dying in the worker log.
-		detail = f"{e} :: {_reason(e)}"
+		detail = f"{_failure(e)}"
 		if _outcome_unknown(e):
 			# the marker stays: the customer may exist, and the next push looks first
 			detail = f"{detail} -- Acumatica may have created the customer anyway; the next push looks for it before sending another"
@@ -510,6 +531,38 @@ def move_markers_on_rename(doc, method, old: str, new: str, merge: bool = False)
 		if not cache.get_value(_inflight_key(entity, new)):
 			cache.set_value(_inflight_key(entity, new), value, expires_in_sec=INFLIGHT_TTL)
 		cache.delete_value(_inflight_key(entity, old))
+	_move_issues_on_rename(old, new)
+
+
+# The sync-issue rows the push keys by the organization's docname (a Contact's are
+# keyed by the contact). Only the push's own kinds: the importer's Customer rows carry
+# an Acumatica CustomerID in the same column.
+_ORGANIZATION_ISSUES = ("Customer", "Customer Salesperson")
+
+
+def _move_issues_on_rename(old: str, new: str) -> None:
+	"""``remote_id`` is Data, so a rename does not reach it. Left under the old name, an
+	open Push Blocked row no longer re-queued the push when the organization was saved
+	-- renaming it is how a rep fixes a refused name -- nor could anything dismiss it,
+	and the manager's panel went on offering actions on a record that was gone."""
+	rows = frappe.get_all(
+		ISSUE,
+		filters={
+			"parent": SETTINGS,
+			"parenttype": SETTINGS,
+			"parentfield": "sync_issues",
+			"entity": ("in", _ORGANIZATION_ISSUES),
+			"kind": ("in", (*WAITING_KINDS, PUSH_FAILED)),
+			"remote_id": old,
+		},
+		pluck="name",
+	)
+	for name in rows:
+		# row by row, never through a save of the Single (see record_sync_issue)
+		frappe.db.set_value(ISSUE, name, "remote_id", new, update_modified=False)
+	if rows:
+		# get_settings() is a cached doc; a row written past it must not be read stale
+		frappe.clear_document_cache(SETTINGS, SETTINGS)
 
 
 def confirmation_hash(facts) -> str:
@@ -914,7 +967,7 @@ def _push_salesperson(client, org_name: str, customer_id: str, deal_doc, setting
 		_issue(
 			org_name,
 			f"customer {customer_id} was created, but salesperson {salesperson} was not set on it: "
-			f"{e} :: {_reason(e)} -- set it in Acumatica",
+			f"{_failure(e)} -- set it in Acumatica",
 			entity="Customer Salesperson",
 		)
 
@@ -962,7 +1015,7 @@ def _push_primary_contact(client, org_name: str, customer_id: str) -> None:
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
 		_issue(
 			contact.name,
-			f"customer {customer_id} was created, but its primary contact was not set: {e} :: {_reason(e)}"
+			f"customer {customer_id} was created, but its primary contact was not set: {_failure(e)}"
 			" -- the next save of the deal tries again",
 			entity="Contact",
 		)
@@ -1053,6 +1106,13 @@ def _reason(e) -> str:
 	return e.detail() if isinstance(e, AcumaticaError) else str(e)
 
 
+def _failure(e) -> str:
+	"""The error and Acumatica's reason for it, for a sync-issue row -- once, when the
+	error has no more to say than its own message."""
+	reason = _reason(e)
+	return str(e) if reason in ("", str(e)) else f"{e} :: {reason}"
+
+
 def _customer_id_collision(client, customer_id: str, org_name: str) -> str | None:
 	"""Why ``customer_id`` must not be PUT for ``org_name`` -- or None when it is free.
 
@@ -1075,7 +1135,7 @@ def _customer_id_collision(client, customer_id: str, org_name: str) -> str | Non
 	try:
 		taken = _remote_customer_exists(client, customer_id)
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
-		return f"could not check whether CustomerID {customer_id} is free: {e} :: {_reason(e)}"
+		return f"could not check whether CustomerID {customer_id} is free: {_failure(e)}"
 	if taken:
 		return f"CustomerID {customer_id} derived from the name already exists in Acumatica"
 	return None
@@ -1118,6 +1178,7 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 	products = deal.get("products") or []
 	details = []
 	unlinked = []
+	unquantified = []
 	# CRM Deal's child table is `products` (CRM Products rows); the row's link to
 	# the CRM Product is `product_code`, the quantity field is `qty`.
 	for row in products:
@@ -1132,9 +1193,15 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 			# what the rep typed: a None in the list crashed the join below.
 			unlinked.append(row.product_code or row.product_name or _("a line with no product"))
 			continue
+		if row.qty is not None and flt(row.qty) <= 0:
+			# `row.qty or 1` sent a line the rep had zeroed as one unit at full price.
+			# Leaving it out is the partial order refused above, and what Acumatica
+			# makes of a quantity of 0 is its own affair: the rep says which they meant.
+			unquantified.append(row.product_name or row.product_code)
+			continue
 		line = {
 			"InventoryID": inventory_id,
-			"OrderQty": row.qty or 1,
+			"OrderQty": 1 if row.qty is None else row.qty,
 			"UnitPrice": row.rate,
 			"DiscountPercent": row.discount_percentage,
 		}
@@ -1148,6 +1215,13 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 				"These products are not linked to Acumatica inventory items: {0}. "
 				"Run a backfill or link them, then try again."
 			).format(", ".join(unlinked))
+		)
+	if unquantified:
+		frappe.throw(
+			_(
+				"These lines have a zero or negative quantity: {0}. Give each a quantity above zero, or remove "
+				"the line from the deal, then try again."
+			).format(", ".join(unquantified))
 		)
 
 	# Acumatica books a quote in its customer's currency and reads every UnitPrice in
@@ -1223,13 +1297,28 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 	try:
 		created = client.put("SalesOrder", payload, timeout=_quote_write_timeout())
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
+		if isinstance(e, AcumaticaAuthError):
+			# Acumatica refused nothing: the request was never sent
+			frappe.cache().delete_value(inflight)
+			frappe.throw(
+				_("Vectora could not sign in to Acumatica, so no quote was sent: {0}").format(_reason(e))
+			)
 		if not _outcome_unknown(e):
 			frappe.cache().delete_value(inflight)
 			# The status line alone ("PUT ... -> 422") tells a rep nothing; the reason
 			# Acumatica gave is in the body.
 			frappe.throw(_("Acumatica refused the sales quote: {0}").format(_reason(e)))
 		# Not "it failed": the order may well exist. The marker stays, so the retry
-		# this invites adopts it instead of making a second one.
+		# this invites adopts it instead of making a second one -- if it is there at
+		# all: set_value swallows a redis connection error, and with no marker the
+		# retry would send another.
+		if not _marker_stored(inflight):
+			frappe.throw(
+				_(
+					"No answer came back from Acumatica ({0}). The quote may still have been created — "
+					"look for it in Acumatica before trying again, or a second one may be made."
+				).format(_reason(e))
+			)
 		frappe.throw(
 			_(
 				"No answer came back from Acumatica ({0}). The quote may still have been created — "
@@ -1238,7 +1327,18 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 		)
 	order_nbr = v(created, "OrderNbr") or ""
 	if order_nbr:
-		frappe.db.set_value("CRM Deal", deal.name, "acumatica_sales_quote", order_nbr)
+		try:
+			frappe.db.set_value("CRM Deal", deal.name, "acumatica_sales_quote", order_nbr)
+		except (frappe.QueryTimeoutError, frappe.QueryDeadlockError):
+			# The order exists and its number did not reach the deal. Not the raw
+			# database error: the marker stays, so the retry this asks for adopts it.
+			frappe.throw(
+				_(
+					"Sales quote {0} was created in Acumatica, but the deal was busy and the "
+					"quote number could not be stored on it. Try again in a moment and Vectora "
+					"will pick the quote up rather than create another."
+				).format(order_nbr)
+			)
 		_settle_inflight(inflight)
 	return order_nbr
 

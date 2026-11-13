@@ -17,12 +17,11 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import timedelta
 
 import frappe
 from frappe import _
-from frappe.utils import get_system_timezone, getdate, now_datetime
+from frappe.utils import getdate, now_datetime
 
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import record_sync_issue
 from crm.integrations.acumatica import outcomes
@@ -106,17 +105,8 @@ def _odata(value: str) -> str:
 	return "'" + str(value).replace("'", "''") + "'"
 
 
-def _local(value) -> datetime | None:
-	"""An Acumatica timestamp as naive site-local time, which is what ``creation`` holds."""
-	if not value:
-		return None
-	try:
-		parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-	except ValueError:
-		return None
-	if parsed.tzinfo:
-		parsed = parsed.astimezone(ZoneInfo(get_system_timezone())).replace(tzinfo=None)
-	return parsed
+# the outcome pass dates a close with it too, so it lives there
+_local = outcomes.local_time
 
 
 def _salesperson(quote) -> str | None:
@@ -190,7 +180,7 @@ class _Pass:
 		closed_date = None
 		if status in ("Won", "Lost"):
 			# when it was accepted or declined, as the outcome pass dates a close
-			closed_date = max(outcomes.date_of(v(quote, "LastModified")) or quote_date, quote_date)
+			closed_date = max(outcomes.local_date_of(v(quote, "LastModified")) or quote_date, quote_date)
 			if lost_reason:
 				outcomes.ensure_lost_reason(lost_reason)
 		currency = v(quote, "CurrencyID") or self.base_currency

@@ -585,6 +585,21 @@ class TestBackfill(ImporterTestCase):
 		queue.assert_called_once()
 		self.assertEqual(out["customer_pushes_queued"], 3)
 
+	@patch("crm.integrations.acumatica.importer._import_all")
+	def test_a_backfill_a_manager_started_runs_as_the_system_not_as_the_manager(self, import_all):
+		"""rq runs a job as whoever enqueued it. The sweep was made the system's when
+		the webhook woke it as Guest; the Backfill button's job, which enters here and
+		not through nightly_sweep, still ran as the manager who pressed it -- and one
+		who sees only their own team had every other rep's quote refused."""
+		seen = []
+		import_all.side_effect = lambda modified_since: seen.append(frappe.session.user) or {}
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user("Guest")  # any session that is not the system's
+
+		importer.run_backfill()
+
+		self.assertEqual(seen, ["Administrator"])
+
 	def test_nightly_sweep_noop_when_disabled(self):
 		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
 		frappe.clear_cache(doctype="CRM Acumatica Settings")  # get_settings() is cached
