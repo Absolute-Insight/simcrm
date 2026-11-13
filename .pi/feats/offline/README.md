@@ -21,6 +21,14 @@
   the device at once and shows where it belongs immediately, marked "Waiting
   to send"; it is sent when there is a connection. A header pill counts what
   is waiting, and turns red for anything the server refused.
+- **Plan** (on My week, for the day selected, today or later): adds one
+  planned activity to the week. Offline planning only ever *adds* — see
+  `_replay_plan_item`.
+- **Sheets** (a fourth tab, only where the company has loaded reference
+  sheets): *Keep on this device* downloads a sheet's page images; a kept
+  sheet opens with no connection, page under page, with zoom.
+- On an iPhone or iPad in a browser tab, a dismissible band says to add the
+  app to the Home Screen (`FieldInstallHint.vue`).
 - **To send** (`/crm/field/outbox`): what is waiting and what was refused,
   with the server's reason, and *Send again* / *Discard* for each.
 - Everything else — dashboard, reports, assistant, e-mail, WhatsApp, deal
@@ -147,13 +155,32 @@ entry stays as `sent`, still laid over the pack (`applyOutbox`), until the
 next pack sync brings the server's own version; then it is deleted. Rejected
 entries are never shown as done anywhere but the outbox.
 
+### 5. Planning offline, and kept sheets
+
+**Planning adds, never replaces.** The Planner saves a whole week under an
+optimistic lock ("nobody changed it since you loaded it"). A phone that was
+offline for two days cannot make that promise, and losing the week to a
+conflict is the wrong price for adding one visit. `plan_item` re-reads the
+week as the server holds it and calls `save_plan` with those rows plus the
+new one, so every Planner rule applies (horizon, day lock, the customer's
+owner) and nothing already there changes. Editing or moving planned items
+stays online, in the Planner.
+
+**Sheets** (`src/offline/sheets.js`). The pack carries only the list of
+sheets and their pages. The images are fetched when a rep keeps a sheet,
+through the ordinary file URLs and their ordinary permission check, and
+stored as blobs in the *pack's* store — so every clear of the pack takes
+them too, and expiry now clears the whole store rather than one key. Only
+`/files/<name>` and `/private/files/<name>` are ever fetched, whatever the
+pack says, and only an `image/*` response is kept. All pages or none.
+
 ## What is on the device, and when it goes
 
 | Store | Holds | Cleared |
 |---|---|---|
 | localStorage `crm-offline-boot` | boot values, no token | logout from the app, lost session, another user, a refused handshake |
 | cookie `crm_field_user` | the signed-in user's id | any logout (server hook); expires after 14 days |
-| IndexedDB `vectora-field-pack` | the pack | the same, and after `PACK_MAX_AGE_DAYS` (14) without a sync |
+| IndexedDB `vectora-field-pack` | the pack, and the page images of kept sheets | the same, and after `PACK_MAX_AGE_DAYS` (14) without a sync |
 | IndexedDB `vectora-field-outbox` | work the server has not seen | only by a confirmed send or the rep discarding it; never by logout, and another user's entries are neither shown nor sent |
 
 The store clears go through `clearOfflineCache()` / `claimOfflineCache()`.
@@ -188,4 +215,7 @@ any list that hit its cap.
 - **`captured_offline` is server-owned**: it is in `SERVER_ITEM_FIELDS`, and
   `_stage_items` must carry it across a `save_plan` like `manual_override`.
 - iOS evicts storage for sites not added to the home screen: iPhone reps must
-  install the app.
+  install the app. The hint says so; `navigator.storage.persist()` is asked
+  for on first use of field mode, and the browser may say no.
+- **WebKit** was exercised in Playwright's build with device emulation, not
+  on a real iPhone. Real-device QA is still owed before rollout.
