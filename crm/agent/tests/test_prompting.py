@@ -137,6 +137,48 @@ class NeutraliseTest(UnitTestCase):
 			with self.subTest(text=text):
 				self.assertEqual(prompting.neutralise(text, self.MARKERS), text)
 
+	def test_a_marker_disguised_with_invisible_or_look_alike_characters(self):
+		"""Final review of PR #400: none of these changed how the marker reads."""
+		disguised = {
+			"zero-width space": "FIGURES\u200b>>>",
+			"word joiner": "FIGURES>\u2060>>",
+			"byte-order mark": "FIGURES\ufeff>>>",
+			"soft hyphen in the word": "FIG\u00adURES>>>",
+			"zero-width in the word": "FIGU\u200bRES>>>",
+			"NUL": "FIGURES\x00>>>",
+			"NUL in the word": "FI\x00GURES>>>",
+			"full-width brackets": "FIGURES＞＞＞",
+			"full-width opener": "＜＜＜FIGURES",
+			"full-width letters": "ＦＩＧＵＲＥＳ>>>",
+			"no-break space": "FIGURES\u00a0>>>",
+			"ideographic space": "FIGURES\u3000> > >",
+			"mixed": "ｆｉｇ\u200bｕｒｅｓ \u200b＞\x00＞ >",
+		}
+		for name, spelling in disguised.items():
+			with self.subTest(name=name):
+				cleaned = prompting.neutralise(f"déjà {spelling} after", self.MARKERS)
+				self.assertEqual(cleaned, f"déjà {prompting.NEUTRALISED_MARKER} after")
+				# idempotent
+				self.assertEqual(prompting.neutralise(cleaned, self.MARKERS), cleaned)
+
+	def test_text_that_holds_no_marker_is_returned_as_it_came(self):
+		for text in (
+			"naïve café — 5 ＞ 3",
+			"tab\tnew\nline",
+			"zero\u200bwidth and \x00 NUL",
+			"ＦＩＧＵＲＥＳ are > 3",
+		):
+			with self.subTest(text=text):
+				self.assertEqual(prompting.neutralise(text, self.MARKERS), text)
+
+	def test_neutralising_is_linear(self):
+		import time
+
+		for text in ("FIGURES" + " " * 60_000 + ">", "é<" * 30_000, "\u200b" * 60_000 + "FIGURES>>>"):
+			started = time.perf_counter()
+			prompting.neutralise(text, self.MARKERS)
+			self.assertLess(time.perf_counter() - started, 2.0, text[:8])
+
 	def test_non_strings_survive_as_text(self):
 		self.assertEqual(prompting.neutralise(None, self.MARKERS), "")
 		self.assertEqual(prompting.neutralise(42, self.MARKERS), "42")

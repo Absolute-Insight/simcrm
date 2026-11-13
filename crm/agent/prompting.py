@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from itertools import pairwise
 
 # Characters per token. BPE on English prose runs about four; 3.5 keeps the
@@ -102,7 +103,41 @@ def neutralise(content, markers) -> str:
 	text = str(content or "")
 	if not markers:
 		return text
-	return _marker_pattern(tuple(markers)).sub(NEUTRALISED_MARKER, text)
+	pattern = _marker_pattern(tuple(markers))
+	if text.isascii() and not _CONTROL.search(text):
+		return pattern.sub(NEUTRALISED_MARKER, text)
+
+	# A marker can be disguised without changing how it reads: a zero-width
+	# space or a NUL inside it, full-width brackets or letters. So the match
+	# runs over a copy with invisible characters dropped and look-alikes folded
+	# (NFKC), and each hit is cut out of the original where it came from.
+	folded: list[str] = []
+	origin: list[int] = []  # for each folded character, its index in ``text``
+	for index, char in enumerate(text):
+		if not char.isascii():
+			if unicodedata.category(char) == "Cf":
+				continue
+			char = unicodedata.normalize("NFKC", char)
+		elif char < " " and char not in "\t\n\r\f\v":
+			continue
+		elif char == "\x7f":
+			continue
+		folded.append(char)
+		origin.extend([index] * len(char))
+	pieces, at = [], 0
+	for found in pattern.finditer("".join(folded)):
+		start, end = origin[found.start()], origin[found.end() - 1] + 1
+		if start < at:
+			continue
+		pieces.append(text[at:start])
+		pieces.append(NEUTRALISED_MARKER)
+		at = end
+	pieces.append(text[at:])
+	return "".join(pieces)
+
+
+# C0 controls other than whitespace, and DEL
+_CONTROL = re.compile(r"[\x00-\x08\x0e-\x1f\x7f]")
 
 
 _MARKER_PATTERNS: dict[tuple, re.Pattern] = {}
