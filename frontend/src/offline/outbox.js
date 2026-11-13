@@ -38,6 +38,8 @@ export const rejectedCount = computed(
   () => outbox.entries.filter((entry) => entry.status === 'rejected').length,
 )
 
+const RETRY_PENDING_MS = 60 * 1000
+
 const byTime = (a, b) => a.captured_at - b.captured_at
 
 async function persist(entry) {
@@ -265,6 +267,13 @@ export function startOutbox() {
     if (connectivity.online && outbox.entries.length) flush()
   })
   onOnline(flush)
+  // A run that stopped on a server error leaves entries pending with the app
+  // still "online", and nothing else would come back for them until the tab
+  // was hidden and shown. Once a minute, while there is something to send.
+  setInterval(() => {
+    if (!connectivity.online || document.visibilityState === 'hidden') return
+    if (outbox.entries.some((entry) => entry.status === 'pending')) flush()
+  }, RETRY_PENDING_MS)
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && connectivity.online) {
       if (outbox.entries.some((e) => e.status !== 'rejected')) flush()

@@ -344,6 +344,29 @@ describe('timing', () => {
   })
 })
 
+describe('coming back for what a server error left', () => {
+  it('tries again within a minute, without the tab being hidden and shown', async () => {
+    vi.useFakeTimers()
+    try {
+      server.replay = async () => {
+        throw Object.assign(new Error('Bad Gateway'), { status: 502 })
+      }
+      const { enqueue, flushOutbox, startOutbox, outbox } = await load()
+      startOutbox()
+      await enqueue('create_task', { title: 'x' })
+      await flushOutbox()
+      expect(outbox.entries[0].status).toBe('pending')
+      const before = server.calls.length
+      server.replay = async () => ({ status: 'applied' })
+      await vi.advanceTimersByTimeAsync(61000)
+      expect(server.calls.length).toBe(before + 1)
+      expect(outbox.entries).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('the rep’s say', () => {
   it('a refused entry can be sent again or thrown away', async () => {
     server.replay = async () => {
