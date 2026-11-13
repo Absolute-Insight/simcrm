@@ -144,7 +144,15 @@ export function syncPack() {
       return true
     } catch (error) {
       packState.error = error
-      if (error?.exc_type === 'PermissionError') packState.refused = true
+      if (error?.exc_type === 'PermissionError') {
+        packState.refused = true
+        // The server's own refusal (it names the exception; a proxy's bare
+        // 403 does not): this user is not to carry a pack any more -- the
+        // sales role was taken away, say. What is already here goes now, not
+        // when its fourteen days are up. A lapsed session is also refused
+        // this way, and is cleared the same (sessionExpiry.js).
+        await dropPack()
+      }
       return false
     } finally {
       packState.syncing = false
@@ -217,10 +225,15 @@ function due() {
 export function dropExpiredPack() {
   if (!fieldPack.value) return
   if (!packExpired(packState.syncedAt, packState.maxAgeDays)) return
+  return dropPack()
+}
+
+/* The pack and the sheets kept beside it, off the screen and off the device. */
+function dropPack() {
   fieldPack.value = null
   packState.syncedAt = null
   forgetSavedSheets()
-  if (hasIndexedDB()) packStore.clear().catch(() => {})
+  return hasIndexedDB() ? packStore.clear().catch(() => {}) : Promise.resolve()
 }
 
 /** This device uses field mode: keep its pack fresh from now on. */

@@ -25,6 +25,18 @@ export function packExpired(syncedAt, maxAgeDays, now = Date.now()) {
   return now - at > days * DAY_MS
 }
 
+/**
+ * Whether any of these lists in the pack was cut at the server's cap
+ * (`truncated` in crm/api/offline.py). A screen showing one says so: a short
+ * list must not pass for a complete one, least of all an empty one -- "no
+ * contacts on record" is a statement about the customer, and the device does
+ * not know it.
+ */
+export function packCut(pack, ...lists) {
+  const cut = Array.isArray(pack?.truncated) ? pack.truncated : []
+  return lists.some((list) => cut.includes(list))
+}
+
 /** Lower-case, accents folded, punctuation to spaces: what search compares. */
 export function searchKey(text) {
   return String(text ?? '')

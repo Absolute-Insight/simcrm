@@ -6,6 +6,7 @@ import {
   needsInstallHint,
   moneyLabel,
   orderTasks,
+  packCut,
   packExpired,
   packWeeks,
   planItemText,
@@ -42,6 +43,21 @@ describe('packExpired', () => {
     expect(packExpired(now + 3 * DAY, 14, now)).toBe(true)
     // an hour of drift is a device clock, not a trick
     expect(packExpired(now + 3600000, 14, now)).toBe(false)
+  })
+})
+
+describe('packCut', () => {
+  it('says when a list on screen was cut at the server’s cap', () => {
+    const pack = { truncated: ['contacts', 'notes'] }
+    expect(packCut(pack, 'contacts')).toBe(true)
+    expect(packCut(pack, 'history', 'notes')).toBe(true)
+    expect(packCut(pack, 'organizations', 'deals', 'tasks')).toBe(false)
+  })
+
+  it('a pack that does not say is not cut', () => {
+    expect(packCut(null, 'contacts')).toBe(false)
+    expect(packCut({}, 'contacts')).toBe(false)
+    expect(packCut({ truncated: 'contacts' }, 'contacts')).toBe(false)
   })
 })
 

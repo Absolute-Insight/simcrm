@@ -59,10 +59,7 @@
       </span>
     </div>
 
-    <p
-      v-if="pack?.truncated?.includes('organizations')"
-      class="text-sm text-ink-gray-6"
-    >
+    <p v-if="packCut(pack, 'organizations')" class="text-sm text-ink-gray-6">
       {{
         __(
           'There are more customers than a device carries. Search online for the rest.',
@@ -74,7 +71,7 @@
 
 <script setup>
 import { useField } from '@/offline/useField'
-import { searchCustomers } from '@/utils/fieldPack'
+import { packCut, searchCustomers } from '@/utils/fieldPack'
 import { computed, ref } from 'vue'
 import LucideBuilding2 from '~icons/lucide/building-2'
 import LucideChevronRight from '~icons/lucide/chevron-right'

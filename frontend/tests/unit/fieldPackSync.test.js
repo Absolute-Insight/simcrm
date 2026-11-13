@@ -130,3 +130,35 @@ describe('syncing the pack', () => {
     expect(fieldPack.value.today).toBe('2026-11-14')
   })
 })
+
+describe('a pack the server will not give any more', () => {
+  it('is taken off the device at once, not when its fourteen days are up', async () => {
+    const { syncPack, fieldPack, packState } = await load()
+    await syncPack()
+    expect(disk.has('pack')).toBe(true)
+    // Frappe's own refusal: the sales role was taken away
+    server.answer = async () => {
+      throw Object.assign(new Error('Not permitted'), {
+        status: 403,
+        exc_type: 'PermissionError',
+      })
+    }
+    expect(await syncPack()).toBe(false)
+    expect(packState.refused).toBe(true)
+    expect(fieldPack.value).toBe(null)
+    expect(disk.size).toBe(0)
+  })
+
+  it('a 403 that is not Frappe’s, or a server error, leaves it where it is', async () => {
+    const { syncPack, fieldPack } = await load()
+    await syncPack()
+    for (const status of [403, 500]) {
+      server.answer = async () => {
+        throw Object.assign(new Error('nope'), { status })
+      }
+      expect(await syncPack()).toBe(false)
+      expect(fieldPack.value.organizations).toEqual([{ name: 'Impala' }])
+      expect(disk.has('pack')).toBe(true)
+    }
+  })
+})
