@@ -357,7 +357,10 @@ class FieldUserCookieTest(IntegrationTestCase):
 		login_manager = frappe._dict(user=OTHER)
 		name_field_user(login_manager)
 		self.assertEqual(frappe.local.cookie_manager.cookies[FIELD_USER_COOKIE]["value"], OTHER)
-		self.assertIn("crm.api.auth.name_field_user", frappe.get_hooks("on_login"))
+		# once the session exists, not at on_login: a login frappe goes on to
+		# refuse (IP, hours) must not have named anyone
+		self.assertIn("crm.api.auth.name_field_user", frappe.get_hooks("on_session_creation"))
+		self.assertNotIn("crm.api.auth.name_field_user", frappe.get_hooks("on_login"))
 
 	def test_a_guest_is_never_named(self):
 		frappe.set_user("Guest")

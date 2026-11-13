@@ -40,8 +40,8 @@ reads `crm/www/crm.py` and fails when they drift.
 
 **Who the shell is for.** `user_id` is a session cookie, and a phone drops it
 when it closes the app. So the server also sets a persistent cookie,
-`crm_field_user`, on every `/crm` render and on **every login**
-(`crm.api.auth.name_field_user`, 14 days — the login hook is what stops it
+`crm_field_user`, on every `/crm` render and on **every new session**
+(`crm.api.auth.name_field_user` on `on_session_creation`, 14 days — that hook is what stops it
 naming the last rep after someone else signs in and goes to the desk) and
 deletes it in an `on_logout` hook
 (`crm.api.auth.forget_field_user`) — which runs for a logout from the desk

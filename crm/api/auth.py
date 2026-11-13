@@ -74,7 +74,8 @@ def name_field_user(login_manager=None):
 	cookie, and a phone drops those when it closes the app. This one lasts as
 	long as a pack does.
 
-	Set on every ``/crm`` render and on **every login**, wherever it lands. The
+	Set on every ``/crm`` render and on **every new session**, wherever it lands
+	(``on_session_creation``: after frappe has accepted the login, not before). The
 	login matters on a shared device: someone who signs in and goes to the desk
 	never renders ``/crm``, and without this the cookie would go on naming the
 	last rep -- whose saved customers the shell would then open for the new
