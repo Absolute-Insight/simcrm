@@ -548,9 +548,14 @@ after_migrate = [
 # state, not caches: dropping the shared API token leaves its login holding one of
 # the API user's concurrent-login slots until it expires (a logout needs the token),
 # and dropping an in-flight marker lets the next click send a second order.
+#
+# The event-reminder sent ledger is state too (crm.api.event.SENT_REMINDER_KEY): it
+# is the only record that a reminder has gone out, so a clear_cache inside the
+# catch-up hour mailed every participant, customers included, a second time.
 persistent_cache_keys = [
 	"acumatica_token::*",
 	"acumatica_inflight::*",
+	"crm:event_reminder_sent:*",
 ]
 
 standard_dropdown_items = [
