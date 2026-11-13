@@ -261,6 +261,58 @@ class DnsBudgetTest(UnitTestCase):
 		self.assertEqual((status, html, error), (200, "<html>ok</html>", ""))
 		self.assertEqual(pinned, ["93.184.216.34"])
 
+	def test_each_hop_is_resolved_exactly_once(self):
+		"""One lookup per hop, and the address pinned is the one it returned: a
+		second lookup is the window a DNS-rebinding host answers differently in."""
+		answers = {"first.example": "93.184.216.34", "second.example": "93.184.216.35"}
+		lookups, pinned = [], []
+
+		def getaddrinfo(host, *args, **kwargs):
+			lookups.append(host)
+			return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (answers[host], 0))]
+
+		def pinned_get(session, url, ip, timeout, retries):
+			pinned.append((url, ip))
+			if "first" in url:
+				return FakeResponse(
+					iter([]),
+					headers={"Location": "https://second.example/"},
+					status_code=302,
+					is_redirect=True,
+				)
+			return FakeResponse(iter([b"<html>ok</html>"]))
+
+		cfg = make_config({"request_timeout": 5, "retry_count": 0, "max_fetch_seconds": 5})
+		with (
+			mock.patch.object(http.socket, "getaddrinfo", side_effect=getaddrinfo),
+			mock.patch.object(http, "_pinned_get", side_effect=pinned_get),
+			mock.patch.object(http, "build_session", return_value=mock.MagicMock()),
+		):
+			status, _html, error, final = http.fetch("https://first.example/", cfg)
+
+		self.assertEqual((status, error, final), (200, "", "https://second.example/"))
+		self.assertEqual(lookups, ["first.example", "second.example"])
+		self.assertEqual(
+			pinned,
+			[("https://first.example/", "93.184.216.34"), ("https://second.example/", "93.184.216.35")],
+		)
+
+	def test_a_hung_lookup_is_asked_once_and_not_retried(self):
+		lookups = []
+		hung = self._hung_resolver()
+
+		def getaddrinfo(host, *args, **kwargs):
+			lookups.append(host)
+			return hung(host, *args, **kwargs)
+
+		cfg = make_config({"request_timeout": 5, "retry_count": 2, "max_fetch_seconds": 0.2})
+		with (
+			mock.patch.object(http.socket, "getaddrinfo", side_effect=getaddrinfo),
+			mock.patch.object(http, "_pinned_get", side_effect=AssertionError("connected")),
+		):
+			http.fetch("https://slow-dns.example/", cfg)
+		self.assertEqual(lookups, ["slow-dns.example"])
+
 
 def _trickle(conn, payload: bytes, pause: float, seconds: float):
 	ends = time.monotonic() + seconds
