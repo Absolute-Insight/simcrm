@@ -149,6 +149,10 @@ export function failureKind(error) {
   const status = Number(error?.status ?? error?.httpStatus)
   const exc = String(error?.exc_type ?? '')
   if (exc === 'CSRFTokenError' || exc === 'TooManyRequestsError') return 'retry'
+  // The record changed while this entry was being applied -- a week edited on
+  // the desktop in the same instant. Nothing is wrong with the entry; the
+  // next attempt is a new request and sees the record as it now is.
+  if (exc === 'TimestampMismatchError') return 'retry'
   if (status === 429 || status >= 500) return 'retry'
   if ([403, 404, 409, 417].includes(status)) return 'rejected'
   if (/Validation|Permission|DoesNotExist|Mandatory|Duplicate/.test(exc)) {

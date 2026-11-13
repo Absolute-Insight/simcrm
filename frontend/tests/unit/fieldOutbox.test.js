@@ -139,6 +139,10 @@ describe('failureKind', () => {
     expect(failureKind({ status: 400, exc_type: 'CSRFTokenError' })).toBe(
       'retry',
     )
+    // the week changed under it: not the entry's fault, and fine next time
+    expect(
+      failureKind({ status: 409, exc_type: 'TimestampMismatchError' }),
+    ).toBe('retry')
     expect(failureKind(undefined)).toBe('retry')
   })
 })

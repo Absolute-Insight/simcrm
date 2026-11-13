@@ -162,8 +162,12 @@ optimistic lock ("nobody changed it since you loaded it"). A phone that was
 offline for two days cannot make that promise, and losing the week to a
 conflict is the wrong price for adding one visit. `plan_item` re-reads the
 week as the server holds it and calls `save_plan` with those rows plus the
-new one, so every Planner rule applies (horizon, day lock, the customer's
-owner) and nothing already there changes. Editing or moving planned items
+new one and the week's own timestamp, so every Planner rule applies (horizon,
+day lock, the customer's owner) and nothing already there changes. If the
+week changed in the instant between that read and the write, the save is
+refused with `TimestampMismatchError`, which the phone treats as *retry*
+(`failureKind`), not as a refusal — a re-read inside the same request would
+see the same snapshot. Editing or moving planned items
 stays online, in the Planner.
 
 **Sheets** (`src/offline/sheets.js`). The pack carries only the list of

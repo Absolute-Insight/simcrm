@@ -646,22 +646,18 @@ def _replay_plan_item(payload: dict, moment: datetime, late: bool) -> None:
 		"note": _text(payload.get("note"), TITLE_LIMIT),
 		"organization": organization,
 	}
-	for attempt in range(2):
-		current = get_plan(str(monday))
-		kept = [
-			{"name": item["name"], **{f: item.get(f) for f in EDITABLE_ITEM_FIELDS}}
-			for item in current["items"]
-		]
-		try:
-			# With the week's own timestamp, as the Planner sends it: if the
-			# week changed between the read and the write -- a row deleted on
-			# the desktop in that instant -- writing back what was read would
-			# put the row back. Read again and add to what is there now.
-			save_plan(str(monday), [*kept, row], str(current["modified"] or ""))
-			return
-		except frappe.TimestampMismatchError:
-			if attempt:
-				raise
+	current = get_plan(str(monday))
+	kept = [
+		{"name": item["name"], **{f: item.get(f) for f in EDITABLE_ITEM_FIELDS}} for item in current["items"]
+	]
+	# With the week's own timestamp, as the Planner sends it. If the week
+	# changed between the read and the write -- a row deleted on the desktop
+	# in that instant -- writing back what was read would put the row back,
+	# so that is refused (TimestampMismatchError). There is no point reading
+	# again here: this transaction goes on seeing the week as it was when it
+	# began. The phone treats that refusal as "try again", and its next
+	# request is a new transaction that sees the week as it is.
+	save_plan(str(monday), [*kept, row], str(current["modified"] or ""))
 
 
 def _parent_of(item: str) -> str | None:

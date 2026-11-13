@@ -29,13 +29,21 @@ const PAGE_TIMEOUT_MS = 30000
  * the browser to resolve into somewhere else on the site.
  */
 export function isSheetFileUrl(url) {
-  const match = /^\/(?:private\/)?files\/([^/?#\\]+)$/.exec(String(url ?? ''))
+  const raw = String(url ?? '')
+  // Browsers strip tabs and newlines out of a URL before resolving it, so
+  // "/files/.\t." is ".." by the time it is fetched. No whitespace or control
+  // character belongs in one of these at all (a space arrives as %20).
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0020\u007f]/.test(raw)) return false
+  const match = /^\/(?:private\/)?files\/([^/?#\\]+)$/.exec(raw)
   if (!match) return false
-  let name
+  let name = match[1]
   try {
-    name = decodeURIComponent(match[1])
+    name = decodeURIComponent(name)
   } catch {
-    return false
+    // A literal % that is not an escape ("50%.png"): the browser sends it as
+    // written. Fine, unless an escape for a dot or a slash is in there too.
+    if (/%(?:2e|2f|5c)/i.test(name)) return false
   }
   return name !== '.' && name !== '..' && !/[/\\]/.test(name)
 }
@@ -113,7 +121,13 @@ export async function keepSheet(sheet) {
       if (!response.ok || !type.startsWith('image/')) {
         throw new Error(__('A page of this sheet could not be downloaded.'))
       }
-      const blob = await response.blob()
+      let blob
+      try {
+        // the timeout can also land here, half way through the body
+        blob = await response.blob()
+      } catch {
+        throw new Error(__('A page of this sheet could not be downloaded.'))
+      }
       if (blob.size > MAX_PAGE_BYTES) {
         throw new Error(__('A page of this sheet is too large to keep.'))
       }

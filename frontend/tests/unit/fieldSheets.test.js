@@ -108,7 +108,11 @@ describe('keeping a sheet', () => {
       '/files/%2e%2e',
       '/private/files/..%2f..%2fapi%2fmethod%2fx',
       '/private/files/a%5cb.png',
-      '/private/files/%zz.png',
+      '/files/.\t.',
+      '/files/%2e\n%2e',
+      '/private/files/\t..',
+      '/files/%2e%zz',
+      '/files/a b.png',
       '',
     ]) {
       await expect(
@@ -122,6 +126,8 @@ describe('keeping a sheet', () => {
     const { isSheetFileUrl } = await load()
     expect(isSheetFileUrl('/private/files/flanges-p1.png')).toBe(true)
     expect(isSheetFileUrl('/files/Valve%20chart%202.png')).toBe(true)
+    expect(isSheetFileUrl('/files/50%.png')).toBe(true)
+    expect(isSheetFileUrl('/files/Tabla%20(v2)+%C3%B1.png')).toBe(true)
     expect(
       isSheetFileUrl('/private/files/qa-offline-flanges-p1a3f2c.png'),
     ).toBe(true)

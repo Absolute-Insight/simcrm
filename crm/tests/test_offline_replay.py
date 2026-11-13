@@ -546,31 +546,28 @@ class PlanOfflineTest(ReplayTestCase):
 				ago(hours=60),
 			)
 
-	def test_a_week_that_changed_under_the_replay_is_read_again_not_overwritten(self):
+	def test_a_week_that_changed_under_the_replay_is_not_overwritten(self):
 		from unittest.mock import patch
 
 		from crm.api import offline
 
 		gone = self.plan_one("Call")
 		real_get_plan = offline.get_plan
-		reads = []
 
-		def stale_first(week):
+		def then_the_desktop_removes_the_call(week):
 			plan = real_get_plan(week)
-			reads.append(week)
-			if len(reads) == 1:
-				# between this read and the write, the desktop removes the call
-				save_plan(week, [], str(plan["modified"]))
+			save_plan(week, [], str(plan["modified"]))
 			return plan
 
-		with patch.object(offline, "get_plan", side_effect=stale_first):
-			replay(
-				new_id(), "plan_item", {"activity_type": "Admin", "planned_date": str(frappe.utils.getdate())}
-			)
-		rows = self.items()
-		self.assertEqual(len(reads), 2)
-		self.assertNotIn(gone, {row["name"] for row in rows})
-		self.assertEqual([row["activity_type"] for row in rows], ["Admin"])
+		# refused, with the error the phone reads as "send it again"
+		with patch.object(offline, "get_plan", side_effect=then_the_desktop_removes_the_call):
+			with self.assertRaises(frappe.TimestampMismatchError):
+				replay(
+					new_id(),
+					"plan_item",
+					{"activity_type": "Admin", "planned_date": str(frappe.utils.getdate())},
+				)
+		self.assertNotIn(gone, {row["name"] for row in self.items()})
 
 	def test_a_plan_with_no_day_is_refused_not_put_on_today(self):
 		for missing in ({}, {"planned_date": ""}, {"planned_date": None}):
