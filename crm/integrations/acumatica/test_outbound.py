@@ -787,7 +787,7 @@ class TestCreateSalesQuote(FrappeTestCase):
 				with self.assertRaises(frappe.ValidationError) as ctx:
 					outbound.create_sales_quote_from_deal(deal.name)
 				self.assertIn("Widget", str(ctx.exception))
-				self.assertIn("quantity", str(ctx.exception))
+				self.assertIn("zero or negative quantity", str(ctx.exception))
 		client.put.assert_not_called()
 		self.assertIsNone(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
 
@@ -816,6 +816,81 @@ class TestCreateSalesQuote(FrappeTestCase):
 			outbound.create_sales_quote_from_deal(deal.name)
 
 		self.assertEqual(order, [("release", True), "put"])
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_the_row_lock_is_kept_when_the_marker_did_not_reach_redis(self, ClientCls):
+		"""frappe's set_value swallows a redis connection error. With no marker, the
+		row lock is the only thing between a second click and a second order."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.return_value = _wrapped(OrderNbr="QT000142")
+		_org, deal = _mapped_deal()
+
+		with (
+			patch.object(outbound, "_mark_inflight"),  # redis blinked: nothing is stored
+			patch.object(outbound, "_release_row_lock") as release,
+		):
+			self.assertEqual(outbound.create_sales_quote_from_deal(deal.name), "QT000142")
+
+		release.assert_not_called()
+		client.put.assert_called_once()
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_login_that_was_not_made_is_a_refusal_not_an_unanswered_quote(self, ClientCls):
+		"""Raised before the PUT is sent: the rep must not be told the quote may exist,
+		nor be held off for the settle window by a marker."""
+		from crm.integrations.acumatica.client import AcumaticaAuthError
+
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		message = "Another worker is still logging in to Acumatica; try again in a minute"
+		client.put.side_effect = AcumaticaAuthError(message, body=message)
+		_org, deal = _mapped_deal()
+
+		with self.assertRaises(frappe.ValidationError) as ctx:
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertIn("still logging in", str(ctx.exception))
+		self.assertNotIn("may still have been created", str(ctx.exception))
+		self.assertIsNone(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_quote_whose_number_could_not_be_stored_says_so_and_keeps_its_marker(self, ClientCls):
+		"""With the row lock let go, another save of the deal can hold the row when the
+		answer arrives. The rep gets the reason, and the retry adopts the order."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.return_value = _wrapped(OrderNbr="QT000143")
+		_org, deal = _mapped_deal()
+		real_set_value = frappe.db.set_value
+
+		def row_is_locked(doctype, name, field, *args, **kwargs):
+			if doctype == "CRM Deal" and field == "acumatica_sales_quote":
+				raise frappe.QueryTimeoutError("Lock wait timeout exceeded")
+			return real_set_value(doctype, name, field, *args, **kwargs)
+
+		with patch("crm.integrations.acumatica.outbound.frappe.db.set_value", side_effect=row_is_locked):
+			with self.assertRaises(frappe.ValidationError) as ctx:
+				outbound.create_sales_quote_from_deal(deal.name)
+		self.assertIn("QT000143 was created in Acumatica", str(ctx.exception))
+		self.assertTrue(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
+
+		client.get_page.return_value = [_wrapped(OrderNbr="QT000143")]
+		self.assertEqual(outbound.create_sales_quote_from_deal(deal.name), "QT000143")
+		client.put.assert_called_once()
+
+	def test_the_login_wait_and_the_put_fit_inside_the_proxys_deadline(self):
+		"""The rep gets Vectora's warning, not the proxy's bare gateway error, only if
+		everything the request can spend comes to less than the proxy allows."""
+		from crm.agent.doctype.crm_agent_settings.crm_agent_settings import DEFAULT_PROXY_READ_TIMEOUT
+		from crm.integrations.acumatica.client import LOGIN_WAIT_IN_REQUEST, TIMEOUT
+
+		with patch.dict(frappe.conf, {"crm_proxy_read_timeout": 0}):
+			spent = LOGIN_WAIT_IN_REQUEST + TIMEOUT + outbound._quote_write_timeout()
+		self.assertLess(spent, DEFAULT_PROXY_READ_TIMEOUT)
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_a_refusal_before_the_put_releases_nothing(self, ClientCls):

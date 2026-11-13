@@ -18,7 +18,14 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 	open_sync_issues,
 	upsert_sync_issue,
 )
-from crm.integrations.acumatica.client import TIMEOUT, AcumaticaClient, AcumaticaError, v, wrap
+from crm.integrations.acumatica.client import (
+	TIMEOUT,
+	AcumaticaAuthError,
+	AcumaticaClient,
+	AcumaticaError,
+	v,
+	wrap,
+)
 from crm.integrations.acumatica.matching import name_match, normalise_name, normalise_vat, state_code
 
 # A write Acumatica never answered may still have landed, and SalesOrder -- like a
@@ -50,10 +57,22 @@ def _settle_inflight(key: str) -> None:
 	frappe.db.after_commit.add(lambda: frappe.cache().delete_value(key))
 
 
+def _marker_stored(key: str) -> bool:
+	"""Whether redis really holds the marker. frappe's set_value swallows a redis
+	connection error, so a marker just "set" may not exist."""
+	try:
+		return bool(frappe.cache().get_value(key, use_local_cache=False))
+	except Exception:
+		return False
+
+
 def _outcome_unknown(e) -> bool:
 	"""Whether a failed write may have landed anyway. An error status from Acumatica
 	is its answer: the write was refused. A timeout, a dropped connection, a gateway
-	in front of it answering 502/503/504, or a body that is not JSON is no answer."""
+	in front of it answering 502/503/504, or a body that is not JSON is no answer.
+	A login that was not made is raised before the write is sent at all."""
+	if isinstance(e, AcumaticaAuthError):
+		return False
 	if isinstance(e, AcumaticaError) and e.status_code:
 		return e.status_code in (502, 503, 504)
 	return True
@@ -1201,7 +1220,7 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 	if unquantified:
 		frappe.throw(
 			_(
-				"These lines have no quantity: {0}. Give each a quantity above zero, or remove "
+				"These lines have a zero or negative quantity: {0}. Give each a quantity above zero, or remove "
 				"the line from the deal, then try again."
 			).format(", ".join(unquantified))
 		)
@@ -1282,7 +1301,10 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 	# ended, the lock made every other save of the deal (a rep's edit, the sweep closing
 	# it) wait out the PUT, and fail on the lock wait when Acumatica took its time.
 	# Nothing has been written yet, so there is nothing else for this to commit.
-	_release_row_lock()
+	# Only with the marker seen in redis, though: if it did not land (redis blinked),
+	# the row lock is the one guard left and stays until the request ends, as before.
+	if _marker_stored(inflight):
+		_release_row_lock()
 	try:
 		created = client.put("SalesOrder", payload, timeout=_quote_write_timeout())
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
@@ -1301,7 +1323,18 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 		)
 	order_nbr = v(created, "OrderNbr") or ""
 	if order_nbr:
-		frappe.db.set_value("CRM Deal", deal.name, "acumatica_sales_quote", order_nbr)
+		try:
+			frappe.db.set_value("CRM Deal", deal.name, "acumatica_sales_quote", order_nbr)
+		except (frappe.QueryTimeoutError, frappe.QueryDeadlockError):
+			# With the row lock let go, somebody else may be mid-save on the deal. The
+			# marker stays, so the retry this asks for adopts the order.
+			frappe.throw(
+				_(
+					"Sales quote {0} was created in Acumatica, but the deal was being saved by "
+					"someone else and the quote number could not be stored on it. Try again in a "
+					"moment and Vectora will pick the quote up rather than create another."
+				).format(order_nbr)
+			)
 		_settle_inflight(inflight)
 	return order_nbr
 
