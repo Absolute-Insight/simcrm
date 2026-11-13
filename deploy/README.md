@@ -709,6 +709,40 @@ docker compose exec backend ls -lh sites/$SITE_NAME/private/backups
 
 `BACKUP_HOUR` (default `2`) is the hour it runs, container local time.
 
+### Knowing when a backup did not happen
+
+The loop can only log a failure and sleep until the next night, and nobody
+reads that log. So the `backup` container carries a healthcheck: it is
+`healthy` while the newest `*-database*.sql.gz` in the backups directory is
+younger than `BACKUP_MAX_AGE_HOURS` (default `26` — one nightly run plus slack)
+and `unhealthy` once it is not. A night that failed — a full volume, a database
+that was down at 02:00 — shows up about two hours later:
+
+```bash
+docker compose ps backup                     # healthy / unhealthy / starting
+docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q backup)"
+```
+
+`starting` is the honest answer on a site that has not had its first night
+yet: there is no backup to be late. It lasts until the first dump exists, or
+26 hours, whichever comes first; a site with a recent backup goes `healthy`
+within a minute of the container starting.
+
+**Nothing in this stack tells anyone.** Docker records the state and restarts
+nothing — restarting would not help — so an unhealthy `backup` is visible only
+to something that looks. Point whatever already watches this host at it. With
+nothing else to hand, a cron line on the host that mails when either backup
+container is not healthy is enough:
+
+```bash
+# /etc/cron.d/vectora-backup-health  (needs a working local `mail`)
+0 8 * * * root cd /path/to/deploy && for s in backup backup-offsite; do id=$(docker compose ps -q $s 2>/dev/null); [ -n "$id" ] || continue; st=$(docker inspect --format '{{.State.Health.Status}}' "$id"); [ "$st" = healthy ] || echo "$s is $st" | mail -s "Vectora backup: $s $st" ops@example.com; done
+```
+
+An uptime monitor that can run a command, or a metrics agent that exports
+container health, does the same job better. The point is only that one of them
+exists.
+
 ### Getting them off the host
 
 A backup that only exists on the machine it protects survives a bad delete,

@@ -373,6 +373,36 @@ services:
         condition: service_completed_successfully
     environment:
       BACKUP_HOUR: ${BACKUP_HOUR:-2}
+      SITE_NAME: ${SITE_NAME:?set SITE_NAME in .env}
+      BACKUP_MAX_AGE_HOURS: ${BACKUP_MAX_AGE_HOURS:-26}
+    # Is there a database dump younger than a day and a bit? The loop below can
+    # only log a failure and sleep until tomorrow, and nothing reads that log
+    # -- a full volume or a database that was down at 02:00 left the container
+    # `Up` and the newest backup quietly ageing. This turns that into a state
+    # something can see: `docker compose ps` shows `unhealthy` about two hours
+    # after a missed night. 26 hours is one nightly run plus slack for a slow
+    # dump; a dump still being written counts, which is the direction to err.
+    #
+    # start_period is the same length on purpose. A site created today has no
+    # backup until its first BACKUP_HOUR, and that is not a failure: until the
+    # period ends a failing check reads `starting`, and the first passing one
+    # ends it early. So an existing site goes healthy within a minute, and a
+    # new one the morning after.
+    #
+    # Nothing in this stack alerts on it. See "Knowing when a backup did not
+    # happen" in README.md for how to have something watch.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          find "/home/frappe/frappe-bench/sites/$$SITE_NAME/private/backups"
+          -name "*-database*.sql.gz"
+          -mmin "-$$(( $${BACKUP_MAX_AGE_HOURS:-26} * 60 ))" 2>/dev/null
+          | grep -q .
+      interval: 300s
+      timeout: 30s
+      retries: 3
+      start_period: ${BACKUP_MAX_AGE_HOURS:-26}h
     entrypoint: ["bash", "-c"]
     command:
       - |
