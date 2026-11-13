@@ -26,10 +26,7 @@
     </div>
 
     <!-- list accounts -->
-    <div
-      v-if="!emailAccounts.loading && Boolean(emailAccounts.data?.length)"
-      class="mt-4"
-    >
+    <div v-if="Boolean(emailAccounts.data?.length)" class="mt-4">
       <div
         v-for="(emailAccount, i) in emailAccounts.data"
         :key="emailAccount.name"
@@ -58,10 +55,20 @@
     <!-- The bare v-else answered a failed fetch with "no email accounts yet",
          which in Settings reads as "your mail is not configured" -- an alarming
          and untrue thing to tell an admin whose list simply did not load. -->
+    <div
+      v-else-if="emailAccounts.list.loading"
+      class="flex items-center justify-center py-12"
+      role="status"
+      :aria-label="__('Loading email accounts')"
+    >
+      <LoadingIndicator class="size-6 text-ink-gray-5" />
+    </div>
+    <!-- `.list.error`: a list resource has no `error` of its own, so this
+         branch was never taken and the empty state answered every failure. -->
     <ErrorState
-      v-else-if="emailAccounts.error"
+      v-else-if="emailAccounts.list.error"
       compact
-      :error="emailAccounts.error"
+      :error="emailAccounts.list.error"
       :title="__('Could not load email accounts')"
       :retry="() => emailAccounts.reload()"
     />
@@ -78,7 +85,7 @@
 import Email2Icon from '@/components/Icons/Email2Icon.vue'
 import EmptyState from '../ListViews/EmptyState.vue'
 import EmailAccountCard from './EmailAccountCard.vue'
-import { createListResource } from 'frappe-ui'
+import { createListResource, LoadingIndicator } from 'frappe-ui'
 import ErrorState from '@/components/ui/ErrorState.vue'
 
 const emit = defineEmits(['update:step'])

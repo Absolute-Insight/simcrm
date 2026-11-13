@@ -18,6 +18,32 @@ import { packStore } from '@/offline/db'
 
 const OWNER_KEY = OFFLINE_OWNER_KEY
 
+/**
+ * localStorage that holds a user's data goes the same way. An event reminder
+ * (subject, location, times) pushed to one rep was kept under a key with no
+ * user in it, so the next person to log in on that browser was shown it. It
+ * is kept per user now -- so it is never read for anyone else, whatever
+ * cleared or did not -- and removed with the rest: on logout, on a lost
+ * session, and when the stores change hands.
+ */
+const EVENT_ALERTS_KEY = 'eventNotificationAlerts'
+
+/** Where `user`'s pending event reminders are kept (data/notifications.js). */
+export function eventAlertsKey(user) {
+  return `${EVENT_ALERTS_KEY}:${user || ''}`
+}
+
+function clearEventAlerts(storage, { everyUser }) {
+  // the key from before reminders were kept per user: nobody reads it now
+  storage.removeItem(EVENT_ALERTS_KEY)
+  if (!everyUser) return
+  const keys = []
+  for (let i = 0; i < storage.length; i++) keys.push(storage.key(i))
+  for (const key of keys) {
+    if (key?.startsWith(EVENT_ALERTS_KEY + ':')) storage.removeItem(key)
+  }
+}
+
 /** The user this device's offline stores are claimed for, or null. */
 export function offlineOwner() {
   try {
@@ -37,6 +63,11 @@ export function clearOfflineCache() {
     localStorage.removeItem(OWNER_KEY)
   } catch {
     // no storage: claimOfflineCache clears on every load instead
+  }
+  try {
+    clearEventAlerts(localStorage, { everyUser: true })
+  } catch {
+    // no storage, nothing kept
   }
   // Field mode's copies go with it: the boot a cached shell starts from and
   // the pack of customers it shows. The outbox does not -- it is work the
@@ -67,7 +98,14 @@ export function claimOfflineCache(user) {
   } catch {
     // unreadable: treat the store as someone else's
   }
-  if (user && owner === user) return Promise.resolve()
+  if (user && owner === user) {
+    try {
+      clearEventAlerts(localStorage, { everyUser: false })
+    } catch {
+      // no storage, nothing kept
+    }
+    return Promise.resolve()
+  }
   const cleared = clearOfflineCache()
   try {
     if (user) localStorage.setItem(OWNER_KEY, user)

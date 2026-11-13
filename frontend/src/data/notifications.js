@@ -1,6 +1,8 @@
 import { sessionStore } from '@/stores/session'
 import { useEvent } from '@/composables/event'
 import { quiet } from '@/utils/quiet'
+import { eventAlertsKey } from '@/utils/offlineCache'
+import { getSessionUser } from '@/utils/session'
 import { dayjs, getConfig } from 'frappe-ui'
 import isBetween from 'dayjs/plugin/isBetween'
 import { useStorage } from '@vueuse/core'
@@ -42,7 +44,11 @@ export const useEventNotifications = () => {
   return event
 }
 
-const eventNotificationAlerts = useStorage('eventNotificationAlerts', [])
+/* Per user: a reminder carries the event's subject, place and times, and on a
+   shared browser a key without the user handed one rep's to the next. The
+   cookie rather than the session store, which does not exist yet when this
+   module is first imported. */
+const eventNotificationAlerts = useStorage(eventAlertsKey(getSessionUser()), [])
 
 /* The reminders the user has dismissed live here beside the alerts, not in
    each caller. The popup records a dismissal and Notifications.vue's socket

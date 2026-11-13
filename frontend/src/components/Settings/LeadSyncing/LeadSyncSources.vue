@@ -25,22 +25,23 @@
       </div>
     </div>
 
-    <!-- loading state -->
-    <div
-      v-if="sources.loading"
-      class="flex mt-28 justify-between w-full h-full"
-    >
-      <Button
-        :loading="sources.loading"
-        variant="ghost"
-        class="w-full"
-        size="2xl"
-      />
+    <!-- loading state. A list resource keeps its request state on `.list`;
+         `sources.loading` is undefined, so this never showed and a slow or
+         failed load read as "no lead sources yet". First load only. -->
+    <div v-if="firstLoad" class="flex mt-28 justify-between w-full h-full">
+      <Button :loading="true" variant="ghost" class="w-full" size="2xl" />
     </div>
+
+    <ErrorState
+      v-else-if="sources.list.error && !sources.data?.length"
+      :error="sources.list.error"
+      :title="__('Could not load the lead sources')"
+      :retry="() => sources.reload()"
+    />
 
     <!-- Empty State -->
     <EmptyState
-      v-if="!sources.loading && !sources.data?.length"
+      v-else-if="!sources.data?.length"
       name="Lead Sources"
       :description="__('Add and manage your lead sources here.')"
       icon="lucide-refresh-cw"
@@ -48,7 +49,7 @@
 
     <!-- Lead source list -->
     <div
-      v-if="!sources.loading && sources.data?.length"
+      v-if="!firstLoad && sources.data?.length"
       class="flex flex-col overflow-hidden"
     >
       <div class="flex items-center py-2 px-4 text-sm text-ink-gray-5">
@@ -104,13 +105,10 @@
           />
         </template>
         <!-- Load More Button -->
-        <div
-          v-if="!sources.loading && sources.hasNextPage"
-          class="flex justify-center"
-        >
+        <div v-if="sources.hasNextPage" class="flex justify-center">
           <Button
             class="mt-3.5 p-2"
-            :loading="sources.loading"
+            :loading="sources.list.loading"
             :label="__('Load More')"
             icon-left="lucide-refresh-cw"
             @click="() => sources.next()"
@@ -127,11 +125,15 @@ import { describeError } from '@/utils/describeError'
 import { Dropdown, toast } from 'frappe-ui'
 import { ref, computed, inject } from 'vue'
 import EmptyState from '../../ListViews/EmptyState.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
 import { ConfirmDelete } from '../../../utils'
 
 const emit = defineEmits(['updateStep'])
 
 const sources = inject('sources')
+// The first load, with nothing to show yet: the only time the list gives way
+// to a spinner.
+const firstLoad = computed(() => sources.list.loading && !sources.data)
 
 const search = ref('')
 const confirmDelete = ref(false)

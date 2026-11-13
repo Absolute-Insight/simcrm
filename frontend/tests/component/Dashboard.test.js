@@ -183,6 +183,7 @@ beforeEach(() => {
   })
   setConfig('systemTimezone', 'Africa/Johannesburg')
 })
+afterEach(() => vi.useRealTimers())
 
 describe('Dashboard, as a manager', () => {
   it('refetches every team panel when the period changes', async () => {
@@ -240,6 +241,58 @@ describe('Dashboard, as a manager', () => {
       expect(latest(tile).value).toBe(expected)
     }
     expect(latest('Dropdown').button.label).toBe('Last 7 Days')
+  })
+
+  it('asks for a preset period ending on the site today at every reload', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-13T12:00:00Z')) // 14:00 on site
+    const { el } = mountDashboard()
+    await settle()
+    const period = (since) => {
+      const { from_date, to_date } = sent(
+        'crm.api.dashboard.get_chart',
+        since,
+      )[0].params
+      return `${from_date},${to_date}`
+    }
+    expect(period(0)).toBe('2026-10-15,2026-11-13')
+
+    // the tab is left open overnight
+    vi.setSystemTime(new Date('2026-11-14T05:00:00Z'))
+    let mark = fp.requests.length
+    click(el, 'Refresh')
+    await settle()
+    expect(period(mark)).toBe('2026-10-16,2026-11-14')
+    expect(latest('Dropdown').button.label).toBe('Last 30 Days')
+    for (const request of fp.requests.slice(mark)) {
+      if (request.params?.to_date) {
+        expect(request.params.to_date).toBe('2026-11-14')
+      }
+    }
+
+    // 22:30 UTC is already the 15th on site (+02:00), whatever this machine's zone
+    vi.setSystemTime(new Date('2026-11-14T22:30:00Z'))
+    mark = fp.requests.length
+    choosePreset(7)
+    await settle()
+    expect(period(mark)).toBe('2026-11-09,2026-11-15')
+  })
+
+  it('leaves a custom range as it was picked at a reload', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-13T12:00:00Z'))
+    const { el } = mountDashboard()
+    await settle()
+    latest('DateRangePicker').onChange(['2026-09-01', '2026-09-30'])
+    await settle()
+    vi.setSystemTime(new Date('2026-11-14T05:00:00Z'))
+    const mark = fp.requests.length
+    click(el, 'Refresh')
+    await settle()
+    expect(sent('crm.api.dashboard.get_chart', mark)[0].params).toMatchObject({
+      from_date: '2026-09-01',
+      to_date: '2026-09-30',
+    })
   })
 
   it('falls back to the last 30 days when the period is cleared', async () => {

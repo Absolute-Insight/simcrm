@@ -60,6 +60,7 @@ import EditIcon from '@/components/Icons/EditIcon.vue'
 import { usersStore } from '@/stores/users'
 import { getMeta } from '@/stores/meta'
 import { useDocument } from '@/data/document'
+import { resetNewDocument } from '@/utils/newDocument'
 import { isMobileView } from '@/composables/settings'
 import { showQuickEntryModal, quickEntryProps } from '@/composables/modals'
 import { createResource, ErrorMessage, call } from 'frappe-ui'
@@ -80,6 +81,9 @@ const loading = ref(false)
 const error = ref(null)
 
 const { document: _data, triggerOnBeforeCreate } = useDocument(props.doctype)
+// The buffer is shared for the session: start from a fresh draft so a form
+// abandoned earlier does not come back under this one's title.
+resetNewDocument(_data, props.doctype)
 const { doctypeMeta } = getMeta(props.doctype)
 
 const dialogOptions = computed(() => {
@@ -166,7 +170,7 @@ async function create() {
   loading.value = false
   show.value = false
   emit('callback', doc)
-  _data.doc = {}
+  resetNewDocument(_data, props.doctype)
 }
 
 watch(

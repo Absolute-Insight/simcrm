@@ -6,6 +6,64 @@ import path from 'path'
 import { VitePWA } from 'vite-plugin-pwa'
 import { offlineShell } from './offlineShell.js'
 import { fontDestination } from './scripts/cssFontRefs.mjs'
+import {
+  HEAVY_LIBRARIES,
+  OFFLINE_ROOTS,
+  SERVER_ONLY,
+  planPrecache,
+} from './src/utils/precachePlan.js'
+
+/**
+ * Work out which chunks the service worker does not precache.
+ *
+ * The decision is src/utils/precachePlan.js; this hands it rollup's module
+ * graph and keeps the answer for workbox's manifestTransforms, which runs
+ * when VitePWA writes the worker in closeBundle. Until a build has run there
+ * is no plan and nothing is left out.
+ */
+function precachePlanner() {
+  const plan = { lazy: new Set() }
+  return {
+    plan,
+    plugin: {
+      name: 'precache-plan',
+      apply: 'build',
+      generateBundle(_, bundle) {
+        const chunks = Object.values(bundle)
+          .filter((file) => file.type === 'chunk')
+          .map((chunk) => ({
+            fileName: chunk.fileName,
+            isEntry: chunk.isEntry,
+            imports: chunk.imports,
+            // what tree-shaking left of each module, not what it imported
+            modules: Object.entries(chunk.modules)
+              .filter(([, module]) => module.renderedLength > 0)
+              .map(([id]) => ({
+                id,
+                dynamicImports:
+                  this.getModuleInfo(id)?.dynamicallyImportedIds ?? [],
+              })),
+          }))
+        const { lazy, kept } = planPrecache(chunks, {
+          heavy: HEAVY_LIBRARIES,
+          offlineRoots: OFFLINE_ROOTS,
+          serverOnly: SERVER_ONLY,
+        })
+        plan.lazy = lazy
+        console.info(
+          `precache plan: ${lazy.size} heavy chunk(s) left to the runtime cache` +
+            kept
+              .map(
+                ({ fileName, via }) =>
+                  `\n  kept ${fileName}: offline reaches it via ` +
+                  via.join(' <- '),
+              )
+              .join(''),
+        )
+      },
+    },
+  }
+}
 
 /**
  * Ship the fonts the built CSS actually asks for.
@@ -77,6 +135,7 @@ function shipFontsReferencedByCss({ searchRoots }) {
 // https://vitejs.dev/config/
 export default defineConfig(async ({ mode }) => {
   const isDev = mode === 'development'
+  const precache = precachePlanner()
   const config = {
     plugins: [
       vue(),
@@ -148,6 +207,42 @@ export default defineConfig(async ({ mode }) => {
             '**/Inter.var*.woff2',
           ],
           importScripts: ['field-sw.js'],
+          // Not every chunk: the heavy libraries that only pages needing the
+          // server draw are left out, and never anything offline can reach
+          // (src/utils/precachePlan.js). index.html is still not precached,
+          // and shell.html and everything field mode loads still is.
+          manifestTransforms: [
+            (entries) => ({
+              manifest: entries.filter(
+                (entry) => !precache.plan.lazy.has(entry.url),
+              ),
+              warnings: [],
+            }),
+          ],
+          // What was left out is cached the first time a page fetches it, so
+          // it is downloaded once per release like the rest -- only later.
+          // The pattern is this build's own hashed files and nothing else: a
+          // hashed name never changes its content, which is what makes
+          // CacheFirst safe, and no API response or page can match it. The
+          // function is written into the worker as text, so it stands alone.
+          runtimeCaching: [
+            {
+              urlPattern: ({ url, sameOrigin }) =>
+                sameOrigin &&
+                /^\/assets\/crm\/frontend\/assets\/[^/]+-[\w-]{8}\.(?:js|css)$/.test(
+                  url.pathname,
+                ),
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'crm-lazy-chunks',
+                cacheableResponse: { statuses: [200] },
+                expiration: {
+                  maxEntries: 40,
+                  maxAgeSeconds: 60 * 24 * 60 * 60,
+                },
+              },
+            },
+          ],
         },
         devOptions: {
           enabled: true,
@@ -207,6 +302,7 @@ export default defineConfig(async ({ mode }) => {
         },
       }),
       offlineShell(),
+      precache.plugin,
     ],
     resolve: {
       alias: {

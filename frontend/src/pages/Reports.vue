@@ -376,7 +376,12 @@ import SkeletonTable from '@/components/ui/SkeletonTable.vue'
 import { getSettings } from '@/stores/settings'
 import { usersStore } from '@/stores/users'
 import { ALL_REPS, useVisibleReps } from '@/composables/visibleReps'
-import { formatRange, getLastXDays, parseDateRange } from '@/utils/dashboard'
+import {
+  formatRange,
+  getLastXDays,
+  parseDateRange,
+  presetDaysFor,
+} from '@/utils/dashboard'
 import { csvFileName, formatCell, toCsv } from '@/utils/reportExport'
 import { latestOnly } from '@/utils/latestOnly'
 import { quiet } from '@/utils/quiet'
@@ -409,16 +414,28 @@ const dateRange = ref(
   String(route.query.range || '') || getLastXDays(DEFAULT_PRESET_DAYS),
 )
 
-/* Which preset the current range corresponds to, so a bookmarked URL reopens
-   showing "Last 30 Days" rather than an anonymous custom range. */
-function presetDaysFor(range) {
-  return PRESET_DAYS.find((days) => getLastXDays(days) === range) ?? null
+/* Which preset the range is, so a bookmarked URL reopens showing "Last 30
+   Days" rather than an anonymous custom range. Worked out when the range is
+   set and then remembered: asked again on every render, the answer changed at
+   midnight, and a page left open relabelled its preset "Custom Range" over
+   dates nobody had picked. */
+const presetDays = ref(presetDaysFor(dateRange.value, PRESET_DAYS))
+
+/* A preset is "the last N days", so it ends on the site's today. Called before
+   a report is fetched; true when the range had to move, which changes the
+   request key and brings the fetch round again with the new dates. */
+function rollPresetForward() {
+  if (presetDays.value === null) return false
+  const range = getLastXDays(presetDays.value)
+  if (range === dateRange.value) return false
+  dateRange.value = range
+  return true
 }
 
 const datePickerRef = ref(null)
 
 const presetLabel = computed(() => {
-  const days = presetDaysFor(dateRange.value)
+  const days = presetDays.value
   return days === null
     ? __('Custom Range')
     : __('Last {0} Days', [String(days)])
@@ -431,6 +448,7 @@ const presetOptions = computed(() => [
     options: PRESET_DAYS.map((days) => ({
       label: __('Last {0} Days', [String(days)]),
       onClick: () => {
+        presetDays.value = days
         dateRange.value = getLastXDays(days)
       },
     })),
@@ -446,9 +464,11 @@ const presetOptions = computed(() => [
 function onDateRangeChange(value) {
   const next = Array.isArray(value) ? value.join(',') : value
   if (!next) {
+    presetDays.value = DEFAULT_PRESET_DAYS
     dateRange.value = getLastXDays(DEFAULT_PRESET_DAYS)
     return
   }
+  presetDays.value = presetDaysFor(next, PRESET_DAYS)
   dateRange.value = next
 }
 
@@ -700,6 +720,7 @@ const baseCurrency = computed(
 watch(
   requestKey,
   () => {
+    if (rollPresetForward()) return
     // The template renders source.error itself; only the rejection is dropped.
     if (active.value) quiet(source.value.fetch())
   },

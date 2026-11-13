@@ -489,7 +489,7 @@ import RatingInput from '@/components/Controls/RatingInput.vue'
 import AttachControl from '@/components/Controls/AttachControl.vue'
 import HtmlControl from '@/components/Controls/HtmlControl.vue'
 import GeolocationControl from '@/components/Controls/GeolocationControl.vue'
-import TextEditorControl from '@/components/Controls/TextEditorControl.vue'
+import TextEditorControl from '@/components/Controls/LazyTextEditorControl'
 import ButtonControl, {
   getButtonTheme,
   getButtonVariant,
