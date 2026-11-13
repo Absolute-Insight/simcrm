@@ -9,29 +9,80 @@ function escapeHTML(text) {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-// Private-use characters that stand in for a code span while the rest of the
-// message is formatted. They are removed from the input first, so a message
-// cannot carry a stand-in of its own.
-const CODE_OPEN = ''
-const CODE_CLOSE = ''
-const STAND_INS = /[]/g
+// Private-use characters that stand in for a span the formatter must not look
+// inside -- code, a link -- while the rest of the message is formatted. They
+// are removed from the input first, so a message cannot carry a stand-in of
+// its own.
+const HELD_OPEN = String.fromCharCode(0xe000)
+const HELD_CLOSE = String.fromCharCode(0xe001)
+const STAND_INS = new RegExp(`[${HELD_OPEN}${HELD_CLOSE}]`, 'g')
+const HELD = new RegExp(`${HELD_OPEN}(\\d+)${HELD_CLOSE}`, 'g')
 
-// WhatsApp formats `*bold*`, `_italic_` and `~strike~` only when the pair
-// hugs its text and sits at the edges of a word: the opening marker follows
-// the start of the line or something that is not a letter or digit, the
-// closing one is followed by the same, and neither touches a space on the
-// inside. Without that, `quote_final_v2.pdf` is italic and "2 * 3 * 4" bold.
-// No lookbehind: Safari before 16.4 refuses to parse the whole file.
-function pair(marker, tag) {
-  const m = marker === '*' ? '\\*' : marker
-  const pattern = new RegExp(
-    `(^|[^\\p{L}\\p{N}${m}])${m}(?=\\S)([^\\n]*?\\S)${m}(?![\\p{L}\\p{N}])`,
-    'gu',
-  )
-  return (text) => text.replace(pattern, `$1<${tag}>$2</${tag}>`)
+// ```block``` and `inline` code.
+const CODE = /```([\s\S]+?)```|`([^`\n]+)`/g
+// A link, as typed: http(s):// or www. up to the next space. An underscore or
+// tilde in a path is part of the address, not markup -- formatted, the link a
+// rep copies out of the thread is not the one that was sent.
+const URL = /\b(?:https?:\/\/|www\.)\S+/gi
+// ...less what sentence punctuation or a closing marker left on its end.
+const URL_TAIL = /[.,;:!?)*_~]+$/
+
+const TAGS = { '*': 'b', _: 'i', '~': 's' }
+const WORD = /[\p{L}\p{N}]/u
+const isWord = (char) => char !== undefined && WORD.test(char)
+const isSpace = (char) => char === undefined || /\s/.test(char)
+
+/**
+ * `*bold*`, `_italic_` and `~strike~` on one line of escaped text.
+ *
+ * WhatsApp formats a pair only when it hugs its text and sits at the edges of
+ * a word: the opening marker follows the start of the line or something that
+ * is not a letter or digit, the closing one is followed by the same, and
+ * neither touches a space -- or another of itself -- on the inside. Without
+ * that, `quote_final_v2.pdf` is italic, "2 * 3 * 4" bold and `**x**` half of
+ * each.
+ *
+ * Read left to right, and a pair's inside is formatted on its own: a marker
+ * that opens inside a pair and closes outside it (`*a _b* c_`) stays text, so
+ * the tags written are always properly nested. Nothing written is read again.
+ */
+function inline(text) {
+  let out = ''
+  let from = 0
+  for (let i = 0; i < text.length; i++) {
+    const marker = text[i]
+    if (!TAGS[marker]) continue
+    const opens =
+      !isWord(text[i - 1]) &&
+      text[i - 1] !== marker &&
+      !isSpace(text[i + 1]) &&
+      text[i + 1] !== marker
+    if (!opens) continue
+    const close = closing(text, marker, i + 2)
+    if (close === -1) continue
+    const tag = TAGS[marker]
+    out += `${text.slice(from, i)}<${tag}>${inline(text.slice(i + 1, close))}</${tag}>`
+    from = close + 1
+    i = close
+  }
+  return out + text.slice(from)
 }
-const INLINE = [pair('_', 'i'), pair('*', 'b'), pair('~', 's')]
-const inline = (text) => INLINE.reduce((out, format) => format(out), text)
+
+/** Where the pair `marker` opened closes, at or after `start`, or -1. */
+function closing(text, marker, start) {
+  for (let j = start; j < text.length; j++) {
+    if (
+      text[j] === marker &&
+      !isSpace(text[j - 1]) &&
+      text[j - 1] !== marker &&
+      text[j + 1] !== marker &&
+      !isWord(text[j + 1])
+    ) {
+      return j
+    }
+  }
+  return -1
+}
 
 /**
  * WhatsApp's markup as HTML. A message is text a stranger typed, so it is
@@ -42,17 +93,23 @@ const inline = (text) => INLINE.reduce((out, format) => format(out), text)
  * text that is already escaped, and no rule removes a character the sender
  * typed other than the markers themselves. Quotes and bullets count only at
  * the start of a line, as they do in WhatsApp; a numbered line ("1. Item",
- * and so "order 4521. Please") is left as the sender wrote it.
+ * and so "order 4521. Please") is left as the sender wrote it, and so is a
+ * link.
  */
 export function formatWhatsAppMessage(message) {
   if (!message) return ''
   message = escapeHTML(String(message).replace(STAND_INS, ''))
 
-  // ```block``` and `inline` code: taken out so nothing inside is formatted
-  const code = []
-  const hold = (_, block, span) =>
-    CODE_OPEN + (code.push(block ?? span) - 1) + CODE_CLOSE
-  message = message.replace(/```([\s\S]+?)```|`([^`\n]+)`/g, hold)
+  // Taken out so nothing inside is formatted, and put back at the end.
+  const held = []
+  const hold = (html) => HELD_OPEN + (held.push(html) - 1) + HELD_CLOSE
+  message = message.replace(CODE, (_, block, span) =>
+    hold(`<code>${(block ?? span).replace(/\n/g, '<br>')}</code>`),
+  )
+  message = message.replace(URL, (url) => {
+    const tail = url.match(URL_TAIL)?.[0] ?? ''
+    return hold(url.slice(0, url.length - tail.length)) + tail
+  })
 
   const lines = message.split('\n').map((line) => {
     const quote = line.match(/^&gt; (.*)$/)
@@ -68,10 +125,8 @@ export function formatWhatsAppMessage(message) {
     )
     .join('')
 
-  message = message.replace(
-    /(\d+)/g,
-    (_, i) => `<code>${code[i].replace(/\n/g, '<br>')}</code>`,
-  )
+  // A stand-in holds only what was put there above: one pass, never nested.
+  message = message.replace(HELD, (_, i) => held[i])
 
   return sanitizeHTML(message)
 }

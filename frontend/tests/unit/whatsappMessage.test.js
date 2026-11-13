@@ -18,6 +18,39 @@ describe('canSendMessage', () => {
   })
 })
 
+/** The elements the browser makes of `html`, in document order. */
+function elementsOf(html) {
+  const box = document.createElement('div')
+  box.innerHTML = html
+  return [...box.querySelectorAll('*')]
+}
+
+/** What a reader sees: the text, with a line break where the markup makes one. */
+function shownText(html) {
+  const box = document.createElement('div')
+  box.innerHTML = html
+  let text = ''
+  const walk = (node) => {
+    for (const child of node.childNodes) {
+      if (child.nodeType === 3) text += child.textContent
+      else if (child.nodeName === 'BR') {
+        // the break after a quote is the quote's own line end
+        if (child.previousSibling?.nodeName !== 'BLOCKQUOTE') text += '\n'
+      } else {
+        walk(child)
+        if (['LI', 'BLOCKQUOTE'].includes(child.nodeName)) text += '\n'
+      }
+    }
+  }
+  walk(box)
+  return text
+}
+
+// the private-use characters the formatter uses as stand-ins
+const OPEN = String.fromCharCode(0xe000)
+const CLOSE = String.fromCharCode(0xe001)
+const STAND_IN = new RegExp(`[${OPEN}${CLOSE}]`)
+
 describe('formatWhatsAppMessage', () => {
   it("shows a stranger's markup as text", () => {
     const out = formatWhatsAppMessage(
@@ -54,10 +87,7 @@ describe('formatWhatsAppMessage', () => {
   it('never drops a character other than the markers', () => {
     const message =
       '1. First *item*\n2. Second _item_\n- a bullet\n* another\n> a ~quote~\nPO 77. Thanks'
-    const text = formatWhatsAppMessage(message)
-      .replace(/<\/blockquote><br>|<br>|<\/li>/g, '\n')
-      .replace(/<[^>]*>/g, '')
-    expect(text).toBe(
+    expect(shownText(formatWhatsAppMessage(message))).toBe(
       '1. First item\n2. Second item\na bullet\nanother\na quote\nPO 77. Thanks',
     )
   })
@@ -82,6 +112,52 @@ describe('formatWhatsAppMessage', () => {
     }
     // a pair does not reach across lines
     expect(formatWhatsAppMessage('*a\nb*')).toBe('*a<br>b*')
+  })
+
+  it('leaves a link exactly as it was sent', () => {
+    for (const message of [
+      'https://x.com/_foo_/bar',
+      'see https://files.example.com/~user/~files~/a_b_c.pdf today',
+      'www.example.com/*new*/_list_',
+      'HTTP://EXAMPLE.COM/_A_',
+      'two: https://a.test/_x_ and https://b.test/~y~',
+    ]) {
+      expect(formatWhatsAppMessage(message)).toBe(message)
+    }
+    expect(formatWhatsAppMessage('https://x.com/?a=1&b=<2>')).toBe(
+      'https://x.com/?a=1&amp;b=&lt;2&gt;',
+    )
+  })
+
+  it('still formats around a link, and a pair that wraps one', () => {
+    expect(formatWhatsAppMessage('*read* https://x.com/_a_ _now_')).toBe(
+      '<b>read</b> https://x.com/_a_ <i>now</i>',
+    )
+    expect(formatWhatsAppMessage('*https://x.com/a_b*')).toBe(
+      '<b>https://x.com/a_b</b>',
+    )
+    expect(formatWhatsAppMessage('(see https://x.com/a_b_c).')).toBe(
+      '(see https://x.com/a_b_c).',
+    )
+    // not a link: no scheme, so it is text like any other
+    expect(formatWhatsAppMessage('the _httpd_ log')).toBe(
+      'the <i>httpd</i> log',
+    )
+  })
+
+  it('does not make half a pair of a doubled marker', () => {
+    for (const plain of ['**bold**', '__x__', '~~gone~~', '***', '** a **']) {
+      expect(formatWhatsAppMessage(plain)).toBe(plain)
+    }
+  })
+
+  it('never writes tags that cross', () => {
+    // the pair that opens first wins; one that would close outside it is text
+    expect(formatWhatsAppMessage('*a _b* c_')).toBe('<b>a _b</b> c_')
+    expect(formatWhatsAppMessage('_a *b_ c*')).toBe('<i>a *b</i> c*')
+    expect(formatWhatsAppMessage('~a *b* c~ *d*')).toBe(
+      '<s>a <b>b</b> c</s> <b>d</b>',
+    )
   })
 
   it('makes a bullet only of a line that starts with one', () => {
@@ -144,9 +220,9 @@ describe('formatWhatsAppMessage', () => {
       'a',
       ' ',
       '1. ',
-      '',
+      OPEN,
       '0',
-      '',
+      CLOSE,
       '<script>',
       '"',
       "'",
@@ -158,16 +234,25 @@ describe('formatWhatsAppMessage', () => {
       let message = ''
       for (let n = 0; n < 12; n++) message += pieces[next() % pieces.length]
       const html = formatWhatsAppMessage(message)
-      const tags = html.match(/<[^>]*>?/g) || []
-      for (const tag of tags) {
-        expect(tag).toMatch(/^<\/?(i|b|s|code|li|blockquote)>$|^<br>$/)
+      for (const element of elementsOf(html)) {
+        expect(['I', 'B', 'S', 'CODE', 'LI', 'BLOCKQUOTE', 'BR']).toContain(
+          element.nodeName,
+        )
+        expect(element.attributes).toHaveLength(0)
       }
-      expect(html).not.toMatch(/[]/)
+      // what the browser builds from it writes back the same: nothing is
+      // left open, closed twice or closed out of order
+      const box = document.createElement('div')
+      box.innerHTML = html
+      expect(box.innerHTML).toBe(html)
+      expect(html).not.toMatch(STAND_IN)
     }
   })
 
   it("cannot be handed a code stand-in of the sender's own", () => {
-    expect(formatWhatsAppMessage('0 `x`')).toBe('0 <code>x</code>')
+    expect(formatWhatsAppMessage(`${OPEN}0${CLOSE} \`x\``)).toBe(
+      '0 <code>x</code>',
+    )
   })
 
   it('takes a message that is not a string', () => {
