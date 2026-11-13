@@ -1,6 +1,19 @@
 name: Build Container Image
 on:
   workflow_dispatch:
+    # Both default to off, and `gh workflow run builds.yml --ref vX.Y.Z` with no
+    # -f (which is what semantic-release runs) leaves them off. They exist so
+    # that breaking either rule in .github/helper/promote-image.sh is something
+    # a person does on purpose and leaves a record of -- see docs/RELEASING.md.
+    inputs:
+      overwrite_release_tag:
+        description: "Replace an already-published vX.Y.Z image tag. Hosts pinned to it get different bytes on their next pull."
+        type: boolean
+        default: false
+      allow_stable_downgrade:
+        description: "Let this build move :stable to a version older than the newest release tag."
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -292,6 +305,17 @@ jobs:
             "${GITHUB_REPOSITORY,,}" "$GITHUB_REF" "$GITHUB_REF_NAME" \
             "$(git rev-parse --short HEAD)" | tee -a "$GITHUB_ENV"
 
+      - name: Refuse to rebuild a published release
+        # A version tag that already has an image is not rebuilt: the same
+        # commit built twice is two different images, and promoting the second
+        # would change what every host pinned to that tag pulls. The promotion
+        # step at the end refuses it too; asking here costs seconds instead of
+        # the hour the build takes. A branch build has no version tag and
+        # passes straight through.
+        env:
+          ALLOW_TAG_OVERWRITE: ${{ inputs.overwrite_release_tag && '1' || '0' }}
+        run: bash .github/helper/promote-image.sh --precheck "$IMAGE_RELEASE_TAGS"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: frappe/frappe_docker
@@ -490,5 +514,12 @@ jobs:
       # point: it names a commit, nothing deploys it by default, and the smoke
       # test needs a pullable ref to test. What a failed run can no longer do is
       # move a version tag or `stable`.
+      #
+      # Two refusals live in the script, both overridable only by the dispatch
+      # inputs at the top of this file: a version tag that already exists is
+      # not re-pointed, and `stable` does not move to an older release.
       - name: Promote the verified image to its release tags
+        env:
+          ALLOW_TAG_OVERWRITE: ${{ inputs.overwrite_release_tag && '1' || '0' }}
+          ALLOW_STABLE_DOWNGRADE: ${{ inputs.allow_stable_downgrade && '1' || '0' }}
         run: bash .github/helper/promote-image.sh "$IMAGE_BUILD_TAG" "$IMAGE_RELEASE_TAGS"

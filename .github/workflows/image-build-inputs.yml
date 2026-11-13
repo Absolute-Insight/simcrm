@@ -136,10 +136,13 @@ jobs:
         # list, so a release would have published the version tag and
         # silently left `stable` behind. These checks caught it.
         #
-        # DRY_RUN, so nothing is pushed and no registry credentials are
-        # needed. What it covers is the part that was wrong: which tags
-        # get promoted, that a non-main ref never promotes `stable`, and
-        # that malformed input fails loudly instead of becoming --tag "".
+        # Nothing is pushed and no registry credentials are needed: the
+        # checks run in DRY_RUN or against a fake `docker`. What they
+        # cover is the part that was wrong: which tags get promoted, that
+        # a non-main ref never promotes `stable`, that malformed input
+        # fails loudly instead of becoming --tag "" -- and the two
+        # refusals: an existing vX.Y.Z tag is never re-pointed, and
+        # `stable` never moves to an older release.
         run: bash .github/helper/test-promote-image.sh
 
       - name: Only a tag build publishes :stable
