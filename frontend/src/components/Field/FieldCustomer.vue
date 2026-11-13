@@ -65,6 +65,26 @@
         </div>
       </div>
 
+      <div class="flex flex-wrap gap-2">
+        <Button
+          variant="solid"
+          :label="__('Log activity')"
+          @click="openFieldDialog('log', { organization })"
+        >
+          <template #prefix>
+            <LucideMapPinPlus class="size-4" aria-hidden="true" />
+          </template>
+        </Button>
+        <Button
+          :label="__('Add note')"
+          @click="openFieldDialog('note', { organization })"
+        >
+          <template #prefix>
+            <LucideNotebookPen class="size-4" aria-hidden="true" />
+          </template>
+        </Button>
+      </div>
+
       <section :aria-label="__('Contacts')">
         <h3 class="v-kpi-label mb-2">{{ __('Contacts') }}</h3>
         <ul v-if="contacts.length" class="flex flex-col gap-2">
@@ -175,7 +195,11 @@
                 {{ note.title || __('Note') }}
               </span>
               <span class="shrink-0 text-sm tabular-nums text-ink-gray-5">
-                {{ shortDate(note.modified) }}
+                {{
+                  note.pending
+                    ? __('Waiting to send')
+                    : shortDate(note.modified)
+                }}
               </span>
             </div>
             <p
@@ -200,12 +224,15 @@
 
 <script setup>
 import FieldPlanItem from '@/components/Field/FieldPlanItem.vue'
+import { openFieldDialog } from '@/offline/fieldDialog'
 import { useField } from '@/offline/useField'
 import { addressLine, moneyLabel, shortDate, telHref } from '@/utils/fieldPack'
 import { PhEnvelope, PhPhone } from '@phosphor-icons/vue'
 import { computed } from 'vue'
 import LucideChevronLeft from '~icons/lucide/chevron-left'
 import LucideMapPin from '~icons/lucide/map-pin'
+import LucideMapPinPlus from '~icons/lucide/map-pin-plus'
+import LucideNotebookPen from '~icons/lucide/notebook-pen'
 
 const props = defineProps({
   organization: { type: String, required: true },

@@ -335,6 +335,20 @@
                       role="img"
                     />
                   </Tooltip>
+                  <Tooltip
+                    v-if="item.captured_offline"
+                    :text="
+                      __(
+                        'Captured with no connection and synced later — its time is the device’s.',
+                      )
+                    "
+                  >
+                    <LucideCloudOff
+                      class="size-3.5 text-ink-gray-5"
+                      :aria-label="__('Captured offline')"
+                      role="img"
+                    />
+                  </Tooltip>
                   <Dropdown
                     v-if="canEdit && itemActions(item).length"
                     :options="itemActions(item)"
@@ -446,6 +460,7 @@
 // activity. There is no same-family Phosphor substitute that keeps that
 // meaning intact.
 import LucideCalendarClock from '~icons/lucide/calendar-clock'
+import LucideCloudOff from '~icons/lucide/cloud-off'
 import LucideMapPin from '~icons/lucide/map-pin'
 import { PhSparkle as LucideSparkles } from '@phosphor-icons/vue'
 import { PhUserCheck as LucideUserCheck } from '@phosphor-icons/vue'
@@ -637,6 +652,7 @@ function mergeServerPlan(data) {
       status: fresh.status,
       outcome: fresh.outcome,
       manual_override: fresh.manual_override,
+      captured_offline: fresh.captured_offline,
       fulfilled_by_doctype: fresh.fulfilled_by_doctype,
       fulfilled_by: fresh.fulfilled_by,
     }

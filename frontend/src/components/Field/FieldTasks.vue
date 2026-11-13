@@ -1,6 +1,17 @@
 <!-- The rep's open tasks, in the order to do them. -->
 <template>
   <div class="flex flex-col gap-2">
+    <Button
+      size="md"
+      class="mb-1 w-full"
+      :label="__('New task')"
+      @click="openFieldDialog('task')"
+    >
+      <template #prefix>
+        <LucidePlus class="size-4" aria-hidden="true" />
+      </template>
+    </Button>
+
     <div
       v-for="task in tasks"
       :key="task.name"
@@ -41,6 +52,19 @@
       >
         {{ task.description }}
       </p>
+      <div
+        v-if="task.pending"
+        class="mt-2 flex items-center gap-1.5 text-sm text-ink-gray-6"
+      >
+        <LucideCloudUpload class="size-3.5" aria-hidden="true" />
+        {{ __('Waiting to send') }}
+      </div>
+      <Button
+        v-else
+        class="mt-2.5"
+        :label="__('Mark as done')"
+        @click="openFieldDialog('close_task', { task })"
+      />
     </div>
 
     <div
@@ -62,10 +86,13 @@
 </template>
 
 <script setup>
+import { openFieldDialog } from '@/offline/fieldDialog'
 import { useField } from '@/offline/useField'
 import { orderTasks, shortDate } from '@/utils/fieldPack'
 import { computed } from 'vue'
+import LucideCloudUpload from '~icons/lucide/cloud-upload'
 import LucideListChecks from '~icons/lucide/list-checks'
+import LucidePlus from '~icons/lucide/plus'
 
 const { pack, today } = useField()
 
