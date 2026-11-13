@@ -792,51 +792,6 @@ class TestCreateSalesQuote(FrappeTestCase):
 		self.assertIsNone(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
-	def test_the_row_lock_is_let_go_before_the_put_once_the_marker_is_set(self, ClientCls):
-		"""Held to the end of the request, the lock made every other save of the deal
-		wait out the PUT. The marker has to be there first: it is what a second click
-		that then gets the lock is refused by (test_a_retry_waits_out_acumatica...)."""
-		_enable()
-		client = MagicMock()
-		ClientCls.return_value = client
-		_org, deal = _mapped_deal()
-		inflight = outbound._inflight_key("SalesOrder", deal.name)
-		order = []
-
-		def put(*args, **kwargs):
-			order.append("put")
-			return _wrapped(OrderNbr="QT000140")
-
-		client.put.side_effect = put
-		with patch.object(
-			outbound,
-			"_release_row_lock",
-			side_effect=lambda: order.append(("release", bool(frappe.cache().get_value(inflight)))),
-		):
-			outbound.create_sales_quote_from_deal(deal.name)
-
-		self.assertEqual(order, [("release", True), "put"])
-
-	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
-	def test_the_row_lock_is_kept_when_the_marker_did_not_reach_redis(self, ClientCls):
-		"""frappe's set_value swallows a redis connection error. With no marker, the
-		row lock is the only thing between a second click and a second order."""
-		_enable()
-		client = MagicMock()
-		ClientCls.return_value = client
-		client.put.return_value = _wrapped(OrderNbr="QT000142")
-		_org, deal = _mapped_deal()
-
-		with (
-			patch.object(outbound, "_mark_inflight"),  # redis blinked: nothing is stored
-			patch.object(outbound, "_release_row_lock") as release,
-		):
-			self.assertEqual(outbound.create_sales_quote_from_deal(deal.name), "QT000142")
-
-		release.assert_not_called()
-		client.put.assert_called_once()
-
-	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_a_login_that_was_not_made_is_a_refusal_not_an_unanswered_quote(self, ClientCls):
 		"""Raised before the PUT is sent: the rep must not be told the quote may exist,
 		nor be held off for the settle window by a marker."""
@@ -845,21 +800,23 @@ class TestCreateSalesQuote(FrappeTestCase):
 		_enable()
 		client = MagicMock()
 		ClientCls.return_value = client
-		message = "Another worker is still logging in to Acumatica; try again in a minute"
+		message = "Another worker is still signing in to Acumatica; try again in a minute"
 		client.put.side_effect = AcumaticaAuthError(message, body=message)
 		_org, deal = _mapped_deal()
 
 		with self.assertRaises(frappe.ValidationError) as ctx:
 			outbound.create_sales_quote_from_deal(deal.name)
 
-		self.assertIn("still logging in", str(ctx.exception))
+		self.assertIn("still signing in", str(ctx.exception))
+		self.assertIn("no quote was sent", str(ctx.exception))
+		self.assertNotIn("refused", str(ctx.exception))
 		self.assertNotIn("may still have been created", str(ctx.exception))
 		self.assertIsNone(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_a_quote_whose_number_could_not_be_stored_says_so_and_keeps_its_marker(self, ClientCls):
-		"""With the row lock let go, another save of the deal can hold the row when the
-		answer arrives. The rep gets the reason, and the retry adopts the order."""
+		"""A lock wait or a deadlock on the deal when the answer arrives reached the rep
+		as a raw database error. They get the reason, and the retry adopts the order."""
 		_enable()
 		client = MagicMock()
 		ClientCls.return_value = client
@@ -886,23 +843,65 @@ class TestCreateSalesQuote(FrappeTestCase):
 		"""The rep gets Vectora's warning, not the proxy's bare gateway error, only if
 		everything the request can spend comes to less than the proxy allows."""
 		from crm.agent.doctype.crm_agent_settings.crm_agent_settings import DEFAULT_PROXY_READ_TIMEOUT
-		from crm.integrations.acumatica.client import LOGIN_WAIT_IN_REQUEST, TIMEOUT
+		from crm.integrations.acumatica.client import LOGIN_TIMEOUT, LOGIN_WAIT_IN_REQUEST
 
 		with patch.dict(frappe.conf, {"crm_proxy_read_timeout": 0}):
-			spent = LOGIN_WAIT_IN_REQUEST + TIMEOUT + outbound._quote_write_timeout()
+			# the wait for another worker's login, then one of its own: the connect
+			# and the read each get their timeout
+			spent = LOGIN_WAIT_IN_REQUEST + sum(LOGIN_TIMEOUT) + outbound._quote_write_timeout()
 		self.assertLess(spent, DEFAULT_PROXY_READ_TIMEOUT)
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
-	def test_a_refusal_before_the_put_releases_nothing(self, ClientCls):
-		"""The release is a commit; a request that is about to throw must not make one."""
+	def test_a_timed_out_quote_with_no_marker_does_not_promise_to_pick_it_up(self, ClientCls):
+		"""frappe's set_value swallows a redis connection error. With no marker the
+		retry looks for nothing and sends another order: say so instead."""
+		import requests
+
 		_enable()
-		ClientCls.return_value = MagicMock()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.side_effect = requests.ReadTimeout("read timed out")
 		_org, deal = _mapped_deal()
-		frappe.db.set_value("CRM Deal", deal.name, "acumatica_sales_quote", "QT000141")
-		with patch.object(outbound, "_release_row_lock") as release:
-			with self.assertRaises(frappe.ValidationError):
+
+		with patch.object(outbound, "_mark_inflight"):  # redis blinked: nothing is stored
+			with self.assertRaises(frappe.ValidationError) as ctx:
 				outbound.create_sales_quote_from_deal(deal.name)
-		release.assert_not_called()
+
+		self.assertIn("may still have been created", str(ctx.exception))
+		self.assertIn("look for it in Acumatica", str(ctx.exception))
+		self.assertNotIn("pick it up", str(ctx.exception))
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_the_row_lock_is_held_across_the_put(self, ClientCls):
+		"""The in-flight marker lives in redis, and a redis that blinks reads as "no
+		marker": the row lock is the one guard against a second click that survives
+		that, so the request must not commit (and let it go) before Acumatica answers."""
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		_org, deal = _mapped_deal()
+		commits = []
+
+		def put(*args, **kwargs):
+			commits.append(commit.call_count)
+			return _wrapped(OrderNbr="QT000144")
+
+		client.put.side_effect = put
+		with patch("crm.integrations.acumatica.outbound.frappe.db.commit") as commit:
+			outbound.create_sales_quote_from_deal(deal.name)
+
+		self.assertEqual(commits, [0])
+
+	def test_a_push_failure_with_nothing_to_add_is_said_once(self):
+		from crm.integrations.acumatica.client import AcumaticaAuthError, AcumaticaError
+
+		message = "Another worker is still signing in to Acumatica; try again in a minute"
+		self.assertEqual(outbound._failure(AcumaticaAuthError(message, body=message)), message)
+		self.assertEqual(
+			outbound._failure(AcumaticaError("PUT -> 422", status_code=422, body='{"message": "No."}')),
+			"PUT -> 422 :: No.",
+		)
+		self.assertEqual(outbound._failure(ValueError("not json")), "not json")
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_the_put_gives_up_before_the_proxy_does(self, ClientCls):
