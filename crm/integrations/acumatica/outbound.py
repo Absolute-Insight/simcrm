@@ -11,6 +11,8 @@ from frappe.utils import add_days, cint, now_datetime
 
 from crm.agent.doctype.crm_agent_settings.crm_agent_settings import DEFAULT_PROXY_READ_TIMEOUT
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
+	ISSUE,
+	SETTINGS,
 	dismiss_sync_issues,
 	get_settings,
 	open_sync_issues,
@@ -510,6 +512,38 @@ def move_markers_on_rename(doc, method, old: str, new: str, merge: bool = False)
 		if not cache.get_value(_inflight_key(entity, new)):
 			cache.set_value(_inflight_key(entity, new), value, expires_in_sec=INFLIGHT_TTL)
 		cache.delete_value(_inflight_key(entity, old))
+	_move_issues_on_rename(old, new)
+
+
+# The sync-issue rows the push keys by the organization's docname (a Contact's are
+# keyed by the contact). Only the push's own kinds: the importer's Customer rows carry
+# an Acumatica CustomerID in the same column.
+_ORGANIZATION_ISSUES = ("Customer", "Customer Salesperson")
+
+
+def _move_issues_on_rename(old: str, new: str) -> None:
+	"""``remote_id`` is Data, so a rename does not reach it. Left under the old name, an
+	open Push Blocked row no longer re-queued the push when the organization was saved
+	-- renaming it is how a rep fixes a refused name -- nor could anything dismiss it,
+	and the manager's panel went on offering actions on a record that was gone."""
+	rows = frappe.get_all(
+		ISSUE,
+		filters={
+			"parent": SETTINGS,
+			"parenttype": SETTINGS,
+			"parentfield": "sync_issues",
+			"entity": ("in", _ORGANIZATION_ISSUES),
+			"kind": ("in", (*WAITING_KINDS, PUSH_FAILED)),
+			"remote_id": old,
+		},
+		pluck="name",
+	)
+	for name in rows:
+		# row by row, never through a save of the Single (see record_sync_issue)
+		frappe.db.set_value(ISSUE, name, "remote_id", new, update_modified=False)
+	if rows:
+		# get_settings() is a cached doc; a row written past it must not be read stale
+		frappe.clear_document_cache(SETTINGS, SETTINGS)
 
 
 def confirmation_hash(facts) -> str:

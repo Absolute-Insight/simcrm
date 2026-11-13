@@ -1509,6 +1509,47 @@ class TestRetryTriggers(FrappeTestCase):
 		self.assertTrue(pushes[0].kwargs["enqueue_after_commit"])
 
 	@patch("crm.integrations.acumatica.outbound.frappe.enqueue")
+	def test_a_renamed_organization_keeps_its_waiting_push(self, enqueue):
+		"""The issue rows name the organization in a Data field, which a rename does not
+		follow: the push a rep renamed the organization to unblock was never re-queued,
+		and the row for the vanished name stayed open on the manager's panel."""
+		from frappe.model.rename_doc import rename_doc
+
+		from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
+			open_sync_issues,
+			record_sync_issue,
+		)
+
+		_enable()
+		org, deal = _complete_deal(with_address=False)
+		outbound.push_customer_for_deal(deal.name)  # Push Blocked: no address
+		old = org.name
+		record_sync_issue("Customer Salesperson", old, outbound.PUSH_FAILED, "salesperson 007 was not set")
+		# the importer's rows carry an Acumatica CustomerID in the same column: not ours
+		record_sync_issue("Customer", old, "Import Failed", "a customer whose ID reads like the name")
+
+		new = rename_doc(
+			"CRM Organization", old, f"{old} Renamed", force=True, ignore_permissions=True, show_alert=False
+		)
+
+		self.assertEqual(len(open_sync_issues("Customer", new, outbound.WAITING_KINDS)), 1)
+		self.assertEqual(open_sync_issues("Customer", old, outbound.WAITING_KINDS), [])
+		self.assertEqual(len(open_sync_issues("Customer Salesperson", new, (outbound.PUSH_FAILED,))), 1)
+		self.assertEqual(len(open_sync_issues("Customer", old, ("Import Failed",))), 1)
+		self.assertEqual(open_sync_issues("Customer", new, ("Import Failed",)), [])
+		# and the cached Single the panel reads shows the row under the new name
+		self.assertIn(
+			(new, outbound.PUSH_BLOCKED),
+			[(row.remote_id, row.kind) for row in outbound.get_settings().sync_issues],
+		)
+
+		enqueue.reset_mock()
+		frappe.get_doc("CRM Organization", new).save(ignore_permissions=True)
+		pushes = _pushes(enqueue)
+		self.assertEqual(len(pushes), 1)
+		self.assertEqual(pushes[0].kwargs["job_id"], f"acumatica_customer_{new}")
+
+	@patch("crm.integrations.acumatica.outbound.frappe.enqueue")
 	def test_editing_an_organization_with_an_old_won_deal_and_nothing_waiting_queues_nothing(self, enqueue):
 		"""The edit itself must not be what creates a live customer out of a deal won
 		years ago."""
