@@ -140,6 +140,21 @@ check(
 	not re.search(r'if \[ -d "sites/[^"]*" \]; then\s*\n\s*echo "Site', create),
 )
 check("create-site marks an unfinished create", ".creating-" in create)
+# A partial site is removed on evidence, never on a check that did not answer.
+check(
+	"create-site asks the database before it removes anything",
+	"db_verdict" in create and "information_schema.tables" in create,
+)
+removals = [m.start() for m in re.finditer(r'rm -rf "sites/', create)]
+guard = create.find("absent|partial)")
+stop = create.find("*)", guard)
+check(
+	"the only site removal is under a database verdict of absent or partial",
+	len(removals) == 1 and guard != -1 and guard < removals[0] < stop,
+	f"{len(removals)} removal(s)",
+)
+check("an unanswered check deletes nothing", "echo unknown" in create and "list-apps 2>/dev/null" not in create)
+check("the root password is not in the mariadb client's argv", "--password" not in create.split("bench new-site")[0] and "-p$" not in create)
 # infra-13
 check("create-site can set host_name", "set-config host_name" in create)
 check(

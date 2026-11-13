@@ -57,11 +57,18 @@ the daily digest — silently not running, with nothing in any log to say so.
 If the container is killed in that window — the 1 GB limit, a host reboot —
 the next start finds the marker, removes the half-made site directory and
 creates the site again; it used to find the directory, take it for a site, and
-restart for ever against a database that had never been made. The marker is
-the only thing that licenses the removal: a site with no marker is never
-touched, and a marker beside a site that did finish (`bench list-apps` shows
-`crm`) is simply cleared. The one thing left behind is the abandoned attempt's
-empty database, whose name the log prints so it can be dropped by hand.
+restart for ever against a database that had never been made.
+
+Removal needs two things, not one: the marker, **and** the database itself
+saying there is nothing there — it does not exist, has no frappe tables, or
+does not record every app the create installs. A site with no marker is never
+touched. A marker beside a database that looks complete, or that could not be
+asked, removes nothing: `create-site` exits with the three commands that
+settle it (inspect, clear the marker, or remove the failed attempt), because a
+question that went unanswered is not grounds to delete a site and its
+encryption key. The one thing an automatic retry leaves behind is the
+abandoned attempt's database, whose name the log prints so it can be dropped
+by hand.
 
 **Keep other users off the host during first boot.** `bench new-site` takes
 the database root password and the administrator password as command-line
