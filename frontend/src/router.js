@@ -83,6 +83,17 @@ const routes = [
         component: () => import('@/components/Field/FieldTasks.vue'),
       },
       {
+        path: 'sheets',
+        name: 'FieldSheets',
+        component: () => import('@/components/Field/FieldSheets.vue'),
+      },
+      {
+        path: 'sheets/:sheet',
+        name: 'FieldSheet',
+        component: () => import('@/components/Field/FieldSheet.vue'),
+        props: true,
+      },
+      {
         path: 'outbox',
         name: 'FieldOutbox',
         component: () => import('@/components/Field/FieldOutbox.vue'),

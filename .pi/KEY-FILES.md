@@ -91,6 +91,7 @@ gotcha, not a location, and it stays in `AGENTS.md`.
 | `frontend/src/utils/fieldOutbox.js` | Pure outbox rules: validation, `applyOutbox` overlay, `failureKind` |
 | `frontend/src/components/Field/FieldEntryDialog.vue` | The one capture dialog (log, outcome, cancel, note, task) |
 | `crm/fcrm/doctype/crm_offline_receipt/` | One row per replayed entry: what makes a retry a no-op |
+| `frontend/src/offline/sheets.js` | Reference sheets kept on the device: download, index, remove |
 | `frontend/src/offline/db.js` | The two IndexedDB stores (pack, outbox) and when each is cleared |
 | `frontend/src/utils/fieldPack.js` | Pure helpers: index by customer, search, expiry, display |
 | `frontend/src/pages/Field.vue` + `components/Field/` | The standalone Field surface: week, customers, customer, tasks |

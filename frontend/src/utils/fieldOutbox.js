@@ -17,6 +17,7 @@ export const ACTIONS = [
   'add_note',
   'create_task',
   'close_task',
+  'plan_item',
 ]
 
 /* NOTE_TEXT_LIMIT and TITLE_LIMIT in crm/api/offline.py. */
@@ -102,6 +103,17 @@ export function entryProblem(action, payload, rules = {}) {
       return tooLong(payload.description, TEXT_LIMIT)
         ? __('That is too long.')
         : ''
+    case 'plan_item': {
+      if (!payload.planned_date) return __('Choose the day.')
+      if (tooLong(payload.note, TITLE_LIMIT)) {
+        return __('Keep the note under {0} characters.', [TITLE_LIMIT])
+      }
+      const visitKinds = rules.event_kinds ?? ['Visit', 'Delivery']
+      if (visitKinds.includes(payload.activity_type) && !payload.organization) {
+        return __('Choose the customer.')
+      }
+      return ''
+    }
     case 'close_task':
       if (!text(payload.closing_note)) return __('Say how it was finished.')
       return tooLong(payload.closing_note, TEXT_LIMIT)
@@ -137,6 +149,10 @@ export function failureKind(error) {
   const status = Number(error?.status ?? error?.httpStatus)
   const exc = String(error?.exc_type ?? '')
   if (exc === 'CSRFTokenError' || exc === 'TooManyRequestsError') return 'retry'
+  // The record changed while this entry was being applied -- a week edited on
+  // the desktop in the same instant. Nothing is wrong with the entry; the
+  // next attempt is a new request and sees the record as it now is.
+  if (exc === 'TimestampMismatchError') return 'retry'
   if (status === 429 || status >= 500) return 'retry'
   if ([403, 404, 409, 417].includes(status)) return 'rejected'
   if (/Validation|Permission|DoesNotExist|Mandatory|Duplicate/.test(exc)) {
@@ -164,6 +180,7 @@ export function applyOutbox(pack, entries, dateOf) {
   if (!pack || !live.length) return pack
 
   const closed = new Map()
+  const planned = []
   const logged = []
   const notes = []
   const newTasks = []
@@ -184,6 +201,16 @@ export function applyOutbox(pack, entries, dateOf) {
         outcome: text(payload.note),
         status: 'Done',
         manual_override: 1,
+        pending: true,
+      })
+    } else if (entry.action === 'plan_item') {
+      planned.push({
+        name: `outbox:${entry.id}`,
+        activity_type: payload.activity_type,
+        planned_date: payload.planned_date,
+        note: text(payload.note),
+        organization: payload.organization || null,
+        status: 'Planned',
         pending: true,
       })
     } else if (entry.action === 'complete_item') {
@@ -231,7 +258,7 @@ export function applyOutbox(pack, entries, dateOf) {
       justClosed.push(next)
       return next
     })
-    const added = logged.filter(
+    const added = [...logged, ...planned].filter(
       (item) => mondayOf(item.planned_date) === plan.week_start,
     )
     return added.length || items.some((item, i) => item !== plan.items[i])
@@ -287,6 +314,17 @@ export function describeEntry(
             : __('Note · {0}', [payload.reference_docname]),
         detail: text(payload.content),
       }
+    case 'plan_item': {
+      const kind = activityLabel(payload.activity_type)
+      return {
+        title: __('Planned · {0}', [
+          payload.organization ? `${kind} · ${at(payload.organization)}` : kind,
+        ]),
+        detail: [payload.planned_date, text(payload.note)]
+          .filter(Boolean)
+          .join(' — '),
+      }
+    }
     case 'create_task':
       return { title: __('New task'), detail: text(payload.title) }
     case 'close_task':

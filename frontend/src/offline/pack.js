@@ -15,6 +15,7 @@ import { getSessionUser } from '@/utils/session'
 import { packExpired } from '@/utils/fieldPack'
 import { connectivity, onOnline } from './connectivity'
 import { hasIndexedDB, packStore } from './db'
+import { dropUnlistedSheets, forgetSavedSheets } from './sheets'
 
 const PACK_KEY = 'pack'
 /* Background refreshes are no closer together than this. A rep's customers do
@@ -59,7 +60,10 @@ export function loadPack() {
         packState.syncedAt = stored.syncedAt
         packState.maxAgeDays = stored.pack.max_age_days
       } else if (stored) {
-        await packStore.del(PACK_KEY)
+        // the whole store, not the one key: the sheets kept beside the pack
+        // are the same user's and the same age
+        await packStore.clear()
+        forgetSavedSheets()
       }
     } catch (error) {
       // private mode or a blocked database: field mode works online only
@@ -127,6 +131,14 @@ export function syncPack() {
         })
       }
       for (const fn of syncedListeners) fn(startedAt)
+      // only on a pack that carries the list (one stored before sheets
+      // existed has none to compare); an "unchanged" answer carries the list
+      // it already had, so comparing against it removes nothing
+      if (Array.isArray(pack.sheets)) {
+        dropUnlistedSheets(pack.sheets.map((sheet) => sheet.name)).catch(
+          () => {},
+        )
+      }
       return true
     } catch (error) {
       packState.error = error
@@ -171,7 +183,8 @@ export function dropExpiredPack() {
   if (!packExpired(packState.syncedAt, packState.maxAgeDays)) return
   fieldPack.value = null
   packState.syncedAt = null
-  if (hasIndexedDB()) packStore.del(PACK_KEY).catch(() => {})
+  forgetSavedSheets()
+  if (hasIndexedDB()) packStore.clear().catch(() => {})
 }
 
 /** This device uses field mode: keep its pack fresh from now on. */
@@ -181,6 +194,10 @@ export function markFieldModeUsed() {
   } catch {
     // not remembered: the pack still syncs whenever a Field screen is open
   }
+  // Ask the browser not to evict what is kept here when the device runs low
+  // on space. It may say no (it decides on its own evidence, and never asks
+  // the person); the answer changes nothing this code does.
+  navigator.storage?.persist?.().catch(() => {})
 }
 
 function wantsPack() {

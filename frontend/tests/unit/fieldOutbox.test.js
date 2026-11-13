@@ -139,6 +139,10 @@ describe('failureKind', () => {
     expect(failureKind({ status: 400, exc_type: 'CSRFTokenError' })).toBe(
       'retry',
     )
+    // the week changed under it: not the entry's fault, and fine next time
+    expect(
+      failureKind({ status: 409, exc_type: 'TimestampMismatchError' }),
+    ).toBe('retry')
     expect(failureKind(undefined)).toBe('retry')
   })
 })
@@ -296,5 +300,83 @@ describe('words', () => {
       ).detail,
     ).toBe('Send quote — Sent')
     expect(describeEntry(entry('nonsense', {}), names).title).toBe('nonsense')
+  })
+})
+
+describe('planning offline', () => {
+  const rules = { event_kinds: ['Visit', 'Delivery'] }
+
+  it('wants a day, and a customer for a visit', () => {
+    expect(
+      entryProblem('plan_item', { activity_type: 'Admin' }, rules),
+    ).toBeTruthy()
+    expect(
+      entryProblem(
+        'plan_item',
+        { activity_type: 'Visit', planned_date: '2026-11-17' },
+        rules,
+      ),
+    ).toBeTruthy()
+    expect(
+      entryProblem(
+        'plan_item',
+        { activity_type: 'Admin', planned_date: '2026-11-17' },
+        rules,
+      ),
+    ).toBe('')
+    expect(
+      entryProblem(
+        'plan_item',
+        {
+          activity_type: 'Admin',
+          planned_date: '2026-11-17',
+          note: 'x'.repeat(141),
+        },
+        rules,
+      ),
+    ).toBeTruthy()
+  })
+
+  it('shows what was planned on its own day, still to do', () => {
+    const out = applyOutbox(
+      pack(),
+      [
+        entry('plan_item', {
+          activity_type: 'Visit',
+          planned_date: '2026-11-17',
+          organization: 'Impala',
+          note: 'Quote',
+        }),
+      ],
+      dateOf,
+    )
+    // the day it is planned for, not the day it was captured
+    expect(out.plans[0].items).toHaveLength(2)
+    expect(out.plans[1].items[0]).toMatchObject({
+      status: 'Planned',
+      planned_date: '2026-11-17',
+      organization: 'Impala',
+      pending: true,
+    })
+    // planned is not done: nothing joins the customer's history
+    expect(out.history).toHaveLength(1)
+  })
+
+  it('describes a planned entry by what and when', () => {
+    const names = {
+      customerName: (n) => n,
+      taskTitle: () => '',
+      activityLabel: (t) => t,
+    }
+    expect(
+      describeEntry(
+        entry('plan_item', {
+          activity_type: 'Visit',
+          planned_date: '2026-11-17',
+          organization: 'Impala',
+        }),
+        names,
+      ),
+    ).toEqual({ title: 'Planned · Visit · Impala', detail: '2026-11-17' })
   })
 })
