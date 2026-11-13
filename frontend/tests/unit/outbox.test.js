@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
  * The outbox against a device (a map standing in for IndexedDB) and a server
@@ -6,7 +6,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  */
 const { disk, server } = vi.hoisted(() => ({
   disk: new Map(),
-  server: { replay: null, calls: [], syncs: 0, syncOk: true },
+  server: {
+    replay: null,
+    calls: [],
+    syncs: 0,
+    syncOk: true,
+    user: 'rep@example.com',
+  },
 }))
 vi.mock('idb-keyval', () => ({
   createStore: (database) => database,
@@ -41,7 +47,7 @@ vi.mock('@/offline/pack', () => {
     },
   }
 })
-vi.mock('@/utils/session', () => ({ getSessionUser: () => 'rep@example.com' }))
+vi.mock('@/utils/session', () => ({ getSessionUser: () => server.user }))
 
 globalThis.indexedDB ??= {}
 
@@ -67,6 +73,7 @@ beforeEach(() => {
   server.calls = []
   server.syncs = 0
   server.syncOk = true
+  server.user = 'rep@example.com'
   server.replay = async () => ({ status: 'applied' })
   vi.spyOn(document, 'cookie', 'get').mockReturnValue(
     'user_id=rep%40example.com',
@@ -405,5 +412,265 @@ describe('the rep’s say', () => {
     expect(outbox.entries).toEqual([])
     expect(server.calls).toEqual([])
     expect(disk.has('theirs')).toBe(true)
+  })
+})
+
+const failure = (status, extra = {}) =>
+  Object.assign(new Error(`HTTP ${status}`), {
+    status,
+    messages: ['Internal Server Error'],
+    ...extra,
+  })
+
+const handshake = (message) =>
+  vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ message }),
+  }))
+
+describe('a stale CSRF token', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    delete window.csrf_token
+  })
+
+  const staleUntilRenewed = async () => {
+    if (window.csrf_token !== 'fresh') {
+      throw failure(400, { exc_type: 'CSRFTokenError' })
+    }
+    return { status: 'applied' }
+  }
+
+  it('is renewed through the handshake, and the same entry goes again', async () => {
+    const fetch = handshake({ user: 'rep@example.com', csrf_token: 'fresh' })
+    vi.stubGlobal('fetch', fetch)
+    window.csrf_token = 'the-old-sessions'
+    server.replay = staleUntilRenewed
+    const { enqueue, flushOutbox, outbox } = await load()
+    const entry = await enqueue('create_task', { title: 'x' })
+    await flushOutbox()
+    expect(String(fetch.mock.calls[0][0])).toContain(
+      'crm.api.offline.handshake',
+    )
+    expect(window.csrf_token).toBe('fresh')
+    expect(server.calls.map((c) => c.request_id)).toEqual([entry.id, entry.id])
+    expect(outbox.entries).toEqual([])
+  })
+
+  it('is asked for once a run, and the entry says why it is still waiting', async () => {
+    const fetch = handshake({ user: 'rep@example.com', csrf_token: 'no-good' })
+    vi.stubGlobal('fetch', fetch)
+    window.csrf_token = 'the-old-sessions'
+    server.replay = staleUntilRenewed
+    const { enqueue, flushOutbox, outbox } = await load()
+    await enqueue('create_task', { title: 'x' })
+    await flushOutbox()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(server.calls).toHaveLength(2)
+    expect(outbox.entries[0]).toMatchObject({ status: 'pending' })
+    expect(outbox.entries[0].error).toMatch(/sign-in is out of date/)
+  })
+
+  it('work captured as one rep is not sent on a session that is now another’s', async () => {
+    const { enqueue, flushOutbox, outbox } = await load({ online: false })
+    await enqueue('create_task', { title: 'mine' })
+    const { connectivity } = await import('@/offline/connectivity')
+    // someone else signed in in another tab: the cookie jar is shared
+    server.user = 'someone.else@example.com'
+    connectivity.online = true
+    await flushOutbox()
+    expect(server.calls).toEqual([])
+    expect(outbox.entries[0].status).toBe('pending')
+  })
+})
+
+describe('an answer the server did not write', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('a bare 403 pauses the run and refuses nothing', async () => {
+    // a captive portal at the site gate: it blocks the handshake as well
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 403, json: async () => null })),
+    )
+    server.replay = async () => {
+      throw failure(403)
+    }
+    const offline = await load({ online: false })
+    await offline.enqueue('create_task', { title: 'a' })
+    await offline.enqueue('create_task', { title: 'b' })
+    const { flushOutbox, outbox, rejectedCount, connectivity } = await load()
+    await flushOutbox()
+    await settle()
+    expect(server.calls).toHaveLength(1)
+    expect(outbox.entries.map((e) => e.status)).toEqual(['pending', 'pending'])
+    expect(rejectedCount.value).toBe(0)
+    expect(outbox.entries[0].error).toMatch(/instead of the server/)
+    // and the probe it started found the server is not there
+    expect(connectivity.online).toBe(false)
+  })
+})
+
+describe('a server error at the head of the outbox', () => {
+  it('stops the run in order, and the entry keeps the reason and the count', async () => {
+    server.replay = async () => {
+      throw failure(502)
+    }
+    const { enqueue, flushOutbox, outbox } = await load()
+    const first = await enqueue('create_task', { title: 'one' })
+    const second = await enqueue('create_task', { title: 'two' })
+    await flushOutbox()
+    await flushOutbox()
+    const [a, b] = outbox.entries
+    expect(server.calls.map((c) => c.request_id)).not.toContain(second.id)
+    expect(a).toMatchObject({ id: first.id, status: 'pending' })
+    expect(a.error).toBeTruthy()
+    expect(a.attempts).toBeGreaterThan(1)
+    expect(disk.get(first.id)).toMatchObject({
+      status: 'pending',
+      error: a.error,
+      attempts: a.attempts,
+    })
+    expect(b).toMatchObject({ status: 'pending', error: null, attempts: 0 })
+  })
+
+  it('says what the server said, when it said something', async () => {
+    server.replay = async () => {
+      throw failure(500, {
+        exc_type: 'QueryDeadlockError',
+        messages: ['Deadlock found. Try again.'],
+      })
+    }
+    const { enqueue, flushOutbox, outbox } = await load()
+    await enqueue('create_task', { title: 'x' })
+    await flushOutbox()
+    expect(outbox.entries[0].error).toBe('Deadlock found. Try again.')
+  })
+
+  it('a dead line leaves no reason: that is the ordinary wait', async () => {
+    server.replay = async () => {
+      throw new TypeError('Failed to fetch')
+    }
+    const { enqueue, flushOutbox, outbox } = await load()
+    await enqueue('create_task', { title: 'x' })
+    await flushOutbox()
+    expect(outbox.entries[0]).toMatchObject({ status: 'pending', error: null })
+  })
+
+  it('the reason goes when the entry does', async () => {
+    server.replay = async () => {
+      throw failure(502)
+    }
+    const { enqueue, flushOutbox, outbox } = await load()
+    await enqueue('create_task', { title: 'x' })
+    await flushOutbox()
+    server.syncOk = false
+    server.replay = async () => ({ status: 'applied' })
+    await flushOutbox()
+    expect(outbox.entries[0]).toMatchObject({ status: 'sent', error: null })
+  })
+
+  it('the timer comes back less and less often while runs keep stopping', async () => {
+    vi.useFakeTimers()
+    try {
+      server.replay = async () => {
+        throw failure(502)
+      }
+      const { enqueue, flushOutbox, startOutbox } = await load()
+      startOutbox()
+      await enqueue('create_task', { title: 'x' })
+      await flushOutbox()
+      const sentBy = async (minutes) => {
+        const before = server.calls.length
+        await vi.advanceTimersByTimeAsync(minutes * 60 * 1000)
+        return server.calls.length - before
+      }
+      // every minute at first, as before
+      expect(await sentBy(1)).toBe(1)
+      // then further apart: ten more minutes used to be ten more requests
+      expect(await sentBy(10)).toBeLessThanOrEqual(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('an entry the server itself keeps failing on is set aside for the rep, and the rest go', async () => {
+    server.replay = async ({ payload }) => {
+      if (payload.title === 'poison') {
+        throw failure(500, { exc_type: 'TypeError' })
+      }
+      return { status: 'applied' }
+    }
+    const offline = await load({ online: false })
+    const poison = await offline.enqueue('create_task', { title: 'poison' })
+    await offline.enqueue('create_task', { title: 'fine' })
+    const { flushOutbox, outbox, rejectedCount } = await load()
+    for (let run = 0; run < 4; run++) await flushOutbox()
+    // four failures: still at the head, still holding the one behind it
+    expect(outbox.entries.map((e) => e.status)).toEqual(['pending', 'pending'])
+    await flushOutbox()
+    expect(outbox.entries).toHaveLength(1)
+    expect(outbox.entries[0]).toMatchObject({
+      id: poison.id,
+      status: 'rejected',
+    })
+    expect(outbox.entries[0].error).toMatch(/failed on this entry 5 times/)
+    expect(rejectedCount.value).toBe(1)
+    expect(server.calls.at(-1).payload.title).toBe('fine')
+  })
+
+  it('a gateway that is down is never the entry’s fault', async () => {
+    server.replay = async () => {
+      throw failure(503)
+    }
+    const { enqueue, flushOutbox, outbox } = await load()
+    await enqueue('create_task', { title: 'x' })
+    for (let run = 0; run < 8; run++) await flushOutbox()
+    expect(outbox.entries[0].status).toBe('pending')
+  })
+})
+
+describe('an entry older than the server’s memory of what it applied', () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const old = () => ({
+    id: 'ancient-entry-0001',
+    user: 'rep@example.com',
+    action: 'add_note',
+    payload: { content: 'x' },
+    captured_at: Date.now() - 91 * DAY,
+    status: 'pending',
+    error: null,
+    attempts: 1,
+  })
+
+  it('is not sent on its own, and is kept for the rep with the reason', async () => {
+    disk.set('ancient-entry-0001', old())
+    const { flushOutbox, outbox } = await load()
+    await flushOutbox()
+    expect(server.calls).toEqual([])
+    expect(outbox.entries[0]).toMatchObject({ status: 'rejected' })
+    expect(outbox.entries[0].error).toMatch(/more than 90 days ago/)
+    expect(disk.get('ancient-entry-0001').status).toBe('rejected')
+  })
+
+  it('goes to the server when the rep says so, which has the last word', async () => {
+    disk.set('ancient-entry-0001', old())
+    const { flushOutbox, retryEntry, outbox } = await load()
+    await flushOutbox()
+    server.replay = async () => ({ status: 'duplicate' })
+    await retryEntry('ancient-entry-0001')
+    expect(server.calls).toHaveLength(1)
+    expect(outbox.entries).toEqual([])
+  })
+
+  it('one inside the window goes as usual', async () => {
+    disk.set('ancient-entry-0001', {
+      ...old(),
+      captured_at: Date.now() - 89 * DAY,
+    })
+    const { flushOutbox } = await load()
+    await flushOutbox()
+    expect(server.calls).toHaveLength(1)
   })
 })

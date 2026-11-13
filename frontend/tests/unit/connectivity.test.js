@@ -176,6 +176,38 @@ describe('the connectivity gate', () => {
     await probe()
     expect(window.csrf_token).toBe('rendered-by-frappe')
   })
+
+  it('does replace it when asked to: the server said that token is no good', async () => {
+    const { renewToken } = await load()
+    window.csrf_token = 'the-old-sessions'
+    expect(await renewToken()).toBe(true)
+    expect(window.csrf_token).toBe('tok')
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('a renewal does not settle for a probe already on its way', async () => {
+    const { probe, renewToken } = await load()
+    window.csrf_token = 'the-old-sessions'
+    const first = probe()
+    const renewed = renewToken()
+    expect(renewToken()).toBe(renewed)
+    await first
+    expect(await renewed).toBe(true)
+    expect(window.csrf_token).toBe('tok')
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('a renewal that cannot reach the server says so and keeps what it had', async () => {
+    const { renewToken, connectivity } = await load({
+      fetch: vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      }),
+    })
+    window.csrf_token = 'the-old-sessions'
+    expect(await renewToken()).toBe(false)
+    expect(window.csrf_token).toBe('the-old-sessions')
+    expect(connectivity.online).toBe(false)
+  })
 })
 
 describe('the probe', () => {

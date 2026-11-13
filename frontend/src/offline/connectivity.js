@@ -123,7 +123,7 @@ function handOver() {
   clearOfflineCache().then(() => window.location.reload())
 }
 
-async function runProbe() {
+async function runProbe({ renew = false } = {}) {
   // The browser is sure there is no network: believe it, and do not light up
   // the radio (or the console) with a request that cannot leave the device.
   // The reverse is not true -- "online" is only a claim, hence the request.
@@ -171,7 +171,7 @@ async function runProbe() {
       handOver()
       return false
     }
-    if (message?.csrf_token && (connectivity.shell || !hasToken())) {
+    if (message?.csrf_token && (renew || connectivity.shell || !hasToken())) {
       window.csrf_token = message.csrf_token
     }
     if (Number.isFinite(message?.server_epoch)) {
@@ -198,6 +198,34 @@ export function probe() {
     probing = null
   })
   return probing
+}
+
+let renewing = null
+
+/**
+ * Ask for the session's CSRF token again and take it, whatever this page was
+ * rendered with. For a request the server refused as `CSRFTokenError`: the
+ * session was re-created under an open page (it lapsed overnight and the rep
+ * signed in again in another tab), so the token Frappe inlined here is the
+ * old session's and will be refused for as long as the page lives.
+ *
+ * Not what `probe()` does on its own: a page Frappe rendered keeps its token
+ * unless the server has said that token is no good.
+ * @returns {Promise<boolean>} true when the page now holds this user's current token
+ */
+export function renewToken() {
+  renewing ||= (async () => {
+    // not the answer of a probe already on its way: that one will not
+    // replace a token the page already has
+    if (probing) await probing.catch(() => {})
+    probing = runProbe({ renew: true }).finally(() => {
+      probing = null
+    })
+    return (await probing) && hasToken()
+  })().finally(() => {
+    renewing = null
+  })
+  return renewing
 }
 
 function offlineError() {

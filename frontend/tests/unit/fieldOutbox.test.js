@@ -1,8 +1,13 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  OUTBOX_MAX_AGE_DAYS,
   applyOutbox,
   describeEntry,
+  entryExpired,
   entryProblem,
+  failureCause,
   failureKind,
   newEntry,
   newEntryId,
@@ -144,6 +149,81 @@ describe('failureKind', () => {
       failureKind({ status: 409, exc_type: 'TimestampMismatchError' }),
     ).toBe('retry')
     expect(failureKind(undefined)).toBe('retry')
+  })
+})
+
+describe('an answer Frappe did not write', () => {
+  // a captive portal at a site gate, a firewall page, a proxy mid-deploy:
+  // frappe-ui's request gives these a status, no exc_type, and its
+  // placeholder for a message
+  const bare = (status) =>
+    Object.assign(new Error('/api/method/crm.api.offline.replay'), {
+      status,
+      messages: ['Internal Server Error'],
+    })
+
+  it.each([403, 404, 409, 417])(
+    'a bare %i is a wall to wait at, not a refusal',
+    (status) => {
+      expect(failureKind(bare(status))).toBe('retry')
+      expect(failureCause(bare(status))).toBe('between')
+    },
+  )
+
+  it('the same status with Frappe’s exception is the server’s verdict', () => {
+    expect(failureCause({ status: 403, exc_type: 'PermissionError' })).toBe(
+      'refused',
+    )
+    // whatever the status, when the exception is one of Frappe’s refusals
+    expect(failureCause({ status: 400, exc_type: 'ValidationError' })).toBe(
+      'refused',
+    )
+  })
+})
+
+describe('failureCause', () => {
+  it('names what stopped an entry that may still go', () => {
+    expect(failureCause(new TypeError('Failed to fetch'))).toBe('network')
+    expect(failureCause({ status: 400, exc_type: 'CSRFTokenError' })).toBe(
+      'token',
+    )
+    expect(failureCause({ status: 502 })).toBe('busy')
+    expect(failureCause({ status: 429 })).toBe('busy')
+    expect(
+      failureCause({ status: 409, exc_type: 'TimestampMismatchError' }),
+    ).toBe('busy')
+  })
+
+  it('tells the server falling over on an entry from the server being busy', () => {
+    expect(failureCause({ status: 500, exc_type: 'TypeError' })).toBe('fault')
+    expect(failureCause({ status: 500, exc_type: 'QueryDeadlockError' })).toBe(
+      'busy',
+    )
+    expect(failureCause({ status: 500 })).toBe('busy')
+  })
+})
+
+describe('entryExpired', () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const now = 1_800_000_000_000
+
+  it('is true only past the days the server keeps its receipts', () => {
+    const at = (days) => ({ captured_at: now - days * DAY })
+    expect(entryExpired(at(OUTBOX_MAX_AGE_DAYS - 1), now)).toBe(false)
+    expect(entryExpired(at(OUTBOX_MAX_AGE_DAYS + 1), now)).toBe(true)
+    expect(entryExpired({ captured_at: 'rubbish' }, now)).toBe(false)
+  })
+
+  it('counts the same days as the server', () => {
+    const source = readFileSync(
+      join(
+        process.cwd(),
+        '../crm/fcrm/doctype/crm_offline_receipt/crm_offline_receipt.py',
+      ),
+      'utf8',
+    )
+    const days = Number(source.match(/^RECEIPT_DAYS = (\d+)$/m)?.[1])
+    expect(days).toBe(OUTBOX_MAX_AGE_DAYS)
   })
 })
 

@@ -53,6 +53,21 @@
         >
           {{ row.error || __('The server did not accept this.') }}
         </div>
+        <!-- Still waiting, and the last try said why. Without this an entry
+             the server keeps failing on reads "Waiting to send" for ever,
+             and so does everything queued behind it. -->
+        <div
+          v-else-if="row.stalled"
+          class="mt-2.5 rounded-5 bg-surface-orange-1 px-3 py-2 text-p-sm text-ink-orange-9"
+          role="status"
+        >
+          {{ row.error }}
+          {{
+            row.attempts > 1
+              ? __('Tried {0} times. It will be tried again.', [row.attempts])
+              : __('It will be tried again.')
+          }}
+        </div>
         <div
           v-else
           class="mt-2 flex items-center gap-1.5 text-sm text-ink-gray-6"
@@ -145,6 +160,13 @@ function whenLabel(ms) {
   return when.day === 'today' ? when.time : `${when.date} ${when.time}`
 }
 
+/* The oldest entry still waiting, when its last try failed for a reason worth
+   saying. Everything else waiting is queued behind it: entries go in order. */
+const blocker = computed(() => {
+  const head = outbox.entries.find((entry) => entry.status === 'pending')
+  return head?.error && !head.sending ? head.id : null
+})
+
 // refused first: they are the ones that need a person
 const rows = computed(() =>
   [...outbox.entries]
@@ -158,6 +180,8 @@ const rows = computed(() =>
       status: entry.status,
       sending: !!entry.sending,
       error: entry.error,
+      attempts: entry.attempts ?? 0,
+      stalled: entry.status === 'pending' && entry.id === blocker.value,
       when: whenLabel(entry.captured_at),
       ...describeEntry(entry, names),
       state:
@@ -169,7 +193,9 @@ const rows = computed(() =>
               ? __(
                   'Not saved on this device. Keep the app open until it is sent.',
                 )
-              : __('Waiting to send'),
+              : blocker.value && entry.status === 'pending'
+                ? __('Waiting for an earlier entry to be sent')
+                : __('Waiting to send'),
       icon: entry.status === 'sent' ? LucideRefreshCw : LucideCloudUpload,
     })),
 )
