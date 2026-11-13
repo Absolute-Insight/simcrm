@@ -1,3 +1,5 @@
+import threading
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -291,3 +293,105 @@ class TestClient(FrappeTestCase):
 		self.assertEqual(v(out, "NoteID"), "guid-1")
 		sent = rput.call_args.kwargs["json"]
 		self.assertEqual(sent["CustomerName"], {"value": "Acme"})
+
+
+class TestSharedLogin(FrappeTestCase):
+	"""The API user has three concurrent logins; the workers share one token."""
+
+	def setUp(self):
+		frappe.cache().delete_value(KEY)
+		self.addCleanup(frappe.cache().delete_value, KEY)
+
+	def test_concurrent_callers_with_an_empty_cache_make_one_login(self):
+		"""The sweep logs out as it ends, with the pushes it queued about to start:
+		each worker found the cache empty and opened a login of its own."""
+		conf = frappe.local.conf
+		logins, tokens, errors = [], [], []
+		barrier = threading.Barrier(4)
+
+		def slow_login(*args, **kwargs):
+			logins.append(1)
+			time.sleep(0.3)  # the window the other callers arrive in
+			return _resp(200, {"access_token": f"tok{len(logins)}", "expires_in": 3600})
+
+		def caller():
+			# what a worker process has of its own: the site's config and an empty local cache
+			frappe.local.conf = conf
+			frappe.local.cache = {}
+			try:
+				barrier.wait(5)
+				tokens.append(AcumaticaClient(_settings())._token())
+			except Exception as e:  # reported by the assertion below, in the test's thread
+				errors.append(e)
+
+		with patch("crm.integrations.acumatica.client.requests.post", side_effect=slow_login):
+			threads = [threading.Thread(target=caller) for _ in range(4)]
+			for t in threads:
+				t.start()
+			for t in threads:
+				t.join(30)
+
+		self.assertEqual(errors, [])
+		self.assertEqual(len(logins), 1, f"{len(logins)} API logins opened for 4 concurrent callers")
+		self.assertEqual(tokens, ["tok1"] * 4)
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	def test_the_login_lock_is_held_for_the_token_request_and_released_after(self, rpost):
+		def lock():
+			return frappe.cache().lock(frappe.cache().make_key(f"{KEY}::login"), timeout=5)
+
+		held_during = []
+
+		def login(*args, **kwargs):
+			held_during.append(not lock().acquire(blocking=False))
+			return _resp(200, {"access_token": "tok", "expires_in": 3600})
+
+		rpost.side_effect = login
+		self.assertEqual(AcumaticaClient(_settings())._token(), "tok")
+		self.assertEqual(held_during, [True])
+		mine = lock()
+		self.assertTrue(mine.acquire(blocking=False), "the lock outlived the login")
+		mine.release()
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_a_401_uses_the_login_another_worker_has_already_made(self, rget, rpost):
+		"""Every worker holding the logged-out token gets a 401 at once. The first logs
+		in again; the rest used to drop that fresh token and open a login each."""
+		frappe.cache().set_value(KEY, "logged-out")
+
+		def answer(url, headers=None, **kwargs):
+			if headers["Authorization"] == "Bearer logged-out":
+				# another worker got its 401 first and has logged in again by now
+				frappe.cache().set_value(KEY, "fresh")
+				return _resp(401, {})
+			return _resp(200, [])
+
+		rget.side_effect = answer
+		AcumaticaClient(_settings()).get_page("Customer")
+
+		self.assertEqual(rget.call_args.kwargs["headers"]["Authorization"], "Bearer fresh")
+		rpost.assert_not_called()
+		self.assertEqual(frappe.cache().get_value(KEY, use_local_cache=False), "fresh")
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	@patch("crm.integrations.acumatica.client.requests.get")
+	def test_a_refused_token_is_dropped_even_when_the_new_login_fails(self, rget, rpost):
+		from crm.integrations.acumatica.client import AcumaticaAuthError
+
+		frappe.cache().set_value(KEY, "stale")
+		rget.return_value = _resp(401, {})
+		rpost.return_value = _resp(500, {})
+		with self.assertRaises(AcumaticaAuthError):
+			AcumaticaClient(_settings()).get_page("Customer")
+		self.assertIsNone(frappe.cache().get_value(KEY, use_local_cache=False))
+
+	@patch("crm.integrations.acumatica.client.requests.post")
+	def test_logout_drops_only_the_token_it_ended(self, rpost):
+		"""A logout that raced a new login must not empty the cache under it."""
+		frappe.cache().set_value(KEY, "newer")
+		c = AcumaticaClient(_settings())
+		c._forget_token("ended")
+		self.assertEqual(frappe.cache().get_value(KEY, use_local_cache=False), "newer")
+		c._forget_token("newer")
+		self.assertIsNone(frappe.cache().get_value(KEY, use_local_cache=False))

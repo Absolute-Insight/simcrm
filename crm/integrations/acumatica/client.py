@@ -1,8 +1,10 @@
 import hashlib
 import json
 import time
+from contextlib import contextmanager, suppress
 
 import frappe
+import redis
 import requests
 
 TOKEN_CACHE_PREFIX = "acumatica_token::"
@@ -23,6 +25,10 @@ def token_cache_key(base: str, client_id: str | None, username: str | None) -> s
 
 
 TIMEOUT = 30
+# One login at a time per API user (see AcumaticaClient._token). The lock outlives the
+# slowest token request, so a worker killed mid-login cannot hold the others out for
+# long; a caller that waited that long logs in for itself, as every caller used to.
+LOGIN_LOCK_SECONDS = TIMEOUT + 15
 # A SalesOrder PUT runs the tenant's whole order pipeline (pricing, tax, customisations)
 # and routinely outlasts a read. Timing out a write that then succeeds is the expensive
 # mistake: the deal never learns its OrderNbr, and the rep's retry makes a second order.
@@ -112,11 +118,59 @@ class AcumaticaClient:
 	def _cache_key(self):
 		return token_cache_key(self.base, self.settings.client_id, self.settings.username)
 
-	def _token(self, force=False):
-		if not force:
-			cached = frappe.cache().get_value(self._cache_key()) if self.shared_session else self._own_token
-			if cached:
+	def _cached_token(self):
+		if not self.shared_session:
+			return self._own_token
+		# From redis itself: this process's copy of the key cannot see the sync's
+		# logout, or the login another worker made since.
+		return frappe.cache().get_value(self._cache_key(), use_local_cache=False)
+
+	@contextmanager
+	def _login_lock(self):
+		"""Hold the shared login's lock, or go on without it once the wait is up.
+		Redis being away must not be what stops a push: unlocked is where this was."""
+		lock, held = None, False
+		try:
+			lock = frappe.cache().lock(
+				frappe.cache().make_key(f"{self._cache_key()}::login"),
+				timeout=LOGIN_LOCK_SECONDS,
+				blocking_timeout=LOGIN_LOCK_SECONDS,
+			)
+			held = lock.acquire()
+		except redis.exceptions.RedisError:
+			held = False
+		try:
+			yield
+		finally:
+			if held:
+				# expired under a slow login and taken by somebody else: theirs now
+				with suppress(redis.exceptions.RedisError):
+					lock.release()
+
+	def _token(self, rejected=None):
+		"""The token to send. ``rejected`` is one Acumatica just answered 401 to.
+
+		The API user has three concurrent logins (see ``logout``). Every caller that
+		found the cache empty used to open one of its own -- the sweep ends by logging
+		out, with the pushes it queued and a rep's quote click in flight -- and each
+		caller a 401 reached dropped the cached token, the one another worker had just
+		stored included. So a login is made under a lock and looked for again once the
+		lock is held: the first caller logs in, the rest use what it stored."""
+		cached = self._cached_token()
+		if cached and cached != rejected:
+			return cached
+		if not self.shared_session:
+			return self._login()
+		with self._login_lock():
+			cached = self._cached_token()
+			if cached and cached != rejected:
 				return cached
+			if cached:
+				# the refused token itself: a login that fails must not leave it behind
+				frappe.cache().delete_value(self._cache_key())
+			return self._login()
+
+	def _login(self):
 		s = self.settings
 		data = {
 			"grant_type": "password",
@@ -149,17 +203,19 @@ class AcumaticaClient:
 			self._own_token = token
 		return token
 
-	def _forget_token(self):
-		if self.shared_session:
-			frappe.cache().delete_value(self._cache_key())
-		else:
+	def _forget_token(self, token):
+		"""Drop ``token`` -- and only it: the shared key may hold a newer login by now."""
+		if not self.shared_session:
 			self._own_token = None
+		elif self._cached_token() == token:
+			frappe.cache().delete_value(self._cache_key())
 
 	def _request(self, method, url, timeout=None, **kw):
 		"""One call with a single re-auth retry on 401."""
 		timeout = timeout or (TIMEOUT if method == "get" else WRITE_TIMEOUT)
+		rejected = None
 		for attempt in (0, 1):
-			token = self._token(force=attempt == 1)
+			token = self._token(rejected=rejected)
 			headers = kw.pop("headers", {}) or {}
 			headers["Authorization"] = f"Bearer {token}"
 			branch = getattr(self.settings, "branch", None)
@@ -171,7 +227,8 @@ class AcumaticaClient:
 			fn = getattr(requests, method)
 			resp = fn(url, headers=headers, timeout=timeout, **dict(kw))
 			if resp.status_code == 401 and attempt == 0:
-				self._forget_token()
+				# _token drops it, unless another worker has already logged in again
+				rejected = token
 				continue
 			if resp.status_code >= 400:
 				raise AcumaticaError(
@@ -193,10 +250,10 @@ class AcumaticaClient:
 		that fails must not turn a finished sync or a successful ping into an error.
 		A client with its own session ends that one and leaves the shared token alone.
 		"""
-		token = frappe.cache().get_value(self._cache_key()) if self.shared_session else self._own_token
+		token = self._cached_token()
 		if not token:
 			return
-		self._forget_token()
+		self._forget_token(token)
 		try:
 			requests.post(
 				f"{self.base}/entity/auth/logout",
