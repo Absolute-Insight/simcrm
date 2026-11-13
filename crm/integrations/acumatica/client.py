@@ -26,9 +26,16 @@ def token_cache_key(base: str, client_id: str | None, username: str | None) -> s
 
 TIMEOUT = 30
 # One login at a time per API user (see AcumaticaClient._token). The lock outlives the
-# slowest token request, so a worker killed mid-login cannot hold the others out for
-# long; a caller that waited that long logs in for itself, as every caller used to.
-LOGIN_LOCK_SECONDS = TIMEOUT + 15
+# slowest token request -- requests applies TIMEOUT to the connect and to the read
+# separately -- so it cannot lapse under a login still in flight, and a worker killed
+# mid-login holds the others out for no longer than this.
+LOGIN_LOCK_SECONDS = 2 * TIMEOUT + 15
+# How long a caller waits for somebody else's login before giving up. A job can sit
+# out the whole of it. A request cannot: outbound._quote_write_timeout keeps
+# TIMEOUT + 15 back from the proxy's deadline for the token, and the wait and a login
+# of the caller's own (the holder's failed) both have to come out of that.
+LOGIN_WAIT_IN_JOB = LOGIN_LOCK_SECONDS
+LOGIN_WAIT_IN_REQUEST = 10
 # A SalesOrder PUT runs the tenant's whole order pipeline (pricing, tax, customisations)
 # and routinely outlasts a read. Timing out a write that then succeeds is the expensive
 # mistake: the deal never learns its OrderNbr, and the rep's retry makes a second order.
@@ -125,25 +132,32 @@ class AcumaticaClient:
 		# logout, or the login another worker made since.
 		return frappe.cache().get_value(self._cache_key(), use_local_cache=False)
 
+	@staticmethod
+	def _login_wait():
+		in_request = getattr(frappe.local, "request", None) is not None
+		return LOGIN_WAIT_IN_REQUEST if in_request else LOGIN_WAIT_IN_JOB
+
 	@contextmanager
 	def _login_lock(self):
-		"""Hold the shared login's lock, or go on without it once the wait is up.
-		Redis being away must not be what stops a push: unlocked is where this was."""
-		lock, held = None, False
+		"""Hold the shared login's lock; yields False when the wait ran out with
+		somebody else still holding it. With redis away there is no lock to take and
+		no token cache either: unlocked (True) is all there is, and where this was."""
+		lock, held = None, True
 		try:
 			lock = frappe.cache().lock(
 				frappe.cache().make_key(f"{self._cache_key()}::login"),
 				timeout=LOGIN_LOCK_SECONDS,
-				blocking_timeout=LOGIN_LOCK_SECONDS,
+				blocking_timeout=self._login_wait(),
 			)
 			held = lock.acquire()
 		except redis.exceptions.RedisError:
-			held = False
+			lock = None
 		try:
-			yield
+			yield held
 		finally:
-			if held:
-				# expired under a slow login and taken by somebody else: theirs now
+			if lock and held:
+				# expired under a login slower than any should be, and taken by
+				# somebody else: theirs now
 				with suppress(redis.exceptions.RedisError):
 					lock.release()
 
@@ -161,10 +175,17 @@ class AcumaticaClient:
 			return cached
 		if not self.shared_session:
 			return self._login()
-		with self._login_lock():
+		with self._login_lock() as held:
 			cached = self._cached_token()
 			if cached and cached != rejected:
 				return cached
+			if not held:
+				# Somebody else's login is still in flight -- the token endpoint is
+				# hanging. Logging in beside it is how several workers took the API
+				# user's three logins at once; nothing has been sent, so the caller
+				# fails cleanly and the next job, sweep or click tries again.
+				message = "Another worker is still logging in to Acumatica; try again in a minute"
+				raise AcumaticaAuthError(message, body=message)
 			if cached:
 				# the refused token itself: a login that fails must not leave it behind
 				frappe.cache().delete_value(self._cache_key())

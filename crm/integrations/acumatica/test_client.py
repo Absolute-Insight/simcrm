@@ -395,3 +395,49 @@ class TestSharedLogin(FrappeTestCase):
 		self.assertEqual(frappe.cache().get_value(KEY, use_local_cache=False), "newer")
 		c._forget_token("newer")
 		self.assertIsNone(frappe.cache().get_value(KEY, use_local_cache=False))
+
+	def _hold_the_login_lock(self):
+		theirs = frappe.cache().lock(frappe.cache().make_key(f"{KEY}::login"), timeout=30)
+		self.assertTrue(theirs.acquire(blocking=False))
+		self.addCleanup(theirs.release)
+
+	@patch("crm.integrations.acumatica.client.LOGIN_WAIT_IN_JOB", 0.3)
+	@patch("crm.integrations.acumatica.client.requests.post")
+	def test_a_caller_whose_wait_runs_out_does_not_log_in_beside_the_holder(self, rpost):
+		"""The token endpoint is hanging and one worker holds the lock on it. The ones
+		whose wait ran out used to log in for themselves -- concurrent logins again,
+		against the cap of three -- instead of failing and being retried."""
+		from crm.integrations.acumatica.client import AcumaticaAuthError
+
+		self._hold_the_login_lock()
+		with self.assertRaises(AcumaticaAuthError) as ctx:
+			AcumaticaClient(_settings())._token()
+		rpost.assert_not_called()
+		self.assertIn("still logging in", ctx.exception.detail())
+
+	@patch("crm.integrations.acumatica.client.LOGIN_WAIT_IN_JOB", 0.3)
+	@patch("crm.integrations.acumatica.client.requests.post")
+	def test_a_caller_whose_wait_runs_out_still_uses_a_login_that_landed(self, rpost):
+		self._hold_the_login_lock()
+		c = AcumaticaClient(_settings())
+		with patch.object(c, "_cached_token", side_effect=[None, "theirs"]):
+			self.assertEqual(c._token(), "theirs")
+		rpost.assert_not_called()
+
+	def test_a_request_waits_less_for_a_login_than_a_job(self):
+		"""A request is behind a proxy with a deadline; a job is not."""
+		from crm.integrations.acumatica import client
+
+		self.assertIsNone(getattr(frappe.local, "request", None))
+		self.assertEqual(AcumaticaClient._login_wait(), client.LOGIN_WAIT_IN_JOB)
+		frappe.local.request = MagicMock()
+		self.addCleanup(delattr, frappe.local, "request")
+		self.assertEqual(AcumaticaClient._login_wait(), client.LOGIN_WAIT_IN_REQUEST)
+
+	def test_the_lock_outlasts_the_slowest_login_and_a_request_stays_inside_its_token_budget(self):
+		from crm.integrations.acumatica import client
+
+		# requests applies TIMEOUT to the connect and to the read separately
+		self.assertGreater(client.LOGIN_LOCK_SECONDS, 2 * client.TIMEOUT)
+		# what outbound._quote_write_timeout keeps back for the token: TIMEOUT + 15
+		self.assertLessEqual(client.LOGIN_WAIT_IN_REQUEST + client.TIMEOUT, client.TIMEOUT + 15)
