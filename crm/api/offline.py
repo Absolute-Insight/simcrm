@@ -133,27 +133,67 @@ def handshake() -> dict:
 
 @frappe.whitelist()
 @sales_user_only
-def get_pack(known_hash: str | None = None) -> dict:
+def get_pack(known_hash: str | None = None, known_sections: dict | str | None = None) -> dict:
 	"""Everything the caller's phone needs to work a site visit offline.
 
 	Pass the ``hash`` of the pack already held to be told ``unchanged`` instead
 	of being sent the same rows again.
+
+	Pass its ``sections`` too -- the hash of each list, as the last answer gave
+	them -- and a list that has not changed is named in ``kept`` instead of
+	being sent. Everything a rep does on the phone changes the pack, so the
+	whole-pack hash alone meant one note cost a download of every customer,
+	contact and deal. A list is left out only when its hash here equals the
+	one the phone says it holds: the phone gets exactly the rows it would have
+	been sent, from its own copy. The rows are still read to know that; this
+	saves the line, not the queries.
 	"""
 	body = _pack_body()
-	digest = hashlib.sha256(
-		json.dumps(body, sort_keys=True, default=str, separators=(",", ":")).encode()
-	).hexdigest()
+	sections = {key: _digest(rows) for key, rows in body.items()}
+	digest = _digest(sections)
 
 	envelope = {
 		"user": frappe.session.user,
 		"hash": digest,
+		"sections": sections,
 		"generated_at": _stamp(frappe.utils.now_datetime()),
 		"today": str(frappe.utils.getdate()),
 		"max_age_days": PACK_MAX_AGE_DAYS,
 	}
 	if known_hash and known_hash == digest:
 		return {**envelope, "unchanged": True}
-	return {**envelope, "unchanged": False, **body}
+	held = _held_sections(known_sections)
+	kept = sorted(key for key in body if held.get(key) == sections[key])
+	return {
+		**envelope,
+		"unchanged": False,
+		"kept": kept,
+		**{key: rows for key, rows in body.items() if key not in kept},
+	}
+
+
+def _digest(value) -> str:
+	return hashlib.sha256(
+		json.dumps(value, sort_keys=True, default=str, separators=(",", ":")).encode()
+	).hexdigest()
+
+
+def _held_sections(known_sections) -> dict[str, str]:
+	"""The list hashes a phone says it holds, as text and nothing else.
+
+	Anything unreadable is "holds nothing", which costs that phone a full
+	download and no one anything else.
+	"""
+	if isinstance(known_sections, str):
+		if len(known_sections) > MAX_PAYLOAD_BYTES:
+			return {}
+		try:
+			known_sections = json.loads(known_sections or "{}")
+		except (ValueError, RecursionError):
+			return {}
+	if not isinstance(known_sections, dict):
+		return {}
+	return {key: value for key, value in known_sections.items() if isinstance(value, str)}
 
 
 def _pack_body() -> dict:

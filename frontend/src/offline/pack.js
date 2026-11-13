@@ -98,10 +98,19 @@ export function syncPack() {
     packState.syncing = true
     const user = getSessionUser()
     const startedAt = Date.now()
+    // the pack the hashes below describe: what the answer leaves out is
+    // taken from this one, whatever `fieldPack` has become by then
+    const held = fieldPack.value
     try {
-      const answer = await call('crm.api.offline.get_pack', {
-        known_hash: fieldPack.value?.hash || undefined,
-      })
+      let answer = await askForPack(held)
+      let pack = packFrom(answer, held)
+      if (!pack) {
+        // The server left out a list this device turns out not to hold. It
+        // only does that for a hash this device sent, so something is wrong
+        // with the copy here: ask again for all of it.
+        answer = await askForPack(null)
+        pack = packFrom(answer, null)
+      }
       // A sync that outlived a logout must not write the old user's rows back.
       // The owner key is what a logout clears, in a shell too -- where the
       // session user is read from the page and would still say the old name.
@@ -113,13 +122,6 @@ export function syncPack() {
         return false
       }
       const syncedAt = Date.now()
-      const pack = answer.unchanged
-        ? {
-            ...fieldPack.value,
-            generated_at: answer.generated_at,
-            today: answer.today,
-          }
-        : answer
       fieldPack.value = pack
       packState.syncedAt = syncedAt
       packState.maxAgeDays = pack.max_age_days
@@ -151,6 +153,40 @@ export function syncPack() {
     syncing = null
   })
   return syncing
+}
+
+function askForPack(held) {
+  return call('crm.api.offline.get_pack', {
+    known_hash: held?.hash || undefined,
+    // one note changes the notes: the lists that did not change stay where
+    // they are instead of coming down the line again
+    known_sections: held?.sections || undefined,
+  })
+}
+
+/**
+ * The pack an answer amounts to: itself, or what is held when nothing
+ * changed, or itself with the lists the server left out because this device
+ * already holds them (`kept`) put back from `held` -- the pack whose hashes
+ * were sent. Null when something left out is not there to put back.
+ */
+function packFrom(answer, held) {
+  const { kept = [], ...pack } = answer
+  if (answer.unchanged) {
+    if (!held) return null
+    return {
+      ...held,
+      sections: answer.sections ?? held.sections,
+      generated_at: answer.generated_at,
+      today: answer.today,
+    }
+  }
+  for (const key of kept) {
+    if (!held || !(key in held)) return null
+    if (held.sections?.[key] !== answer.sections?.[key]) return null
+    pack[key] = held[key]
+  }
+  return pack
 }
 
 /**

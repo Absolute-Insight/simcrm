@@ -304,6 +304,58 @@ class FieldPackTest(IntegrationTestCase):
 		self.assertFalse(again["unchanged"])
 		self.assertNotEqual(again["hash"], first["hash"])
 
+	def test_a_list_already_held_is_not_sent_again(self):
+		# a note written on the phone changes the notes, not the 3000 customers
+		first = self.pack()
+		self.assertEqual(
+			set(first["sections"]),
+			{
+				"rules",
+				"plans",
+				"sheets",
+				"organizations",
+				"contacts",
+				"deals",
+				"history",
+				"notes",
+				"tasks",
+				"truncated",
+			},
+		)
+		self.contact("Naledi", self.mine)
+		again = self.pack(known_hash=first["hash"], known_sections=first["sections"])
+		self.assertFalse(again["unchanged"])
+		self.assertNotEqual(again["hash"], first["hash"])
+		self.assertTrue(any("Naledi" in (row.get("full_name") or "") for row in again["contacts"]))
+		self.assertNotIn("organizations", again)
+		self.assertNotIn("deals", again)
+		self.assertIn("organizations", again["kept"])
+		self.assertNotIn("contacts", again["kept"])
+		self.assertEqual(again["sections"]["organizations"], first["sections"]["organizations"])
+		self.assertNotEqual(again["sections"]["contacts"], first["sections"]["contacts"])
+
+	def test_a_list_is_only_left_out_for_a_phone_that_holds_exactly_it(self):
+		first = self.pack()
+		self.org("Newly mine", REP)
+		for claim in (
+			None,
+			"",
+			"not json",
+			"[1, 2]",
+			{"organizations": first["sections"]["organizations"]},
+			{"organizations": {"$ne": ""}, "contacts": ["x"], "no_such_list": "x"},
+			frappe.as_json({"organizations": "0" * 64}),
+		):
+			again = self.pack(known_hash=first["hash"], known_sections=claim)
+			self.assertIn("organizations", again, claim)
+			self.assertNotIn("organizations", again["kept"], claim)
+
+	def test_the_hash_of_the_whole_moves_with_any_of_its_lists(self):
+		first = self.pack()
+		same = self.pack()
+		self.assertEqual(first["hash"], same["hash"])
+		self.assertEqual(first["sections"], same["sections"])
+
 	def test_the_pack_names_its_owner_and_its_shelf_life(self):
 		pack = self.pack()
 		self.assertEqual(pack["user"], REP)
