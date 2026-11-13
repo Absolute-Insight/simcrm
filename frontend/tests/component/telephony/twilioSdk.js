@@ -20,14 +20,26 @@ export class FakeCall extends Emitter {
     super()
     this.parameters = parameters
     this.muted = false
+    this.state = 'open'
+    this.ignored = false
+  }
+  // 'pending', 'connecting', 'ringing', 'open' or 'closed' in the real SDK
+  status() {
+    return this.state
+  }
+  // Stops this Device ringing for the call without refusing the caller.
+  ignore() {
+    this.ignored = true
   }
   accept() {
     return Promise.resolve()
   }
   reject() {
+    this.state = 'closed'
     this.emit('reject')
   }
   disconnect() {
+    this.state = 'closed'
     this.emit('disconnect')
   }
   isMuted() {

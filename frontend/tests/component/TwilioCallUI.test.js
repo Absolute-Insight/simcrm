@@ -390,7 +390,28 @@ describe('TwilioCallUI: one Device for as long as it is mounted', () => {
     expect(devices[0].state).toBe('destroyed')
   })
 
-  it('destroys the kept Device when the call errors out, and only once', async () => {
+  it('keeps the call up through an error that did not end it', async () => {
+    const first = mountCallUI()
+    first.vm.setup()
+    await flush()
+    const [leg] = await ring({ From: '+27115550001', CallSid: 'CA-LIVE' })
+    button(first.el, 'label', 'Accept').click()
+    await flush()
+    first.unmount()
+    const second = mountCallUI()
+    await flush()
+
+    // the SDK raises `error` for a message or a DTMF tone that failed; the
+    // call is still open, and destroying its Device would hang up on the rep
+    leg.emit('error', new Error('31209 message failed to send'))
+    await flush()
+    expect(devices[0].state).toBe('unregistered')
+    expect(twilioHandover.current?.call).toBe(leg)
+    const hangUp = button(second.el, 'tooltip', 'Hang Up')
+    expect(hangUp && visible(hangUp)).toBe(true)
+  })
+
+  it('destroys the kept Device once when the call ends, error or not', async () => {
     const w = mountCallUI()
     w.vm.setup()
     await flush()
@@ -402,11 +423,48 @@ describe('TwilioCallUI: one Device for as long as it is mounted', () => {
     let destroyed = 0
     const destroy = devices[0].destroy.bind(devices[0])
     devices[0].destroy = () => (destroyed++, destroy())
+    // an error that closed the call, then the disconnect that follows it
+    leg.state = 'closed'
     leg.emit('error', new Error('31005 connection error'))
-    leg.emit('disconnect')
     expect(devices[0].state).toBe('destroyed')
+    leg.emit('disconnect')
     expect(destroyed).toBe(1)
     expect(twilioHandover.current).toBe(null)
+  })
+
+  it('does not let a second caller take the popup from a handed-over call', async () => {
+    const first = mountCallUI()
+    first.vm.setup()
+    await flush()
+    const [leg] = await ring({ From: '+27115550001', CallSid: 'CA-LIVE' })
+    button(first.el, 'label', 'Accept').click()
+    await flush()
+    first.unmount()
+    const second = mountCallUI()
+    second.vm.setup()
+    await flush()
+
+    // only the new popup's Device is registered, and it has no call of its
+    // own, so the SDK surfaces the second caller to it
+    const [other] = await ring({ From: '+27115550002', CallSid: 'CA-2ND' })
+    expect(other.ignored).toBe(true)
+    expect(second.el.textContent).toContain('Alice First')
+    expect(button(second.el, 'label', 'Accept')).toBeUndefined()
+
+    // the controls still act on the call the rep is on
+    second.vm.$.setupState.toggleMute()
+    expect(leg.isMuted()).toBe(true)
+    expect(other.isMuted()).toBe(false)
+    button(second.el, 'tooltip', 'Hang Up').click()
+    await flush()
+    expect(leg.status()).toBe('closed')
+    expect(other.status()).toBe('open')
+
+    // and once it is over, the next caller rings as usual
+    const [next] = await ring({ From: '+27115550002', CallSid: 'CA-3RD' })
+    expect(next.ignored).toBe(false)
+    const accept = button(second.el, 'label', 'Accept')
+    expect(accept && visible(accept)).toBe(true)
   })
 
   it('refreshes the token of a Device kept for a live call without throwing', async () => {

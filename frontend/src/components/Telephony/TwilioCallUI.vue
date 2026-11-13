@@ -363,6 +363,17 @@ function toggleMute() {
 }
 
 function handleIncomingCall(call) {
+  // A call picked up from the popup the layout swapped out is on that
+  // popup's Device, not this one, so the SDK's own busy guard -- a Device
+  // with a call up does not surface another -- does not hold here. Without
+  // this the second caller would take the popup, and the call the rep is on
+  // would be left with no Hang up or Mute. Ignored, as the SDK would: the
+  // caller rings on, to voicemail or the rep's other devices.
+  if (_call && twilioHandover.current?.call === _call) {
+    log.value = `Busy: ignored incoming call from ${call.parameters.From}`
+    call.ignore?.()
+    return
+  }
   log.value = `Incoming call from ${call.parameters.From}`
   phoneNumber.value = call.parameters.From
 
@@ -599,11 +610,16 @@ onBeforeUnmount(() => {
         if (twilioHandover.current?.call === call) twilioHandover.current = null
         orphan.destroy()
       }
-      // every way a call is over, `error` included: a Device left behind
-      // here is one nothing will ever destroy
-      for (const event of ['disconnect', 'cancel', 'reject', 'error']) {
+      for (const event of ['disconnect', 'cancel', 'reject']) {
         call.on(event, end)
       }
+      // `error` is not the end of a call: the SDK raises it for a message
+      // that did not send, a DTMF tone, some media trouble, and the call
+      // goes on. Only an error that left the call closed ends it here --
+      // destroying the Device on any other would hang up on the rep.
+      call.on('error', () => {
+        if (call.status?.() === 'closed') end()
+      })
     }
   }
   device?.destroy()
