@@ -101,8 +101,12 @@
             v-html="formatWhatsAppMessage(whatsapp.message)"
           />
           <div v-else-if="whatsapp.content_type == 'image'">
+            <!-- lazy: a long chat used to fetch every photo in it on open -->
             <img
               :src="whatsapp.attach"
+              height="160"
+              loading="lazy"
+              decoding="async"
               class="h-40 cursor-pointer rounded-[var(--v-radius-card)]"
               @click="() => openFileInAnotherTab(whatsapp.attach)"
             />
