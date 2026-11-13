@@ -107,6 +107,74 @@ class UnlinkOneContactTest(IntegrationTestCase):
 		self.assertEqual(len(self.contacts_left()), 3)
 
 
+class UnlinkContactReportsWhatItDidTest(IntegrationTestCase):
+	"""The contact branch of the unlink was hard-coded to success: a document
+	that holds the contact some other way was reported unlinked and left as it
+	was, the modal closed, and the contact still refused to delete."""
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		self.contact = make_contact("Referenced")
+		self.other = make_contact("Bystander")
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def make(self, doctype: str, contact: str, **fields):
+		return frappe.get_doc(
+			{
+				"doctype": doctype,
+				"title": "About the contact",
+				"reference_doctype": "Contact",
+				"reference_docname": contact,
+				**fields,
+			}
+		).insert(ignore_permissions=True)
+
+	def unlink(self, *docs):
+		return frappe.call(
+			"crm.api.doc.remove_linked_doc_reference",
+			items=[{"doctype": doc.doctype, "docname": doc.name} for doc in docs],
+			remove_contact=True,
+			contact=self.contact,
+		)
+
+	def reference_of(self, doc) -> tuple:
+		return frappe.db.get_value(doc.doctype, doc.name, ["reference_doctype", "reference_docname"])
+
+	def test_a_task_and_a_note_that_reference_the_contact_are_really_unlinked(self):
+		task, note = self.make("CRM Task", self.contact), self.make("FCRM Note", self.contact)
+
+		result = self.unlink(task, note)
+
+		self.assertEqual(result, {"unlinked": [task.name, note.name], "skipped": []})
+		for doc in (task, note):
+			self.assertFalse(any(self.reference_of(doc)), doc.doctype)
+
+	def test_a_document_that_does_not_hold_the_contact_is_not_reported_unlinked(self):
+		# it references another contact: nothing of this contact's to clear
+		task = self.make("CRM Task", self.other)
+
+		result = self.unlink(task)
+
+		self.assertEqual(
+			result, {"unlinked": [], "skipped": [{"docname": task.name, "reason": "not_unlinkable"}]}
+		)
+		self.assertEqual(self.reference_of(task), ("Contact", self.other))
+
+	def test_a_document_that_will_not_save_is_not_reported_unlinked(self):
+		task = self.make("CRM Task", self.contact)
+
+		with patch(
+			"frappe.model.document.Document.save", side_effect=frappe.ValidationError("will not save")
+		):
+			result = self.unlink(task)
+
+		self.assertEqual(
+			result, {"unlinked": [], "skipped": [{"docname": task.name, "reason": "not_unlinkable"}]}
+		)
+
+
 class BulkDeleteIsPerRecordTest(IntegrationTestCase):
 	"""Unlink-then-delete ran as two passes: every record's links first, then
 	frappe's delete loop, which commits after each success and rolls back after

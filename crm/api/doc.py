@@ -1056,27 +1056,52 @@ def remove_doc_link(doctype, docname) -> bool:
 	return True
 
 
-def remove_contact_link(doctype, docname, contact):
-	"""Take one contact off a document that lists it.
+def remove_contact_link(doctype, docname, contact) -> bool:
+	"""Take one contact off a document that lists it. Returns whether a link
+	was actually removed.
 
 	frappe's get_linked_docs reports a CRM Contacts child row as its parent deal,
 	so this is handed the deal and only ``contact`` says which row is going. It
 	used to clear the whole table and the ``contact`` field, so deleting one of a
 	deal's three contacts stripped all three -- and with no primary contact left,
 	the deal's email, mobile and phone too.
+
+	A task, note or call log points at a contact the other way, through its
+	``reference_doctype`` / ``reference_docname`` pair. That reference is cleared
+	as well, as :func:`remove_doc_link` clears it for any other record: left
+	alone, the save was a no-op the caller reported as "unlinked", and the
+	contact then refused to delete over a link the modal said was gone.
 	"""
 	if not doctype or not docname or not contact:
-		return
+		return False
 
 	try:
 		linked_doc_data = frappe.get_doc(doctype, docname)
+		changed = False
 		if linked_doc_data.get("contact") == contact:
 			linked_doc_data.contact = None
+			changed = True
 		if linked_doc_data.meta.has_field("contacts"):
-			linked_doc_data.contacts = [row for row in linked_doc_data.contacts if row.contact != contact]
+			kept = [row for row in linked_doc_data.contacts if row.contact != contact]
+			if len(kept) != len(linked_doc_data.contacts):
+				linked_doc_data.contacts = kept
+				changed = True
+		if (
+			_has_reference_fields(doctype)
+			and linked_doc_data.get("reference_doctype") == "Contact"
+			and linked_doc_data.get("reference_docname") == contact
+		):
+			linked_doc_data.update({"reference_doctype": "", "reference_docname": ""})
+			changed = True
+		if not changed:
+			# it holds the contact in some field of its own: nothing here to clear
+			return False
 		linked_doc_data.save(ignore_permissions=True)
-	except (frappe.DoesNotExistError, frappe.ValidationError):
-		pass
+	except frappe.DoesNotExistError:
+		pass  # gone already: nothing links the contact any more
+	except frappe.ValidationError:
+		return False
+	return True
 
 
 @frappe.whitelist()
@@ -1111,8 +1136,7 @@ def remove_linked_doc_reference(
 
 		try:
 			if remove_contact:
-				remove_contact_link(item["doctype"], item["docname"], contact)
-				unlinked_here = True
+				unlinked_here = remove_contact_link(item["doctype"], item["docname"], contact)
 			else:
 				unlinked_here = remove_doc_link(item["doctype"], item["docname"])
 
@@ -1120,8 +1144,10 @@ def remove_linked_doc_reference(
 				frappe.delete_doc(item["doctype"], item["docname"])
 			elif not unlinked_here:
 				# Nothing was cleared -- the document links the record through a field
-				# of its own -- so "unlinked" would be the false success that left the
-				# modal closed over a link that is still there.
+				# of its own, or would not save without it -- so "unlinked" would be
+				# the false success that left the modal closed over a link that is
+				# still there. Both branches answer for themselves: the contact one
+				# used to be hard-coded to success.
 				skipped.append({"docname": item["docname"], "reason": "not_unlinkable"})
 				continue
 		except (frappe.DoesNotExistError, frappe.ValidationError) as exc:
