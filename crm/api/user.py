@@ -259,6 +259,7 @@ def update_user_role(user: str, new_role: str):
 	if new_role not in ["System Manager", "Sales Manager", "Sales User"]:
 		frappe.throw(_("Cannot assign this role"))
 
+	_refuse_standard_user(user)
 	user_doc = frappe.get_doc("User", user)
 	target_roles = [d.role for d in user_doc.roles]
 	target_is_system_manager = "System Manager" in target_roles
@@ -325,6 +326,7 @@ def remove_crm_roles_from_user(user: str):
 	if user == frappe.session.user:
 		frappe.throw(_("You cannot remove yourself."), frappe.PermissionError)
 
+	_refuse_standard_user(user)
 	user_doc = frappe.get_doc("User", user)
 	roles = [d.role for d in user_doc.roles]
 
@@ -414,6 +416,21 @@ def rename_user_keyed_row(doctype: str, old: str, new: str) -> None:
 			ignore_permissions=True,
 			show_alert=False,
 			rebuild_search=False,
+		)
+
+
+def _refuse_standard_user(user: str) -> None:
+	"""Administrator and Guest are not CRM users to be given a role or offboarded.
+
+	Refused by name. The guards below read the target's Has Role rows, and
+	Administrator's are not guaranteed to hold System Manager on every install
+	(see ``crm.api.session``): with that row absent a Sales Manager passed every
+	one of them, and ``ignore_permissions`` on the save skips frappe's own rule
+	that only Administrator edits a standard user.
+	"""
+	if user in frappe.STANDARD_USERS:
+		frappe.throw(
+			_("{0} is a system account and cannot be changed here.").format(user), frappe.PermissionError
 		)
 
 
