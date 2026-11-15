@@ -63,7 +63,7 @@ services:
     # docker resolves the digest and ignores the tag. Bumping it is a deliberate
     # act with a backup in front of it -- see "Bumping the database image" in
     # README.md.
-    image: mariadb:10.6.28@sha256:553351e202c5f01c9e703d7d1d2b037a0aedb43c4fed79b3615d9183655f02c5
+    image: mariadb:10.6.28@sha256:c7d726a1c0d29e486a1ab4ef0c76c75431a11428e76c50e99ba32106cea04114
     logging: *logging
     restart: unless-stopped
     healthcheck:
