@@ -14,11 +14,11 @@ jobs:
         runs-on: ubuntu-latest
 
         steps:
-            - uses: actions/checkout@v7
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
                   fetch-depth: 200
 
-            - uses: actions/setup-node@v7
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version: "24"
                   check-latest: true
@@ -38,19 +38,18 @@ jobs:
             PYTHONDONTWRITEBYTECODE: "1"
 
         steps:
-            - uses: actions/checkout@v7
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
             - name: Set up Python
-              uses: actions/setup-python@v7
+              uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
               with:
                   python-version: "3.14"
                   cache: pip
 
-            - name: Install Semgrep
-              run: pip install --upgrade semgrep
-
-            - name: Download Semgrep rules
-              run: git clone --depth 1 https://github.com/frappe/semgrep-rules.git frappe-semgrep-rules
+            # semgrep and frappe's rules, both pinned -- the pins and the reason
+            # are in the helper, which semgrep-full-scan.yml shares.
+            - name: Install Semgrep and fetch the rules
+              run: bash .github/helper/install-semgrep.sh frappe-semgrep-rules
 
             - name: Run Semgrep rules
               run: semgrep ci --config ./frappe-semgrep-rules/rules --config r/python.lang.correctness
@@ -64,15 +63,15 @@ jobs:
             PYTHONDONTWRITEBYTECODE: "1"
 
         steps:
-            - uses: actions/checkout@v7
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
             - name: Set up Python
-              uses: actions/setup-python@v7
+              uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
               with:
                   python-version: "3.14"
                   cache: pip
 
-            - uses: actions/setup-node@v7
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version: "24"
 
@@ -80,6 +79,6 @@ jobs:
               run: cd frontend && yarn install
 
             - name: Run Pre-commit
-              uses: pre-commit/action@v3.0.1
+              uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
               with:
                   extra_args: --all-files

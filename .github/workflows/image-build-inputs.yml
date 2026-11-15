@@ -26,6 +26,10 @@ on:
       - ".github/helper/set-image-tags.sh"
       - ".github/helper/test-set-image-tags.sh"
       - ".github/helper/test-promote-image.sh"
+      - ".github/helper/release-bump-parent.py"
+      - ".github/helper/test-release-bump-parent.sh"
+      - ".github/helper/stage-app-source.sh"
+      - ".github/helper/test-deploy-compose.sh"
   workflow_dispatch:
 
 permissions:
@@ -42,7 +46,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Clone
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Load image pins
         run: |
@@ -54,7 +58,7 @@ jobs:
           done
 
       - name: Check out frappe_docker at the pin
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: frappe/frappe_docker
           path: builds
@@ -68,6 +72,25 @@ jobs:
 
       - name: Fetch the pinned frappe_whatsapp
         run: bash scripts/fetch-frappe-whatsapp.sh builds/app-src/frappe_whatsapp
+
+      - name: Stage this commit as the app source
+        # The same call builds.yml makes. The image is built from the commit
+        # that was checked out and verified, not from wherever its branch
+        # points by the time the Containerfile runs -- and the script that
+        # arranges that is otherwise first run by a release.
+        run: |
+          set -euo pipefail
+          bash .github/helper/stage-app-source.sh builds/app-src/crm "$GITHUB_REF_NAME" "$GITHUB_SHA"
+          # What bench will do with it inside the builder.
+          git clone --quiet --depth 1 --branch "$GITHUB_REF_NAME" builds/app-src/crm "$RUNNER_TEMP/bench-clone"
+          [ "$(git -C "$RUNNER_TEMP/bench-clone" rev-parse HEAD)" = "$GITHUB_SHA" ]
+          # And a checkout that is not the commit asked for is refused. Its
+          # output is dropped: the refusal prints ::error:: lines, which would
+          # show as annotations on a step that passed.
+          if bash .github/helper/stage-app-source.sh "$RUNNER_TEMP/wrong/crm" x 0000000000000000000000000000000000000000 >/dev/null 2>&1; then
+            echo "::error::stage-app-source.sh staged a commit other than the one it was told to"
+            exit 1
+          fi
 
       - name: Check the builder image can build the pinned frappe
         run: bash .github/helper/check-build-toolchain.sh builds/frappe-src
@@ -108,6 +131,20 @@ jobs:
           done
           echo "deploy/docker-compose.yml parses with only the required keys set."
 
+      - name: deploy/ keeps the properties a production host relies on
+        # Config only -- nothing is started. The memory ceilings and what
+        # sits under them, the backup healthchecks, what the offsite copy
+        # leaves out, how create-site tells a site from a directory; and a
+        # syntax check of every script embedded in the file, which are
+        # strings in YAML that no linter otherwise reads before a host does.
+        run: bash .github/helper/test-deploy-compose.sh
+
+      - name: Only a pure version bump inherits its parent's checks
+        # The build guard's one exemption, decided on the diff. builds.yml
+        # cannot be run from a PR, so this is where that rule is exercised
+        # before a release depends on it.
+        run: bash .github/helper/test-release-bump-parent.sh
+
       - name: Release tagging promotes what it verified
         # builds.yml runs only on a push to main or a tag, so until this
         # existed the promotion step could not be executed anywhere but a
@@ -117,10 +154,13 @@ jobs:
         # list, so a release would have published the version tag and
         # silently left `stable` behind. These checks caught it.
         #
-        # DRY_RUN, so nothing is pushed and no registry credentials are
-        # needed. What it covers is the part that was wrong: which tags
-        # get promoted, that a non-main ref never promotes `stable`, and
-        # that malformed input fails loudly instead of becoming --tag "".
+        # Nothing is pushed and no registry credentials are needed: the
+        # checks run in DRY_RUN or against a fake `docker`. What they
+        # cover is the part that was wrong: which tags get promoted, that
+        # a non-main ref never promotes `stable`, that malformed input
+        # fails loudly instead of becoming --tag "" -- and the two
+        # refusals: an existing vX.Y.Z tag is never re-pointed, and
+        # `stable` never moves to an older release.
         run: bash .github/helper/test-promote-image.sh
 
       - name: Only a tag build publishes :stable

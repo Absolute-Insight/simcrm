@@ -23,7 +23,9 @@ ERPNEXT_BRANCH="${ERPNEXT_BRANCH:-develop}"
 # shellcheck source=../../scripts/frappe-pin.env
 source "${GITHUB_WORKSPACE}/scripts/frappe-pin.env"
 
-pip install frappe-bench
+# Pinned in scripts/frappe-pin.env (sourced above), beside the frappe it
+# builds; the reason is there.
+pip install "frappe-bench==${FRAPPE_BENCH_VERSION}"
 bash "${GITHUB_WORKSPACE}/scripts/fetch-frappe.sh" ~/frappe
 bench init --skip-assets --frappe-path ~/frappe --frappe-branch "${FRAPPE_PIN_BRANCH}" --python "$(which python)" frappe-bench
 
@@ -45,8 +47,23 @@ mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "GRANT ALL PRIVILEGES ON 
 
 mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "FLUSH PRIVILEGES"
 
+# wkhtmltopdf 0.12.3, from a commit rather than from `master`, and checked
+# before it is unpacked: this is a binary that ends up on PATH as root's
+# install, fetched from a branch anyone with push to that repository could
+# move. The digest is of the file at that commit (git blob 517ef5b0).
+WKHTMLTOX_COMMIT="afcd096a36e83d5c9ce71c8d17be292e079b8014"
+WKHTMLTOX_FILE="wkhtmltox-0.12.3_linux-generic-amd64.tar.xz"
+WKHTMLTOX_SHA256="40bc014d0754ea44bb90e733f03e7c92862f7445ef581e3599ecc00711dddcaa"
+
 install_whktml() {
-    wget -O /tmp/wkhtmltox.tar.xz https://github.com/frappe/wkhtmltopdf/raw/master/wkhtmltox-0.12.3_linux-generic-amd64.tar.xz
+    wget -O /tmp/wkhtmltox.tar.xz "https://github.com/frappe/wkhtmltopdf/raw/${WKHTMLTOX_COMMIT}/${WKHTMLTOX_FILE}"
+    if ! echo "${WKHTMLTOX_SHA256}  /tmp/wkhtmltox.tar.xz" | sha256sum -c - >/dev/null; then
+        # This function runs in the background, so it cannot fail the script;
+        # it can refuse to install, and say so where the log will show it.
+        echo "::error::wkhtmltox.tar.xz does not match its pinned sha256; wkhtmltopdf NOT installed"
+        rm -f /tmp/wkhtmltox.tar.xz
+        return 1
+    fi
     tar -xf /tmp/wkhtmltox.tar.xz -C /tmp
     sudo mv /tmp/wkhtmltox/bin/wkhtmltopdf /usr/local/bin/wkhtmltopdf
     sudo chmod o+x /usr/local/bin/wkhtmltopdf
