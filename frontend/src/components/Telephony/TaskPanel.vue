@@ -84,8 +84,11 @@ import { usersStore } from '@/stores/users'
 import { taskStatusOptions, taskPriorityOptions, getFormat } from '@/utils'
 import { Dropdown, Tooltip, DateTimePicker } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
-import { TextEditor } from 'frappe-ui/experimental'
+import { lazyTextEditor } from '@/components/Controls/LazyTextEditor'
 import { toRef } from 'vue'
+
+// fetched when the panel is first drawn: the call window is part of the shell
+const TextEditor = lazyTextEditor({ height: '150px' })
 
 const props = defineProps({
   task: {

@@ -128,8 +128,11 @@ import CheckSwitch from '@/components/ui/CheckSwitch.vue'
 import { describeError } from '@/utils/describeError'
 import { FormControl, toast, createResource } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
-import { TextEditor } from 'frappe-ui/experimental'
+import { lazyTextEditor } from '@/components/Controls/LazyTextEditor'
 import { computed, inject, onMounted, ref } from 'vue'
+
+// fetched when a template is first opened: Settings is part of the shell
+const TextEditor = lazyTextEditor({ height: '180px' })
 
 const props = defineProps({
   templateData: { type: Object, required: true },
