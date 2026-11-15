@@ -4,7 +4,7 @@ services:
     # moving tag, and a dev bench silently running a different engine than
     # production is how a "works on my machine" schema bug gets shipped. Bump
     # both together -- see "Bumping the database image" in deploy/README.md.
-    image: mariadb:10.6.28@sha256:553351e202c5f01c9e703d7d1d2b037a0aedb43c4fed79b3615d9183655f02c5
+    image: mariadb:10.6.28@sha256:c7d726a1c0d29e486a1ab4ef0c76c75431a11428e76c50e99ba32106cea04114
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
