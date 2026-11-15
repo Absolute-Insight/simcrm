@@ -163,7 +163,8 @@ describe('EventModal save re-entry', () => {
   }
   async function release() {
     for (let i = 0; i < 20; i++) {
-      while (S.gates.length) S.gates.shift()({ name: 'CT-1' })
+      // what crm.api.contact.find_by_email answers: the Contact's name
+      while (S.gates.length) S.gates.shift()('CT-1')
       await flush()
     }
   }
