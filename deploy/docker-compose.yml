@@ -528,7 +528,7 @@ services:
   # somewhere else for a restore onto a new host to be complete; README.md,
   # "Restoring onto a new host", is the procedure.
   backup-offsite:
-    image: rclone/rclone:1.68.2@sha256:74c51b8817e5431bd6d7ed27cb2a50d8ee78d77f6807b72a41ef6f898845942b
+    image: rclone/rclone:1.76.0@sha256:7cbeec24a44f206067597c0368be4de90ae19a64d5113c7d1938bd737a81e466
     logging: *logging
     restart: unless-stopped
     profiles: ["offsite"]
