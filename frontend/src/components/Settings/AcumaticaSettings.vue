@@ -544,8 +544,41 @@ const confirmNew = reactive({ show: false, issue: null })
 async function refreshAfterAction() {
   await Promise.all([
     loadStatus(),
-    managedElsewhere.value ? null : settings.reload(),
+    managedElsewhere.value ? null : keepingEdits(() => settings.reload()),
   ])
+}
+
+// A reload replaces the doc on screen with the server's copy, which silently threw
+// away an instance URL, a secret or a salesperson row typed but not yet saved --
+// Dismiss on an unrelated issue row was enough. Hold the unsaved fields across the
+// call and put them back (the same guard ERPNextSettings has).
+async function keepingEdits(fn) {
+  const edits = Object.fromEntries(
+    Object.entries(settings.doc || {}).filter(
+      ([field, value]) =>
+        JSON.stringify(value) !== JSON.stringify(settings.originalDoc?.[field]),
+    ),
+  )
+  // The salesperson rows are the editor's own state: the doc only holds the JSON
+  // of the complete ones, so a row still being typed is in no field to restore.
+  const rows = ownerRows.value
+  const rowsEdited =
+    'salesperson_owners' in edits ||
+    'salesperson_branches' in edits ||
+    rows.some((row) => !row.code?.trim() || !row.user?.trim())
+  try {
+    return await fn()
+  } finally {
+    if (settings.doc) {
+      Object.assign(settings.doc, edits)
+      if (rowsEdited && !ownersUnreadable.value) {
+        // as syncOwners leaves it: the watcher then sees the JSON these rows wrote
+        ownersWritten = settings.doc.salesperson_owners
+        branchesWritten = settings.doc.salesperson_branches
+        ownerRows.value = rows
+      }
+    }
+  }
 }
 
 const managedElsewhere = computed(() =>

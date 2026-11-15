@@ -31,18 +31,32 @@ def get_permission_query_conditions(user=None):
 
 
 def has_permission(doc, ptype="read", user=None):
-	"""The record door, answering exactly as the list door does."""
+	"""The record door, answering exactly as the list door does.
+
+	It answers for the row as stored and for the row in hand. frappe checks write
+	on the document *after* ``set_value`` has applied the caller's values, so
+	judging ``doc.user`` alone let an in-tree manager put one of their own reps
+	on another team's suggestion, read it in the response and take it off the
+	rep whose queue it was in.
+	"""
 	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
 
 	user = user or frappe.session.user
 	users = visible_users(user)
 	if users is None:
 		return True
-	if not doc.user:
-		# unowned suggestions are listed only to an unrestricted viewer, so they
-		# are actionable only by one
-		return False
-	return doc.user in users
+	# unowned suggestions are listed only to an unrestricted viewer, so they are
+	# actionable only by one -- whichever side of the edit is the unowned one
+	return all(owner and owner in users for owner in {_stored_user(doc), doc.user})
+
+
+def _stored_user(doc) -> str | None:
+	"""Whose queue the suggestion is in as saved; the document's own for a new one."""
+	if doc.name and not doc.get("__islocal"):
+		row = frappe.db.get_value("CRM Suggestion", doc.name, "user", as_dict=True)
+		if row:
+			return row.user
+	return doc.user
 
 
 class CRMSuggestion(Document):

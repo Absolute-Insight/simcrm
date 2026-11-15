@@ -49,30 +49,49 @@ def _enabled_doctypes(cfg: EnrichmentConfig) -> list[str]:
 	return [dt for dt, flag in ENABLE_FLAG_BY_DOCTYPE.items() if cfg.setting(flag)]
 
 
-def _enqueue_run(reference_doctype: str, reference_name: str, website: str) -> dict:
-	"""Validate + enqueue one enrichment run for a target record. Shared by
-	``enrich`` (initial trigger from the record) and ``retry`` (re-run from a Run).
+def _permitted_doc(doctype: str, name: str, ptype: str):
+	"""The document, if it exists and the caller holds ``ptype`` on it.
 
-	Caller must have already resolved the website. Enforces the Settings allow-list
-	and ``write`` permission on the target. Uses the per-doc ``job_id`` +
-	``deduplicate`` so a second trigger while one is in-flight is a no-op. The
-	allow-list is read from Settings alone: the rules and mappings are the worker's
-	business, and building them here cost a query per rule on every click.
+	One error for "no such record" and "not yours". ``frappe.get_doc`` followed by
+	``check_permission`` answered them differently (``DoesNotExistError`` against
+	``PermissionError``), and a customer's name is its id: a rep could ask whether a
+	customer they cannot see exists, one guess per call.
 	"""
+	doc = None
+	if name and frappe.db.exists(doctype, name):
+		doc = frappe.get_doc(doctype, name)
+		if not doc.has_permission(ptype):
+			doc = None
+	if doc is None:
+		frappe.throw(
+			_("This record does not exist, or you are not permitted to use it."), frappe.PermissionError
+		)
+	return doc
+
+
+def _check_enabled(reference_doctype: str) -> None:
+	"""The Settings allow-list. Read from Settings alone: the rules and mappings are
+	the worker's business, and building them here cost a query per rule on every click."""
 	if not enrichment_enabled_for(reference_doctype):
 		frappe.throw(
 			_("Enrichment is not enabled for {0}.").format(reference_doctype),
 			frappe.ValidationError,
 		)
 
-	doc = frappe.get_doc(reference_doctype, reference_name)
-	doc.check_permission("write")
 
+def _enqueue_run(doc, website: str) -> dict:
+	"""Enqueue one enrichment run for ``doc``, which the caller has already loaded
+	through ``_permitted_doc(..., "write")`` behind the allow-list. Shared by
+	``enrich`` (initial trigger from the record) and ``retry`` (re-run from a Run).
+
+	Uses the per-doc ``job_id`` + ``deduplicate`` so a second trigger while one is
+	in-flight is a no-op.
+	"""
 	website = (website or "").strip()
 	if not website:
 		frappe.throw(_("Set a website on this record before enriching."), frappe.ValidationError)
 
-	return enqueue_enrichment(reference_doctype, reference_name, website, frappe.session.user)
+	return enqueue_enrichment(doc.doctype, doc.name, website, frappe.session.user)
 
 
 @frappe.whitelist()
@@ -89,15 +108,11 @@ def enrich(reference_doctype: str, reference_name: str) -> dict:
 	# The allow-list gates the lookup, not just the enqueue. Loading the document
 	# first made "no such record" and "not enabled for X" two distinguishable
 	# answers for any doctype/name pair a caller cared to try, which is an
-	# existence oracle for records they cannot read.
-	if not enrichment_enabled_for(reference_doctype):
-		frappe.throw(
-			_("Enrichment is not enabled for {0}.").format(reference_doctype),
-			frappe.ValidationError,
-		)
-	doc = frappe.get_doc(reference_doctype, reference_name)
-	website = (doc.get("website") or "").strip()
-	return _enqueue_run(reference_doctype, reference_name, website)
+	# existence oracle for records they cannot read. Within an enabled doctype
+	# ``_permitted_doc`` closes the same oracle between "missing" and "hidden".
+	_check_enabled(reference_doctype)
+	doc = _permitted_doc(reference_doctype, reference_name, "write")
+	return _enqueue_run(doc, doc.get("website"))
 
 
 @frappe.whitelist()
@@ -110,16 +125,16 @@ def retry(run: str) -> dict:
 	Returns ``{queued: bool, job_id: str, website: str}``.
 	"""
 	_check_user_rate_limit()
-	run_doc = frappe.get_doc("CRM Enrichment Run", run)
 	# before anything reads the run: its errors would otherwise confirm that a run
 	# on a hidden lead or deal exists, and which doctype it points at
-	run_doc.check_permission("read")
+	run_doc = _permitted_doc("CRM Enrichment Run", run, "read")
 	if not run_doc.reference_doctype or not run_doc.reference_name:
 		frappe.throw(_("This run has no linked record to re-enrich."), frappe.ValidationError)
 
-	target = frappe.get_doc(run_doc.reference_doctype, run_doc.reference_name)
+	_check_enabled(run_doc.reference_doctype)
+	target = _permitted_doc(run_doc.reference_doctype, run_doc.reference_name, "write")
 	website = (target.get("website") or "").strip() or (run_doc.source_website or "").strip()
-	return _enqueue_run(run_doc.reference_doctype, run_doc.reference_name, website)
+	return _enqueue_run(target, website)
 
 
 @frappe.whitelist()

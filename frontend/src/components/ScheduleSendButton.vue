@@ -1,5 +1,5 @@
 <template>
-  <Dropdown :options="options" align="end">
+  <Dropdown :options="options" align="end" @update:open="onMenuToggle">
     <Button
       variant="solid"
       class="rounded-l-none border-l border-outline-gray-5"
@@ -80,17 +80,25 @@ watch(showPicker, (open) => {
 const pickedAt = computed(() =>
   pickedTime.value ? dayjs.tz(pickedTime.value, localTimezone) : null,
 )
-const pickedInFuture = computed(() => !!pickedAt.value?.isAfter(dayjs()))
+// dayjs() is not reactive, so a computed that compares against it keeps the
+// answer it had when the time was picked. Bumping this makes them ask again.
+const clockRead = ref(0)
+const pickedInFuture = computed(() => {
+  void clockRead.value
+  return !!pickedAt.value?.isAfter(dayjs())
+})
 
 // Ours, not upstream's. frappe clears email queue rows 30 days after they were
 // made, whatever their status, so an email scheduled further out than that
 // stays "Scheduled" on the timeline for good and is never sent.
 const MAX_DAYS_AHEAD = 28
-const pickedOk = computed(
-  () =>
+const pickedOk = computed(() => {
+  void clockRead.value
+  return (
     pickedInFuture.value &&
-    !pickedAt.value?.isAfter(dayjs().add(MAX_DAYS_AHEAD, 'day')),
-)
+    !pickedAt.value?.isAfter(dayjs().add(MAX_DAYS_AHEAD, 'day'))
+  )
+})
 
 function at(day: Dayjs, hour: number) {
   return day.hour(hour).minute(0).second(0)
@@ -115,6 +123,13 @@ function slotOptions(day: Dayjs, after: Dayjs) {
       },
       onClick: () => schedule(time),
     }))
+}
+
+// The composer stays mounted from page load, so the menu is dated from when it
+// opens. The open event covers the keyboard (Enter, Space, ArrowDown), which
+// the trigger's pointerdown does not.
+function onMenuToggle(open: boolean) {
+  if (open) openedAt.value = dayjs()
 }
 
 // Rebuilt each time the menu opens, so "today" and "tomorrow" never go stale
@@ -149,7 +164,9 @@ function schedule(time: Dayjs, confirmed = false) {
 }
 
 function schedulePicked() {
-  // Re-checked here: the time can pass while the dialog sits open
+  // Re-checked against the clock as it is now: the time can pass while the
+  // dialog sits open. A refusal also shows why, and disables the button.
+  clockRead.value++
   if (!pickedOk.value) return
   showPicker.value = false
   schedule(pickedAt.value as Dayjs, true)

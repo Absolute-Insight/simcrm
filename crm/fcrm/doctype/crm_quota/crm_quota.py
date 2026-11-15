@@ -81,25 +81,57 @@ def has_permission(doc, ptype="read", user=None):
 	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
 
 	user = user or frappe.session.user
+	# both the rep the row is stored against and the one the caller has put on
+	# it: the first decides whether they may touch the row at all, the second
+	# whether they may give it to that person
+	targets = {_stored_user(doc), _named_user(doc)}
 	# Nobody writes their own target -- checked before the see-everyone shortcut,
 	# because visible_users() is None for an out-of-tree Sales Manager on the
 	# see-all setting too, not only for a System Manager, and that let such a
 	# manager set their own target through the document API.
-	if doc.user == user and ptype != "read" and not _sets_any_target(user):
+	if user in targets and ptype != "read" and not _sets_any_target(user):
 		return False
 	users = visible_users(user)
 	if users is None:
 		return True
-	if doc.user not in users:
+	if not targets <= set(users):
 		return False
 	# Nobody writes their own target. A rep never could; a manager could, because
 	# their own row is inside their own subtree — and attainment against a quota
 	# is a compensation figure, so the person measured must not be the person who
 	# typed the number. A System Manager is exempt (and is the one who sets a
 	# manager's target); ``users is None`` above has already let them through.
-	if doc.user == user:
+	if user in targets:
 		return ptype == "read"
 	return True
+
+
+def _stored_user(doc) -> str | None:
+	"""Whose target this is as saved, not as the caller has rewritten it.
+
+	frappe checks write on the document *after* ``set_value`` has applied the
+	caller's values, so an in-tree manager who set ``user`` to one of their own
+	reps on another team's quota passed the subtree check. ``user`` is
+	set-only-once, so the save itself was refused further on -- but by a check
+	that is not this one's to lean on, and only after write had been granted on a
+	compensation figure outside the manager's team.
+	"""
+	if doc.name and not doc.get("__islocal"):
+		stored = frappe.db.get_value("CRM Quota", doc.name, "user")
+		if stored:
+			return stored
+	return doc.user
+
+
+def _named_user(doc) -> str | None:
+	"""The user on the document in hand, as the database spells them.
+
+	Permission is checked before links are validated, and link validation then
+	rewrites ``user`` to the stored spelling, which the database matches without
+	regard to case. Compared as typed, a manager's own address in capitals was
+	not "their own target" here and was saved as theirs a moment later.
+	"""
+	return (doc.user and frappe.db.get_value("User", doc.user, "name")) or doc.user
 
 
 def _sets_any_target(user: str) -> bool:

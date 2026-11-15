@@ -86,7 +86,10 @@ def _stored_user(doc) -> str | None:
 		stored = frappe.db.get_value("CRM Visit Target", doc.name, "user")
 		if stored:
 			return stored
-	return doc.user
+	# as the database spells them: permission is checked before link validation
+	# rewrites what was typed, so the caller's own address in another case was
+	# not "their own target" here and was saved as theirs a moment later
+	return (doc.user and frappe.db.get_value("User", doc.user, "name")) or doc.user
 
 
 def _sets_any_target(user: str) -> bool:

@@ -14,8 +14,12 @@ from datetime import timedelta
 import frappe
 from frappe.model.document import Document
 
-# Long past any retry: a device re-sends within moments of reconnecting, and
-# its outbox entry is gone the moment the answer arrives.
+# Long past any ordinary retry: a device re-sends within moments of
+# reconnecting. Not past every retry -- an entry whose answer was lost stays in
+# the outbox of a phone left in a drawer -- so this is also the oldest entry
+# ``replay`` will take, and the oldest a device sends on its own
+# (OUTBOX_MAX_AGE_DAYS in the frontend's utils/fieldOutbox.js, which a unit
+# test holds to this line). Change the number here and nowhere else.
 RECEIPT_DAYS = 90
 
 

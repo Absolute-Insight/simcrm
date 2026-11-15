@@ -127,3 +127,102 @@ class ManagerRoleChangeTest(IntegrationTestCase):
 		frappe.set_user("Administrator")
 		update_user_role(PEER, "Sales User")
 		self.assertEqual(self.roles_of(PEER), {"Sales User"})
+
+
+class StandardUserRoleChangeTest(IntegrationTestCase):
+	"""Administrator and Guest are refused by name, not by what their Has Role
+	rows happen to hold: Administrator's need not include System Manager."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		ensure_user(MANAGER, "Manager", "Sales Manager", "Sales User")
+		self.addCleanup(frappe.set_user, "Administrator")
+		# the install the guard used to depend on not existing
+		frappe.db.delete(
+			"Has Role", {"parent": "Administrator", "parenttype": "User", "role": "System Manager"}
+		)
+		frappe.clear_cache(user="Administrator")
+
+	def administrator_state(self) -> tuple[set[str], int]:
+		roles = set(
+			frappe.db.get_all("Has Role", {"parent": "Administrator", "parenttype": "User"}, pluck="role")
+		)
+		blocked = frappe.db.count("Block Module", {"parent": "Administrator", "parenttype": "User"})
+		return roles, blocked
+
+	def test_a_sales_manager_cannot_change_the_administrators_role(self):
+		from crm.api.user import add_existing_users, update_user_role
+
+		before = self.administrator_state()
+		frappe.set_user(MANAGER)
+		for new_role in ("Sales User", "Sales Manager", "System Manager"):
+			with self.subTest(new_role=new_role), self.assertRaises(frappe.PermissionError):
+				update_user_role("Administrator", new_role)
+		with self.assertRaises(frappe.PermissionError):
+			add_existing_users(["Administrator"], "Sales User")
+		frappe.set_user("Administrator")
+		self.assertEqual(self.administrator_state(), before)
+
+	def test_a_sales_manager_cannot_offboard_the_administrator(self):
+		from crm.api.user import remove_crm_roles_from_user
+
+		before = self.administrator_state()
+		frappe.set_user(MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			remove_crm_roles_from_user("Administrator")
+		frappe.set_user("Administrator")
+		self.assertEqual(self.administrator_state(), before)
+
+	def test_guest_is_refused_too(self):
+		from crm.api.user import remove_crm_roles_from_user, update_user_role
+
+		frappe.set_user(MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			update_user_role("Guest", "Sales User")
+		with self.assertRaises(frappe.PermissionError):
+			remove_crm_roles_from_user("Guest")
+
+	def test_a_system_manager_is_refused_as_well(self):
+		"""frappe lets only Administrator edit a standard user; these endpoints
+		save past that rule, so they do not offer it to anyone."""
+		from crm.api.user import update_user_role
+
+		with self.assertRaises(frappe.PermissionError):
+			update_user_role("Administrator", "Sales User")
+
+	def test_a_differently_spelled_name_is_the_same_account(self):
+		"""``frappe.get_doc("User", "administrator")`` loads Administrator: the
+		database ignores case and trailing spaces, so the guard must as well."""
+		from crm.api.user import add_existing_users, remove_crm_roles_from_user, update_user_role
+
+		before = self.administrator_state()
+		frappe.set_user(MANAGER)
+		for name in ("administrator", "ADMINISTRATOR", "Administrator ", "guest"):
+			with self.subTest(name=name):
+				with self.assertRaises(frappe.PermissionError):
+					update_user_role(name, "Sales User")
+				with self.assertRaises(frappe.PermissionError):
+					remove_crm_roles_from_user(name)
+				with self.assertRaises(frappe.PermissionError):
+					add_existing_users([name], "Sales User")
+		frappe.set_user("Administrator")
+		self.assertEqual(self.administrator_state(), before)
+
+	def test_nobody_removes_themselves_under_another_spelling(self):
+		from crm.api.user import remove_crm_roles_from_user
+
+		frappe.set_user(MANAGER)
+		for name in (MANAGER.upper(), f"{MANAGER} "):
+			with self.subTest(name=name), self.assertRaises(frappe.PermissionError):
+				remove_crm_roles_from_user(name)
+		frappe.set_user("Administrator")
+		self.assertIn("Sales Manager", frappe.get_roles(MANAGER))
+
+	def test_a_differently_spelled_rep_is_still_managed(self):
+		"""The other direction: the name is resolved, not refused."""
+		from crm.api.user import update_user_role
+
+		ensure_user(PEER, "Peer", "Sales Manager", "Sales User")
+		update_user_role(PEER.upper(), "Sales User")
+		self.assertEqual(set(frappe.get_roles(PEER)) & {"Sales User", "Sales Manager"}, {"Sales User"})

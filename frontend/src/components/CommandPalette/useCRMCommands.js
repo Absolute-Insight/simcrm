@@ -76,6 +76,8 @@ function createSearchState() {
     upcoming: ref([]),
     error: ref(false),
     requestId: 0,
+    // the request in flight, as { id, query }
+    pending: null,
     timer: null,
   }
 }
@@ -124,9 +126,12 @@ function scheduleSearch(query, context) {
   const { state } = context
   const term = query.trim()
   clearTimeout(state.timer)
+  if (!term) {
+    commandPaletteSearching.value = false
+    return fetchRecords('', context)
+  }
   state.requestId++
   commandPaletteSearching.value = term.length >= MIN_QUERY_LENGTH
-  if (!term) return fetchRecords('', context)
   if (term.length < MIN_QUERY_LENGTH) {
     state.records.value = []
     return
@@ -139,13 +144,21 @@ function scheduleSearch(query, context) {
 
 async function fetchRecords(query, context) {
   const { state, user } = context
+  // Opening the palette again after a search empties the query and opens it
+  // in one tick, so both watchers ask for the same list. The second is not
+  // sent: the first is still the latest request, and its answer is the one.
+  if (state.pending?.query === query && state.pending.id === state.requestId) {
+    return
+  }
   const request = ++state.requestId
+  state.pending = { id: request, query }
   const recent = readRecent(user)
   try {
     const data = await call('crm.api.command_palette.search', {
       query,
       recent_names: JSON.stringify(recentNamesByDoctype(recent)),
     })
+    if (state.pending?.id === request) state.pending = null
     if (request !== state.requestId) return
     commandPaletteSearching.value = false
     state.error.value = false
@@ -153,6 +166,7 @@ async function fetchRecords(query, context) {
     state.recent.value = sortByRecency(data.recent || [], recent)
     state.upcoming.value = data.upcoming || []
   } catch (error) {
+    if (state.pending?.id === request) state.pending = null
     if (request !== state.requestId) return
     commandPaletteSearching.value = false
     state.error.value = true

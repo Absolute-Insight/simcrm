@@ -47,6 +47,7 @@ from crm.api.rep_plan import (
 	ITEM_FIELDS,
 	LOGGABLE_TYPES,
 	REFERENCE_DOCTYPES,
+	_customer_available,
 	cancel_item,
 	complete_item,
 	get_plan,
@@ -54,8 +55,9 @@ from crm.api.rep_plan import (
 	past_days_locked,
 	save_plan,
 )
+from crm.fcrm.doctype.crm_offline_receipt.crm_offline_receipt import RECEIPT_DAYS
 from crm.rep_planning import ACTIVITY_TYPES, EVENT_KINDS, MATCH_HORIZON_WEEKS, week_of
-from crm.utils import sales_user_only, user_rate_limited
+from crm.utils import is_sales_user, sales_user_only, user_rate_limited
 
 # How far back a phone carries what happened at a customer. Also the window a
 # lost phone exposes, which is why it is not "everything".
@@ -105,6 +107,8 @@ REPLAY_RATE_SCOPE = "offline_replay"
 REPLAY_RATE_LIMIT = 240
 
 MAX_PAYLOAD_BYTES = 20_000
+MAX_KNOWN_SECTIONS = 32
+HASH_LENGTH = 64
 NOTE_TEXT_LIMIT = 5000
 TITLE_LIMIT = 140
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{15,63}$")
@@ -129,29 +133,96 @@ def handshake() -> dict:
 	}
 
 
+class NotAFieldUser(frappe.PermissionError):
+	"""The caller has no sales role, so there is no pack for them -- any more, or ever.
+
+	Its own name because the name is what reaches the phone (``exc_type``),
+	and the phone acts on it: a pack already there is deleted at once. A plain
+	``PermissionError`` must not do that. One raised from *inside* the pack --
+	a list that stopped being readable because someone edited a role -- is a
+	fault to fix on the server, and would otherwise empty every rep's phone
+	on its next sync.
+	"""
+
+
 @frappe.whitelist()
-@sales_user_only
-def get_pack(known_hash: str | None = None) -> dict:
+def get_pack(known_hash: str | None = None, known_sections: dict | str | None = None) -> dict:
 	"""Everything the caller's phone needs to work a site visit offline.
 
 	Pass the ``hash`` of the pack already held to be told ``unchanged`` instead
 	of being sent the same rows again.
+
+	Pass its ``sections`` too -- the hash of each list, as the last answer gave
+	them -- and a list that has not changed is named in ``kept`` instead of
+	being sent. Everything a rep does on the phone changes the pack, so the
+	whole-pack hash alone meant one note cost a download of every customer,
+	contact and deal. A list is left out only when its hash here equals the
+	one the phone says it holds: the phone gets exactly the rows it would have
+	been sent, from its own copy. The rows are still read to know that; this
+	saves the line, not the queries.
 	"""
+	# sales_user_only's test, with an answer of its own: see NotAFieldUser
+	if not is_sales_user():
+		frappe.throw(
+			_("You are not permitted to access this resource."),
+			NotAFieldUser,
+			title=_("Not Allowed"),
+		)
 	body = _pack_body()
-	digest = hashlib.sha256(
-		json.dumps(body, sort_keys=True, default=str, separators=(",", ":")).encode()
-	).hexdigest()
+	sections = {key: _digest(rows) for key, rows in body.items()}
+	digest = _digest(sections)
 
 	envelope = {
 		"user": frappe.session.user,
 		"hash": digest,
+		"sections": sections,
 		"generated_at": _stamp(frappe.utils.now_datetime()),
 		"today": str(frappe.utils.getdate()),
 		"max_age_days": PACK_MAX_AGE_DAYS,
 	}
 	if known_hash and known_hash == digest:
 		return {**envelope, "unchanged": True}
-	return {**envelope, "unchanged": False, **body}
+	held = _held_sections(known_sections)
+	kept = sorted(key for key in body if held.get(key) == sections[key])
+	return {
+		**envelope,
+		"unchanged": False,
+		"kept": kept,
+		**{key: rows for key, rows in body.items() if key not in kept},
+	}
+
+
+def _digest(value) -> str:
+	return hashlib.sha256(
+		json.dumps(value, sort_keys=True, default=str, separators=(",", ":")).encode()
+	).hexdigest()
+
+
+def _held_sections(known_sections) -> dict[str, str]:
+	"""The list hashes a phone says it holds, as text and nothing else.
+
+	Anything unreadable is "holds nothing", which costs that phone a full
+	download and no one anything else.
+	"""
+	if isinstance(known_sections, str):
+		if len(known_sections) > MAX_PAYLOAD_BYTES:
+			return {}
+		try:
+			known_sections = json.loads(known_sections or "{}")
+		except (ValueError, RecursionError):
+			return {}
+	# the pack has ten lists and a hash is 64 characters: a claim far past
+	# that is not a pack's, whichever way it was sent
+	if not isinstance(known_sections, dict) or len(known_sections) > MAX_KNOWN_SECTIONS:
+		return {}
+	return {
+		key: value
+		for key, value in known_sections.items()
+		if isinstance(key, str)
+		and len(key) <= HASH_LENGTH
+		and isinstance(value, str)
+		and len(value) <= HASH_LENGTH
+	}
 
 
 def _pack_body() -> dict:
@@ -419,7 +490,9 @@ def replay(
 	device's clock corrected for the skew the last handshake measured. It is
 	never trusted to be in the future, and it only earns a rep anything -- a
 	way past "activities are logged on the day they happen" -- inside
-	``OFFLINE_GRACE_HOURS``, with the row flagged ``captured_offline``.
+	``OFFLINE_GRACE_HOURS``, with the row flagged ``captured_offline``. Nor is
+	an entry taken that is older than the receipts are kept (``RECEIPT_DAYS``):
+	by then the receipt that would have called it a duplicate may be gone.
 
 	The action is one of ``ACTIONS`` and nothing else: this is not a generic
 	method dispatcher. Each handler does its own permission check as the
@@ -435,10 +508,24 @@ def replay(
 	if not handler:
 		frappe.throw(_("That cannot be done offline."), frappe.ValidationError)
 	payload = _payload(payload)
-	moment, late = _captured(captured_at)
+	moment, late, age = _captured(captured_at)
 
 	if _already_applied(request_id):
 		return {"request_id": request_id, "status": "duplicate"}
+	if age > RECEIPT_DAYS * 86400:
+		# Asked after the receipt, not before: one that is still there is the
+		# better answer. Without one, an entry this old may be the retry of
+		# something applied and since forgotten -- a phone that lost the answer
+		# and then spent three months in a drawer -- and applying it would
+		# write the note or the task a second time. A receipt is never older
+		# than the capture it records, so inside this window it still exists.
+		frappe.throw(
+			_(
+				"This was captured more than {0} days ago and can no longer be sent. "
+				"Check whether it is already there, and write it again if it is not."
+			).format(RECEIPT_DAYS),
+			frappe.ValidationError,
+		)
 
 	frappe.db.savepoint("offline_replay")
 	try:
@@ -501,8 +588,8 @@ def _payload(payload) -> dict:
 	return payload
 
 
-def _captured(captured_at) -> tuple[datetime, bool]:
-	"""When the entry was captured, on the site's clock, and whether it arrived late."""
+def _captured(captured_at) -> tuple[datetime, bool, float]:
+	"""When the entry was captured, on the site's clock; whether it arrived late; its age in seconds."""
 	now = time.time()
 	try:
 		captured = float(captured_at) / 1000 if captured_at not in (None, "") else now
@@ -516,7 +603,8 @@ def _captured(captured_at) -> tuple[datetime, bool]:
 		frappe.throw(_("That entry is dated in the future. Check the date on this device."))
 	captured = min(captured, now)
 	moment = frappe.utils.convert_utc_to_system_timezone(datetime.fromtimestamp(captured, tz=UTC))
-	return moment.replace(tzinfo=None, microsecond=0), (now - captured) > LATE_AFTER_SECONDS
+	age = now - captured
+	return moment.replace(tzinfo=None, microsecond=0), age > LATE_AFTER_SECONDS, age
 
 
 def _name(payload: dict, key: str) -> str:
@@ -550,9 +638,46 @@ def _as_html(text: str) -> str:
 	return frappe.utils.escape_html(text).replace("\n", "<br>")
 
 
-def _flag_offline(item: str, late: bool) -> None:
-	if late:
+def _flag_offline(item: str, moment: datetime, late: bool) -> None:
+	"""Mark an outcome whose time is the device's word, not the server's.
+
+	Late, or dated on an earlier day than the one it arrived on -- captured at
+	23:52 and delivered at 00:03 is eleven minutes old and already yesterday's.
+	The same test ``_replay_log_activity`` applies.
+	"""
+	if late or moment.date() < frappe.utils.getdate():
 		frappe.db.set_value("CRM Rep Plan Item", item, "captured_offline", 1)
+
+
+def _customer(name: str) -> str | None:
+	"""A customer the caller may log or plan against, or the refusal ``_readable`` gives.
+
+	Asked with the predicate the plan's own save uses, and asked first: left to
+	the code behind it, a customer that does not exist and one that is another
+	rep's were refused in different words.
+	"""
+	if not name:
+		return None
+	if not _customer_available(name):
+		frappe.throw(_("That record is no longer available."), frappe.PermissionError)
+	return name
+
+
+def _own_item(item: str) -> str:
+	"""The week a planned item of the caller's own is in, or one refusal for gone and not yours."""
+	row = (
+		frappe.db.get_value("CRM Rep Plan Item", item, ["parent", "parenttype"], as_dict=True)
+		if item
+		else None
+	)
+	plan = (
+		frappe.db.get_value("CRM Rep Plan", row.parent, ["user", "week_start"], as_dict=True)
+		if row and row.parenttype == "CRM Rep Plan"
+		else None
+	)
+	if not plan or plan.user != frappe.session.user:
+		frappe.throw(_("That activity is no longer available."), frappe.PermissionError)
+	return plan.week_start
 
 
 def _replay_log_activity(payload: dict, moment: datetime, late: bool) -> None:
@@ -573,7 +698,7 @@ def _replay_log_activity(payload: dict, moment: datetime, late: bool) -> None:
 			frappe.ValidationError,
 		)
 	log_activity(
-		organization=_name(payload, "organization") or None,
+		organization=_customer(_name(payload, "organization")),
 		note=_text(payload.get("note"), NOTE_TEXT_LIMIT),
 		when=moment,
 		reference_doctype=_name(payload, "reference_doctype") or None,
@@ -586,23 +711,21 @@ def _replay_log_activity(payload: dict, moment: datetime, late: bool) -> None:
 
 def _replay_complete_item(payload: dict, moment: datetime, late: bool) -> None:
 	item = _name(payload, "item")
+	week_start = _own_item(item)
 	# complete_item wants a time inside the item's own week. A Friday visit
 	# closed on Monday falls outside it, and then the planned day stands, as it
 	# does when the Planner is given no time at all.
-	week_start = frappe.db.get_value("CRM Rep Plan", _parent_of(item), "week_start")
-	when = None
-	if week_start:
-		start, end = week_of(frappe.utils.getdate(week_start))
-		if start <= moment.date() <= end:
-			when = str(moment)
+	start, end = week_of(frappe.utils.getdate(week_start))
+	when = str(moment) if start <= moment.date() <= end else None
 	complete_item(item, _text(payload.get("outcome"), NOTE_TEXT_LIMIT), when)
-	_flag_offline(item, late)
+	_flag_offline(item, moment, late)
 
 
 def _replay_cancel_item(payload: dict, moment: datetime, late: bool) -> None:
 	item = _name(payload, "item")
+	_own_item(item)
 	cancel_item(item, _text(payload.get("reason"), NOTE_TEXT_LIMIT))
-	_flag_offline(item, late)
+	_flag_offline(item, moment, late)
 
 
 def _replay_plan_item(payload: dict, moment: datetime, late: bool) -> None:
@@ -631,12 +754,11 @@ def _replay_plan_item(payload: dict, moment: datetime, late: bool) -> None:
 		# planned for a day that had already passed when the rep planned it
 		frappe.throw(_("Activities are planned for today or later."), frappe.ValidationError)
 
-	organization = _name(payload, "organization") or None
-	if activity_type in EVENT_KINDS and not (
-		organization and frappe.db.exists("CRM Organization", organization)
-	):
-		# save_plan drops a customer that no longer exists and keeps the row. A
-		# visit to nobody is not what the rep planned; say so instead.
+	# save_plan drops a customer that no longer exists and keeps the row, and
+	# refuses one that is another rep's. Neither is what the rep planned, and
+	# the difference is not theirs to learn: one refusal for both.
+	organization = _customer(_name(payload, "organization"))
+	if activity_type in EVENT_KINDS and not organization:
 		frappe.throw(_("Choose the customer for this {0}.").format(_(activity_type)), frappe.ValidationError)
 
 	monday, _sunday = week_of(day)
@@ -658,10 +780,6 @@ def _replay_plan_item(payload: dict, moment: datetime, late: bool) -> None:
 	# began. The phone treats that refusal as "try again", and its next
 	# request is a new transaction that sees the week as it is.
 	save_plan(str(monday), [*kept, row], str(current["modified"] or ""))
-
-
-def _parent_of(item: str) -> str | None:
-	return frappe.db.get_value("CRM Rep Plan Item", item, "parent") if item else None
 
 
 def _readable(doctype: str, name: str, allowed: tuple[str, ...]) -> tuple[str, str]:

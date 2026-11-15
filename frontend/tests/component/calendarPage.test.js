@@ -35,11 +35,9 @@ vi.mock('frappe-ui', async () => {
     usePageMeta() {},
     call: vi.fn(async (method, args) => {
       state.calls.push([method, args])
-      if (method === 'frappe.client.get_value') {
+      if (method === 'crm.api.contact.find_by_email') {
         // one of the two addresses already has a Contact
-        return args.filters.email_id === 'known@client.test'
-          ? { name: 'C-KNOWN' }
-          : undefined
+        return args.email === 'known@client.test' ? 'C-KNOWN' : null
       }
       if (method === 'frappe.client.insert') return { name: 'C-NEW' }
     }),

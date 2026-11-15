@@ -67,8 +67,16 @@
       />
     </div>
 
+    <p v-if="packCut(pack, 'tasks')" class="text-sm text-ink-gray-6">
+      {{
+        __(
+          'There are more open tasks than a device carries. The rest are online.',
+        )
+      }}
+    </p>
+
     <div
-      v-if="!tasks.length"
+      v-else-if="!tasks.length"
       class="flex flex-col items-center gap-1 rounded-5 border border-dashed px-4 py-10 text-center"
     >
       <LucideListChecks
@@ -88,7 +96,7 @@
 <script setup>
 import { openFieldDialog } from '@/offline/fieldDialog'
 import { useField } from '@/offline/useField'
-import { orderTasks, shortDate } from '@/utils/fieldPack'
+import { orderTasks, packCut, shortDate } from '@/utils/fieldPack'
 import { computed } from 'vue'
 import LucideCloudUpload from '~icons/lucide/cloud-upload'
 import LucideListChecks from '~icons/lucide/list-checks'

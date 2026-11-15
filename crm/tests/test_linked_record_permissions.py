@@ -223,3 +223,369 @@ class LinkedRecordPermissionTest(IntegrationTestCase):
 		frappe.set_user(MALLORY)
 		self.assertTrue(frappe.has_permission("FCRM Note", "create"))
 		self.assertTrue(frappe.has_permission("CRM Task", "create"))
+
+
+#: The least each doctype needs to be inserted.
+PAYLOADS = {
+	"FCRM Note": {"title": "Filed", "content": "Filed from outside"},
+	"CRM Task": {"title": "Filed", "status": "Backlog"},
+	"CRM Call Log": {
+		"id": "filed-call",
+		"from": "+15557770000",
+		"to": "+15558880000",
+		"status": "Completed",
+		"type": "Outgoing",
+		"telephony_medium": "Manual",
+	},
+}
+
+#: An ordinary edit of each, which leaves the reference alone.
+EDITS = {
+	"FCRM Note": ("title", "Edited"),
+	"CRM Task": ("title", "Edited"),
+	"CRM Call Log": ("duration", 42),
+}
+
+
+class FilingOnARecordTest(IntegrationTestCase):
+	"""A note, a task or a call log goes onto a record the user can read.
+
+	The hook answered True for every create before it looked at the reference, and
+	frappe's link validation only asks whether the record exists, so a rep filed
+	onto a colleague's deal by typing its name: the row landed on that deal's
+	timeline and a task assigned to its owner notified them.
+
+	  filing-manager  (in the tree, over filing-alice)
+	  filing-mallory  (a rep on nobody's team)
+	  filing-outside  (a Sales Manager outside the tree, at "All records")
+	"""
+
+	ALICE = "filing-alice@crmtest.test"
+	MALLORY = "filing-mallory@crmtest.test"
+	TEAM_MANAGER = "filing-manager@crmtest.test"
+	OUTSIDE_MANAGER = "filing-outside@crmtest.test"
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		self.addCleanup(frappe.set_user, "Administrator")
+		ensure_user(self.ALICE, "Alice", "Sales User")
+		ensure_user(self.MALLORY, "Mallory", "Sales User")
+		ensure_user(self.TEAM_MANAGER, "Team Manager", "Sales Manager")
+		ensure_user(self.OUTSIDE_MANAGER, "Outside Manager", "Sales Manager")
+
+		for doctype, field, value in (
+			("CRM Access Settings", "manager_outside_hierarchy", "All records"),
+			("FCRM Settings", "enable_sales_hierarchy", 1),
+		):
+			saved = frappe.db.get_single_value(doctype, field)
+			frappe.db.set_single_value(doctype, field, value)
+			self.addCleanup(frappe.db.set_single_value, doctype, field, saved or value)
+		people = [self.ALICE, self.MALLORY, self.TEAM_MANAGER, self.OUTSIDE_MANAGER]
+		frappe.db.delete("CRM Sales Hierarchy", {"user": ("in", people)})
+		self.addCleanup(frappe.db.delete, "CRM Sales Hierarchy", {"user": ("in", people)})
+		top = frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": self.TEAM_MANAGER}).insert(
+			ignore_permissions=True
+		)
+		frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": self.ALICE, "reports_to": top.name}).insert(
+			ignore_permissions=True
+		)
+
+		org = (
+			frappe.get_doc({"doctype": "CRM Organization", "organization_name": "Filing Org"})
+			.insert(ignore_if_duplicate=True)
+			.name
+		)
+		self.deal = self._keep(
+			frappe.get_doc({"doctype": "CRM Deal", "organization": org, "deal_owner": self.ALICE}).insert(
+				ignore_permissions=True
+			)
+		)
+		self.lead = self._keep(
+			frappe.get_doc(
+				{"doctype": "CRM Lead", "first_name": "Filing", "lead_owner": self.ALICE, "status": "New"}
+			).insert(ignore_permissions=True)
+		)
+		self.own_deal = self._keep(
+			frappe.get_doc({"doctype": "CRM Deal", "organization": org, "deal_owner": self.MALLORY}).insert(
+				ignore_permissions=True
+			)
+		)
+
+	def _keep(self, doc):
+		"""Delete ``doc`` when the test ends, whoever inserted it."""
+		self.addCleanup(
+			lambda dt=doc.doctype, dn=doc.name: (
+				frappe.db.exists(dt, dn) and frappe.delete_doc(dt, dn, force=True, ignore_permissions=True)
+			)
+		)
+		return doc
+
+	def new(self, doctype: str, reference=None, **fields):
+		payload = {"doctype": doctype, **PAYLOADS[doctype], **fields}
+		if doctype == "CRM Call Log":
+			payload["id"] = f"filed-call-{frappe.generate_hash(length=8)}"
+		if reference:
+			payload |= {"reference_doctype": reference.doctype, "reference_docname": reference.name}
+		return frappe.get_doc(payload)
+
+	def filed_on(self, doctype: str, reference) -> int:
+		return frappe.db.count(
+			doctype, {"reference_doctype": reference.doctype, "reference_docname": reference.name}
+		)
+
+	# --- the hole ---------------------------------------------------------
+
+	def test_a_rep_cannot_file_onto_a_deal_or_lead_they_cannot_read(self):
+		frappe.set_user(self.MALLORY)
+		for doctype in PAYLOADS:
+			for reference in (self.deal, self.lead):
+				with self.subTest(doctype=doctype, reference=reference.doctype):
+					with self.assertRaises(frappe.PermissionError):
+						self.new(doctype, reference).insert()
+					self.assertEqual(self.filed_on(doctype, reference), 0)
+
+	def test_a_task_for_the_owner_of_a_hidden_deal_is_refused_before_it_notifies_them(self):
+		frappe.set_user(self.MALLORY)
+		with self.assertRaises(frappe.PermissionError):
+			self.new("CRM Task", self.deal, assigned_to=self.ALICE).insert()
+		frappe.set_user("Administrator")
+		self.assertFalse(frappe.db.exists("CRM Task", {"reference_docname": self.deal.name}))
+
+	def test_a_call_log_cannot_be_linked_to_a_hidden_deal_through_its_links(self):
+		"""The other link shape the scoping reads; a call linked this way shows on the deal."""
+		frappe.set_user(self.MALLORY)
+		with self.assertRaises(frappe.PermissionError):
+			self.new(
+				"CRM Call Log", links=[{"link_doctype": "CRM Deal", "link_name": self.deal.name}]
+			).insert()
+
+	def test_a_rep_cannot_move_their_own_row_onto_a_hidden_deal(self):
+		"""set_value updates the document and then saves it, so the write check is
+		the only one that sees the new reference."""
+		frappe.set_user(self.MALLORY)
+		for doctype in PAYLOADS:
+			with self.subTest(doctype=doctype):
+				row = self._keep(self.new(doctype, self.own_deal).insert())
+				with self.assertRaises(frappe.PermissionError):
+					frappe.client.set_value(doctype, row.name, "reference_docname", self.deal.name)
+				with self.assertRaises(frappe.PermissionError):
+					frappe.client.set_value(
+						doctype,
+						row.name,
+						{"reference_doctype": "CRM Lead", "reference_docname": self.lead.name},
+					)
+				doc = frappe.get_doc(doctype, row.name)
+				doc.reference_docname = self.deal.name
+				with self.assertRaises(frappe.PermissionError):
+					doc.save()
+				self.assertEqual(
+					frappe.db.get_value(doctype, row.name, "reference_docname"), self.own_deal.name
+				)
+
+	def test_a_rep_cannot_move_an_unlinked_row_onto_a_hidden_deal(self):
+		frappe.set_user(self.MALLORY)
+		note = self._keep(self.new("FCRM Note").insert())
+		with self.assertRaises(frappe.PermissionError):
+			frappe.client.set_value(
+				"FCRM Note", note.name, {"reference_doctype": "CRM Deal", "reference_docname": self.deal.name}
+			)
+
+	def test_a_rep_cannot_add_a_hidden_deal_to_their_call_logs_links(self):
+		frappe.set_user(self.MALLORY)
+		call = self._keep(self.new("CRM Call Log", self.own_deal).insert())
+		doc = frappe.get_doc("CRM Call Log", call.name)
+		doc.append("links", {"link_doctype": "CRM Deal", "link_name": self.deal.name})
+		with self.assertRaises(frappe.PermissionError):
+			doc.save()
+
+	# --- the same, spelled the way the database forgives -----------------------
+
+	#: frappe checks permission before it validates links, and the database
+	#: matches all of these to "CRM Deal": its collation ignores case and trailing
+	#: spaces. The pinned frappe happens to fail on them further on, inside link
+	#: validation; the check does not lean on that.
+	SPELLINGS = ("crm deal", "CRM DEAL", "CRM Deal ", "Crm Deal")
+
+	def assert_nothing_filed_on_the_hidden_deal(self):
+		frappe.set_user("Administrator")
+		for doctype in PAYLOADS:
+			self.assertEqual(self.filed_on(doctype, self.deal), 0, doctype)
+		self.assertFalse(
+			frappe.db.exists("Dynamic Link", {"parenttype": "CRM Call Log", "link_name": self.deal.name})
+		)
+		frappe.set_user(self.MALLORY)
+
+	def test_a_differently_spelled_doctype_does_not_get_past_the_check(self):
+		frappe.set_user(self.MALLORY)
+		for doctype in PAYLOADS:
+			for spelling in self.SPELLINGS:
+				with self.subTest(doctype=doctype, spelling=spelling):
+					with self.assertRaises(frappe.PermissionError):
+						self.new(
+							doctype, reference_doctype=spelling, reference_docname=self.deal.name
+						).insert()
+		self.assert_nothing_filed_on_the_hidden_deal()
+
+	def test_a_differently_spelled_docname_does_not_get_past_the_check(self):
+		frappe.set_user(self.MALLORY)
+		for name in (self.deal.name.lower(), f"{self.deal.name} "):
+			with self.subTest(name=name), self.assertRaises(frappe.PermissionError):
+				self.new("FCRM Note", reference_doctype="CRM Deal", reference_docname=name).insert()
+		self.assert_nothing_filed_on_the_hidden_deal()
+
+	def test_a_differently_spelled_doctype_does_not_move_a_row_either(self):
+		frappe.set_user(self.MALLORY)
+		for doctype in PAYLOADS:
+			row = self._keep(self.new(doctype).insert())
+			for spelling in self.SPELLINGS:
+				with self.subTest(doctype=doctype, spelling=spelling):
+					with self.assertRaises(frappe.PermissionError):
+						frappe.client.set_value(
+							doctype,
+							row.name,
+							{"reference_doctype": spelling, "reference_docname": self.deal.name},
+						)
+		self.assert_nothing_filed_on_the_hidden_deal()
+
+	def test_a_differently_spelled_link_row_does_not_get_past_the_check(self):
+		frappe.set_user(self.MALLORY)
+		for spelling in self.SPELLINGS:
+			with self.subTest(spelling=spelling, on="insert"), self.assertRaises(frappe.PermissionError):
+				self.new(
+					"CRM Call Log", links=[{"link_doctype": spelling, "link_name": self.deal.name}]
+				).insert()
+		call = self._keep(self.new("CRM Call Log", self.own_deal).insert())
+		for spelling in self.SPELLINGS:
+			with self.subTest(spelling=spelling, on="save"), self.assertRaises(frappe.PermissionError):
+				doc = frappe.get_doc("CRM Call Log", call.name)
+				doc.append("links", {"link_doctype": spelling, "link_name": self.deal.name})
+				doc.save()
+		self.assert_nothing_filed_on_the_hidden_deal()
+
+	def test_the_validate_hook_refuses_on_its_own(self):
+		"""The second lock: with the permission hook talked past, the row still
+		does not land. It runs after frappe has normalised the links."""
+		from unittest.mock import patch
+
+		frappe.set_user(self.MALLORY)
+		with patch("crm.permissions.linked_records.has_permission", return_value=True):
+			for doctype in PAYLOADS:
+				with self.subTest(doctype=doctype, on="insert"), self.assertRaises(frappe.PermissionError):
+					self.new(doctype, self.deal).insert()
+			note = self._keep(self.new("FCRM Note", self.own_deal).insert())
+			with self.assertRaises(frappe.PermissionError):
+				frappe.client.set_value("FCRM Note", note.name, "reference_docname", self.deal.name)
+			# and lets through what the hook lets through
+			frappe.client.set_value("FCRM Note", note.name, "title", "Edited")
+		self.assert_nothing_filed_on_the_hidden_deal()
+
+	def test_the_validate_hook_is_registered_for_all_three(self):
+		from crm import hooks
+
+		for doctype in PAYLOADS:
+			self.assertIn(
+				"crm.permissions.linked_records.validate_filing", hooks.doc_events[doctype]["validate"]
+			)
+
+	# --- a manager outside the tree, on the default setting ------------------------
+
+	def test_an_own_records_manager_files_on_their_own_records_only(self):
+		"""A new install's default: such a manager is scoped as a rep is."""
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		own = self._keep(
+			frappe.get_doc({"doctype": "CRM Deal", "deal_owner": self.OUTSIDE_MANAGER}).insert(
+				ignore_permissions=True
+			)
+		)
+		frappe.set_user(self.OUTSIDE_MANAGER)
+		for doctype in PAYLOADS:
+			with self.subTest(doctype=doctype):
+				with self.assertRaises(frappe.PermissionError):
+					self.new(doctype, self.deal).insert()
+				with self.assertRaises(frappe.PermissionError):
+					self.new(doctype, reference_doctype="crm deal", reference_docname=self.deal.name).insert()
+				row = self._keep(self.new(doctype, own).insert())
+				with self.assertRaises(frappe.PermissionError):
+					frappe.client.set_value(doctype, row.name, "reference_docname", self.deal.name)
+
+	# --- what still works ---------------------------------------------------
+
+	def assert_files_on(self, user: str, *references):
+		frappe.set_user(user)
+		for doctype in PAYLOADS:
+			for reference in references:
+				with self.subTest(user=user, doctype=doctype, reference=reference.doctype):
+					row = self._keep(self.new(doctype, reference).insert())
+					self.assertEqual(row.reference_docname, reference.name)
+					# and edits it afterwards, the reference untouched
+					frappe.client.set_value(doctype, row.name, *EDITS[doctype])
+		frappe.set_user("Administrator")
+
+	def test_the_owner_files_on_their_own_records(self):
+		self.assert_files_on(self.ALICE, self.deal, self.lead)
+
+	def test_a_rep_files_with_no_reference_at_all(self):
+		frappe.set_user(self.MALLORY)
+		for doctype in PAYLOADS:
+			with self.subTest(doctype=doctype):
+				self._keep(self.new(doctype).insert())
+
+	def test_the_team_manager_files_on_the_teams_records(self):
+		self.assert_files_on(self.TEAM_MANAGER, self.deal, self.lead)
+
+	def test_the_team_manager_cannot_file_outside_the_team(self):
+		frappe.set_user(self.TEAM_MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			self.new("FCRM Note", self.own_deal).insert()
+
+	def test_a_manager_outside_the_tree_files_anywhere(self):
+		self.assert_files_on(self.OUTSIDE_MANAGER, self.deal, self.own_deal)
+
+	def test_a_system_manager_files_anywhere(self):
+		self.assert_files_on("Administrator", self.deal, self.lead)
+
+	def test_a_rep_assigned_by_todo_files_on_the_record(self):
+		for reference in (self.deal, self.lead):
+			frappe.get_doc(
+				{
+					"doctype": "ToDo",
+					"reference_type": reference.doctype,
+					"reference_name": reference.name,
+					"allocated_to": self.MALLORY,
+					"description": "Help Alice",
+				}
+			).insert(ignore_permissions=True)
+		self.assert_files_on(self.MALLORY, self.deal, self.lead)
+
+	def test_a_rep_moves_their_row_between_records_they_can_read(self):
+		other = self._keep(
+			frappe.get_doc(
+				{"doctype": "CRM Lead", "first_name": "Own", "lead_owner": self.MALLORY, "status": "New"}
+			).insert(ignore_permissions=True)
+		)
+		frappe.set_user(self.MALLORY)
+		note = self._keep(self.new("FCRM Note", self.own_deal).insert())
+		frappe.client.set_value(
+			"FCRM Note", note.name, {"reference_doctype": "CRM Lead", "reference_docname": other.name}
+		)
+		self.assertEqual(frappe.db.get_value("FCRM Note", note.name, "reference_docname"), other.name)
+
+	def test_an_assignee_still_edits_a_task_on_a_deal_they_cannot_read(self):
+		"""Assigned by the deal's owner: the task is theirs, the deal is not, and
+		saving it leaves the reference where it was."""
+		frappe.set_user("Administrator")
+		task = self._keep(
+			self.new("CRM Task", self.deal, assigned_to=self.MALLORY).insert(ignore_permissions=True)
+		)
+		frappe.set_user(self.MALLORY)
+		frappe.client.set_value("CRM Task", task.name, "status", "In Progress")
+		self.assertEqual(frappe.db.get_value("CRM Task", task.name, "status"), "In Progress")
+
+	def test_server_code_still_files_a_call_for_an_agent_who_cannot_read_the_lead(self):
+		"""Twilio and Exotel save with ignore_permissions: the caller's number matched
+		somebody else's lead, and the call is still the agent's who took it."""
+		frappe.set_user(self.MALLORY)
+		call = self._keep(self.new("CRM Call Log", self.lead, receiver=self.MALLORY, type="Incoming"))
+		call.insert(ignore_permissions=True)
+		self.assertTrue(frappe.db.exists("CRM Call Log", call.name))

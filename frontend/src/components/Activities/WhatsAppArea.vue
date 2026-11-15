@@ -40,7 +40,7 @@
             class="mb-1 text-sm-bold"
             :class="
               whatsapp.reply_to_type == 'Incoming'
-                ? 'text-ink-green-5'
+                ? 'text-ink-green-9'
                 : 'text-ink-blue-link'
             "
           >

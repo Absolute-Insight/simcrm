@@ -178,7 +178,8 @@ import { useDraggable, useWindowSize } from '@vueuse/core'
 import { useTelemetry } from '@framework/ui/telemetry'
 import { useCRMOnboarding } from '@/composables/useCRMOnboarding'
 import { Avatar, call, createResource, toast } from 'frappe-ui'
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { twilioHandover } from '@/components/Telephony/twilioHandover'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const { capture } = useTelemetry()
 const { updateOnboardingStep } = useCRMOnboarding()
@@ -192,6 +193,8 @@ let started = false
 let unavailable = ''
 let log = ref('Connecting...')
 let _call = null
+// whether _call rang in (true) or was placed from here: they end differently
+let incomingCall = false
 
 let showCallPopup = ref(false)
 let showSmallCallWindow = ref(false)
@@ -333,9 +336,19 @@ function addDeviceListeners() {
 
   device.on('incoming', handleIncomingCall)
 
+  // This Device, not whatever `device` is by the time the token arrives: the
+  // variable is cleared on unmount, and a Device kept alive for a call that
+  // outlived its popup still asks for a token here.
+  const registered = device
   device.on('tokenWillExpire', async () => {
-    const data = await call('crm.integrations.twilio.api.generate_access_token')
-    device.updateToken(data.token)
+    try {
+      const data = await call(
+        'crm.integrations.twilio.api.generate_access_token',
+      )
+      if (data?.token) registered.updateToken(data.token)
+    } catch (error) {
+      console.error('Twilio token refresh failed', error)
+    }
   })
 }
 
@@ -350,11 +363,23 @@ function toggleMute() {
 }
 
 function handleIncomingCall(call) {
+  // A call picked up from the popup the layout swapped out is on that
+  // popup's Device, not this one, so the SDK's own busy guard -- a Device
+  // with a call up does not surface another -- does not hold here. Without
+  // this the second caller would take the popup, and the call the rep is on
+  // would be left with no Hang up or Mute. Ignored, as the SDK would: the
+  // caller rings on, to voicemail or the rep's other devices.
+  if (_call && twilioHandover.current?.call === _call) {
+    log.value = `Busy: ignored incoming call from ${call.parameters.From}`
+    call.ignore?.()
+    return
+  }
   log.value = `Incoming call from ${call.parameters.From}`
   phoneNumber.value = call.parameters.From
 
   showCallPopup.value = true
   _call = call
+  incomingCall = true
   // A call starts with a note of its own: only the rep's own hang-up cleared
   // the last one, not the caller's.
   note.value = {
@@ -363,7 +388,10 @@ function handleIncomingCall(call) {
     content: '',
   }
 
-  // add event listener to call object
+  watchIncomingCall(call)
+}
+
+function watchIncomingCall(call) {
   call.on('cancel', handleDisconnectedIncomingCall)
   call.on('disconnect', handleDisconnectedIncomingCall)
   call.on('reject', handleDisconnectedIncomingCall)
@@ -373,7 +401,7 @@ async function acceptIncomingCall() {
   log.value = 'Accepted incoming call.'
   onCall.value = true
   await _call.accept()
-  counterUp.value.start()
+  counterUp.value?.start()
 }
 
 function rejectIncomingCall() {
@@ -397,7 +425,7 @@ function hangUpCall() {
     title: '',
     content: '',
   }
-  counterUp.value.stop()
+  counterUp.value?.stop()
 }
 
 function handleDisconnectedIncomingCall() {
@@ -407,7 +435,62 @@ function handleDisconnectedIncomingCall() {
   _call = null
   muted.value = false
   onCall.value = false
-  counterUp.value.stop()
+  counterUp.value?.stop()
+}
+
+function watchOutgoingCall(call) {
+  call.on('messageReceived', (message) => {
+    let info = message.content
+    callStatus.value = info.CallStatus
+
+    log.value = `Call status: ${info.CallStatus}`
+
+    if (info.CallStatus == 'in-progress') {
+      log.value = `Call in progress.`
+      calling.value = false
+      onCall.value = true
+      counterUp.value?.start()
+    }
+  })
+
+  call.on('accept', () => {
+    log.value = `Initiated call!`
+    showCallPopup.value = true
+    calling.value = true
+    onCall.value = false
+  })
+  call.on('disconnect', () => {
+    log.value = `Call ended from makeOutgoing call disconnect.`
+    calling.value = false
+    onCall.value = false
+    showCallPopup.value = false
+    showSmallCallWindow.value = false
+    _call = null
+    callStatus.value = ''
+    muted.value = false
+    counterUp.value?.stop()
+    note.value = {
+      name: '',
+      title: '',
+      content: '',
+    }
+  })
+  call.on('cancel', () => {
+    log.value = `Call ended from makeOutgoing call cancel.`
+    calling.value = false
+    onCall.value = false
+    showCallPopup.value = false
+    showSmallCallWindow.value = false
+    _call = null
+    callStatus.value = ''
+    muted.value = false
+    note.value = {
+      name: '',
+      title: '',
+      content: '',
+    }
+    counterUp.value?.stop()
+  })
 }
 
 async function makeOutgoingCall(number) {
@@ -422,6 +505,7 @@ async function makeOutgoingCall(number) {
         title: '',
         content: '',
       }
+      incomingCall = false
       _call = await device.connect({
         params: { To: number },
       })
@@ -431,58 +515,7 @@ async function makeOutgoingCall(number) {
 
       capture('make_outgoing_call')
 
-      _call.on('messageReceived', (message) => {
-        let info = message.content
-        callStatus.value = info.CallStatus
-
-        log.value = `Call status: ${info.CallStatus}`
-
-        if (info.CallStatus == 'in-progress') {
-          log.value = `Call in progress.`
-          calling.value = false
-          onCall.value = true
-          counterUp.value.start()
-        }
-      })
-
-      _call.on('accept', () => {
-        log.value = `Initiated call!`
-        showCallPopup.value = true
-        calling.value = true
-        onCall.value = false
-      })
-      _call.on('disconnect', () => {
-        log.value = `Call ended from makeOutgoing call disconnect.`
-        calling.value = false
-        onCall.value = false
-        showCallPopup.value = false
-        showSmallCallWindow.value = false
-        _call = null
-        callStatus.value = ''
-        muted.value = false
-        counterUp.value.stop()
-        note.value = {
-          name: '',
-          title: '',
-          content: '',
-        }
-      })
-      _call.on('cancel', () => {
-        log.value = `Call ended from makeOutgoing call cancel.`
-        calling.value = false
-        onCall.value = false
-        showCallPopup.value = false
-        showSmallCallWindow.value = false
-        _call = null
-        callStatus.value = ''
-        muted.value = false
-        note.value = {
-          name: '',
-          title: '',
-          content: '',
-        }
-        counterUp.value.stop()
-      })
+      watchOutgoingCall(_call)
     } catch (error) {
       log.value = `Could not connect call: ${error.message}`
       toast.error(__('Could not connect the call: {0}', [error.message]))
@@ -515,10 +548,80 @@ function toggleCallWindow() {
   showSmallCallWindow.value = !showSmallCallWindow.value
 }
 
+/* A call left by the popup the layout just swapped out (twilioHandover.js):
+   show it here, with its controls. Its Device belongs to the instance that
+   answered it and is destroyed when the call ends; this one only holds the
+   call. The timer starts again from zero -- how long the call has run is the
+   old popup's to know -- and a note begun there is not carried over. */
+onMounted(() => {
+  const left = twilioHandover.current
+  if (!left) return
+  _call = left.call
+  incomingCall = left.incoming
+  phoneNumber.value = left.number
+  onCall.value = left.onCall
+  calling.value = left.calling
+  callStatus.value = left.callStatus
+  muted.value = left.muted
+  showCallPopup.value = true
+  if (left.incoming) watchIncomingCall(_call)
+  else watchOutgoingCall(_call)
+  if (left.onCall) counterUp.value?.start()
+})
+
 onBeforeUnmount(() => {
   // The layout swaps headers at the mobile breakpoint; a Device left registered
   // keeps ringing for an instance nobody can see.
   started = false
+  // destroy() also hangs up, and the swap happens under a rep who is talking:
+  // a window dragged across the breakpoint, a phone turned on its side. A
+  // Device carrying an answered or outgoing call is left until that call
+  // ends, and the call is handed to the popup that mounts next. A call that
+  // is only ringing in is not kept: the next instance's Device rings for it
+  // too, and that one can be seen.
+  const live = _call && (onCall.value || calling.value || callStatus.value)
+  if (live) {
+    const call = _call
+    // A call picked up from an earlier popup is not on this instance's
+    // Device, and its Device already ends with it.
+    const mine = twilioHandover.current?.call !== call
+    twilioHandover.current = {
+      call,
+      incoming: incomingCall,
+      number: phoneNumber.value,
+      onCall: onCall.value,
+      calling: calling.value,
+      callStatus: callStatus.value,
+      muted: muted.value,
+    }
+    if (mine) {
+      const orphan = device
+      device = null
+      // no more incoming calls for a Device nobody can see
+      try {
+        Promise.resolve(orphan.unregister?.()).catch(() => {})
+      } catch {
+        // not registered: nothing to stop
+      }
+      let ended = false
+      const end = () => {
+        if (ended) return
+        ended = true
+        if (twilioHandover.current?.call === call) twilioHandover.current = null
+        orphan.destroy()
+      }
+      for (const event of ['disconnect', 'cancel', 'reject']) {
+        call.on(event, end)
+      }
+      // `error` is not the end of a call: the SDK raises it for a message
+      // that did not send, a DTMF tone, some media trouble, and the call
+      // goes on. Only an error that left the call closed ends it here --
+      // destroying the Device on any other would hang up on the rep.
+      call.on('error', () => {
+        if (call.status?.() === 'closed') end()
+      })
+    }
+  }
   device?.destroy()
   device = null
 })

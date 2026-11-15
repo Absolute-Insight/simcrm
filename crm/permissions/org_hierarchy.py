@@ -112,6 +112,24 @@ def has_deal_permission(doc, ptype, user):
 	return _has_permission(doc, ptype, user, "CRM Deal")
 
 
+#: What the assignment sub-select above filters on, most selective first.
+TODO_SCOPE_INDEX = ["allocated_to", "reference_type", "status"]
+
+
+def ensure_todo_index() -> None:
+	"""Index the assignment sub-select every scoped lead and deal query carries.
+
+	frappe indexes ToDo by (reference_type, reference_name) only, so "the records
+	assigned to this user" read every ToDo of that doctype -- open, closed and
+	cancelled, since assignments are never deleted -- and tested ``allocated_to``
+	row by row, on each list page, count, kanban column and document check a rep
+	makes. after_migrate rather than a patch, as for the indexes beside it in
+	hooks.py: ToDo is frappe's table, so no doctype JSON of ours can ask for it.
+	``add_index`` does nothing when the index is already there.
+	"""
+	frappe.db.add_index("ToDo", TODO_SCOPE_INDEX)
+
+
 def _in_hierarchy(user: str) -> bool:
 	# Deliberately not request_cache'd: frappe.local.request_cache is created in
 	# frappe.init and only cleared at the end of a web request, so in a scheduler

@@ -304,6 +304,58 @@ class FieldPackTest(IntegrationTestCase):
 		self.assertFalse(again["unchanged"])
 		self.assertNotEqual(again["hash"], first["hash"])
 
+	def test_a_list_already_held_is_not_sent_again(self):
+		# a note written on the phone changes the notes, not the 3000 customers
+		first = self.pack()
+		self.assertEqual(
+			set(first["sections"]),
+			{
+				"rules",
+				"plans",
+				"sheets",
+				"organizations",
+				"contacts",
+				"deals",
+				"history",
+				"notes",
+				"tasks",
+				"truncated",
+			},
+		)
+		self.contact("Naledi", self.mine)
+		again = self.pack(known_hash=first["hash"], known_sections=first["sections"])
+		self.assertFalse(again["unchanged"])
+		self.assertNotEqual(again["hash"], first["hash"])
+		self.assertTrue(any("Naledi" in (row.get("full_name") or "") for row in again["contacts"]))
+		self.assertNotIn("organizations", again)
+		self.assertNotIn("deals", again)
+		self.assertIn("organizations", again["kept"])
+		self.assertNotIn("contacts", again["kept"])
+		self.assertEqual(again["sections"]["organizations"], first["sections"]["organizations"])
+		self.assertNotEqual(again["sections"]["contacts"], first["sections"]["contacts"])
+
+	def test_a_list_is_only_left_out_for_a_phone_that_holds_exactly_it(self):
+		first = self.pack()
+		self.org("Newly mine", REP)
+		for claim in (
+			None,
+			"",
+			"not json",
+			"[1, 2]",
+			{"organizations": first["sections"]["organizations"]},
+			{"organizations": {"$ne": ""}, "contacts": ["x"], "no_such_list": "x"},
+			frappe.as_json({"organizations": "0" * 64}),
+		):
+			again = self.pack(known_hash=first["hash"], known_sections=claim)
+			self.assertIn("organizations", again, claim)
+			self.assertNotIn("organizations", again["kept"], claim)
+
+	def test_the_hash_of_the_whole_moves_with_any_of_its_lists(self):
+		first = self.pack()
+		same = self.pack()
+		self.assertEqual(first["hash"], same["hash"])
+		self.assertEqual(first["sections"], same["sections"])
+
 	def test_the_pack_names_its_owner_and_its_shelf_life(self):
 		pack = self.pack()
 		self.assertEqual(pack["user"], REP)
@@ -317,6 +369,39 @@ class FieldPackTest(IntegrationTestCase):
 		frappe.set_user(OUTSIDER)
 		with self.assertRaises(frappe.PermissionError):
 			get_pack()
+
+	def test_the_refusal_of_someone_who_is_no_field_user_is_told_apart(self):
+		# the phone drops its pack on this answer and on no other: the name is
+		# what travels to it as exc_type
+		with self.assertRaises(frappe.PermissionError) as refused:
+			self.pack(OUTSIDER)
+		self.assertEqual(type(refused.exception).__name__, "NotAFieldUser")
+
+	def test_a_permission_error_from_inside_the_pack_is_not_that_refusal(self):
+		# an administrator edits role permissions and Address stops being
+		# readable: every rep's sync fails, and none of them is to lose the
+		# customers already on the phone for it
+		from unittest.mock import patch
+
+		with (
+			patch("crm.api.offline._addresses", side_effect=frappe.PermissionError("Address")),
+			self.assertRaises(frappe.PermissionError) as failed,
+		):
+			self.pack()
+		self.assertEqual(type(failed.exception).__name__, "PermissionError")
+
+	def test_a_claim_too_large_to_be_a_packs_hashes_is_holds_nothing(self):
+		first = self.pack()
+		self.org("Newly mine", REP)
+		honest = dict(first["sections"])
+		padding = {f"list-{n}": "x" for n in range(200)}
+		for claim in (honest | padding, frappe.as_json(honest | {"pad": "x" * 30_000})):
+			again = self.pack(known_hash=first["hash"], known_sections=claim)
+			self.assertEqual(again["kept"], [])
+			self.assertIn("contacts", again)
+		# a hash is 64 characters: anything longer is not one
+		again = self.pack(known_sections={"contacts": first["sections"]["contacts"] + "0" * 200})
+		self.assertNotIn("contacts", again["kept"])
 
 	def test_someone_without_a_sales_role_gets_no_token(self):
 		frappe.set_user(OUTSIDER)

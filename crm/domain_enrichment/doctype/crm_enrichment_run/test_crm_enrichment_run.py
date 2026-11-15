@@ -108,6 +108,51 @@ class TestEnrichmentRunScoping(IntegrationTestCase):
 		get_config.assert_not_called()
 		enqueue.assert_not_called()
 
+	def test_enrich_and_retry_answer_alike_for_a_hidden_record_and_a_missing_one(self):
+		"""Audit be_enrichment-5: ``get_doc`` ran before the permission check, so a
+		hidden record raised ``PermissionError`` and a missing one
+		``DoesNotExistError`` -- a rep could ask whether a name exists."""
+		from crm.domain_enrichment import api
+
+		def answer(call, *args):
+			with (
+				patch.object(api, "enrichment_enabled_for", return_value=True),
+				patch.object(api, "enqueue_enrichment") as enqueue,
+				self.assertRaises(frappe.PermissionError) as raised,
+			):
+				call(*args)
+			enqueue.assert_not_called()
+			return type(raised.exception), str(raised.exception)
+
+		frappe.set_user(REP)
+		self.assertEqual(
+			answer(api.enrich, "CRM Lead", self.hidden_lead.name),
+			answer(api.enrich, "CRM Lead", "CRM-LEAD-no-such-lead"),
+		)
+		self.assertEqual(
+			answer(api.retry, self.hidden_lead_run.name), answer(api.retry, "no-such-enrichment-run")
+		)
+		# a run the rep may read, on a record that has since gone
+		frappe.set_user("Administrator")
+		orphan = self.make_run("CRM Lead", self.own_lead.name)
+		orphan.db_set("reference_name", "CRM-LEAD-no-such-lead")
+		frappe.set_user(REP)
+		self.assertEqual(
+			answer(api.retry, orphan.name), answer(api.enrich, "CRM Lead", self.hidden_lead.name)
+		)
+
+	def test_enrich_still_queues_a_record_the_rep_may_write(self):
+		from crm.domain_enrichment import api
+
+		frappe.db.set_value("CRM Lead", self.own_lead.name, "website", "https://acme.example")
+		frappe.set_user(REP)
+		with (
+			patch.object(api, "enrichment_enabled_for", return_value=True),
+			patch.object(api, "enqueue_enrichment", return_value={"queued": True}) as enqueue,
+		):
+			self.assertEqual(api.enrich("CRM Lead", self.own_lead.name), {"queued": True})
+		enqueue.assert_called_once_with("CRM Lead", self.own_lead.name, "https://acme.example", REP)
+
 	def manager_scope(self, scope):
 		saved = frappe.db.get_single_value("CRM Access Settings", "manager_outside_hierarchy")
 		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", scope)

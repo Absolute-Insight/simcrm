@@ -31,7 +31,8 @@
 </template>
 
 <script setup>
-import EditValueModal from '@/components/Modals/EditValueModal.vue'
+import ModalLoading from '@/components/ui/ModalLoading.vue'
+import { lazyComponent } from '@/utils/lazyComponent'
 import AssignmentModal from '@/components/Modals/AssignmentModal.vue'
 import { setupListCustomizations } from '@/utils'
 import { globalStore } from '@/stores/global'
@@ -61,6 +62,26 @@ const { $dialog, $socket } = globalStore()
 const { capture } = useTelemetry()
 
 const showEditModal = ref(false)
+
+/* Loaded when Edit is first chosen. Imported here, the bulk-edit dialog made
+   its rich-text editor -- 284 KB gzipped -- part of every list page, for a
+   dialog most visits never open. If it cannot be fetched the click is not
+   left without an answer: the dialog is put away, so that Edit asks again,
+   and a toast says why nothing opened. The selection is untouched. */
+const EditValueModal = lazyComponent(
+  () => import('@/components/Modals/EditValueModal.vue'),
+  {
+    loading: ModalLoading,
+    onFail() {
+      showEditModal.value = false
+      toast.error(
+        __(
+          'Could not load the bulk edit dialog. Check your connection and try again.',
+        ),
+      )
+    },
+  },
+)
 const selectedValues = ref([])
 const unselectAllAction = ref(() => {})
 const showDeleteDocModal = ref({

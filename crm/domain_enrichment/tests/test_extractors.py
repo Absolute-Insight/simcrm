@@ -602,6 +602,72 @@ class SocialTest(UnitTestCase):
 				profiles = extractors.extract_social_profiles([page], {page.url: soup}, [rule])
 				self.assertTrue(profiles["twitter"].value)
 
+	def test_only_http_links_are_stored_as_profiles(self):
+		"""Audit be_enrichment-3: the patterns are unanchored searches, so a
+		``javascript:`` URL that mentions the network was stored as the profile."""
+		for href in (
+			"javascript:alert(document.domain)//linkedin.com/company/x",
+			"JavaScript:alert(1)//www.linkedin.com/company/x",
+			"data:text/html,<script>alert(1)</script>//linkedin.com/company/x",
+			"vbscript:msgbox(1)//linkedin.com/company/x",
+			"ftp://linkedin.com/company/x",
+		):
+			with self.subTest(href=href):
+				page, soup = fixtures.make_page("https://acme.example", f'<a href="{href}">in</a>')
+				for extra in ([], [href]):  # an <a href>, and a JSON-LD sameAs entry
+					profiles = extractors.extract_social_profiles(
+						[page], {page.url: soup}, fixtures.social_rules(), extra_links=extra
+					)
+					self.assertEqual(profiles["linkedin"].value, "")
+		page, soup = fixtures.make_page(
+			"https://acme.example", '<a href="https://www.linkedin.com/company/acme">in</a>'
+		)
+		profiles = extractors.extract_social_profiles([page], {page.url: soup}, fixtures.social_rules())
+		self.assertEqual(profiles["linkedin"].value, "https://www.linkedin.com/company/acme")
+
+	def test_a_scheme_relative_link_with_no_base_is_https_not_dropped(self):
+		"""Review of PR #400: with no page URL to take a scheme from, the http(s)
+		check dropped ``//linkedin.com/...`` that was stored before it."""
+		profiles = extractors.extract_social_profiles(
+			[], {}, fixtures.social_rules(), extra_links=["//www.linkedin.com/company/acme"]
+		)
+		self.assertEqual(profiles["linkedin"].value, "https://www.linkedin.com/company/acme")
+		self.assertEqual(
+			extractors._safe_url("", "//cdn.acme.example/logo.png"), "https://cdn.acme.example/logo.png"
+		)
+		self.assertEqual(extractors._safe_url("", "javascript:alert(1)//linkedin.com/company/x"), "")
+
+	def test_a_stored_link_has_a_host_and_nothing_else_in_its_authority(self):
+		"""Final review of PR #400: with no base, "//" became "https://"."""
+		for base in ("", "https://acme.example/"):
+			for raw in (
+				"// evil",
+				"//user:pw@host/x",
+				"//user@linkedin.com/company/x",
+				"https://user:pw@linkedin.com/company/x",
+				"https://linked in.com/company/x",
+				"//\tlinkedin.com/x",
+				"https://linkedin.com/\ncompany/x",
+			):
+				with self.subTest(base=base, raw=raw):
+					self.assertEqual(extractors._safe_url(base, raw), "")
+		# with no base there is no host for these to fall back on
+		for raw in ("//", "https://", "https:///linkedin.com/company/x", "/company/x", "?q=1"):
+			with self.subTest(raw=raw):
+				self.assertEqual(extractors._safe_url("", raw), "")
+		self.assertEqual(
+			extractors._safe_url("", "//www.linkedin.com/company/acme"),
+			"https://www.linkedin.com/company/acme",
+		)
+		self.assertEqual(
+			extractors._safe_url("https://acme.example/a/", "img/my logo.png"),
+			"https://acme.example/a/img/my logo.png",
+		)
+		self.assertEqual(
+			extractors._safe_url("", "https://acme.example:8443/logo.png"),
+			"https://acme.example:8443/logo.png",
+		)
+
 	def test_protocol_relative_links_made_absolute(self):
 		page, soup = fixtures.make_page(
 			"https://bluedart.com",

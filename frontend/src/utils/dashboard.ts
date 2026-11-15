@@ -1,17 +1,39 @@
-import { dayjs } from 'frappe-ui'
+import { getConfig } from 'frappe-ui'
+import { addDays, todayInTimeZone } from '@/utils/planner'
 
 export type DashboardDateRange = string | [string, string] | [] | null
 
-export function getLastXDays(range: number = 30): string | null {
-  const today = new Date()
-  const lastXDate = new Date(today)
+/** Today's calendar date where the site is: the day the server reports on. */
+export function siteToday(): string {
+  return todayInTimeZone(getConfig('systemTimezone'))
+}
+
+/**
+ * "Last N days" as `from,to`, ending on the site's today.
+ *
+ * It used to end on the browser's today, so for part of every day a user in
+ * another zone asked for a window that stopped a day short of the page's own
+ * "today". The arithmetic is on calendar dates, not on a local Date.
+ */
+export function getLastXDays(
+  range: number = 30,
+  today: string = siteToday(),
+): string {
   // an inclusive window of `range` days ending today: subtracting `range`
   // itself made "Last 30 Days" a 31-day span
-  lastXDate.setDate(today.getDate() - (range - 1))
+  return `${addDays(today, -(range - 1))},${today}`
+}
 
-  return `${dayjs(lastXDate).format('YYYY-MM-DD')},${dayjs(today).format(
-    'YYYY-MM-DD',
-  )}`
+/**
+ * Which of `presets` (day counts) `range` is today, or null for a custom one.
+ */
+export function presetDaysFor(
+  range: DashboardDateRange,
+  presets: number[],
+): number | null {
+  const [from, to] = parseDateRange(range)
+  const text = `${from},${to}`
+  return presets.find((days) => getLastXDays(days) === text) ?? null
 }
 
 export function parseDateRange(range: DashboardDateRange): [string, string] {

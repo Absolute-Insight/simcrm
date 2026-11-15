@@ -242,7 +242,16 @@ async function createDeal() {
     deal.doc['mobile_no'] = null
   } else deal.doc['contact'] = null
 
-  await triggerOnBeforeCreate?.()
+  // Raised before the first await: a Form Script's onBeforeCreate can take a
+  // round trip, and a second click in that window created a second deal.
+  if (isDealCreating.value) return
+  isDealCreating.value = true
+  try {
+    await triggerOnBeforeCreate?.()
+  } catch (err) {
+    isDealCreating.value = false
+    throw err
+  }
 
   createResource({
     url: 'crm.fcrm.doctype.crm_deal.crm_deal.create_deal',

@@ -233,3 +233,222 @@ class SettingsSecretsTest(IntegrationTestCase):
 		script = erp.get_crm_form_script()
 		self.assertIn("erpnext_crm_settings.is_enabled", script)
 		self.assertNotIn("frappe.client.get_single_value", script)
+
+
+SETTINGS = "ERPNext CRM Settings"
+
+
+class SiteUrlAndItsSecretTest(IntegrationTestCase):
+	"""The API secret is masked on read but sent to whatever the site URL says, and a
+	Sales Manager can write the site URL. The URL is checked when it changes, the
+	stored secret does not follow it to another host, and what the other site
+	answers is not relayed to the browser."""
+
+	URL = "https://erp.example.com"
+
+	def setUp(self):
+		super().setUp()
+		from frappe.utils.password import set_encrypted_password
+
+		from crm.integrations import remote_url
+
+		frappe.set_user("Administrator")
+		# off: validate() then does nothing but judge the document
+		_enable(enabled=0, create_customer_on_status_change=0, erpnext_site_url=self.URL, api_key="key")
+		set_encrypted_password(SETTINGS, SETTINGS, "stored-api-secret", "api_secret")
+		frappe.db.set_single_value(SETTINGS, "api_secret", "*" * 17)
+		frappe.clear_document_cache(SETTINGS, SETTINGS)
+
+		def resolve(host):
+			return ["10.0.3.7"] if host.endswith(".internal") else ["93.184.215.14"]
+
+		for patcher in (
+			patch.object(remote_url, "_resolve", side_effect=resolve),
+			patch.dict(frappe.local.conf, {"developer_mode": 0, remote_url.TRUSTED_HOSTS_CONFIG: []}),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+		# as CustomerPushOffTheSavePathTest: off, even if something above committed
+		frappe.db.set_single_value(SETTINGS, "enabled", 0)
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
+		frappe.clear_document_cache(SETTINGS, SETTINGS)
+		super().tearDown()
+
+	def stored(self):
+		return frappe.get_doc(SETTINGS).get_password("api_secret", raise_exception=False)
+
+	def enabled_remote(self):
+		"""The integration on, pointed at a private host, with only the remote call
+		left of what an enabled save does: the rest alters tables (custom fields),
+		which commits, and has nothing to do with where the secret may go."""
+		frappe.db.set_single_value("CRM Acumatica Settings", "enabled", 0)
+		_enable(erpnext_site_url="http://erpnext-frontend.internal:8080", api_key="key")
+		for method in (
+			"add_quotation_to_option",
+			"create_custom_fields_in_frappe_crm",
+			"create_crm_form_script",
+			"grant_item_access_to_sales_roles",
+		):
+			patcher = patch.object(erp.ERPNextCRMSettings, method)
+			patcher.start()
+			self.addCleanup(patcher.stop)
+		settings = frappe.get_doc(SETTINGS)
+		settings.erpnext_company = "Another Co"
+		return settings
+
+	def test_moving_the_site_does_not_take_the_stored_secret_with_it(self):
+		for url in ("https://attacker.example", "https://erp.example.com:8443", "http://erp.example.com"):
+			with self.subTest(url=url), self.assertRaises(frappe.ValidationError):
+				frappe.client.set_value(SETTINGS, SETTINGS, {"erpnext_site_url": url})
+		self.assertEqual(frappe.db.get_single_value(SETTINGS, "erpnext_site_url"), self.URL)
+		self.assertEqual(self.stored(), "stored-api-secret")
+
+	def test_the_site_can_be_moved_by_entering_the_secret_again(self):
+		frappe.client.set_value(
+			SETTINGS, SETTINGS, {"erpnext_site_url": "https://erp2.example.com/", "api_secret": "new-secret"}
+		)
+		self.assertEqual(frappe.db.get_single_value(SETTINGS, "erpnext_site_url"), "https://erp2.example.com")
+		self.assertEqual(self.stored(), "new-secret")
+
+	def test_removing_the_url_clears_the_secret_stored_for_it(self):
+		frappe.client.set_value(SETTINGS, SETTINGS, {"erpnext_site_url": ""})
+		self.assertIsNone(self.stored())
+
+	def test_a_url_that_is_not_public_https_is_refused(self):
+		for url in (
+			"http://erp2.example.com",
+			"https://127.0.0.1:8000",
+			"http://erpnext.internal:8000",
+			"https://key:secret@erp2.example.com",
+		):
+			with self.subTest(url=url), self.assertRaises(frappe.ValidationError):
+				frappe.client.set_value(SETTINGS, SETTINGS, {"erpnext_site_url": url, "api_secret": "typed"})
+
+	def test_a_private_site_the_operator_trusts_is_accepted(self):
+		"""A self-hosted SIMERP on the same private network, on http: the site config
+		names it, and then the pane can be pointed at it."""
+		from crm.integrations import remote_url
+
+		with patch.dict(frappe.local.conf, {remote_url.TRUSTED_HOSTS_CONFIG: ["erpnext.internal"]}):
+			frappe.client.set_value(
+				SETTINGS,
+				SETTINGS,
+				{"erpnext_site_url": "http://erpnext.internal:8000", "api_secret": "typed"},
+			)
+			erp.get_erpnext_site_client(frappe.get_doc(SETTINGS))  # and used
+		self.assertEqual(self.stored(), "typed")
+
+	def test_the_same_site_setup_has_no_url_to_judge(self):
+		"""SIMERP installed on this very site: no URL, no key, nothing sent anywhere."""
+		_enable(enabled=0, is_erpnext_in_different_site=0, erpnext_site_url="", api_key="")
+		frappe.db.set_single_value(SETTINGS, "api_secret", "")
+		settings = frappe.get_doc(SETTINGS)
+		settings.erpnext_company = "Another Co"
+		settings.save()
+		self.assertEqual(frappe.db.get_single_value(SETTINGS, "erpnext_company"), "Another Co")
+
+	def test_a_stored_url_that_has_become_internal_is_not_sent_the_secret(self):
+		frappe.db.set_single_value(SETTINGS, "erpnext_site_url", "https://moved.internal")
+		frappe.clear_document_cache(SETTINGS, SETTINGS)
+		with patch.object(erp, "FrappeClient") as client, self.assertRaises(frappe.ValidationError):
+			erp.get_erpnext_site_client(frappe.get_doc(SETTINGS))
+		client.assert_not_called()
+
+	def test_a_refused_host_is_explained_when_the_enabled_integration_is_saved(self):
+		"""Enabled and remote, every save calls the other site. A host that is not
+		allowed used to end that save with a bare exception -- "Failed to save
+		settings" -- whichever field was being changed."""
+		settings = self.enabled_remote()
+		frappe.clear_messages()
+		with (
+			patch.object(erp, "FrappeClient") as client,
+			self.assertRaises(frappe.ValidationError) as refused,
+		):
+			settings.save()
+		client.assert_not_called()
+		for text in (str(refused.exception), str(frappe.local.message_log)):
+			self.assertIn("erpnext-frontend.internal", text)
+			self.assertIn("crm_erp_trusted_hosts", text)
+
+	def test_the_enabled_integration_saves_once_its_host_is_trusted(self):
+		from crm.integrations import remote_url
+
+		settings = self.enabled_remote()
+		with (
+			patch.dict(frappe.local.conf, {remote_url.TRUSTED_HOSTS_CONFIG: ["erpnext-frontend.internal"]}),
+			patch.object(erp, "FrappeClient") as client,
+		):
+			settings.save()
+		client.assert_called_once()
+		self.assertEqual(frappe.db.get_single_value(SETTINGS, "erpnext_company"), "Another Co")
+
+	def test_the_client_does_not_follow_a_redirect(self):
+		"""The site URL was checked; a 307 from it to the metadata address, or to a
+		host of the sender's choosing with the key in the header, was not."""
+		from unittest.mock import MagicMock
+
+		import requests
+
+		from crm.integrations.remote_url import RemoteHostNotAllowed
+
+		answer = MagicMock(status_code=307, headers={"Location": "http://169.254.169.254/"})
+		with patch.object(requests.Session, "request", return_value=answer) as request:
+			client = erp.get_erpnext_site_client(frappe.get_doc(SETTINGS))
+			with self.assertRaises(RemoteHostNotAllowed):
+				client.get_list("Company", fields=["company_name"])
+		self.assertIs(request.call_args.kwargs["allow_redirects"], False)
+		self.assertEqual(request.call_args.kwargs["timeout"], (5, 30))
+
+	def _redirecting_client(self):
+		from unittest.mock import MagicMock
+
+		from crm.integrations.remote_url import refuse_redirect
+
+		def refused(*args, **kwargs):
+			refuse_redirect(MagicMock(status_code=301), "SIMERP Site URL")
+
+		client = MagicMock()
+		client.post_api.side_effect = refused
+		client.get_list.side_effect = refused
+		return patch.object(erp, "get_erpnext_site_client", return_value=client)
+
+	def test_a_redirecting_site_is_named_as_one_wherever_it_is_called(self):
+		"""An http:// URL whose proxy answers 301 to https used to work by being
+		followed. Refused, it has to say so: "check the Error Log" and "enable Data
+		Synchronization" send an admin looking in the wrong place."""
+		settings = self.enabled_remote()
+		deal = _won_deal()
+		calls = {
+			"saving the settings": settings.save,
+			"refreshing companies": settings.get_external_companies,
+			"the customer link": lambda: erp.get_customer_link(deal.name),
+			"creating a prospect": lambda: erp.create_prospect_in_remote_site(deal.name, settings),
+		}
+		for name, call in calls.items():
+			frappe.clear_messages()
+			with (
+				self.subTest(call=name),
+				self._redirecting_client(),
+				patch.object(erp, "_check_user_rate_limit"),
+				self.assertRaises(frappe.ValidationError) as refused,
+			):
+				call()
+			self.assertIn("redirect", str(refused.exception))
+			self.assertIn("redirect", str(frappe.local.message_log))
+
+	def test_what_the_other_site_answers_is_not_relayed(self):
+		"""Refresh companies raised whatever the remote said -- its traceback, or the
+		first lines of any page an internal URL served."""
+		settings = frappe.get_doc(SETTINGS)
+		with patch.object(erp, "get_erpnext_site_client") as client:
+			client.return_value.get_list.side_effect = Exception(
+				"<html>internal admin page: token=abc</html>"
+			)
+			with self.assertRaises(frappe.ValidationError) as failed:
+				settings.get_external_companies()
+		self.assertNotIn("internal admin page", str(failed.exception))
+		self.assertNotIn("token=abc", str(frappe.local.message_log))

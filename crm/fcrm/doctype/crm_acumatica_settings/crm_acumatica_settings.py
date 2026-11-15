@@ -6,7 +6,12 @@ from frappe.model.document import Document
 from frappe.query_builder.functions import Max, Min
 from frappe.utils import now_datetime
 
+from crm.integrations.remote_url import validate_url_field
+
 FORM_SCRIPT_NAME = "Create Sales Quote from CRM Deal"
+# What the client posts to the instance URL to log in. Stored for one host, they
+# are not sent to another: see validate_url_field.
+CONNECTION_SECRETS = ("client_secret", "password")
 MAX_SYNC_ISSUES = 200
 
 
@@ -18,6 +23,9 @@ class CRMAcumaticaSettings(Document):
 		validate_settings(self)
 		self.validate_customer_push()
 		self.drop_sync_issues()
+		# enabled or not: the Test connection button posts the secrets to this URL
+		# whether or not the integration is on
+		validate_url_field(self, "instance_url", CONNECTION_SECRETS)
 		if not self.enabled:
 			return
 		if not self.instance_url:

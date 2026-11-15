@@ -1,7 +1,10 @@
 import json
+from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
+
+SETTINGS = "CRM Acumatica Settings"
 
 
 class TestAcumaticaSettings(FrappeTestCase):
@@ -501,3 +504,157 @@ class TestCustomerPushSettings(FrappeTestCase):
 			"fields"
 		]
 		self.assertEqual(fields, ["website", "acumatica_id", "tax_registration_id", "industry"])
+
+
+class TestInstanceUrlAndItsSecrets(FrappeTestCase):
+	"""The secrets are masked on read, but they are posted to whatever the instance
+	URL says -- and a Sales Manager can write the instance URL. So the URL is
+	checked when it changes, and the secrets stored for one host never follow it to
+	another: whoever moves it has to enter them again."""
+
+	URL = "https://mbp.example.com/MBP"
+	SECRETS = (("client_secret", "stored-client-secret"), ("password", "stored-api-password"))
+
+	def setUp(self):
+		from frappe.utils.password import set_encrypted_password
+
+		from crm.integrations import remote_url
+
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value(SETTINGS, {"enabled": 0, "instance_url": self.URL})
+		for field, value in self.SECRETS:
+			set_encrypted_password(SETTINGS, SETTINGS, value, field)
+			frappe.db.set_single_value(SETTINGS, field, "*" * len(value))
+		frappe.clear_document_cache(SETTINGS, SETTINGS)
+
+		def resolve(host):
+			if host == "db.internal":
+				return ["10.0.3.7"]
+			return ["93.184.215.14"]
+
+		for patcher in (
+			patch.object(remote_url, "_resolve", side_effect=resolve),
+			patch.dict(frappe.local.conf, {"developer_mode": 0, remote_url.TRUSTED_HOSTS_CONFIG: []}),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def stored(self, field):
+		return frappe.get_doc(SETTINGS).get_password(field, raise_exception=False)
+
+	def test_moving_the_instance_does_not_take_the_stored_secrets_with_it(self):
+		s = frappe.get_doc(SETTINGS)
+		s.instance_url = "https://attacker.example"
+		with self.assertRaises(frappe.ValidationError) as refused:
+			s.save()
+		self.assertIn("Client Secret", str(refused.exception))
+		self.assertIn("Password", str(refused.exception))
+		# nothing moved: the URL and both secrets are as they were
+		self.assertEqual(frappe.db.get_single_value(SETTINGS, "instance_url"), self.URL)
+		self.assertEqual(self.stored("client_secret"), "stored-client-secret")
+
+	def test_the_api_a_manager_saves_through_is_held_to_it(self):
+		"""The pane saves with frappe.client.set_value; so can anyone with the role."""
+		for values in (
+			{"instance_url": "https://attacker.example"},
+			# one secret typed, the other left on its mask
+			{"instance_url": "https://attacker.example", "client_secret": "mine"},
+			{"instance_url": "https://mbp.example.com:8443/MBP"},
+			{"instance_url": "https://mbp.example.com.attacker.example/MBP"},
+		):
+			with self.subTest(values=values), self.assertRaises(frappe.ValidationError):
+				frappe.client.set_value(SETTINGS, SETTINGS, values)
+		self.assertEqual(frappe.db.get_single_value(SETTINGS, "instance_url"), self.URL)
+
+	def test_the_instance_can_be_moved_by_entering_the_secrets_again(self):
+		s = frappe.get_doc(SETTINGS)
+		s.instance_url = "https://live.example.com/"
+		s.client_secret = "new-client-secret"
+		s.password = "new-api-password"
+		s.save()
+		self.assertEqual(frappe.db.get_single_value(SETTINGS, "instance_url"), "https://live.example.com")
+		self.assertEqual(self.stored("client_secret"), "new-client-secret")
+		self.assertEqual(self.stored("password"), "new-api-password")
+
+	def test_another_company_on_the_same_host_keeps_the_secrets(self):
+		"""Sandbox and live share a host and differ by path; so does a typo fixed."""
+		s = frappe.get_doc(SETTINGS)
+		s.instance_url = "https://MBP.example.com/Live/"
+		s.save()
+		self.assertEqual(frappe.db.get_single_value(SETTINGS, "instance_url"), "https://MBP.example.com/Live")
+		self.assertEqual(self.stored("password"), "stored-api-password")
+
+	def test_removing_the_url_clears_the_secrets_stored_for_it(self):
+		"""Otherwise the move is two saves: blank the URL, then set the new one."""
+		s = frappe.get_doc(SETTINGS)
+		s.instance_url = ""
+		s.save()
+		self.assertIsNone(self.stored("client_secret"))
+		self.assertIsNone(self.stored("password"))
+
+		s.reload()
+		s.instance_url = "https://attacker.example"
+		s.save()  # nothing stored is left to send there
+		self.assertIsNone(self.stored("client_secret"))
+
+	def test_secrets_stored_before_any_url_are_not_sent_to_the_first_one(self):
+		frappe.db.set_single_value(SETTINGS, "instance_url", "")
+		frappe.clear_document_cache(SETTINGS, SETTINGS)
+		s = frappe.get_doc(SETTINGS)
+		s.instance_url = "https://attacker.example"
+		with self.assertRaises(frappe.ValidationError):
+			s.save()
+
+	def test_a_url_that_is_not_public_https_is_refused(self):
+		for url in (
+			"http://live.example.com",
+			"https://127.0.0.1:8000",
+			"https://169.254.169.254/latest",
+			"https://db.internal",
+			"https://user:pw@live.example.com",
+			"live.example.com",
+		):
+			with self.subTest(url=url):
+				s = frappe.get_doc(SETTINGS)
+				s.instance_url = url
+				s.client_secret = "typed"
+				s.password = "typed"
+				with self.assertRaises(frappe.ValidationError):
+					s.save()
+
+	def test_a_path_or_slash_edit_on_a_url_from_before_the_rules_is_not_re_judged(self):
+		"""Same scheme, host and port: the same server the secrets were entered for,
+		so neither the URL rules nor the re-entry rule has anything new to decide."""
+		frappe.db.set_single_value(SETTINGS, "instance_url", "http://10.0.0.5/acumatica")
+		for url, kept in (
+			("http://10.0.0.5/acumatica/", "http://10.0.0.5/acumatica"),
+			("http://10.0.0.5/AcumaticaLive", "http://10.0.0.5/AcumaticaLive"),
+			("http://10.0.0.5:80/AcumaticaLive", "http://10.0.0.5:80/AcumaticaLive"),
+		):
+			with self.subTest(url=url):
+				frappe.clear_document_cache(SETTINGS, SETTINGS)
+				s = frappe.get_doc(SETTINGS)
+				s.instance_url = url
+				s.save()
+				self.assertEqual(frappe.db.get_single_value(SETTINGS, "instance_url"), kept)
+				self.assertEqual(self.stored("password"), "stored-api-password")
+		# another host is still another host
+		s = frappe.get_doc(SETTINGS)
+		s.instance_url = "http://10.0.0.6/acumatica"
+		with self.assertRaises(frappe.ValidationError):
+			s.save()
+
+	def test_the_other_settings_still_save_beside_a_url_from_before_the_rules(self):
+		"""An existing site's URL is judged when it is used, not on every save of
+		something else -- or its admin could not change anything until it was fixed."""
+		frappe.db.set_single_value(SETTINGS, "instance_url", "http://10.0.0.5/acumatica")
+		frappe.clear_document_cache(SETTINGS, SETTINGS)
+		s = frappe.get_doc(SETTINGS)
+		s.quote_order_type = "QT"
+		s.save()
+		self.assertEqual(frappe.db.get_single_value(SETTINGS, "quote_order_type"), "QT")
+		self.assertEqual(self.stored("password"), "stored-api-password")

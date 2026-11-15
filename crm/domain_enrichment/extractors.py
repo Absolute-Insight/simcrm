@@ -248,7 +248,9 @@ def _safe_url(base_url, raw):
 	``http(s)`` URL. Rejects ``javascript:``/``data:`` schemes a crawled site could
 	inject into a stored logo/image/icon field (stored-XSS defense)."""
 	raw = (raw or "").strip()
-	if not raw:
+	if not raw or any(char < " " for char in raw):
+		# a tab or newline inside a URL is dropped by browsers and by urlparse,
+		# so what is checked would not be what is stored
 		return ""
 	# urljoin() leaves javascript:/data: schemes as-is, so check the raw scheme
 	# first, then re-check the resolved URL for relative inputs.
@@ -256,7 +258,19 @@ def _safe_url(base_url, raw):
 	if scheme and scheme not in ("http", "https"):
 		return ""
 	resolved = urljoin(base_url, raw)
-	return resolved if urlparse(resolved).scheme in ("http", "https") else ""
+	if resolved.startswith("//"):
+		# scheme-relative with no base to take a scheme from (a JSON-LD sameAs
+		# link on a page whose URL is not known): https, not dropped
+		resolved = "https:" + resolved
+	parsed = urlparse(resolved)
+	if parsed.scheme not in ("http", "https"):
+		return ""
+	# a link to store has a host and nothing else in its authority: "//",
+	# "// evil" and "//user:pw@host/x" are not addresses of anything
+	netloc = parsed.netloc
+	if not parsed.hostname or "@" in netloc or any(char.isspace() for char in netloc):
+		return ""
+	return resolved
 
 
 def _best_icon(soup, base_url):
@@ -600,7 +614,12 @@ def extract_social_profiles(pages, soups_by_url, social_rules, extra_links=None)
 	for href, source, method in candidates:
 		if not href or SOCIAL_NEGATIVE.search(href):
 			continue
-		url = urljoin(source, href.strip())
+		# http(s) only, like the logo and icon: the patterns are unanchored
+		# searches, so ``javascript:...//linkedin.com/company/x`` matched and was
+		# stored as the record's profile link
+		url = _safe_url(source, href)
+		if not url:
+			continue
 		for rule in social_rules:
 			network = rule.target_value
 			if profiles[network].value:

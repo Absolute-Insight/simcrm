@@ -313,3 +313,43 @@ class ReminderCadenceTest(IntegrationTestCase):
 
 		self.assertEqual(popups, [])
 		self.assertEqual([label for _clock, _name, label in emails], ["1 hour(s)"])
+
+
+class ReminderLedgerSurvivesClearCacheTest(IntegrationTestCase):
+	"""The sent ledger is the only record that a reminder went out. ``frappe.clear_cache``
+	deletes every site key no hook names, and ``rename_doc`` -- which the Acumatica
+	sync runs on a renamed customer -- calls it, as do migrate and a Role save."""
+
+	def setUp(self):
+		super().setUp()
+		forget_sent_reminders()
+		self.addCleanup(forget_sent_reminders)
+
+	def test_the_ledger_is_a_persistent_cache_key(self):
+		from crm import hooks
+		from crm.api.event import SENT_REMINDER_KEY
+
+		self.assertIn(f"{SENT_REMINDER_KEY}*", hooks.persistent_cache_keys)
+
+	def test_a_claimed_reminder_stays_claimed_across_a_clear_cache(self):
+		from crm.api.event import _claim_reminder
+
+		reminder = frappe._dict(
+			event_name="EV-LEDGER-CLEAR-CACHE",
+			notification_type="Email",
+			trigger_datetime=datetime(2026, 3, 2, 9, 50),
+		)
+		# clear_cache reads persistent_cache_keys from hooks cached per site,
+		# possibly by a process running other code; start from this code's
+		frappe.clear_cache()
+		self.assertTrue(_claim_reminder(reminder))
+
+		frappe.clear_cache()
+
+		self.assertFalse(_claim_reminder(reminder), "the reminder would be mailed a second time")
+
+	def test_an_ordinary_cache_key_is_still_cleared(self):
+		"""The control: the exemption is the ledger's, not the whole ``crm:`` space."""
+		frappe.cache.set_value("crm:event_reminder_other", 1)
+		frappe.clear_cache()
+		self.assertIsNone(frappe.cache.get_value("crm:event_reminder_other"))

@@ -13,6 +13,12 @@ from frappe.frappeclient import FrappeClient
 from frappe.model.document import Document
 from frappe.utils import get_url_to_form, get_url_to_list
 
+from crm.integrations.remote_url import (
+	RemoteHostNotAllowed,
+	ensure_host_allowed,
+	refuse_redirect,
+	validate_url_field,
+)
 from crm.utils import user_rate_limited
 
 # Per user and per minute on the endpoints that reach the remote ERPNext site.
@@ -29,6 +35,16 @@ def _is_erpnext_installed():
 def _log_and_throw(message: str, title: str | None = None):
 	frappe.log_error(frappe.get_traceback(), title or message)
 	frappe.throw(_(message))
+
+
+def _throw_refusal(refusal: Exception):
+	"""A host or a redirect the CRM will not send the API secret to, said to the user.
+
+	``ensure_host_allowed`` and ``refuse_redirect`` raise it bare, because they also
+	run in jobs. Caught by the catch-alls here it became "check the Error Log"; left
+	alone it reached the browser with no message at all. The text is ours and names
+	what to change, so it is thrown as it is."""
+	frappe.throw(str(refusal), RemoteHostNotAllowed, title=_("SIMERP site not reachable as configured"))
 
 
 def _check_user_rate_limit() -> None:
@@ -68,6 +84,9 @@ class ERPNextCRMSettings(Document):
 	# end: auto-generated types
 
 	def validate(self):
+		# First, and enabled or not: everything below may call the other site, and
+		# the secret stored for one host is not sent to another.
+		validate_url_field(self, "erpnext_site_url", ("api_secret",))
 		old = self.get_doc_before_save()
 		was_active = bool(old and old.enabled and not old.is_erpnext_in_different_site)
 		if self.enabled:
@@ -163,9 +182,19 @@ class ERPNextCRMSettings(Document):
 		_create_custom_fields(custom_fields, ignore_validate=True)
 
 	def create_custom_fields_in_remote_site(self):
-		client = get_erpnext_site_client(self)
+		try:
+			client = get_erpnext_site_client(self)
+		except RemoteHostNotAllowed as e:
+			# Enabled and remote, this runs on every save. Left to propagate as raised,
+			# it carried no message for the browser: "Failed to save settings", for
+			# whichever field was being changed. Thrown, it says which host and where
+			# an administrator allows it.
+			_throw_refusal(e)
 		try:
 			client.post_api("erpnext.crm.frappe_crm_api.create_custom_fields_for_frappe_crm")
+		except RemoteHostNotAllowed as e:
+			# a redirect: not "enable Data Synchronization", and not in the Error Log
+			_throw_refusal(e)
 		except Exception:
 			frappe.log_error(
 				frappe.get_traceback(),
@@ -228,8 +257,21 @@ class ERPNextCRMSettings(Document):
 		frappe.only_for(["System Manager", "Sales Manager"], True)
 		if not self.erpnext_site_url or not self.api_key or not self.api_secret:
 			return []
-		client = get_erpnext_site_client(self)
-		return client.get_list("Company", fields=["company_name"])
+		try:
+			client = get_erpnext_site_client(self)
+			return client.get_list("Company", fields=["company_name"])
+		except RemoteHostNotAllowed as e:
+			_throw_refusal(e)
+		except Exception:
+			# Never the other side's words: FrappeClient raises the remote traceback,
+			# or whatever page the URL served, and the URL is a Sales Manager's to set.
+			frappe.log_error(frappe.get_traceback(), "Could not read companies from the SIMERP site")
+			frappe.throw(
+				_(
+					"Could not read the companies from the SIMERP site. Check the site URL, "
+					"API key and API secret; the details are in the Error Log."
+				)
+			)
 
 	@frappe.whitelist()
 	def is_erpnext_installed(self):
@@ -381,15 +423,30 @@ def _can_read_items():
 
 def get_erpnext_site_client(erpnext_crm_settings):
 	site_url = erpnext_crm_settings.erpnext_site_url
+	# Asked every time the secret is about to be sent: a name can be re-pointed
+	# after the settings were saved, and a URL may predate the save-time check.
+	ensure_host_allowed(site_url, _("SIMERP Site URL"))
 	api_key = erpnext_crm_settings.api_key
 	api_secret = erpnext_crm_settings.get_password("api_secret", raise_exception=False)
 
 	client = FrappeClient(site_url, api_key=api_key, api_secret=api_secret)
-	# FrappeClient never passes a timeout, so an unresponsive remote site held a
-	# web worker indefinitely. 5s to connect, 30s per read, on every request the
-	# session makes.
-	client.session.request = functools.partial(client.session.request, timeout=(5, 30))
+	client.session.request = functools.partial(_bounded_request, client.session.request)
 	return client
+
+
+def _bounded_request(send, method, url, **kwargs):
+	"""Every request the FrappeClient session makes, with two things it never set.
+
+	A timeout: an unresponsive remote site held a web worker indefinitely. 5s to
+	connect, 30s per read. And no redirects: ``session.get`` and ``session.post``
+	ask for them to be followed, which would carry the API key to wherever the
+	checked host points next -- so they are refused here, whatever the caller says.
+	"""
+	kwargs.setdefault("timeout", (5, 30))
+	kwargs["allow_redirects"] = False
+	response = send(method, url, **kwargs)
+	refuse_redirect(response, _("SIMERP Site URL"))
+	return response
 
 
 def get_local_customer(crm_deal: str):
@@ -409,8 +466,8 @@ def get_customer_link(crm_deal: str):
 		customer = get_local_customer(crm_deal)
 		return get_url_to_form("Customer", customer) if customer else ""
 
-	client = get_erpnext_site_client(erpnext_crm_settings)
 	try:
+		client = get_erpnext_site_client(erpnext_crm_settings)
 		customer = client.get_list("Customer", filters={"crm_deal": crm_deal})
 		customer = customer[0].get("name") if customer else None
 
@@ -420,6 +477,8 @@ def get_customer_link(crm_deal: str):
 		if customer:
 			return f"{erpnext_crm_settings.erpnext_site_url}/app/customer/{customer}"
 		return ""
+	except RemoteHostNotAllowed as e:
+		_throw_refusal(e)
 	except Exception:
 		_log_and_throw(
 			"Error while fetching customer in ERPNext, check error log for more details",
@@ -496,6 +555,8 @@ def create_prospect_in_remote_site(crm_deal, erpnext_crm_settings):
 				"address": json.dumps(address) if address else None,
 			},
 		)
+	except RemoteHostNotAllowed as e:
+		_throw_refusal(e)
 	except Exception:
 		_log_and_throw(
 			"Error while creating prospect in ERPNext, check error log for more details",

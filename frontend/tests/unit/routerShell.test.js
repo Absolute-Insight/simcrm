@@ -65,8 +65,10 @@ describe('the Home redirect', () => {
   it('only lands a manager on a default view whose route exists', () => {
     // A Notes default filed under "FCRM Notes" made next() throw "No match"
     // on every Home visit; the guard now asks the router before choosing.
+    // ...and Access Control, so the view is not one filed under a surface
+    // hidden from the manager (routerGuard.test.js runs both).
     expect(branch).toMatch(
-      /getDefaultView\(null, \(name\) => router\.hasRoute\(name\)\)/,
+      /\(name\) => router\.hasRoute\(name\) && visible\(name\)/,
     )
   })
 

@@ -161,6 +161,78 @@ describe("a rep's Home", () => {
   })
 })
 
+describe("a manager's Home", () => {
+  const manager = (options) => bootTab({ role: 'Sales Manager', ...options })
+  const noViews = () => []
+  const defaultView = (route_name, extra = {}) => ({
+    name: `${route_name}-default`,
+    route_name,
+    type: 'kanban',
+    is_default: 1,
+    is_standard: 0,
+    ...extra,
+  })
+
+  it('is Leads', async () => {
+    const { router } = await manager({ views: noViews })
+    expect(await navigate(router, '/')).toBe('Leads')
+  })
+
+  it('is the first surface left visible when Access Control hid Leads', async () => {
+    const { router } = await manager({ hidden: ['nav.leads'], views: noViews })
+    expect(await navigate(router, '/')).toBe('Deals')
+
+    const second = await manager({
+      hidden: ['nav.leads', 'nav.deals', 'nav.contacts'],
+      views: noViews,
+    })
+    expect(await navigate(second.router, '/')).toBe('Organizations')
+  })
+
+  it('opens the saved default view of a visible surface', async () => {
+    const { router } = await manager({
+      views: () => [defaultView('Deals')],
+    })
+    expect(await navigate(router, '/')).toBe('Deals')
+    expect(router.currentRoute.value.params.viewType).toBe('kanban')
+    expect(router.currentRoute.value.query.view).toBe('Deals-default')
+  })
+
+  it('skips a saved default view filed under a hidden surface', async () => {
+    const { router } = await manager({
+      hidden: ['nav.leads'],
+      views: () => [defaultView('Leads'), defaultView('Contacts')],
+    })
+    expect(await navigate(router, '/')).toBe('Contacts')
+    expect(router.currentRoute.value.query.view).toBe('Contacts-default')
+
+    const second = await manager({
+      hidden: ['nav.leads'],
+      views: () => [defaultView('Leads')],
+    })
+    expect(await navigate(second.router, '/')).toBe('Deals')
+    expect(second.router.currentRoute.value.query.view).toBeUndefined()
+  })
+
+  it('still lands somewhere when everything is hidden', async () => {
+    const { router } = await manager({
+      hidden: [
+        'nav.leads',
+        'nav.deals',
+        'nav.contacts',
+        'nav.organizations',
+        'nav.notes',
+        'nav.tasks',
+        'nav.call_logs',
+        'nav.dashboard',
+        'nav.planner',
+      ],
+      views: noViews,
+    })
+    expect(await navigate(router, '/')).toBe('Leads')
+  })
+})
+
 describe('with no server', () => {
   /* Every request the guard would wait on fails. Before field mode that
      refused the navigation -- on a cold start, a blank page. */

@@ -261,6 +261,26 @@ const REP_HOME_ROUTES = [
   ['Dashboard', 'nav.dashboard'],
 ]
 
+/* Where a manager lands when no saved default view decides it, in the order
+   the views store ranks defaults: Leads first, as it always was. The same
+   rule as for a rep -- the first one Access Control left visible. */
+const MANAGER_HOME_ROUTES = [
+  ['Leads', 'nav.leads'],
+  ['Deals', 'nav.deals'],
+  ['Contacts', 'nav.contacts'],
+  ['Organizations', 'nav.organizations'],
+  ['Notes', 'nav.notes'],
+  ['Tasks', 'nav.tasks'],
+  ['Call Logs', 'nav.call_logs'],
+  ['Dashboard', 'nav.dashboard'],
+  ['Planner', 'nav.planner'],
+]
+const NAV_KEY_OF_ROUTE = Object.fromEntries([
+  ...MANAGER_HOME_ROUTES,
+  ['Reports', 'nav.reports'],
+  ['Calendar', 'nav.calendar'],
+])
+
 /* The views every list route and a manager's Home are resolved from. A failed
    fetch leaves its rejected promise behind, as for `users` above, and the
    store never refetches on its own: re-awaiting it refused every later list
@@ -407,14 +427,27 @@ router.beforeEach(async (to, from, next) => {
     const { views, getDefaultView } = viewsStore()
     await viewsLoaded(views)
 
-    let defaultView = getDefaultView(null, (name) => router.hasRoute(name))
+    // Access Control can hide a surface from the Sales Manager role too, and
+    // this branch never asked: a manager with Leads hidden still landed on
+    // Leads at every login, a page with no nav entry to get back to. A route
+    // with no nav key of its own is not something the matrix can hide.
+    const visible = (name) =>
+      !NAV_KEY_OF_ROUTE[name] || canSee(NAV_KEY_OF_ROUTE[name])
+    const [fallback] =
+      MANAGER_HOME_ROUTES.find(([name]) => visible(name)) ??
+      MANAGER_HOME_ROUTES[0]
+
+    let defaultView = getDefaultView(
+      null,
+      (name) => router.hasRoute(name) && visible(name),
+    )
     if (!defaultView) {
-      next({ name: 'Leads' })
+      next({ name: fallback })
       return
     }
 
     let { route_name, type, name, is_standard } = defaultView
-    route_name = route_name || 'Leads'
+    route_name = route_name || fallback
 
     if (name && !is_standard) {
       next({

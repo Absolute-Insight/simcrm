@@ -15,7 +15,21 @@
       {{ __('My week') }}
     </router-link>
 
-    <p class="text-p-base text-ink-gray-6">
+    <!-- The session is someone else's now (they signed in in another tab).
+         Nothing leaves this page until it is reloaded: what is typed here is
+         this rep's, and must not be sent as theirs. -->
+    <p
+      v-if="connectivity.otherUser"
+      class="rounded-5 bg-surface-orange-1 px-3 py-2 text-p-base text-ink-orange-9"
+      role="alert"
+    >
+      {{
+        __(
+          'Someone else has signed in on this device, so nothing is being sent. Reload the app and sign in as yourself. What is waiting here stays saved.',
+        )
+      }}
+    </p>
+    <p v-else class="text-p-base text-ink-gray-6">
       {{
         connectivity.online
           ? __('Entries are sent as soon as they are saved.')
@@ -52,6 +66,24 @@
           role="alert"
         >
           {{ row.error || __('The server did not accept this.') }}
+        </div>
+        <!-- Still waiting, and the last try said why. Without this an entry
+             the server keeps failing on reads "Waiting to send" for ever,
+             and so does everything queued behind it. -->
+        <div
+          v-else-if="row.stalled"
+          class="mt-2.5 rounded-5 bg-surface-orange-1 px-3 py-2 text-p-sm text-ink-orange-9"
+          role="status"
+        >
+          {{ row.error }}
+          {{
+            row.attempts > 1
+              ? __(
+                  'Tried {0} times. It will be tried again; there is no need to type it in again.',
+                  [row.attempts],
+                )
+              : __('It will be tried again.')
+          }}
         </div>
         <div
           v-else
@@ -145,6 +177,17 @@ function whenLabel(ms) {
   return when.day === 'today' ? when.time : `${when.date} ${when.time}`
 }
 
+/* The oldest entry still waiting, when its last try failed for a reason worth
+   saying. Everything else waiting is queued behind it: entries go in order. */
+const blocker = computed(() => {
+  // Only while there is a connection. The reason was true of the last try;
+  // with the line gone the wait is the ordinary one, and "the server could
+  // not take this" under "No connection" would be about something else.
+  if (!connectivity.online) return null
+  const head = outbox.entries.find((entry) => entry.status === 'pending')
+  return head?.error && !head.sending ? head.id : null
+})
+
 // refused first: they are the ones that need a person
 const rows = computed(() =>
   [...outbox.entries]
@@ -158,6 +201,8 @@ const rows = computed(() =>
       status: entry.status,
       sending: !!entry.sending,
       error: entry.error,
+      attempts: entry.attempts ?? 0,
+      stalled: entry.status === 'pending' && entry.id === blocker.value,
       when: whenLabel(entry.captured_at),
       ...describeEntry(entry, names),
       state:
@@ -169,7 +214,9 @@ const rows = computed(() =>
               ? __(
                   'Not saved on this device. Keep the app open until it is sent.',
                 )
-              : __('Waiting to send'),
+              : blocker.value && entry.status === 'pending'
+                ? __('Waiting for an earlier entry to be sent')
+                : __('Waiting to send'),
       icon: entry.status === 'sent' ? LucideRefreshCw : LucideCloudUpload,
     })),
 )

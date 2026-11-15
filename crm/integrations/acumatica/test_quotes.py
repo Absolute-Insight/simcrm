@@ -204,6 +204,23 @@ class NewQuoteBecomesADealTest(NewQuotesTestCase):
 		self.assertEqual(counts["new_deals"], 0)
 		self.assertEqual(self.deals_for(7), 0)
 
+	@patch("crm.integrations.acumatica.outcomes.get_system_timezone", return_value="Africa/Johannesburg")
+	def test_a_quote_closed_just_after_midnight_closes_its_deal_on_the_sites_date(self, _tz):
+		"""23:30 UTC on 30 November is 01:30 on 1 December in Johannesburg; the UTC day
+		put the deal in November's won revenue."""
+		self.pull(
+			[
+				self.quote(
+					41, status="Completed", quote_date="2026-11-20", LastModified="2026-11-30T23:30:00+00:00"
+				),
+				self.quote(
+					42, status="Canceled", quote_date="2026-11-20", LastModified="2026-11-30T23:30:00Z"
+				),
+			]
+		)
+		self.assertEqual(self.deal(41, ("closed_date",)).closed_date, date(2026, 12, 1))
+		self.assertEqual(self.deal(42, ("closed_date",)).closed_date, date(2026, 12, 1))
+
 	def test_a_rerun_creates_nothing_new(self):
 		rows = [self.quote(8, status="Completed"), self.quote(9)]
 		self.assertEqual(self.pull(rows)["new_deals"], 2)

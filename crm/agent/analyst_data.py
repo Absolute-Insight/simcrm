@@ -35,6 +35,7 @@ from crm.agent.signals import (
 	_working_deal_rows,
 	cadence_ratio,
 )
+from crm.integrations.remote_url import ensure_host_allowed, refuse_redirect
 
 ERP_ROW_CAP = 5000
 ERP_TIMEOUT = 30
@@ -839,6 +840,8 @@ def _erpnext_get(doctype: str, fields: list[str], filters: list, deadline=None) 
 	One row past :data:`ERP_ROW_CAP` is asked for, so :func:`_within_cap` can tell
 	a window that holds exactly the cap from one that holds more."""
 	settings = frappe.get_cached_doc("ERPNext CRM Settings")
+	# the same door as get_erpnext_site_client: the secret goes nowhere internal
+	ensure_host_allowed(settings.erpnext_site_url, "SIMERP Site URL")
 	secret = settings.get_password("api_secret", raise_exception=False) or ""
 	response = requests.get(
 		f"{settings.erpnext_site_url.rstrip('/')}/api/resource/{doctype}",
@@ -849,7 +852,9 @@ def _erpnext_get(doctype: str, fields: list[str], filters: list, deadline=None) 
 		},
 		headers={"Authorization": f"token {settings.api_key}:{secret}"},
 		timeout=_erpnext_timeout(deadline),
+		allow_redirects=False,
 	)
+	refuse_redirect(response, "SIMERP Site URL")
 	response.raise_for_status()
 	return response.json().get("data") or []
 

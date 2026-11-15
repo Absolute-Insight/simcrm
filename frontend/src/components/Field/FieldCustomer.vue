@@ -131,8 +131,21 @@
             </div>
           </li>
         </ul>
-        <p v-else class="text-p-base text-ink-gray-6">
+        <p
+          v-else-if="!packCut(pack, 'contacts')"
+          class="text-p-base text-ink-gray-6"
+        >
           {{ __('No contacts on record for this customer.') }}
+        </p>
+        <p
+          v-if="packCut(pack, 'contacts')"
+          class="mt-2 text-sm text-ink-gray-6"
+        >
+          {{
+            __(
+              'There are more contacts than a device carries. Look online for anyone missing here.',
+            )
+          }}
         </p>
       </section>
 
@@ -168,8 +181,18 @@
             </p>
           </li>
         </ul>
-        <p v-else class="text-p-base text-ink-gray-6">
+        <p
+          v-else-if="!packCut(pack, 'deals')"
+          class="text-p-base text-ink-gray-6"
+        >
           {{ __('No open deals with this customer.') }}
+        </p>
+        <p v-if="packCut(pack, 'deals')" class="mt-2 text-sm text-ink-gray-6">
+          {{
+            __(
+              'There are more open deals than a device carries. Look online for any missing here.',
+            )
+          }}
         </p>
       </section>
 
@@ -210,11 +233,24 @@
             </p>
           </div>
         </div>
-        <p v-else class="text-p-base text-ink-gray-6">
+        <p
+          v-else-if="!packCut(pack, 'history', 'notes')"
+          class="text-p-base text-ink-gray-6"
+        >
           {{
             __('Nothing recorded with this customer in the last {0} days.', [
               pack?.rules?.history_days ?? 90,
             ])
+          }}
+        </p>
+        <p
+          v-if="packCut(pack, 'history', 'notes')"
+          class="mt-2 text-sm text-ink-gray-6"
+        >
+          {{
+            __(
+              'There is more recent activity than a device carries. The rest is online.',
+            )
           }}
         </p>
       </section>
@@ -226,7 +262,13 @@
 import FieldPlanItem from '@/components/Field/FieldPlanItem.vue'
 import { openFieldDialog } from '@/offline/fieldDialog'
 import { useField } from '@/offline/useField'
-import { addressLine, moneyLabel, shortDate, telHref } from '@/utils/fieldPack'
+import {
+  addressLine,
+  moneyLabel,
+  packCut,
+  shortDate,
+  telHref,
+} from '@/utils/fieldPack'
 import { PhEnvelope, PhPhone } from '@phosphor-icons/vue'
 import { computed } from 'vue'
 import LucideChevronLeft from '~icons/lucide/chevron-left'

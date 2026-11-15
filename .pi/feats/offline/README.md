@@ -111,7 +111,14 @@ server-side — the phone never renders stored markup.
 
 It is a full snapshot, not a diff: a cursor would have to get deletions and
 reassigned customers right, and getting that wrong shows a rep a customer
-they no longer have. `known_hash` skips the download when nothing changed.
+they no longer have. `known_hash` skips the download when nothing changed,
+and `known_sections` — the hash of each list, as the last answer gave them —
+skips the lists that did not: one note costs the notes, not every customer
+and contact again. A list is left out (`kept`) only when its hash equals the
+one the phone sent, and `packFrom` (`pack.js`) puts it back from the pack
+those hashes described, asking for everything if it cannot. The rows are
+still read on the server to know what changed: this saves the line, not the
+queries.
 
 On the device it lives in its own IndexedDB database (`offline/db.js`) and is
 read by the Field screens through `offline/useField.js` — online and offline
@@ -132,7 +139,13 @@ stored, or the handler threw and neither is. A second copy finds the receipt
 (or loses the race for its primary key) and is answered `duplicate`. The
 action is one of six in `ACTIONS` — it is not a method dispatcher — and each
 handler checks permission as the session user, as the endpoint it stands in
-for does. Receipts are purged after 90 days.
+for does. Receipts are purged after `RECEIPT_DAYS` (90), and that is also
+the oldest entry `replay` takes: past it the receipt that would have said
+"duplicate" may be gone, so an entry with no receipt is refused rather than
+risk applying it twice (one whose receipt is still there is still answered
+`duplicate`). The device counts the same days (`OUTBOX_MAX_AGE_DAYS`, held to
+the Python by a unit test): it sets such an entry aside as refused without
+sending it, and *Send again* asks the server.
 
 `captured_at` is the device's clock corrected by the handshake's skew. It is
 never accepted in the future (five minutes of tolerance, then clamped).
@@ -141,16 +154,68 @@ captured offline is accepted up to `OFFLINE_GRACE_HOURS` (72) after the fact,
 where the online door refuses yesterday. Anything that took more than 15
 minutes to arrive, **or is dated on an earlier day than the one it arrived
 on** (a visit captured at 23:52 and delivered at 00:03), is flagged
-`captured_offline` on its plan item — server-
+`captured_offline` on its plan item — logged, completed or cancelled alike
+(`_flag_offline`) — server-
 owned like `manual_override`, shown in the Planner and the team week — so a
 manager can tell the device's word from the server's. The whitelisted
 `log_unplanned_visit` cannot pass that flag; only `log_activity`, which is
 not whitelisted, takes it.
 
-On the device, a failed send is one of two things (`failureKind`): a
-**refusal** (403/404/409/417) marks the entry `rejected` with the server's
+`captured_at` is the device's word and nothing on the server witnesses it:
+any signed-in client can claim an activity was captured up to 72 hours ago
+and have it accepted past the day lock, flagged. That is the price of the
+exemption, accepted knowingly; closing it needs evidence the server holds
+itself (a device id on the handshake, say), which is a product decision.
+
+On the device, a failed send is one of two things (`failureKind`, from
+`failureCause`): a **refusal** marks the entry `rejected` with the server's
 message and the run moves on; **anything else** — no network, 5xx, 429, a
-lapsed session — stops the run with the rest still pending, in order. A sent
+lapsed session — stops the run with the rest still pending, in order.
+
+- **Only Frappe's own answer is a refusal**: 403/404/409/417 *with* an
+  `exc_type`. The same status with no exception named is a captive portal or
+  a proxy (`between`): the run stops, nothing is refused, and a probe finds
+  out whether the server is there — the bare-403 rule of the handshake.
+- **A `CSRFTokenError`** means the session was re-created under the open page.
+  The outbox asks for the session's token (`renewToken`, the one case where a
+  rendered page's token is replaced) and sends the same entry again, once a
+  run.
+- **A page belongs to the person it was loaded for** (`pageUser`, read once in
+  `connectivity.js`). The cookie jar is shared between tabs, so the live
+  cookie can come to name someone else while the page still shows the first
+  rep's customers. Entries are stamped with `pageUser`, never the live
+  cookie; a token is never taken from a handshake that names anyone else
+  (`connectivity.otherUser`); and a run sends nothing while the cookie or the
+  handshake says the session is another's. The outbox screen says to reload.
+- **The entry a run stopped at keeps the reason** (`entry.error`, with
+  `attempts`), and the outbox screen shows it while there is a connection;
+  the entries behind it say they are waiting for it. Everything automatic —
+  the minute timer, the tab or the line coming back — waits out a backoff
+  while runs keep stopping (`BACKOFF_MS`); only a new entry or *Send again*
+  sends at once.
+- **Order holds, with one exception.** A status cannot tell a server that is
+  down for everyone from one that fails on this entry alone, so the outbox
+  asks: after a failure that is not a verdict it probes. No answer is an
+  outage — the app goes offline and nothing is held against the entry. An
+  answer, `STALL_LIMIT` times running for the same entry, means it is the
+  entry (or a firewall that minds its text): it is set aside as refused, for
+  the rep to send again or discard, as a refusal already lets later entries
+  pass. A rate limit is never counted. Nor is a second failure inside the
+  window the first one opened (`entry.stall_at`, 1 / 3 / 7 / 15 minutes): a
+  rep who logs five things in a minute sets off five runs, and that is one
+  failure seen five times. Setting aside therefore takes the whole schedule
+  — about 26 minutes at the least — however often a run is started.
+
+  **The limit of that test.** In a partial outage — the handshake answers and
+  `replay` fails for everyone — the probe cannot tell, and entries are set
+  aside one at a time on that schedule. Nothing is lost: each waits in the
+  outbox for *Send again*. **Send again is always safe; typing it in again
+  is not.** An entry that was slow (a gateway's 504) may well have been
+  applied; sent again under its own id it is answered `duplicate`, while a
+  fresh entry with the same words is a second note. The set-aside message
+  says so, and never suggests discarding.
+
+A sent
 entry stays as `sent`, still laid over the pack (`applyOutbox`), until the
 next pack sync brings the server's own version; then it is deleted. Rejected
 entries are never shown as done anywhere but the outbox.
@@ -184,7 +249,7 @@ pack says, and only an `image/*` response is kept. All pages or none.
 |---|---|---|
 | localStorage `crm-offline-boot` | boot values, no token | logout from the app, lost session, another user, a refused handshake |
 | cookie `crm_field_user` | the signed-in user's id | any logout (server hook); expires after 14 days |
-| IndexedDB `vectora-field-pack` | the pack, and the page images of kept sheets | the same, and after `PACK_MAX_AGE_DAYS` (14) without a sync |
+| IndexedDB `vectora-field-pack` | the pack, and the page images of kept sheets | the same, after `PACK_MAX_AGE_DAYS` (14) without a sync, and when `get_pack` answers `NotAFieldUser` (the sales role was taken away). Not on any other `PermissionError`: one from inside the pack is a server fault, and must not empty every phone |
 | IndexedDB `vectora-field-outbox` | work the server has not seen | only by a confirmed send or the rep discarding it; never by logout, and another user's entries are neither shown nor sent |
 
 The store clears go through `clearOfflineCache()` / `claimOfflineCache()`.
@@ -196,7 +261,14 @@ The expiry is re-checked whenever the tab comes back, and a `syncedAt` ahead
 of the clock counts as expired.
 Caps and windows (`HISTORY_DAYS`, `PACK_MAX_AGE_DAYS`, row limits) are
 constants at the top of `crm/api/offline.py`; `truncated` in the pack names
-any list that hit its cap.
+any list that hit its cap, and every screen showing such a list says so
+(`packCut`) instead of "none on record".
+
+The 14 days are enforced by the device, and only can be: a phone with no
+connection cannot be told anything. The moment it has one, the pack is
+replaced, or dropped on a refusal. The server does not refuse a replay
+because the pack it was captured against is old — the outbox is the rep's
+work, and each handler checks permission as of now.
 
 ## Traps
 
@@ -211,7 +283,11 @@ any list that hit its cap.
 - **Every record name a handler looks up goes through `_name()`.** The
   payload is JSON; `frappe.db.exists` and `get_value` read a dict as unscoped
   filters, which turns "missing vs not yours" into a probe over other reps'
-  rows. For the same reason a handler raises **one** exception for both.
+  rows. For the same reason a handler raises **one** exception for both —
+  and asks before the code behind it does: `_readable` for a note or a task,
+  `_customer` for a customer logged or planned against, `_own_item` for a
+  planned item. Left to `log_activity` and the plan's save, "no such
+  customer" and "another rep's" were refused in different words.
 - **A new offline action** needs four things: a handler in `ACTIONS`, a case
   in `entryProblem` and `applyOutbox` (`utils/fieldOutbox.js`), and a form in
   `FieldEntryDialog.vue`. Never route one to a whitelisted function that

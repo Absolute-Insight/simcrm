@@ -156,6 +156,36 @@ class NumbersTest(UnitTestCase):
 		self.assertEqual(reference.numbers("51,33 Bar"), [{"51.33"}])
 		self.assertEqual(reference.numbers("285.0 mm"), [{"285"}])
 
+	def test_a_comma_after_a_leading_zero_is_a_decimal(self):
+		"""Audit be_agent-2: "0,125 mm" read as 125 -- a thousands group never
+		follows a leading zero. A right answer was refused and "0,125 kPa" passed
+		against a row holding 125 kPa."""
+		self.assertEqual(reference.numbers("0,125 mm"), reference.numbers("0.125 mm"))
+		self.assertEqual(reference.numbers("0,125 mm"), [{".125"}])
+		self.assertEqual(reference.numbers("00,500"), [{".5"}])
+		# four digits before the comma are not a thousands group either
+		self.assertEqual(reference.numbers("1234,567"), [{"1234.567"}])
+		self.assertEqual(reference.numbers("1,234,567"), [{"1234567"}])
+		self.assertNotIn("0125", reference.normalise("0,125 mm"))
+		self.assertIn("1234567", reference.normalise("1,234,567 kPa"))
+		row = {
+			**ROWS[7],
+			"cells": [
+				{"label": "Rated pressure", "value": "125", "unit": "kPa", "status": "ok"},
+				{"label": "Gasket", "value": "0.125", "unit": "mm", "status": "ok"},
+			],
+		}
+		self.assertEqual(reference.verify("The gasket is 0,125 mm.", [row], [row])[0], [row])
+		row["cells"].pop()
+		self.assertIsNone(reference.verify("It is rated 0,125 kPa.", [row], [row])[0])
+
+	def test_thousands_dots_before_a_decimal_comma(self):
+		self.assertEqual(reference.numbers("1.234,56"), [{"1234.56"}])
+		self.assertEqual(reference.numbers("12.345.678,9 kPa"), [{"12345678.9"}])
+		self.assertEqual(reference.numbers("001.234,5"), [{"1234.5"}])
+		# a plain decimal, and a decimal comma, are untouched
+		self.assertEqual(reference.numbers("1.234 and 51,33"), [{"1.234"}, {"51.33"}])
+
 	def test_a_thousands_comma_before_a_decimal_is_still_thousands(self):
 		"""Audit L-39: "1,270.0" read as 1.270 refused a correct answer."""
 		self.assertEqual(reference.numbers("1,270.0 mm"), [{"1270"}])
@@ -399,6 +429,552 @@ class ReviewBypassTest(UnitTestCase):
 	def test_a_unicode_minus_keeps_its_sign(self):
 		self.assertEqual(reference.numbers("\u221229 \u00baC"), [{"-29"}])
 		self.assertEqual(reference.numbers("15\u201320 bar"), [{"15"}, {"20"}])
+
+
+class NamingNumbersTest(UnitTestCase):
+	"""Audit be_agent-1 (A3-3): the numbers that say which row is meant -- its
+	size, standard, class, page, a digit in a column's name -- vouched for any
+	figure. They name the row; only a confirmed cell is what a column says."""
+
+	ROW = ROWS[0] | {
+		"cells": [
+			*ROWS[0]["cells"],
+			{"label": "Bolt hole diameter (d1)", "value": "22.0", "unit": "mm", "status": "ok"},
+		]
+	}
+
+	def test_a_naming_number_is_not_a_columns_value(self):
+		for answer in (
+			"The flange OD is 150 mm.",  # the nominal bore
+			'The 6" flange has 6 bolt holes.',  # the inch size
+			"It takes 2 bolts.",  # the page
+			"The PCD is 1123 mm.",  # SABS 1123
+			"Bolt holes are 1 mm.",  # the 1 of "(d1)"
+			"It has an OD of 150 mm.",
+			"OD: 150 mm",
+			"| Flange OD | 150 mm |",
+			'The 6" flange has a 150 mm OD.',
+			"The OD for this flange is approximately 150 mm.",
+			"The PCD (bolt circle diameter) is 150 mm.",
+			"Bolt hole diameter (d1): 6 mm",
+			"The 150 mm flange has 3 bolt holes.",  # the 3 of 1600/3
+			"Flange OD 1600 mm",
+			"PCD 150 mm, 8 holes",
+			"The bolt size is 6.",
+		):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+
+	def test_an_answer_may_still_name_its_row(self):
+		for answer in (
+			'The 150 mm (6") SABS 1123 1600/3 flange has an OD of 285.0 mm and 8 bolt holes (d1 22.0 mm).',
+			"Flange Drilling Tables, page 2: the 150 mm flange OD is 285.0 mm.",
+			'The PCD of the 6" SABS 1123 flange is 240.0 mm.',
+			'PCD of 6" SABS flange is 240.0 mm',
+			'6" PCD: 240.0 mm',
+			"OD (150 mm flange): 285.0 mm",
+			'Nominal size: 150 mm (6")\nFlange OD: 285.0 mm',
+			"The OD is 285.0 mm for the 150 mm size.",
+			'For a flange of 150 mm (6"), the OD is 285.0 mm.',
+			"| Size | OD | PCD |\n| 150 mm | 285.0 | 240.0 |",
+			"This is the 1600/3 row.\nBolt hole diameter (d1): 22.0 mm",
+			"- 1600 kPa: 8 bolts, M20",
+			'The sheet does not give a mass for the 6" 1600/3 flange.',
+			'**150 mm (6") · SABS 1123 1600/3**\n\n- Flange OD: 285.0 mm\n- PCD (bolt circle diameter): '
+			"240.0 mm\n- Number of bolt holes: 8\n- Bolt hole diameter (d1): 22.0 mm\n- Bolt size: M20",
+		):
+			with self.subTest(answer=answer):
+				used, missing = reference.verify(answer, [self.ROW], [self.ROW])
+				self.assertEqual((used, missing), ([self.ROW], []))
+
+	def test_a_number_that_is_both_is_data(self):
+		# the line-size row's label and its cells hold the same two figures
+		used, _ = reference.verify('A 2 1/2" line is 65 mm.', [ROWS[6]], [])
+		self.assertEqual(used, [ROWS[6]])
+
+	def test_a_page_number_or_a_column_digit_needs_its_word(self):
+		self.assertIsNotNone(reference.verify("See page 2.", [self.ROW], [self.ROW])[0])
+		self.assertIsNone(reference.verify("Use 2 gaskets.", [self.ROW], [self.ROW])[0])
+		self.assertIsNone(reference.verify("Use 1 gasket.", [self.ROW], [self.ROW])[0])
+
+	def test_a_column_whose_name_ends_in_a_figure(self):
+		rating = {
+			**ROWS[7],
+			"label": "PN16",
+			"cells": [
+				{"label": "Body test @ 1.5", "value": "2.4 MPa", "status": "ok"},
+				{"label": "Seat test @ 1.1", "value": "1.76 MPa", "status": "ok"},
+			],
+		}
+		self.assertIsNotNone(reference.verify("PN16: body test @ 1.5 is 2.4 MPa.", [rating], [])[0])
+		self.assertIsNone(reference.verify("PN16: body test @ 1.5 is 1.1 MPa.", [rating], [])[0])
+		self.assertIsNone(reference.verify("The seat test @ 1.1 is 16 MPa.", [rating], [])[0])
+
+	def test_one_as_a_pronoun_is_not_a_count(self):
+		# the "(d1)" of a column's name used to vouch for it by accident
+		answer = 'Which one do you need? The 6" 1600/3 flange has 8 holes.'
+		self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+		self.assertEqual(reference.numbers("this one, or one of the others"), [])
+		self.assertEqual(reference.numbers("one bolt"), [{"1"}])
+		self.assertIsNone(reference.verify("It takes one bolt.", [self.ROW], [self.ROW])[0])
+		for answer in ("Only one matches: OD 285.0 mm.", "Only one row matches: OD 285.0 mm."):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+
+	def test_one_before_the_thing_counted_is_a_count_whatever_precedes_it(self):
+		"""Review of PR #400: "the one" was read as a pronoun whatever followed."""
+		for answer in ("It has only the one bolt hole.", "It takes the one bolt."):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+		self.assertEqual(reference.numbers("the one bolt hole"), [{"1"}])
+
+	def test_a_lists_own_numbering_is_not_a_figure(self):
+		for answer in (
+			"1. The OD is 285.0 mm.",
+			"1. OD: 285.0 mm\n2. PCD: 240.0 mm\n3. Bolt holes: 8",
+			'1. 150 mm (6") SABS 1123 1600/3\n2) Flange OD: 285.0 mm',
+			"- 1) OD 285.0 mm",
+		):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+		self.assertEqual(reference.numbers("1. The OD\n2. The PCD"), [])
+		# not numbering: a figure that ends its line, or a decimal
+		self.assertEqual(reference.numbers("Bolt holes:\n8."), [{"8"}])
+		self.assertEqual(reference.numbers("285.0 mm"), [{"285"}])
+		self.assertIsNone(reference.verify("1. The OD is 150 mm.", [self.ROW], [self.ROW])[0])
+
+	def test_a_page_reference_with_a_full_stop_keeps_its_page(self):
+		"""Review of PR #400: the claim split at "p. " and left the 2 on its own."""
+		for answer in ("The OD is 285.0 mm (p. 2).", "See pg. 2: OD 285.0 mm", "OD 285.0 mm. See P. 2."):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+		self.assertIsNone(reference.verify("The OD is 150 mm (p. 2).", [self.ROW], [self.ROW])[0])
+		self.assertIsNone(reference.verify("The OD is 285.0 mm (p. 7).", [self.ROW], [self.ROW])[0])
+
+	def test_a_size_restated_after_a_column_is_still_the_rows(self):
+		"""Review of PR #400: correct answers the first cut of this rule refused."""
+		for answer in (
+			"OD (150 mm): 285.0 mm",
+			"PCD (150 mm): 240.0 mm",
+			'Number of bolt holes (6"): 8',
+			"The OD of 6 inch is 285.0 mm.",
+			'The OD of 6" is 285.0 mm.',
+		):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+		# with no value of the column's own after it, the size is the claimed value
+		for answer in ("OD (150 mm).", "The OD of 150 mm is correct.", "Flange OD (150 mm)"):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+
+	def test_any_verb_or_symbol_between_column_and_number_reads_like_is(self):
+		for answer in (
+			"The OD will be 150 mm",
+			"The OD should be 150 mm.",
+			"The OD would be 150 mm",
+			"The OD comes to 150 mm",
+			"OD → 150 mm",
+			"OD -> 150 mm",
+			"OD = 150 mm",
+			"The OD for a flange like this could be 150 mm",
+		):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+		for answer in ("The OD will be 285.0 mm.", "OD → 285.0 mm", 'The 6" OD comes to 285.0 mm'):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+
+	def test_a_restated_size_does_not_let_the_same_number_pass_as_the_value(self):
+		"""Final review of PR #400: the size in brackets was exempted, and the
+		number after it then had ")" or a unit where its column should be."""
+		for answer in (
+			"OD (150 mm): 150 mm",
+			'Flange OD (6"): 6 mm',
+			'PCD (6"): 6 mm',
+			"PCD [150]: 150",
+			'Bolt holes (6"): 6',
+			"The OD of 6 inch is 6 mm",
+			"The OD of 150 mm is 150 mm",
+			"Number of bolt holes of 6 inch is 6",
+			# a size on the way from the column to the value does not hide the column
+			"The OD of the 6 inch flange is 150 mm",
+			"The OD for the 150 mm flange is 150 mm",
+		):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+		for answer in ("The OD of the 6 inch flange is 285.0 mm", "The OD for the 150 mm flange is 285.0 mm"):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+
+	def test_a_column_out_of_sight_of_its_number_fails_closed(self):
+		"""The look-behind is bounded; what it cannot see is not taken for a name."""
+		long_winded = (
+			"The OD of the flange you asked about, going by the drilling table for this nominal size "
+			"and this pressure class as the sheet lists them under the SABS standard for flanges, is "
+		)
+		self.assertGreater(len(long_winded), 160)
+		for answer in (long_winded + "150 mm", "OD:" + " " * 200 + "150 mm", "OD" + "\t" * 400 + "150"):
+			with self.subTest(answer=answer[:40]):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+		self.assertEqual(reference.verify(long_winded + "285.0 mm", [self.ROW], [self.ROW])[0], [self.ROW])
+
+	def test_a_column_of_any_prompt_row_makes_the_number_a_value(self):
+		"""``The OD is 150 mm`` was refused against the drilling rows and accepted
+		once the prompt also held the 150 mm bolt-set row: that row has no OD, so
+		the 150 "named" it."""
+		bolt_set_row = ROWS[5]
+		self.assertNotIn("Flange OD", [cell["label"] for cell in bolt_set_row["cells"]])
+		for answer in (
+			"The OD is 150 mm",
+			"The flange OD is 150 mm.",
+			"The PCD is 150 mm.",
+			"OD (150 mm): 150 mm",
+		):
+			for rows, cited in (
+				([ROWS[0], ROWS[1]], [ROWS[0]]),
+				(ROWS, [ROWS[0]]),
+				(ROWS, []),
+				([ROWS[0], bolt_set_row], [bolt_set_row]),
+			):
+				with self.subTest(answer=answer, rows=len(rows), cited=bool(cited)):
+					self.assertIsNone(reference.verify(answer, rows, cited)[0])
+		# each row still answers for itself with the other in the prompt
+		self.assertEqual(reference.verify("- 1600/3 drilling: OD 285.0 mm", ROWS, [])[0], [ROWS[0]])
+		self.assertEqual(reference.verify("- 1600 kPa bolt set: 8 Off M20 x 75", ROWS, [])[0], [bolt_set_row])
+
+	def test_a_number_at_the_start_of_a_line_is_numbering_only_in_a_list(self):
+		"""Final review of PR #400: any line-start number was taken for numbering."""
+		for answer in (
+			"Number of bolt holes:\n12. Bolt size M20",
+			"Bolt holes\n16) M20",
+			"Number of bolt holes:\n1. Bolt size M20",
+			"Flange OD:\n3. M20 bolts",
+			"2. The OD is 285.0 mm.",
+		):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+		self.assertEqual(reference.numbers("Number of bolt holes:\n12. Bolt size M20"), [{"12"}, {"20"}])
+		for answer in (
+			"Here it is.\n1. OD 285.0 mm",
+			"The values are:\n1. OD 285.0 mm\n2. PCD 240.0 mm",
+			"1. OD 285.0 mm\n\n2. PCD 240.0 mm\n\n3. Bolt holes: 8",
+			# each list starts again at 1
+			"1. OD: 285.0 mm\n2. PCD: 240.0 mm\n\nBolting:\n1. Bolt size: M20\n2. Number of bolt holes: 8",
+			# a lone 1. under a lead-in that is not a column's name
+			"The 150 mm flange has:\n1. OD: 285.0 mm",
+			"**Flange drilling**\n1. OD: 285.0 mm",
+		):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+		# trimming keeps the numbering it was given
+		answer = "1. 1600 kPa: PCD 240.0 mm\n2. 1000 kPa: PCD 240.0 mm"
+		self.assertEqual(reference.trim_comparisons(answer, ROWS), answer)
+
+	def test_a_column_on_its_own_line_is_finished_by_the_line_under_it(self):
+		for answer in (
+			"Flange OD:\n150 mm",
+			"**PCD**\n\n150 mm",
+			"Number of bolt holes:\n6",
+			"Flange OD\n- 150 mm",
+			"Bolt hole diameter (d1):\n6 mm",
+		):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+		for answer in (
+			"Flange OD:\n285.0 mm",
+			"**PCD**\n\n240.0 mm",
+			'150 mm (6") SABS 1123 1600/3\nNumber of bolt holes:\n8',
+			"The flange drilling for this size:\nOD 285.0 mm",
+			"Bolt hole diameter (d1):\n22.0 mm",
+		):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [self.ROW], [self.ROW])[0], [self.ROW])
+		# a column's name with its value on the same line is a claim, not a heading
+		self.assertIsNone(reference.verify("Bolt hole diameter (d1): 1 mm", [self.ROW], [self.ROW])[0])
+		self.assertIsNone(reference.verify("Bolt hole diameter (d1): 6", [self.ROW], [self.ROW])[0])
+
+	def test_a_size_before_a_columns_name_and_its_value_names_the_row(self):
+		bolt_set_row = ROWS[5]
+		for answer in (
+			"150 mm bolt set: 8 Off M20 x 75",
+			'The 6" bolt set is 8 Off M20 x 75.',
+			"1600 kPa bolt size: M20",
+		):
+			with self.subTest(answer=answer):
+				self.assertEqual(reference.verify(answer, [bolt_set_row], [bolt_set_row])[0], [bolt_set_row])
+		for answer in ("It is a 150 mm bolt set.", "A 150 mm bolt length."):
+			with self.subTest(answer=answer):
+				self.assertIsNone(reference.verify(answer, [bolt_set_row], [bolt_set_row])[0])
+
+	def test_an_abbreviations_stop_does_not_end_the_claim(self):
+		row = {
+			**ROWS[7],
+			"label": "Trim 5",
+			"cells": [{"label": "API trim no.", "value": "8", "status": "ok"}],
+		}
+		self.assertEqual(reference.verify("The API trim no. is 8.", [row], [row])[0], [row])
+		self.assertIsNone(reference.verify("The API trim no. is 5.", [row], [row])[0])
+
+	def test_known_limits(self):
+		"""What the rule does NOT catch -- pinned so a change here is a decision.
+
+		It reads wording, not meaning. A column called by another name is not
+		recognised as that column, and a figure that is another cell of the same
+		row is data whichever column the answer puts it under.
+		"""
+		for answer in (
+			"The flange is 150 mm thick.",  # a synonym: no column is named "thick"
+			"It weighs 150 kg.",  # likewise
+			"The PCD is 285.0 mm.",  # the OD's value given as the PCD: both are cells
+			"It has 22 bolt holes.",  # the hole diameter given as the count
+		):
+			with self.subTest(answer=answer):
+				self.assertIsNotNone(reference.verify(answer, [self.ROW], [self.ROW])[0])
+		# a column no row in the prompt has is not known to be a column at all
+		self.assertIsNotNone(reference.verify("The OD is 150 mm.", [ROWS[5]], [ROWS[5]])[0])
+		# another prompt row's cell: the claim is read as that row's, and cites it
+		self.assertEqual(reference.verify("The PCD is 190.5 mm.", ROWS, [ROWS[0]])[0], [ROWS[2]])
+
+	def test_a_long_single_line_answer_is_checked_in_linear_time(self):
+		"""Review of PR #400: the look-behind patterns were searched from the start
+		of the claim for every figure. A looping model's 14 kB one-line reply
+		took 3.9 s in the web worker; 56 kB took over a minute."""
+		import time
+
+		for unit in ("6 bolt ", "the od is 150 mm and ", "one ", "p. 2 ", "od ( 150 mm ) : "):
+			answer = unit * (14_000 // len(unit))
+			started = time.perf_counter()
+			reference.verify(answer, ROWS, [self.ROW])
+			reference.trim_comparisons(answer, ROWS)
+			self.assertLess(time.perf_counter() - started, 2.0, unit)
+
+	def test_stripping_row_ids_is_linear_too(self):
+		"""It runs on the raw reply, before the check: a run of spaces or commas
+		was rescanned from every position in it (10 s at 60 kB)."""
+		import time
+
+		for answer in (
+			"OD" + " " * 60_000 + "150",
+			"OD" + "," * 60_000 + "150",
+			"(" + "R1 " * 20_000,
+			"see " * 15_000,
+			"OD (see R1)" + " " * 30_000 + ".",
+		):
+			started = time.perf_counter()
+			reference.strip_row_ids(answer)
+			self.assertLess(time.perf_counter() - started, 2.0, answer[:12])
+		self.assertEqual(reference.strip_row_ids("PCD is 190.5 mm   (see R3) ."), "PCD is 190.5 mm.")
+		self.assertEqual(
+			reference.strip_row_ids("OD 285.0 mm ,  PCD 240.0 mm ;"), "OD 285.0 mm, PCD 240.0 mm"
+		)
+
+
+# Every answer shape named in the audit and the three reviews of PR #400, with
+# the verdict each must keep: (answer, which rows are in the prompt, accepted).
+# A change to the number check that flips one of these is a decision, not a
+# side effect -- tightening has refused correct answers here more than once,
+# and loosening has let wrong figures back in.
+LONG = (
+	"The OD of the flange you asked about, going by the drilling table for this nominal size "
+	"and this pressure class as the sheet lists them under the SABS standard for flanges, is "
+)
+VERDICTS = [
+	# --- the audit's five, and the first cut's wrong answers
+	("The flange OD is 150 mm.", "one", False),
+	('The 6" flange has 6 bolt holes.', "one", False),
+	("It takes 2 bolts.", "one", False),
+	("The PCD is 1123 mm.", "one", False),
+	("Bolt holes are 1 mm.", "one", False),
+	("It has an OD of 150 mm.", "one", False),
+	("OD: 150 mm", "one", False),
+	("OD = 150", "one", False),
+	("| Flange OD | 150 mm |", "one", False),
+	('The 6" flange has a 150 mm OD.', "one", False),
+	("The OD for this flange is approximately 150 mm.", "one", False),
+	("The PCD (bolt circle diameter) is 150 mm.", "one", False),
+	("Bolt hole diameter (d1): 6 mm", "one", False),
+	("The 150 mm flange has 3 bolt holes.", "one", False),
+	("Number of bolt holes: 6", "one", False),
+	("Flange OD 1600 mm", "one", False),
+	("PCD 150 mm, 8 holes", "one", False),
+	("The bolt size is 6.", "one", False),
+	("It has 1123 holes.", "one", False),
+	("The outside diameter is 150 mm.", "one", False),
+	("OD for this flange is 150 mm", "one", False),
+	("It has 7 bolt holes.", "one", False),
+	("Use 2 gaskets.", "one", False),
+	# --- correct answers that name their row
+	(
+		'The 150 mm (6") SABS 1123 1600/3 flange has an OD of 285.0 mm and 8 bolt holes (d1 22.0 mm), page 2.',
+		"one",
+		True,
+	),
+	("A 150 mm flange has an OD of 285 mm.", "one", True),
+	("For 150 mm: OD 285.0 mm", "one", True),
+	("OD (150 mm flange): 285.0 mm", "one", True),
+	("8 holes on the 6 inch flange.", "one", True),
+	('The PCD of the 6" SABS 1123 flange is 240.0 mm.', "one", True),
+	('PCD of 6" SABS flange is 240.0 mm', "one", True),
+	('6" PCD: 240.0 mm', "one", True),
+	('The 6" flange OD is 285.0 mm.', "one", True),
+	('Nominal size: 150 mm (6")\nFlange OD: 285.0 mm', "one", True),
+	("Size: 150 mm\n- OD: 285.0 mm", "one", True),
+	("| Size | OD | PCD |\n| 150 mm | 285.0 | 240.0 |", "one", True),
+	("Flange Drilling Tables, page 2: the 150 mm flange OD is 285.0 mm.", "one", True),
+	("The OD is 285.0 mm for the 150 mm size.", "one", True),
+	("This is the 1600/3 row.\nBolt hole diameter (d1): 22.0 mm", "one", True),
+	('The sheet does not give a mass for the 6" 1600/3 flange.', "one", True),
+	('For a flange of 150 mm (6"), the OD is 285.0 mm.', "one", True),
+	("- 1600 kPa: 8 bolts, M20", "one", True),
+	(
+		'**150 mm (6") · SABS 1123 1600/3**\n\n- Flange OD: 285.0 mm\n- PCD (bolt circle diameter): 240.0 mm\n'
+		"- Number of bolt holes: 8\n- Bolt hole diameter (d1): 22.0 mm\n- Bolt size: M20",
+		"one",
+		True,
+	),
+	('Which one do you need? The 6" 1600/3 flange has 8 holes.', "one", True),
+	# --- first review: pages, restated sizes, numbering, "one", modal verbs
+	("The OD is 285.0 mm (p. 2).", "one", True),
+	("See pg. 2: OD 285.0 mm", "one", True),
+	("The OD is 150 mm (p. 2).", "one", False),
+	("The OD is 285.0 mm (p. 7).", "one", False),
+	("OD (150 mm): 285.0 mm", "one", True),
+	("PCD (150 mm): 240.0 mm", "one", True),
+	('Number of bolt holes (6"): 8', "one", True),
+	("The OD of 6 inch is 285.0 mm.", "one", True),
+	("OD (150 mm).", "one", False),
+	("1. The OD is 285.0 mm.", "one", True),
+	("1. OD: 285.0 mm\n2. PCD: 240.0 mm\n3. Bolt holes: 8", "one", True),
+	("1. The OD is 150 mm.", "one", False),
+	("Only one matches: OD 285.0 mm.", "one", True),
+	("Only one row matches: OD 285.0 mm.", "one", True),
+	("It takes one bolt.", "one", False),
+	("It has only the one bolt hole.", "one", False),
+	("It takes the one bolt.", "one", False),
+	("The OD will be 150 mm", "one", False),
+	("The OD should be 150 mm.", "one", False),
+	("The OD would be 150 mm", "one", False),
+	("The OD comes to 150 mm", "one", False),
+	("OD → 150 mm", "one", False),
+	("OD -> 150 mm", "one", False),
+	("OD = 150 mm", "one", False),
+	("The OD will be 285.0 mm.", "one", True),
+	("OD → 285.0 mm", "one", True),
+	# --- final review: the fail-open shapes
+	("OD (150 mm): 150 mm", "one", False),
+	('Flange OD (6"): 6 mm', "one", False),
+	('PCD (6"): 6 mm', "one", False),
+	("PCD [150]: 150", "one", False),
+	('Bolt holes (6"): 6', "one", False),
+	("The OD of 6 inch is 6 mm", "one", False),
+	("The OD of 150 mm is 150 mm", "one", False),
+	("Number of bolt holes of 6 inch is 6", "one", False),
+	("The OD of the 6 inch flange is 150 mm", "one", False),
+	("The OD for the 150 mm flange is 150 mm", "one", False),
+	("The OD of the 6 inch flange is 285.0 mm", "one", True),
+	(LONG + "150 mm", "one", False),
+	(LONG + "285.0 mm", "one", True),
+	("OD:" + " " * 200 + "150 mm", "one", False),
+	("The OD is 150 mm", "pair", False),
+	("The OD is 150 mm", "all", False),
+	("The OD is 150 mm", "all uncited", False),
+	("OD (150 mm): 150 mm", "all", False),
+	("Number of bolt holes:\n12. Bolt size M20", "one", False),
+	("Bolt holes\n16) M20", "one", False),
+	("Number of bolt holes:\n1. Bolt size M20", "one", False),
+	("2. The OD is 285.0 mm.", "one", False),
+	("Flange OD:\n150 mm", "one", False),
+	("**PCD**\n\n150 mm", "one", False),
+	("Number of bolt holes:\n6", "one", False),
+	("Flange OD:\n285.0 mm", "one", True),
+	("Here it is.\n1. OD 285.0 mm", "one", True),
+	# --- closing check: lists that restart, a lone "1.", "size: value" under a column
+	(
+		'150 mm (6") SABS 1123 1600/3:\n1. OD: 285.0 mm\n2. PCD: 240.0 mm\n\n'
+		'900 mm (36") ASME B16.5 Class 300:\n1. OD: 1270.0 mm\n2. Bolt size: 2"',
+		"r0 r3",
+		True,
+	),
+	(
+		"**150 mm, 1600/3**\n1. OD: 285.0 mm\n2. Bolt size: M20\n\n**150 mm, 1000/3**\n1. OD: 285.0 mm\n2. Bolt size: M16",
+		"pair uncited",
+		True,
+	),
+	(
+		"1. OD: 285.0 mm\n2. PCD: 240.0 mm\n\nBolting:\n1. Bolt size: M20\n2. Number of bolt holes: 8",
+		"one",
+		True,
+	),
+	("The 150 mm flange has:\n1. OD: 285.0 mm", "one", True),
+	("Here are the figures:\n1. OD: 285.0 mm", "one", True),
+	("**Flange drilling**\n1. OD: 285.0 mm", "one", True),
+	("The OD is 285.0 mm.\n\nTo confirm:\n1. Check the PCD is 240.0 mm.", "one", True),
+	("Flange OD\n- 150 mm: 285.0 mm\n- 900 mm: 1270.0 mm", "r0 r3", True),
+	("Flange OD:\n150 mm: 285.0 mm", "one", True),
+	('PCD:\n6": 240.0 mm', "one", True),
+	('OD:\n150 mm (6"): 285.0 mm', "one", True),
+	("Bolt size\n150 mm 1600/3: M20\n150 mm 1000/3: M16", "pair uncited", True),
+	("A 150 mm bolt pattern has 8 holes.", "r0 bolts", True),
+	("The 6 inch bolt pattern is 8 holes on a 240.0 mm PCD.", "r0 bolts", True),
+	("The 1600 kPa pressure rating flange has OD 285.0 mm.", "r0 rating", True),
+	('The 900 mm flange takes 2" bolts, type B. The 150 mm flange takes M20.', "r0 r3", True),
+	("150 mm bolt set: 8 Off M20 x 75", "bolts", True),
+	("It is a 150 mm bolt set.", "bolts", False),
+	("The OD is 150 mm: 8 holes", "one", False),
+	('The 6" flange has a 150 mm OD and 8 holes.', "one", False),
+]
+
+
+class RowContextTest(UnitTestCase):
+	def test_a_rows_own_value_does_not_hand_the_claim_to_another_row(self):
+		"""Closing check of PR #400: "Number of bolts: 8" under the 6" bolt set was
+		read as naming the 8" flange -- whose nominal bore cell also holds the 8 --
+		and the next line was then refused as not being that row's."""
+		eight_inch = drilling(200, 8, "SABS 1123", "1600/3", "SABS 1600 kPa PN16", od="340.0")
+		eight_inch["cells"].insert(0, {"label": "Nominal bore", "value": '200 mm (8")', "status": "ok"})
+		bolt_set_row = ROWS[5]
+		answer = (
+			'150 mm (6") SABS 1123 1600 kPa:\n1. Bolt set: 8 Off M20 x 75\n'
+			"2. Number of bolts: 8\n3. Bolt size: M20\n4. Bolt length: 75 mm"
+		)
+		for rows in ([eight_inch, bolt_set_row], [bolt_set_row, eight_inch]):
+			with self.subTest(first=rows[0]["name"]):
+				self.assertEqual(reference.verify(answer, rows, [])[0], [bolt_set_row])
+		# a row named by a figure the current row does not hold still takes over
+		answer = '150 mm (6") SABS 1123 1600 kPa: 8 Off M20 x 75\n200 mm (8") 1600/3: OD 340.0 mm'
+		self.assertEqual(
+			reference.verify(answer, [eight_inch, bolt_set_row], [])[0], [bolt_set_row, eight_inch]
+		)
+		# and a line read under the wrong row is still refused
+		answer = '200 mm (8") 1600/3:\nBolt length: 75 mm'
+		self.assertIsNone(reference.verify(answer, [eight_inch, bolt_set_row], [])[0])
+
+
+class VerdictCorpusTest(UnitTestCase):
+	def prompts(self):
+		row = NamingNumbersTest.ROW
+		return {
+			"one": ([row], [row]),
+			"pair": ([ROWS[0], ROWS[1]], [ROWS[0]]),
+			"pair uncited": ([ROWS[0], ROWS[1]], []),
+			"all": (ROWS, [ROWS[0]]),
+			"all uncited": (ROWS, []),
+			"r0 r3": ([ROWS[0], ROWS[3]], []),
+			"r0 bolts": ([ROWS[0], ROWS[5]], [ROWS[0]]),
+			"r0 rating": ([ROWS[0], ROWS[7]], [ROWS[0]]),
+			"bolts": ([ROWS[5]], [ROWS[5]]),
+		}
+
+	def test_every_shape_keeps_its_verdict(self):
+		prompts = self.prompts()
+		for answer, prompt, accepted in VERDICTS:
+			rows, cited = prompts[prompt]
+			with self.subTest(answer=answer[:80], prompt=prompt):
+				# as crm.agent.api._reference_answer runs it
+				checked = reference.strip_row_ids(answer)
+				checked = reference.trim_comparisons(checked, rows) or checked
+				used, _missing = reference.verify(checked, rows, cited)
+				self.assertEqual(used is not None, accepted)
 
 
 class TrimComparisonsTest(UnitTestCase):

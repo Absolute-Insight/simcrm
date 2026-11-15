@@ -15,10 +15,23 @@
 import { computed, reactive } from 'vue'
 import { call } from 'frappe-ui'
 import { describeError } from '@/utils/describeError'
-import { failureKind, newEntry, newEntryId } from '@/utils/fieldOutbox'
+import {
+  OUTBOX_MAX_AGE_DAYS,
+  entryExpired,
+  failureCause,
+  newEntry,
+  newEntryId,
+} from '@/utils/fieldOutbox'
 import { isSessionGone } from '@/utils/sessionExpiry'
 import { getSessionUser } from '@/utils/session'
-import { connectivity, onOnline, serverNow } from './connectivity'
+import {
+  connectivity,
+  onOnline,
+  pageUser,
+  probe,
+  renewToken,
+  serverNow,
+} from './connectivity'
 import { hasIndexedDB, outboxStore } from './db'
 import { onPackSynced, packState, syncPackFresh } from './pack'
 
@@ -39,6 +52,34 @@ export const rejectedCount = computed(
 )
 
 const RETRY_PENDING_MS = 60 * 1000
+/* After the same entry has failed once, twice, ... while the server was
+   answering, how long before it is worth asking again -- and before another
+   failure of it means anything. Two things wait this out:
+
+   - anything automatic: the once-a-minute timer, the tab coming back, the
+     line coming back. A server in trouble is not helped by every phone
+     asking it every minute, and still less by one asking each time its owner
+     looks at it. What the rep does on purpose -- a new entry, Send again --
+     still sends at once.
+   - the count itself. A run the rep set off inside the window may fail too,
+     and that is the same failure seen again, not a new one: five things
+     logged in a minute while replay is down for everyone must not set the
+     first of them aside in that minute. */
+const BACKOFF_MS = [1, 3, 7, 15].map((minutes) => minutes * 60 * 1000)
+/* The same entry failed in this many windows running while the server
+   answered the handshake each time: it is the entry (or something on the way
+   that minds this entry -- a firewall that dislikes its text), not the
+   moment. It is set aside for the rep, as a refusal is, so the entries
+   behind it are not held for ever. A failure while the server cannot be
+   reached at all is not counted: that is an outage, and nothing is wrong
+   with the entry. */
+const STALL_LIMIT = 5
+
+let retryAt = 0
+
+function flowing() {
+  retryAt = 0
+}
 
 const byTime = (a, b) => a.captured_at - b.captured_at
 
@@ -58,12 +99,11 @@ let loading = null
 /** Read this user's entries from the device. Other users' stay untouched. */
 export function loadOutbox() {
   loading ||= (async () => {
-    const user = getSessionUser()
     try {
       const stored = hasIndexedDB() ? await outboxStore.entries() : []
       outbox.entries = stored
         .map(([, entry]) => entry)
-        .filter((entry) => entry?.user === user && entry.id)
+        .filter((entry) => entry?.user === pageUser && entry.id)
         .sort(byTime)
     } catch (error) {
       console.warn('outbox unavailable', error)
@@ -85,7 +125,9 @@ export async function enqueue(action, payload) {
   await loadOutbox()
   const entry = newEntry(action, payload, {
     id: newEntryId(),
-    user: getSessionUser(),
+    // the person this page was loaded for, whose week it is showing -- not
+    // whoever the cookie names by now (see `pageUser`)
+    user: pageUser,
     capturedAt: serverNow(),
   })
   let stored = true
@@ -142,20 +184,78 @@ async function send(entry) {
    what comes back must not write it onto the device again. */
 const held = (entry) => outbox.entries.some((other) => other.id === entry.id)
 
+/* Why an entry that is still waiting did not go, in words for the outbox
+   screen. Text the server wrote for a person wins. */
+function stallReason(cause, error) {
+  if (cause === 'between') {
+    return __(
+      'The connection here answered instead of the server. Check that this network lets you through.',
+    )
+  }
+  return (
+    describeError(error).message ||
+    __('The server could not take this just now.')
+  )
+}
+
+async function setAside(entry, reason) {
+  entry.status = 'rejected'
+  entry.error = reason
+  entry.stalls = 0
+  entry.stall_at = 0
+  await persist(entry).catch(() => {})
+}
+
+/* Leave an entry waiting, with the reason or with none. */
+async function leave(entry, reason = null) {
+  entry.error = reason
+  await persist(entry).catch(() => {})
+}
+
 async function sendPending() {
   await loadOutbox()
   outbox.flushing = true
   const tried = new Set()
+  let renewed = false
   try {
     // Asked again each time round, not listed once at the start: something
     // captured while the first entry was on the wire goes out in this run.
     for (;;) {
       if (!connectivity.online) break
+      // Asked each time round as well. The cookie jar is shared between
+      // tabs: if someone else has signed in since this page loaded, the
+      // session is theirs, and nothing typed on this page -- under the first
+      // person's customers -- may be applied as them. Reloading puts it
+      // right; until then nothing leaves.
+      const live = getSessionUser()
+      if (live !== pageUser) {
+        if (live) connectivity.otherUser = true
+        break
+      }
+      if (connectivity.otherUser) break
       const entry = outbox.entries.find(
-        (other) => other.status === 'pending' && !tried.has(other.id),
+        (other) =>
+          other.status === 'pending' &&
+          other.user === pageUser &&
+          !tried.has(other.id),
       )
       if (!entry) break
       tried.add(entry.id)
+      if (!entry.expired && entryExpired(entry, serverNow())) {
+        // The server keeps its record of what it applied for so long and no
+        // longer: after that it cannot tell a retry from a new entry. Not
+        // sent on the device's own initiative; "Send again" asks the server,
+        // which answers "already have it" or refuses.
+        entry.expired = true
+        await setAside(
+          entry,
+          __(
+            'This was captured more than {0} days ago, so it was not sent on its own. Send it again to check with the server, or discard it.',
+            [OUTBOX_MAX_AGE_DAYS],
+          ),
+        )
+        continue
+      }
       entry.sending = true
       try {
         await send(entry)
@@ -163,13 +263,77 @@ async function sendPending() {
         entry.sending = false
         if (!held(entry)) continue
         if (isSessionGone(error, document.cookie)) break
-        if (failureKind(error) !== 'rejected') break
-        entry.status = 'rejected'
-        entry.error = describeError(error).message
-        await persist(entry).catch(() => {})
-        continue
+        const cause = failureCause(error)
+        if (cause === 'refused') {
+          await setAside(entry, describeError(error).message)
+          continue
+        }
+        if (cause === 'network') {
+          // the gate has started a probe, and the probe decides; this is
+          // the ordinary wait
+          await leave(entry)
+          break
+        }
+        if (cause === 'token') {
+          // The page's token belongs to a session that is gone. Ask for
+          // this session's and send the same entry again -- once a run: a
+          // server that refuses the token it just issued is not fixed by
+          // asking again. Reloading is, so say that.
+          const again = !renewed && (await renewToken())
+          const refusedAfresh = renewed
+          renewed = true
+          if (again) {
+            tried.delete(entry.id)
+            continue
+          }
+          await leave(
+            entry,
+            refusedAfresh
+              ? __(
+                  'The server did not accept this page’s sign-in. Reload the app to send this.',
+                )
+              : null,
+          )
+          break
+        }
+        if (cause === 'limited') {
+          await leave(entry, stallReason(cause, error))
+          retryAt = Math.max(retryAt, Date.now() + BACKOFF_MS[0])
+          break
+        }
+        // Something answered, and it was not a verdict on the entry. Is the
+        // server there? If it is not, this is an outage: the app goes
+        // offline, nothing is held against the entry, and the run comes back
+        // when the line does.
+        if (!(await probe())) {
+          await leave(entry)
+          break
+        }
+        // It is there, and still this entry did not go. Counted once a
+        // window: a failure inside the window the last one opened is that
+        // failure again (see BACKOFF_MS).
+        if (Date.now() >= (entry.stall_at ?? 0)) {
+          entry.stalls = (entry.stalls ?? 0) + 1
+          if (entry.stalls >= STALL_LIMIT) {
+            await setAside(
+              entry,
+              __(
+                'This could not be sent after {0} tries spread over time, while the server was answering, so it was set aside to let the rest go. Send again is safe: the server applies an entry only once, even if an earlier try got through. Do not type it in again.',
+                [STALL_LIMIT],
+              ),
+            )
+            continue
+          }
+          entry.stall_at =
+            Date.now() +
+            BACKOFF_MS[Math.min(entry.stalls, BACKOFF_MS.length) - 1]
+        }
+        retryAt = entry.stall_at
+        await leave(entry, stallReason(cause, error))
+        break
       }
       entry.sending = false
+      flowing()
       if (!held(entry)) continue
       // Applied, or already applied by an earlier attempt whose answer was
       // lost. Kept as `sent` so the screens go on showing it until a sync
@@ -177,6 +341,8 @@ async function sendPending() {
       entry.status = 'sent'
       entry.sent_at = Date.now()
       entry.error = null
+      entry.stalls = 0
+      entry.stall_at = 0
       await persist(entry).catch(() => {})
     }
   } finally {
@@ -192,7 +358,8 @@ let sending = null
  *
  * A refusal marks that entry and moves on. Anything else -- no network, a
  * server error, a lapsed session -- stops the run with the rest still
- * waiting, because the next entry would hit the same thing.
+ * waiting, in order, because the next entry would hit the same thing; the
+ * entry it stopped at keeps the reason, for the outbox screen.
  */
 export function flushOutbox() {
   sending ||= sendPending().finally(() => {
@@ -241,6 +408,8 @@ export async function retryEntry(id) {
   if (!entry || entry.status !== 'rejected') return
   entry.status = 'pending'
   entry.error = null
+  entry.stalls = 0
+  entry.stall_at = 0
   await persist(entry).catch(() => {})
   // a run already under way has been past this entry once and will not look
   // at it again: let it finish, then start one that will
@@ -258,10 +427,13 @@ let started = false
 
 /** Send on start and whenever the server comes back. Idempotent. */
 export function startOutbox() {
-  if (started || !getSessionUser()) return
+  if (started || !pageUser) return
   started = true
+  // Everything here is the app's own idea, not the rep's, so all of it
+  // waits out the backoff a stopped run left (BACKOFF_MS).
   const flush = () => {
-    if (!packState.refused) flushOutbox()
+    if (packState.refused || Date.now() < retryAt) return
+    flushOutbox()
   }
   loadOutbox().then(() => {
     if (connectivity.online && outbox.entries.length) flush()

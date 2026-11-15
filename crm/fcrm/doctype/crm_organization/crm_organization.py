@@ -30,9 +30,10 @@ class CRMOrganization(Document):
 	# end: auto-generated types
 
 	def validate(self):
-		from crm.permissions.customers import validate_account_owner_change
+		from crm.permissions.customers import validate_account_owner_change, validate_organization_address
 
 		validate_account_owner_change(self)
+		validate_organization_address(self)
 		self.update_exchange_rate()
 
 	def after_insert(self):

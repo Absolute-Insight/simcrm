@@ -107,6 +107,59 @@ class SeedOnceTest(IntegrationTestCase):
 		self.assertFalse(frappe.db.exists("CRM Enrichment Rule", {"rule_name": "Industry: Ecommerce"}))
 		self.assertEqual(int(self._marker()), install.SEED_VERSION)
 
+	def test_restore_defaults_puts_back_what_was_deleted(self):
+		"""Audit be_enrichment-7: the button shares the migrate hook's seeder, and
+		the marker made it a no-op on every site already seeded. The marker field
+		is hidden, so a deleted default could never come back."""
+		import inspect
+
+		import crm.install
+
+		install.seed_default_rules_and_mappings()
+		mapping = {"source_key": "industry", "target_doctype": "CRM Deal", "target_fieldname": "industry"}
+		frappe.db.delete("CRM Enrichment Field Mapping", mapping)
+		frappe.db.delete("CRM Enrichment Rule", {"rule_name": "Industry: Ecommerce"})
+		frappe.db.delete("CRM Enrichment Rule", {"rule_name": "Social: linkedin"})
+		frappe.db.delete("CRM Industry", {"name": "Ecommerce"})
+		self.assertEqual(int(self._marker()), install.SEED_VERSION)
+
+		install.seed_default_rules_and_mappings(restore=True)
+
+		self.assertTrue(frappe.db.exists("CRM Enrichment Field Mapping", mapping))
+		self.assertTrue(frappe.db.exists("CRM Enrichment Rule", {"rule_name": "Industry: Ecommerce"}))
+		self.assertTrue(frappe.db.exists("CRM Enrichment Rule", {"rule_name": "Social: linkedin"}))
+		self.assertTrue(frappe.db.exists("CRM Industry", "Ecommerce"))
+		self.assertEqual(int(self._marker()), install.SEED_VERSION)
+		# the button is the caller that restores; the migrate hook is not
+		self.assertIn(
+			"seed_default_rules_and_mappings(restore=True)", inspect.getsource(crm.install.restore_defaults)
+		)
+		self.assertIn(
+			"crm.domain_enrichment.install.seed_default_rules_and_mappings", frappe.get_hooks("after_migrate")
+		)
+
+	def test_restore_defaults_changes_nothing_that_exists_and_doubles_no_rule(self):
+		install.seed_default_rules_and_mappings()
+		frappe.db.set_value(
+			"CRM Enrichment Rule",
+			{"rule_name": "Industry: Manufacturing"},
+			"rule_name",
+			"Manufacturing (engineering)",
+		)
+		frappe.db.set_value("CRM Enrichment Rule", {"rule_name": "Industry: SaaS"}, "weight", 7)
+		rules = frappe.db.count("CRM Enrichment Rule")
+		mappings = frappe.db.count("CRM Enrichment Field Mapping")
+
+		install.seed_default_rules_and_mappings(restore=True)
+
+		# the renamed rule still covers its industry: a second one would count twice
+		self.assertEqual(frappe.db.count("CRM Enrichment Rule", {"industry": "Manufacturing"}), 1)
+		self.assertEqual(
+			frappe.db.get_value("CRM Enrichment Rule", {"rule_name": "Industry: SaaS"}, "weight"), 7
+		)
+		self.assertEqual(frappe.db.count("CRM Enrichment Rule"), rules)
+		self.assertEqual(frappe.db.count("CRM Enrichment Field Mapping"), mappings)
+
 	def test_a_fresh_site_is_seeded_and_marked(self):
 		frappe.db.set_single_value("CRM Enrichment Settings", "seed_version", 0)
 		frappe.db.delete("CRM Enrichment Rule")
@@ -322,16 +375,70 @@ class JobTimeoutTest(IntegrationTestCase):
 		"""What letting the deadline through buys: run_enrichment's own handler records
 		the Failed run and tells the button. (write_run is stubbed: the handler's
 		rollback would also roll back a record inserted by this test.)"""
+		org = frappe.new_doc("CRM Organization")
+		org.organization_name = "Slow Org " + frappe.generate_hash(length=4)
+		org.insert()
 		published = []
 		with (
-			mock.patch.object(tasks, "run_pipeline", side_effect=JobTimeoutException("late")),
+			mock.patch.object(tasks, "run_pipeline", side_effect=JobTimeoutException("late")) as pipeline,
 			mock.patch.object(tasks, "_publish", side_effect=lambda *a, **k: published.append(k)),
 			mock.patch.object(tasks, "write_run") as write_run,
 		):
-			tasks.run_enrichment("CRM Organization", "O1", "https://slow.example", user="Administrator")
+			tasks.run_enrichment("CRM Organization", org.name, "https://slow.example", user="Administrator")
 
+		pipeline.assert_called_once()
 		self.assertEqual(write_run.call_args.kwargs["status"], "Failed")
 		self.assertEqual(published[-1]["status"], "error")
+
+
+class AuthoriseBeforeCrawlTest(IntegrationTestCase):
+	"""Audit be_enrichment-2: the job crawled first and checked ``write`` afterwards,
+	so a user who could never store the result had up to ``max_fetches`` outbound
+	requests made for them. (write_run is stubbed: the handler's rollback would
+	also roll back the record this test inserts.)"""
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def _run_as(self, user, name):
+		with (
+			mock.patch.object(tasks, "run_pipeline", return_value=canned_result()) as pipeline,
+			mock.patch.object(tasks, "_publish"),
+			mock.patch.object(tasks, "write_run") as write_run,
+		):
+			frappe.set_user(user)
+			try:
+				tasks.run_enrichment("CRM Organization", name, "https://acme.example", user=user)
+			finally:
+				frappe.set_user("Administrator")
+		return pipeline, write_run
+
+	def _org(self):
+		org = frappe.new_doc("CRM Organization")
+		org.organization_name = "Authorise Org " + frappe.generate_hash(length=4)
+		org.website = "https://acme.example"
+		org.insert()
+		return org.name
+
+	def test_a_job_that_may_not_write_the_record_never_crawls(self):
+		name = self._org()
+		for user in ("Guest", _make_minimal_user()):
+			with self.subTest(user=user):
+				pipeline, write_run = self._run_as(user, name)
+				pipeline.assert_not_called()
+				self.assertEqual(write_run.call_args.kwargs["status"], "Failed")
+
+	def test_a_record_that_is_gone_is_not_crawled_either(self):
+		pipeline, write_run = self._run_as("Administrator", "no-such-organization-at-all")
+		pipeline.assert_not_called()
+		self.assertEqual(write_run.call_args.kwargs["status"], "Failed")
+
+	def test_a_permitted_job_still_crawls_and_completes(self):
+		name = self._org()
+		pipeline, write_run = self._run_as("Administrator", name)
+		pipeline.assert_called_once()
+		self.assertEqual(write_run.call_args.kwargs["status"], "Completed")
 
 
 class AlreadyRunningTest(IntegrationTestCase):
@@ -628,6 +735,23 @@ class AutoEnrichOnCreateTest(IntegrationTestCase):
 	def test_skips_without_website(self):
 		enq = self._run(self._doc("CRM Deal", website=""), self._settings())
 		enq.assert_not_called()
+
+	def test_a_record_created_by_guest_is_not_crawled(self):
+		"""Audit be_enrichment-2: a public form's lead is inserted in a Guest
+		session, and its website is the visitor's to choose. Auto-enrich queued a
+		crawl of it per submission -- an anonymous, unthrottled way to make the
+		server fetch any URL -- and the job then failed its write check anyway."""
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user("Guest")
+		for doctype in ("CRM Lead", "CRM Deal", "CRM Organization"):
+			with self.subTest(doctype=doctype):
+				settings = self._settings(enable_lead=1)
+				enq = self._run(self._doc(doctype, website="https://attacker.example"), settings)
+				enq.assert_not_called()
+
+		frappe.set_user("Administrator")
+		enq = self._run(self._doc("CRM Lead", name="L1"), self._settings(enable_lead=1))
+		enq.assert_called_once()
 
 
 def _make_minimal_user():

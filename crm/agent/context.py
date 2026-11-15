@@ -78,8 +78,12 @@ def _fenced_thread(communications: list[dict], max_chars: int) -> str:
 	# a tier whose contract is to degrade. Datetimes stringify in an order that
 	# is still chronological, and a NULL sorts oldest, which is the safe end.
 	for comm in sorted(communications, key=lambda c: str(c.get("creation") or ""), reverse=True):
-		sender = comm.get("sender", "unknown")
-		entry = f"[{comm.get('creation', '')}] {sender}: {_neutralise(comm.get('content', ''))}"
+		# Every field of the line, not only the body: the From address of an
+		# inbound mail is as much the sender's to choose as its text is, and a
+		# marker left literal there closes the fence before the body starts.
+		sender = _neutralise(str(comm.get("sender") or "unknown"))
+		created = _neutralise(str(comm.get("creation") or ""))
+		entry = f"[{created}] {sender}: {_neutralise(comm.get('content', ''))}"
 		# the joining newline is part of the cost, or the fenced body overshoots
 		# max_chars by one char per seam
 		needed = len(entry) + (1 if kept else 0)

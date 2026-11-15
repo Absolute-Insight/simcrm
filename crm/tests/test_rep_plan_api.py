@@ -706,7 +706,10 @@ class UnplannedVisitTest(IntegrationTestCase):
 			log_unplanned_visit(self.org.name, "   ")
 
 	def test_an_unknown_organization_is_refused(self):
-		with self.assertRaises(frappe.DoesNotExistError):
+		# as a customer the rep may not see is (crm/tests/test_offline_replay.py
+		# pins that the two answers are one): not DoesNotExistError, which
+		# told a rep which customer names exist outside their own book
+		with self.assertRaises(frappe.PermissionError):
 			log_unplanned_visit("Nobody Ltd", "x")
 
 	def test_a_visit_cannot_be_logged_before_it_happens(self):

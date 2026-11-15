@@ -34,6 +34,10 @@ async function load({ shell = false, onLine = true, fetch } = {}) {
   } else {
     delete window.__crm_offline_shell
     delete window.__crm_offline_user
+    // a page Frappe rendered was rendered for the session's user
+    vi.spyOn(document, 'cookie', 'get').mockReturnValue(
+      `user_id=${encodeURIComponent(REP)}`,
+    )
   }
   delete window.csrf_token
   vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(onLine)
@@ -175,6 +179,55 @@ describe('the connectivity gate', () => {
     window.csrf_token = 'rendered-by-frappe'
     await probe()
     expect(window.csrf_token).toBe('rendered-by-frappe')
+  })
+
+  it('does replace it when asked to: the server said that token is no good', async () => {
+    const { renewToken } = await load()
+    window.csrf_token = 'the-old-sessions'
+    expect(await renewToken()).toBe(true)
+    expect(window.csrf_token).toBe('tok')
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('a renewal does not settle for a probe already on its way', async () => {
+    const { probe, renewToken } = await load()
+    window.csrf_token = 'the-old-sessions'
+    const first = probe()
+    const renewed = renewToken()
+    expect(renewToken()).toBe(renewed)
+    await first
+    expect(await renewed).toBe(true)
+    expect(window.csrf_token).toBe('tok')
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('never takes the token of a session that is someone else’s now', async () => {
+    // they signed in in another tab; this page still shows the first rep
+    const { renewToken, probe, connectivity } = await load({
+      fetch: vi.fn(async () =>
+        ok({ csrf_token: 'theirs', user: 'someone.else@example.com' }),
+      ),
+    })
+    window.csrf_token = 'the-old-sessions'
+    expect(await renewToken()).toBe(false)
+    expect(window.csrf_token).toBe('the-old-sessions')
+    expect(connectivity.otherUser).toBe(true)
+    // nor when the page has no token at all to lose
+    delete window.csrf_token
+    await probe()
+    expect(window.csrf_token).toBeUndefined()
+  })
+
+  it('a renewal that cannot reach the server says so and keeps what it had', async () => {
+    const { renewToken, connectivity } = await load({
+      fetch: vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      }),
+    })
+    window.csrf_token = 'the-old-sessions'
+    expect(await renewToken()).toBe(false)
+    expect(window.csrf_token).toBe('the-old-sessions')
+    expect(connectivity.online).toBe(false)
   })
 })
 

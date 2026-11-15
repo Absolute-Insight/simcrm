@@ -354,10 +354,11 @@ class RedirectDedupTest(UnitTestCase):
 	"""A redirect can land two different *requested* URLs on the same resolved page
 	(e.g. /contact.html -> /contact) -- the pre-fetch `visited` check can't catch
 	this since the requested URLs genuinely differ. crawl() must collapse the
-	duplicate after the fact and not let it consume a page-budget slot.
+	duplicate after the fact: it is not a second result. Its fetch still counts
+	against ``max_pages`` -- the request was made.
 	"""
 
-	def test_redirect_collapsed_duplicate_does_not_consume_budget(self):
+	def test_redirect_collapsed_duplicate_is_not_a_second_result(self):
 		homepage_html = (
 			'<html><body><a href="/contact">Contact</a>'
 			'<a href="/contact.html">Contact (alt)</a>'
@@ -382,9 +383,37 @@ class RedirectDedupTest(UnitTestCase):
 			results = crawler.crawl("https://acme.example", cfg)
 		urls = [page.url for page, _soup in results]
 		self.assertEqual(urls.count("https://acme.example/contact"), 1)
-		# The freed budget slot means /team -- otherwise starved by the wasted
-		# duplicate fetch -- still gets crawled.
+		# with room in the budget, the page behind the duplicate is still crawled
 		self.assertIn("https://acme.example/team", urls)
+
+	def test_redirect_duplicates_are_fetches_and_the_budget_bounds_them(self):
+		"""Audit be_enrichment-1: ``max_pages`` bounded results, so a homepage whose
+		links all redirect back to it was fetched link by link -- 501 fetches at
+		max_pages=10 -- until rq's timeout, which is sized on ``max_fetches``."""
+		links = "".join(f'<a href="/l{i}">l{i}</a>' for i in range(60))
+		responses = {"https://acme.example": (200, f"<html><body>{links}</body></html>")}
+		redirects = {}
+		for i in range(60):
+			responses[f"https://acme.example/l{i}"] = (200, "<html><body>home again</body></html>")
+			redirects[f"https://acme.example/l{i}"] = "https://acme.example"
+		cfg = make_config(
+			settings={"max_pages": 10, "max_depth": 2, "use_sitemap": 0},
+			link_priority=PRIORITY,
+			skip_patterns=[],
+		)
+		fetched = []
+		fake = fixtures.fake_fetch_with_redirects(responses, redirects)
+
+		def counting(url, *args, **kwargs):
+			fetched.append(url)
+			return fake(url, *args, **kwargs)
+
+		with mock.patch.object(crawler, "fetch", side_effect=counting):
+			results = crawler.crawl("https://acme.example", cfg)
+		pages = [url for url in fetched if not url.endswith("/robots.txt")]
+		self.assertEqual(len(pages), 10)
+		self.assertLessEqual(len(fetched), crawler.max_fetches(10))
+		self.assertEqual([page.url for page, _soup in results], ["https://acme.example"])
 
 
 class OffSiteRedirectScopeTest(UnitTestCase):
