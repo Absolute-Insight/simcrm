@@ -592,7 +592,7 @@ import {
   call,
 } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
-import { TextEditor } from 'frappe-ui/experimental'
+import { lazyTextEditor } from '@/components/Controls/LazyTextEditor'
 // the calendar family is parked in experimental for v1 (frappe-ui migration doc)
 import {
   CalendarColorMap as colorMap,
@@ -601,6 +601,9 @@ import {
 import { ref, computed, watch, h, inject } from 'vue'
 import { useRouter } from 'vue-router'
 import { actionErrorMessage } from '@/utils/reportActionError'
+
+// fetched when an event is first opened, not with the calendar itself
+const TextEditor = lazyTextEditor({ height: '2rem' })
 
 const props = defineProps({
   mode: { type: String, default: 'details' },
