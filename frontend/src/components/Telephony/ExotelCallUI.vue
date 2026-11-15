@@ -240,9 +240,14 @@ import { sessionStore } from '@/stores/session'
 import { useDraggable, useWindowSize } from '@vueuse/core'
 import { Avatar, Button, createResource, toast } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
-import { TextEditor } from 'frappe-ui/experimental'
+import { lazyTextEditor } from '@/components/Controls/LazyTextEditor'
 import { ref, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+
+/* The note's editor, fetched when a note is first taken. The call window is
+   mounted by the app shell, so imported here the editor was fetched with
+   every page. */
+const TextEditor = lazyTextEditor({ height: '290px' })
 
 const { $socket } = globalStore()
 

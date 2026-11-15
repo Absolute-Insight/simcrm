@@ -9,6 +9,9 @@ import {
 } from './telephony/frappeUi.js'
 import { editors } from './telephony/experimental.js'
 import ExotelCallUI from '@/components/Telephony/ExotelCallUI.vue'
+// The note's editor is fetched on first use. Fetched here, the first note of
+// the file opens it as fast as every later one does.
+import '@/components/editor/TextEditor.js'
 
 const socket = vi.hoisted(() => ({ listeners: {} }))
 

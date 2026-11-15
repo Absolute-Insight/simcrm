@@ -129,8 +129,11 @@ import { useBroadcast } from '@/composables/useBroadcast'
 import { describeError } from '@/utils/describeError'
 import { FormControl, Switch, toast } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
-import { TextEditor } from 'frappe-ui/experimental'
+import { lazyTextEditor } from '@/components/Controls/LazyTextEditor'
 import { inject, onMounted, ref } from 'vue'
+
+// fetched when a template is first written: Settings is part of the shell
+const TextEditor = lazyTextEditor({ height: '180px' })
 
 const props = defineProps({
   templateData: { type: Object, default: () => ({}) },

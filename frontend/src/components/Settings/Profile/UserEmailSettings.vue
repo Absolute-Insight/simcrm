@@ -130,9 +130,12 @@ import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
 import { describeError } from '@/utils/describeError'
 import { Button, Combobox, createResource, toast } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
-import { TextEditor } from 'frappe-ui/experimental'
+import { lazyTextEditor } from '@/components/Controls/LazyTextEditor'
 import { useOwnProfile } from '@/composables/useOwnProfile'
 import { computed } from 'vue'
+
+// fetched when this page is first opened: Settings is part of the shell
+const TextEditor = lazyTextEditor({ height: '7rem' })
 
 const emit = defineEmits(['updateStep'])
 
