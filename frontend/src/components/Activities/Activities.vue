@@ -173,9 +173,24 @@
                 ].includes(activity.activity_type),
               }"
             >
+              <!-- a restricted email names no sender: show the colleague on
+                   it, or nobody -- never the signed-in user by default -->
+              <LucideMail
+                v-if="
+                  activity.activity_type == 'communication' &&
+                  activity.data.hidden &&
+                  !activity.data.internal_party_user
+                "
+                class="size-4 text-ink-gray-6"
+                aria-hidden="true"
+              />
               <UserAvatar
-                v-if="activity.activity_type == 'communication'"
-                :user="activity.data.sender"
+                v-else-if="activity.activity_type == 'communication'"
+                :user="
+                  activity.data.hidden
+                    ? activity.data.internal_party_user
+                    : activity.data.sender
+                "
                 size="md"
               />
               <MissedCallIcon
