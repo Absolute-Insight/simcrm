@@ -6,9 +6,15 @@ the CRM ERP Write table. A site upgraded while a push is unanswered would otherw
 forget it, and the next push or click would send a second customer or order into the
 client's ERP. So every live marker becomes an open ledger row.
 
-Idempotent: a target that already has an open row is left as it is. With redis empty,
-or unreachable, it does nothing. The redis keys are left where they are -- they expire
-on their own, and an image rolled back to the previous release still finds them.
+Idempotent: a target that already has an open row is left as it is. With redis empty it
+does nothing; with redis unreachable it raises, so migrate fails and runs it again --
+"could not look" is not "nothing in flight". It reads the keys only because
+hooks.persistent_cache_keys still lists their prefix for this release: migrate runs
+frappe.clear_cache() before its patches.
+
+The redis keys are left to expire. They are no help to a rollback: the previous
+release cannot read CRM ERP Write, and the keys do not survive a clear_cache once the
+prefix leaves persistent_cache_keys -- see deploy/README.md, "Rolling back".
 """
 
 import frappe
@@ -21,11 +27,7 @@ CARRIED = "carried over from the cache marker at upgrade"
 
 def execute():
 	cache = frappe.cache()
-	try:
-		keys = cache.get_keys(PREFIX)
-	except Exception:
-		frappe.log_error(frappe.get_traceback(), "Acumatica in-flight markers: redis unreadable at upgrade")
-		return
+	keys = live_keys(cache, PREFIX)
 	site_prefix = cache.make_key("")
 	for raw_key in keys or []:
 		key = frappe.safe_decode(raw_key)
@@ -48,6 +50,14 @@ def execute():
 		if ledger.acquire(target, marker):
 			ledger.record_unknown(target, CARRIED)
 			print(f"Carried the in-flight Acumatica marker for {target} into CRM ERP Write")
+
+
+def live_keys(cache, prefix: str) -> list:
+	"""The site's keys under ``prefix``, straight from redis. frappe's get_keys answers
+	a connection error with whatever this process happens to hold, which in migrate is
+	nothing: a redis that is down must fail the patch, not pass it."""
+	cache.ping()
+	return cache.keys(cache.make_key(prefix + "*"))
 
 
 def _marker(kind: str, value):

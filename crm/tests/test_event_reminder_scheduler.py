@@ -23,6 +23,13 @@ from frappe.utils import now_datetime
 from crm.api.event import trigger_offset_event_notifications as trigger_event_notifications
 
 REP = "reminder-rep@crmtest.test"
+# sent-ledger rows this module may delete: only those made since it was imported,
+# never the live record of a site the suite is pointed at
+_STARTED = {}
+
+
+def setUpModule():
+	_STARTED["at"] = now_datetime() - timedelta(seconds=1)
 
 
 def ensure_rep():
@@ -40,7 +47,7 @@ def forget_sent_reminders():
 	from crm.utils.autonomous import autonomous_db
 
 	with autonomous_db() as db:
-		db.sql("delete from `tabCRM Event Reminder Sent`")
+		db.sql("delete from `tabCRM Event Reminder Sent` where creation >= %s", (_STARTED["at"],))
 
 
 class ReminderSweepTest(IntegrationTestCase):
@@ -336,13 +343,32 @@ class ReminderLedgerSurvivesClearCacheTest(IntegrationTestCase):
 		forget_sent_reminders()
 		self.addCleanup(forget_sent_reminders)
 
-	def test_the_ledger_needs_nothing_kept_in_the_cache(self):
+	def test_the_cache_keeps_only_what_the_upgrade_carries_over(self):
+		"""The legacy keys stay persistent for one release, so the clear_cache migrate
+		runs before its patches cannot delete what the carry-over patches read."""
 		from crm import hooks
 
-		self.assertFalse(
-			[key for key in hooks.persistent_cache_keys if "event_reminder" in key],
-			"the sent ledger is in the database; nothing of it may depend on the cache",
+		self.assertLessEqual(
+			set(hooks.persistent_cache_keys),
+			{"acumatica_token::*", "acumatica_inflight::*", "crm:event_reminder_sent:*"},
 		)
+
+	def test_claims_in_the_cache_are_carried_into_the_ledger_on_upgrade(self):
+		"""A reminder claimed in redis just before the upgrade must not be sent again
+		after it -- migrate's own clear_cache first, as SiteMigration.setUp runs it."""
+		from crm.api.event import _claim_reminder
+		from crm.patches.v1_0 import carry_event_reminder_claims_to_ledger as patch
+
+		key = "crm:event_reminder_sent:EV-LEDGER-CARRY:Email:2026-03-02T09:50:00"
+		frappe.cache.set(frappe.cache.make_key(key), 1, ex=600)
+		self.addCleanup(frappe.cache.delete_value, key)
+		frappe.clear_cache()
+
+		patch.execute()
+		patch.execute()  # idempotent
+
+		carried = frappe._dict(self.REMINDER, event_name="EV-LEDGER-CARRY")
+		self.assertFalse(_claim_reminder(carried), "the reminder would be mailed a second time")
 
 	def test_a_claimed_reminder_stays_claimed_across_a_clear_cache(self):
 		from crm.api.event import _claim_reminder

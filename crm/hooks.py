@@ -558,12 +558,19 @@ after_migrate = [
 # frappe.clear_cache() deletes every other key on the site -- and frappe.rename_doc
 # calls it, so the Acumatica sync renaming an organization ran it mid-sync. Dropping
 # the shared API token leaves its login holding one of the API user's concurrent-login
-# slots until it expires (a logout needs the token): wasteful, not unsafe, so it may
-# also be evicted. What must never be lost -- the Acumatica in-flight markers and the
-# event-reminder sent ledger -- is in the database (CRM ERP Write, CRM Event Reminder
-# Sent), not here.
+# slots until it expires (a logout needs the token): wasteful, not unsafe. What must
+# never be lost -- the Acumatica in-flight markers and the event-reminder sent ledger
+# -- is in the database (CRM ERP Write, CRM Event Reminder Sent), not here.
+#
+# The two legacy prefixes below are kept for ONE release only: migrate runs
+# frappe.clear_cache() before its patches, and the carry-over patches
+# (crm.patches.v1_0.carry_acumatica_inflight_markers_to_ledger and
+# carry_event_reminder_claims_to_ledger) must still find those keys. Remove them in
+# the release after, once those patches have run on every site.
 persistent_cache_keys = [
 	"acumatica_token::*",
+	"acumatica_inflight::*",
+	"crm:event_reminder_sent:*",
 ]
 
 standard_dropdown_items = [

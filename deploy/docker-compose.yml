@@ -127,17 +127,17 @@ services:
     # maxmemory, no eviction, and the default snapshots to /data. It looks like
     # an oversight in a service called "cache" -- bench's own redis_cache.conf
     # sets a ceiling with allkeys-lru and turns snapshots off -- and it is not
-    # one here. This instance does not hold only disposable data. The Acumatica
-    # in-flight markers (crm/integrations/acumatica/outbound.py; listed as
-    # persistent keys in crm/hooks.py) live in it for thirty days, and a marker
-    # is the only thing that stops a retried quote being written to the
-    # customer's ERP a second time; the event-reminder ledger is here too. An
-    # evicted or unpersisted marker is a duplicate sales order.
+    # one here. The Acumatica in-flight markers and the event-reminder ledger
+    # now live in the database (CRM ERP Write, CRM Event Reminder Sent); what
+    # persistence still protects is the shared Acumatica API token, the
+    # customer-push sweep's bookmark and -- for the one release whose migrate
+    # carries them into those tables -- the legacy acumatica_inflight::* and
+    # crm:event_reminder_sent:* keys. An upgrade from an older release must
+    # find them after the restart that comes with it.
     #
-    # So until those keys live somewhere durable (the database, or
-    # redis-queue), this service must not get a maxmemory-policy that evicts
-    # and must keep writing snapshots. .github/helper/test-deploy-compose.sh
-    # fails if either changes.
+    # So until the release after that, this service must not get a
+    # maxmemory-policy that evicts and must keep writing snapshots.
+    # .github/helper/test-deploy-compose.sh fails if either changes.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
