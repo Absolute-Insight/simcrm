@@ -3,7 +3,7 @@
     <div
       v-for="(event, i) in events"
       :key="event.name"
-      class="activity grid grid-cols-[30px_minmax(auto,_1fr)] gap-4 px-3 sm:px-10"
+      class="activity grid grid-cols-[30px_minmax(0,_1fr)] gap-4 px-3 sm:px-10"
     >
       <div
         class="z-0 relative flex justify-center before:absolute before:left-[50%] before:-z-[1] before:top-0 before:border-l before:border-outline-elevation-2"
