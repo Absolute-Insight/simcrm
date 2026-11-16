@@ -3,8 +3,10 @@ import { nextTick } from 'vue'
 import { mount } from './mount.js'
 
 // Calendar page: creating an event with an attendee typed in by address.
-// Audit FE-35: only the update path gave such an attendee a Contact, so the
-// insert carried reference_docname "new" and the server refused the event.
+// Audit FE-35: only the update path prepared such an attendee, so the insert
+// carried reference_docname "new", which frappe's link check refuses. The
+// event's save now gives each typed address its Contact (crm.api.attendees);
+// the browser asks nothing and creates nothing.
 
 const state = vi.hoisted(() => ({
   inserted: [],
@@ -35,11 +37,6 @@ vi.mock('frappe-ui', async () => {
     usePageMeta() {},
     call: vi.fn(async (method, args) => {
       state.calls.push([method, args])
-      if (method === 'crm.api.contact.find_by_email') {
-        // one of the two addresses already has a Contact
-        return args.email === 'known@client.test' ? 'C-KNOWN' : null
-      }
-      if (method === 'frappe.client.insert') return { name: 'C-NEW' }
     }),
   }
 })
@@ -111,7 +108,7 @@ const flush = async () => {
 }
 
 describe('Calendar: creating an event', () => {
-  it('gives each typed attendee a Contact before the insert', async () => {
+  it('sends each typed attendee as its address, for the save to resolve', async () => {
     mount(CalendarPage, { stubs: { Button: { render: () => null } } })
     await flush()
     state.calendar.onCellClick({ date: '2026-10-30', time: '09:00' })
@@ -142,18 +139,15 @@ describe('Calendar: creating an event', () => {
       {
         email: 'colleague@mbp.test',
         reference_doctype: 'Contact',
-        reference_docname: 'C-NEW',
+        reference_docname: '',
       },
       {
         email: 'known@client.test',
         reference_doctype: 'Contact',
-        reference_docname: 'C-KNOWN',
+        reference_docname: '',
       },
     ])
-    // an existing Contact is used, not duplicated
-    const created = state.calls.filter(([m]) => m === 'frappe.client.insert')
-    expect(created.map(([, a]) => a.doc.email_ids[0].email_id)).toEqual([
-      'colleague@mbp.test',
-    ])
+    // no lookup a rep's row scoping would answer, and no Contact from here
+    expect(state.calls).toEqual([])
   })
 })

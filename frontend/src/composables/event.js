@@ -1,5 +1,5 @@
 import { usersStore } from '@/stores/users'
-import { dayjs, createListResource, call } from 'frappe-ui'
+import { dayjs, createListResource } from 'frappe-ui'
 import { computed, ref, watch } from 'vue'
 import { allTimeSlots } from '@/components/Calendar/utils'
 
@@ -245,52 +245,39 @@ export function normalizeParticipants(list = []) {
 }
 
 /**
- * Give every typed attendee a Contact before the event is saved.
+ * Hand typed attendees to the server to resolve, as the address alone.
  *
- * Event Participants' reference is a required Dynamic Link, and Attendee
- * hands over an address that matches no Contact as `reference_docname: 'new'`
- * (or none at all, for a comma-separated paste), which the server refuses.
- * An existing Contact with that email is used; otherwise one is created.
+ * Event Participants' reference is a Dynamic Link, and Attendee hands over an
+ * address that matches no Contact the rep can see as `reference_docname: 'new'`
+ * (or none at all, for a comma-separated paste). The event's save gives such a
+ * row its Contact (`crm.api.attendees`): one the rep can read is named on the
+ * row; otherwise the Contact behind it -- possibly another rep's customer's,
+ * or one created for the rep -- is recorded off the event, and the row keeps
+ * only the address.
  *
- * "With that email" is any of the Contact's addresses: `Contact.email_id` is
- * the primary one only, so looking there gave somebody invited at their second
- * address a second Contact. The server looks, and only among the Contacts this
- * user can read.
+ * This used to look the Contact up and create it from here. The lookup only
+ * saw the Contacts the rep can read, so a meeting with another rep's customer
+ * gave that person a second Contact; and anything the browser is told about a
+ * hidden Contact tells the rep whose customer it is. So nothing is asked here.
+ *
+ * `'new'` must not reach the server: frappe checks links before any hook runs,
+ * and would refuse it as a Contact that does not exist.
  */
 export async function ensureParticipantContacts(participants) {
   if (!Array.isArray(participants) || !participants.length) return participants
-  const updated = []
-  for (const part of participants) {
+  return participants.map((part) => {
     const p = { ...part }
-    try {
-      if (
-        p.reference_doctype === 'Contact' &&
-        UNRESOLVED_DOCNAMES.has(p.reference_docname || '') &&
-        p.email
-      ) {
-        const existing = await call('crm.api.contact.find_by_email', {
-          email: p.email,
-        })
-        if (existing) {
-          p.reference_docname = existing
-        } else {
-          const firstName = p.email.split('@')[0] || p.email
-          const contactDoc = await call('frappe.client.insert', {
-            doc: {
-              doctype: 'Contact',
-              first_name: firstName,
-              email_ids: [{ email_id: p.email, is_primary: 1 }],
-            },
-          })
-          if (contactDoc?.name) p.reference_docname = contactDoc.name
-        }
-      }
-    } catch (e) {
-      console.error('Failed creating contact for participant', p.email, e)
+    const typed =
+      (p.reference_doctype || 'Contact') === 'Contact' &&
+      UNRESOLVED_DOCNAMES.has(p.reference_docname || '') &&
+      (p.email || '').trim()
+    if (typed) {
+      p.email = p.email.trim()
+      p.reference_doctype = 'Contact'
+      p.reference_docname = ''
     }
-    updated.push(p)
-  }
-  return updated
+    return p
+  })
 }
 
 export function formatDuration(mins) {
