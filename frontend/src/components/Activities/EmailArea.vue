@@ -75,7 +75,7 @@
         <span class="mr-1 text-ink-gray-5"> {{ __('To') }}: </span>
         <span>{{ activity.data.recipients }}</span>
       </div>
-      <div class="flex min-w-0 items-center gap-1.5 text-p-sm text-ink-gray-5">
+      <div class="flex min-w-0 items-center gap-1.5 text-p-sm text-ink-gray-6">
         <LucideLock class="size-3.5 shrink-0" aria-hidden="true" />
         <span class="truncate">
           {{ __("You don't have access to this email's content") }}

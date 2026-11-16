@@ -309,6 +309,8 @@ class HiddenTimelineEmailTest(IntegrationTestCase):
 		]
 		self.hidden = add_email("Contact", self.contact, "Hidden", content="<p>Secret terms</p>")
 		communication = frappe.get_doc("Communication", self.hidden)
+		communication.cc = "copied@example.com"
+		communication.bcc = "blind@example.com"
 		communication.add_link("CRM Deal", self.deal)
 		communication.save(ignore_permissions=True)
 		for i, name in enumerate([*older, self.hidden]):
@@ -333,6 +335,9 @@ class HiddenTimelineEmailTest(IntegrationTestCase):
 		self.assertNotIn("snippet", hidden)
 		self.assertNotIn("content", hidden)
 		self.assertEqual(hidden["attachments"], [])
+		self.assertNotIn("cc", hidden)
+		self.assertNotIn("bcc", hidden)
+		self.assertNotIn("blind@example.com", frappe.as_json(rows))
 		self.assertNotIn("Secret", frappe.as_json(rows))
 		# the newest two the rep may open are the ones that come open
 		self.assertEqual(sorted(s for s, d in rows.items() if "content" in d), ["Readable 1", "Readable 2"])

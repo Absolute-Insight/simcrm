@@ -131,10 +131,15 @@ def get_hidden_communications(communications: list, doctype: str, name: str) -> 
 
 
 def hide_email_content(activity: dict) -> None:
-	"""Keep the row -- who wrote to whom, and when -- but none of what it says."""
+	"""Keep the row -- who wrote to whom, and when -- but none of what it says.
+
+	CC and BCC go too: the row shows sender and To only, and a blind copy is
+	exactly what a reader without access to the email should not learn."""
 	data = activity["data"]
 	data.pop("snippet", None)
 	data.pop("content", None)
+	data.pop("cc", None)
+	data.pop("bcc", None)
 	data["attachments"] = []
 	data["hidden"] = True
 
