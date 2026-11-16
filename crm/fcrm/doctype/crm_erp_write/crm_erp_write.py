@@ -76,6 +76,7 @@ class CRMERPWrite(Document):
 		state: DF.Literal["In Flight", "Unknown", "Applied", "Refused", "Abandoned"]
 		target: DF.Data
 		triggered_by: DF.Data | None
+		version: DF.Int
 	# end: auto-generated types
 
 	pass
@@ -113,7 +114,7 @@ def _user() -> str:
 
 def _open_row(db, target: str):
 	rows = db.sql(
-		f"select name, target, state, attempts, marker, remote_id, error, started_at from {TABLE}"
+		f"select name, target, state, attempts, version, marker, remote_id, error, started_at from {TABLE}"
 		" where open_key = %s",
 		(target,),
 		as_dict=True,
@@ -126,8 +127,8 @@ def _open_row(db, target: str):
 
 
 def open_write(target: str):
-	"""The open row for ``target`` -- name, state, attempts, marker (parsed), remote_id,
-	error, started_at -- or None. Raises when the database cannot be asked: "no answer" is
+	"""The open row for ``target`` -- name, state, attempts, version, marker (parsed),
+	remote_id, error, started_at -- or None. Raises when the database cannot be asked: "no answer" is
 	not "no write in flight"."""
 	with autonomous_db() as db:
 		return _open_row(db, target)
@@ -141,8 +142,8 @@ def _insert(db, target: str, marker, state: str = IN_FLIGHT) -> str:
 		f"""insert into {TABLE}
 			(name, creation, modified, owner, modified_by, docstatus, idx,
 			target, open_key, kind, reference_doctype, reference_name, state,
-			attempts, started_at, triggered_by, marker)
-		values (%s, %s, %s, %s, %s, 0, 0, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s)""",
+			attempts, version, started_at, triggered_by, marker)
+		values (%s, %s, %s, %s, %s, 0, 0, %s, %s, %s, %s, %s, %s, 1, 1, %s, %s, %s)""",
 		(
 			name,
 			now,
@@ -170,8 +171,10 @@ def acquire(target: str, marker, expected=None) -> str | None:
 	With no ``expected`` row, an insert: the UNIQUE ``open_key`` refuses it if any
 	other worker opened one first, however close together they ran. With one (a retry
 	of a write that never heard back, after looking for what it made), that row is
-	taken over only if it is still exactly the attempt the caller read -- a compare-
-	and-set on its attempt count, so two retries cannot both send."""
+	taken over only if it is still exactly as the caller read it -- a compare-and-set
+	on its version, which every write to the row moves (an unanswered attempt
+	recorded included), so two retries cannot both send, nor one that read the row
+	while its write was still in flight."""
 	with autonomous_db() as db:
 		if expected is None:
 			try:
@@ -183,10 +186,11 @@ def acquire(target: str, marker, expected=None) -> str | None:
 		now = now_datetime()
 		db.sql(
 			f"""update {TABLE}
-			set state = %s, attempts = attempts + 1, marker = %s, started_at = %s,
-				triggered_by = %s, error = null, finished_at = null, modified = %s, modified_by = %s
-			where name = %s and open_key = %s and attempts = %s""",
-			(IN_FLIGHT, _dump(marker), now, _user(), now, _user(), expected.name, target, expected.attempts),
+			set state = %s, attempts = attempts + 1, version = version + 1, marker = %s,
+				started_at = %s, triggered_by = %s, error = null, finished_at = null,
+				modified = %s, modified_by = %s
+			where name = %s and open_key = %s and version = %s""",
+			(IN_FLIGHT, _dump(marker), now, _user(), now, _user(), expected.name, target, expected.version),
 		)
 		return expected.name if db._cursor.rowcount == 1 else None
 
@@ -202,7 +206,8 @@ def put_marker(target: str, marker) -> str:
 				raise
 		now = now_datetime()
 		db.sql(
-			f"update {TABLE} set marker = %s, modified = %s, modified_by = %s where open_key = %s",
+			f"""update {TABLE} set marker = %s, version = version + 1, modified = %s, modified_by = %s
+			where open_key = %s""",
 			(_dump(marker), now, _user(), target),
 		)
 		row = _open_row(db, target)
@@ -213,7 +218,8 @@ def record_unknown(target: str, error) -> None:
 	"""The write got no answer: the row stays open, so the next attempt looks first."""
 	with autonomous_db() as db:
 		db.sql(
-			f"update {TABLE} set state = %s, error = %s, modified = %s where open_key = %s",
+			f"""update {TABLE} set state = %s, error = %s, version = version + 1, modified = %s
+			where open_key = %s""",
 			(UNKNOWN, _short(error), now_datetime(), target),
 		)
 
@@ -232,44 +238,77 @@ def close(target: str, state: str, error=None, remote_id=None) -> None:
 		)
 
 
-def close_after_commit(target: str, state: str = APPLIED, remote_id=None) -> None:
+def close_after_commit(
+	target: str, state: str = APPLIED, remote_id=None, error=None, on_failure=None
+) -> None:
 	"""Settle the row once the request's own transaction commits -- and only then. A
 	rollback after a write that landed (a worker killed before its commit) leaves the
-	row open, so the next attempt finds the record instead of making another."""
+	row open, so the next attempt finds the record instead of making another.
+	``on_failure(exc)`` is called if the settle itself fails."""
 
 	def settle():
 		try:
-			close(target, state, remote_id=remote_id)
-		except Exception:
+			close(target, state, error=error, remote_id=remote_id)
+		except Exception as e:
 			# left open, the next attempt looks before it sends: safe, only slower
 			frappe.log_error(frappe.get_traceback(), "ERP write ledger: could not settle a write")
+			if on_failure:
+				try:
+					on_failure(e)
+				except Exception:
+					frappe.log_error(
+						frappe.get_traceback(), "ERP write ledger: could not report a failed settle"
+					)
 
 	frappe.db.after_commit.add(settle)
 
 
-def move(old_target: str, new_target: str) -> None:
+def move(old_target: str, new_target: str):
 	"""A rename of the record the target names: the open row follows it. When the new
 	name already has one open, that one stands and the old one is abandoned -- one
-	open write per target."""
+	open write per target. What it did, for ``restore`` -- or None if nothing was open."""
 	kind, reference = _split(new_target)
 	now = now_datetime()
 	with autonomous_db() as db:
-		if not _open_row(db, old_target):
-			return
+		row = _open_row(db, old_target)
+		if not row:
+			return None
 		try:
 			db.sql(
-				f"""update {TABLE} set target = %s, open_key = %s, reference_name = %s, modified = %s
-				where open_key = %s""",
-				(new_target, new_target, reference, now, old_target),
+				f"""update {TABLE} set target = %s, open_key = %s, reference_name = %s,
+					version = version + 1, modified = %s
+				where name = %s""",
+				(new_target, new_target, reference, now, row.name),
 			)
 		except Exception as e:
 			if not is_duplicate(db, e):
 				raise
 			db.sql(
 				f"""update {TABLE} set state = %s, open_key = null, finished_at = %s, modified = %s,
-					error = %s where open_key = %s""",
-				(ABANDONED, now, now, _short(f"renamed onto {reference}, which had its own"), old_target),
+					version = version + 1, error = %s where name = %s""",
+				(ABANDONED, now, now, _short(f"renamed onto {reference}, which had its own"), row.name),
 			)
+		return frappe._dict(name=row.name, state=row.state, error=row.error)
+
+
+def restore(moved, old_target: str) -> None:
+	"""Undo ``move`` for a rename that rolled back: the row is open under the old name
+	again, in the state it had. Never raises (it runs in a rollback hook)."""
+	if not moved:
+		return
+	kind, reference = _split(old_target)
+	try:
+		with autonomous_db() as db:
+			db.sql(
+				f"""update {TABLE} set target = %s, open_key = %s, reference_name = %s, state = %s,
+					error = %s, finished_at = null, version = version + 1, modified = %s
+				where name = %s""",
+				(old_target, old_target, reference, moved.state, moved.error, now_datetime(), moved.name),
+			)
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(), "ERP write ledger: could not move a write back after a rename"
+		)
 
 
 def purge_settled() -> None:

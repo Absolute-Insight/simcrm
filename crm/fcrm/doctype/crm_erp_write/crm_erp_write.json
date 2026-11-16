@@ -14,6 +14,7 @@
   "remote_id",
   "column_break_when",
   "attempts",
+  "version",
   "started_at",
   "finished_at",
   "triggered_by",
@@ -88,6 +89,14 @@
    "read_only": 1
   },
   {
+   "default": "0",
+   "description": "Moves on every write to the row: a retry takes the row over only if it is unchanged since it was read.",
+   "fieldname": "version",
+   "fieldtype": "Int",
+   "label": "Version",
+   "read_only": 1
+  },
+  {
    "fieldname": "started_at",
    "fieldtype": "Datetime",
    "label": "Started At",
@@ -137,7 +146,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-16 12:00:00.000000",
+ "modified": "2026-11-16 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM ERP Write",

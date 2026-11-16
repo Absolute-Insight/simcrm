@@ -7,6 +7,7 @@ target; it survives the request's rollback and a flush of the cache; and a close
 is history, never a guard."""
 
 import threading
+from unittest.mock import patch as mock_patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -19,8 +20,11 @@ TARGET = "SalesOrder::LED-TEST-DEAL"
 
 
 def _forget():
+	"""Only this module's rows (every target it writes names an LED- record): the
+	ledger is written on a committing connection, and a live guard on a site the
+	suite is pointed at must never go with them."""
 	with autonomous_db() as db:
-		db.sql("delete from `tabCRM ERP Write`")
+		db.sql("delete from `tabCRM ERP Write` where target like %s", ("%::LED-%",))
 
 
 def _rows(target=None):
@@ -82,6 +86,30 @@ class TestERPWriteLedger(FrappeTestCase):
 		self.assertEqual(len([r for r in results if r]), 1, results)
 		row = ledger.open_write(TARGET)
 		self.assertEqual((row.state, row.attempts, row.marker), (ledger.IN_FLIGHT, 2, {"sent_at": 2.0}))
+
+	def test_an_unanswered_write_is_no_longer_the_attempt_a_stale_read_saw(self):
+		"""A retry that read the row while its write was still in flight must not take
+		it over once that write has come back unanswered: it never looked for what that
+		write made."""
+		ledger.acquire(TARGET, {"sent_at": 1.0})
+		seen_in_flight = ledger.open_write(TARGET)
+		ledger.record_unknown(TARGET, "504")
+		self.assertIsNone(ledger.acquire(TARGET, {"sent_at": 2.0}, expected=seen_in_flight))
+		self.assertTrue(ledger.acquire(TARGET, {"sent_at": 2.0}, expected=ledger.open_write(TARGET)))
+
+	def test_a_rename_that_rolls_back_puts_the_open_write_back(self):
+		from crm.integrations.acumatica.outbound import move_markers_on_rename
+
+		ledger.acquire("Customer::LED-Old", {"sent_at": 1.0})
+		ledger.acquire("CustomerContact::LED-Old", {"contact": "x"})
+		ledger.acquire("CustomerContact::LED-New", {"contact": "y"})
+		move_markers_on_rename(None, None, "LED-Old", "LED-New")
+		self.assertTrue(ledger.open_write("Customer::LED-New"))
+		frappe.db.rollback()
+		self.assertTrue(ledger.open_write("Customer::LED-Old"))
+		self.assertIsNone(ledger.open_write("Customer::LED-New"))
+		self.assertEqual(ledger.open_write("CustomerContact::LED-Old").marker, {"contact": "x"})
+		self.assertEqual(ledger.open_write("CustomerContact::LED-New").marker, {"contact": "y"})
 
 	def test_the_open_write_outlives_the_requests_rollback_and_the_cache(self):
 		ledger.acquire(TARGET, {"sent_at": 1.0})
@@ -187,7 +215,9 @@ class TestCarryOverPatch(FrappeTestCase):
 			ledger.open_write("CustomerContact::LED-PATCH-ORG").marker, {"contact": "LED-CONTACT"}
 		)
 		with autonomous_db() as db:
-			self.assertEqual(db.sql("select count(*) from `tabCRM ERP Write`")[0][0], 3)
+			self.assertEqual(
+				db.sql("select count(*) from `tabCRM ERP Write` where target like %s", ("%::LED-%",))[0][0], 3
+			)
 
 	def test_a_bare_timestamp_customer_marker_keeps_its_ambiguity(self):
 		from crm.patches.v1_0 import carry_acumatica_inflight_markers_to_ledger as patch
@@ -199,10 +229,31 @@ class TestCarryOverPatch(FrappeTestCase):
 			{"sent_at": 1700000000.0, "preexisting": None},
 		)
 
+	def test_markers_survive_the_clear_cache_migrate_runs_before_its_patches(self):
+		"""SiteMigration.setUp calls frappe.clear_cache() before either patch pass: a
+		marker not in persistent_cache_keys is gone before the patch can read it."""
+		from crm.patches.v1_0 import carry_acumatica_inflight_markers_to_ledger as patch
+
+		frappe.cache().set_value(self.KEYS[0], 1763290000.5)
+		frappe.clear_cache()
+		patch.execute()
+		self.assertEqual(ledger.open_write("SalesOrder::LED-PATCH-DEAL").marker, {"sent_at": 1763290000.5})
+
+	def test_an_unreachable_redis_fails_the_patch_so_migrate_runs_it_again(self):
+		import redis
+
+		from crm.patches.v1_0 import carry_acumatica_inflight_markers_to_ledger as patch
+
+		with mock_patch.object(frappe.cache, "ping", side_effect=redis.exceptions.ConnectionError("down")):
+			with self.assertRaises(redis.exceptions.ConnectionError):
+				patch.execute()
+
 	def test_nothing_in_redis_does_nothing(self):
 		from crm.patches.v1_0 import carry_acumatica_inflight_markers_to_ledger as patch
 
 		frappe.cache().delete_value(list(self.KEYS))
 		patch.execute()
 		with autonomous_db() as db:
-			self.assertEqual(db.sql("select count(*) from `tabCRM ERP Write`")[0][0], 0)
+			self.assertEqual(
+				db.sql("select count(*) from `tabCRM ERP Write` where target like %s", ("%::LED-%",))[0][0], 0
+			)

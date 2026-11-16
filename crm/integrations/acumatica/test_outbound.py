@@ -1,5 +1,8 @@
 import json
 import re
+import threading
+import time
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -10,9 +13,13 @@ from crm.integrations.acumatica import outbound
 from crm.utils.autonomous import autonomous_db
 
 _commit_patch = patch("crm.integrations.acumatica.outbound._commit")
+# ledger rows this module may delete: only those made since it started, never a
+# live guard on a site the suite is pointed at
+_STARTED = {}
 
 
 def setUpModule():
+	_STARTED["at"] = frappe.utils.now_datetime() - timedelta(seconds=1)
 	# The push commits once a customer is linked, so nothing later in the job can roll
 	# the link back. Under test that would keep every organization, deal and user the
 	# test made; the tests assert on the call instead.
@@ -67,7 +74,7 @@ def _forget_inflight():
 	test's rollback does not reach; and a rolled-back naming series hands the next
 	test's deal the same name. The sweep's throttle and bookmark are in redis."""
 	with autonomous_db() as db:
-		db.sql("delete from `tabCRM ERP Write`")
+		db.sql("delete from `tabCRM ERP Write` where creation >= %s", (_STARTED["at"],))
 	frappe.cache().delete_value([outbound._SWEEP_RAN, outbound._SWEEP_CURSOR])
 
 
@@ -2203,3 +2210,201 @@ class TestRound3Guards(CustomerPushCase):
 		person.acumatica_id = "123"
 		person.save(ignore_permissions=True)
 		self.assertEqual(frappe.db.get_value("Contact", person.name, "acumatica_id"), "123")
+
+
+class TestManagersResolveAStuckPush(CustomerPushCase):
+	"""An unanswered push whose customer recovery cannot pick out waits on a manager.
+	Under redis the marker expired after 30 days; a ledger row never does, so the
+	manager's two answers must be what releases it."""
+
+	def _stuck(self):
+		import requests
+
+		_enable()
+		org, deal = _complete_deal()
+		self.client.put.side_effect = requests.ReadTimeout("read timed out")
+		outbound.push_customer_for_deal(deal.name)
+		self.client.put.reset_mock()
+		self.client.put.side_effect = None
+		self.client.get_page.side_effect = _pages(
+			customers=[
+				_wrapped(CustomerID="C-NEWA", CustomerName=org.organization_name, NoteID="g-a"),
+				_wrapped(CustomerID="C-NEWB", CustomerName=org.organization_name, NoteID="g-b"),
+			]
+		)
+		outbound.push_customer_for_deal(deal.name)
+		self.client.put.assert_not_called()
+		self.assertIn("more than one new customer", _issues_for(org.name, "Push Failed")[0].detail)
+		return org, deal
+
+	def _rows(self, org):
+		with autonomous_db() as db:
+			return db.sql(
+				"select state, remote_id, error from `tabCRM ERP Write` where target = %s",
+				(outbound._inflight_key("Customer", org.name),),
+				as_dict=True,
+			)
+
+	@patch("crm.integrations.acumatica.outbound.frappe.enqueue")
+	def test_confirming_it_new_abandons_the_unanswered_write_and_the_push_sends(self, enqueue):
+		from crm.integrations.acumatica.api import confirm_new_customer
+
+		org, deal = self._stuck()
+		confirm_new_customer(org.name)
+		self.assertTrue(_marker("Customer", org.name), "released only once the confirmation commits")
+		frappe.db.after_commit.run()
+		self.assertIsNone(_marker("Customer", org.name))
+		(row,) = self._rows(org)
+		self.assertEqual(row.state, ledger.ABANDONED)
+		self.assertIn("Administrator", row.error)
+
+		self.client.get_page.side_effect = _pages()
+		self.client.put.return_value = _wrapped(CustomerID="C-NEW9", NoteID="g-9")
+		outbound.push_customer_for_deal(deal.name)
+		self.assertEqual(len(_customer_puts(self.client)), 1)
+		self.assertEqual(frappe.db.get_value("CRM Organization", org.name, "acumatica_id"), "C-NEW9")
+
+	def test_linking_it_by_hand_settles_the_unanswered_write(self):
+		from crm.integrations.acumatica.api import link_existing_customer
+
+		org, deal = self._stuck()
+		with patch("crm.integrations.acumatica.api.AcumaticaClient") as Api:
+			Api.return_value.get_page.return_value = [
+				_wrapped(CustomerID="C-NEWA", CustomerName=org.organization_name, NoteID="g-a")
+			]
+			link_existing_customer(org.name, "C-NEWA")
+		frappe.db.after_commit.run()
+		self.assertIsNone(_marker("Customer", org.name))
+		self.assertEqual([(r.state, r.remote_id) for r in self._rows(org)], [(ledger.APPLIED, "C-NEWA")])
+
+
+class TestASettleThatFailsIsNotLeftInvisible(CustomerPushCase):
+	def test_it_is_retried_then_shown_to_managers(self):
+		_enable()
+		org, deal = _complete_deal()
+		self.client.put.side_effect = [
+			_wrapped(CustomerID="C-A00411", NoteID="g-411"),
+			_wrapped(ContactID=7781, NoteID="g-contact"),
+			_wrapped(CustomerID="C-A00411"),
+		]
+		key = outbound._inflight_key("Customer", org.name)
+		failing = patch.object(ledger, "close", side_effect=frappe.QueryTimeoutError("lock wait"))
+		with failing, patch("crm.integrations.acumatica.outbound.frappe.enqueue") as enqueue:
+			outbound.push_customer_for_deal(deal.name)
+			frappe.db.after_commit.run()
+		retries = [
+			c
+			for c in enqueue.call_args_list
+			if c.args and c.args[0].endswith("settle_left_open") and c.kwargs.get("key") == key
+		]
+		self.assertEqual(len(retries), 1)
+
+		with failing:
+			outbound.settle_left_open(key=key, remote_id="C-A00411")
+		self.assertIn("could not be closed", _issues_for(org.name, "Push Failed")[0].detail)
+
+		# and the retry that works closes it
+		outbound.settle_left_open(key=key, remote_id="C-A00411")
+		self.assertIsNone(_marker("Customer", org.name))
+
+
+class TestConcurrentPushes(FrappeTestCase):
+	"""Two workers on their own connections, interleaved the way a confirm job and the
+	ordinary job can be: B reads A's open write before the row lock, finds nothing A
+	made yet, and waits on the lock while A's PUT gets a fast 504 and commits."""
+
+	_SETTINGS = (
+		"instance_url",
+		"create_customer_on_status_change",
+		"deal_status",
+		"customer_numbering",
+		"customer_id_max_length",
+		"quote_order_type",
+		"new_customer_class",
+		"home_country",
+		"tax_zone_home",
+		"tax_zone_abroad",
+		"salesperson_owners",
+		"salesperson_branches",
+	)
+
+	def setUp(self):
+		# _enable() is committed here, so what it changes must be put back by hand
+		self.settings_before = {
+			f: frappe.db.get_single_value("CRM Acumatica Settings", f) for f in self._SETTINGS
+		}
+		_enable()
+		self.org, deal = _complete_deal(status="Qualification")
+		# Won without the on_update hook: a committed hook would queue a real job
+		frappe.db.set_value("CRM Deal", deal.name, "status", "Won")
+		self.deal = deal.name
+		self.contact = frappe.get_doc("CRM Deal", deal.name).contacts[0].contact
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- both workers must see it
+
+	def tearDown(self):
+		frappe.db.rollback()
+		frappe.db.delete("CRM Contacts", {"parent": self.deal})
+		frappe.db.delete("CRM Deal", self.deal)
+		frappe.db.delete("Contact Email", {"parent": self.contact})
+		frappe.db.delete("Dynamic Link", {"parent": ("in", [self.contact, self.org.address])})
+		frappe.db.delete("Contact", self.contact)
+		frappe.db.delete("CRM Organization", self.org.name)
+		frappe.db.delete("Address", self.org.address)
+		frappe.db.delete("CRM Acumatica Sync Issue", {"remote_id": self.org.name})
+		for field, value in self.settings_before.items():
+			frappe.db.set_single_value("CRM Acumatica Settings", field, value)
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- the fixtures were committed
+		_disable()
+		_forget_inflight()
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_stale_read_of_the_open_write_never_sends_a_second_customer(self, ClientCls):
+		from crm.integrations.acumatica.client import AcumaticaError
+
+		a_in_put, b_looked = threading.Event(), threading.Event()
+		puts, errors = [], []
+
+		def put(entity, payload, **kw):
+			who = threading.current_thread().name
+			puts.append((who, entity))
+			if who == "A":
+				a_in_put.set()
+				b_looked.wait(30)
+				time.sleep(1.5)  # B is past its remote reads, waiting on the row lock
+				raise AcumaticaError("Acumatica PUT Customer -> 504", status_code=504)
+			return _wrapped(CustomerID="C-B", NoteID="g-b")
+
+		def get_page(entity, **kw):
+			if threading.current_thread().name == "B":
+				b_looked.set()
+			return []
+
+		ClientCls.return_value.put.side_effect = put
+		ClientCls.return_value.get_page.side_effect = get_page
+		site, sites_path = frappe.local.site, frappe.local.sites_path
+
+		def job(wait_for=None):
+			if wait_for:
+				wait_for.wait(30)
+			frappe.init(site, sites_path=sites_path)
+			frappe.connect()
+			try:
+				outbound.push_customer_for_deal(self.deal)
+				frappe.db.commit()  # nosemgrep: frappe-manual-commit -- what the job runner does
+			except Exception as e:
+				errors.append(e)
+			finally:
+				frappe.destroy()
+
+		a = threading.Thread(target=job, name="A")
+		b = threading.Thread(target=job, name="B", kwargs={"wait_for": a_in_put})
+		a.start()
+		b.start()
+		a.join(90)
+		b.join(90)
+
+		self.assertEqual(errors, [])
+		self.assertEqual([who for who, entity in puts if entity == "Customer"], ["A"])
+		self.assertEqual(
+			ledger.open_write(outbound._inflight_key("Customer", self.org.name)).state, ledger.UNKNOWN
+		)

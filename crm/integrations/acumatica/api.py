@@ -4,6 +4,7 @@ import re
 import frappe
 import requests
 from frappe import _
+from frappe.utils import now_datetime
 from frappe.utils.background_jobs import is_job_enqueued
 
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
@@ -13,6 +14,7 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 	get_settings,
 	open_sync_issues,
 )
+from crm.fcrm.doctype.crm_erp_write import crm_erp_write as ledger
 from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError, v
 
 # Both describe the sync rather than this button -- the timeout is how long one takes,
@@ -378,6 +380,8 @@ def link_existing_customer(organization: str, customer_id: str) -> dict:
 		customer_id,
 	)
 	dismiss_sync_issues("Customer", org.name, _RESOLVED)
+	# an unanswered push's write is settled by this answer -- once it commits
+	_settle_open_write(org.name, ledger.APPLIED, remote_id=customer_id, why="linked by hand")
 	return {"organization": org.name, "customer_id": customer_id}
 
 
@@ -462,5 +466,21 @@ def confirm_new_customer(organization: str) -> dict:
 	# A job of its own: one already running for this organization would swallow a
 	# deduplicated enqueue under the ordinary id -- and, having read the organization
 	# before this, report the duplicate all over again.
+	# An unanswered push whose customer could not be picked out holds the organization
+	# until somebody decides; confirming it new is that decision. Released before the
+	# queued push runs (after_commit runs in order), and only if this commits.
+	_settle_open_write(org.name, ledger.ABANDONED, why="confirmed as a new customer")
 	_enqueue_push(deal, org.name, job_suffix="_confirm")
 	return {"organization": org.name, "queued": True}
+
+
+def _settle_open_write(organization: str, state: str, remote_id=None, why: str = "") -> None:
+	"""Close the organization's open customer write, if any, recording who decided."""
+	from crm.integrations.acumatica.outbound import _inflight_key
+
+	ledger.close_after_commit(
+		_inflight_key("Customer", organization),
+		state,
+		remote_id=remote_id,
+		error=f"{why} by {frappe.session.user} at {now_datetime()}",
+	)
