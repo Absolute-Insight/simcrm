@@ -150,8 +150,12 @@ sending it, and *Send again* asks the server.
 `captured_at` is the device's clock corrected by the handshake's skew. It is
 never accepted in the future (five minutes of tolerance, then clamped).
 **It buys one thing**: with *Plan only for today or later* on, an activity
-captured offline is accepted up to `OFFLINE_GRACE_HOURS` (24) after the fact,
-where the online door refuses yesterday. Anything that took more than 15
+captured offline is accepted up to `offline_grace_hours()` after the fact,
+where the online door refuses yesterday. That is FCRM Settings → *Offline
+capture grace (hours)* (Settings → Visit Targets, shown while the day lock is
+on): 24 by default, 1–168; unset, 0 or out of range reads as 24. It is read as
+each entry arrives, so changing it never re-flags what is already recorded,
+and the pack carries it as `rules.offline_grace_hours`. Anything that took more than 15
 minutes to arrive, **or is dated on an earlier day than the one it arrived
 on** (a visit captured at 23:52 and delivered at 00:03), is flagged
 `captured_offline` on its plan item — logged, completed or cancelled alike
@@ -162,7 +166,7 @@ manager can tell the device's word from the server's. The whitelisted
 not whitelisted, takes it.
 
 `captured_at` is the device's word and nothing on the server witnesses it:
-any signed-in client can claim an activity was captured up to 24 hours ago
+any signed-in client can claim an activity was captured up to the grace (a day by default) ago
 and have it accepted past the day lock, flagged. That is the price of the
 exemption, accepted knowingly; closing it needs evidence the server holds
 itself (a device id on the handshake, say), which is a product decision.
@@ -250,11 +254,13 @@ pack says, and only an `image/*` response is kept. All pages or none.
 the server. Server-owned like the flag, carried across a `save_plan`, cleared
 by `clear_override`. The Planner's cloud marker and the team week show it
 ("offline +5h", "Logged offline, sent 5 hours later"), and *Visits against
-target* has a **Logged offline** count per rep (the dashboard panel says
-"· N offline"). Nothing is refused on the strength of it: the capture time is
+target* has a **Logged offline** count per rep and **Logged offline %**, its
+share of everything the rep logged (done or cancelled, plus any flagged row) in
+the period — blank when nothing was logged (`offline_rate`, computed in the
+same query as the count). The dashboard panel says "· N offline (P%)". Nothing is refused on the strength of it: the capture time is
 the phone's word and nothing on the server can witness it (a device id would
-be the phone's word too). Visibility is the control; the 24-hour grace — MBP's
-call on 2026-11-16, reps do not stay on site overnight — bounds how far back a
+be the phone's word too). Visibility is the control; the grace — 24 hours by
+default, MBP's call on 2026-11-16, reps do not stay on site overnight — bounds how far back a
 forged time can reach.
 
 **A manager's pack is narrowed.** A rep carries what they may see, unclaimed
