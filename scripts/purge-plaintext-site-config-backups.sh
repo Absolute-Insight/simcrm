@@ -14,7 +14,10 @@
 # Dry run by default: lists what matches and prints counts, deletes nothing.
 # With --delete it asks you to type the bucket name, then deletes those files
 # permanently (on B2, --b2-hard-delete: a plain delete would only *hide* them,
-# leaving every secret recoverable as an old version).
+# leaving every secret recoverable as an old version). It then lists again with
+# --b2-versions and fails unless no version of any of them is left. --delete
+# needs to KNOW the remote is B2 (from the environment, or the remote's `type`
+# in rclone.conf), and refuses otherwise.
 #
 # Only `*site_config_backup*.json` outside any `*.crypt/` prefix is touched.
 # The encrypted archive's copies (<site>.crypt/..., stored as ciphertext and
@@ -76,6 +79,15 @@ else
 	rc() { docker run --rm "${envs[@]}" "$image" "$@"; }
 fi
 
+# What kind of store this is decides whether a delete is a delete. On B2 a
+# plain delete only HIDES a file: the secret stays readable as an old version,
+# and the run would still look clean. So the type must be known -- from the
+# environment, or from the rclone.conf that defines the remote -- before
+# anything is deleted.
+if [ -z "$rtype" ]; then
+	rtype="$(rc config show "$remote" 2>/dev/null | sed -n 's/^type *= *//p' | head -n 1)" || rtype=""
+fi
+
 filters=(--filter "- *.crypt/**" --filter "+ *site_config_backup*.json" --filter "- *")
 
 list() {
@@ -83,7 +95,7 @@ list() {
 	rc lsf -R --files-only "${filters[@]}" "$@" "$target"
 }
 
-echo "Target: $target (bucket '$bucket', remote type '${rtype:-from rclone.conf}')"
+echo "Target: $target (bucket '$bucket', remote type '${rtype:-UNKNOWN}')"
 current="$(list)" || die "cannot list $target -- check the key and the path"
 n_current=$(printf '%s' "$current" | grep -c . || true)
 echo "Matching files (current versions): $n_current"
@@ -92,7 +104,7 @@ printf '%s\n' "$current" | grep . | head -n 20 | sed 's/^/  /' || true
 
 n_versions=""
 if [ "$rtype" = b2 ]; then
-	versions="$(list --b2-versions)" || versions=""
+	versions="$(list --b2-versions)" || die "cannot list old versions under $target"
 	n_versions=$(printf '%s' "$versions" | grep -c . || true)
 	echo "Matching files including old and hidden versions: $n_versions"
 fi
@@ -102,6 +114,13 @@ if [ "$delete" != 1 ]; then
 	echo "Dry run: nothing deleted. Re-run with --delete to remove the $n_current file(s) above."
 	exit 0
 fi
+case "$rtype" in
+b2 | local) ;;
+"")
+	die "refusing to delete: cannot tell what kind of store '$remote' is (no RCLONE_CONFIG_${upper}_TYPE, and 'rclone config show $remote' says nothing). On B2 a delete without --b2-hard-delete only hides a file and keeps the secret as a version. Set PURGE_B2_ACCOUNT_ID/PURGE_B2_APPLICATION_KEY, or RCLONE_CONFIG_${upper}_TYPE." ;;
+*)
+	die "refusing to delete on a '$rtype' remote: this script can only prove the files are gone (old versions included) on b2. Delete them, and every old version, with the store's own tools." ;;
+esac
 if [ "$n_current" = 0 ] && [ "${n_versions:-0}" = 0 ]; then
 	echo "Nothing to delete."
 	exit 0
@@ -126,12 +145,14 @@ left="$(list)" || left=""
 n_left=$(printf '%s' "$left" | grep -c . || true)
 echo "Deleted: $((n_current - n_left)) of $n_current. Left (current versions): $n_left"
 if [ "$rtype" = b2 ]; then
-	versions="$(list --b2-versions)" || versions=""
+	# The check that matters: not "is it listed", but "is any version left".
+	versions="$(list --b2-versions)" || die "FAILED: cannot list old versions after deleting; check by hand (console: Show versions)"
 	n_versions=$(printf '%s' "$versions" | grep -c . || true)
 	echo "Left including old and hidden versions: $n_versions"
-	if [ "$n_versions" != 0 ]; then
-		echo "Old versions remain. In the Backblaze console, browse the bucket with 'Show versions'"
-		echo "and delete them, or see deploy/README.md for why some cannot be deleted yet."
-	fi
 fi
-[ "$n_left" = 0 ] && [ "${n_versions:-0}" = 0 ]
+if [ "$n_left" != 0 ] || [ "${n_versions:-0}" != 0 ]; then
+	echo "FAILED: $n_left current and ${n_versions:-0} total version(s) still in the bucket -- the secrets are still recoverable." >&2
+	echo "Under Object Lock they cannot go until their retain-until date; otherwise delete them in the console with 'Show versions'." >&2
+	exit 1
+fi
+echo "Done: no plaintext site_config_backup.json is left under $target, in any version."
