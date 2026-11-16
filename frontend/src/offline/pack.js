@@ -146,7 +146,7 @@ export function syncPack() {
       packState.error = error
       // `NotAFieldUser` is the server saying this user is not to carry a
       // pack any more -- the sales role was taken away. What is already here
-      // goes now, not when its fourteen days are up.
+      // goes now, not when its shelf life is up.
       if (error?.exc_type === 'NotAFieldUser') {
         packState.refused = true
         await dropPack()
