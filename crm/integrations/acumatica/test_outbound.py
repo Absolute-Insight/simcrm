@@ -3,6 +3,7 @@ import re
 import threading
 import time
 from datetime import timedelta
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -2313,28 +2314,33 @@ class TestConcurrentPushes(FrappeTestCase):
 	ordinary job can be: B reads A's open write before the row lock, finds nothing A
 	made yet, and waits on the lock while A's PUT gets a fast 504 and commits."""
 
-	_SETTINGS = (
-		"instance_url",
-		"create_customer_on_status_change",
-		"deal_status",
-		"customer_numbering",
-		"customer_id_max_length",
-		"quote_order_type",
-		"new_customer_class",
-		"home_country",
-		"tax_zone_home",
-		"tax_zone_abroad",
-		"salesperson_owners",
-		"salesperson_branches",
-	)
+	_SETTINGS: ClassVar[dict] = {
+		"enabled": 1,
+		"instance_url": "https://t.acumatica.com",
+		"create_customer_on_status_change": 1,
+		"deal_status": "Won",
+		"customer_numbering": "AutoNumber",
+		"customer_id_max_length": 10,
+		"quote_order_type": "QT",
+		"new_customer_class": "COD",
+		"home_country": "South Africa",
+		"tax_zone_home": "01",
+		"tax_zone_abroad": "02",
+		"salesperson_owners": None,
+		"salesperson_branches": None,
+	}
 
 	def setUp(self):
-		# _enable() is committed here, so what it changes must be put back by hand
+		# Committed, so set field by field: a save of the Single runs its on_update,
+		# which puts the Acumatica section into the deal layouts for good.
 		self.settings_before = {
 			f: frappe.db.get_single_value("CRM Acumatica Settings", f) for f in self._SETTINGS
 		}
-		_enable()
+		for field, value in self._SETTINGS.items():
+			frappe.db.set_single_value("CRM Acumatica Settings", field, value)
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
 		self.org, deal = _complete_deal(status="Qualification")
+
 		# Won without the on_update hook: a committed hook would queue a real job
 		frappe.db.set_value("CRM Deal", deal.name, "status", "Won")
 		self.deal = deal.name
@@ -2354,7 +2360,7 @@ class TestConcurrentPushes(FrappeTestCase):
 		for field, value in self.settings_before.items():
 			frappe.db.set_single_value("CRM Acumatica Settings", field, value)
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- the fixtures were committed
-		_disable()
+		frappe.clear_cache(doctype="CRM Acumatica Settings")
 		_forget_inflight()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
