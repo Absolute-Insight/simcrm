@@ -36,8 +36,15 @@
           :intro="intro"
           :placeholder="__('Ask about our products…')"
           :focus-when="assistantVisible"
+          :can-attach="!!assistantCapabilities?.attachments"
+          :accept="(assistantCapabilities?.accept || []).join(',')"
+          :attachment="assistantAttachment"
+          :attach-file="attachToAssistant"
+          :can-dictate="!!assistantCapabilities?.dictation"
+          :max-clip-seconds="assistantCapabilities?.max_clip_seconds || 30"
           @send="askAssistant"
           @retry="retryLastQuestion"
+          @detach="detachFromAssistant"
         >
           <template #message-extra="{ message }">
             <!-- Sources are the knowledge articles the server actually
@@ -143,6 +150,11 @@ import ReferenceViewerModal from '@/components/Modals/ReferenceViewerModal.vue'
 import { PhFileText } from '@phosphor-icons/vue'
 import {
   askAssistant,
+  assistantAttachment,
+  assistantCapabilities,
+  attachToAssistant,
+  detachFromAssistant,
+  loadAssistantCapabilities,
   assistantAsking,
   assistantFailure,
   assistantFailureReason,
@@ -161,9 +173,17 @@ import { usersStore } from '@/stores/users'
 import { activeSettingsPage, showSettings } from '@/composables/settings'
 import { onClickOutside } from '@vueuse/core'
 import { Badge } from 'frappe-ui'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 const { isAdmin } = usersStore()
+
+watch(
+  assistantVisible,
+  (open) => {
+    if (open) loadAssistantCapabilities()
+  },
+  { immediate: true },
+)
 
 const target = ref(null)
 
@@ -186,6 +206,10 @@ const exampleQuestions = [
 ]
 
 function failureCopy(failure) {
+  if (failure === 'rejected' && assistantFailureReason.value) {
+    // the server's own sentence about what it could not read
+    return assistantFailureReason.value
+  }
   if (
     failure === 'unavailable' &&
     unavailableReasonMessage(assistantFailureReason.value)
