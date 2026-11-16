@@ -263,7 +263,10 @@ case "$cmd" in
         if [ "${RCLONE_CANARY:-}" = bad ]; then echo "failed to authenticate decrypted block - bad password?" >&2; exit 1; fi
         f="$SHIM_STATE/canary-${target%%:*}"
         if [ -e "$f" ]; then cat "$f"; exit 0; fi
-        echo "ERROR : .vectora-canary: object not found" >&2; exit 4 ;;
+        # What B2 does with a missing file: rclone falls back to treating it
+        # as a directory, B2 lists an empty prefix as nothing, and cat exits 0
+        # having printed nothing. (Local backends say "not found"; B2 does not.)
+        exit 0 ;;
       *)
         if [ "${RCLONE_CANARY:-}" = bad ]; then echo "failed to authenticate decrypted block - bad password?" >&2; exit 1; fi
         exit 0 ;;
@@ -283,6 +286,15 @@ case "$cmd" in
     exit "${RCLONE_COPY_RC:-0}" ;;
   lsf)
     dest="$1"
+    # A crypt prefix listed whole (the canary check): it may fail, and it shows
+    # the canary once one has been written.
+    case "$dest $*" in
+      offsitecrypt*--include*) ;;
+      offsitecrypt*)
+        if [ "${RCLONE_LSF_CRYPT_RC:-0}" != 0 ]; then echo "Failed to lsf: couldn't list bucket: 503 service unavailable" >&2; exit "$RCLONE_LSF_CRYPT_RC"; fi
+        if [ -e "$SHIM_STATE/canary-${dest%%:*}" ]; then echo ".vectora-canary"; seen=1; fi
+        case "$dest" in *monthly*) [ -n "${seen:-}" ] && exit 0; exit "${RCLONE_LSF_MONTHLY_RC:-3}" ;; esac ;;
+    esac
     case "$dest" in
       *monthly*)
         for a in "$@"; do
@@ -321,6 +333,7 @@ exit "${BENCH_RC:-0}"
 """,
 	# The loops never end on their own: the Nth sleep ends the script.
 	"sleep": r"""#!/bin/sh
+echo "$1" >> "$SHIM_LOG/sleep.log"
 n=$(( $(cat "$SHIM_STATE/sleeps" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$SHIM_STATE/sleeps"
 if [ "$n" -ge "${SLEEP_LIMIT:-1}" ]; then kill -TERM "$PPID"; fi
@@ -528,11 +541,38 @@ open(canaries[0], "w").write("garbage")
 open(f"{root}/log/rclone.log", "w").close()
 os.remove(f"{root}/state/sleeps")
 out = run_script(root, offsite_cmd, "sh", {**OFFSITE_ENV, "OFFSITE_CRYPT_PASSWORD": "typo", "OFFSITE_PING_URL": f"https://hc.example/{SECRET}"}, 1)
-check("a canary that does not match: refuses to start and copies nothing", "refusing to start" in out and not calls(root, "copy"), out)
-check("... and pings /fail", f"{SECRET}/fail" in log(root, "ping"), log(root, "ping"))
-root, out = offsite("canary-bad-key", OFFSITE_CRYPT_PASSWORD="typo", RCLONE_CANARY="bad")
-check("a passphrase that cannot decrypt the prefix: refuses to start, copies nothing", "refusing to start" in out and not calls(root, "copy") and not calls(root, "rcat"), out)
+check(
+	"a canary that does not match: says the passphrase differs, copies nothing",
+	"differs from the one that wrote this prefix" in out and "NOT COPYING:" in out and not calls(root, "copy"),
+	out,
+)
+check("... pings /fail", f"{SECRET}/fail" in log(root, "ping"), log(root, "ping"))
+check("... and waits before exiting, so a restart loop cannot hammer B2", log(root, "sleep").split()[-1:] == ["900"], log(root, "sleep"))
+root, out = offsite("canary-bad-key", OFFSITE_CRYPT_PASSWORD="typo", RCLONE_CANARY="bad", OFFSITE_START_RETRY_SECONDS="60")
+check(
+	"a passphrase that cannot decrypt the prefix's files: refuses, copies nothing, writes no canary",
+	"does not decrypt with this" in out and not calls(root, "copy") and not calls(root, "rcat"),
+	out,
+)
+check("... after the configured wait", log(root, "sleep").split() == ["60"], log(root, "sleep"))
+root, out = offsite("canary-fresh", OFFSITE_CRYPT_PASSWORD="new", RCLONE_LSF_DAILY="")
+check(
+	"a fresh, empty prefix on B2 (cat of a missing file exits 0, empty) gets a canary",
+	"wrote and verified the passphrase canary" in out and calls(root, "rcat") and calls(root, "copy"),
+	out,
+)
+root, out = offsite("canary-list-error", OFFSITE_CRYPT_PASSWORD="x", RCLONE_LSF_CRYPT_RC="1", OFFSITE_PING_URL=f"https://hc.example/{SECRET}")
+check(
+	"a listing that fails at start is a transient error, not a passphrase verdict",
+	"NOT COPYING YET" in out and "network or key problem" in out and "differs" not in out and not calls(root, "copy") and not calls(root, "rcat"),
+	out,
+)
+check("... pinged /fail and retried after a wait", f"{SECRET}/fail" in log(root, "ping") and log(root, "sleep").split() == ["900"], log(root, "ping") + log(root, "sleep"))
+for var, url in (("OFFSITE_PING_URL", f"https://hc.example/api/push/{SECRET}?status=up"), ("OFFSITE_PING_URL", f"https://hc.example/{SECRET}#x")):
+	root, out = offsite("ping-query", **{var: url})
+	check(f"a ping URL with a query or fragment is refused: {url.split(SECRET)[1]!r}", "pings are off" in out and log(root, "ping") == "" and SECRET not in out, out)
 check("pruning never deletes the canary", "--exclude .vectora-canary" in offsite_cmd)
+check("existence of the canary is never inferred from `rclone cat`", "not found|does" not in offsite_cmd)
 
 # 4. Pings: start, success, failure, and the secret path never logged.
 root, out = offsite("ping-ok", OFFSITE_PING_URL=f"https://hc.example/ping/{SECRET}/")

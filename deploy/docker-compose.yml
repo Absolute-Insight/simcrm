@@ -509,6 +509,9 @@ services:
           *[[:space:]\"\\]*)
             echo "[backup] BACKUP_PING_URL contains whitespace, a quote or a backslash; pings are off" >&2
             ping_url="" ;;
+          *"?"*|*"#"*)
+            echo "[backup] BACKUP_PING_URL has a query string or fragment; pings are off. It must be a healthchecks.io-style URL that /start, /fail and /0 can be appended to (deploy/README.md, 'Being told when a backup did not happen')" >&2
+            ping_url="" ;;
           http://*|https://*)
             echo "[backup] pinging $$(redact "$$ping_url") at the start and end of each run" ;;
           *)
@@ -651,6 +654,9 @@ services:
       # Optional dead-man's switch, as BACKUP_PING_URL on `backup`, pinged
       # around every hourly run.
       OFFSITE_PING_URL: ${OFFSITE_PING_URL:-}
+      # How long a start that cannot verify the passphrase canary waits before
+      # exiting (and being restarted). Seconds.
+      OFFSITE_START_RETRY_SECONDS: ${OFFSITE_START_RETRY_SECONDS:-900}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -680,6 +686,9 @@ services:
           "") ;;
           *[[:space:]\"\\]*)
             echo "[offsite] OFFSITE_PING_URL contains whitespace, a quote or a backslash; pings are off" >&2
+            ping_url="" ;;
+          *"?"*|*"#"*)
+            echo "[offsite] OFFSITE_PING_URL has a query string or fragment; pings are off. It must be a healthchecks.io-style URL that /start, /fail and /0 can be appended to (deploy/README.md, 'Being told when a backup did not happen')" >&2
             ping_url="" ;;
           http://*|https://*)
             echo "[offsite] pinging $$(redact "$$ping_url") at the start and end of each hourly run" ;;
@@ -756,39 +765,82 @@ services:
           # second key without a word -- and the half nobody can decrypt is
           # only discovered at restore time. So each crypt prefix holds a small
           # .vectora-canary written under its key: it must decrypt to the
-          # expected text, or this service refuses to start. A prefix with
+          # expected text, or this service does not copy. A prefix with
           # encrypted files but no canary (written before it existed) must
           # decrypt its first file before a canary is added.
+          #
+          # Existence is asked with a LISTING, never inferred from `rclone cat`:
+          # on B2, cat of a missing file falls back to listing an empty
+          # "directory" and exits 0 with no output, which would read as a
+          # wrong passphrase on every fresh prefix. A listing that fails is a
+          # network or key problem, reported as such -- not as a passphrase.
+          #
+          # canary_check <crypt remote> <where, for messages>:
+          #   0 verified (or created)   1 passphrase differs   2 could not check
           canary_name=.vectora-canary
           canary_text="vectora offsite canary: written under this prefix's passphrase"
+          canary_err=/tmp/offsite.canary.err
           canary_check() {
-            got=$$(rclone cat "$$1$$canary_name" 2>/tmp/offsite.canary.err)
-            if [ "$$?" = 0 ]; then
-              [ "$$got" = "$$canary_text" ] && return 0
-              echo "[offsite] refusing to start: $$2/$$canary_name does not decrypt to the expected text -- OFFSITE_CRYPT_PASSWORD or OFFSITE_CRYPT_SALT differs from the one that wrote this prefix" >&2
-              return 1
+            listing=$$(rclone lsf "$$1" --files-only 2>"$$canary_err")
+            rc=$$?
+            case "$$rc" in
+              0) ;;
+              3) listing="" ;;  # "directory not found": a prefix nothing was ever written to
+              *) echo "[offsite] cannot list $$2 to check the passphrase canary (rclone exit $$rc: $$(tail -n 1 "$$canary_err")) -- a network or key problem, not the passphrase" >&2
+                 return 2 ;;
+            esac
+            if printf '%s\n' "$$listing" | grep -qxF "$$canary_name"; then
+              got=$$(rclone cat "$$1$$canary_name" 2>"$$canary_err")
+              rc=$$?
+              if [ "$$rc" = 0 ] && [ "$$got" = "$$canary_text" ]; then
+                return 0
+              fi
+              if [ "$$rc" = 0 ] || grep -qiE 'authenticate|bad password|magic' "$$canary_err"; then
+                echo "[offsite] $$2/$$canary_name does not decrypt to the expected text: OFFSITE_CRYPT_PASSWORD or OFFSITE_CRYPT_SALT differs from the one that wrote this prefix" >&2
+                return 1
+              fi
+              echo "[offsite] cannot read $$2/$$canary_name (rclone exit $$rc: $$(tail -n 1 "$$canary_err")) -- a network or key problem, not the passphrase" >&2
+              return 2
             fi
-            if ! grep -qiE 'not found|does ?n.t exist|no such' /tmp/offsite.canary.err; then
-              echo "[offsite] refusing to start: cannot decrypt $$2/$$canary_name -- OFFSITE_CRYPT_PASSWORD or OFFSITE_CRYPT_SALT differs from the one that wrote this prefix ($$(tail -n 1 /tmp/offsite.canary.err))" >&2
-              return 1
+            one=$$(printf '%s\n' "$$listing" | grep -vxF "$$canary_name" | grep . | head -n 1)
+            if [ -n "$$one" ] && ! rclone cat --head 1 "$$1$$one" >/dev/null 2>"$$canary_err"; then
+              if grep -qiE 'authenticate|bad password|magic' "$$canary_err"; then
+                echo "[offsite] $$2/$$one does not decrypt with this OFFSITE_CRYPT_PASSWORD/OFFSITE_CRYPT_SALT; put the old values back, or point the copies at a new prefix" >&2
+                return 1
+              fi
+              echo "[offsite] cannot read $$2/$$one to check the passphrase ($$(tail -n 1 "$$canary_err")) -- a network or key problem, not the passphrase" >&2
+              return 2
             fi
-            one=$$(rclone lsf "$$1" --files-only --exclude "$$canary_name" 2>/dev/null | head -n 1)
-            if [ -n "$$one" ] && ! rclone cat --head 1 "$$1$$one" >/dev/null 2>&1; then
-              echo "[offsite] refusing to start: $$2/$$one does not decrypt with this OFFSITE_CRYPT_PASSWORD/OFFSITE_CRYPT_SALT; put the old values back, or point the copies at a new prefix" >&2
-              return 1
-            fi
-            if ! printf '%s' "$$canary_text" | rclone rcat "$$1$$canary_name" 2>/dev/null \
-              || [ "$$(rclone cat "$$1$$canary_name" 2>/dev/null)" != "$$canary_text" ]; then
-              echo "[offsite] refusing to start: could not write and read back $$2/$$canary_name" >&2
-              return 1
+            if ! printf '%s' "$$canary_text" | rclone rcat "$$1$$canary_name" 2>"$$canary_err" \
+              || [ "$$(rclone cat "$$1$$canary_name" 2>>"$$canary_err")" != "$$canary_text" ]; then
+              echo "[offsite] could not write and read back $$2/$$canary_name ($$(tail -n 1 "$$canary_err"))" >&2
+              return 2
             fi
             echo "[offsite] wrote and verified the passphrase canary $$2/$$canary_name"
+            return 0
           }
-          if ! canary_check offsitecrypt: "$${base}/$${SITE_NAME}.crypt" \
-            || ! canary_check offsitecryptmonthly: "$${base}/monthly/$${SITE_NAME}.crypt"; then
-            hc_ping /fail
-            exit 1
+          # A refusal waits before exiting: `restart: unless-stopped` would
+          # otherwise restart it at once, and a wrong passphrase or a bucket
+          # that is unreachable for an hour would hammer B2 and the monitor
+          # every few seconds. One log line and one /fail ping per attempt.
+          wait="$${OFFSITE_START_RETRY_SECONDS:-900}"
+          case "$$wait" in ""|*[!0-9]*) wait=900 ;; esac
+          verdict=0
+          canary_check offsitecrypt: "$${base}/$${SITE_NAME}.crypt" || verdict=$$?
+          if [ "$$verdict" = 0 ]; then
+            canary_check offsitecryptmonthly: "$${base}/monthly/$${SITE_NAME}.crypt" || verdict=$$?
           fi
+          case "$$verdict" in
+            0) ;;
+            1) echo "[offsite] NOT COPYING: the passphrase does not match the archive it would write into. Fix .env (deploy/README.md, 'Encrypting the copies'); checking again in $${wait}s." >&2
+               hc_ping /fail
+               sleep "$$wait"
+               exit 1 ;;
+            *) echo "[offsite] NOT COPYING YET: could not check the passphrase canary (see above); retrying in $${wait}s." >&2
+               hc_ping /fail
+               sleep "$$wait"
+               exit 1 ;;
+          esac
         fi
         # Not encrypted is allowed -- a stack that predates OFFSITE_CRYPT_PASSWORD
         # keeps working exactly as before -- but it is never quiet: every hourly run

@@ -1148,6 +1148,12 @@ environment — and that client can only fetch a path *below* the URL.
    minutes; the nightly one after the next `BACKUP_HOUR` (or force a run in
    the monitor's UI with "Ping now" to see the channel work).
 
+**The URL must be healthchecks.io-shaped**: `https://host/path` with nothing
+after the path, so that `/start`, `/fail` and `/0` can be appended. A URL with
+a query string or fragment (`...?status=up`, `...#x`) is refused at start with
+a log line saying so, and that service sends no pings: appending a path to it
+would ping the wrong endpoint.
+
 Guarantees, so the monitor can never cost you a backup: pings run only when
 the variable is set and starts with `http://` or `https://`; each is bounded
 at 15 seconds; a ping that fails is logged as `did not get through (ignored)`
@@ -1162,9 +1168,9 @@ environment. Keep it as you keep the rest of `.env`.
 run it on a machine *other than this one* (a monitor on the host it watches
 goes down with it) and use its ping URLs instead. Another monitor works if it
 alerts when an expected HTTP GET stops arriving *and* accepts the `/start`,
-`/fail` and (for the offsite check) `/0` paths — Uptime Kuma's "Push"
-monitors, for instance, do not, so with one of those only the nightly
-`backup` check is meaningful.
+`/fail` and (for the offsite check) `/0` paths on a URL without a query
+string. Uptime Kuma's "Push" monitors, for instance, take their status in a
+query string and are refused for both services.
 
 #### Or: a cron line on the host
 
@@ -1340,12 +1346,17 @@ bucket. Anyone who can read this host's `.env` already has the database.
 - **The canary.** Each encrypted prefix holds a small `.vectora-canary`,
   written under its passphrase the first time. On every start the service
   decrypts it; if the passphrase or salt in `.env` is not the one that wrote
-  the prefix — a typo, a rotation done in place — it logs `refusing to start:
-  ... differs from the one that wrote this prefix`, pings `/fail` and exits,
+  the prefix — a typo, a rotation done in place — it logs `... differs from
+  the one that wrote this prefix` and `NOT COPYING`, pings `/fail`, waits
+  `OFFSITE_START_RETRY_SECONDS` (default 900) and exits to be restarted,
   rather than putting a second key's files into the same archive where only
   a restore would find them. A prefix that already holds encrypted files but
-  no canary must decrypt its first file before the canary is added. Pruning
-  never deletes it.
+  no canary must decrypt its first file before the canary is added. If the
+  bucket cannot be listed or read at that moment, the log says `NOT COPYING
+  YET ... a network or key problem, not the passphrase` and it retries on
+  the same schedule — an outage is not reported as a wrong passphrase.
+  Existence is checked by listing, never by reading: on B2, reading a file
+  that is not there succeeds with no output. Pruning never deletes it.
 
 **Without a passphrase**, nothing breaks: an install that predates this keeps
 copying, unencrypted, to the same `<site>/` prefix as before. But it is never
