@@ -107,7 +107,12 @@ REDIS_IMAGE="${REDIS_IMAGE:-redis:6.2-alpine}"
 # compose would otherwise take a project name, a file or an env file from the
 # caller's environment. On the production host that environment can point at
 # the live stack.
-unset COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILES COMPOSE_PROFILES COMPOSE_PATH_SEPARATOR DB_IMAGE
+# The same goes for the variables the generated compose file interpolates: the
+# caller's environment outranks --env-file, so an exported one would win.
+# They carry a prefix nothing else uses, and are cleared regardless.
+unset COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILES COMPOSE_PROFILES COMPOSE_PATH_SEPARATOR
+unset MDBR_DB_IMAGE MDBR_AUTO_UPGRADE MDBR_ROOT_PW MDBR_REDIS_IMAGE MDBR_APP_IMAGE MDBR_ROLLBACK_IMAGE
+export -n FROM_IMAGE TO_IMAGE APP_IMAGE REDIS_IMAGE 2>/dev/null || true
 PROJECT="mdb-rehearse-$(date +%s)-$$"
 [[ "$PROJECT" =~ ^mdb-rehearse-[0-9]+-[0-9]+$ ]] || die "unexpected project name $PROJECT"
 case "${PROJECT,,}" in *vectora*) die "refusing: project name $PROJECT contains 'vectora'" ;; esac
@@ -132,7 +137,7 @@ networks:
     internal: true
 services:
   db:
-    image: ${DB_IMAGE:?}
+    image: ${MDBR_DB_IMAGE:?}
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
@@ -140,8 +145,8 @@ services:
       - --skip-innodb-read-only-compressed
       - --innodb-buffer-pool-size=384M
     environment:
-      MARIADB_ROOT_PASSWORD: ${ROOT_PW:?}
-      MARIADB_AUTO_UPGRADE: ${AUTO_UPGRADE:-}
+      MARIADB_ROOT_PASSWORD: ${MDBR_ROOT_PW:?}
+      MARIADB_AUTO_UPGRADE: ${MDBR_AUTO_UPGRADE:-}
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       start_period: 60s
@@ -153,14 +158,14 @@ services:
       - db-data:/var/lib/mysql
   # Step 9 only: an empty FROM engine for the rollback restore.
   db-rollback:
-    image: ${ROLLBACK_IMAGE:?}
+    image: ${MDBR_ROLLBACK_IMAGE:?}
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --skip-character-set-client-handshake
       - --skip-innodb-read-only-compressed
     environment:
-      MARIADB_ROOT_PASSWORD: ${ROOT_PW:?}
+      MARIADB_ROOT_PASSWORD: ${MDBR_ROOT_PW:?}
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       start_period: 60s
@@ -170,11 +175,11 @@ services:
     volumes:
       - rollback-data:/var/lib/mysql
   redis-cache:
-    image: ${REDIS_IMAGE:?}
+    image: ${MDBR_REDIS_IMAGE:?}
   redis-queue:
-    image: ${REDIS_IMAGE:?}
+    image: ${MDBR_REDIS_IMAGE:?}
   backend:
-    image: ${APP_IMAGE:?}
+    image: ${MDBR_APP_IMAGE:?}
     volumes:
       - sites:/home/frappe/frappe-bench/sites
     healthcheck:
@@ -192,7 +197,7 @@ YAML
 envfile="$work/compose.env"
 write_env() { # $1 = db image, $2 = auto-upgrade value
 	umask 077
-	printf 'DB_IMAGE=%s\nAUTO_UPGRADE=%s\nROOT_PW=%s\nREDIS_IMAGE=%s\nAPP_IMAGE=%s\nROLLBACK_IMAGE=%s\n' \
+	printf 'MDBR_DB_IMAGE=%s\nMDBR_AUTO_UPGRADE=%s\nMDBR_ROOT_PW=%s\nMDBR_REDIS_IMAGE=%s\nMDBR_APP_IMAGE=%s\nMDBR_ROLLBACK_IMAGE=%s\n' \
 		"$1" "$2" "$root_pw" "$REDIS_IMAGE" "$APP_IMAGE" "$FROM_IMAGE" >"$envfile"
 }
 dc() { docker compose -p "$PROJECT" --project-directory "$work" -f "$work/compose.yml" --env-file "$envfile" "$@"; }
@@ -238,6 +243,9 @@ echo "rehearse: app       $APP_IMAGE"
 log "1/9 starting the old engine"
 write_env "$FROM_IMAGE" ""
 dc pull -q db redis-cache backend
+# Step 7 talks to gunicorn from inside the app container, with its curl.
+docker run --rm --entrypoint sh "$APP_IMAGE" -c 'command -v curl' >/dev/null 2>&1 ||
+	die "$APP_IMAGE has no curl; step 7 needs it"
 t=$(now)
 dc up -d --wait db redis-cache redis-queue
 T[old_start]=$(($(now) - t))
@@ -319,7 +327,8 @@ sql -e "SET GLOBAL innodb_fast_shutdown = 0"
 t=$(now)
 dc stop -t 600 db
 T[shutdown]=$(($(now) - t))
-if dc logs db 2>&1 | tail -n 20 | grep -q "Shutdown complete"; then
+dc logs db >"$work/db-old.log" 2>&1 || true
+if tail -n 20 "$work/db-old.log" | grep -q "Shutdown complete"; then
 	check "old engine shut down cleanly" 0 "${T[shutdown]}s"
 else
 	check "old engine shut down cleanly" 1 "no 'Shutdown complete' in the log -- do not start the new engine on this"
@@ -335,8 +344,11 @@ dc up -d --wait db
 T[upgrade]=$(($(now) - t))
 new_version="$(sql -e 'SELECT VERSION()')"
 echo "new server: $new_version"
-dc logs db 2>&1 | grep -iE 'upgrade|backup' | sed 's/^/  /' || true
-if dc logs db 2>&1 | grep -q "Finished mariadb-upgrade"; then
+# Captured once, then read: grep -q exiting early would SIGPIPE a live
+# `compose logs` and, under pipefail, read as "not found".
+dc logs db >"$work/db-new.log" 2>&1 || true
+grep -iE 'upgrade|backup' "$work/db-new.log" | sed 's/^/  /' || true
+if grep -q "Finished mariadb-upgrade" "$work/db-new.log"; then
 	check "mariadb-upgrade ran on first start" 0 "$old_version -> $new_version in ${T[upgrade]}s"
 else
 	check "mariadb-upgrade ran on first start" 1 "the entrypoint did not run it; see 'docker compose logs db'"
