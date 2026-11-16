@@ -70,7 +70,7 @@
       <div v-else-if="title == 'Comments'" class="pb-5">
         <div v-for="(comment, i) in activities" :key="comment.name">
           <div
-            class="activity grid grid-cols-[30px_minmax(auto,_1fr)] gap-2 px-3 sm:gap-4 sm:px-10"
+            class="activity grid grid-cols-[30px_minmax(0,_1fr)] gap-2 px-3 sm:gap-4 sm:px-10"
           >
             <div
               class="z-0 relative flex justify-center before:absolute before:left-[50%] before:-z-[1] before:top-0 before:border-l before:border-outline-elevation-2"
@@ -98,7 +98,7 @@
       <div v-else-if="title == 'Calls'" class="activity">
         <div v-for="(call, i) in activities" :key="call.name">
           <div
-            class="activity grid grid-cols-[30px_minmax(auto,_1fr)] gap-4 px-3 sm:px-10"
+            class="activity grid grid-cols-[30px_minmax(0,_1fr)] gap-4 px-3 sm:px-10"
           >
             <div
               class="z-0 relative flex justify-center before:absolute before:left-[50%] before:-z-[1] before:top-0 before:border-l before:border-outline-elevation-2"
@@ -147,7 +147,7 @@
           class="activity px-3 sm:px-10"
           :class="
             ['Activity', 'Emails'].includes(title)
-              ? 'grid grid-cols-[30px_minmax(auto,_1fr)] gap-2 sm:gap-4'
+              ? 'grid grid-cols-[30px_minmax(0,_1fr)] gap-2 sm:gap-4'
               : ''
           "
         >
