@@ -73,3 +73,4 @@ crm.patches.v1_0.grant_acumatica_identity_permlevel
 crm.patches.v1_0.encrypt_facebook_page_access_token
 crm.patches.v1_0.trust_existing_internal_erp_hosts
 crm.patches.v1_0.add_file_thumbnail_field
+crm.patches.v1_0.clear_untrusted_thumbnail_urls
