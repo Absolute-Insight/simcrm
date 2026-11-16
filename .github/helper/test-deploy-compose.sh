@@ -332,6 +332,12 @@ exec REALDATE "$@"
 """.replace("REALDATE", shutil.which("date")),
 	"docker": r"""#!/bin/sh
 printf '%s\n' "$*" >> "$SHIM_LOG/docker.log"
+# Keep the compose file a drill generates: it is deleted when the drill exits.
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-f" ] && [ -f "$a" ] && [ ! -e "$SHIM_STATE/drill-compose.yml" ]; then cp "$a" "$SHIM_STATE/drill-compose.yml"; fi
+  prev="$a"
+done
 case "$*" in
   "compose version"*) exit 0 ;;
   "ps -aq"*) printf '%s' "${DOCKER_PS_OUT:-}" ; exit 0 ;;
@@ -654,6 +660,32 @@ check("restore-drill ignores COMPOSE_PROJECT_NAME", "-p vectora " not in log(roo
 drill_text = open(f"{repo}/scripts/restore-drill.sh").read()
 check("the drill's network is internal and publishes no port", "internal: true" in drill_text and "ports:" not in drill_text)
 check("the drill tears down with down -v on exit", "trap cleanup EXIT" in drill_text and "down -v --remove-orphans" in drill_text)
+
+
+def drill_compose(env_lines):
+	"""Run a drill (every docker call shimmed) and return the compose file it generated."""
+	root = fresh("drill-compose")
+	backup_set(root, "20261102_020000")
+	open(f"{root}/drill.env", "w").write(env_lines)
+	full = {"PATH": f"{shims}:/usr/bin:/bin", "SHIM_LOG": f"{root}/log", "SHIM_STATE": f"{root}/state", "HOME": root}
+	subprocess.run(
+		["bash", f"{repo}/scripts/restore-drill.sh", "--env-file", f"{root}/drill.env", "--image", "img:tag", "--project", "bk-drill-t",
+			f"{root}/sites/s.example/private/backups"],
+		env=full, capture_output=True, text=True, timeout=60,
+	)
+	try:
+		return open(f"{root}/state/drill-compose.yml").read(), log(root, "docker")
+	except FileNotFoundError:
+		return "", log(root, "docker")
+
+
+default_db = re.search(r"\$\{DB_IMAGE:-([^}]+)\}", compose_text).group(1)
+generated, docker_log = drill_compose("")
+check("the drill runs production's default database image", f"image: {default_db}" in generated, generated[:400] + docker_log)
+check("... on an internal network with no published port", "internal: true" in generated and "ports:" not in generated, generated)
+check("... and takes it down with down -v", "-p bk-drill-t" in docker_log and "down -v" in docker_log, docker_log)
+generated, _ = drill_compose("DB_IMAGE=mariadb:11.4.13@sha256:abc\n")
+check("the drill follows DB_IMAGE when production overrides it", "image: mariadb:11.4.13@sha256:abc" in generated, generated[:400])
 rclone_runs = [l for l in drill_text.splitlines() if "docker run" in l and '"$rclone_image"' in l and "obscure" not in l]
 check(
 	"the drill only ever reads from the bucket (lsf, or copy into its temp dir)",

@@ -119,7 +119,14 @@ if [ -z "$image" ]; then
 fi
 # The database and redis the drill runs on are the ones production pins.
 pin() { sed -n "s|^ *image: \($1[^ ]*\) *$|\1|p" "$deploy_dir/docker-compose.yml" | head -n 1; }
-db_image="$(pin mariadb:)"
+# The database is whatever production runs: DB_IMAGE from the env file (the
+# MariaDB upgrade switch), else the default the compose file pins. A drill on a
+# different engine than production's would prove the wrong restore.
+db_image="$(env_get DB_IMAGE)"
+if [ -z "$db_image" ]; then
+	db_image="$(sed -n 's|^ *image: \${DB_IMAGE:-\(mariadb:[^}]*\)} *$|\1|p' "$deploy_dir/docker-compose.yml" | head -n 1)"
+fi
+[ -n "$db_image" ] || db_image="$(pin mariadb:)"
 redis_image="$(pin redis:)"
 rclone_image="$(pin rclone/rclone:)"
 [ -n "$db_image" ] && [ -n "$redis_image" ] || die "cannot read the mariadb/redis pins from $deploy_dir/docker-compose.yml"
