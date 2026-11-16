@@ -5,7 +5,9 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
+from crm.fcrm.doctype.crm_erp_write import crm_erp_write as ledger
 from crm.integrations.acumatica import outbound
+from crm.utils.autonomous import autonomous_db
 
 _commit_patch = patch("crm.integrations.acumatica.outbound._commit")
 
@@ -61,9 +63,18 @@ def _disable():
 
 
 def _forget_inflight():
-	"""In-flight markers live in redis, which the test's rollback does not reach; and a
-	rolled-back naming series hands the next test's deal the same name."""
-	frappe.cache().delete_keys(outbound.INFLIGHT_PREFIX)
+	"""In-flight markers are ledger rows written on their own connection, which the
+	test's rollback does not reach; and a rolled-back naming series hands the next
+	test's deal the same name. The sweep's throttle and bookmark are in redis."""
+	with autonomous_db() as db:
+		db.sql("delete from `tabCRM ERP Write`")
+	frappe.cache().delete_value([outbound._SWEEP_RAN, outbound._SWEEP_CURSOR])
+
+
+def _marker(entity, name):
+	"""The open in-flight marker for the record, or None."""
+	row = ledger.open_write(outbound._inflight_key(entity, name))
+	return row.marker if row else None
 
 
 def _make_deal(status="Won", **kw):
@@ -637,7 +648,7 @@ class TestCreateSalesQuote(FrappeTestCase):
 		self.assertIn("Customer is on credit hold.", str(ctx.exception))
 		self.assertFalse(frappe.db.get_value("CRM Deal", deal.name, "acumatica_sales_quote"))
 		# Acumatica answered: nothing was made, so the next click need not look for it
-		self.assertIsNone(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
+		self.assertIsNone(_marker("SalesOrder", deal.name))
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_a_timed_out_quote_warns_that_it_may_exist(self, ClientCls):
@@ -789,7 +800,7 @@ class TestCreateSalesQuote(FrappeTestCase):
 				self.assertIn("Widget", str(ctx.exception))
 				self.assertIn("zero or negative quantity", str(ctx.exception))
 		client.put.assert_not_called()
-		self.assertIsNone(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
+		self.assertIsNone(_marker("SalesOrder", deal.name))
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_a_login_that_was_not_made_is_a_refusal_not_an_unanswered_quote(self, ClientCls):
@@ -811,7 +822,7 @@ class TestCreateSalesQuote(FrappeTestCase):
 		self.assertIn("no quote was sent", str(ctx.exception))
 		self.assertNotIn("refused", str(ctx.exception))
 		self.assertNotIn("may still have been created", str(ctx.exception))
-		self.assertIsNone(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
+		self.assertIsNone(_marker("SalesOrder", deal.name))
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_a_quote_whose_number_could_not_be_stored_says_so_and_keeps_its_marker(self, ClientCls):
@@ -833,7 +844,7 @@ class TestCreateSalesQuote(FrappeTestCase):
 			with self.assertRaises(frappe.ValidationError) as ctx:
 				outbound.create_sales_quote_from_deal(deal.name)
 		self.assertIn("QT000143 was created in Acumatica", str(ctx.exception))
-		self.assertTrue(frappe.cache().get_value(outbound._inflight_key("SalesOrder", deal.name)))
+		self.assertTrue(_marker("SalesOrder", deal.name))
 
 		client.get_page.return_value = [_wrapped(OrderNbr="QT000143")]
 		self.assertEqual(outbound.create_sales_quote_from_deal(deal.name), "QT000143")
@@ -968,6 +979,55 @@ class TestCreateSalesQuote(FrappeTestCase):
 			f"Description eq 'Vectora deal {deal.name}'", client.get_page.call_args.kwargs["filter"]
 		)
 		self.assertEqual(frappe.db.get_value("CRM Deal", deal.name, "acumatica_sales_quote"), "QT000777")
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_retry_after_a_flushed_cache_and_a_rolled_back_request_adopts_the_order(self, ClientCls):
+		"""The marker is written outside the request: the request that never heard back
+		is rolled back, and the cache may be flushed or restarted, before the retry."""
+		import requests
+
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		client.put.side_effect = requests.ReadTimeout("read timed out")
+		_org, deal = _mapped_deal()
+		with self.assertRaises(frappe.ValidationError):
+			outbound.create_sales_quote_from_deal(deal.name)
+		self.assertEqual(
+			ledger.open_write(outbound._inflight_key("SalesOrder", deal.name)).state, ledger.UNKNOWN
+		)
+
+		frappe.clear_cache()
+		frappe.cache().delete_keys("")
+
+		client.get_page.return_value = [_wrapped(OrderNbr="QT000779")]
+		self.assertEqual(outbound.create_sales_quote_from_deal(deal.name), "QT000779")
+		client.put.assert_called_once()
+
+		# applied once the request commits, with the order it made
+		frappe.db.after_commit.run()
+		self.assertIsNone(_marker("SalesOrder", deal.name))
+		with autonomous_db() as db:
+			rows = db.sql(
+				"select state, remote_id, attempts from `tabCRM ERP Write` where target = %s",
+				(outbound._inflight_key("SalesOrder", deal.name),),
+				as_dict=True,
+			)
+		self.assertEqual(
+			[(r.state, r.remote_id, r.attempts) for r in rows], [(ledger.APPLIED, "QT000779", 1)]
+		)
+
+	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
+	def test_a_quote_whose_write_cannot_be_recorded_is_not_sent(self, ClientCls):
+		_enable()
+		client = MagicMock()
+		ClientCls.return_value = client
+		_org, deal = _mapped_deal()
+		with patch.object(ledger, "acquire", side_effect=frappe.QueryTimeoutError("lock wait")):
+			with self.assertRaises(frappe.ValidationError) as ctx:
+				outbound.create_sales_quote_from_deal(deal.name)
+		self.assertIn("no quote was sent", str(ctx.exception))
+		client.put.assert_not_called()
 
 	@patch("crm.integrations.acumatica.outbound.AcumaticaClient")
 	def test_a_retry_waits_out_acumatica_before_sending_another(self, ClientCls):
@@ -1428,13 +1488,11 @@ class TestDuplicatePrevention(CustomerPushCase):
 		def first_job_sent(doctype, filters=None, fieldname="name", *args, **kwargs):
 			if doctype == "CRM Organization" and kwargs.get("for_update"):
 				key = outbound._inflight_key("Customer", org.name)
-				frappe.cache().set_value(
+				# another worker, on its own connection
+				ledger.acquire(
 					key,
 					{"sent_at": 1.0, "preexisting": [], "name": org.organization_name, "customer_id": None},
 				)
-				# another worker writes redis only: this process's local cache still holds
-				# the None it read at the top, which a cached re-read would return
-				frappe.local.cache[frappe.cache().make_key(key)] = None
 			return real_get_value(doctype, filters, fieldname, *args, **kwargs)
 
 		with patch("crm.integrations.acumatica.outbound.frappe.db.get_value", side_effect=first_job_sent):
@@ -1894,8 +1952,8 @@ class TestUnansweredPushRecovery(CustomerPushCase):
 			ignore_permissions=True,
 			show_alert=False,
 		)
-		self.assertTrue(frappe.cache().get_value(outbound._inflight_key("Customer", renamed)))
-		self.assertFalse(frappe.cache().get_value(outbound._inflight_key("Customer", org.name)))
+		self.assertTrue(_marker("Customer", renamed))
+		self.assertFalse(_marker("Customer", org.name))
 
 		made = _wrapped(CustomerID="C-MADE2", CustomerName=sent, NoteID="g-made2")
 		self.client.get_page.side_effect = lambda entity, **kw: (
@@ -1905,10 +1963,54 @@ class TestUnansweredPushRecovery(CustomerPushCase):
 		self.assertEqual(frappe.db.get_value("CRM Organization", renamed, "acumatica_id"), "C-MADE2")
 		self.assertEqual(_customer_puts(self.client), [])
 
+	def test_a_flushed_cache_between_the_attempt_and_the_retry_sends_no_second_customer(self):
+		"""The marker used to live in the cache redis: a flush, an eviction or a restart
+		between the unanswered PUT and the next push forgot it, and that push sent a
+		second customer. It is a ledger row now, written outside the job's transaction."""
+		org, deal = self._confirmed_deal()
+		self._time_out_first_push(org, deal)
+		row = ledger.open_write(outbound._inflight_key("Customer", org.name))
+		self.assertEqual(row.state, ledger.UNKNOWN)
+		self.assertIn("read timed out", row.error)
+
+		frappe.clear_cache()
+		frappe.cache().delete_keys("")
+
+		made = _wrapped(CustomerID="C-MADE3", CustomerName=org.organization_name, NoteID="g-made3")
+		self.client.get_page.side_effect = _pages(customers=[made])
+		outbound.push_customer_for_deal(deal.name)
+		self.assertEqual(_customer_puts(self.client), [])
+		self.assertEqual(frappe.db.get_value("CRM Organization", org.name, "acumatica_id"), "C-MADE3")
+
+	def test_a_refused_push_closes_its_write(self):
+		from crm.integrations.acumatica.client import AcumaticaError
+
+		_enable()
+		org, deal = _complete_deal()
+		self.client.put.side_effect = AcumaticaError("PUT Customer -> 422", status_code=422, body="{}")
+		outbound.push_customer_for_deal(deal.name)
+		self.assertIsNone(_marker("Customer", org.name))
+		with autonomous_db() as db:
+			states = db.sql(
+				"select state from `tabCRM ERP Write` where target = %s",
+				(outbound._inflight_key("Customer", org.name),),
+				pluck=True,
+			)
+		self.assertEqual(states, [ledger.REFUSED])
+
+	def test_a_ledger_that_cannot_be_written_sends_nothing(self):
+		_enable()
+		org, deal = _complete_deal()
+		with patch.object(ledger, "acquire", side_effect=frappe.QueryTimeoutError("lock wait")):
+			outbound.push_customer_for_deal(deal.name)
+		self.assertEqual(_customer_puts(self.client), [])
+		self.assertIn("could not be recorded", _issues_for(org.name, "Push Failed")[0].detail)
+
 	def test_a_marker_without_the_list_adopts_nothing(self):
 		_enable()
 		org, deal = _complete_deal()
-		frappe.cache().set_value(outbound._inflight_key("Customer", org.name), 1700000000.0)
+		# a marker from before the push recorded which namesakes already existed
+		ledger.acquire(outbound._inflight_key("Customer", org.name), outbound._read_marker(1700000000.0))
 		self.client.get_page.side_effect = _pages(
 			customers=[_wrapped(CustomerID="C-WHO", CustomerName=org.organization_name)]
 		)
@@ -1960,7 +2062,7 @@ class TestFollowUpsAndIssueRows(CustomerPushCase):
 		self.client.put.side_effect = requests.ConnectionError("dns is down")
 		for _ in range(3):
 			outbound.push_customer_for_deal(deal.name)
-			frappe.cache().delete_value(outbound._inflight_key("Customer", org.name))
+			_forget_inflight()
 		self.assertEqual(len(_issues_for(org.name, "Push Failed")), 1)
 
 	def test_recording_an_issue_never_saves_the_settings_document(self):

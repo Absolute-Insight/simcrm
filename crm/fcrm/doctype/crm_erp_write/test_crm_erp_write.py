@@ -1,0 +1,208 @@
+# Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
+# For license information, please see license.txt
+
+"""The ERP write ledger is the guard against a second keyless PUT into the client's
+ERP. These pin what makes it one: the database, not the request, decides who holds a
+target; it survives the request's rollback and a flush of the cache; and a closed row
+is history, never a guard."""
+
+import threading
+
+import frappe
+from frappe.tests.utils import FrappeTestCase
+from frappe.utils import add_days, now_datetime
+
+from crm.fcrm.doctype.crm_erp_write import crm_erp_write as ledger
+from crm.utils.autonomous import autonomous_db
+
+TARGET = "SalesOrder::LED-TEST-DEAL"
+
+
+def _forget():
+	with autonomous_db() as db:
+		db.sql("delete from `tabCRM ERP Write`")
+
+
+def _rows(target=None):
+	with autonomous_db() as db:
+		return db.sql(
+			"select name, target, open_key, state, attempts, remote_id, error, marker, triggered_by"
+			" from `tabCRM ERP Write` where target = %s order by creation",
+			(target or TARGET,),
+			as_dict=True,
+		)
+
+
+def _in_workers(count, work):
+	"""Run ``work()`` in ``count`` threads, each its own frappe site context and
+	database connection, released together; their results and any errors."""
+	site, sites_path = frappe.local.site, frappe.local.sites_path
+	barrier = threading.Barrier(count)
+	results, errors = [], []
+
+	def run():
+		frappe.init(site, sites_path=sites_path)
+		frappe.connect()
+		try:
+			barrier.wait(timeout=30)
+			results.append(work())
+		except Exception as e:
+			errors.append(e)
+		finally:
+			frappe.destroy()
+
+	threads = [threading.Thread(target=run) for _ in range(count)]
+	for thread in threads:
+		thread.start()
+	for thread in threads:
+		thread.join(timeout=60)
+	return results, errors
+
+
+class TestERPWriteLedger(FrappeTestCase):
+	def setUp(self):
+		_forget()
+		self.addCleanup(_forget)
+
+	def test_two_workers_opening_the_same_write_one_wins(self):
+		results, errors = _in_workers(4, lambda: ledger.acquire(TARGET, {"sent_at": 1.0}))
+		self.assertEqual(errors, [])
+		self.assertEqual(len([r for r in results if r]), 1, results)
+		self.assertEqual(len(_rows()), 1)
+
+	def test_two_retries_of_the_same_unanswered_write_one_takes_it_over(self):
+		"""Both read the same open attempt and found nothing it made; only one may send."""
+		ledger.acquire(TARGET, {"sent_at": 1.0})
+		ledger.record_unknown(TARGET, "read timed out")
+		seen = ledger.open_write(TARGET)
+
+		results, errors = _in_workers(4, lambda: ledger.acquire(TARGET, {"sent_at": 2.0}, expected=seen))
+
+		self.assertEqual(errors, [])
+		self.assertEqual(len([r for r in results if r]), 1, results)
+		row = ledger.open_write(TARGET)
+		self.assertEqual((row.state, row.attempts, row.marker), (ledger.IN_FLIGHT, 2, {"sent_at": 2.0}))
+
+	def test_the_open_write_outlives_the_requests_rollback_and_the_cache(self):
+		ledger.acquire(TARGET, {"sent_at": 1.0})
+		frappe.db.rollback()
+		frappe.clear_cache()
+		frappe.cache().delete_keys("")
+		self.assertEqual(ledger.open_write(TARGET).marker, {"sent_at": 1.0})
+		self.assertIsNone(ledger.acquire(TARGET, {"sent_at": 2.0}))
+
+	def test_settled_only_when_the_request_commits(self):
+		ledger.acquire(TARGET, {"sent_at": 1.0})
+		ledger.close_after_commit(TARGET, remote_id="QT000900")
+		frappe.db.rollback()
+		self.assertTrue(ledger.open_write(TARGET), "a rolled-back request must leave the write open")
+
+		ledger.close_after_commit(TARGET, remote_id="QT000900")
+		frappe.db.after_commit.run()
+		self.assertIsNone(ledger.open_write(TARGET))
+		(row,) = _rows()
+		self.assertEqual((row.state, row.remote_id, row.open_key), (ledger.APPLIED, "QT000900", None))
+
+	def test_a_closed_write_is_history_and_the_next_one_opens_a_new_row(self):
+		ledger.acquire(TARGET, {"sent_at": 1.0})
+		ledger.close(TARGET, ledger.REFUSED, error="422 credit hold")
+		self.assertTrue(ledger.acquire(TARGET, {"sent_at": 2.0}))
+		rows = _rows()
+		self.assertEqual([r.state for r in rows], [ledger.REFUSED, ledger.IN_FLIGHT])
+		self.assertEqual(rows[0].error, "422 credit hold")
+		self.assertEqual(rows[0].triggered_by, "Administrator")
+
+	def test_a_rename_moves_the_open_write(self):
+		old, new = "Customer::LED-Old", "Customer::LED-New"
+		ledger.acquire(old, {"sent_at": 1.0, "name": "LED Old"})
+		ledger.move(old, new)
+		self.assertIsNone(ledger.open_write(old))
+		self.assertEqual(ledger.open_write(new).marker["name"], "LED Old")
+		self.assertEqual(_rows(new)[0].open_key, new)
+
+	def test_a_rename_onto_a_name_with_its_own_open_write_keeps_that_one(self):
+		old, new = "Customer::LED-Old", "Customer::LED-New"
+		ledger.acquire(old, {"sent_at": 1.0})
+		ledger.acquire(new, {"sent_at": 2.0})
+		ledger.move(old, new)
+		self.assertEqual(ledger.open_write(new).marker, {"sent_at": 2.0})
+		self.assertEqual(_rows(old)[0].state, ledger.ABANDONED)
+
+	def test_the_purge_drops_old_closed_rows_and_never_an_open_one(self):
+		closed, kept_open = "SalesOrder::LED-Closed", "SalesOrder::LED-Open"
+		ledger.acquire(closed, {"sent_at": 1.0})
+		ledger.close(closed, ledger.APPLIED)
+		ledger.acquire(kept_open, {"sent_at": 1.0})
+		ledger.record_unknown(kept_open, "read timed out")
+		long_ago = add_days(now_datetime(), -ledger.KEEP_CLOSED_DAYS - 1)
+		with autonomous_db() as db:
+			db.sql(
+				"update `tabCRM ERP Write` set finished_at = %s, modified = %s, started_at = %s",
+				(long_ago, long_ago, long_ago),
+			)
+
+		ledger.purge_settled()
+
+		self.assertEqual(_rows(closed), [])
+		self.assertEqual(ledger.open_write(kept_open).state, ledger.UNKNOWN)
+
+	def test_no_role_may_write_it_by_hand(self):
+		perms = frappe.get_meta("CRM ERP Write").permissions
+		self.assertEqual([p.role for p in perms], ["System Manager"])
+		self.assertFalse(any(p.write or p.create or p.delete for p in perms))
+
+
+class TestCarryOverPatch(FrappeTestCase):
+	"""An upgrade during an unanswered push must not open a duplicate window."""
+
+	KEYS = (
+		"acumatica_inflight::SalesOrder::LED-PATCH-DEAL",
+		"acumatica_inflight::Customer::LED-PATCH-ORG",
+		"acumatica_inflight::CustomerContact::LED-PATCH-ORG",
+		"acumatica_inflight::CustomerPushSweep::ran",
+	)
+
+	def setUp(self):
+		_forget()
+		self.addCleanup(_forget)
+		self.addCleanup(lambda: frappe.cache().delete_value(list(self.KEYS)))
+
+	def test_live_markers_become_open_rows_once(self):
+		from crm.patches.v1_0 import carry_acumatica_inflight_markers_to_ledger as patch
+
+		cache = frappe.cache()
+		cache.set_value(self.KEYS[0], 1763290000.5)
+		cache.set_value(self.KEYS[1], {"sent_at": 1.0, "preexisting": ["C-OLD"], "name": "LED Patch"})
+		cache.set_value(self.KEYS[2], "LED-CONTACT")
+		cache.set_value(self.KEYS[3], 1.0)
+
+		patch.execute()
+		patch.execute()  # idempotent
+
+		order = ledger.open_write("SalesOrder::LED-PATCH-DEAL")
+		self.assertEqual((order.state, order.marker), (ledger.UNKNOWN, {"sent_at": 1763290000.5}))
+		customer = ledger.open_write("Customer::LED-PATCH-ORG")
+		self.assertEqual(customer.marker["preexisting"], ["C-OLD"])
+		self.assertEqual(
+			ledger.open_write("CustomerContact::LED-PATCH-ORG").marker, {"contact": "LED-CONTACT"}
+		)
+		with autonomous_db() as db:
+			self.assertEqual(db.sql("select count(*) from `tabCRM ERP Write`")[0][0], 3)
+
+	def test_a_bare_timestamp_customer_marker_keeps_its_ambiguity(self):
+		from crm.patches.v1_0 import carry_acumatica_inflight_markers_to_ledger as patch
+
+		frappe.cache().set_value(self.KEYS[1], 1700000000.0)
+		patch.execute()
+		self.assertEqual(
+			ledger.open_write("Customer::LED-PATCH-ORG").marker,
+			{"sent_at": 1700000000.0, "preexisting": None},
+		)
+
+	def test_nothing_in_redis_does_nothing(self):
+		from crm.patches.v1_0 import carry_acumatica_inflight_markers_to_ledger as patch
+
+		frappe.cache().delete_value(list(self.KEYS))
+		patch.execute()
+		with autonomous_db() as db:
+			self.assertEqual(db.sql("select count(*) from `tabCRM ERP Write`")[0][0], 0)

@@ -118,7 +118,13 @@ The worker, in order:
    no request at all, a **"Push Blocked"** sync issue naming what is missing, and
    one in-app note (CRM Notification, via `notify_user`) to the deal owner saying
    what to fill in.
-3. **Unanswered earlier push** (in-flight marker). The marker holds the send time,
+3. **Unanswered earlier push** (in-flight marker). Markers are open rows in the ERP
+   write ledger, **CRM ERP Write** (`target` = `<Kind>::<docname>`; UNIQUE
+   `open_key` = the target while In Flight/Unknown, NULL once Applied/Refused/
+   Abandoned), written on a connection of their own (`crm/utils/autonomous.py`) so
+   neither the job's rollback nor a cache flush loses them. Taken by an insert that
+   fails on conflict, or a compare-and-set on the attempt count for a retry; closed
+   rows stay as an audit trail (purged after 180 days, open rows never). The marker holds the send time,
    the `CustomerName` and `CustomerID` *as sent* (recovery looks for those, not the
    organization's current name — it may have been renamed since; the CRM
    Organization `after_rename` hook moves the marker to the new docname), and the
@@ -260,8 +266,8 @@ records a sync issue:
   first/last name), adopting what an earlier attempt made, or PUT one (`FirstName`,
   `LastName`, `Email`, `Phone1`, `JobTitle`, `BusinessAccount`); link the CRM
   Contact's `acumatica_id`/`acumatica_noteid`; then PUT Customer {`CustomerID`,
-  `PrimaryContactID`}. A failure is a "Push Failed" on the Contact; a redis marker
-  (`acumatica_inflight::CustomerContact::<org>`) remembers the follow-up is owed and
+  `PrimaryContactID`}. A failure is a "Push Failed" on the Contact; an open ledger
+  row (`CustomerContact::<org>` in CRM ERP Write) remembers the follow-up is owed and
   the next deal save finishes it — only for a customer this push created, never an
   imported one. A contact already linked to Acumatica is left alone.
 

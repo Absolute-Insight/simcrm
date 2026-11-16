@@ -72,3 +72,4 @@ crm.patches.v1_0.add_vat_number_to_organization_side_panel
 crm.patches.v1_0.grant_acumatica_identity_permlevel
 crm.patches.v1_0.encrypt_facebook_page_access_token
 crm.patches.v1_0.trust_existing_internal_erp_hosts
+crm.patches.v1_0.carry_acumatica_inflight_markers_to_ledger
