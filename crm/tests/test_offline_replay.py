@@ -11,7 +11,8 @@ not witness, so what that time is allowed to buy is the other half.
 from __future__ import annotations
 
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
+from datetime import time as clock_time
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -241,6 +242,24 @@ class CapturedTimeTest(ReplayTestCase):
 		)
 		return moment.replace(tzinfo=None, microsecond=0)
 
+	def test_how_late_it_arrived_is_kept_with_it(self):
+		replay(new_id(), "log_activity", self.visit(), ago(hours=5, minutes=10))
+		row = next(item for item in get_pack()["history"] if item["organization"] == self.org)
+		self.assertEqual(row["captured_offline"], 1)
+		self.assertAlmostEqual(row["offline_delay_minutes"], 310, delta=2)
+
+	def test_an_entry_sent_at_once_carries_no_delay(self):
+		replay(new_id(), "log_activity", self.visit(), ago(seconds=5))
+		row = self.items()[0]
+		self.assertEqual((row["captured_offline"], row["offline_delay_minutes"]), (0, 0))
+
+	def test_the_delay_cannot_be_set_through_the_document_api(self):
+		replay(new_id(), "log_activity", self.visit(), ago(hours=2))
+		plan = frappe.get_doc("CRM Rep Plan", {"user": REP, "week_start": this_monday()})
+		plan.items[0].offline_delay_minutes = 0
+		with self.assertRaises(frappe.PermissionError):
+			plan.save()
+
 	def test_a_time_in_the_future_is_refused(self):
 		with self.assertRaises(frappe.ValidationError):
 			replay(new_id(), "log_activity", self.visit(), ago(hours=-2))
@@ -301,7 +320,18 @@ class PastLockTest(ReplayTestCase):
 		frappe.set_user(REP)
 
 	def yesterday_ms(self) -> int:
-		return ago(hours=26)
+		"""A capture time on yesterday's date by the site's calendar, inside the grace.
+
+		Ten minutes before the site's midnight. Only unavailable in the last ten
+		minutes of the site's day, where "yesterday, less than a day ago" and
+		"today" meet; there the test steps aside rather than guess.
+		"""
+		now = frappe.utils.now_datetime()
+		since_midnight = (now - datetime.combine(now.date(), clock_time.min)).total_seconds()
+		age = since_midnight + 10 * 60
+		if age >= OFFLINE_GRACE_HOURS * 3600:
+			self.skipTest("too close to the site's midnight for a capture that is yesterday and inside a day")
+		return ago(seconds=age)
 
 	def test_online_yesterday_is_still_refused(self):
 		yesterday = frappe.utils.now_datetime() - timedelta(hours=26)
@@ -334,6 +364,14 @@ class PastLockTest(ReplayTestCase):
 		# and it is flagged: the server did not witness the day it is dated
 		self.assertEqual(row["captured_offline"], 1)
 
+	def test_the_grace_is_a_day(self):
+		# MBP's call: reps do not stay at a site overnight
+		self.assertEqual(OFFLINE_GRACE_HOURS, 24)
+		out = replay(new_id(), "log_activity", self.visit(), ago(hours=OFFLINE_GRACE_HOURS - 1))
+		self.assertEqual(out["status"], "applied")
+		with self.assertRaises(frappe.ValidationError):
+			replay(new_id(), "log_activity", self.visit(), ago(hours=OFFLINE_GRACE_HOURS + 1))
+
 	def test_past_the_grace_the_lock_stands(self):
 		with self.assertRaises(frappe.ValidationError):
 			replay(new_id(), "log_activity", self.visit(), ago(hours=OFFLINE_GRACE_HOURS + 2))
@@ -353,6 +391,22 @@ class PlannedItemTest(ReplayTestCase):
 		row = self.items()[0]
 		self.assertEqual((row["status"], row["outcome"]), ("Done", "Replaced the knife gate"))
 		self.assertEqual(row["captured_offline"], 0)
+
+	def test_an_outcome_that_arrived_late_keeps_how_late(self):
+		item = self.plan_one()
+		replay(new_id(), "complete_item", {"item": item, "outcome": "Done on site"}, ago(hours=3))
+		row = next(r for r in self.items() if r["name"] == item)
+		self.assertEqual(row["captured_offline"], 1)
+		self.assertAlmostEqual(row["offline_delay_minutes"], 180, delta=2)
+
+	def test_handing_it_back_clears_the_delay_too(self):
+		from crm.api.rep_plan import clear_override
+
+		item = self.plan_one()
+		replay(new_id(), "complete_item", {"item": item, "outcome": "x"}, ago(hours=3))
+		clear_override(item)
+		row = next(r for r in self.items() if r["name"] == item)
+		self.assertEqual((row["captured_offline"], row["offline_delay_minutes"]), (0, 0))
 
 	def test_an_outcome_that_arrived_late_is_flagged(self):
 		item = self.plan_one()

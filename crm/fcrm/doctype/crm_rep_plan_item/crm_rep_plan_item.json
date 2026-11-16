@@ -18,6 +18,7 @@
   "fulfilled_by",
   "manual_override",
   "captured_offline",
+  "offline_delay_minutes",
   "suggestion"
  ],
  "fields": [
@@ -114,6 +115,16 @@
    "read_only": 1
   },
   {
+   "default": "0",
+   "depends_on": "captured_offline",
+   "description": "How long after the rep captured it the entry reached the server, in minutes.",
+   "fieldname": "offline_delay_minutes",
+   "fieldtype": "Int",
+   "label": "Synced After (minutes)",
+   "non_negative": 1,
+   "read_only": 1
+  },
+  {
    "fieldname": "suggestion",
    "fieldtype": "Link",
    "label": "From Suggestion",
@@ -123,7 +134,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-11-13 12:00:00.000000",
+ "modified": "2026-11-16 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM Rep Plan Item",
