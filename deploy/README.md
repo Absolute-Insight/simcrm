@@ -513,8 +513,8 @@ change is never something that happens behind your back either way.
 will receive no further fixes and the patch bump above has nowhere left to go.
 The way out is the series bump to 11.4 LTS in the next section. Until production
 has made it, the engines are deliberately split: production on the 10.6 default
-here, the devcontainer, the migration lane and e2e on 11.4, and
-`server-tests.yml` running both. Dependabot proposes patch bumps only, and only
+here, the devcontainer and e2e on 11.4, and `server-tests.yml` and
+`migration-test.yml` running both. Dependabot proposes patch bumps only, and only
 where it can read a literal `image:` -- the devcontainer, not the `DB_IMAGE`
 default here.
 
@@ -593,6 +593,26 @@ its own CI on 11.8. Two things differ from 10.6 that matter here:
    window: on the dev site (12 MB of SQL) restore took 13 s, the 11.4 start
    with its upgrade 16 s, migrate 5 s; production's upgrade step is dominated by
    the start-up, not the data, so expect a similar figure plus the shutdown.
+4. **Room for the cold copy, and no old one in the way.** Step 3 of the window
+   copies the whole data directory into a second volume, so the disk docker
+   keeps its volumes on needs at least twice the data directory's size free,
+   plus a gigabyte -- one copy for the rollback, the rest for 11.4's upgrade
+   work and the night's backup:
+
+   ```bash
+   docker run --rm -v vectora_db-data:/d:ro \
+     mariadb:10.6.28@sha256:c7d726a1c0d29e486a1ab4ef0c76c75431a11428e76c50e99ba32106cea04114 du -sh /d
+   df -h "$(docker info -f '{{.DockerRootDir}}')/volumes"
+   docker volume inspect vectora_db-data-pre-11-4 >/dev/null 2>&1 && echo "EXISTS -- stop"
+   ```
+
+   If `vectora_db-data-pre-11-4` already exists -- an earlier attempt -- do not
+   go on: `cp -a` would merge today's files into that one's, and the result is
+   a data directory neither engine wrote. Look at what it is first
+   (`docker volume inspect vectora_db-data-pre-11-4` for its creation date,
+   and the `du` above with that name), and only once you are sure nothing
+   needs it, remove it deliberately with
+   `docker volume rm vectora_db-data-pre-11-4`.
 
 #### In the window
 
@@ -612,13 +632,18 @@ docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mariadb -uroot
 docker compose stop -t 600 db
 docker compose logs db | tail -3                           # must end in "Shutdown complete"
 
-# 3. a cold copy of the 10.6 data directory: the fast rollback
-docker run --rm -v vectora_db-data:/from:ro -v vectora_db-data-pre-11-4:/to \
-  mariadb:10.6.28@sha256:c7d726a1c0d29e486a1ab4ef0c76c75431a11428e76c50e99ba32106cea04114 \
-  cp -a /from/. /to/
+# 3. a cold copy of the 10.6 data directory: the fast rollback. Into a volume
+#    that must not exist yet -- see "Before the window", item 4.
+docker volume inspect vectora_db-data-pre-11-4 >/dev/null 2>&1 \
+  && echo "vectora_db-data-pre-11-4 exists -- stop" \
+  || docker run --rm -v vectora_db-data:/from:ro -v vectora_db-data-pre-11-4:/to \
+       mariadb:10.6.28@sha256:c7d726a1c0d29e486a1ab4ef0c76c75431a11428e76c50e99ba32106cea04114 \
+       cp -a /from/. /to/
 
-# 4. switch: the image, and the entrypoint's upgrade step
-#    uncomment DB_IMAGE in .env, then:
+# 4. switch: the image, and the entrypoint's upgrade step.
+#    ADD this line to .env -- production's .env predates the commented
+#    example in .env.example, so there is nothing to uncomment:
+#      DB_IMAGE=mariadb:11.4.13@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532
 printf 'MARIADB_AUTO_UPGRADE=1\n' > db.env
 docker compose config --images | grep mariadb              # the 11.4.13 digest
 docker compose pull db
@@ -636,7 +661,7 @@ docker compose exec backend bench --site <site> set-maintenance-mode off
 container ten seconds before SIGKILL, and a 10.6 that is killed leaves redo log
 to replay -- which 11.4 will not do across the redo-log format change ("Upgrade
 after a crash is not supported", per MariaDB's upgrade notes; not reproduced
-here). If that happens, comment `DB_IMAGE` out, let 10.6 start and recover,
+here). If that happens, remove the `DB_IMAGE` line from `.env`, let 10.6 start and recover,
 and do step 2 again. `-t 600` and the slow shutdown leave nothing to replay.
 
 **Step 4's log is supposed to have errors in it.** The entrypoint starts the
@@ -672,7 +697,7 @@ back the cold copy from step 3. Nothing has been written since.
 
 ```bash
 docker compose stop -t 600 db
-# comment DB_IMAGE out again in .env, then:
+# remove the DB_IMAGE line from .env, then:
 rm db.env
 docker run --rm -v vectora_db-data:/to -v vectora_db-data-pre-11-4:/from:ro \
   mariadb:10.6.28@sha256:c7d726a1c0d29e486a1ab4ef0c76c75431a11428e76c50e99ba32106cea04114 \
@@ -687,24 +712,49 @@ restore, which 10.6 can read because every table is still on
 `utf8mb4_unicode_ci`:
 
 ```bash
+# 1. close the site and stop everything that writes -- window step 1 again --
+#    so the dump below is the last write, not a snapshot of a moving target
 docker compose exec backend bench --site <site> set-maintenance-mode on
+docker compose stop scheduler queue-short queue-long backup
 docker compose exec backend bench --site all backup        # from 11.4
+docker compose stop frontend websocket backend
 docker compose stop -t 600 db
-# comment DB_IMAGE out again in .env, then:
+
+# 2. set the 11.4 data directory ASIDE, not away: docker cannot rename a
+#    volume, so copy it (same disk check as "Before the window", item 4, and
+#    the same refusal if the target already exists), then empty the original
+docker volume inspect vectora_db-data-11-4-failed >/dev/null 2>&1 \
+  && echo "vectora_db-data-11-4-failed exists -- stop" \
+  || docker run --rm -v vectora_db-data:/from:ro -v vectora_db-data-11-4-failed:/to \
+       mariadb:11.4.13@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532 \
+       cp -a /from/. /to/
+docker run --rm -v vectora_db-data:/d \
+  mariadb:10.6.28@sha256:c7d726a1c0d29e486a1ab4ef0c76c75431a11428e76c50e99ba32106cea04114 \
+  sh -c 'rm -rf /d/* /d/.[!.]* 2>/dev/null; ls -A /d | wc -l'   # 0
+
+# 3. a new, empty 10.6 on the emptied volume
+# remove the DB_IMAGE line from .env, then:
 rm db.env
-docker compose rm -f db
-docker volume rm vectora_db-data                           # the 11.4 data directory
-docker compose up -d db                                    # a new, empty 10.6
-# the restore from "Rolling back" above, with that dump -- in a one-off
-# container, because `up` would start create-site against a database that is
-# not there yet. The guard and both root flags are explained there.
+docker compose up -d db
+
+# 4. the restore from "Rolling back" further down this file (under "Upgrading"),
+#    with that dump -- in a one-off container, because `up` would start
+#    create-site against a database that is not there yet. The guard and both
+#    root flags are explained there.
 : "${DB_ROOT_PASSWORD:?set it from .env before restoring}"
 docker compose run --rm --no-deps -T backend bench --site <site> restore --force \
   --db-root-username root --db-root-password "$DB_ROOT_PASSWORD" \
   /home/frappe/frappe-bench/sites/<site>/private/backups/<that dump>.sql.gz
+
+# 5. verify as in "Verifying" (10.6.28 this time, the same counts), then reopen
 docker compose up -d
 docker compose exec backend bench --site <site> set-maintenance-mode off
 ```
+
+Only once the restored 10.6 has verified, and taken a nightly backup of its
+own, remove the set-aside copy: `docker volume rm vectora_db-data-11-4-failed`.
+Until then it is the only copy of the 11.4 data directory, and the way back if
+the restore turns out to be missing something.
 
 Keep `vectora_db-data-pre-11-4` until the new engine has run through a week
 of nightly backups, then `docker volume rm vectora_db-data-pre-11-4`.
@@ -713,7 +763,8 @@ of nightly backups, then `docker volume rm vectora_db-data-pre-11-4`.
 
 In a pull request: make the 11.4 digest the default in `docker-compose.yml`
 (it resolves to what `.env` already says, so it recreates nothing), drop the
-10.6 leg from `server-tests.yml`, and record the date here.
+10.6 legs from `server-tests.yml` and `migration-test.yml`, and record the date
+here.
 
 ### Sizing the database
 
