@@ -2301,6 +2301,27 @@ class TestManagersResolveAStuckPush(CustomerPushCase):
 		frappe.db.after_commit.run()
 		self.assertTrue(_marker("Customer", org.name))
 
+	def test_the_confirm_window_outlasts_the_slowest_customer_put(self):
+		"""started_at is stamped before the client call. The client can wait for the
+		login lock, log in, and PUT -- connect and read timed out separately -- and do
+		it all twice on a 401. The window must cover that and still leave Acumatica its
+		settle time; a window short of it lets a killed PUT land after the confirm."""
+		from crm.integrations.acumatica import client
+
+		slowest_attempt = client.LOGIN_WAIT_IN_JOB + sum(client.LOGIN_TIMEOUT) + 2 * client.WRITE_TIMEOUT
+		self.assertGreaterEqual(
+			outbound.CONFIRM_SETTLE_SECONDS, 2 * slowest_attempt + outbound.QUOTE_SETTLE_SECONDS
+		)
+
+		from crm.integrations.acumatica.api import confirm_new_customer
+
+		org, deal = self._stuck()
+		self._age(org, 2 * slowest_attempt)  # the client may only just have given up
+		seen = self._seen(org)
+		with self.assertRaises(frappe.ValidationError):
+			confirm_new_customer(org.name, write=seen["name"], version=seen["version"])
+		self.assertTrue(_marker("Customer", org.name))
+
 	def test_confirm_releases_only_the_write_the_manager_saw(self):
 		from crm.integrations.acumatica.api import confirm_new_customer
 

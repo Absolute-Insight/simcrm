@@ -20,6 +20,8 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 )
 from crm.fcrm.doctype.crm_erp_write import crm_erp_write as ledger
 from crm.integrations.acumatica.client import (
+	LOGIN_TIMEOUT,
+	LOGIN_WAIT_IN_JOB,
 	TIMEOUT,
 	WRITE_TIMEOUT,
 	AcumaticaAuthError,
@@ -41,10 +43,15 @@ from crm.integrations.acumatica.matching import name_match, normalise_name, norm
 # How long Acumatica may still be working on a quote after we stopped waiting for it.
 # Inside this, finding no order proves nothing yet.
 QUOTE_SETTLE_SECONDS = 300
-# How long after a customer PUT was sent it may still land: the client gives up on it
-# at WRITE_TIMEOUT, and Acumatica may still be working on it for a while after. A
-# manager may not release an unanswered write younger than this.
-CONFIRM_SETTLE_SECONDS = WRITE_TIMEOUT + QUOTE_SETTLE_SECONDS
+# How long after a customer write was acquired its PUT may still land. started_at is
+# stamped before the client call, and the client can spend, in the worst case: a wait
+# for the login lock plus a login (connect + read), then the PUT -- whose scalar
+# timeout requests applies to connect and to read separately -- and all of that twice,
+# because a 401 retries with a fresh login. Acumatica may then still be working on it
+# for QUOTE_SETTLE_SECONDS. A manager may not release an unanswered write younger than
+# this.
+_ONE_ATTEMPT_SECONDS = LOGIN_WAIT_IN_JOB + sum(LOGIN_TIMEOUT) + 2 * WRITE_TIMEOUT
+CONFIRM_SETTLE_SECONDS = 2 * _ONE_ATTEMPT_SECONDS + QUOTE_SETTLE_SECONDS
 
 
 def _inflight_key(entity: str, name: str) -> str:
