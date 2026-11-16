@@ -16,7 +16,6 @@ import {
   planBreakdown,
   riskReason,
   standardViewPayload,
-  offlineRate,
   toISODate,
   visitsCell,
   withFreshFigures,
@@ -692,15 +691,13 @@ describe('activitySummary', () => {
 describe('visitsCell', () => {
   const row = (extra) => ({ completed: 3, target: 63, offline: 0, ...extra })
 
-  it('adds the offline count and its share of what was logged', () => {
-    expect(visitsCell(row({ offline: 2, logged: 63, offline_rate: 3 }))).toBe(
-      '3 / 63 · 2 offline (3%)',
+  it('names what the offline count is out of, not a bare percent', () => {
+    // 40 logged activities of any kind, not the visit target of 63
+    expect(visitsCell(row({ offline: 2, logged: 40, offline_rate: 5 }))).toBe(
+      '3 / 63 · 2 of 40 logged offline',
     )
-  })
-
-  it('works the share out from the counts when the server sends none', () => {
-    expect(visitsCell(row({ offline: 1, logged: 4 }))).toBe(
-      '3 / 63 · 1 offline (25%)',
+    expect(visitsCell(row({ target: null, offline: 1, logged: 4 }))).toBe(
+      '3 · No target · 1 of 4 logged offline',
     )
   })
 
@@ -709,22 +706,13 @@ describe('visitsCell', () => {
     expect(visitsCell(row({ target: null }))).toBe('3 · No target')
   })
 
-  it('keeps the count without a share when there is nothing to divide by', () => {
+  it('keeps the count when there is no total to set it against', () => {
     expect(visitsCell(row({ offline: 2, logged: 0, offline_rate: null }))).toBe(
-      '3 / 63 · 2 offline',
+      '3 / 63 · 2 logged offline',
     )
-  })
-})
-
-describe('offlineRate', () => {
-  it('is null with nothing logged, never a division by zero', () => {
-    expect(offlineRate({ offline: 0, logged: 0 })).toBeNull()
-    expect(offlineRate({})).toBeNull()
-  })
-
-  it('prefers the server figure and never passes 100%', () => {
-    expect(offlineRate({ offline_rate: 7, offline: 1, logged: 2 })).toBe(7)
-    expect(offlineRate({ offline: 5, logged: 4 })).toBe(100)
-    expect(offlineRate({ offline: 1, logged: 3 })).toBe(33)
+    // never "5 of 4"
+    expect(visitsCell(row({ offline: 5, logged: 4 }))).toBe(
+      '3 / 63 · 5 of 5 logged offline',
+    )
   })
 })

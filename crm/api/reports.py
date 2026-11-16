@@ -446,7 +446,7 @@ REPORTS = {
 				"key": "offline_rate",
 				"label": "Logged offline %",
 				"type": "percent",
-				"description": "Logged offline as a share of every activity the rep logged (done or cancelled) in the period. Blank when nothing was logged",
+				"description": "Activities logged offline as a share of every activity of any kind the rep logged (done or cancelled) in the period. Blank when nothing was logged",
 			},
 		],
 		"get_rows": _visits_by_rep,
