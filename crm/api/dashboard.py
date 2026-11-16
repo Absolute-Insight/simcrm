@@ -2399,6 +2399,18 @@ def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list
 		.run()
 	)
 
+	# Logged offline: any activity whose time is the phone's word, not the
+	# server's (crm.api.offline). Not a fault -- a rep at a site with no signal
+	# logs it there -- but a number a manager should be able to see, because
+	# nothing on the server witnessed when it happened.
+	query, PlanItem, Plan = _plan_items_in(from_date, to_date, user)
+	offline = dict(
+		query.where(PlanItem.captured_offline == 1)
+		.select(Plan.user, Count(PlanItem.name))
+		.groupby(Plan.user)
+		.run()
+	)
+
 	reps = set(counts) | set(unplanned)
 	scope = _scope_users(user)
 	filters = {"user": ("in", scope)} if scope is not None else {}
@@ -2439,6 +2451,7 @@ def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list
 					"missed": int(row.get("missed") or 0),
 					"open": int(row.get("open") or 0),
 					"unplanned": int(unplanned.get(rep) or 0),
+					"offline": int(offline.get(rep) or 0),
 					# no target is not 0% of one -- the quota report's rule
 					"attainment": round(completed / target * 100) if target else None,
 					"on_track": on_track,

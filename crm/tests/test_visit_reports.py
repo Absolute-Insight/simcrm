@@ -364,6 +364,18 @@ class VisitsByRepTest(VisitFixture, IntegrationTestCase):
 		self.assertEqual(row["attainment"], 60)
 		self.assertEqual(row["on_track"], "Behind")
 
+	def test_activities_logged_offline_are_counted_beside_the_rest(self):
+		self.assertEqual(self.row()["offline"], 0)
+		plan = frappe.get_doc("CRM Rep Plan", {"user": REP, "week_start": self.monday})
+		for item in plan.items[:2]:
+			frappe.db.set_value(
+				"CRM Rep Plan Item", item.name, {"captured_offline": 1, "offline_delay_minutes": 300}
+			)
+		row = self.row()
+		self.assertEqual(row["offline"], 2)
+		# counted beside, never instead of: a visit logged offline is still a visit
+		self.assertEqual(row["completed"], 3)
+
 	def test_meeting_the_target_due_so_far_is_on_track(self):
 		make_target(REP, 3)
 		row = self.row()
