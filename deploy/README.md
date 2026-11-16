@@ -962,7 +962,7 @@ Passing it explicitly makes the command behave the same either way.
 Verified by running the restore both ways against a real backup, and by
 exercising both credential paths with stdin redirected.
 
-Which means the restore drill in the pilot checklist below is not a nice-to-have:
+Which means the [restore drill](#restore-drill) is not a nice-to-have:
 it is the rehearsal for the only rollback you have. If step 0's backup has never
 been restored, you do not have a rollback, you have a file.
 
@@ -1097,20 +1097,91 @@ yet: there is no backup to be late. It lasts until the first dump exists, or
 26 hours, whichever comes first; a site with a recent backup goes `healthy`
 within a minute of the container starting.
 
-**Nothing in this stack tells anyone.** Docker records the state and restarts
+**A healthcheck is a state, not an alert.** Docker records it and restarts
 nothing — restarting would not help — so an unhealthy `backup` is visible only
-to something that looks. Point whatever already watches this host at it. With
-nothing else to hand, a cron line on the host that mails when either backup
-container is not healthy is enough:
+to something that looks. Two ways to have something look, and a production
+host wants the first:
+
+#### Being told when a backup did not happen
+
+A dead-man's switch: the service reports each run to a monitor *outside this
+host*, and the monitor alerts when a report it expected does not arrive. That
+catches what no check on the host can — the whole host being down, docker
+stopped, the container deleted — because silence is the signal.
+
+Both backup services speak the [healthchecks.io](https://healthchecks.io)
+protocol when given a check URL:
+
+| `.env` key | Pinged by | Suggested check |
+|---|---|---|
+| `BACKUP_PING_URL` | `backup`, once a night | period 1 day, grace 3 hours |
+| `OFFSITE_PING_URL` | `backup-offsite`, every hour | period 1 hour, grace 2 hours |
+
+Each run sends `GET <url>/start` when it begins, then a success ping when it
+worked or `GET <url>/fail` when it did not, so the monitor alerts on a failure
+straight away and on a missing run after the grace period, and shows how long
+each run took. For the off-host copy, "worked" means the copy, the monthly
+copy and any pruning all succeeded.
+
+The success ping is `GET <url>` from `backup`, and `GET <url>/0` from
+`backup-offsite` — the exit-status form of the same protocol, which
+healthchecks.io (hosted or self-hosted) reads as success. The reason is the
+secret below: the rclone image has no curl, busybox wget takes a URL only on
+its command line (where `ps` on the host would show it), so the offsite
+service pings through rclone's own HTTP client with the URL in its
+environment — and that client can only fetch a path *below* the URL.
+
+1. Create two checks (healthchecks.io → Add Check, one per row above), set
+   their period and grace, and connect the alert channels you actually read
+   (email, Slack, SMS, PagerDuty…).
+2. Put their ping URLs in `.env`:
+   ```bash
+   BACKUP_PING_URL=https://hc-ping.com/<uuid-of-the-nightly-check>
+   OFFSITE_PING_URL=https://hc-ping.com/<uuid-of-the-hourly-check>
+   ```
+3. Recreate both services so they read them:
+   ```bash
+   docker compose up -d backup
+   docker compose --profile offsite up -d backup-offsite
+   ```
+4. Check the first pings arrived: the offsite check turns green within a few
+   minutes; the nightly one after the next `BACKUP_HOUR` (or force a run in
+   the monitor's UI with "Ping now" to see the channel work).
+
+**The URL must be healthchecks.io-shaped**: `https://host/path` with nothing
+after the path, so that `/start`, `/fail` and `/0` can be appended. A URL with
+a query string or fragment (`...?status=up`, `...#x`) is refused at start with
+a log line saying so, and that service sends no pings: appending a path to it
+would ping the wrong endpoint.
+
+Guarantees, so the monitor can never cost you a backup: pings run only when
+the variable is set and starts with `http://` or `https://`; each is bounded
+at 15 seconds; a ping that fails is logged as `did not get through (ignored)`
+and the run carries on. **The URL's path is the secret** — anyone who has it
+can mark a run as passed — so the services log it only up to the host
+(`https://hc-ping.com/...`), and neither service ever puts it on a command
+line: `backup` hands it to curl on stdin, `backup-offsite` to rclone in its
+environment. Keep it as you keep the rest of `.env`.
+
+**Self-hosted alternative.** healthchecks.io is open source
+([healthchecks/healthchecks](https://github.com/healthchecks/healthchecks));
+run it on a machine *other than this one* (a monitor on the host it watches
+goes down with it) and use its ping URLs instead. Another monitor works if it
+alerts when an expected HTTP GET stops arriving *and* accepts the `/start`,
+`/fail` and (for the offsite check) `/0` paths on a URL without a query
+string. Uptime Kuma's "Push" monitors, for instance, take their status in a
+query string and are refused for both services.
+
+#### Or: a cron line on the host
+
+With nothing else to hand, a cron line on the host that mails when either backup
+container is not healthy is better than nothing — but it shares the host's
+fate, and it is the only place the unencrypted-copies warning below surfaces:
 
 ```bash
 # /etc/cron.d/vectora-backup-health  (needs a working local `mail`)
-0 8 * * * root cd /path/to/deploy && for s in backup backup-offsite; do id=$(docker compose ps -q $s 2>/dev/null); [ -n "$id" ] || continue; st=$(docker inspect --format '{{.State.Health.Status}}' "$id"); [ "$st" = healthy ] || echo "$s is $st" | mail -s "Vectora backup: $s $st" ops@example.com; done
+0 8 * * * root cd /path/to/deploy && for s in backup backup-offsite; do id=$(docker compose ps -q $s 2>/dev/null); [ -n "$id" ] || continue; st=$(docker inspect --format '{{.State.Health.Status}}' "$id"); [ "$st" = healthy ] || echo "$s is $st: $(docker inspect --format '{{range .State.Health.Log}}{{.Output}}{{end}}' "$id" | tail -n 3)" | mail -s "Vectora backup: $s $st" ops@example.com; done
 ```
-
-An uptime monitor that can run a command, or a metrics agent that exports
-container health, does the same job better. The point is only that one of them
-exists.
 
 ### Getting them off the host
 
@@ -1124,46 +1195,80 @@ docker compose --profile offsite up -d backup-offsite
 docker compose logs -f backup-offsite        # first copy, then hourly
 ```
 
-Three `.env` keys are required, and the rest are optional; all are documented
-in `.env.example`:
+**For a new install, in this order:** create the bucket with Object Lock and
+lifecycle rules and a key that cannot delete ([Immutable copies, and how long
+they are kept](#immutable-copies-and-how-long-they-are-kept)); generate the
+encryption passphrase and put it where it will outlive this host
+([Encrypting the copies](#encrypting-the-copies)); set the ping URL
+([above](#being-told-when-a-backup-did-not-happen)); then start the service.
+
+The `.env` keys, all documented in `.env.example`:
 
 | Key | What it is |
 |---|---|
-| `B2_ACCOUNT_ID` | The application key's **keyID** |
-| `B2_APPLICATION_KEY` | The application key itself, shown once at creation |
+| `B2_ACCOUNT_ID` | Required. The application key's **keyID** |
+| `B2_APPLICATION_KEY` | Required. The application key itself, shown once at creation |
 | `BACKUP_TARGET` | The bucket as an rclone destination, e.g. `offsite:vecmbp` |
-| `OFFSITE_CRYPT_PASSWORD`, `OFFSITE_CRYPT_SALT` | Optional. Encrypt the copies before they leave the host — [below](#encrypting-the-copies) |
-| `OFFSITE_INCLUDE_SITE_CONFIG` | Optional, default `0`. Also copy `site_config_backup.json`; honoured only when the copies are encrypted |
-| `OFFSITE_RETENTION_DAYS` | Optional, default `0` (never delete). Prune the destination — [below](#how-long-the-copies-are-kept) |
-| `OFFSITE_MAX_AGE_HOURS` | Optional, default `28`. How stale the newest copy may be before the container is unhealthy |
+| `OFFSITE_CRYPT_PASSWORD`, `OFFSITE_CRYPT_SALT` | Encrypt the copies before they leave the host. Set them — [below](#encrypting-the-copies) |
+| `OFFSITE_ALLOW_PLAINTEXT` | Default `0`. `1` accepts unencrypted copies without the healthcheck reporting it |
+| `OFFSITE_INCLUDE_SITE_CONFIG` | Default `0`. Also copy `site_config_backup.json`; honoured only when the copies are encrypted |
+| `OFFSITE_RETENTION_DAYS` | Default `0` (never delete — no delete is ever attempted). Prefer lifecycle rules — [below](#immutable-copies-and-how-long-they-are-kept) |
+| `OFFSITE_MAX_AGE_HOURS` | Default `28`. How stale the newest copy may be before the container is unhealthy |
+| `OFFSITE_PING_URL` | Optional dead-man's switch — [above](#being-told-when-a-backup-did-not-happen) |
 
-Make an **application key scoped to the one bucket** (Backblaze → App Keys →
-Add a New Application Key), never the master key. It needs `listBuckets`,
-`listFiles` and `writeFiles` on that bucket and nothing else. The site name is
-appended to the destination automatically, so one bucket can hold several
-deployments without them overwriting each other.
+What lands where, with `BACKUP_TARGET=offsite:<bucket>` (a path after the
+bucket name is kept in front of all four):
+
+| Prefix in the bucket | What |
+|---|---|
+| `<site>/` | dailies, unencrypted (no passphrase set) |
+| `<site>.crypt/` | dailies, encrypted |
+| `monthly/<site>/` | the first backup of each month, unencrypted — only with `OFFSITE_ALLOW_PLAINTEXT=1` |
+| `monthly/<site>.crypt/` | the first backup of each month, encrypted |
+
+No prefix is a prefix of another, so each takes its own lifecycle rule, and
+encrypted and unencrypted copies are never mixed in one listing.
 
 It copies rather than syncs, deliberately: `rclone copy` never deletes at the
 destination, so the seven-day local retention does not propagate to the
 archive, and a copy that failed at 02:00 is retried at 03:00 rather than a day
-later. Re-copying costs nothing — rclone skips what is already there.
+later. Re-copying costs nothing — rclone skips what is already there. Files
+modified in the last 15 minutes wait for the next run, so a dump that is still
+being written is never uploaded half-finished (on a locked bucket it would
+stay there, locked, for the whole retention period).
+
+**The monthly tier** (encrypted copies only, or plaintext that
+`OFFSITE_ALLOW_PLAINTEXT=1` accepted — an upgraded stack without a passphrase
+does not start keeping a year of plaintext dumps). After each successful
+hourly copy, the service copies this month's first backup set to `monthly/` —
+one set a month, whatever restarts in between, because it asks the destination
+rather than remembering: if `monthly/` already has a dump for the month, it is
+*that* set that gets copied again (rclone uploads only what is missing, so a
+copy that died between the dump and the tars is completed), and the month
+counts as done only once a copy has exited cleanly. "First" is the earliest
+set of the month still on the host (the host keeps a week, so after an outage
+spanning the 1st it is the first night it can see); a set is only taken once
+nothing in it has changed for an hour. Lifecycle rules then keep `monthly/`
+longer than the dailies. `OFFSITE_RETENTION_DAYS`, if set, never touches it.
 
 Check it is still working, rather than assuming:
 
 ```bash
-docker compose ps backup-offsite             # healthy == the key works AND a recent dump is there
+docker compose ps backup-offsite             # healthy == key works, a recent dump is there, copies are encrypted
+docker compose exec backup-offsite cat /tmp/offsite.status
 docker compose exec backup-offsite sh -c 'rclone ls "$(cat /tmp/offsite.dest)"' | tail
+docker inspect --format '{{range .State.Health.Log}}{{.Output}}{{end}}' "$(docker compose ps -q backup-offsite)"
 ```
 
-The healthcheck asks two things every five minutes. Can the key still open
-the bucket — so an expired or revoked key shows up as unhealthy instead of as
-an archive that quietly stopped weeks ago. And is the newest database dump *at
-the destination* younger than `OFFSITE_MAX_AGE_HOURS` (default `28`: the
-backup's own 26 plus time to upload) — because a key that opens the bucket
-says nothing about whether anything has arrived lately, and the old check
-stayed green while copying nothing. Like `backup`, it is only a state; see
-[Knowing when a backup did not happen](#knowing-when-a-backup-did-not-happen)
-for having something watch it.
+The healthcheck asks three things every five minutes, and prints each one
+that fails (the last command above shows it). Can the key still open the
+bucket — so an expired or revoked key shows up as unhealthy instead of as an
+archive that quietly stopped weeks ago. Is the newest database dump *at the
+destination* younger than `OFFSITE_MAX_AGE_HOURS` (default `28`: the backup's
+own 26 plus time to upload). And are the copies encrypted — unless
+`OFFSITE_ALLOW_PLAINTEXT=1` says plaintext is a decision. The status file says
+the same in `key=value` form: `encryption=on|off`, `prune=off|script|delegated|failed`,
+`monthly=<YYYYMM done>`, `last_result`, `last_ok`.
 
 **After changing any of these settings, or upgrading**, recreate the service by
 name — it is behind a profile, so a plain `docker compose up -d` does not touch
@@ -1175,7 +1280,8 @@ docker compose --profile offsite up -d backup-offsite
 
 #### What is not copied
 
-`*-site_config_backup.json`. Frappe writes one beside every dump and it is
+`*-site_config_backup.json`, unless the copies are encrypted and
+`OFFSITE_INCLUDE_SITE_CONFIG=1`. Frappe writes one beside every dump and it is
 `site_config.json` verbatim: `db_password` and `encryption_key`, in plaintext.
 The dump next to it holds every stored integration secret, encrypted with that
 key. Together in a third party's bucket they are the whole CRM — every
@@ -1186,47 +1292,44 @@ bucket unreadable to a Backblaze account compromise.
 So the copy leaves that file on the host, which means **the encryption key has
 to be kept somewhere else** for a restore onto a new host to be complete —
 [Restoring onto a new host](#restoring-onto-a-new-host) is the procedure, and
-it is one line to do today.
+it is one line to do today. With encryption on, `OFFSITE_INCLUDE_SITE_CONFIG=1`
+puts it in the archive instead, as ciphertext.
 
-Until this changed the file *was* copied, so a bucket that has been in use
-holds one per night already, and `rclone copy` never deletes. Remove them
-once, from somewhere that holds a key allowed to delete (the Backblaze web
-console, or `rclone delete` with your own credentials — not this service's
-key, which should not have that right):
-
-```bash
-rclone delete --include "*site_config_backup*" <remote>:<bucket>/<site> --dry-run   # then without --dry-run
-```
-
-Whether to also rotate what those files exposed is a judgement about who could
-have read the bucket. The database password is cheap to change; the encryption
-key is not — every stored secret has to be re-entered under the new one.
+Until PR #402 the file *was* copied, so a bucket that has been in use holds one
+per night already, and `rclone copy` never deletes. [Cleaning up the plaintext
+secrets already in the
+bucket](#cleaning-up-the-plaintext-secrets-already-in-the-bucket) is the
+runbook.
 
 #### Encrypting the copies
 
-Off by default. Set a passphrase in `.env` and every copy goes through an
-rclone [`crypt`](https://rclone.org/crypt/) remote, so the bucket only ever
-receives ciphertext:
+Set a passphrase in `.env` and every copy goes through an rclone
+[`crypt`](https://rclone.org/crypt/) remote, so the bucket only ever receives
+ciphertext. `.env.example` has the two keys uncommented and empty: a new
+install is expected to fill them before its first copy.
 
 ```bash
-OFFSITE_CRYPT_PASSWORD=<long random value: openssl rand -base64 32>
-#OFFSITE_CRYPT_SALT=<optional second value>
+OFFSITE_CRYPT_PASSWORD=<openssl rand -base64 32>
+OFFSITE_CRYPT_SALT=<openssl rand -base64 32>       # rclone's password2; optional, recommended
 docker compose --profile offsite up -d backup-offsite
 ```
 
-- Encrypted copies go to **`<site>.crypt/`**, beside the plaintext `<site>/`
-  that earlier runs wrote. Nothing already there is touched or re-encrypted;
-  delete the plaintext prefix yourself once the encrypted one has a full set.
-- File *contents* are encrypted; file *names* are not (they gain a `.bin`
-  suffix), so the bucket's console still shows which nights are present.
-- With a passphrase set, `OFFSITE_INCLUDE_SITE_CONFIG=1` also copies
-  `site_config_backup.json`, which makes the archive self-contained. Without
-  one that setting is ignored, and the log says so.
-
 **The passphrase is the archive.** There is no recovery if it is lost, and the
-archive exists for the day this host — and its `.env` — are gone. Keep it where
-you keep the encryption key: outside this host. Changing the passphrase or the
-salt later makes everything already encrypted unreadable under the new values.
+archive exists for the day this host — and its `.env` — are gone. Before the
+first encrypted copy:
+
+1. Store both values in the team's password manager, in an entry named for the
+   deployment and the bucket, next to the site's `encryption_key`.
+2. Write both on paper, seal it in an envelope signed across the flap, and give
+   it to a second person who does not keep it near this host — so one person
+   leaving, or one locked-out password manager, does not end the archive.
+3. Then turn it on, and prove it reads back (below).
+
+Changing the passphrase or the salt later makes everything already encrypted
+unreadable under the new values, and the canary (below) stops the service
+rather than let that happen in the same prefix. To rotate, point the copies at
+a new prefix as well (a new `BACKUP_TARGET` path), set the new values, let the
+new copies land, and keep the old values until the old copies have aged out.
 
 **It is not protected on this host, and is not meant to be.** It sits in `.env`
 in the clear, shows in `docker inspect` of the container like every other
@@ -1235,13 +1338,62 @@ variable there, and the copy the service writes into rclone's config is only
 a reader. Encryption here protects the bucket from whoever can read the
 bucket. Anyone who can read this host's `.env` already has the database.
 
+- File *contents* are encrypted; file *names* are not (they gain a `.bin`
+  suffix), so the bucket's console still shows which nights are present.
+- With a passphrase set, `OFFSITE_INCLUDE_SITE_CONFIG=1` also copies
+  `site_config_backup.json`, which makes the archive self-contained. Without
+  one that setting is ignored, and the log says so.
+- **The canary.** Each encrypted prefix holds a small `.vectora-canary`,
+  written under its passphrase the first time. On every start the service
+  decrypts it; if the passphrase or salt in `.env` is not the one that wrote
+  the prefix — a typo, a rotation done in place — it logs `... differs from
+  the one that wrote this prefix` and `NOT COPYING`, pings `/fail`, waits
+  `OFFSITE_START_RETRY_SECONDS` (default 900) and exits to be restarted,
+  rather than putting a second key's files into the same archive where only
+  a restore would find them. A prefix that already holds encrypted files but
+  no canary must decrypt its first file before the canary is added. If the
+  bucket cannot be listed or read at that moment, the log says `NOT COPYING
+  YET ... a network or key problem, not the passphrase` and it retries on
+  the same schedule — an outage is not reported as a wrong passphrase.
+  Existence is checked by listing, never by reading: on B2, reading a file
+  that is not there succeeds with no output. Pruning never deletes it.
+
+**Without a passphrase**, nothing breaks: an install that predates this keeps
+copying, unencrypted, to the same `<site>/` prefix as before. But it is never
+quiet about it. Every hourly run logs
+
+```
+[offsite] WARNING: copies leave this host UNENCRYPTED. ...
+```
+
+and the healthcheck reports `copies are NOT encrypted`, so the container goes
+`unhealthy` about an hour after it starts and whatever watches container
+health sees it. Set the passphrase, or — only for a destination you control end
+to end — `OFFSITE_ALLOW_PLAINTEXT=1`, which keeps the log line and clears the
+healthcheck.
+
+**Switching an existing install to encrypted copies:**
+
+1. Generate and store the passphrase and salt as above.
+2. Add them to `.env` and recreate: `docker compose --profile offsite up -d backup-offsite`.
+3. The log now says `-> offsite:<bucket>/<site>.crypt, encrypted`. The first
+   run uploads the week of backups on the host, encrypted, under
+   `<site>.crypt/`; the month's first set goes to `monthly/<site>.crypt/`.
+   The plaintext `<site>/` is not touched or re-encrypted — the two
+   archives never mix.
+4. Read one back (below) and compare it with the original.
+5. When `<site>.crypt/` holds as many nights as you want to be able to go
+   back, the plaintext prefix is the exposure that is left: let its
+   lifecycle rule age it out, or delete it with your own key (Object Lock
+   retention permitting). Until then they are as readable as they ever were.
+
 Reading an encrypted archive back, on any machine with rclone and the two
-secrets:
+secrets — or let [the restore drill](#restore-drill) do it:
 
 ```bash
 export RCLONE_CONFIG_OFFSITE_TYPE=b2 RCLONE_CONFIG_OFFSITE_ACCOUNT=<keyID> RCLONE_CONFIG_OFFSITE_KEY=<key>
 export RCLONE_CONFIG_ARCHIVE_TYPE=crypt
-export RCLONE_CONFIG_ARCHIVE_REMOTE=offsite:<bucket>/<site>.crypt
+export RCLONE_CONFIG_ARCHIVE_REMOTE=offsite:<bucket>/<site>.crypt     # or <bucket>/monthly/<site>.crypt
 export RCLONE_CONFIG_ARCHIVE_FILENAME_ENCRYPTION=off
 export RCLONE_CONFIG_ARCHIVE_DIRECTORY_NAME_ENCRYPTION=false
 export RCLONE_CONFIG_ARCHIVE_PASSWORD=$(rclone obscure -)     # type the passphrase, then Ctrl-D
@@ -1250,42 +1402,358 @@ rclone ls archive:
 rclone copy archive: ./restore --include "<stamp>-*"
 ```
 
-Do that once after turning encryption on, and compare a file with the
-original. An encrypted backup nobody has ever decrypted is the same kind of
-object as a backup nobody has ever restored.
+An encrypted backup nobody has ever decrypted is the same kind of object as a
+backup nobody has ever restored.
 
-#### How long the copies are kept
+#### Immutable copies, and how long they are kept
 
-For ever, unless you decide otherwise: the service only adds. Every night is a
-full database dump and two full file archives, so the bucket grows by that much
-a day, and a record deleted from the CRM stays in the archive for as long as
-the archive does.
+The off-host copy is worth having because it survives whatever happens to this
+host — including someone who takes it over and wants the backups gone too. So
+the key this host holds should be able to **add** to the archive and nothing
+else, and the bucket itself should refuse deletes for a while after each
+upload. Retention is then the bucket's job, not this service's:
 
-The place to bound it is **the bucket, not this service**. A Backblaze
-lifecycle rule (Bucket → Lifecycle Settings → custom) with, for example,
-`daysFromUploadingToHiding: 35` and `daysFromHidingToDeleting: 1` keeps five
-weeks and needs nothing from this stack. It also keeps the property that makes
-the off-host copy worth having: the key on this host can write and cannot
-delete, so whoever takes over the host cannot take the archive with it. S3 and
-most other stores have an equivalent.
+- **Object Lock** with a default retention: every uploaded file version is
+  immutable for `LOCK_DAYS`. Not even a key with `deleteFiles` can remove it in
+  that time.
+- **Lifecycle rules** per prefix: dailies hidden after `DAILY_DAYS`, monthlies
+  after `MONTHLY_DAYS`, hidden versions deleted a day later.
+- **An application key without `deleteFiles`**: `listBuckets`, `listFiles`,
+  `readFiles`, `writeFiles`, restricted to the one bucket.
 
-Where the store has no such rule, the service can prune instead:
+The numbers are yours; these are the ones the rest of this section uses:
 
 ```bash
-OFFSITE_RETENTION_DAYS=35      # 0 or unset = never delete (the default)
+BUCKET=vectora-backups-<company>     # bucket names are global on B2
+SITE=<your SITE_NAME>
+LOCK_DAYS=30         # immutability window for every upload
+DAILY_DAYS=30        # keep dailies this long; >= LOCK_DAYS
+MONTHLY_DAYS=365     # keep monthlies this long
 ```
 
-That deletes, at the destination, files last modified more than that many days
-ago. It is off by default because it is destructive and because it needs an
-application key that may also `deleteFiles` — which is a key that can destroy
-the archive. Three limits are built in: values under 14 are refused (the host
-keeps a week, and a shorter window would delete files only for the next hourly
-copy to upload them again); it runs only straight after a copy that succeeded;
-and it does not run at all unless a dump newer than `OFFSITE_MAX_AGE_HOURS` is
-at the destination — an archive that has stopped receiving is the last copy
-there is, and is not aged away. On Backblaze a delete *hides* a file rather
-than removing it; pair it with "keep only the last version" on the bucket, or
-the storage is not actually released.
+Keep `DAILY_DAYS` at or above `LOCK_DAYS`: a lifecycle rule cannot delete a
+version that is still locked, so a shorter rule only leaves hidden-but-billed
+versions until the lock ends. Monthlies are locked for `LOCK_DAYS` like
+everything else (the default retention is per bucket); after that they are
+protected by this host's key not being able to delete. If monthlies must be
+locked for their whole life, give them a second bucket with
+`LOCK_DAYS=MONTHLY_DAYS` — and know that compliance-mode locking for a year
+is a year of storage nobody can remove.
+
+**Governance or compliance.** In *governance* mode a key with the
+`bypassGovernance` capability can still shorten or remove a lock — the escape
+hatch for a mistake. That includes the master key and, through the web
+console, **anyone who can log in to the Backblaze account**. So governance
+mode protects against this host being taken over, not against the account
+being taken over. In *compliance* mode nobody can shorten a lock, Backblaze
+included, until the retention ends.
+
+- Whatever the mode: turn on two-factor authentication for the Backblaze
+  account (in its sign-in settings), keep the master
+  application key offline, and give no one else the account login.
+- Governance is the sensible default when the threat you are guarding against
+  is this server: a compromised host holds a key that cannot delete, and the
+  account stays out of reach behind 2FA.
+- Choose **compliance** when account takeover is in scope — a phished or
+  shared login, an insider with console access — or when a regulator sets the
+  rule. The price is real: nothing locked can be removed early, by you either,
+  so start with a short `LOCK_DAYS` and lengthen it once the bill is known.
+
+With the [b2 command-line tool](https://www.backblaze.com/docs/cloud-storage-command-line-tools)
+(v4 syntax, written from its documentation and not run against an account
+here — check `b2 bucket update --help` on the version you have),
+authorised with the master key **on your own machine, not this host**:
+
+```bash
+b2 account authorize        # master keyID + key, interactively
+
+# 1. the bucket, with Object Lock. (An existing bucket can have Object Lock
+#    switched on from its settings in the console; it can never be switched off.)
+b2 bucket create --file-lock-enabled --default-server-side-encryption SSE-B2 "$BUCKET" allPrivate
+
+# 2. default retention for every new upload. The period is "<n> days" or
+#    "<n> years", space and all: the v4 parser rejects "30d".
+b2 bucket update --default-retention-mode governance \
+  --default-retention-period "${LOCK_DAYS} days" "$BUCKET" allPrivate
+
+# 2a. and check it took, before anything relies on it: this must print mode
+#     "governance" (or "compliance") and a period of LOCK_DAYS days. An empty
+#     or null defaultRetention means uploads are NOT locked -- stop and fix it.
+b2 bucket get "$BUCKET" | python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin).get("fileLockConfiguration"), indent=2))'
+
+# 3. lifecycle: one rule per prefix (encrypted and plaintext, daily and monthly)
+b2 bucket update "$BUCKET" allPrivate \
+  --lifecycle-rule "{\"fileNamePrefix\": \"$SITE/\", \"daysFromUploadingToHiding\": $DAILY_DAYS, \"daysFromHidingToDeleting\": 1}" \
+  --lifecycle-rule "{\"fileNamePrefix\": \"$SITE.crypt/\", \"daysFromUploadingToHiding\": $DAILY_DAYS, \"daysFromHidingToDeleting\": 1}" \
+  --lifecycle-rule "{\"fileNamePrefix\": \"monthly/\", \"daysFromUploadingToHiding\": $MONTHLY_DAYS, \"daysFromHidingToDeleting\": 1}"
+
+# 4. the key this host gets: write and read, never delete, this bucket only
+b2 key create --bucket "$BUCKET" "vectora-$SITE-offsite" listBuckets,listFiles,readFiles,writeFiles
+#    -> put its keyID in B2_ACCOUNT_ID and the key in B2_APPLICATION_KEY, then
+#       BACKUP_TARGET=offsite:$BUCKET, and recreate backup-offsite
+
+# 5. check all of it: fileLockConfiguration (as in 2a), the three
+#    lifecycleRules, and the key's capabilities (no deleteFiles)
+b2 bucket get "$BUCKET"
+b2 key list --long | grep "vectora-$SITE-offsite"
+```
+
+The same in the web console: **Buckets → Create a Bucket**, Private, Default
+Encryption *Enable*, Object Lock *Enable*; then on the bucket, **Object Lock →
+Default Retention Policy** *Governance*, `LOCK_DAYS` days; **Lifecycle
+Settings → Use custom lifecycle rules**, one row per prefix above with "Days
+till hide" and "Days till delete" = `1`; **Application Keys → Add a New
+Application Key**, *Allow access to bucket* = this bucket, *Type of access* =
+**Read and Write**, then — because the console's Read and Write includes
+`deleteFiles` — create it with the CLI (step 4) instead if you can. A key
+whose capabilities include `deleteFiles` defeats the point of everything else
+here.
+
+Prefixes in the rules are relative to the bucket: if `BACKUP_TARGET` carries a
+path (`offsite:<bucket>/vectora`), put it in front of each (`vectora/$SITE/`,
+`vectora/monthly/`).
+
+**What the service does with that key.** With `OFFSITE_RETENTION_DAYS` unset
+(the default), it never issues a delete of any kind. If it *is* set and the
+store refuses the delete — no `deleteFiles`, or a locked version — the service
+logs once that pruning is **delegated to the bucket's lifecycle rules**, sets
+`prune=delegated` in its status file, and stops trying; that is a supported
+state, not a failure. Any other prune error is a failure, logged as
+`PRUNE FAILED`, shown by the healthcheck and pinged to `/fail`.
+
+One B2 subtlety: rclone's delete on B2 *hides* a file rather than removing
+it, and hiding needs only `writeFiles`. So against a write-only B2 key a
+prune may "succeed" by hiding old dailies; the versions themselves stay (and
+under Object Lock cannot be removed until their retention ends), and the
+lifecycle rule's "days till delete" removes them. Nothing is lost that the
+lifecycle rules would have kept — but it is one more reason to leave
+`OFFSITE_RETENTION_DAYS` unset and let the bucket decide.
+
+`OFFSITE_RETENTION_DAYS` remains for stores without lifecycle rules. It
+deletes dailies (never `monthly/`) last modified more than that many days ago,
+and has three limits built in: values under 14 are refused (the host keeps a
+week, and a shorter window would delete files only for the next hourly copy to
+upload them again); it runs only straight after a copy that succeeded; and it
+does not run at all unless a dump newer than `OFFSITE_MAX_AGE_HOURS` is at the
+destination — an archive that has stopped receiving is the last copy there is,
+and is not aged away.
+
+#### Cleaning up the plaintext secrets already in the bucket
+
+For a bucket that received copies before PR #402: it holds one
+`*-site_config_backup.json` per night — `db_password` and `encryption_key` in
+plaintext — next to unencrypted dumps of the whole CRM. Run this once, in
+order, from your own machine with your own credentials. Nothing here runs from
+the server, and the server's key should not be able to do step 4 anyway.
+
+**1. Find out whether anyone read them.** Before deleting anything, because
+deleting is also deleting the evidence.
+
+- Backblaze console → **Application Keys**: every key with access to this
+  bucket. Any you cannot account for: note its keyID, then delete it.
+- Backblaze console → **Reports**: per-bucket daily *Class B transactions*
+  (downloads) and *download bandwidth*, back to when the first copy was made.
+  Downloads on days nobody you know restored anything are the warning sign.
+- If server access logging or event notifications were configured on the
+  bucket, read those for downloads (`b2_download_file_by_name` /
+  `b2_download_file_by_id`, or S3 `GetObject`) of `*site_config_backup.json`.
+  B2 keeps no per-object read log unless it was set up beforehand; the
+  Reports page is then the evidence there is.
+- Write down what you found and the date: it decides step 3.
+
+**2. Rotate the site's database password — always.** It is cheap and it is in
+every one of those files. In the deploy directory on the server, in a quiet
+hour (the app is down for about a minute):
+
+```bash
+cd /path/to/deploy
+SITE_NAME=$(sed -n 's/^SITE_NAME=//p' .env)
+DB_NAME=$(docker compose exec -T backend sh -c "sed -n 's/.*\"db_name\": *\"\([^\"]*\)\".*/\1/p' sites/$SITE_NAME/site_config.json")
+OLD_DB_PASSWORD=$(docker compose exec -T backend sh -c "sed -n 's/.*\"db_password\": *\"\([^\"]*\)\".*/\1/p' sites/$SITE_NAME/site_config.json")
+export NEW_DB_PASSWORD=$(openssl rand -hex 24)
+
+# a. stop everything that holds a connection
+docker compose stop backend websocket queue-short queue-long scheduler backup
+
+# b. change it in MariaDB. The SQL goes on stdin, the root password comes from
+#    the db container's own environment: neither is on a command line.
+docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mariadb -uroot' <<SQL
+ALTER USER '$DB_NAME'@'%' IDENTIFIED BY '$NEW_DB_PASSWORD';
+SQL
+
+# c. and in the site's config (the value travels by environment)
+docker compose run --rm --no-deps -T -e NEW_DB_PASSWORD --entrypoint bash backend \
+  -c 'bench --site "$0" set-config db_password "$NEW_DB_PASSWORD"' "$SITE_NAME"
+
+# d. start everything again
+docker compose up -d
+
+# e. verify: the app answers, the database answers, the old password does not
+docker compose exec -T backend bench --site "$SITE_NAME" execute frappe.db.count --args "['User']"
+docker compose exec -T backend curl -fsS -H "Host: $SITE_NAME" http://localhost:8000/api/method/ping
+docker compose exec -T db sh -c "MYSQL_PWD='$OLD_DB_PASSWORD' mariadb -u'$DB_NAME' -e 'select 1'"   # must say: Access denied
+docker compose ps                                                                                   # all healthy again
+unset NEW_DB_PASSWORD OLD_DB_PASSWORD
+```
+
+The site user is `'<db_name>'@'%'` because `create-site` makes it with
+`--mariadb-user-host-login-scope='%'`; `SELECT user, host FROM mysql.user`
+confirms it. The new password lives only in `site_config.json` on the `sites`
+volume — `.env` never held it.
+
+The database **root** password (`DB_ROOT_PASSWORD` in `.env`) is not in
+`site_config_backup.json`, so it was not exposed by these files. To rotate it
+anyway, change it in MariaDB first, then in `.env`, then let compose recreate
+`db` and `create-site` (the variable is in their environment — a cold restart
+of the database):
+
+```bash
+export NEW_ROOT=$(openssl rand -hex 24)
+docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mariadb -uroot' <<SQL
+ALTER USER IF EXISTS 'root'@'%' IDENTIFIED BY '$NEW_ROOT';
+ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY '$NEW_ROOT';
+SQL
+cp .env .env.bak-root && sed -i "s/^DB_ROOT_PASSWORD=.*/DB_ROOT_PASSWORD=$NEW_ROOT/" .env
+docker compose up -d                                   # recreates db and create-site
+docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mariadb -uroot -e "select 1"'
+shred -u .env.bak-root; unset NEW_ROOT
+```
+
+`MYSQL_ROOT_PASSWORD` is read only when the data directory is first
+initialised, which is why the `ALTER USER` comes first: changing `.env` alone
+changes nothing but the next `create-site`'s view of it. Both procedures were
+rehearsed on a throwaway stack.
+
+**3. The `encryption_key` — only if step 1 found exposure, and not by changing
+it.** The pinned frappe (`scripts/frappe-pin.env`, e2e1006be) has **no**
+supported key-rotation command: nothing in `frappe/commands` or
+`frappe/utils/password.py` re-encrypts under a new key. What the key protects
+in this codebase:
+
+- every Password field: the `__Auth` table, rows with `encrypted = 1` — mail
+  account passwords, CRM Acumatica / WhatsApp / telephony credentials, user
+  API secrets, OAuth client secrets;
+- two-factor OTP secrets (`tabDefaultValue`, `<user>_otpsecret`);
+- the HMAC secret for signed URLs (`frappe.utils.verified_command`) — e.g.
+  unsubscribe links — unless `site_config.json` sets a separate `secret`;
+- frappe's own backup encryption key, which a v14 patch seeded from it (used
+  only if *System Settings → Encrypt Backups* is on; it is off here).
+
+Changing `encryption_key` in `site_config.json` re-encrypts **none** of that:
+every stored secret fails with "Encryption key is invalid", every 2FA user is
+locked out, every link already sent stops verifying. Do not do it, and do not
+script a re-encryption the framework does not provide.
+
+What does work, and is the actual fix: **make what the key decrypts worthless.**
+Change each secret at its source — a new Acumatica password, new WhatsApp and
+telephony tokens, new mail-account app passwords, regenerated API keys, users
+re-enrolling 2FA — and enter the new values in the CRM. They are encrypted with
+the same key, but the copies of the old ciphertext in the bucket now decrypt
+to credentials that no longer work. The key itself then protects nothing an
+attacker can use. Record which secrets you changed. (If you also want signed
+links to stop depending on it, set a long random `secret` in
+`site_config.json`; links already in people's mailboxes stop working.)
+
+If step 1 found nothing, the risk that remains is that someone read the files
+without leaving a trace you could see; weigh that against the work above. The
+database password in step 2 is rotated either way.
+
+**4. Delete them.** With a key of your own that has `listFiles` and
+`deleteFiles` on the bucket (not the server's):
+
+```bash
+export PURGE_B2_ACCOUNT_ID=<keyID> PURGE_B2_APPLICATION_KEY=<key>
+scripts/purge-plaintext-site-config-backups.sh offsite:<bucket>            # dry run: lists and counts
+scripts/purge-plaintext-site-config-backups.sh --delete offsite:<bucket>   # asks you to type the bucket name
+```
+
+It touches only `*site_config_backup*.json` outside the `*.crypt/` prefixes
+(an encrypted archive's copies are ciphertext and are what make it
+self-contained), deletes them permanently on B2 (`--b2-hard-delete` — a plain
+delete only hides, and the hidden version keeps the secret), then lists again
+*including old versions* and exits non-zero, saying the secrets are still
+recoverable, if any version of any of them is left. It must know the remote is
+B2 to do that: it takes the type from `PURGE_B2_*` / `RCLONE_CONFIG_<REMOTE>_TYPE`,
+or from `rclone config show <remote>` when the remote is defined in your
+`rclone.conf`, and refuses `--delete` when it cannot tell (or when the remote
+is another kind of store, where it cannot prove old versions are gone). Files
+still under Object Lock retention cannot be deleted until it ends; if it
+reports some, delete them from the console's *Show versions* view after their
+retain-until date.
+
+The unencrypted dumps beside them still hold every customer record; they go
+when the plaintext prefix is retired after [switching to encrypted
+copies](#encrypting-the-copies).
+
+### Restore drill
+
+A backup that has never been restored is a hope. `scripts/restore-drill.sh`
+restores one into a throwaway stack and says whether it worked:
+
+```bash
+cd /path/to/repo
+scripts/restore-drill.sh --record deploy/restore-drills.log offsite                # newest daily from the bucket
+scripts/restore-drill.sh --record deploy/restore-drills.log --monthly offsite      # newest monthly
+scripts/restore-drill.sh --stamp 20261102_020001 offsite                           # a particular night
+scripts/restore-drill.sh /path/to/a/backup/dir                                     # a set on disk
+```
+
+With `offsite` it reads the bucket, prefix and passphrase from `deploy/.env`
+(`--env-file` for another) and decrypts when `OFFSITE_CRYPT_PASSWORD` is set.
+It reads with the server's key by default; a key of its own is better —
+`b2 key create --bucket "$BUCKET" vectora-restore-drill listBuckets,listFiles,readFiles` —
+passed as `DRILL_B2_ACCOUNT_ID` / `DRILL_B2_APPLICATION_KEY`. Whichever key, it
+never writes to the bucket: the remote is only ever the source of an `rclone
+lsf` or `rclone copy` into a private temp directory.
+
+Then, in a compose project of its own (`vbk-drill-<time>`; `--project` to
+name it), on an **internal-only network** with **no published ports** — so
+nothing restored can send mail, call the ERP or be reached — it creates a
+fresh site, puts the set's `encryption_key` in place (from the archive's
+`site_config_backup.json`, or `--encryption-key-file`), restores the database
+and both file archives, runs `bench migrate`, counts deals, leads,
+organisations, contacts, users and files, checks the file archives' contents
+arrived, checks every stored secret decrypts with the key, starts the app
+server and asks `/api/method/ping`. Output:
+
+```
+  step                                       result     secs  detail
+  fetch the backup set from the bucket       ok            2
+  check the backup set                       ok            0  20261116_143051: db +public +private +site_config
+  start the throwaway stack (vbk-drill-…)    ok            6
+  create a fresh site                        ok           24
+  restore the database and files             ok           17
+  bench migrate                              ok            4
+  row counts                                 ok           11  CRM Deal=0 CRM Lead=1 ... User=2 File=2
+  files restored                             ok            0  public 1/1, private 1/1
+  stored secrets decrypt with the key        ok            1  1 of 1 stored secrets decrypt
+  GET /api/method/ping                       ok            3  {"message":"pong"}
+
+RESULT: PASS in 68s
+```
+
+The exit status is 0 only on PASS. Everything it started is removed with
+`docker compose down -v` when it exits, however it exits, and the temp
+directory holding the decrypted backup goes with it. It refuses to run as any
+project whose name starts with `vectora` (compose would name its containers
+`vectora-*`, and its teardown is `down -v`), and in any project that already
+has containers. Without an encryption key the secrets step reports
+`NOT VERIFIED` rather than failing — but a real new-host restore without that
+key loses every integration credential, so treat it as a finding. A backup
+with no deals and no leads fails unless `--allow-empty`: restoring an empty
+CRM proves little.
+
+**Run it quarterly**, and after any change to the backup setup (new bucket,
+new passphrase, a frappe upgrade). Use a host with the RAM for a second
+database for ten minutes — the production host is fine outside working hours.
+`--record` appends one tab-separated line per run (date, PASS/FAIL, duration,
+backup stamp, source, image, counts); keep that file, and put the date and
+result in your ops log as well. A FAIL is an incident: the backups you have
+are not the backups you think you have.
+
+What it does not prove: that DNS, TLS and the proxy come back, that mail and
+the ERP connection work from a new host, or that people can log in through the
+browser. Those are the rest of [Restoring onto a new host](#restoring-onto-a-new-host).
 
 ### Why this is a service and not a note in a runbook
 
@@ -1871,8 +2339,9 @@ integration in step 6.
 The defaults below are deliberately conservative; loosen them as the pilot
 earns trust, not before.
 
-1. **Restore drill first.** Take a backup, restore it to a scratch site, log
-   in. A backup you have never restored is a hope, not a plan.
+1. **Restore drill first.** `scripts/restore-drill.sh offsite` — see
+   [Restore drill](#restore-drill) — then log in to a scratch site of your own
+   once. A backup you have never restored is a hope, not a plan.
    *Rehearsed on a dev bench (2026-08-18), and it is what found the missing
    `--db-root-password` above.* Backup of a 1,716-deal site produced a 998 KiB
    dump in under a second; restoring it to a fresh scratch site brought back
