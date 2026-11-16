@@ -18,6 +18,7 @@ SERVER_ITEM_FIELDS = (
 	"fulfilled_by",
 	"manual_override",
 	"captured_offline",
+	"offline_delay_minutes",
 )
 
 
@@ -224,7 +225,7 @@ class CRMRepPlan(Document):
 
 def _server_value(field: str, value):
 	"""A server-owned item field as compared by validate, with a new row's defaults."""
-	if field in ("manual_override", "captured_offline"):
+	if field in ("manual_override", "captured_offline", "offline_delay_minutes"):
 		return frappe.utils.cint(value)
 	if field == "status":
 		return value or "Planned"

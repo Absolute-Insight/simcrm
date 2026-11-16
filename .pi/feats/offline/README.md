@@ -150,7 +150,7 @@ sending it, and *Send again* asks the server.
 `captured_at` is the device's clock corrected by the handshake's skew. It is
 never accepted in the future (five minutes of tolerance, then clamped).
 **It buys one thing**: with *Plan only for today or later* on, an activity
-captured offline is accepted up to `OFFLINE_GRACE_HOURS` (72) after the fact,
+captured offline is accepted up to `OFFLINE_GRACE_HOURS` (24) after the fact,
 where the online door refuses yesterday. Anything that took more than 15
 minutes to arrive, **or is dated on an earlier day than the one it arrived
 on** (a visit captured at 23:52 and delivered at 00:03), is flagged
@@ -162,7 +162,7 @@ manager can tell the device's word from the server's. The whitelisted
 not whitelisted, takes it.
 
 `captured_at` is the device's word and nothing on the server witnesses it:
-any signed-in client can claim an activity was captured up to 72 hours ago
+any signed-in client can claim an activity was captured up to 24 hours ago
 and have it accepted past the day lock, flagged. That is the price of the
 exemption, accepted knowingly; closing it needs evidence the server holds
 itself (a device id on the handshake, say), which is a product decision.
@@ -242,6 +242,27 @@ stored as blobs in the *pack's* store — so every clear of the pack takes
 them too, and expiry now clears the whole store rather than one key. Only
 `/files/<name>` and `/private/files/<name>` are ever fetched, whatever the
 pack says, and only an `image/*` response is kept. All pages or none.
+
+### 6. What a manager can see, and what a manager carries
+
+**How late.** An item flagged `captured_offline` also stores
+`offline_delay_minutes`: how long after the rep captured it the entry reached
+the server. Server-owned like the flag, carried across a `save_plan`, cleared
+by `clear_override`. The Planner's cloud marker and the team week show it
+("offline +5h", "Logged offline, sent 5 hours later"), and *Visits against
+target* has a **Logged offline** count per rep (the dashboard panel says
+"· N offline"). Nothing is refused on the strength of it: the capture time is
+the phone's word and nothing on the server can witness it (a device id would
+be the phone's word too). Visibility is the control; the 24-hour grace — MBP's
+call on 2026-11-16, reps do not stay on site overnight — bounds how far back a
+forged time can reach.
+
+**A manager's pack is narrowed.** A rep carries what they may see, unclaimed
+customers included (they may be sent to one). A manager may see the whole site;
+their phone carries only the customers of the reps they lead (where the sales
+hierarchy names a team), and the customers on their own plans and open deals
+(`_managers_customers`). Deals and notes travel only with a carried customer,
+for everyone: field mode never shows a deal anywhere else.
 
 ## What is on the device, and when it goes
 

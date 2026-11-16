@@ -92,7 +92,11 @@ RECEIPT = "CRM Offline Receipt"
 # With "plan only for today or later" on, an activity is logged on the day it
 # happens. A phone with no signal cannot, so one captured offline is accepted
 # this long after the fact -- and flagged. Past it, the lock stands.
-OFFLINE_GRACE_HOURS = 72
+#
+# A day, MBP's call (2026-11-16): reps do not stay at a site overnight, so a
+# visit is back on the network by the next morning at the latest. Longer would
+# only widen what a forged capture time can back-date.
+OFFLINE_GRACE_HOURS = 24
 
 # An entry that took longer than this to arrive was captured without a
 # connection, and its time is the device's word. Shorter is just a slow line.
@@ -231,9 +235,9 @@ def _pack_body() -> dict:
 
 	organizations = _organizations()
 	contacts = _contacts(organizations)
-	deals = _deals()
+	deals = _deals(organizations)
 	history = _history(since)
-	notes = _notes(since)
+	notes = _notes(since, organizations, deals)
 	tasks = _tasks()
 
 	truncated = [
@@ -318,8 +322,15 @@ def _sheets() -> list[dict]:
 
 
 def _organizations() -> list[dict]:
+	filters = {}
+	carried = _managers_customers()
+	if carried is not None:
+		if not carried:
+			return []
+		filters["name"] = ("in", sorted(carried))
 	rows = frappe.get_list(
 		"CRM Organization",
+		filters=filters,
 		fields=["name", "organization_name", "website", "industry", "territory", "account_owner", "address"],
 		order_by="organization_name asc",
 		limit=MAX_ORGANIZATIONS,
@@ -328,6 +339,79 @@ def _organizations() -> list[dict]:
 	for row in rows:
 		row["address"] = addresses.get(row.pop("address", None))
 	return rows
+
+
+def _managers_customers() -> set[str] | None:
+	"""The customers a manager's phone carries, or None for a rep (no narrowing).
+
+	A rep carries what they may see: their customers and the unclaimed ones
+	they might be sent to. A manager may see far more -- a Sales Manager outside
+	the tree, every customer on the site -- and the pack would put all of it on
+	a phone, which is the most data at risk if it is lost and the most work for
+	the server on every sync, for someone who visits a handful.
+
+	So a manager carries the customers of the reps they lead, where the sales
+	hierarchy names a team; the customers on their own plans (this window and
+	next week) and on the open deals they own. Row scoping still applies on top:
+	this only ever narrows what ``frappe.get_list`` would return.
+	"""
+	from crm.permissions.customers import is_manager
+	from crm.permissions.org_hierarchy import _in_hierarchy, _team_mem_query, hierarchy_enabled
+
+	user = frappe.session.user
+	if not is_manager(user):
+		return None
+
+	carried: set[str] = set()
+	# The team is the hierarchy's answer, asked directly: visible_users says
+	# "everyone" for a System Manager before it looks at the tree, which would
+	# leave a System Manager who leads a team carrying none of it.
+	if hierarchy_enabled() and _in_hierarchy(user):
+		team = [member for member in (_team_mem_query(user).run(pluck=True) or []) if member != user]
+	else:
+		team = []
+	if team:
+		carried.update(
+			frappe.get_all(
+				"CRM Organization",
+				filters={"account_owner": ("in", team)},
+				pluck="name",
+				limit=MAX_ORGANIZATIONS,
+			)
+		)
+
+	since = frappe.utils.getdate() - timedelta(days=HISTORY_DAYS)
+	monday, _sunday = week_of(since)
+	plans = frappe.get_all("CRM Rep Plan", filters={"user": user, "week_start": (">=", monday)}, pluck="name")
+	if plans:
+		carried.update(
+			frappe.get_all(
+				"CRM Rep Plan Item",
+				filters={
+					"parent": ("in", plans),
+					"parenttype": "CRM Rep Plan",
+					"organization": ("is", "set"),
+				},
+				pluck="organization",
+				distinct=True,
+			)
+		)
+
+	carried.update(
+		row
+		for row in frappe.get_all(
+			"CRM Deal",
+			filters={"deal_owner": user, "status": ("not in", _closed_statuses() or [""])},
+			pluck="organization",
+			distinct=True,
+		)
+		if row
+	)
+	return carried
+
+
+def _closed_statuses() -> list[str]:
+	return frappe.get_all("CRM Deal Status", filters={"type": ("in", CLOSED_DEAL_TYPES)}, pluck="name")
 
 
 def _addresses(names: set[str]) -> dict[str, dict]:
@@ -365,9 +449,19 @@ def _contacts(organizations: list[dict]) -> list[dict]:
 	)
 
 
-def _deals() -> list[dict]:
-	closed = frappe.get_all("CRM Deal Status", filters={"type": ("in", CLOSED_DEAL_TYPES)}, pluck="name")
-	filters = {"status": ("not in", closed)} if closed else {}
+def _deals(organizations: list[dict]) -> list[dict]:
+	"""Open deals at the customers being carried.
+
+	Field mode only ever shows a deal under its customer, so a deal at a
+	customer the phone does not carry -- or at none -- is weight with no screen.
+	"""
+	carried = sorted(row.name for row in organizations)
+	if not carried:
+		return []
+	closed = _closed_statuses()
+	filters = {"organization": ("in", carried)}
+	if closed:
+		filters["status"] = ("not in", closed)
 	return frappe.get_list(
 		"CRM Deal",
 		filters=filters,
@@ -419,10 +513,18 @@ def _history(since) -> list[dict]:
 	return rows
 
 
-def _notes(since) -> list[dict]:
+def _notes(since, organizations: list[dict], deals: list[dict]) -> list[dict]:
+	"""Recent notes on the customers and deals being carried -- where they show."""
+	references = sorted({row.name for row in organizations} | {row.name for row in deals})
+	if not references:
+		return []
 	rows = frappe.get_list(
 		"FCRM Note",
-		filters={"reference_doctype": ("in", NOTE_DOCTYPES), "modified": (">=", since)},
+		filters={
+			"reference_doctype": ("in", NOTE_DOCTYPES),
+			"reference_docname": ("in", references),
+			"modified": (">=", since),
+		},
 		fields=["name", "title", "content", "reference_doctype", "reference_docname", "owner", "modified"],
 		order_by="modified desc",
 		limit=MAX_NOTES,
@@ -547,7 +649,11 @@ def replay(
 		_already_applied(request_id, current=True)
 		return {"request_id": request_id, "status": "duplicate"}
 
-	handler(payload, moment, late)
+	frappe.flags.offline_delay_minutes = int(age // 60)
+	try:
+		handler(payload, moment, late)
+	finally:
+		frappe.flags.offline_delay_minutes = None
 	return {"request_id": request_id, "status": "applied", "late": late}
 
 
@@ -646,7 +752,20 @@ def _flag_offline(item: str, moment: datetime, late: bool) -> None:
 	The same test ``_replay_log_activity`` applies.
 	"""
 	if late or moment.date() < frappe.utils.getdate():
-		frappe.db.set_value("CRM Rep Plan Item", item, "captured_offline", 1)
+		frappe.db.set_value(
+			"CRM Rep Plan Item",
+			item,
+			{"captured_offline": 1, "offline_delay_minutes": _delay_minutes()},
+		)
+
+
+def _delay_minutes() -> int:
+	"""How long the entry being replayed took to reach the server, in minutes.
+
+	Set by ``replay`` around the handler it calls, from the capture time it has
+	already bounded (never in the future, never older than the receipts).
+	"""
+	return max(0, int(frappe.flags.offline_delay_minutes or 0))
 
 
 def _customer(name: str) -> str | None:
@@ -706,6 +825,7 @@ def _replay_log_activity(payload: dict, moment: datetime, late: bool) -> None:
 		activity_type=_name(payload, "activity_type") or "Unplanned Meeting",
 		# flagged whenever the server did not witness the day it is dated
 		captured_offline=late or past,
+		offline_delay_minutes=_delay_minutes(),
 	)
 
 

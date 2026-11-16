@@ -163,11 +163,96 @@ class FieldPackTest(IntegrationTestCase):
 		names = {row["name"] for row in self.pack()["organizations"]}
 		self.assertTrue({self.mine, self.theirs} <= names)
 
-	def test_a_manager_carries_what_a_manager_sees(self):
-		make_user(MANAGER, "Sales Manager")
+	def test_a_manager_who_sees_everything_does_not_carry_everything(self):
+		# A Sales Manager outside the tree may read every customer on the site;
+		# the phone carries only the ones on their own plans and deals.
 		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		planned = self.org("Manager planned", REP)
+		dealt = self.org("Manager dealt", OTHER)
+		self.deal(dealt, MANAGER)
+		frappe.set_user(MANAGER)
+		save_plan(
+			this_monday(),
+			[
+				{
+					"activity_type": "Visit",
+					"planned_date": str(frappe.utils.getdate()),
+					"organization": planned,
+				}
+			],
+		)
+		frappe.set_user("Administrator")
 		names = {row["name"] for row in self.pack(MANAGER)["organizations"]}
-		self.assertTrue({self.mine, self.theirs} <= names)
+		self.assertEqual(names, {planned, dealt})
+		self.assertNotIn(self.mine, names)
+		self.assertNotIn(self.theirs, names)
+
+	def test_a_manager_with_a_team_carries_the_teams_customers(self):
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+		frappe.db.delete("CRM Sales Hierarchy", {"user": ("in", [MANAGER, REP, OTHER])})
+		top = frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": MANAGER}).insert(
+			ignore_permissions=True
+		)
+		frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": REP, "reports_to": top.name}).insert(
+			ignore_permissions=True
+		)
+		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
+		self.addCleanup(frappe.cache.delete_value, "crm_sales_hierarchy_subtree")
+		names = {row["name"] for row in self.pack(MANAGER)["organizations"]}
+		self.assertIn(self.mine, names)
+		# OTHER is not on the manager's team
+		self.assertNotIn(self.theirs, names)
+
+	def test_a_manager_on_own_records_only_carries_only_what_they_may_read(self):
+		# the fresh-install default: the manager's plan names a customer that
+		# row scoping hides from them -- the candidate set must not let it in
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		hidden = self.org("Manager hidden", OTHER)
+		frappe.get_doc(
+			{
+				"doctype": "CRM Rep Plan",
+				"user": MANAGER,
+				"week_start": this_monday(),
+				"items": [
+					{
+						"activity_type": "Visit",
+						"planned_date": str(frappe.utils.getdate()),
+						"organization": hidden,
+					}
+				],
+			}
+		).insert(ignore_permissions=True)
+		readable = set(frappe.get_list("CRM Organization", pluck="name", user=MANAGER, limit=0))
+		names = {row["name"] for row in self.pack(MANAGER)["organizations"]}
+		self.assertTrue(names <= readable)
+		self.assertEqual(hidden in names, hidden in readable)
+
+	def test_a_system_manager_who_leads_a_team_carries_it(self):
+		frappe.get_doc("User", MANAGER).add_roles("System Manager")
+		self.test_a_manager_with_a_team_carries_the_teams_customers()
+
+	def test_a_manager_with_nothing_of_their_own_carries_nothing(self):
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
+		pack = self.pack(MANAGER)
+		self.assertEqual((pack["organizations"], pack["contacts"], pack["deals"]), ([], [], []))
+
+	def test_a_rep_still_carries_unclaimed_customers(self):
+		# the narrowing is for managers: a rep may be sent to an unclaimed one
+		unclaimed = frappe.get_doc(
+			{
+				"doctype": "CRM Organization",
+				"organization_name": f"Pack Free {frappe.generate_hash(length=6)}",
+			}
+		).insert(ignore_permissions=True)
+		self.assertIn(unclaimed.name, {row["name"] for row in self.pack()["organizations"]})
+
+	def test_deals_and_notes_travel_only_with_their_customer(self):
+		# a deal with no customer has nowhere to show in field mode
+		lone = frappe.get_doc({"doctype": "CRM Deal", "deal_owner": REP}).insert(ignore_permissions=True)
+		at_mine = self.deal(self.mine, REP)
+		names = {row["name"] for row in self.pack()["deals"]}
+		self.assertIn(at_mine, names)
+		self.assertNotIn(lone.name, names)
 
 	def test_open_deals_come_along_and_closed_ones_do_not(self):
 		won = frappe.get_all("CRM Deal Status", filters={"type": "Won"}, pluck="name", limit=1)

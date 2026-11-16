@@ -119,10 +119,14 @@
                       {{ __(activityLabel(item.activity_type)) }} ·
                       {{ statusLabel(item.status) }}
                       <!-- the manager's view is where this matters: a visit
-                           the server did not witness the time of -->
-                      <template v-if="item.captured_offline">
-                        · {{ __('offline') }}
-                      </template>
+                           the server did not witness the time of. Grey, not
+                           the status colour: it is not part of the status. -->
+                      <span
+                        v-if="item.captured_offline"
+                        class="text-ink-gray-6"
+                      >
+                        · {{ offlineShort(item.offline_delay_minutes) }}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -148,7 +152,12 @@ import {
   todayInTimeZone,
   weekDayCells,
 } from '@/utils/planner'
-import { statusColor, statusLabel, typeIcon } from '@/utils/plannerDisplay'
+import {
+  offlineDelayLabel,
+  statusColor,
+  statusLabel,
+  typeIcon,
+} from '@/utils/plannerDisplay'
 import { quiet } from '@/utils/quiet'
 import { Select, createResource, dayjs, getConfig } from 'frappe-ui'
 import { computed, ref, watch } from 'vue'
@@ -219,6 +228,16 @@ function dayLabel(date) {
   return dayjs(date).format('ddd D')
 }
 
+/* The cell is ~140px: "offline +2d" fits where the sentence does not; the
+   tooltip carries the sentence. */
+function offlineShort(minutes) {
+  const m = Number(minutes)
+  if (!Number.isFinite(m) || m < 60) return __('offline')
+  // the same rounding as offlineDelayLabel, so 23h40m reads "+1d" in both
+  if (Math.round(m / 60) < 24) return __('offline +{0}h', [Math.round(m / 60)])
+  return __('offline +{0}d', [Math.round(m / 1440)])
+}
+
 function itemTitle(item) {
   return [
     activityLabel(item.activity_type),
@@ -226,7 +245,7 @@ function itemTitle(item) {
     item.note,
     item.outcome,
     statusLabel(item.status),
-    item.captured_offline ? __('Captured offline, synced later') : '',
+    item.captured_offline ? offlineDelayLabel(item.offline_delay_minutes) : '',
   ]
     .filter(Boolean)
     .join(' · ')

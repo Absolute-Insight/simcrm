@@ -337,11 +337,7 @@
                   </Tooltip>
                   <Tooltip
                     v-if="item.captured_offline"
-                    :text="
-                      __(
-                        'Captured with no connection and synced later — its time is the device’s.',
-                      )
-                    "
+                    :text="`${offlineDelayLabel(item.offline_delay_minutes)}. ${__('Its time is the phone’s word, not the server’s.')}`"
                   >
                     <LucideCloudOff
                       class="size-3.5 text-ink-gray-5"
@@ -471,7 +467,12 @@ import LayoutHeader from '@/components/LayoutHeader.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import ViewBreadcrumbs from '@/components/ViewBreadcrumbs.vue'
 import TeamWeek from '@/components/Planner/TeamWeek.vue'
-import { statusColor, statusLabel, typeIcon } from '@/utils/plannerDisplay'
+import {
+  offlineDelayLabel,
+  statusColor,
+  statusLabel,
+  typeIcon,
+} from '@/utils/plannerDisplay'
 import { useConfirmGate } from '@/composables/confirmGate'
 import { describeError } from '@/utils/describeError'
 import { quiet } from '@/utils/quiet'
@@ -653,6 +654,7 @@ function mergeServerPlan(data) {
       outcome: fresh.outcome,
       manual_override: fresh.manual_override,
       captured_offline: fresh.captured_offline,
+      offline_delay_minutes: fresh.offline_delay_minutes,
       fulfilled_by_doctype: fresh.fulfilled_by_doctype,
       fulfilled_by: fresh.fulfilled_by,
     }
