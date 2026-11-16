@@ -2147,10 +2147,10 @@
   resolved "https://registry.yarnpkg.com/@twilio/voice-errors/-/voice-errors-1.7.0.tgz#44c93f4bffad64d869fbdc70f0042b1e5566fa01"
   integrity sha512-9TvniWpzU0iy6SYFAcDP+HG+/mNz2yAHSs7+m0DZk86lE+LoTB6J/ZONTPuxXrXWi4tso/DulSHuA0w7nIQtGg==
 
-"@twilio/voice-sdk@^2.18.5":
-  version "2.18.5"
-  resolved "https://registry.yarnpkg.com/@twilio/voice-sdk/-/voice-sdk-2.18.5.tgz#11fe3904e7a984a611d7d074176cc8283a6aa7af"
-  integrity sha512-2/tw1IDAIn7j6yFDOln8p93v3aHIxNIN93JwL98cHIlbkSNeU/Jt9zGM/0TvDpNjo+k88lvAew4jgOjKlc9/KA==
+"@twilio/voice-sdk@^2.19.0":
+  version "2.19.0"
+  resolved "https://registry.yarnpkg.com/@twilio/voice-sdk/-/voice-sdk-2.19.0.tgz#dbce404b5652bcf326b7ff58edb86c7c7a8c6c9f"
+  integrity sha512-gXMCMtvu3Yn+MHYyrtLnqsoM82h74uFd1qfBU6AsWoW+fDEqQCI3mp4t2cHU5ORYbW0T0J3r3KIMyP4ecp1WXw==
   dependencies:
     "@twilio/voice-errors" "1.7.0"
     "@types/events" "3.0.3"
@@ -2365,10 +2365,10 @@
     "@rolldown/pluginutils" "^1.0.1"
     "@vue/babel-plugin-jsx" "^2.0.1"
 
-"@vitejs/plugin-vue@^6.0.10":
-  version "6.0.10"
-  resolved "https://registry.yarnpkg.com/@vitejs/plugin-vue/-/plugin-vue-6.0.10.tgz#fa58b9f63a6062d537a7db5040de0f7a873d8de3"
-  integrity sha512-b80aUQh3n+qEzzZm5oQp3rT2QImeCx58K6eFl/RkJ3d65KW0kTuv5lNsLRVAjbW9YRUpo/wzmvzMgV34bTAItA==
+"@vitejs/plugin-vue@^6.0.11":
+  version "6.0.11"
+  resolved "https://registry.yarnpkg.com/@vitejs/plugin-vue/-/plugin-vue-6.0.11.tgz#a4003b3e34f9a3d6808143778545b6c1fc1b69eb"
+  integrity sha512-m48lskIUJGlB6qUiYhDMI8nd2ngeidz2U4nKTjqI13cFMu5rH8JeEILPkDtK9Fk/TjBA2pkj8AlbenqDaKu+ww==
   dependencies:
     "@rolldown/pluginutils" "^1.0.1"
 
