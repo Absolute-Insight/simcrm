@@ -2411,7 +2411,9 @@ def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list
 		.run()
 	)
 
-	reps = set(counts) | set(unplanned)
+	# a rep whose only items in the period were logged offline -- calls,
+	# deliveries -- still gets the row that shows it
+	reps = set(counts) | set(unplanned) | set(offline)
 	scope = _scope_users(user)
 	filters = {"user": ("in", scope)} if scope is not None else {}
 	reps.update(

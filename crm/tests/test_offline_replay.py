@@ -399,6 +399,16 @@ class PlannedItemTest(ReplayTestCase):
 		self.assertEqual(row["captured_offline"], 1)
 		self.assertAlmostEqual(row["offline_delay_minutes"], 180, delta=2)
 
+	def test_a_later_outcome_by_hand_clears_an_earlier_offline_one(self):
+		from crm.api.rep_plan import complete_item
+
+		item = self.plan_one()
+		replay(new_id(), "cancel_item", {"item": item, "reason": "Plant shut"}, ago(hours=3))
+		frappe.db.set_value("CRM Rep Plan Item", item, "status", "Planned")
+		complete_item(item, "Went after all")
+		row = next(r for r in self.items() if r["name"] == item)
+		self.assertEqual((row["captured_offline"], row["offline_delay_minutes"]), (0, 0))
+
 	def test_handing_it_back_clears_the_delay_too(self):
 		from crm.api.rep_plan import clear_override
 

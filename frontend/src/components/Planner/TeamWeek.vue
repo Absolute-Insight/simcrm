@@ -233,7 +233,8 @@ function dayLabel(date) {
 function offlineShort(minutes) {
   const m = Number(minutes)
   if (!Number.isFinite(m) || m < 60) return __('offline')
-  if (m < 1440) return __('offline +{0}h', [Math.round(m / 60)])
+  // the same rounding as offlineDelayLabel, so 23h40m reads "+1d" in both
+  if (Math.round(m / 60) < 24) return __('offline +{0}h', [Math.round(m / 60)])
   return __('offline +{0}d', [Math.round(m / 1440)])
 }
 

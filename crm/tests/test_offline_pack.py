@@ -203,6 +203,34 @@ class FieldPackTest(IntegrationTestCase):
 		# OTHER is not on the manager's team
 		self.assertNotIn(self.theirs, names)
 
+	def test_a_manager_on_own_records_only_carries_only_what_they_may_read(self):
+		# the fresh-install default: the manager's plan names a customer that
+		# row scoping hides from them -- the candidate set must not let it in
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		hidden = self.org("Manager hidden", OTHER)
+		frappe.get_doc(
+			{
+				"doctype": "CRM Rep Plan",
+				"user": MANAGER,
+				"week_start": this_monday(),
+				"items": [
+					{
+						"activity_type": "Visit",
+						"planned_date": str(frappe.utils.getdate()),
+						"organization": hidden,
+					}
+				],
+			}
+		).insert(ignore_permissions=True)
+		readable = set(frappe.get_list("CRM Organization", pluck="name", user=MANAGER, limit=0))
+		names = {row["name"] for row in self.pack(MANAGER)["organizations"]}
+		self.assertTrue(names <= readable)
+		self.assertEqual(hidden in names, hidden in readable)
+
+	def test_a_system_manager_who_leads_a_team_carries_it(self):
+		frappe.get_doc("User", MANAGER).add_roles("System Manager")
+		self.test_a_manager_with_a_team_carries_the_teams_customers()
+
 	def test_a_manager_with_nothing_of_their_own_carries_nothing(self):
 		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
 		pack = self.pack(MANAGER)

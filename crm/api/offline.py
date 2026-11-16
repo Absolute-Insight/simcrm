@@ -355,15 +355,21 @@ def _managers_customers() -> set[str] | None:
 	next week) and on the open deals they own. Row scoping still applies on top:
 	this only ever narrows what ``frappe.get_list`` would return.
 	"""
-	from crm.fcrm.doctype.crm_rep_plan.crm_rep_plan import visible_users
 	from crm.permissions.customers import is_manager
+	from crm.permissions.org_hierarchy import _in_hierarchy, _team_mem_query, hierarchy_enabled
 
 	user = frappe.session.user
 	if not is_manager(user):
 		return None
 
 	carried: set[str] = set()
-	team = [member for member in (visible_users(user) or []) if member != user]
+	# The team is the hierarchy's answer, asked directly: visible_users says
+	# "everyone" for a System Manager before it looks at the tree, which would
+	# leave a System Manager who leads a team carrying none of it.
+	if hierarchy_enabled() and _in_hierarchy(user):
+		team = [member for member in (_team_mem_query(user).run(pluck=True) or []) if member != user]
+	else:
+		team = []
 	if team:
 		carried.update(
 			frappe.get_all(

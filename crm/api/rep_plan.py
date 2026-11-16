@@ -589,6 +589,10 @@ def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled
 	values = {
 		"status": "Done",
 		"manual_override": 1,
+		# a new outcome by hand: an earlier one captured offline no longer
+		# describes the row (a replay that is itself late flags it again)
+		"captured_offline": 0,
+		"offline_delay_minutes": 0,
 		"fulfilled_by_doctype": fulfilled_by_doctype,
 		"fulfilled_by": fulfilled_by,
 	}
@@ -620,6 +624,10 @@ def mark_missed(item: str):
 		{
 			"status": "Missed",
 			"manual_override": 1,
+			# a new outcome by hand: an earlier one captured offline no longer
+			# describes the row (a replay that is itself late flags it again)
+			"captured_offline": 0,
+			"offline_delay_minutes": 0,
 			"fulfilled_by_doctype": None,
 			"fulfilled_by": None,
 		},
@@ -813,6 +821,10 @@ def complete_item(item: str, outcome: str, when: str | None = None):
 		{
 			"status": "Done",
 			"manual_override": 1,
+			# a new outcome by hand: an earlier one captured offline no longer
+			# describes the row (a replay that is itself late flags it again)
+			"captured_offline": 0,
+			"offline_delay_minutes": 0,
 			"outcome": outcome,
 			"fulfilled_by_doctype": "Event" if event else None,
 			"fulfilled_by": event,
@@ -862,6 +874,10 @@ def cancel_item(item: str, reason: str):
 		{
 			"status": "Cancelled",
 			"manual_override": 1,
+			# a new outcome by hand: an earlier one captured offline no longer
+			# describes the row (a replay that is itself late flags it again)
+			"captured_offline": 0,
+			"offline_delay_minutes": 0,
 			"outcome": reason,
 			"fulfilled_by_doctype": "Event" if event else None,
 			"fulfilled_by": event,
