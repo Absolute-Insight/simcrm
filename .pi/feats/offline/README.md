@@ -57,7 +57,7 @@ reads `crm/www/crm.py` and fails when they drift.
 **Who the shell is for.** `user_id` is a session cookie, and a phone drops it
 when it closes the app. So the server also sets a persistent cookie,
 `crm_field_user`, on every `/crm` render and on **every new session**
-(`crm.api.auth.name_field_user` on `on_session_creation`, 14 days — that hook is what stops it
+(`crm.api.auth.name_field_user` on `on_session_creation`, 7 days — that hook is what stops it
 naming the last rep after someone else signs in and goes to the desk) and
 deletes it in an `on_logout` hook
 (`crm.api.auth.forget_field_user`) — which runs for a logout from the desk
@@ -269,13 +269,13 @@ for everyone: field mode never shows a deal anywhere else.
 | Store | Holds | Cleared |
 |---|---|---|
 | localStorage `crm-offline-boot` | boot values, no token | logout from the app, lost session, another user, a refused handshake |
-| cookie `crm_field_user` | the signed-in user's id | any logout (server hook); expires after 14 days |
-| IndexedDB `vectora-field-pack` | the pack, and the page images of kept sheets | the same, after `PACK_MAX_AGE_DAYS` (14) without a sync, and when `get_pack` answers `NotAFieldUser` (the sales role was taken away). Not on any other `PermissionError`: one from inside the pack is a server fault, and must not empty every phone |
+| cookie `crm_field_user` | the signed-in user's id | any logout (server hook); expires after 7 days |
+| IndexedDB `vectora-field-pack` | the pack, and the page images of kept sheets | the same, after `PACK_MAX_AGE_DAYS` (7) without a sync, and when `get_pack` answers `NotAFieldUser` (the sales role was taken away). Not on any other `PermissionError`: one from inside the pack is a server fault, and must not empty every phone |
 | IndexedDB `vectora-field-outbox` | work the server has not seen | only by a confirmed send or the rep discarding it; never by logout, and another user's entries are neither shown nor sent |
 
 The store clears go through `clearOfflineCache()` / `claimOfflineCache()`.
 A logout from the **desk** runs none of that: the data stays on disk until
-the next `/crm` load or the 14-day expiry, but the shell will not open for
+the next `/crm` load or the 7-day expiry, but the shell will not open for
 it, because the cookie is gone. A manager who sees every record carries
 every record, up to the caps — that is the app's own rule, not narrowed here.
 The expiry is re-checked whenever the tab comes back, and a `syncedAt` ahead
@@ -285,7 +285,7 @@ constants at the top of `crm/api/offline.py`; `truncated` in the pack names
 any list that hit its cap, and every screen showing such a list says so
 (`packCut`) instead of "none on record".
 
-The 14 days are enforced by the device, and only can be: a phone with no
+The 7 days (the user's call, 2026-11-16; it was 14) are enforced by the device, and only can be: a phone with no
 connection cannot be told anything. The moment it has one, the pack is
 replaced, or dropped on a refusal. The server does not refuse a replay
 because the pack it was captured against is old — the outbox is the rep's

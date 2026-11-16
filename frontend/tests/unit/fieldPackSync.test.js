@@ -40,7 +40,7 @@ const envelope = (sections) => ({
   sections,
   generated_at: '2026-11-13 09:00:00',
   today: '2026-11-13',
-  max_age_days: 14,
+  max_age_days: 7,
 })
 
 const full = () => ({
@@ -139,7 +139,7 @@ describe('a pack the server will not give any more', () => {
       ...extra,
     })
 
-  it('is taken off the device at once, not when its fourteen days are up', async () => {
+  it('is taken off the device at once, not when its shelf life is up', async () => {
     const { syncPack, fieldPack, packState } = await load()
     await syncPack()
     expect(disk.has('pack')).toBe(true)
