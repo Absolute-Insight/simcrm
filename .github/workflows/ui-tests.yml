@@ -39,10 +39,10 @@ jobs:
         ports:
           - 11000:6379
       mariadb:
-        # Digest-pinned to match deploy/docker-compose.yml and the devcontainer:
-        # `mariadb:10.6` moves, and a suite that ran on a different engine than
-        # production proves less than it claims.
-        image: mariadb:10.6.28@sha256:553351e202c5f01c9e703d7d1d2b037a0aedb43c4fed79b3615d9183655f02c5
+        # Digest-pinned to the devcontainer's engine and deploy/'s DB_IMAGE
+        # target, MariaDB 11.4 LTS. 10.6 keeps its coverage in server-tests.yml's
+        # matrix until production has upgraded.
+        image: mariadb:11.4.13@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532
         env:
           MYSQL_ROOT_PASSWORD: root
         ports:

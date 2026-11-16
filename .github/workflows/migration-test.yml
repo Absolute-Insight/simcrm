@@ -26,21 +26,35 @@ concurrency:
 
 jobs:
     migrate:
-        name: Upgrade base branch -> PR
+        # The leg names carry the engine; the fixed-name job below is the one
+        # builds.yml's release guard and docs/RELEASING.md name.
+        name: Upgrade base branch -> PR (MariaDB ${{ matrix.db.version }})
         runs-on: ubuntu-latest
         timeout-minutes: 60
+        strategy:
+            fail-fast: false
+            matrix:
+                # Both engines while production is between them: until the
+                # operator runs "Upgrading MariaDB to 11.4" in deploy/README.md,
+                # the next release migrates a site on 10.6; after it, on 11.4.
+                # Drop the 10.6 leg in the PR that records production's upgrade.
+                db:
+                    - version: "10.6"
+                      image: mariadb:10.6.28@sha256:553351e202c5f01c9e703d7d1d2b037a0aedb43c4fed79b3615d9183655f02c5
+                    - version: "11.4"
+                      image: mariadb:11.4.13@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532
 
         services:
             mysql:
-                # Digest-pinned to match deploy/docker-compose.yml and the
-                # devcontainer: `mariadb:10.6` moves, and a suite that ran on a
-                # different engine than production proves less than it claims.
-                image: mariadb:10.6.28@sha256:553351e202c5f01c9e703d7d1d2b037a0aedb43c4fed79b3615d9183655f02c5
+                # Digest-pinned, to match deploy/docker-compose.yml's default
+                # and its DB_IMAGE target.
+                image: ${{ matrix.db.image }}
                 env:
                     MYSQL_ROOT_PASSWORD: root
                 ports:
                     - 3306:3306
-                options: --health-cmd="mysqladmin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+                # mariadb-admin: 11.x images no longer ship `mysqladmin`.
+                options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
 
         env:
             BASE_BRANCH: ${{ github.base_ref || github.ref_name }}
@@ -139,3 +153,21 @@ jobs:
                   rsync -a --delete --exclude=".git" "${GITHUB_WORKSPACE}/pr-crm/" apps/crm/
                   bench setup requirements --dev
                   bench --site test_site migrate
+
+    # One check with a fixed name, whatever the matrix holds: builds.yml's
+    # release guard requires "Upgrade base branch -> PR" by exact name, and
+    # the matrix legs' names carry the engine. `always()` so a failed leg
+    # still reports a verdict -- a skipped job is none, and the guard treats
+    # absence as unpublishable.
+    migrate-result:
+        name: Upgrade base branch -> PR
+        needs: migrate
+        if: always()
+        runs-on: ubuntu-latest
+        steps:
+            - name: Report the matrix result
+              env:
+                  RESULT: ${{ needs.migrate.result }}
+              run: |
+                  echo "matrix result: $RESULT"
+                  [ "$RESULT" = "success" ]
