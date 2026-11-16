@@ -453,7 +453,11 @@ services:
           # makes the shell read it as octal.
           while [ "$${h#0}" != "$$h" ]; do h="$${h#0}"; done
           [ -n "$$h" ] || h=26
-          find"/home/frappe/frappe-bench/sites/$$SITE_NAME/private/backups" -name "*-database*.sql.gz" -mmin "-$$(( h * 60 ))" 2>/dev/null | grep -q .
+          # The space after `find` is load-bearing: without it this was one
+          # word, "command not found", swallowed by the 2>/dev/null -- and a
+          # check that could never pass. The compose test now runs it against
+          # a real dump.
+          find "/home/frappe/frappe-bench/sites/$$SITE_NAME/private/backups" -name "*-database*.sql.gz" -mmin "-$$(( h * 60 ))" 2>/dev/null | grep -q .
       interval: 300s
       timeout: 30s
       retries: 3
