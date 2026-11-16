@@ -376,6 +376,49 @@ class VisitsByRepTest(VisitFixture, IntegrationTestCase):
 		# counted beside, never instead of: a visit logged offline is still a visit
 		self.assertEqual(row["completed"], 3)
 
+	def test_the_offline_share_is_of_everything_logged(self):
+		# the fixture logs (done or cancelled) seven items of any kind: three
+		# visits done, one cancelled, an unplanned meeting, a call, a delivery.
+		# The missed visit was not logged by anyone.
+		row = self.row()
+		self.assertEqual((row["offline"], row["logged"], row["offline_rate"]), (0, 7, 0))
+		logged = 7
+		plan = frappe.get_doc("CRM Rep Plan", {"user": REP, "week_start": self.monday})
+		done = [item for item in plan.items if item.status == "Done"]
+		for item in done[:2]:
+			frappe.db.set_value("CRM Rep Plan Item", item.name, "captured_offline", 1)
+		row = self.row()
+		self.assertEqual((row["offline"], row["logged"]), (2, logged))
+		self.assertEqual(row["offline_rate"], round(2 / logged * 100))
+		# and the report carries it as a column
+		report = get_report("visits_by_rep", self.start, self.end, REP)
+		self.assertIn("offline_rate", [column["key"] for column in report["columns"]])
+
+	def test_a_flagged_item_still_counts_whatever_became_of_it(self):
+		# a missed item was not logged, but one flagged offline was: the share
+		# never passes 100%
+		plan = frappe.get_doc("CRM Rep Plan", {"user": REP, "week_start": self.monday})
+		missed = next(item for item in plan.items if item.status == "Missed")
+		logged = self.row()["logged"]
+		frappe.db.set_value("CRM Rep Plan Item", missed.name, "captured_offline", 1)
+		row = self.row()
+		self.assertEqual((row["offline"], row["logged"]), (1, logged + 1))
+
+	def test_nothing_logged_is_no_share_not_zero(self):
+		make_target(OUTSIDER, 3)
+		make_plan(OUTSIDER, self.monday, [{"activity_type": "Visit", "planned_date": self.day(1)}])
+		rows = {r["user"]: r for r in visits_by_rep(self.start, self.end, OUTSIDER)}
+		self.assertEqual((rows[OUTSIDER]["logged"], rows[OUTSIDER]["offline"]), (0, 0))
+		self.assertIsNone(rows[OUTSIDER]["offline_rate"])
+
+	def test_offline_rate_is_safe_with_nothing_to_divide(self):
+		from crm.api.dashboard import offline_rate
+
+		self.assertIsNone(offline_rate(0, 0))
+		self.assertIsNone(offline_rate(3, 0))
+		self.assertEqual(offline_rate(2, 63), 3)
+		self.assertEqual(offline_rate(5, 4), 100)
+
 	def test_a_rep_whose_only_items_were_logged_offline_still_has_a_row(self):
 		make_plan(
 			OUTSIDER,
