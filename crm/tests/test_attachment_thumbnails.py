@@ -13,7 +13,11 @@ lists a rep reads.
 from __future__ import annotations
 
 import io
+import math
 import os
+import subprocess
+import sys
+import tempfile
 from unittest.mock import patch
 
 import frappe
@@ -28,6 +32,30 @@ from crm.utils.thumbnails import FIELD
 OWNER = "thumb-owner@crmtest.test"
 OTHER = "thumb-other@crmtest.test"
 ASSIGNEE = "thumb-assignee@crmtest.test"
+MANAGER = "thumb-manager@crmtest.test"
+
+#: What one render may add to a worker's resident memory, at each format's cap.
+#: queue-short runs in 512 MB; measured peaks are 14-126 MB.
+RENDER_MEMORY_BOUND_MB = 160
+
+MEASURE = """
+import sys
+from crm.utils import thumbnails
+
+def peak_kb(key):
+    with open("/proc/self/status") as status:
+        return int(next(line for line in status if line.startswith(key)).split()[1])
+
+with open("/proc/self/clear_refs", "w") as refs:
+    refs.write("5")  # resets VmHWM to what is resident now
+before = peak_kb("VmRSS:")
+try:
+    thumbnails.render(sys.argv[1])
+    result = "made"
+except thumbnails.Refused:
+    result = "refused"
+print(result, (peak_kb("VmHWM:") - before) // 1024)
+"""
 
 GPS_IFD = 0x8825
 ORIENTATION = 0x0112
@@ -83,8 +111,11 @@ class AttachmentThumbnailTest(IntegrationTestCase):
 			saved = frappe.db.get_single_value(doctype, field)
 			frappe.db.set_single_value(doctype, field, value)
 			self.addCleanup(frappe.db.set_single_value, doctype, field, saved)
-		people = [OWNER, OTHER, ASSIGNEE]
+		ensure_user(MANAGER, "Thumb Manager", "Sales Manager")
+		people = [OWNER, OTHER, ASSIGNEE, MANAGER]
 		frappe.db.delete("CRM Sales Hierarchy", {"user": ("in", people)})
+		top = self.make({"doctype": "CRM Sales Hierarchy", "user": MANAGER})
+		self.make({"doctype": "CRM Sales Hierarchy", "user": OWNER, "reports_to": top.name})
 
 		# the insert hook queues a job after commit; here the job is run by hand
 		enqueue = patch("crm.utils.thumbnails.frappe.enqueue")
@@ -111,8 +142,10 @@ class AttachmentThumbnailTest(IntegrationTestCase):
 	def make(self, payload: dict):
 		return frappe.get_doc(payload).insert(ignore_permissions=True)
 
-	def attach(self, content: bytes, file_name="site.jpg", is_private=1, doc=None, user=OWNER):
+	def attach(self, content: bytes, file_name=None, is_private=1, doc=None, user=OWNER):
 		doc = doc or self.lead
+		# unique: a file moved between public and private refuses a name already there
+		file_name = file_name or f"site-{frappe.generate_hash(length=8)}.jpg"
 		frappe.set_user(user)
 		try:
 			return frappe.get_doc(
@@ -369,3 +402,195 @@ class AttachmentThumbnailTest(IntegrationTestCase):
 
 		self.assertEqual(thumbnails.backfill_thumbnails(limit=2, commit=False), 0)
 		self.assertEqual(frappe.db.count("File", {FIELD: ("in", [first.name, third.name])}), 2)
+
+	# -- review follow-ups ------------------------------------------------------
+
+	def files_on_disk(self, source_name: str, private=True) -> list[str]:
+		folder = frappe.get_site_path("private" if private else "public", "files")
+		return sorted(f for f in os.listdir(folder) if f.startswith(f"thumb-{source_name}"))
+
+	def test_render_stays_within_its_memory_bound(self):
+		"""Decoding is width x height x bands whatever the file size: pinned per format at its cap."""
+		if not os.path.exists("/proc/self/clear_refs"):
+			self.skipTest("peak memory is read from /proc")
+		cases = [
+			("JPEG at the cap", "RGB", thumbnails.MAX_PIXELS, "JPEG", {}),
+			("RGBA PNG at the cap", "RGBA", thumbnails.MAX_PIXELS_DECODED, "PNG", {}),
+			("lossless WebP at the cap", "RGBA", thumbnails.MAX_PIXELS_WEBP, "WEBP", {"lossless": True}),
+			("palette GIF at the cap", "P", thumbnails.MAX_PIXELS_DECODED, "GIF", {}),
+		]
+		root = os.path.dirname(os.path.dirname(thumbnails.__file__))
+		env = {**os.environ, "PYTHONPATH": os.pathsep.join([root, os.environ.get("PYTHONPATH", "")])}
+		with tempfile.TemporaryDirectory() as folder:
+			for label, mode, pixels, fmt, options in cases:
+				with self.subTest(label):
+					side = int(math.sqrt(pixels / 12))
+					path = os.path.join(folder, f"image.{fmt.lower()}")
+					Image.new(mode, (side * 4, side * 3)).save(path, fmt, **options)
+					out = subprocess.run(
+						[sys.executable, "-c", MEASURE, path],
+						env=env,
+						capture_output=True,
+						text=True,
+						check=True,
+					)
+					result, peak = out.stdout.split()
+					self.assertEqual(result, "made")
+					self.assertLess(int(peak), RENDER_MEMORY_BOUND_MB, f"{label}: {peak} MB")
+
+	def test_a_tiny_file_declaring_a_huge_canvas_is_refused_from_its_header(self):
+		with tempfile.TemporaryDirectory() as folder:
+			for fmt, options in (("WEBP", {"lossless": True}), ("PNG", {})):
+				with self.subTest(fmt):
+					path = os.path.join(folder, f"bomb.{fmt.lower()}")
+					Image.new("RGBA", (8000, 6000)).save(path, fmt, **options)
+					self.assertLess(os.path.getsize(path), 300_000)
+					with self.assertRaises(thumbnails.Refused):
+						thumbnails.render(path)
+
+	def test_only_the_allowed_parsers_read_the_file(self):
+		out = io.BytesIO()
+		Image.new("RGB", (40, 40)).save(out, "TIFF")
+		source = self.attach(out.getvalue(), file_name="scan.png")
+		self.assertIsNone(thumbnails.make_thumbnail(source.name))
+		self.assertFalse(frappe.db.exists("File", {FIELD: source.name}))
+
+	def test_a_truncated_photo_is_logged_not_filed_as_an_error(self):
+		source = self.attach(photo(size=(1200, 900))[:2000], file_name="cut.jpg")
+		errors = frappe.db.count("Error Log")
+		self.assertIsNone(thumbnails.make_thumbnail(source.name))
+		self.assertEqual(frappe.db.count("Error Log"), errors)
+
+	def test_the_backfill_moves_its_cursor_before_it_renders(self):
+		source = self.attach(photo())
+		saved = frappe.db.get_global(thumbnails.BACKFILL_CURSOR)
+		self.addCleanup(frappe.db.set_global, thumbnails.BACKFILL_CURSOR, saved)
+		frappe.db.set_global(thumbnails.BACKFILL_CURSOR, f"{source.creation}|")
+
+		def worker_killed(name):
+			raise SystemExit("OOM")
+
+		with patch.object(thumbnails, "make_thumbnail", worker_killed), self.assertRaises(SystemExit):
+			thumbnails.backfill_thumbnails(limit=5, commit=False)
+		# the next run starts after it, not on it again
+		self.assertEqual(frappe.db.get_global(thumbnails.BACKFILL_CURSOR), f"{source.creation}|{source.name}")
+
+	def test_making_one_copy_private_leaves_the_other_copy_and_its_thumbnail(self):
+		"""Older frappe moved every row with the same bytes by raw SQL, no hooks run,
+		which would have left the other copy's thumbnail public. The pinned frappe
+		copies the file instead; if that ever changes back, this fails."""
+		content = photo()
+		other_lead = self.make({"doctype": "CRM Lead", "first_name": "Twin", "lead_owner": OWNER})
+		twin = f"twin-{frappe.generate_hash(length=8)}.jpg"
+		first = self.attach(content, file_name=twin, is_private=0)
+		second = self.attach(content, file_name=twin, is_private=0, doc=other_lead)
+		self.assertEqual(first.file_url, second.file_url, "frappe stores the same bytes once")
+		thumbnails.make_thumbnail(first.name)
+		public_twin = thumbnails.make_thumbnail(second.name)
+
+		first.reload()
+		first.is_private = 1
+		first.save(ignore_permissions=True)
+
+		self.assertEqual(
+			frappe.db.get_value("File", second.name, ["is_private", "thumbnail_url"]), (0, public_twin)
+		)
+		self.assertTrue(thumbnails.make_thumbnail(first.name).startswith("/private/files/"))
+
+	def test_a_photo_made_public_while_it_is_drawn_gets_a_thumbnail_matching_where_it_ended_up(self):
+		source = self.attach(photo())
+		real_render = thumbnails.render
+		calls = []
+
+		def render_while_privacy_changes(path):
+			if not calls:
+				doc = frappe.get_doc("File", source.name)
+				doc.is_private = 0
+				doc.save(ignore_permissions=True)
+			calls.append(path)
+			return real_render(path)
+
+		with patch.object(thumbnails, "render", render_while_privacy_changes):
+			url = thumbnails.make_thumbnail(source.name)
+		self.assertEqual(len(calls), 2, "drawn again from where the file moved to")
+		self.assertTrue(url.startswith("/files/"))
+		self.assertEqual(frappe.db.count("File", {FIELD: source.name}), 1)
+
+	def test_a_photo_deleted_while_it_is_drawn_leaves_nothing_behind(self):
+		source = self.attach(photo())
+		real_render = thumbnails.render
+
+		def render_while_deleted(path):
+			content = real_render(path)
+			frappe.delete_doc("File", source.name, ignore_permissions=True)
+			return content
+
+		with patch.object(thumbnails, "render", render_while_deleted):
+			self.assertIsNone(thumbnails.make_thumbnail(source.name))
+		self.assertFalse(frappe.db.exists("File", {FIELD: source.name}))
+		self.assertEqual(self.files_on_disk(source.name), [])
+
+	def test_a_file_already_at_the_chosen_name_is_never_overwritten(self):
+		source = self.attach(photo())
+		taken = frappe.get_site_path("private", "files", f"thumb-{source.name}-taken.jpg")
+		with open(taken, "wb") as handle:
+			handle.write(b"someone else's upload")
+		self.addCleanup(lambda: os.path.exists(taken) and os.remove(taken))
+
+		names = iter(["taken", "free"])
+		with patch.object(thumbnails, "_random_part", lambda: next(names)):
+			url = thumbnails.make_thumbnail(source.name)
+
+		self.assertEqual(url, f"/private/files/thumb-{source.name}-free.jpg")
+		with open(taken, "rb") as handle:
+			self.assertEqual(handle.read(), b"someone else's upload")
+
+	def test_a_rep_cannot_point_a_thumbnail_url_at_someone_elses_file(self):
+		victim = self.attach(
+			b"quote for the customer", file_name=f"quote-{frappe.generate_hash(length=6)}.txt"
+		)
+		victim_path = frappe.get_site_path("private", "files", os.path.basename(victim.file_url))
+		frappe.set_user(OTHER)
+		try:
+			mine = frappe.get_doc(
+				{"doctype": "File", "file_name": "mine.txt", "content": "mine", "is_private": 1}
+			).insert()
+			frappe.client.set_value("File", mine.name, "thumbnail_url", victim.file_url)
+			self.assertFalse(frappe.db.get_value("File", mine.name, "thumbnail_url"))
+			frappe.client.delete("File", mine.name)
+		finally:
+			frappe.set_user("Administrator")
+		self.assertTrue(os.path.isfile(victim_path), "deleting their upload deleted the victim's file")
+
+	def test_a_thumbnail_url_may_still_be_cleared(self):
+		source = self.attach(photo())
+		thumbnails.make_thumbnail(source.name)
+		frappe.set_user(OWNER)
+		try:
+			frappe.client.set_value("File", source.name, "thumbnail_url", None)
+		finally:
+			frappe.set_user("Administrator")
+		self.assertFalse(frappe.db.get_value("File", source.name, "thumbnail_url"))
+
+	def test_after_a_move_the_thumbnail_opens_to_the_new_records_readers_and_still_to_its_uploader(self):
+		source = self.attach(photo())
+		url = thumbnails.make_thumbnail(source.name)
+		other = self.make({"doctype": "CRM Lead", "first_name": "Moved", "lead_owner": OTHER})
+		source.reload()
+		source.attached_to_name = other.name
+		source.save(ignore_permissions=True)
+
+		for user, allowed in ((OWNER, True), (OTHER, True), (ASSIGNEE, False)):
+			with self.subTest(user=user):
+				self.assertEqual(bool(self.opened_by(user, source.file_url)), allowed)
+				self.assertEqual(bool(self.opened_by(user, url)), allowed)
+
+	def test_a_sales_manager_over_the_rep_lists_the_photo_not_its_thumbnail(self):
+		source = self.attach(photo())
+		thumbnails.make_thumbnail(source.name)
+		frappe.set_user(MANAGER)
+		try:
+			listed = frappe.get_list("File", filters={"attached_to_name": self.lead.name}, pluck="name")
+		finally:
+			frappe.set_user("Administrator")
+		self.assertEqual(listed, [source.name])

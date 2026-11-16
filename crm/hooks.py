@@ -264,7 +264,7 @@ doc_events = {
 	},
 	# a private-safe thumbnail per image: see crm/utils/thumbnails.py
 	"File": {
-		"before_insert": ["crm.utils.thumbnails.forget_copied_thumbnail"],
+		"before_insert": ["crm.utils.thumbnails.guard_marker"],
 		"validate": ["crm.utils.thumbnails.guard_marker"],
 		"after_insert": ["crm.utils.thumbnails.on_file_insert"],
 		"on_update": ["crm.utils.thumbnails.on_file_update"],
