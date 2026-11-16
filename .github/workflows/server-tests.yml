@@ -72,7 +72,7 @@ jobs:
                   echo "refs=[\"${FRAPPE_REF:0:12}\"]" >> "$GITHUB_OUTPUT"
 
     test:
-        name: Tests (frappe ${{ matrix.frappe-ref }})
+        name: Tests (frappe ${{ matrix.frappe-ref }}, MariaDB ${{ matrix.db.version }})
         needs: setup
         runs-on: ubuntu-latest
         timeout-minutes: 60
@@ -80,18 +80,31 @@ jobs:
             fail-fast: false
             matrix:
                 frappe-ref: ${{ fromJson(needs.setup.outputs.frappe-refs) }}
+                # Both engines while production is between them. deploy/ still
+                # defaults to 10.6 until the operator runs "Upgrading MariaDB to
+                # 11.4" in deploy/README.md, and every release cut before then
+                # ships to a 10.6 database -- so 10.6 stays tested. 11.4 is what
+                # the devcontainer, the migration lane and e2e run. Drop the 10.6
+                # leg in the PR that records production's upgrade.
+                db:
+                    - version: "10.6"
+                      image: mariadb:10.6.28@sha256:553351e202c5f01c9e703d7d1d2b037a0aedb43c4fed79b3615d9183655f02c5
+                    - version: "11.4"
+                      image: mariadb:11.4.13@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532
 
         services:
             mysql:
                 # Digest-pinned to match deploy/docker-compose.yml and the
-                # devcontainer: `mariadb:10.6` moves, and a suite that ran on a
+                # devcontainer: a moving tag means a suite that ran on a
                 # different engine than production proves less than it claims.
-                image: mariadb:10.6.28@sha256:553351e202c5f01c9e703d7d1d2b037a0aedb43c4fed79b3615d9183655f02c5
+                image: ${{ matrix.db.image }}
                 env:
                     MYSQL_ROOT_PASSWORD: root
                 ports:
                     - 3306:3306
-                options: --health-cmd="mysqladmin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+                # mariadb-admin, not mysqladmin: the 11.x images no longer ship
+                # the mysql* compatibility names, and both series have this one.
+                options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
 
         steps:
             - name: Clone
@@ -123,7 +136,7 @@ jobs:
               if: github.base_ref == 'develop' || github.ref_name == 'develop'
               uses: ./.github/actions/upload-coverage
               with:
-                  artifact-name: coverage-${{ matrix.frappe-ref }}
+                  artifact-name: coverage-${{ matrix.frappe-ref }}-mariadb-${{ matrix.db.version }}
                   coverage-path: /home/runner/frappe-bench/sites/coverage.xml
 
     # One check with a fixed name, whatever the matrix resolved to. The matrix

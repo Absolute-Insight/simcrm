@@ -32,15 +32,17 @@ jobs:
 
         services:
             mysql:
-                # Digest-pinned to match deploy/docker-compose.yml and the
-                # devcontainer: `mariadb:10.6` moves, and a suite that ran on a
-                # different engine than production proves less than it claims.
-                image: mariadb:10.6.28@sha256:553351e202c5f01c9e703d7d1d2b037a0aedb43c4fed79b3615d9183655f02c5
+                # Digest-pinned, and the 11.4 target of deploy/'s DB_IMAGE: the
+                # upgrade under test is the one production takes after its
+                # engine swap (deploy/README.md, "Upgrading MariaDB to 11.4").
+                # 10.6 keeps its coverage in server-tests.yml's matrix.
+                image: mariadb:11.4.13@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532
                 env:
                     MYSQL_ROOT_PASSWORD: root
                 ports:
                     - 3306:3306
-                options: --health-cmd="mysqladmin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+                # mariadb-admin: 11.x images no longer ship `mysqladmin`.
+                options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
 
         env:
             BASE_BRANCH: ${{ github.base_ref || github.ref_name }}
