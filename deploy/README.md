@@ -2132,7 +2132,7 @@ profile or `local-model`, not both.
 
 ```bash
 docker compose --profile gpu-model up -d
-docker compose logs -f llm-fetch     # first run downloads 10 GB; every `up -d` re-checks the pin
+docker compose logs -f llm-fetch     # first run downloads 10 GB; every `up -d` re-checks the pin before llm starts
 ```
 
 Like `local-model`, the profile has to be named on every `pull` and `up -d`
@@ -2175,14 +2175,16 @@ that rests on an image is never shown as verified. Under four parallel requests
 the outputs vary run to run (batched decoding), and two probe runs in four lost
 an Analyst sentence to the grounding check — which is the check doing its job.
 
-**The model is pinned.** `llm-fetch` pulls `VECTORA_LLM_MODEL` and checks every
-digest in its manifest — weights, the audio/vision projector, chat template,
+**The model is pinned.** Before `llm` starts, `llm-fetch` pulls
+`VECTORA_LLM_MODEL` with a private ollama of its own and checks every digest
+in its manifest — weights, the audio/vision projector, chat template,
 parameters — against `VECTORA_LLM_FINGERPRINT`. ollama verifies each blob
 against its digest as it downloads, so the manifest pins the bytes. On a
-mismatch (the tag was re-pointed upstream) the model is deleted again and the
-step exits 1: the server stays up with nothing to serve, and every tier degrades
-to `unavailable` rather than answering from an unmeasured model. Re-run the
-evals before changing either value.
+mismatch (the tag was re-pointed upstream) the model is deleted again, the step
+exits 1 and `llm` is not started: every tier degrades to `unavailable` rather
+than answering from an unmeasured model. Re-run the evals before changing
+either value. The first question after a restart loads the weights (a few
+seconds); there is no warm-up call.
 
 The licence is OpenMDW-1.1 (over Apache-2.0 for the Gemma base): no field-of-use
 limits, no share-back, outputs unrestricted. Its notice duty applies only if the

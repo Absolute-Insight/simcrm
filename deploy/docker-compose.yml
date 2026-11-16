@@ -1366,6 +1366,10 @@ services:
     logging: *logging
     profiles: ["gpu-model"]
     restart: unless-stopped
+    # Served only after llm-fetch has checked the model it will serve.
+    depends_on:
+      llm-fetch:
+        condition: service_completed_successfully
     environment:
       OLLAMA_HOST: 0.0.0.0:8086
       OLLAMA_KEEP_ALIVE: "-1"
@@ -1385,31 +1389,33 @@ services:
       start_period: 60s
       retries: 30
 
-  # One-shot: pull the pinned model, check every digest in its manifest -- the
-  # weights, the audio/vision projector, the chat template and the parameters
-  # -- against the pinned fingerprint, and warm it. A tag on a registry can be
-  # re-pointed; a model is code that writes to customers, so one that does not
-  # match the measured one is deleted again and nothing is served. ollama
-  # itself checks each blob against its digest as it downloads, so the
-  # manifest's digests pin the bytes.
+  # One-shot, before `llm` starts: pull the pinned model with a private ollama
+  # of its own, check every digest in its manifest -- the weights, the
+  # audio/vision projector, the chat template and the parameters -- against
+  # the pinned fingerprint, and only then let `llm` serve the volume. A tag on
+  # a registry can be re-pointed; a model is code that writes to customers, so
+  # one that does not match the measured one is deleted again, this step fails,
+  # and `llm` is not started. ollama itself checks each blob against its digest
+  # as it downloads, so the manifest's digests pin the bytes.
   llm-fetch:
     image: ollama/ollama:0.40.16
     logging: *logging
     profiles: ["gpu-model"]
     restart: "no"
-    depends_on:
-      llm:
-        condition: service_healthy
     volumes:
       - llm-ollama:/root/.ollama
     environment:
-      OLLAMA_HOST: http://llm:8086
+      OLLAMA_HOST: 127.0.0.1:11434
       MODEL: ${VECTORA_LLM_MODEL:-nemotron-3.5-bolt:e4b-q8_0}
       FINGERPRINT: ${VECTORA_LLM_FINGERPRINT:-9ee0607b4740d965e86dd24cc08bdca68c5ceb9405447c57e5acec91dfccb2ce}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -e
+        ollama serve >/tmp/serve.log 2>&1 &
+        serve=$$!
+        trap 'kill $$serve 2>/dev/null || true' EXIT
+        i=0; until ollama list >/dev/null 2>&1; do i=$$((i+1)); [ $$i -gt 60 ] && { cat /tmp/serve.log; exit 1; }; sleep 1; done
         echo "Pulling $$MODEL (about 10 GB the first time)"
         ollama pull "$$MODEL"
         name=$${MODEL%%:*}; tag=$${MODEL#*:}
@@ -1417,12 +1423,10 @@ services:
         got=$$(grep -o 'sha256:[0-9a-f]\{64\}' "$$manifest" | sort -u | sha256sum | cut -d' ' -f1)
         if [ "$$got" != "$$FINGERPRINT" ]; then
           echo "$$MODEL does not match VECTORA_LLM_FINGERPRINT (got $$got); deleting it, nothing served"
-          ollama rm "$$MODEL" || true
+          ollama rm "$$MODEL" || rm -f "$$manifest"
           exit 1
         fi
-        echo "Warming $$MODEL"
-        ollama run --think=false "$$MODEL" "reply with the single word: ready" >/dev/null 2>&1 </dev/null
-        echo "Model ready at http://llm:8086/v1 as $$MODEL"
+        echo "$$MODEL matches its pin; llm may serve it at http://llm:8086/v1"
 
 volumes:
   llm-ollama:
