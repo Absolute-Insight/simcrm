@@ -14,6 +14,7 @@ from crm.fcrm.doctype.crm_products.crm_products import create_product_details_sc
 from crm.integrations.acumatica.install import ensure_custom_fields as ensure_acumatica_fields
 from crm.permissions.customers import stop_frappe_event_digest
 from crm.permissions.org_hierarchy import ensure_todo_index
+from crm.utils.thumbnails import ensure_thumbnail_field
 
 
 def before_install():
@@ -72,6 +73,7 @@ def restore_defaults(force=False):
 	create_default_manager_dashboard(force)
 	create_assignment_rule_custom_fields()
 	add_assignment_rule_property_setters()
+	ensure_thumbnail_field()
 	# ``restore``: this is the explicit path. The migrate hook seeds once per
 	# version and never puts back what an admin deleted; here they asked.
 	seed_default_rules_and_mappings(restore=True)
