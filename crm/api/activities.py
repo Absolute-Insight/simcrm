@@ -109,13 +109,46 @@ def sanitize_email_body(html: str | None) -> str:
 	return sanitize_html(html or "", always_sanitize=True)
 
 
+def get_hidden_communications(communications: list, doctype: str, name: str) -> set[str]:
+	"""Emails on this timeline whose content the reader may not see.
+
+	The timeline lists an email referenced to this record, or linked to it from
+	another. The first kind passed the record's own check; the second also has
+	to pass frappe's rule for the Communication -- its reference is readable --
+	which is what get_email_body asks. Checked once per referenced record.
+	"""
+	readable: dict[tuple[str, str], bool] = {}
+	hidden = set()
+	for communication in communications:
+		reference = (communication.reference_doctype, communication.reference_name)
+		if reference == (doctype, name) or not all(reference):
+			continue
+		if reference not in readable:
+			readable[reference] = communication_has_permission(communication, "read")
+		if not readable[reference]:
+			hidden.add(communication.name)
+	return hidden
+
+
+def hide_email_content(activity: dict) -> None:
+	"""Keep the row -- who wrote to whom, and when -- but none of what it says."""
+	data = activity["data"]
+	data.pop("snippet", None)
+	data.pop("content", None)
+	data["attachments"] = []
+	data["hidden"] = True
+
+
 def inline_newest_email_bodies(activities: list[dict], count: int = EXPANDED_EMAILS) -> None:
 	"""Put the body on the newest ``count`` emails, which the timeline opens by default.
 
 	It saves those a round trip and lets them paint at full height at once, which
 	is what keeps "scroll to the newest" from landing short. One query for all.
 	"""
-	emails = [a for a in activities if a.get("activity_type") == "communication"]
+	# an email the reader may not open never takes one of the places
+	emails = [
+		a for a in activities if a.get("activity_type") == "communication" and not a["data"].get("hidden")
+	]
 	newest = sorted(emails, key=lambda a: a["creation"], reverse=True)[:count]
 	if not newest:
 		return
@@ -138,34 +171,58 @@ def inline_newest_email_bodies(activities: list[dict], count: int = EXPANDED_EMA
 class _TextOnly(HTMLParser):
 	"""The words of an html fragment, without what a mail client does not show."""
 
-	HIDDEN = frozenset({"head", "script", "style", "title", "template", "noscript"})
+	HIDDEN = frozenset({"script", "style", "title", "template", "noscript"})
+	# What may sit in a <head>. Any other tag starts the body, as it does in a
+	# browser, so an unclosed <head> does not hide the whole mail.
+	HEAD_CONTENT = frozenset({"head", "meta", "link", "base", *HIDDEN})
+	# Tags that separate words. Inline ones (span, b, a, font) do not:
+	# "Than<span>ks</span>" is one word.
+	BLOCKS = frozenset(
+		{
+			"address", "article", "aside", "blockquote", "br", "center", "dd", "div", "dl",
+			"dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4",
+			"h5", "h6", "header", "hr", "img", "li", "main", "nav", "ol", "p", "pre", "section",
+			"table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul",
+		}
+	)  # fmt: skip
 
 	def __init__(self, limit: int):
 		super().__init__(convert_charrefs=True)
 		self.parts: list[str] = []
-		self.size = 0
+		self.visible = 0
 		self.hidden = 0
+		self.in_head = False
 		self.limit = limit
 
 	def handle_starttag(self, tag, attrs):
+		if tag == "head":
+			self.in_head = True
+		elif tag == "body" or (self.in_head and tag not in self.HEAD_CONTENT):
+			self.in_head = False
+			self.hidden = 0
 		if tag in self.HIDDEN:
 			self.hidden += 1
-		else:
-			# a block or a <br> separates words even when the html has no space
+		elif tag in self.BLOCKS:
 			self.parts.append(" ")
 
 	def handle_endtag(self, tag):
-		if tag in self.HIDDEN and self.hidden:
-			self.hidden -= 1
-		else:
+		if tag == "head":
+			self.in_head = False
+			self.hidden = 0
+		elif tag in self.HIDDEN:
+			self.hidden = max(self.hidden - 1, 0)
+		elif tag in self.BLOCKS:
 			self.parts.append(" ")
 
 	def handle_data(self, data):
-		if self.hidden:
+		if self.hidden or self.in_head:
 			return
 		self.parts.append(data)
-		self.size += len(data)
-		if self.size > self.limit * 4:
+		# Only what shows counts toward the cut-off: indentation, &nbsp; and
+		# preheader padding are stripped later and used to end the read before
+		# the first word. The 16 KB read bounds the work either way.
+		self.visible += len(_NOT_VISIBLE.sub("", data))
+		if self.visible > self.limit * 2:
 			raise _Enough
 
 
@@ -174,7 +231,8 @@ class _Enough(Exception):
 
 
 # Zero-width characters Outlook and marketing mail pad their preheaders with.
-INVISIBLE = re.compile("[​-‏͏⁠﻿­]")
+INVISIBLE = re.compile("[\u200b-\u200f\u034f\u2060\ufeff\u00ad]")
+_NOT_VISIBLE = re.compile("[\\s\u200b-\u200f\u034f\u2060\ufeff\u00ad]")
 
 
 def email_snippet(html: str | None, limit: int = SNIPPET_LENGTH) -> str:
@@ -355,6 +413,7 @@ def get_deal_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 	communications = docinfo.communications + docinfo.automated_messages
 	communication_attachments = get_attachments_by_name("Communication", [c.name for c in communications])
 	communication_directions = get_communication_directions([c.name for c in communications])
+	hidden_emails = get_hidden_communications(communications, "CRM Deal", name)
 	for communication in communications:
 		activity = {
 			"activity_type": "communication",
@@ -383,6 +442,8 @@ def get_deal_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 			},
 			"is_lead": False,
 		}
+		if communication.name in hidden_emails:
+			hide_email_content(activity)
 		activities.append(activity)
 
 	for attachment_log in docinfo.attachment_logs:
@@ -512,6 +573,7 @@ def get_lead_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 	communications = docinfo.communications + docinfo.automated_messages
 	communication_attachments = get_attachments_by_name("Communication", [c.name for c in communications])
 	communication_directions = get_communication_directions([c.name for c in communications])
+	hidden_emails = get_hidden_communications(communications, "CRM Lead", name)
 	for communication in communications:
 		activity = {
 			"activity_type": "communication",
@@ -540,6 +602,8 @@ def get_lead_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 			},
 			"is_lead": True,
 		}
+		if communication.name in hidden_emails:
+			hide_email_content(activity)
 		activities.append(activity)
 
 	for attachment_log in docinfo.attachment_logs:

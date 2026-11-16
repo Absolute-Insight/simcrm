@@ -93,6 +93,29 @@ class EmailSnippetTest(IntegrationTestCase):
 		self.assertEqual(email_snippet(""), "")
 		self.assertEqual(email_snippet("just  text"), "just text")
 
+	def test_preheader_padding_does_not_use_up_the_read(self):
+		padding = "&#847;&zwnj;&nbsp;" * 400
+		html = f'<div style="display:none">{padding}</div><p>Your quote is ready</p>'
+		self.assertEqual(email_snippet(html), "Your quote is ready")
+
+	def test_indentation_does_not_use_up_the_read(self):
+		cell = "\n" + " " * 40 + "<td>\n" + " " * 44 + "</td>"
+		html = "<table>" + "<tr>" + cell * 60 + "</tr><tr><td>Delivery on Friday</td></tr></table>"
+		self.assertEqual(email_snippet(html), "Delivery on Friday")
+
+	def test_an_unclosed_head_ends_at_the_body(self):
+		self.assertEqual(email_snippet("<html><head><meta charset=utf-8><body><p>Hello"), "Hello")
+		self.assertEqual(email_snippet("<html><head><meta charset=utf-8><p>Hello"), "Hello")
+		self.assertEqual(email_snippet("<head><style>p{}</style><title>T</title></head>Hi"), "Hi")
+
+	def test_inline_tags_do_not_split_words_and_blocks_do(self):
+		self.assertEqual(email_snippet("<p>Than<span>ks</span> a <b>lot</b></p>"), "Thanks a lot")
+		self.assertEqual(email_snippet("Than</span>ks"), "Thanks")
+		self.assertEqual(
+			email_snippet("<p>one</p><p>two</p>three<br>four<div>five</div>"), "one two three four five"
+		)
+		self.assertEqual(email_snippet("<table><tr><td>a</td><td>b</td></tr></table>"), "a b")
+
 
 class TimelinePayloadTest(IntegrationTestCase):
 	def setUp(self):
@@ -236,3 +259,86 @@ class EmailBodyEndpointTest(IntegrationTestCase):
 		frappe.db.set_value("Communication", self.email, "content", "a < b & c")
 		frappe.set_user(OTHER)
 		self.assertEqual(get_email_body(self.email)["content"], "a &lt; b &amp; c")
+
+	def test_a_variant_of_the_name_answers_for_the_same_row_and_rule(self):
+		variants = [self.email.upper(), self.email + " "]
+		frappe.set_user(OWNER)
+		for variant in variants:
+			with self.subTest(variant=variant):
+				self.assertEqual(self.refusal(variant), self.refusal("no-such-email"))
+		frappe.set_user(OTHER)
+		for variant in variants:
+			with self.subTest(variant=variant):
+				self.assertEqual(get_email_body(variant)["name"], self.email)
+
+
+class HiddenTimelineEmailTest(IntegrationTestCase):
+	"""An email linked to the rep's deal but referenced to a record they cannot read.
+
+	The timeline lists it -- frappe's docinfo follows timeline links -- but
+	frappe's own rule for the Communication says no, so the row says who wrote
+	to whom and when, and nothing of what: no snippet, no body, no files.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		ensure_rep(OWNER, "Owner")
+		self.deal = (
+			frappe.get_doc({"doctype": "CRM Deal", "deal_owner": OWNER}).insert(ignore_permissions=True).name
+		)
+		ensure_rep(OTHER, "Other")
+		# a buyer at another rep's customer: the contact is hidden with it
+		org = frappe.get_doc(
+			{
+				"doctype": "CRM Organization",
+				"organization_name": f"Hidden Org {frappe.generate_hash(length=6)}",
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.set_value("CRM Organization", org.name, "account_owner", OTHER)
+		self.contact = (
+			frappe.get_doc(
+				{"doctype": "Contact", "first_name": "Hidden", "last_name": "Buyer", "company_name": org.name}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
+		older = [
+			add_email("CRM Deal", self.deal, f"Readable {i}", content=f"<p>Readable body {i}</p>")
+			for i in range(3)
+		]
+		self.hidden = add_email("Contact", self.contact, "Hidden", content="<p>Secret terms</p>")
+		communication = frappe.get_doc("Communication", self.hidden)
+		communication.add_link("CRM Deal", self.deal)
+		communication.save(ignore_permissions=True)
+		for i, name in enumerate([*older, self.hidden]):
+			when = f"2026-01-0{i + 1} 10:00:00"
+			frappe.db.set_value(
+				"Communication", name, {"creation": when, "communication_date": when}, update_modified=False
+			)
+
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+		super().tearDown()
+
+	def test_the_row_carries_no_content_and_takes_no_open_slot(self):
+		frappe.set_user(OWNER)
+		self.assertFalse(frappe.has_permission("Contact", "read", self.contact), "control")
+
+		rows = {a["data"]["subject"]: a["data"] for a in emails(get_activities(self.deal)[0])}
+
+		hidden = rows["Hidden"]
+		self.assertTrue(hidden["hidden"])
+		self.assertNotIn("snippet", hidden)
+		self.assertNotIn("content", hidden)
+		self.assertEqual(hidden["attachments"], [])
+		self.assertNotIn("Secret", frappe.as_json(rows))
+		# the newest two the rep may open are the ones that come open
+		self.assertEqual(sorted(s for s, d in rows.items() if "content" in d), ["Readable 1", "Readable 2"])
+		self.assertEqual(rows["Readable 0"]["snippet"], "Readable body 0")
+
+	def test_the_admin_sees_it_like_any_other(self):
+		rows = {a["data"]["subject"]: a["data"] for a in emails(get_activities(self.deal)[0])}
+		self.assertNotIn("hidden", rows["Hidden"])
+		self.assertIn("Secret terms", rows["Hidden"]["content"])
