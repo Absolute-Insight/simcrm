@@ -439,14 +439,10 @@ def _file_row(source, content: bytes, file_name: str, file_url: str, private: in
 	thumbnail.content_hash = get_content_hash(content)
 	thumbnail.file_size = len(content)
 
-	user = frappe.session.user
-	# a public thumbnail of a public photo is not an upload a rep made: the
-	# "only System Managers upload public files" setting is not about it
-	frappe.set_user("Administrator")
-	try:
-		thumbnail.insert(ignore_permissions=True)
-	finally:
-		frappe.set_user(user)
+	# Runs as whoever queued it. With "only System Managers upload public files"
+	# on, a rep's public photo gets no thumbnail (logged; the original is drawn)
+	# until the scheduled backfill, which runs as Administrator, reaches it.
+	thumbnail.insert(ignore_permissions=True)
 	frappe.db.set_value("File", thumbnail.name, _access_of(source), update_modified=False)
 	return file_url
 
