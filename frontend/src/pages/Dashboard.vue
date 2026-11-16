@@ -624,6 +624,7 @@ import {
   reorderVisiblePanel,
   riskReason,
   toISODate,
+  visitsCell,
   withFreshFigures,
 } from '@/utils/dashboardHome'
 import {
@@ -1127,11 +1128,7 @@ const PANEL_CATALOGUE = computed(() => {
       rows: computed(() => teamVisits.data?.rows || []),
       // No target is not behind on one, the same rule as the quota panel.
       // logged offline: shown, not judged -- see the report's column note
-      cell: (row) =>
-        (row.target == null
-          ? `${row.completed} · ${__('No target')}`
-          : `${row.completed} / ${row.target}`) +
-        (row.offline ? ` · ${__('{0} offline', [row.offline])}` : ''),
+      cell: visitsCell,
       // the status is judged against the target due so far, not the period's
       tone: (row) => (row.on_track === 'Behind' ? 'text-ink-orange-9' : ''),
     },

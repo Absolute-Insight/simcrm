@@ -442,6 +442,12 @@ REPORTS = {
 				"type": "number",
 				"description": "Activities of any kind logged on a phone with no connection and sent later, so their time is the phone's word. Expected for remote sites; worth a look when it is most of a rep's week",
 			},
+			{
+				"key": "offline_rate",
+				"label": "Logged offline %",
+				"type": "percent",
+				"description": "Logged offline as a share of every activity the rep logged (done or cancelled) in the period. Blank when nothing was logged",
+			},
 		],
 		"get_rows": _visits_by_rep,
 	},

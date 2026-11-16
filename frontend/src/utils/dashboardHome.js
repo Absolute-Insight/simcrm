@@ -476,3 +476,32 @@ export function activitySummary(rows, order = []) {
   )
   return { totals, types }
 }
+
+/**
+ * Logged offline as a whole percent of everything the rep logged, or null.
+ * The server sends it (`offline_rate`, crm.api.dashboard.visits_by_rep); an
+ * answer without it is worked out from the two counts. Nothing logged is no
+ * share at all, not 0%.
+ */
+export function offlineRate({ offline_rate, offline = 0, logged = 0 } = {}) {
+  if (Number.isFinite(offline_rate)) return offline_rate
+  if (!logged) return null
+  return Math.round((Math.min(offline, logged) / logged) * 100)
+}
+
+/**
+ * The dashboard's visits-against-target cell: "3 / 63 · 2 offline (3%)".
+ * Logged offline is shown, not judged -- the tone stays the target's.
+ */
+export function visitsCell(row) {
+  let text =
+    row.target == null
+      ? `${row.completed} · ${__('No target')}`
+      : `${row.completed} / ${row.target}`
+  if (row.offline) {
+    const rate = offlineRate(row)
+    text += ` · ${__('{0} offline', [row.offline])}`
+    if (rate != null) text += ` (${rate}%)`
+  }
+  return text
+}
