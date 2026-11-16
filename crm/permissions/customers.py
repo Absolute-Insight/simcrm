@@ -252,14 +252,30 @@ def visible_event_condition(user: str | None = None):
 			| ((Other.reference_doctype == "CRM Deal") & Other.reference_docname.isin(deals_there))
 		)
 	)
+	# an attendee typed by address, whose Contact is recorded off the event
+	Attendee = frappe.qb.DocType("CRM Event Attendee").as_("_cust_att")
+	by_attendee = (
+		frappe.qb.from_(Attendee).select(Attendee.event).where(Attendee.contact.isin(hidden_contacts))
+	)
 	attending = (
 		frappe.qb.from_(Part).select(Part.parent).where((Part.parenttype == "Event") & (Part.email == user))
 	)
 	return (
 		(Event.owner == user)
-		| (Event.name.notin(by_participant) & Event.name.notin(by_reference))
+		| (Event.name.notin(by_participant) & Event.name.notin(by_reference) & Event.name.notin(by_attendee))
 		| Event.name.isin(attending)
 	)
+
+
+def visible_event_attendee_condition(user: str | None = None):
+	"""An attendee row names a Contact, so it is read with that Contact. Reps hold
+	no role permission on the doctype at all; this scopes an in-tree manager."""
+	cond = visible_contact_condition(user or frappe.session.user)
+	if cond is None:
+		return None
+	Attendee = frappe.qb.DocType("CRM Event Attendee")
+	Contact = frappe.qb.DocType("Contact")
+	return Attendee.contact.isin(frappe.qb.from_(Contact).select(Contact.name).where(cond))
 
 
 def _sql(cond) -> str:
@@ -280,6 +296,10 @@ def get_address_permission_query_conditions(user=None, doctype=None):
 
 def get_event_permission_query_conditions(user=None, doctype=None):
 	return _sql(visible_event_condition(user))
+
+
+def get_event_attendee_permission_query_conditions(user=None, doctype=None):
+	return _sql(visible_event_attendee_condition(user))
 
 
 def _row_visible(doctype: str, name: str, cond) -> bool:
@@ -317,6 +337,10 @@ def has_event_permission(doc, ptype=None, user=None, debug=False):
 	return _has_row_permission(doc, ptype, "Event", visible_event_condition, user)
 
 
+def has_event_attendee_permission(doc, ptype=None, user=None, debug=False):
+	return _has_row_permission(doc, ptype, "CRM Event Attendee", visible_event_attendee_condition, user)
+
+
 def customer_visible(organization: str, user: str | None = None) -> bool:
 	cond = visible_organization_condition(user)
 	return True if cond is None else _row_visible("CRM Organization", organization, cond)
@@ -339,6 +363,11 @@ def assert_customer_allowed(organization: str | None, user: str | None = None) -
 		_("{0} is another rep's customer. Ask a manager to reassign it to you.").format(organization),
 		frappe.PermissionError,
 	)
+
+
+def contact_visible(contact: str, user: str | None = None) -> bool:
+	cond = visible_contact_condition(user or frappe.session.user)
+	return cond is None or _row_visible("Contact", contact, cond)
 
 
 def assert_contact_allowed(contact: str | None, user: str | None = None) -> None:
