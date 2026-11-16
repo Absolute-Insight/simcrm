@@ -242,14 +242,21 @@ def get_duplicate_contacts(start: int = 0, page_length: int = 20) -> dict:
 	page_length = min(max(frappe.utils.cint(page_length), 1), DUPLICATE_PAGE_MAX)
 	pairs = _email_pairs_sql()
 	groups = f"select d.k, count(distinct d.contact) as n from ({pairs}) d group by d.k having n > 1"
-	# with a value, always: the scope's %% is unescaped only when there is one
-	total = frappe.db.sql(f"select count(*) from ({groups}) g where %(on)s", {"on": 1})[0][0]
-	page = frappe.db.sql(f"{groups} order by d.k limit %s offset %s", (page_length, start), as_dict=True)
+	# The interpolated text is SQL this module builds: fixed fragments and the
+	# Contact permission condition pypika renders with its values escaped. Every
+	# request value (start, page length, keys) goes in as a parameter. With a
+	# value, always: the scope's %% is unescaped only when there is one.
+	total = frappe.db.sql(  # nosemgrep: frappe-sql-format-injection
+		f"select count(*) from ({groups}) g where %(on)s", {"on": 1}
+	)[0][0]
+	page = frappe.db.sql(  # nosemgrep: frappe-sql-format-injection
+		f"{groups} order by d.k limit %s offset %s", (page_length, start), as_dict=True
+	)
 	if not page:
 		return {"total": total, "groups": []}
 
 	keys = tuple(row.k for row in page)
-	members = frappe.db.sql(
+	members = frappe.db.sql(  # nosemgrep: frappe-sql-format-injection
 		f"select distinct d.k, d.contact from ({pairs}) d where d.k in %(keys)s", {"keys": keys}
 	)
 	names = sorted({contact for _k, contact in members})
