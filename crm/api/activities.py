@@ -15,6 +15,7 @@ from frappe.translate import get_translated_doctypes
 from frappe.utils import cint, get_datetime, sanitize_html
 
 from crm.fcrm.doctype.crm_call_log.crm_call_log import parse_call_logs, redact_hidden_references
+from crm.utils.thumbnails import not_a_thumbnail
 
 # Saves and emails per record on one page of the timeline; "load older" asks for
 # the next page by asking for a longer one.
@@ -639,7 +640,7 @@ ATTACHMENT_FIELDS = [
 	"file_name",
 	"file_type",
 	"file_url",
-	# The small copy frappe keeps for an image, when it has made one: the
+	# The small copy crm.utils.thumbnails makes of an image, once it has: the
 	# Attachments tab draws a 44px square and should not fetch a phone photo for it.
 	"thumbnail_url",
 	"file_size",
@@ -668,7 +669,7 @@ def get_attachments(doctype: str, name: str):
 	return (
 		frappe.db.get_all(
 			"File",
-			filters={"attached_to_doctype": doctype, "attached_to_name": name},
+			filters={"attached_to_doctype": doctype, "attached_to_name": name, **not_a_thumbnail()},
 			fields=ATTACHMENT_FIELDS,
 		)
 		or []
@@ -687,7 +688,7 @@ def get_attachments_by_name(doctype: str, names: list[str]) -> dict[str, list]:
 	grouped: dict[str, list] = {}
 	for row in frappe.db.get_all(
 		"File",
-		filters={"attached_to_doctype": doctype, "attached_to_name": ("in", names)},
+		filters={"attached_to_doctype": doctype, "attached_to_name": ("in", names), **not_a_thumbnail()},
 		fields=[*ATTACHMENT_FIELDS, "attached_to_name"],
 		order_by="modified desc",
 	):

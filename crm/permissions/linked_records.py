@@ -306,6 +306,11 @@ def get_file_permission_query_conditions(user=None):
 	keeps their own: frappe's File check opens a file to its owner whatever became
 	of the record, and a list that left it out would disagree with that.
 
+	A thumbnail row (``crm.utils.thumbnails``) is never listed to a rep: it is a
+	copy of an attachment they can already see, not an attachment of its own.
+	Opening it does not go through this list -- frappe's private-file route reads
+	the row unscoped and asks the File's own permission.
+
 	Each doctype's clause is the same for every File query a request makes, so it
 	is built once per request and user. Never across requests: it is made of who
 	is on whose team and what the access settings say, right now. Which doctypes
@@ -313,6 +318,7 @@ def get_file_permission_query_conditions(user=None):
 	runs in, so a file cannot arrive between the question and the list.
 	"""
 	import crm.hooks
+	from crm.utils.thumbnails import permission_clause
 
 	user = user or frappe.session.user
 	scoped = [doctype for doctype in crm.hooks.permission_query_conditions if doctype != "File"]
@@ -322,9 +328,11 @@ def get_file_permission_query_conditions(user=None):
 		if doctype not in built:
 			built[doctype] = _file_clauses(doctype, user)
 		clauses += built[doctype]
-	if not clauses:
-		return ""
-	return f"(`tabFile`.`owner` = {frappe.db.escape(user)} or ({' and '.join(clauses)}))"
+	scoped_sql = (
+		f"(`tabFile`.`owner` = {frappe.db.escape(user)} or ({' and '.join(clauses)}))" if clauses else ""
+	)
+	thumbnails = "" if sees_everything(user) else permission_clause()
+	return " and ".join(part for part in (scoped_sql, thumbnails) if part)
 
 
 def _request_memo(user: str) -> dict:
