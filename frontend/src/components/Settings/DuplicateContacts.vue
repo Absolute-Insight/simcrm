@@ -122,6 +122,7 @@
                     size="sm"
                     :label="__('Keep')"
                     :tooltip="__('Merge the others into this one')"
+                    :disabled="merging"
                     @click="askMerge(group, contact)"
                   />
                 </td>
@@ -229,7 +230,7 @@ const confirmMessage = computed(() => {
   if (!pending.value) return ''
   const { keep, others } = pending.value
   return __(
-    'Merge {0} into {1}? Their deals, events, calls and emails move to {1}, and {0} will be deleted. This cannot be undone.',
+    'Merge {0} into {1}? Their deals, events, calls and emails move to {1}, and {0} will be deleted. Anyone who could see any of these contacts, through a deal, a share or the customer, will see {1} with all of it. This cannot be undone.',
     [
       others.map((c) => c.full_name || c.name).join(', '),
       keep.full_name || keep.name,
@@ -245,14 +246,23 @@ function askMerge(group, keep) {
   confirmOpen.value = true
 }
 
+// the server merges at most this many at once; a larger group goes in turns
+const MERGE_CHUNK = 20
+const merging = ref(false)
+
 async function merge({ hideDialog }) {
   const { keep, others } = pending.value || {}
   if (!keep || !others?.length) return hideDialog()
+  if (merging.value) return
+  merging.value = true
   try {
-    await call('crm.api.contact.merge_duplicate_contacts', {
-      target: keep.name,
-      sources: others.map((c) => c.name),
-    })
+    const names = others.map((c) => c.name)
+    for (let i = 0; i < names.length; i += MERGE_CHUNK) {
+      await call('crm.api.contact.merge_duplicate_contacts', {
+        target: keep.name,
+        sources: names.slice(i, i + MERGE_CHUNK),
+      })
+    }
     toast.success(__('Contacts merged'))
     hideDialog()
     pending.value = null
@@ -260,9 +270,12 @@ async function merge({ hideDialog }) {
     if (groups.value.length === 1 && start.value > 0) {
       start.value = Math.max(start.value - PAGE_LENGTH, 0)
     }
-    duplicates.reload()
   } catch (error) {
     toast.error(error.messages?.[0] || __('Could not merge these contacts'))
+  } finally {
+    merging.value = false
+    // a refusal part-way leaves some merged: show what is there now
+    duplicates.reload()
   }
 }
 </script>

@@ -209,9 +209,12 @@ def _require_manager() -> None:
 		frappe.throw(_("Only a manager can review duplicate contacts."), frappe.PermissionError)
 
 
-def _email_pairs_sql() -> str:
-	"""(normalised address, contact) for every address on a Contact the caller
-	can read: an in-tree manager reviews their own team's contacts only."""
+def _email_pairs_sql(keys: bool = False) -> str:
+	"""(address, contact) for every address on a Contact the caller can read: a
+	manager scoped to a team reviews that team's contacts only. On the address as
+	stored, grouped by the tables' collation (utf8mb4_unicode_ci), which already
+	ignores case and trailing spaces; ``keys`` narrows it to ``%(keys)s`` on the
+	indexed columns."""
 	from crm.permissions.customers import get_contact_permission_query_conditions
 
 	visible = get_contact_permission_query_conditions(frappe.session.user)
@@ -220,13 +223,14 @@ def _email_pairs_sql() -> str:
 		if visible
 		else ""
 	)
+	only = "and {} in %(keys)s" if keys else "and {} != ''"
 	return f"""
 		select p.k, p.contact from (
-			select lower(trim(ce.email_id)) as k, c.name as contact
+			select ce.email_id as k, c.name as contact
 			from `tabContact Email` ce join `tabContact` c on c.name = ce.parent
-			where ce.parenttype = 'Contact' and ifnull(ce.email_id, '') != ''
+			where ce.parenttype = 'Contact' {only.format("ce.email_id")}
 			union
-			select lower(trim(c.email_id)), c.name from `tabContact` c where ifnull(c.email_id, '') != ''
+			select c.email_id, c.name from `tabContact` c where c.email_id is not null {only.format("c.email_id")}
 		) p
 		where p.k != '' {scope}"""
 
@@ -235,8 +239,8 @@ def _email_pairs_sql() -> str:
 def get_duplicate_contacts(start: int = 0, page_length: int = 20) -> dict:
 	"""Contacts that share an email address, a page of addresses at a time.
 
-	Managers only: a group names every rep's customers. One a rep may not read
-	is left out for a manager scoped to their team."""
+	Managers only: a group names every rep's customers. A manager scoped to a
+	team sees the contacts, customers and deals of that scope only."""
 	_require_manager()
 	start = max(frappe.utils.cint(start), 0)
 	page_length = min(max(frappe.utils.cint(page_length), 1), DUPLICATE_PAGE_MAX)
@@ -255,9 +259,10 @@ def get_duplicate_contacts(start: int = 0, page_length: int = 20) -> dict:
 	if not page:
 		return {"total": total, "groups": []}
 
-	keys = tuple(row.k for row in page)
+	keys = [row.k for row in page]
 	members = frappe.db.sql(  # nosemgrep: frappe-sql-format-injection
-		f"select distinct d.k, d.contact from ({pairs}) d where d.k in %(keys)s", {"keys": keys}
+		f"select distinct d.k, d.contact from ({_email_pairs_sql(keys=True)}) d",
+		{"keys": tuple(keys)},
 	)
 	names = sorted({contact for _k, contact in members})
 	contacts = {
@@ -268,47 +273,73 @@ def get_duplicate_contacts(start: int = 0, page_length: int = 20) -> dict:
 			fields=["name", "full_name", "company_name", "email_id", "mobile_no", "owner", "creation"],
 		)
 	}
-	companies = sorted({c.company_name for c in contacts.values() if c.company_name})
-	customer_owner = {}
-	if companies:
-		for org in frappe.get_all(
-			"CRM Organization",
-			or_filters={"name": ("in", companies), "organization_name": ("in", companies)},
-			fields=["name", "organization_name", "account_owner"],
-		):
-			customer_owner.setdefault(org.organization_name, org.account_owner)
-			customer_owner[org.name] = org.account_owner
-
-	from pypika.functions import Count
-
-	Row = frappe.qb.DocType("CRM Contacts")
-	deals = dict(
-		frappe.qb.from_(Row)
-		.select(Row.contact, Count(Row.parent).distinct())
-		.where((Row.parenttype == "CRM Deal") & Row.contact.isin(names))
-		.groupby(Row.contact)
-		.run()
-	)
+	customer_owner = _customer_owners({c.company_name for c in contacts.values() if c.company_name})
+	deals = _readable_deal_counts(names)
 
 	by_key: dict[str, list] = {}
 	for key, name in members:
 		contact = contacts.get(name)
 		if not contact:
 			continue
-		by_key.setdefault(key, []).append(
+		by_key.setdefault(_normal(key), []).append(
 			{
 				**contact,
 				"customer_owner": customer_owner.get(contact.company_name),
 				"deals": deals.get(name, 0),
 			}
 		)
-	return {
-		"total": total,
-		"groups": [
-			{"email": key, "contacts": sorted(by_key.get(key, []), key=lambda c: (c["creation"], c["name"]))}
-			for key in keys
-		],
-	}
+	out = []
+	for key in keys:
+		rows = {c["name"]: c for c in by_key.get(_normal(key), [])}.values()
+		out.append(
+			{"email": _normal(key), "contacts": sorted(rows, key=lambda c: (c["creation"], c["name"]))}
+		)
+	return {"total": total, "groups": out}
+
+
+def _normal(email) -> str:
+	return (email or "").strip().lower()
+
+
+def _customer_owners(companies: set[str]) -> dict:
+	"""Account owner by the customer's name and display name, among the customers
+	the caller can read: a scoped manager is not told whose a hidden one is."""
+	if not companies:
+		return {}
+	owners = {}
+	for org in frappe.get_list(
+		"CRM Organization",
+		or_filters={"name": ("in", sorted(companies)), "organization_name": ("in", sorted(companies))},
+		fields=["name", "organization_name", "account_owner"],
+		limit_page_length=0,
+	):
+		owners.setdefault(org.organization_name, org.account_owner)
+		owners[org.name] = org.account_owner
+	return owners
+
+
+def _readable_deal_counts(contacts: list[str]) -> dict[str, int]:
+	"""Per contact, the deals on it the caller can read."""
+	rows = frappe.get_all(
+		"CRM Contacts",
+		filters={"parenttype": "CRM Deal", "contact": ("in", contacts)},
+		fields=["contact", "parent"],
+	)
+	if not rows:
+		return {}
+	readable = set(
+		frappe.get_list(
+			"CRM Deal",
+			filters={"name": ("in", sorted({r.parent for r in rows}))},
+			pluck="name",
+			limit_page_length=0,
+		)
+	)
+	counts: dict[str, set] = {}
+	for row in rows:
+		if row.parent in readable:
+			counts.setdefault(row.contact, set()).add(row.parent)
+	return {contact: len(parents) for contact, parents in counts.items()}
 
 
 def _writable_contact(name):
@@ -366,8 +397,10 @@ def merge_duplicate_contacts(target: str, sources: list | str) -> str:
 	for source in merging:
 		_carry_over(source, kept)
 		kept.save()
+		_keep_address(source, kept)
 		# checked above: a manager, with write on both, merging a duplicate. The
 		# delete it ends in is the merge itself, and loses nothing it points at.
+		# The search rebuild is queued once below, not once per contact.
 		rename_doc(
 			doctype="Contact",
 			old=source.name,
@@ -375,9 +408,11 @@ def merge_duplicate_contacts(target: str, sources: list | str) -> str:
 			merge=True,
 			show_alert=False,
 			ignore_permissions=True,
+			rebuild_search=False,
 		)
 		kept = frappe.get_doc("Contact", kept.name)
-	_drop_repeated_deal_rows(kept.name)
+	_drop_repeated_rows(kept.name)
+	frappe.enqueue("frappe.utils.global_search.rebuild_for_doctype", doctype="Contact")
 	return kept.name
 
 
@@ -403,8 +438,26 @@ def _carry_over(source, kept) -> None:
 			links.add((row.link_doctype, row.link_name))
 
 
-def _drop_repeated_deal_rows(contact: str) -> None:
-	"""A deal that had both contacts now lists the kept one twice."""
+def _keep_address(source, kept) -> None:
+	"""The source's own address goes with the kept contact.
+
+	The contact page's address modal writes an Address with no links at all and
+	names it in ``Contact.address``; deleting the source would leave it tied to
+	nothing, which every rep can read. A link to the kept contact keeps it with
+	that contact, and the kept contact takes it when it has none."""
+	if not source.address or not frappe.db.exists("Address", source.address):
+		return
+	address = frappe.get_doc("Address", source.address)
+	if not address.has_link("Contact", kept.name):
+		address.append("links", {"link_doctype": "Contact", "link_name": kept.name})
+		address.save(ignore_permissions=True)
+	if not kept.address:
+		frappe.db.set_value("Contact", kept.name, "address", source.address, update_modified=False)
+
+
+def _drop_repeated_rows(contact: str) -> None:
+	"""A deal that had both contacts now lists the kept one twice, and so may an
+	event; an event's two typed addresses for the person stay two rows."""
 	seen = set()
 	for row in frappe.get_all(
 		"CRM Contacts",
@@ -414,5 +467,16 @@ def _drop_repeated_deal_rows(contact: str) -> None:
 	):
 		if (row.parenttype, row.parent) in seen:
 			frappe.db.delete("CRM Contacts", row.name)
+		else:
+			seen.add((row.parenttype, row.parent))
+	seen = set()
+	for row in frappe.get_all(
+		"Event Participants",
+		filters={"reference_doctype": "Contact", "reference_docname": contact},
+		fields=["name", "parenttype", "parent"],
+		order_by="idx asc",
+	):
+		if (row.parenttype, row.parent) in seen:
+			frappe.db.delete("Event Participants", row.name)
 		else:
 			seen.add((row.parenttype, row.parent))

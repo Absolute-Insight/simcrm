@@ -110,6 +110,29 @@ describe('Duplicate contacts', () => {
     expect(field(el, 'Merge')).toBeTruthy()
   })
 
+  it('merges a group of more than 20 in turns, and says who will see the result', async () => {
+    const many = Array.from({ length: 25 }, (_, i) => contact(`C${i}`))
+    backend.handlers['crm.api.contact.get_duplicate_contacts'] = () =>
+      page([{ email: 'many@impala.test', contacts: many }])
+    const { el } = render()
+    await flush()
+
+    el.querySelectorAll('[data-label="Keep"]')[0].click()
+    await flush()
+    expect(el.textContent).toContain(
+      'Anyone who could see any of these contacts',
+    )
+    field(el, 'Merge').click()
+    field(el, 'Merge').click() // a second click while it runs
+    await flush()
+
+    const merges = backend.log.filter(
+      (r) => r.url === 'crm.api.contact.merge_duplicate_contacts',
+    )
+    expect(merges.map((r) => r.params.sources.length)).toEqual([20, 4])
+    expect(merges.every((r) => r.params.target === 'C0')).toBe(true)
+  })
+
   it('pages through the addresses', async () => {
     backend.handlers['crm.api.contact.get_duplicate_contacts'] = ({ start }) =>
       page(

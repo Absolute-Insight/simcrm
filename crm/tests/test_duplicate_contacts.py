@@ -131,3 +131,99 @@ class TestDuplicateContacts(AttendeeCase):
 			merge_duplicate_contacts(kept.name, ["No Such Contact"])
 		frappe.set_user("Administrator")
 		self.assertTrue(frappe.db.exists("Contact", other.name))
+
+	def test_the_dropped_contacts_own_address_goes_with_the_kept_one(self):
+		"""The address modal writes an Address with no links; once its contact was
+		deleted it was tied to nothing hidden, and every rep could read it."""
+		from crm.api.contact import merge_duplicate_contacts
+		from crm.permissions.customers import has_address_permission
+
+		email = self.email("addr")
+		kept = self.contact(self.org_a, email, first_name="Kept")
+		gone = self.contact(self.org_a, email, first_name="Gone")
+		address = frappe.get_doc(
+			{
+				"doctype": "Address",
+				"address_title": f"Gone {frappe.generate_hash(length=6)}",
+				"address_line1": "1 Gone St",
+				"city": "Durban",
+				"country": "South Africa",
+				"address_type": "Office",
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.set_value("Contact", gone.name, "address", address.name)
+		self.assertFalse(has_address_permission(address, "read", REP_B), "control: hidden with its contact")
+
+		frappe.set_user(MANAGER)
+		merge_duplicate_contacts(kept.name, [gone.name])
+		frappe.set_user("Administrator")
+
+		self.assertEqual(frappe.db.get_value("Contact", kept.name, "address"), address.name)
+		self.assertTrue(frappe.get_doc("Address", address.name).has_link("Contact", kept.name))
+		self.assertFalse(has_address_permission(frappe.get_doc("Address", address.name), "read", REP_B))
+
+	def test_a_merge_leaves_no_repeated_event_row(self):
+		from crm.api.contact import merge_duplicate_contacts
+
+		email = self.email("evrow")
+		kept = self.contact(self.org_a, email, first_name="Kept")
+		gone = self.contact(self.org_a, email, first_name="Gone")
+		event = frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "Both",
+				"starts_on": "2026-11-20 09:00:00",
+				"event_participants": [
+					{"reference_doctype": "Contact", "reference_docname": kept.name},
+					{"reference_doctype": "Contact", "reference_docname": gone.name},
+				],
+			}
+		).insert(ignore_permissions=True)
+		frappe.set_user(MANAGER)
+		merge_duplicate_contacts(kept.name, [gone.name])
+		frappe.set_user("Administrator")
+		rows = frappe.get_doc("Event", event.name).event_participants
+		self.assertEqual([r.reference_docname for r in rows], [kept.name])
+
+	def test_a_team_manager_sees_their_scope_only(self):
+		"""Neither the contacts, the account owner of a customer outside the team,
+		nor deals they cannot read."""
+		from frappe.utils.nestedset import rebuild_tree
+
+		from crm.permissions.test_org_hierarchy import make_hierarchy_node
+
+		mgr = make_hierarchy_node(MANAGER, is_group=1)
+		make_hierarchy_node(REP_A, reports_to=mgr.name)
+		rebuild_tree("CRM Sales Hierarchy")
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+
+		email = self.email("team")
+		mine = self.contact(self.org_a, email, first_name="Mine")
+		also = self.contact(None, email, first_name="Unclaimed")
+		outside = self.contact(self.org_b, email, first_name="Outside")
+		deal = frappe.get_doc(
+			{
+				"doctype": "CRM Deal",
+				"organization": self.org_b,
+				"deal_owner": REP_B,
+				"status": "Qualification",
+			}
+		)
+		deal.append("contacts", {"contact": also.name})
+		deal.insert(ignore_permissions=True)
+
+		seen = []
+		start = 0
+		while True:
+			page = self.list_as(MANAGER, start=start, page_length=50)
+			seen += page["groups"]
+			start += 50
+			if start >= page["total"]:
+				break
+		group = next(g for g in seen if g["email"] == email)
+		names = {c["name"] for c in group["contacts"]}
+		self.assertEqual(names, {mine.name, also.name})
+		self.assertNotIn(outside.name, json.dumps(seen, default=str))
+		by_name = {c["name"]: c for c in group["contacts"]}
+		self.assertEqual(by_name[also.name]["deals"], 0, "a deal outside the team was counted")
+		self.assertEqual(by_name[mine.name]["customer_owner"], REP_A)
