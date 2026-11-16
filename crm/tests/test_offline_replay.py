@@ -476,6 +476,28 @@ class GraceSettingTest(ReplayTestCase):
 		settings.save()
 		self.assertEqual(offline_grace_hours(), 48)
 
+	def test_a_bad_value_already_stored_does_not_block_other_settings(self):
+		# written past the form (an import, a console): every later save of the
+		# brand or currency must not be refused for a field nobody touched
+		set_grace(OFFLINE_GRACE_MAX_HOURS + 100)
+		frappe.set_user("Administrator")
+		settings = frappe.get_single("FCRM Settings")
+		settings.brand_name = "Grace test brand"
+		settings.save()
+		self.assertEqual(frappe.db.get_single_value("FCRM Settings", "brand_name"), "Grace test brand")
+		# and it still reads as the default day
+		self.assertEqual(offline_grace_hours(), OFFLINE_GRACE_HOURS)
+
+	def test_a_rep_cannot_set_the_window(self):
+		from frappe.client import set_value
+
+		set_grace(24)
+		frappe.set_user(REP)
+		with self.assertRaises(frappe.PermissionError):
+			set_value("FCRM Settings", "FCRM Settings", "offline_grace_hours", OFFLINE_GRACE_MAX_HOURS)
+		frappe.set_user("Administrator")
+		self.assertEqual(offline_grace_hours(), 24)
+
 
 class PlannedItemTest(ReplayTestCase):
 	def test_an_outcome_closes_the_item(self):

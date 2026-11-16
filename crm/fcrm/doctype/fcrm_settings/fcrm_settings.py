@@ -71,15 +71,19 @@ class FCRMSettings(Document):
 		"""How long a capture made offline may lag, past the day lock (``crm.api.offline``).
 
 		Blank or 0 is a site from before the field, saving something else: it
-		takes the default rather than refusing that save. Anything else outside
+		takes the default rather than refusing that save. A new value outside
 		1..168 is refused -- a window wider than a week only widens what a forged
-		capture time can back-date.
+		capture time can back-date. One already stored is left alone: refusing
+		it would block every other save of these settings (brand, currency...),
+		and the reader treats it as the default anyway.
 		"""
 		from crm.api.offline import OFFLINE_GRACE_HOURS, OFFLINE_GRACE_MAX_HOURS
 
 		value = frappe.utils.cint(self.offline_grace_hours)
 		if not value:
 			self.offline_grace_hours = OFFLINE_GRACE_HOURS
+			return
+		if not self.has_value_changed("offline_grace_hours"):
 			return
 		if not 1 <= value <= OFFLINE_GRACE_MAX_HOURS:
 			frappe.throw(

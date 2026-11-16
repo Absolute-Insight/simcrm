@@ -7,8 +7,12 @@ const backend = vi.hoisted(() => ({ handlers: {}, log: [], toasts: [] }))
 vi.mock('frappe-ui', async (importOriginal) =>
   (await import('./standIns.js')).frappeUi(importOriginal, backend),
 )
+const session = vi.hoisted(() => ({ manager: true }))
 vi.mock('@/stores/users', () => ({
-  usersStore: () => ({ isManager: () => true, isAdmin: () => false }),
+  usersStore: () => ({
+    isManager: () => session.manager,
+    isAdmin: () => false,
+  }),
 }))
 vi.mock('@/stores/session', () => ({
   sessionStore: () => ({ user: 'mgr@x.test' }),
@@ -35,6 +39,7 @@ beforeEach(() => {
   backend.toasts.length = 0
   backend.handlers = { 'crm.api.visit_targets.get_visit_targets': () => [] }
   settings.saved = []
+  session.manager = true
   settings.doc = reactive({ lock_past_plans: 1, offline_grace_hours: 24 })
   settings.setValue = reactive({
     loading: false,
@@ -81,5 +86,13 @@ describe('Visit Targets, offline capture grace', () => {
     const { el } = mount(VisitTargets)
     await flush()
     expect(grace(el)).toBeNull()
+  })
+
+  it('is not offered to a rep', async () => {
+    session.manager = false
+    const { el } = mount(VisitTargets)
+    await flush()
+    expect(grace(el)).toBeNull()
+    expect(el.textContent).not.toContain('Offline capture grace')
   })
 })
