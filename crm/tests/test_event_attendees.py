@@ -10,8 +10,6 @@ import threading
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from crm.api.attendees import get_contact_events
-
 REP_A = "att-rep-a@scope.test"
 REP_B = "att-rep-b@scope.test"
 REP_C = "att-rep-c@scope.test"
@@ -135,12 +133,28 @@ class TestTypedAttendees(AttendeeCase):
 		self.assertEqual(self.attendees(event["name"]), {second: hidden.name})
 		self.assertEqual(contacts_with(second), {hidden.name})
 
-	def test_an_unknown_address_gets_one_contact_of_the_reps_own(self):
+	def test_an_unknown_address_makes_no_contact_and_waits(self):
 		email = self.email("fresh")
 		event = self.event_as(REP_A, email)
-		(created,) = contacts_with(email)
-		self.assertEqual(frappe.db.get_value("Contact", created, "owner"), REP_A)
-		self.assertEqual(self.attendees(event["name"]), {email: created})
+		self.assertEqual(contacts_with(email), set(), "a Contact was made for nobody's address")
+		self.assertEqual(self.attendees(event["name"]), {email: None})
+
+	def test_a_contact_saved_later_with_the_address_is_linked(self):
+		email = self.email("later")
+		event = self.event_as(REP_A, email)["name"]
+		frappe.set_user(REP_B)
+		later = frappe.get_doc(
+			{
+				"doctype": "Contact",
+				"first_name": "Later",
+				"company_name": self.org_b,
+				"email_ids": [{"email_id": email.upper(), "is_primary": 1}],
+			}
+		).insert()
+		frappe.set_user("Administrator")
+		self.assertEqual(self.attendees(event), {email: later.name})
+		row = frappe.get_doc("Event", event).event_participants[0]
+		self.assertEqual(row.reference_docname, "", "the event the rep reads is unchanged")
 
 	def test_a_contact_the_rep_can_read_is_named_on_the_row(self):
 		email = self.email("mine")
@@ -149,27 +163,93 @@ class TestTypedAttendees(AttendeeCase):
 		self.assertEqual(event["event_participants"][0]["reference_docname"], mine.name)
 		self.assertEqual(self.attendees(event["name"]), {})
 
-	def test_the_response_is_the_same_whether_a_hidden_contact_existed_or_not(self):
+	def rep_view(self, email, event):
+		"""Everything a rep can read that could tell the cases apart, with this
+		case's own address and event name taken out."""
+		from frappe.client import get as client_get
+		from frappe.desk.form.load import get_versions
+
+		def contacts_found(user):
+			frappe.set_user(user)
+			return frappe.get_list(
+				"Contact", filters=[["Contact Email", "email_id", "=", email]], pluck="name"
+			) + frappe.get_list("Contact", filters={"email_id": email}, pluck="name")
+
+		frappe.set_user(REP_A)
+		doc = frappe.get_doc("Event", event)
+		doc.subject = "Meeting (moved)"
+		doc.save()
+		view = {
+			"save": doc.as_dict(),
+			"get": client_get("Event", event),
+			"participants": frappe.get_list(
+				"Event Participants", parent_doctype="Event", filters={"parent": event}, fields=["*"]
+			),
+			"versions": [json.loads(v.data) for v in get_versions(doc)],
+			"contacts_rep": contacts_found(REP_A),
+			"contacts_third_rep": contacts_found(REP_C),
+		}
+		for user in (REP_A, REP_C):
+			frappe.set_user(user)
+			view[f"event_seen_by_{user}"] = event in frappe.get_list(
+				"Event", pluck="name", limit_page_length=0
+			)
+		frappe.set_user("Administrator")
+		text = json.dumps(view, default=str, sort_keys=True)
+		return text.replace(email.upper(), "<email>").replace(email, "<email>").replace(event, "<event>")
+
+	def test_every_read_is_the_same_whether_a_hidden_contact_existed_or_not(self):
+		import re
+
 		hidden_email, fresh_email = self.email("hidden"), self.email("nobody")
-		self.contact(self.org_b, hidden_email)
-		hidden = self.event_as(REP_A, hidden_email)
-		fresh = self.event_as(REP_A, fresh_email)
+		hidden = self.contact(self.org_b, hidden_email, first_name="Secret Buyer")
+		hidden_event = self.event_as(REP_A, hidden_email)
+		fresh_event = self.event_as(REP_A, fresh_email)
 
-		varying = {"name", "creation", "modified", "email", "parent"}
+		def scrub(text):
+			# row names, timestamps and version names differ from save to save
+			text = re.sub(r'"(name|creation|modified|parent|docname)": "[^"]*"', r'"\1": "-"', text)
+			return re.sub(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)?", "<ts>", text)
 
-		def shape(doc):
-			return {
-				**{k: v for k, v in doc.items() if k not in varying and k != "event_participants"},
-				"event_participants": [
-					{k: v for k, v in row.items() if k not in varying} for row in doc["event_participants"]
-				],
-			}
-
-		self.assertEqual(set(hidden), set(fresh))
 		self.assertEqual(
-			[set(r) for r in hidden["event_participants"]], [set(r) for r in fresh["event_participants"]]
+			scrub(
+				json.dumps(hidden_event, default=str, sort_keys=True)
+				.replace(hidden_email, "<email>")
+				.replace(hidden_event["name"], "<event>")
+			),
+			scrub(
+				json.dumps(fresh_event, default=str, sort_keys=True)
+				.replace(fresh_email, "<email>")
+				.replace(fresh_event["name"], "<event>")
+			),
+			"the save response",
 		)
-		self.assertEqual(shape(hidden), shape(fresh))
+		hidden_view = self.rep_view(hidden_email, hidden_event["name"])
+		fresh_view = self.rep_view(fresh_email, fresh_event["name"])
+		self.assertEqual(scrub(hidden_view), scrub(fresh_view))
+		for secret in (hidden.name, "Secret Buyer", self.org_b, REP_B):
+			self.assertNotIn(secret, hidden_view)
+
+	def test_a_rep_who_may_not_create_contacts_can_still_add_any_address(self):
+		"""Nothing is created on their behalf, so the two cases cannot differ in
+		whether the save is refused."""
+		from unittest.mock import patch
+
+		import frappe.permissions as perms
+
+		original = perms.has_permission
+
+		def no_contact_create(doctype, ptype="read", *args, **kwargs):
+			if doctype == "Contact" and ptype == "create":
+				return False
+			return original(doctype, ptype, *args, **kwargs)
+
+		hidden_email, fresh_email = self.email("nc-hidden"), self.email("nc-fresh")
+		self.contact(self.org_b, hidden_email)
+		with patch.object(perms, "has_permission", no_contact_create):
+			hidden = self.event_as(REP_A, hidden_email)
+			fresh = self.event_as(REP_A, fresh_email)
+		self.assertTrue(hidden["name"] and fresh["name"])
 
 	def test_nothing_the_rep_reads_names_the_hidden_contact(self):
 		from frappe.client import get as client_get
@@ -179,7 +259,6 @@ class TestTypedAttendees(AttendeeCase):
 		hidden = self.contact(self.org_b, email, first_name="Secret Buyer")
 		event = self.event_as(REP_A, email)["name"]
 
-		# a later save, with the rows as the rep reads them back
 		frappe.set_user(REP_A)
 		doc = frappe.get_doc("Event", event)
 		doc.subject = "Meeting (moved)"
@@ -243,26 +322,12 @@ class TestTypedAttendees(AttendeeCase):
 				}
 			).insert()
 
-	def test_the_contacts_owner_sees_the_event_on_their_contact(self):
+	def test_the_contacts_owner_has_the_event_on_their_contact(self):
 		email = self.email("owner")
 		hidden = self.contact(self.org_b, email)
 		event = self.event_as(REP_A, email)["name"]
-
+		self.assertEqual(self.attendees(event), {email: hidden.name})
 		frappe.set_user(REP_B)
-		self.assertIn(event, [e.name for e in get_contact_events(hidden.name)])
-		frappe.set_user(REP_A)
-		with self.assertRaises(frappe.PermissionError):
-			get_contact_events(hidden.name)
-		with self.assertRaises(frappe.PermissionError):
-			get_contact_events("No Such Contact")
-
-	def test_a_third_rep_does_not_see_the_event(self):
-		email = self.email("third")
-		self.contact(self.org_b, email)
-		event = self.event_as(REP_A, email)["name"]
-		frappe.set_user(REP_C)
-		self.assertNotIn(event, frappe.get_list("Event", pluck="name", limit_page_length=0))
-		frappe.set_user(REP_A)
 		self.assertIn(event, frappe.get_list("Event", pluck="name", limit_page_length=0))
 
 	def test_saving_again_keeps_the_link_and_removing_the_attendee_drops_it(self):
@@ -285,58 +350,106 @@ class TestTypedAttendees(AttendeeCase):
 		frappe.set_user("Administrator")
 		self.assertNotIn(email, self.attendees(event))
 
-	def test_deleting_the_event_or_the_contact_drops_the_row(self):
+	def test_deleting_the_contact_leaves_the_attendee_waiting_and_the_event_drops_it(self):
 		email = self.email("gone")
 		hidden = self.contact(self.org_b, email)
 		event = self.event_as(REP_A, email)["name"]
 		frappe.delete_doc("Contact", hidden.name)
-		self.assertEqual(self.attendees(event), {})
+		self.assertEqual(self.attendees(event), {email: None})
 
-		other = self.email("gone2")
-		self.contact(self.org_b, other)
-		event = self.event_as(REP_A, other)["name"]
 		frappe.delete_doc("Event", event)
 		self.assertEqual(self.attendees(event), {})
 
 
+class TestAttendeeScopes(AttendeeCase):
+	"""Who may read a CRM Event Attendee row, beyond reps (who may not at all)."""
+
+	def row(self, company):
+		email = self.email(f"scope-{frappe.scrub(company)[-6:]}")
+		self.contact(company, email)
+		# by a rep with no customers, so the contact is hidden and recorded apart
+		event = self.event_as(REP_C, email)["name"]
+		return frappe.get_doc("CRM Event Attendee", {"event": event})
+
+	def test_an_out_of_tree_manager_scoped_to_own_records_reads_none_of_a_reps(self):
+		from crm.permissions.customers import has_event_attendee_permission
+
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		row = self.row(self.org_b)
+		self.assertFalse(has_event_attendee_permission(row, "read", MANAGER))
+		frappe.set_user(MANAGER)
+		self.assertNotIn(row.name, frappe.get_list("CRM Event Attendee", pluck="name"))
+
+	def test_an_in_tree_manager_reads_their_teams_only(self):
+		from frappe.utils.nestedset import rebuild_tree
+
+		from crm.permissions.customers import has_event_attendee_permission
+		from crm.permissions.test_org_hierarchy import make_hierarchy_node
+
+		mgr = make_hierarchy_node(MANAGER, is_group=1)
+		make_hierarchy_node(REP_A, reports_to=mgr.name)
+		rebuild_tree("CRM Sales Hierarchy")
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+		theirs, not_theirs = self.row(self.org_a), self.row(self.org_b)
+		self.assertTrue(has_event_attendee_permission(theirs, "read", MANAGER))
+		self.assertFalse(has_event_attendee_permission(not_theirs, "read", MANAGER))
+		frappe.set_user(MANAGER)
+		listed = set(frappe.get_list("CRM Event Attendee", pluck="name"))
+		self.assertIn(theirs.name, listed)
+		self.assertNotIn(not_theirs.name, listed)
+
+
 class TestConcurrentAttendees(IntegrationTestCase):
-	def test_two_saves_adding_the_same_new_address_make_one_contact(self):
-		"""Each in its own connection, as two web workers would be."""
+	def test_a_contact_saved_while_the_event_saves_is_not_left_waiting(self):
+		"""Each in its own connection, as two web workers would be: whichever
+		commits first, the attendee ends with the Contact."""
 		email = f"race-{frappe.generate_hash(length=8)}@client.test"
 		site, sites_path = frappe.local.site, frappe.local.sites_path
 		barrier = threading.Barrier(2)
-		events, errors = [], []
+		events, contacts, errors = [], [], []
 
-		def save():
+		def run(work):
 			frappe.init(site, sites_path=sites_path)
 			frappe.connect()
 			try:
-				frappe.set_user("Administrator")
-				doc = frappe.get_doc(
-					{
-						"doctype": "Event",
-						"subject": "Race",
-						"starts_on": "2026-11-20 09:00:00",
-						"event_participants": [{"email": email, "reference_doctype": "Contact"}],
-					}
-				)
+				frappe.set_user(REP_A)
 				barrier.wait(timeout=30)
-				doc.insert()
+				work()
 				frappe.db.commit()  # nosemgrep: frappe-manual-commit
-				events.append(doc.name)
 			except Exception as e:
 				errors.append(e)
 			finally:
 				frappe.destroy()
 
-		# the race under test is the Contact's, not the naming series': two first
+		def save_event():
+			doc = frappe.get_doc(
+				{
+					"doctype": "Event",
+					"subject": "Race",
+					"starts_on": "2026-11-20 09:00:00",
+					"event_participants": [{"email": email, "reference_doctype": "Contact"}],
+				}
+			).insert()
+			events.append(doc.name)
+
+		def save_contact():
+			doc = frappe.get_doc(
+				{
+					"doctype": "Contact",
+					"first_name": "Race",
+					"email_ids": [{"email_id": email, "is_primary": 1}],
+				}
+			).insert()
+			contacts.append(doc.name)
+
+		# the race under test is the attendee's, not the naming series': two first
 		# inserts of a series that has no row yet deadlock on it in frappe itself
 		from crm.utils.autonomous import autonomous_db
 
 		with autonomous_db() as db:
 			db.sql("insert ignore into `tabSeries` (name, current) values ('EV', 0)")
 
-		threads = [threading.Thread(target=save) for _ in range(2)]
+		threads = [threading.Thread(target=run, args=(work,)) for work in (save_event, save_contact)]
 		try:
 			for thread in threads:
 				thread.start()
@@ -344,15 +457,13 @@ class TestConcurrentAttendees(IntegrationTestCase):
 				thread.join(timeout=60)
 			self.assertEqual(errors, [])
 			with autonomous_db() as db:
-				made = db.sql(
-					"select parent from `tabContact Email` where email_id = %s and parenttype = 'Contact'",
-					email,
-				)
-				linked = db.sql(
-					"select distinct contact from `tabCRM Event Attendee` where email = %s", email
-				)
-			self.assertEqual(len(made), 1, "two Contacts for one new address")
-			self.assertEqual({r[0] for r in linked}, {made[0][0]})
+				named = db.sql(
+					"select reference_docname from `tabEvent Participants` where parent = %s", events[0]
+				)[0][0]
+				linked = db.sql("select contact from `tabCRM Event Attendee` where event = %s", events[0])
+			# named on the row when the Contact was there first (it is the rep's own),
+			# recorded off it otherwise -- never left waiting
+			self.assertTrue(named == contacts[0] or [r[0] for r in linked] == [contacts[0]], (named, linked))
 		finally:
 			self._purge(email, events)
 

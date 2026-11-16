@@ -21,7 +21,7 @@ class CRMEventAttendee(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		contact: DF.Link
+		contact: DF.Link | None
 		email: DF.Data
 		event: DF.Data
 	# end: auto-generated types

@@ -252,6 +252,7 @@ doc_events = {
 			"crm.api.contact.validate",
 			"crm.integrations.acumatica.install.guard_contact_identity",
 		],
+		"on_update": ["crm.api.attendees.link_waiting_attendees"],
 		"on_trash": ["crm.api.attendees.drop_contact_attendees"],
 	},
 	"Address": {
@@ -572,6 +573,8 @@ after_migrate = [
 	"crm.fcrm.doctype.crm_forecast_snapshot.crm_forecast_snapshot.on_doctype_update",
 	# frappe's table: the rep scoping sub-select filters it by assignee
 	"crm.permissions.org_hierarchy.ensure_todo_index",
+	# the attendee lookup and the duplicates review read Contact Email by address
+	"crm.api.attendees.ensure_contact_email_index",
 ]
 
 # frappe.clear_cache() deletes every other key on the site -- and frappe.rename_doc

@@ -249,11 +249,11 @@ export function normalizeParticipants(list = []) {
  *
  * Event Participants' reference is a Dynamic Link, and Attendee hands over an
  * address that matches no Contact the rep can see as `reference_docname: 'new'`
- * (or none at all, for a comma-separated paste). The event's save gives such a
- * row its Contact (`crm.api.attendees`): one the rep can read is named on the
- * row; otherwise the Contact behind it -- possibly another rep's customer's,
- * or one created for the rep -- is recorded off the event, and the row keeps
- * only the address.
+ * (or none at all, for a comma-separated paste). The event's save resolves such
+ * a row (`crm.api.attendees`): a Contact the rep can read is named on the row;
+ * otherwise the row keeps only the address, and the Contact behind it --
+ * possibly another rep's customer's, or none yet -- is recorded off the event.
+ * No Contact is created for an address nobody has.
  *
  * This used to look the Contact up and create it from here. The lookup only
  * saw the Contacts the rep can read, so a meeting with another rep's customer

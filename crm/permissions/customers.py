@@ -219,7 +219,12 @@ def visible_address_condition(user: str | None = None, for_write: bool = False):
 def visible_event_condition(user: str | None = None):
 	"""Calendar events are Public by default, and they name the customer: by a
 	participant, or by the record they were added from, which is where a subject and
-	a location come along. A rep keeps their own, and those they attend."""
+	a location come along. A rep keeps their own, and those they attend.
+
+	An attendee typed by address names nobody on the event (:mod:`crm.api.attendees`),
+	so the Contact recorded behind it does not hide the event: if it did, a rep would
+	see an event when the address is nobody's and not when it is a colleague's
+	customer's, and could tell which."""
 	user = user or frappe.session.user
 	org_cond = visible_organization_condition(user)
 	if org_cond is None:
@@ -252,24 +257,20 @@ def visible_event_condition(user: str | None = None):
 			| ((Other.reference_doctype == "CRM Deal") & Other.reference_docname.isin(deals_there))
 		)
 	)
-	# an attendee typed by address, whose Contact is recorded off the event
-	Attendee = frappe.qb.DocType("CRM Event Attendee").as_("_cust_att")
-	by_attendee = (
-		frappe.qb.from_(Attendee).select(Attendee.event).where(Attendee.contact.isin(hidden_contacts))
-	)
 	attending = (
 		frappe.qb.from_(Part).select(Part.parent).where((Part.parenttype == "Event") & (Part.email == user))
 	)
 	return (
 		(Event.owner == user)
-		| (Event.name.notin(by_participant) & Event.name.notin(by_reference) & Event.name.notin(by_attendee))
+		| (Event.name.notin(by_participant) & Event.name.notin(by_reference))
 		| Event.name.isin(attending)
 	)
 
 
 def visible_event_attendee_condition(user: str | None = None):
-	"""An attendee row names a Contact, so it is read with that Contact. Reps hold
-	no role permission on the doctype at all; this scopes an in-tree manager."""
+	"""An attendee row names a Contact, so it is read with that Contact; one still
+	waiting for a Contact is left to managers who see everything. Reps hold no
+	role permission on the doctype at all; this scopes the other managers."""
 	cond = visible_contact_condition(user or frappe.session.user)
 	if cond is None:
 		return None

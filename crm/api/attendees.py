@@ -11,23 +11,27 @@ So the event's own save resolves the address, here, against every Contact:
 
 - one both the rep and the event's owner can read is put on the participant row,
   as a picked Contact would be;
-- otherwise the row keeps only the typed address, and the Contact behind it --
-  an existing one the rep may not read, or one created for the rep when there is
-  none -- is recorded in ``CRM Event Attendee``, which reps cannot read at all.
+- otherwise the row keeps only the typed address, and ``CRM Event Attendee``,
+  which reps cannot read at all, records the Contact behind it -- or none yet.
+  Nothing is created when nobody has the address: a Contact made for the rep
+  would be one they (and every rep) could list, and its absence in the other
+  case would say whose customer the address is. A Contact saved later with the
+  address is linked to the waiting rows then (:func:`link_waiting_attendees`).
 
-The hidden case and the not-found case leave the rep with the same row and the
-same response. They are told apart by nothing on the event: not the participant
-row, its version history, a list filter on it, or a timeline Communication
-(frappe makes one per named participant; a typed one is never named). Storing
-the hidden Contact's name on the row and blanking it on the way out, as call
-logs do, was not enough here: the row belongs to an event the rep owns, so
-frappe's generic list API lets them filter their own events on it character by
-character.
+The hidden case and the not-found case leave every rep with the same row, the
+same response, the same Contacts and the same events. Nothing on the event tells
+them apart: not the participant row, its version history, a list filter on it,
+or a timeline Communication (frappe makes one per named participant; a typed one
+is never named). Storing the hidden Contact's name on the row and blanking it on
+the way out, as call logs do, was not enough here: the row belongs to an event
+the rep owns, so frappe's generic list API lets them filter their own events on
+it character by character.
 
-Two saves adding the same new address at once must not create two Contacts, so
-the lookup and the insert run under a named database lock per address, held to
-the end of the transaction, and the lookup also reads through a fresh
-connection: the request's own snapshot predates the other save's commit.
+An event save and a Contact save carrying the same address can run at once, so
+both take a named database lock per address, held to the end of the
+transaction, and the event's lookup also reads through a fresh connection: the
+request's own snapshot predates the other save's commit. Otherwise a Contact
+committed in between would leave the attendee waiting for good.
 """
 
 from __future__ import annotations
@@ -82,8 +86,8 @@ def resolve_event_attendees(doc, method=None) -> None:
 		_lock(key)
 	found = _contacts_by_email(wanted)
 
-	# an address already resolved for this event stays as it was: re-deciding it
-	# on a later save would answer differently once the rep's own Contact exists
+	# an address already resolved for this event stays as it was: naming a
+	# Contact on the row now would change what the rep sees on a later save
 	choices: dict[str, tuple[str, str | None]] = {key: ("kept", contact) for key, contact in linked.items()}
 	for key in wanted:
 		candidates = found.get(key, [])
@@ -110,9 +114,6 @@ def resolve_event_attendees(doc, method=None) -> None:
 		if how == "named":
 			row.reference_docname = contact
 			continue
-		if not contact:
-			contact = _create_contact(row.email, doc)
-			choices[key] = ("kept", contact)
 		row._crm_typed_attendee = True
 		doc.flags.crm_attendees[key] = contact
 
@@ -128,7 +129,9 @@ def sync_event_attendees(doc, method=None) -> None:
 	for key, contact in wanted.items():
 		if key in stored:
 			continue
-		attendee = frappe.get_doc({"doctype": DOCTYPE, "event": doc.name, "email": key, "contact": contact})
+		attendee = frappe.get_doc(
+			{"doctype": DOCTYPE, "event": doc.name, "email": key, "contact": contact or None}
+		)
 		# a Contact found through the fresh connection is not in this snapshot yet
 		attendee.flags.ignore_links = True
 		attendee.insert(ignore_permissions=True)
@@ -143,39 +146,42 @@ def drop_event_attendees(doc, method=None) -> None:
 
 
 def drop_contact_attendees(doc, method=None) -> None:
-	"""Contact on_trash: the event keeps the typed address, and its next save
-	finds the person again."""
-	frappe.db.delete(DOCTYPE, {"contact": doc.name})
+	"""Contact on_trash: the attendee waits again for a Contact with its address."""
+	frappe.db.set_value(DOCTYPE, {"contact": doc.name}, "contact", None, update_modified=False)
 
 
-@frappe.whitelist()
-def get_contact_events(contact: str) -> list[dict]:
-	"""The events a Contact attends, by participant row or typed address, among
-	the events the caller can read. For the Contact's own readers only."""
-	if (
-		not contact
-		or not frappe.db.exists("Contact", contact)
-		or not frappe.has_permission("Contact", "read", doc=contact)
-	):
-		# one answer for "no such contact" and "not yours": the name is the question
-		frappe.throw(_("Not permitted"), frappe.PermissionError)
-	names = set(
-		frappe.get_all(
-			"Event Participants",
-			filters={"parenttype": "Event", "reference_doctype": "Contact", "reference_docname": contact},
-			pluck="parent",
-		)
-	)
-	names |= set(frappe.get_all(DOCTYPE, filters={"contact": contact}, pluck="event"))
-	if not names:
-		return []
-	return frappe.get_list(
-		"Event",
-		filters={"name": ("in", sorted(names))},
-		fields=["name", "subject", "starts_on", "ends_on", "status", "owner"],
-		order_by="starts_on desc",
-		limit_page_length=50,
-	)
+def link_waiting_attendees(doc, method=None) -> None:
+	"""Contact on_update: an attendee typed before anyone had this address is
+	this Contact. Recorded off the event only, so nothing the event's owner sees
+	changes."""
+	keys = sorted(_contact_keys(doc))
+	if not keys:
+		return
+	for key in keys:
+		_lock(key)
+	Attendee = frappe.qb.DocType(DOCTYPE)
+	# an UPDATE reads the latest committed rows, whatever this snapshot holds
+	(
+		frappe.qb.update(Attendee)
+		.set(Attendee.contact, doc.name)
+		.where(Attendee.email.isin(keys))
+		.where(Attendee.contact.isnull() | (Attendee.contact == ""))
+	).run()
+
+
+def _contact_keys(contact) -> set[str]:
+	keys = {normalize_email(row.email_id) for row in contact.get("email_ids") or []}
+	keys.add(normalize_email(contact.get("email_id")))
+	keys.discard("")
+	return keys
+
+
+def ensure_contact_email_index() -> None:
+	"""after_migrate: frappe indexes ``tabContact.email_id`` but not the address
+	rows, which every attendee lookup reads under its lock. Contact Email is
+	frappe's table, so no doctype JSON of ours can ask for it; ``add_index`` does
+	nothing when the index is already there."""
+	frappe.db.add_index("Contact Email", ["email_id"])
 
 
 def _event_owner(doc) -> str:
@@ -191,28 +197,18 @@ def _contact_visible(contact: str, user: str) -> bool:
 	return contact_visible(contact, user)
 
 
-def _create_contact(email: str, event) -> str:
-	contact = frappe.get_doc(
-		{
-			"doctype": "Contact",
-			"first_name": email.split("@")[0] or email,
-			"email_ids": [{"email_id": email, "is_primary": 1}],
-		}
-	)
-	contact.flags.ignore_permissions = bool(event.flags.ignore_permissions)
-	contact.insert()
-	return contact.name
-
-
+# On the indexed columns as stored: the tables' collation (utf8mb4_unicode_ci)
+# already matches without regard to case or trailing spaces. An address stored
+# with a leading space is not found, and waits as one nobody has.
 _LOOKUP = """
 	select lower(trim(c.email_id)) as k, c.name, c.creation, 1 as is_primary
 	from `tabContact` c
-	where lower(trim(c.email_id)) in %(keys)s
+	where c.email_id in %(keys)s
 	union all
 	select lower(trim(ce.email_id)) as k, c.name, c.creation, ce.is_primary
 	from `tabContact Email` ce
 	join `tabContact` c on c.name = ce.parent
-	where ce.parenttype = 'Contact' and lower(trim(ce.email_id)) in %(keys)s
+	where ce.email_id in %(keys)s and ce.parenttype = 'Contact'
 """
 
 
