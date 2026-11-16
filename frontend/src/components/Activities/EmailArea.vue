@@ -61,33 +61,97 @@
         </div>
       </div>
     </div>
-    <div class="flex flex-col gap-1 text-base leading-5 text-ink-gray-8">
-      <div>{{ activity.data.subject }}</div>
-      <div>
-        <span class="mr-1 text-ink-gray-5"> {{ __('To') }}: </span>
-        <span>{{ activity.data.recipients }}</span>
-        <span v-if="activity.data.cc">, </span>
-        <span v-if="activity.data.cc" class="mr-1 text-ink-gray-5">
-          {{ __('CC') }}:
-        </span>
-        <span v-if="activity.data.cc">{{ activity.data.cc }}</span>
-        <span v-if="activity.data.bcc">, </span>
-        <span v-if="activity.data.bcc" class="mr-1 text-ink-gray-5">
-          {{ __('BCC') }}:
-        </span>
-        <span v-if="activity.data.bcc">{{ activity.data.bcc }}</span>
+    <!-- The summary opens and closes the email. Closed, every line is
+         truncated, so a closed row is the same height however long its
+         recipients or body: rows above the newest cannot grow while the
+         timeline scrolls to it. -->
+    <button
+      type="button"
+      class="flex min-w-0 items-start gap-2 rounded text-left text-base leading-5 text-ink-gray-8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-outline-gray-3"
+      :aria-expanded="expanded ? 'true' : 'false'"
+      :aria-label="
+        expanded
+          ? __('Collapse email: {0}', [activity.data.subject])
+          : __('Expand email: {0}', [activity.data.subject])
+      "
+      data-email-toggle
+      @click="toggle"
+    >
+      <div class="flex min-w-0 flex-1 flex-col gap-1">
+        <div :class="{ truncate: !expanded }">
+          {{ activity.data.subject }}
+        </div>
+        <div :class="{ truncate: !expanded }">
+          <span class="mr-1 text-ink-gray-5"> {{ __('To') }}: </span>
+          <span>{{ activity.data.recipients }}</span>
+          <span v-if="activity.data.cc">, </span>
+          <span v-if="activity.data.cc" class="mr-1 text-ink-gray-5">
+            {{ __('CC') }}:
+          </span>
+          <span v-if="activity.data.cc">{{ activity.data.cc }}</span>
+          <span v-if="activity.data.bcc">, </span>
+          <span v-if="activity.data.bcc" class="mr-1 text-ink-gray-5">
+            {{ __('BCC') }}:
+          </span>
+          <span v-if="activity.data.bcc">{{ activity.data.bcc }}</span>
+        </div>
+        <div
+          v-if="!expanded"
+          class="flex min-w-0 items-center gap-2 text-p-sm text-ink-gray-6"
+          data-email-snippet
+        >
+          <span class="truncate">{{ activity.data.snippet }}</span>
+          <span
+            v-if="attachments.length"
+            class="ml-auto flex shrink-0 items-center gap-1 text-ink-gray-5"
+          >
+            <LucidePaperclip class="size-3.5" aria-hidden="true" />
+            {{ attachments.length }}
+          </span>
+        </div>
       </div>
-    </div>
-    <div class="border-0 border-t mt-3 mb-1 border-outline-elevation-2" />
-    <EmailContent :content="activity.data.content" />
-    <div v-if="activity.data?.attachments?.length" class="flex flex-wrap gap-2">
-      <AttachmentItem
-        v-for="a in activity.data.attachments"
-        :key="a.file_url"
-        :label="a.file_name"
-        :url="a.file_url"
+      <LucideChevronDown
+        class="mt-0.5 size-4 shrink-0 text-ink-gray-5 transition-transform"
+        :class="{ 'rotate-180': expanded }"
+        aria-hidden="true"
       />
-    </div>
+    </button>
+    <template v-if="expanded">
+      <div class="border-0 border-t mt-3 mb-1 border-outline-elevation-2" />
+      <EmailContent v-if="body != null" :content="body" />
+      <div
+        v-else-if="failed"
+        role="alert"
+        class="flex min-h-10 flex-wrap items-center gap-2 py-1 text-p-sm text-ink-red-9"
+        data-email-error
+      >
+        <span>{{ __('Could not load this email.') }}</span>
+        <Button
+          variant="subtle"
+          size="sm"
+          :label="__('Retry')"
+          data-email-retry
+          @click="loadBody"
+        />
+      </div>
+      <div
+        v-else
+        class="flex min-h-10 items-center gap-2 text-p-sm text-ink-gray-5"
+        aria-live="polite"
+        data-email-loading
+      >
+        <LoadingIndicator class="size-4" />
+        <span>{{ __('Loading email...') }}</span>
+      </div>
+      <div v-if="attachments.length" class="flex flex-wrap gap-2">
+        <AttachmentItem
+          v-for="a in attachments"
+          :key="a.file_url"
+          :label="a.file_name"
+          :url="a.file_url"
+        />
+      </div>
+    </template>
   </div>
 </template>
 <script setup>
@@ -95,11 +159,17 @@ import ReplyIcon from '@/components/Icons/ReplyIcon.vue'
 import ReplyAllIcon from '@/components/Icons/ReplyAllIcon.vue'
 import AttachmentItem from '@/components/AttachmentItem.vue'
 import EmailContent from '@/components/Activities/EmailContent.vue'
+import LoadingIndicator from '@/components/Icons/LoadingIndicator.vue'
 import { createDialog } from '@/utils/dialogs'
+import {
+  cachedEmailBody,
+  fetchEmailBody,
+  rememberEmailBody,
+} from '@/composables/useEmailBody'
 import { Badge, Dropdown, call, dayjsLocal, toast } from 'frappe-ui'
 import TimelineTimestamp from '@/components/Activities/TimelineTimestamp.vue'
 import ToneBadge from '@/components/ui/ToneBadge.vue'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
   activity: { type: Object, default: () => ({}) },
@@ -107,6 +177,42 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['reload'])
+
+const attachments = computed(() => props.activity.data?.attachments || [])
+
+// The timeline sends the body only with the newest emails, which open by
+// default and so paint at full height at once; any other is a snippet until
+// the rep opens it. See crm.api.activities.get_email_body.
+const inlineBody = () => props.activity.data?.content
+const expanded = ref(typeof inlineBody() === 'string')
+const body = ref(inlineBody() ?? cachedEmailBody(props.activity.name) ?? null)
+const failed = ref(false)
+if (typeof inlineBody() === 'string') {
+  rememberEmailBody(props.activity.name, inlineBody())
+}
+
+// A reload keeps this card (it is keyed by name) and may bring the body along.
+watch(inlineBody, (content) => {
+  if (typeof content !== 'string') return
+  rememberEmailBody(props.activity.name, content)
+  body.value = content
+})
+
+async function loadBody() {
+  if (body.value != null) return body.value
+  failed.value = false
+  try {
+    body.value = await fetchEmailBody(props.activity.name)
+  } catch {
+    failed.value = true
+  }
+  return body.value
+}
+
+function toggle() {
+  expanded.value = !expanded.value
+  if (expanded.value) loadBody()
+}
 
 const scheduled = computed(() => {
   const { delivery_status, send_after } = props.activity.data
@@ -209,7 +315,21 @@ function deleteScheduled() {
   )
 }
 
+// Reply quotes the body, so a closed email's is fetched first. A body already
+// here replies at once, in the same tick as the click.
 function reply(email, reply_all = false) {
+  if (!props.emailBox) return
+  if (body.value != null) return quoteInReply(email, body.value, reply_all)
+  loadBody().then((content) => {
+    if (content == null) {
+      toast.error(__('Could not load this email to reply to it'))
+      return
+    }
+    quoteInReply(email, content, reply_all)
+  })
+}
+
+function quoteInReply(email, message, reply_all) {
   // Read at the click, not at setup: the composer is a template ref further
   // down the page, and a card mounted before it (the first render of a tab)
   // would hold null for good and throw here.
@@ -217,7 +337,6 @@ function reply(email, reply_all = false) {
   if (!emailBox) return
   emailBox.show = true
   let editor = emailBox.editor
-  let message = email.content
   let recipients = email.recipients.split(',').map((r) => r.trim())
   // Reply from whichever of the user's own accounts the thread went through,
   // never from the customer's address: email.sender is who wrote to us.

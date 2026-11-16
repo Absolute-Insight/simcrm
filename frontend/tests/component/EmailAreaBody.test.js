@@ -1,0 +1,239 @@
+import { h, nextTick } from 'vue'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mount } from './mount.js'
+import EmailArea from '@/components/Activities/EmailArea.vue'
+import { forgetEmailBodies } from '@/composables/useEmailBody'
+
+// The timeline sends a snippet per email and the body only with the newest
+// ones; any other body is fetched when the email is opened, once.
+const { call } = vi.hoisted(() => ({ call: vi.fn() }))
+vi.mock('frappe-ui', async (original) => ({ ...(await original()), call }))
+
+vi.mock('@/components/Activities/EmailContent.vue', () => ({
+  default: {
+    props: ['content'],
+    render() {
+      return h('div', { 'data-email-content': '' }, this.content)
+    },
+  },
+}))
+vi.mock('@/components/Activities/TimelineTimestamp.vue', () => ({
+  default: { render: () => null },
+}))
+vi.mock('@/components/AttachmentItem.vue', () => ({
+  default: { render: () => null },
+}))
+
+const Button = {
+  inheritAttrs: false,
+  render() {
+    const { tooltip, label, onClick, ...rest } = this.$attrs
+    const data = Object.fromEntries(
+      Object.entries(rest).filter(([k]) => k.startsWith('data-')),
+    )
+    return h('button', { ...data, 'data-tooltip': tooltip, onClick }, label)
+  },
+}
+
+function composer() {
+  const inserted = []
+  const chain = new Proxy(
+    {},
+    {
+      get: (_, k) => {
+        if (k === 'run') return () => {}
+        if (k === 'insertContent')
+          return (content) => (inserted.push(content), chain)
+        return () => chain
+      },
+    },
+  )
+  const doc = { forEach: () => {} }
+  return {
+    show: false,
+    inserted,
+    editor: { editor: { chain: () => chain, state: { doc } } },
+  }
+}
+
+function email(name, data = {}) {
+  return {
+    name,
+    activity_type: 'communication',
+    communication_type: 'Communication',
+    communication_date: '2026-10-29 09:00:00',
+    data: {
+      subject: 'Quote Q-1042',
+      snippet: 'Please find the quote attached & priced',
+      sender: 'buyer@customer.co.za',
+      sender_full_name: 'Buyer',
+      recipients: 'thabo@mbp-engineering.co.za',
+      sent_or_received: 'Received',
+      cc: null,
+      bcc: null,
+      attachments: [],
+      ...data,
+    },
+  }
+}
+
+function render(activity, emailBox = composer()) {
+  return {
+    ...mount(EmailArea, { props: { activity, emailBox }, stubs: { Button } }),
+    emailBox,
+  }
+}
+
+const flush = async () => {
+  for (let i = 0; i < 5; i++) await nextTick()
+  await new Promise((r) => setTimeout(r))
+}
+
+const toggle = (el) => el.querySelector('[data-email-toggle]')
+
+beforeEach(() => {
+  forgetEmailBodies()
+  call.mockReset()
+})
+
+describe('EmailArea closed', () => {
+  it('shows the snippet and fetches nothing', () => {
+    const { el } = render(email('c-1'))
+    expect(toggle(el).getAttribute('aria-expanded')).toBe('false')
+    expect(el.querySelector('[data-email-snippet]').textContent).toContain(
+      'Please find the quote attached & priced',
+    )
+    expect(el.querySelector('[data-email-content]')).toBeNull()
+    expect(call).not.toHaveBeenCalled()
+  })
+
+  // Rows above the newest must not grow while the timeline scrolls to it:
+  // closed, every line is clipped to one, whatever the recipients or body.
+  it('is one line per field, so its height is fixed', () => {
+    const { el } = render(
+      email('c-1', { recipients: Array(30).fill('a@b.co').join(', ') }),
+    )
+    const lines = toggle(el).querySelectorAll(':scope > div > div')
+    expect(lines.length).toBe(3)
+    expect(lines[0].className).toContain('truncate')
+    expect(lines[1].className).toContain('truncate')
+    expect(lines[2].querySelector('.truncate')).not.toBeNull()
+  })
+})
+
+describe('EmailArea opened by default', () => {
+  it('paints the body it came with on the first render, without a request', () => {
+    const { el } = render(email('c-2', { content: '<p>Full body</p>' }))
+    expect(toggle(el).getAttribute('aria-expanded')).toBe('true')
+    expect(el.querySelector('[data-email-content]').textContent).toBe(
+      '<p>Full body</p>',
+    )
+    expect(el.querySelector('[data-email-snippet]')).toBeNull()
+    expect(call).not.toHaveBeenCalled()
+  })
+})
+
+describe('EmailArea fetch on expand', () => {
+  it('fetches the body once and keeps it', async () => {
+    call.mockResolvedValue({ name: 'c-3', content: '<p>Fetched</p>' })
+    const { el } = render(email('c-3'))
+
+    toggle(el).click()
+    await nextTick()
+    expect(el.querySelector('[data-email-loading]')).not.toBeNull()
+    await flush()
+    expect(call).toHaveBeenCalledTimes(1)
+    expect(call).toHaveBeenCalledWith('crm.api.activities.get_email_body', {
+      name: 'c-3',
+    })
+    expect(el.querySelector('[data-email-content]').textContent).toBe(
+      '<p>Fetched</p>',
+    )
+
+    // closed and opened again, and on a card for the same email (a reload)
+    toggle(el).click()
+    await nextTick()
+    toggle(el).click()
+    await flush()
+    const again = render(email('c-3')).el
+    toggle(again).click()
+    await flush()
+    expect(again.querySelector('[data-email-content]').textContent).toBe(
+      '<p>Fetched</p>',
+    )
+    expect(call).toHaveBeenCalledTimes(1)
+  })
+
+  it('asks once when opened twice before the answer arrives', async () => {
+    let answer
+    call.mockReturnValue(new Promise((r) => (answer = r)))
+    const a = render(email('c-4')).el
+    const b = render(email('c-4')).el
+    toggle(a).click()
+    toggle(b).click()
+    answer({ content: '<p>Once</p>' })
+    await flush()
+    expect(call).toHaveBeenCalledTimes(1)
+    expect(b.querySelector('[data-email-content]').textContent).toBe(
+      '<p>Once</p>',
+    )
+  })
+
+  it('says it failed and fetches again on Retry', async () => {
+    call.mockRejectedValueOnce(new Error('Email not found'))
+    const { el } = render(email('c-5'))
+
+    toggle(el).click()
+    await flush()
+    const error = el.querySelector('[data-email-error]')
+    expect(error.getAttribute('role')).toBe('alert')
+    expect(error.className).toContain('text-ink-red-9')
+    expect(el.querySelector('[data-email-content]')).toBeNull()
+
+    call.mockResolvedValueOnce({ content: '<p>Second time</p>' })
+    el.querySelector('[data-email-retry]').click()
+    await flush()
+    expect(call).toHaveBeenCalledTimes(2)
+    expect(el.querySelector('[data-email-error]')).toBeNull()
+    expect(el.querySelector('[data-email-content]').textContent).toBe(
+      '<p>Second time</p>',
+    )
+  })
+})
+
+describe('EmailArea reply on a closed email', () => {
+  it('fetches the body first and quotes it', async () => {
+    call.mockResolvedValue({ content: '<p>Original words</p>' })
+    const { el, emailBox } = render(email('c-6'))
+
+    el.querySelector('[data-tooltip="Reply"]').click()
+    await flush()
+
+    expect(call).toHaveBeenCalledTimes(1)
+    expect(emailBox.show).toBe(true)
+    expect(emailBox.editor.toEmails).toEqual(['buyer@customer.co.za'])
+    expect(emailBox.inserted).toEqual([
+      '<blockquote><p>Original words</p></blockquote>',
+    ])
+  })
+
+  it('quotes an inline body in the same tick, without a request', () => {
+    const { el, emailBox } = render(
+      email('c-7', { content: '<p>Already here</p>' }),
+    )
+    el.querySelector('[data-tooltip="Reply All"]').click()
+    expect(call).not.toHaveBeenCalled()
+    expect(emailBox.inserted).toEqual([
+      '<blockquote><p>Already here</p></blockquote>',
+    ])
+  })
+
+  it('does not open the composer when the body cannot be loaded', async () => {
+    call.mockRejectedValue(new Error('Email not found'))
+    const { el, emailBox } = render(email('c-8'))
+    el.querySelector('[data-tooltip="Reply"]').click()
+    await flush()
+    expect(emailBox.show).toBe(false)
+    expect(emailBox.inserted).toEqual([])
+  })
+})
