@@ -1507,6 +1507,29 @@ class TestDuplicatePrevention(CustomerPushCase):
 			outbound.push_customer_for_deal(deal.name)
 		self.client.put.assert_not_called()
 
+	@patch("crm.integrations.acumatica.outbound.frappe.enqueue")
+	def test_an_organization_renamed_while_the_push_waited_is_not_pushed_under_its_old_name(self, enqueue):
+		"""The row lock returns nothing for a name that is gone: the push must stop, and
+		queue itself again for the organization's new name."""
+		_enable()
+		org, deal = _complete_deal()
+		enqueue.reset_mock()  # the deal's own save queued the ordinary push
+		real_get_value = frappe.db.get_value
+
+		def renamed_meanwhile(doctype, filters=None, fieldname="name", *args, **kwargs):
+			if kwargs.get("for_update") and doctype == "CRM Organization":
+				return None
+			if kwargs.get("for_update") and doctype == "CRM Deal":
+				return "Renamed Org Ltd"
+			return real_get_value(doctype, filters, fieldname, *args, **kwargs)
+
+		with patch("crm.integrations.acumatica.outbound.frappe.db.get_value", side_effect=renamed_meanwhile):
+			outbound.push_customer_for_deal(deal.name)
+		self.client.put.assert_not_called()
+		self.assertEqual(
+			[c.kwargs["job_id"] for c in _pushes(enqueue)], ["acumatica_customer_Renamed Org Ltd"]
+		)
+
 	def test_the_remote_reads_run_before_the_row_lock(self):
 		_enable()
 		org, deal = _complete_deal()
@@ -1960,6 +1983,7 @@ class TestUnansweredPushRecovery(CustomerPushCase):
 			ignore_permissions=True,
 			show_alert=False,
 		)
+		frappe.db.before_commit.run()  # the marker follows the rename as it commits
 		self.assertTrue(_marker("Customer", renamed))
 		self.assertFalse(_marker("Customer", org.name))
 
@@ -2246,12 +2270,60 @@ class TestManagersResolveAStuckPush(CustomerPushCase):
 				as_dict=True,
 			)
 
+	def _seen(self, org):
+		"""The open write as the manager's panel shows it on the organization's row."""
+		from crm.integrations.acumatica.api import get_open_sync_issues
+
+		rows = [i for i in get_open_sync_issues() if i["remote_id"] == org.name and i.get("open_write")]
+		return rows[0]["open_write"]
+
+	def _age(self, org, seconds):
+		with autonomous_db() as db:
+			db.sql(
+				"update `tabCRM ERP Write` set started_at = %s where open_key = %s",
+				(
+					frappe.utils.add_to_date(frappe.utils.now_datetime(), seconds=-seconds),
+					outbound._inflight_key("Customer", org.name),
+				),
+			)
+
+	def test_confirm_is_refused_while_the_unanswered_write_may_still_land(self):
+		"""A worker killed mid-PUT leaves its row open and no lock held. Abandoned
+		seconds later, the confirm push's duplicate check could run before Acumatica
+		commits the killed PUT: a second customer."""
+		from crm.integrations.acumatica.api import confirm_new_customer
+
+		org, deal = self._stuck()
+		seen = self._seen(org)
+		with self.assertRaises(frappe.ValidationError) as ctx:
+			confirm_new_customer(org.name, write=seen["name"], version=seen["version"])
+		self.assertIn("still being settled", str(ctx.exception))
+		frappe.db.after_commit.run()
+		self.assertTrue(_marker("Customer", org.name))
+
+	def test_confirm_releases_only_the_write_the_manager_saw(self):
+		from crm.integrations.acumatica.api import confirm_new_customer
+
+		org, deal = self._stuck()
+		self._age(org, outbound.CONFIRM_SETTLE_SECONDS + 60)
+		seen = self._seen(org)
+		# another attempt touched it after the panel was loaded
+		ledger.record_unknown(outbound._inflight_key("Customer", org.name), "504 again")
+		with self.assertRaises(frappe.ValidationError) as ctx:
+			confirm_new_customer(org.name, write=seen["name"], version=seen["version"])
+		self.assertIn("changed", str(ctx.exception))
+		with self.assertRaises(frappe.ValidationError):
+			confirm_new_customer(org.name)  # not saying which write is no answer either
+		self.assertTrue(_marker("Customer", org.name))
+
 	@patch("crm.integrations.acumatica.outbound.frappe.enqueue")
 	def test_confirming_it_new_abandons_the_unanswered_write_and_the_push_sends(self, enqueue):
 		from crm.integrations.acumatica.api import confirm_new_customer
 
 		org, deal = self._stuck()
-		confirm_new_customer(org.name)
+		self._age(org, outbound.CONFIRM_SETTLE_SECONDS + 60)
+		seen = self._seen(org)
+		confirm_new_customer(org.name, write=seen["name"], version=seen["version"])
 		self.assertTrue(_marker("Customer", org.name), "released only once the confirmation commits")
 		frappe.db.after_commit.run()
 		self.assertIsNone(_marker("Customer", org.name))

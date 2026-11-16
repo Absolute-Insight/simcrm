@@ -224,22 +224,32 @@ def record_unknown(target: str, error) -> None:
 		)
 
 
-def close(target: str, state: str, error=None, remote_id=None) -> None:
-	"""Settle the open row for ``target``, if there is one."""
+def close(target: str, state: str, error=None, remote_id=None, name=None, version=None) -> bool:
+	"""Settle the open row for ``target`` -- only the row ``name``, when given, and only
+	at ``version``, when given: a decision made on what somebody saw must not close a
+	row that has moved on since. Whether a row was closed."""
 	assert state in CLOSED_STATES, state
 	now = now_datetime()
+	where, values = "open_key = %s", [target]
+	if name is not None:
+		where += " and name = %s"
+		values.append(name)
+	if version is not None:
+		where += " and version = %s"
+		values.append(int(version))
 	with autonomous_db() as db:
 		db.sql(
 			f"""update {TABLE}
 			set state = %s, open_key = null, finished_at = %s, modified = %s,
 				error = coalesce(%s, error), remote_id = coalesce(%s, remote_id)
-			where open_key = %s""",
-			(state, now, now, _short(error), None if remote_id is None else str(remote_id), target),
+			where {where}""",
+			(state, now, now, _short(error), None if remote_id is None else str(remote_id), *values),
 		)
+		return db._cursor.rowcount == 1
 
 
 def close_after_commit(
-	target: str, state: str = APPLIED, remote_id=None, error=None, on_failure=None
+	target: str, state: str = APPLIED, remote_id=None, error=None, on_failure=None, name=None, version=None
 ) -> None:
 	"""Settle the row once the request's own transaction commits -- and only then. A
 	rollback after a write that landed (a worker killed before its commit) leaves the
@@ -248,7 +258,7 @@ def close_after_commit(
 
 	def settle():
 		try:
-			close(target, state, error=error, remote_id=remote_id)
+			close(target, state, error=error, remote_id=remote_id, name=name, version=version)
 		except Exception as e:
 			# left open, the next attempt looks before it sends: safe, only slower
 			frappe.log_error(frappe.get_traceback(), "ERP write ledger: could not settle a write")
@@ -266,7 +276,7 @@ def close_after_commit(
 def move(old_target: str, new_target: str):
 	"""A rename of the record the target names: the open row follows it. When the new
 	name already has one open, that one stands and the old one is abandoned -- one
-	open write per target. What it did, for ``restore`` -- or None if nothing was open."""
+	open write per target. The row moved, or None if nothing was open."""
 	kind, reference = _split(new_target)
 	now = now_datetime()
 	with autonomous_db() as db:
@@ -291,24 +301,18 @@ def move(old_target: str, new_target: str):
 		return frappe._dict(name=row.name, state=row.state, error=row.error)
 
 
-def restore(moved, old_target: str) -> None:
-	"""Undo ``move`` for a rename that rolled back: the row is open under the old name
-	again, in the state it had. Never raises (it runs in a rollback hook)."""
-	if not moved:
-		return
-	kind, reference = _split(old_target)
-	try:
-		with autonomous_db() as db:
-			db.sql(
-				f"""update {TABLE} set target = %s, open_key = %s, reference_name = %s, state = %s,
-					error = %s, finished_at = null, version = version + 1, modified = %s
-				where name = %s""",
-				(old_target, old_target, reference, moved.state, moved.error, now_datetime(), moved.name),
-			)
-	except Exception:
-		frappe.log_error(
-			frappe.get_traceback(), "ERP write ledger: could not move a write back after a rename"
+def open_writes(targets) -> dict:
+	"""``{target: row}`` for those of ``targets`` with an open row; one read."""
+	targets = list(targets)
+	if not targets:
+		return {}
+	with autonomous_db() as db:
+		rows = db.sql(
+			f"select name, open_key, state, version, started_at from {TABLE} where open_key in %s",
+			(targets,),
+			as_dict=True,
 		)
+	return {row.open_key: row for row in rows}
 
 
 def purge_settled() -> None:

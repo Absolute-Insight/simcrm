@@ -21,6 +21,7 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 from crm.fcrm.doctype.crm_erp_write import crm_erp_write as ledger
 from crm.integrations.acumatica.client import (
 	TIMEOUT,
+	WRITE_TIMEOUT,
 	AcumaticaAuthError,
 	AcumaticaClient,
 	AcumaticaError,
@@ -40,6 +41,10 @@ from crm.integrations.acumatica.matching import name_match, normalise_name, norm
 # How long Acumatica may still be working on a quote after we stopped waiting for it.
 # Inside this, finding no order proves nothing yet.
 QUOTE_SETTLE_SECONDS = 300
+# How long after a customer PUT was sent it may still land: the client gives up on it
+# at WRITE_TIMEOUT, and Acumatica may still be working on it for a while after. A
+# manager may not release an unanswered write younger than this.
+CONFIRM_SETTLE_SECONDS = WRITE_TIMEOUT + QUOTE_SETTLE_SECONDS
 
 
 def _inflight_key(entity: str, name: str) -> str:
@@ -61,7 +66,7 @@ def _mark_inflight(key: str, value=None, expected=None) -> str | None:
 	return ledger.acquire(key, marker, expected)
 
 
-def _settle_inflight(key: str, remote_id=None) -> None:
+def _settle_inflight(key: str, remote_id=None, name=None) -> None:
 	"""The write's outcome is on record -- once it is committed. A rollback after a
 	successful PUT (a worker killed before its commit) must leave the marker, so the
 	next attempt finds the record instead of making another. A settle that fails is
@@ -73,17 +78,18 @@ def _settle_inflight(key: str, remote_id=None) -> None:
 			"crm.integrations.acumatica.outbound.settle_left_open",
 			key=key,
 			remote_id=remote_id,
+			name=name,
 			queue="short",
 		)
 
-	ledger.close_after_commit(key, ledger.APPLIED, remote_id=remote_id, on_failure=retry)
+	ledger.close_after_commit(key, ledger.APPLIED, remote_id=remote_id, on_failure=retry, name=name)
 
 
-def settle_left_open(key: str, remote_id=None) -> None:
+def settle_left_open(key: str, remote_id=None, name=None) -> None:
 	"""Job: close a write whose settle failed after its commit. Failing again, it is a
 	Push Failed row in the panel managers already watch."""
 	try:
-		ledger.close(key, ledger.APPLIED, remote_id=remote_id)
+		ledger.close(key, ledger.APPLIED, remote_id=remote_id, name=name)
 		return
 	except Exception as e:
 		error = e
@@ -94,8 +100,9 @@ def settle_left_open(key: str, remote_id=None) -> None:
 		reference,
 		PUSH_FAILED,
 		f"{remote_id or 'the record'} is in Acumatica, but its write-ledger row ({key}) could not be "
-		f"closed: {error}. Nothing is sent twice -- the next attempt looks for it first -- "
-		"but if this stays, close the row's write by linking it here.",
+		f"closed: {error}. Nothing is sent twice -- the next attempt looks for it first, and a "
+		"linked customer or a stored quote number stops it anyway. If this keeps coming back, "
+		"the database is refusing writes: an administrator can find the row in CRM ERP Write.",
 	)
 
 
@@ -468,11 +475,18 @@ def push_customer_for_deal(deal: str) -> None:
 		as_dict=True,
 		for_update=True,
 	)
-	if locked and (locked.acumatica_noteid or locked.acumatica_id):
+	if not locked:
+		# Renamed (or deleted) while this push waited on the lock: the name it was about
+		# to push no longer exists. The deal follows a rename -- push for the new name.
+		moved_to = frappe.db.get_value("CRM Deal", doc.name, "organization", for_update=True)
+		if moved_to and moved_to != org.name:
+			_enqueue_push(doc.name, moved_to)
+		return
+	if locked.acumatica_noteid or locked.acumatica_id:
 		if not doc.get("acumatica_customer") and locked.acumatica_id:
 			frappe.db.set_value("CRM Deal", doc.name, "acumatica_customer", locked.acumatica_id)
 		return
-	if locked and (locked.get("acumatica_confirmed_for") or "") != confirmation:
+	if (locked.get("acumatica_confirmed_for") or "") != confirmation:
 		return
 	try:
 		current = _open_marker(inflight)
@@ -530,7 +544,7 @@ def push_customer_for_deal(deal: str) -> None:
 		return
 
 	_link_customer(org.name, doc.name, created)
-	_settle_inflight(inflight, v(created, "CustomerID"))
+	_settle_inflight(inflight, v(created, "CustomerID"), name=acquired)
 	_commit()
 	_after_customer_created(client, org.name, v(created, "CustomerID"), facts.contact, doc, settings)
 
@@ -557,7 +571,7 @@ def _recovered(client, payload, row, inflight, org, doc, facts, settings) -> boo
 		return True
 	if earlier:
 		_link_customer(org.name, doc.name, earlier)
-		_settle_inflight(inflight, v(earlier, "CustomerID"))
+		_settle_inflight(inflight, v(earlier, "CustomerID"), name=row.name)
 		_commit()
 		_after_customer_created(client, org.name, v(earlier, "CustomerID"), facts.contact, doc, settings)
 		return True
@@ -619,16 +633,23 @@ def _confirmed_past(raw: str, facts) -> set:
 def move_markers_on_rename(doc, method, old: str, new: str, merge: bool = False) -> None:
 	"""CRM Organization after_rename: the in-flight markers are keyed by the docname,
 	and one orphaned by a rename is a push that forgot it may already have created the
-	customer -- the next one sends a second. Moved at once, on the ledger's own
-	connection, as the redis marker was: the push that reads it next runs after this
-	rename commits, in another job."""
-	for entity in ("Customer", "CustomerContact"):
-		old_key = _inflight_key(entity, old)
-		moved = ledger.move(old_key, _inflight_key(entity, new))
-		if moved:
-			# a rename that fails after this hook puts the row back under the old name
-			# (a worker killed mid-rename leaves it under the new one: noted, not closed)
-			frappe.db.after_rollback.add(lambda m=moved, t=old_key: ledger.restore(m, t))
+	customer -- the next one sends a second.
+
+	Moved when the rename commits, and only if it is still there then: a rename can
+	be undone without a rollback hook running -- the sync renames inside a per-record
+	savepoint -- and a row moved for a rename that was undone is a guard nobody looks
+	under. The push that reads it next runs after this commit, in another job. (A
+	commit that fails after the move leaves the row under the new name: the one
+	window this does not close.)"""
+
+	def move_if_renamed():
+		if frappe.db.exists("CRM Organization", new) and not frappe.db.exists("CRM Organization", old):
+			for entity in ("Customer", "CustomerContact"):
+				# raises if the ledger cannot be written: the commit -- and the rename --
+				# fail rather than leave the guard under a name that no longer exists
+				ledger.move(_inflight_key(entity, old), _inflight_key(entity, new))
+
+	frappe.db.before_commit.add(move_if_renamed)
 	_move_issues_on_rename(old, new)
 
 
@@ -1391,7 +1412,7 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 			)
 		if earlier:
 			frappe.db.set_value("CRM Deal", deal.name, "acumatica_sales_quote", earlier)
-			_settle_inflight(inflight, earlier)
+			_settle_inflight(inflight, earlier, name=earlier_attempt.name)
 			return earlier
 		sent_at = (earlier_attempt.marker or {}).get("sent_at") or 0
 		if time.time() - float(sent_at) < QUOTE_SETTLE_SECONDS:
@@ -1467,7 +1488,7 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 					"will pick the quote up rather than create another."
 				).format(order_nbr)
 			)
-		_settle_inflight(inflight, order_nbr)
+		_settle_inflight(inflight, order_nbr, name=acquired)
 	return order_nbr
 
 

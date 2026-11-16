@@ -97,19 +97,60 @@ class TestERPWriteLedger(FrappeTestCase):
 		self.assertIsNone(ledger.acquire(TARGET, {"sent_at": 2.0}, expected=seen_in_flight))
 		self.assertTrue(ledger.acquire(TARGET, {"sent_at": 2.0}, expected=ledger.open_write(TARGET)))
 
-	def test_a_rename_that_rolls_back_puts_the_open_write_back(self):
-		from crm.integrations.acumatica.outbound import move_markers_on_rename
+	def _org(self, name):
+		return frappe.get_doc({"doctype": "CRM Organization", "organization_name": name}).insert(
+			ignore_permissions=True
+		)
 
-		ledger.acquire("Customer::LED-Old", {"sent_at": 1.0})
-		ledger.acquire("CustomerContact::LED-Old", {"contact": "x"})
-		ledger.acquire("CustomerContact::LED-New", {"contact": "y"})
-		move_markers_on_rename(None, None, "LED-Old", "LED-New")
-		self.assertTrue(ledger.open_write("Customer::LED-New"))
+	def test_a_rename_moves_the_open_write_when_it_commits(self):
+		from frappe.model.rename_doc import rename_doc
+
+		self._org("LED-Rn Old")
+		ledger.acquire("Customer::LED-Rn Old", {"sent_at": 1.0})
+		ledger.acquire("CustomerContact::LED-Rn New", {"contact": "y"})
+		ledger.acquire("CustomerContact::LED-Rn Old", {"contact": "x"})
+		rename_doc("CRM Organization", "LED-Rn Old", "LED-Rn New", force=True, ignore_permissions=True)
+		self.assertTrue(ledger.open_write("Customer::LED-Rn Old"), "moved only when the rename commits")
+		frappe.db.before_commit.run()
+		self.assertIsNone(ledger.open_write("Customer::LED-Rn Old"))
+		self.assertTrue(ledger.open_write("Customer::LED-Rn New"))
+		# the new name's own follow-up stands
+		self.assertEqual(ledger.open_write("CustomerContact::LED-Rn New").marker, {"contact": "y"})
+
+	def test_a_rename_that_rolls_back_leaves_the_open_write_where_it_was(self):
+		from frappe.model.rename_doc import rename_doc
+
+		self._org("LED-Rb Old")
+		ledger.acquire("Customer::LED-Rb Old", {"sent_at": 1.0})
+		rename_doc("CRM Organization", "LED-Rb Old", "LED-Rb New", force=True, ignore_permissions=True)
 		frappe.db.rollback()
-		self.assertTrue(ledger.open_write("Customer::LED-Old"))
-		self.assertIsNone(ledger.open_write("Customer::LED-New"))
-		self.assertEqual(ledger.open_write("CustomerContact::LED-Old").marker, {"contact": "x"})
-		self.assertEqual(ledger.open_write("CustomerContact::LED-New").marker, {"contact": "y"})
+		frappe.db.before_commit.run()
+		self.assertTrue(ledger.open_write("Customer::LED-Rb Old"))
+		self.assertIsNone(ledger.open_write("Customer::LED-Rb New"))
+
+	def test_a_rename_undone_by_the_importers_savepoint_leaves_the_open_write_where_it_was(self):
+		"""The sync wraps each record in a savepoint; rolling one back runs no rollback
+		hooks, and the sync's next commit must not move the row for a rename it undid."""
+		from crm.integrations.acumatica.importer import _rename_organization
+
+		self._org("LED-Sp Old")
+		ledger.acquire("Customer::LED-Sp Old", {"sent_at": 1.0})
+		frappe.db.savepoint("acumatica_rec")
+		_rename_organization("LED-Sp Old", "LED-Sp New")
+		frappe.db.rollback(save_point="acumatica_rec")
+		frappe.db.before_commit.run()  # the sync's next commit
+		self.assertTrue(ledger.open_write("Customer::LED-Sp Old"))
+		self.assertIsNone(ledger.open_write("Customer::LED-Sp New"))
+
+	def test_close_settles_only_the_row_and_version_it_names(self):
+		ledger.acquire(TARGET, {"sent_at": 1.0})
+		seen = ledger.open_write(TARGET)
+		ledger.record_unknown(TARGET, "504")
+		ledger.close(TARGET, ledger.ABANDONED, name=seen.name, version=seen.version)
+		self.assertTrue(ledger.open_write(TARGET), "a row that changed since it was seen stays open")
+		now = ledger.open_write(TARGET)
+		ledger.close(TARGET, ledger.ABANDONED, name=now.name, version=now.version)
+		self.assertIsNone(ledger.open_write(TARGET))
 
 	def test_the_open_write_outlives_the_requests_rollback_and_the_cache(self):
 		ledger.acquire(TARGET, {"sent_at": 1.0})
