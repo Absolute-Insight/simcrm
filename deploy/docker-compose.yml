@@ -63,7 +63,20 @@ services:
     # docker resolves the digest and ignores the tag. Bumping it is a deliberate
     # act with a backup in front of it -- see "Bumping the database image" in
     # README.md.
-    image: mariadb:10.6.28@sha256:c7d726a1c0d29e486a1ab4ef0c76c75431a11428e76c50e99ba32106cea04114
+    #
+    # DB_IMAGE in .env overrides it, and that is the 10.6 -> 11.4 upgrade switch
+    # (README.md, "Upgrading MariaDB to 11.4"). Unset, this resolves to exactly
+    # the image it did before the variable existed, so the service's config hash
+    # is unchanged and the next unrelated `up -d` does not touch the database.
+    image: ${DB_IMAGE:-mariadb:10.6.28@sha256:c7d726a1c0d29e486a1ab4ef0c76c75431a11428e76c50e99ba32106cea04114}
+    # Optional, and absent until the upgrade: a db.env beside this file holding
+    # MARIADB_AUTO_UPGRADE=1 makes the image's entrypoint back up the system
+    # schema and run mariadb-upgrade on the first start after a version change.
+    # A file rather than an `environment:` line because a new key there --
+    # even an empty one -- changes the hash and recreates the running database.
+    env_file:
+      - path: ./db.env
+        required: false
     logging: *logging
     restart: unless-stopped
     healthcheck:

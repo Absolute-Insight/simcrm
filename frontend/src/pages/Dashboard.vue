@@ -1126,10 +1126,12 @@ const PANEL_CATALOGUE = computed(() => {
       emptyDescription: __('Set visit targets in Settings → Visit Targets.'),
       rows: computed(() => teamVisits.data?.rows || []),
       // No target is not behind on one, the same rule as the quota panel.
+      // logged offline: shown, not judged -- see the report's column note
       cell: (row) =>
-        row.target == null
+        (row.target == null
           ? `${row.completed} · ${__('No target')}`
-          : `${row.completed} / ${row.target}`,
+          : `${row.completed} / ${row.target}`) +
+        (row.offline ? ` · ${__('{0} offline', [row.offline])}` : ''),
       // the status is judged against the target due so far, not the period's
       tone: (row) => (row.on_track === 'Behind' ? 'text-ink-orange-9' : ''),
     },

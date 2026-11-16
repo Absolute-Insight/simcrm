@@ -28,6 +28,7 @@ class CRMRepPlanItem(Document):
 		fulfilled_by_doctype: DF.Link | None
 		manual_override: DF.Check
 		note: DF.Data | None
+		offline_delay_minutes: DF.Int
 		organization: DF.Link | None
 		outcome: DF.SmallText | None
 		parent: DF.Data

@@ -1,6 +1,7 @@
 import { clear } from 'idb-keyval'
 import { clearBootSnapshot, OFFLINE_OWNER_KEY } from '@/offline/bootSnapshot'
 import { packStore } from '@/offline/db'
+import { forgetEmailBodies } from '@/utils/emailBodyCache'
 
 /**
  * frappe-ui keeps the last response of every `cache:` resource in IndexedDB
@@ -59,6 +60,8 @@ export function offlineOwner() {
  * Never rejects: callers chain a redirect onto it.
  */
 export function clearOfflineCache() {
+  // email bodies the timeline fetched are held in memory, not IndexedDB
+  forgetEmailBodies()
   try {
     localStorage.removeItem(OWNER_KEY)
   } catch {
