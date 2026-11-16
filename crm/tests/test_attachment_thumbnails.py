@@ -413,9 +413,18 @@ class AttachmentThumbnailTest(IntegrationTestCase):
 		"""Decoding is width x height x bands whatever the file size: pinned per format at its cap."""
 		if not os.path.exists("/proc/self/clear_refs"):
 			self.skipTest("peak memory is read from /proc")
+		samples = thumbnails.PROGRESSIVE_SAMPLES
+		progressive = {"progressive": True}
 		cases = [
 			("JPEG at the cap", "RGB", thumbnails.MAX_PIXELS, "JPEG", {}),
+			("CMYK JPEG at the cap", "CMYK", thumbnails.MAX_PIXELS, "JPEG", {}),
+			# draft() does not shrink a progressive JPEG's coefficient buffer
+			("progressive 4:2:0", "RGB", samples / 1.5, "JPEG", {**progressive, "subsampling": 2}),
+			("progressive 4:4:4", "RGB", samples / 3, "JPEG", {**progressive, "subsampling": 0}),
+			("progressive grey", "L", samples, "JPEG", progressive),
+			("progressive CMYK", "CMYK", samples / 4, "JPEG", progressive),
 			("RGBA PNG at the cap", "RGBA", thumbnails.MAX_PIXELS_DECODED, "PNG", {}),
+			("16-bit grey PNG at the cap", "I;16", thumbnails.MAX_PIXELS_DECODED, "PNG", {}),
 			("lossless WebP at the cap", "RGBA", thumbnails.MAX_PIXELS_WEBP, "WEBP", {"lossless": True}),
 			("palette GIF at the cap", "P", thumbnails.MAX_PIXELS_DECODED, "GIF", {}),
 		]
@@ -424,7 +433,7 @@ class AttachmentThumbnailTest(IntegrationTestCase):
 		with tempfile.TemporaryDirectory() as folder:
 			for label, mode, pixels, fmt, options in cases:
 				with self.subTest(label):
-					side = int(math.sqrt(pixels / 12))
+					side = int(math.sqrt(pixels / 12)) - 1
 					path = os.path.join(folder, f"image.{fmt.lower()}")
 					Image.new(mode, (side * 4, side * 3)).save(path, fmt, **options)
 					out = subprocess.run(
@@ -437,6 +446,27 @@ class AttachmentThumbnailTest(IntegrationTestCase):
 					result, peak = out.stdout.split()
 					self.assertEqual(result, "made")
 					self.assertLess(int(peak), RENDER_MEMORY_BOUND_MB, f"{label}: {peak} MB")
+
+	def test_a_large_progressive_jpeg_is_refused_from_its_header(self):
+		with tempfile.TemporaryDirectory() as folder:
+			for mode, options in (("RGB", {"subsampling": 2}), ("RGB", {"subsampling": 0}), ("CMYK", {})):
+				with self.subTest(mode=mode, **options):
+					path = os.path.join(folder, "progressive.jpg")
+					Image.new(mode, (8000, 6000)).save(path, "JPEG", progressive=True, **options)
+					with self.assertRaises(thumbnails.Refused):
+						thumbnails.render(path)
+					# the same canvas, baseline, decodes at 1/8 and is made
+					Image.new(mode, (8000, 6000)).save(path, "JPEG", **options)
+					self.assertTrue(thumbnails.render(path))
+
+	def test_a_16_bit_grey_png_is_scaled_not_refused(self):
+		with tempfile.TemporaryDirectory() as folder:
+			path = os.path.join(folder, "depth.png")
+			for size in ((3000, 2000), (400, 300)):  # reduced first, and drawn as it is
+				Image.new("I;16", size, 32768).save(path, "PNG")
+				with Image.open(io.BytesIO(thumbnails.render(path))) as image:
+					# mid-grey, not clipped to white
+					self.assertAlmostEqual(image.getpixel((0, 0))[0], 128, delta=2)
 
 	def test_a_tiny_file_declaring_a_huge_canvas_is_refused_from_its_header(self):
 		with tempfile.TemporaryDirectory() as folder:
@@ -497,24 +527,29 @@ class AttachmentThumbnailTest(IntegrationTestCase):
 		)
 		self.assertTrue(thumbnails.make_thumbnail(first.name).startswith("/private/files/"))
 
-	def test_a_photo_made_public_while_it_is_drawn_gets_a_thumbnail_matching_where_it_ended_up(self):
+	def test_a_photo_made_public_while_it_is_drawn_is_left_to_the_job_that_change_queued(self):
 		source = self.attach(photo())
 		real_render = thumbnails.render
 		calls = []
 
 		def render_while_privacy_changes(path):
-			if not calls:
-				doc = frappe.get_doc("File", source.name)
-				doc.is_private = 0
-				doc.save(ignore_permissions=True)
+			doc = frappe.get_doc("File", source.name)
+			doc.is_private = 0
+			doc.save(ignore_permissions=True)
 			calls.append(path)
 			return real_render(path)
 
 		with patch.object(thumbnails, "render", render_while_privacy_changes):
-			url = thumbnails.make_thumbnail(source.name)
-		self.assertEqual(len(calls), 2, "drawn again from where the file moved to")
-		self.assertTrue(url.startswith("/files/"))
-		self.assertEqual(frappe.db.count("File", {FIELD: source.name}), 1)
+			self.assertIsNone(thumbnails.make_thumbnail(source.name))
+		self.assertEqual(len(calls), 1, "no second render while the source row is locked")
+		self.assertFalse(frappe.db.exists("File", {FIELD: source.name}), "nothing filed as private")
+		self.assertEqual(self.files_on_disk(source.name), [])
+		# the change queued its own job, not deduplicated against the running one
+		[job] = [
+			job for job in self.thumbnail_jobs() if job["name"] == source.name and not job["deduplicate"]
+		]
+		self.assertIsNone(job["job_id"])
+		self.assertTrue(thumbnails.make_thumbnail(source.name).startswith("/files/"))
 
 	def test_a_photo_deleted_while_it_is_drawn_leaves_nothing_behind(self):
 		source = self.attach(photo())
@@ -594,3 +629,35 @@ class AttachmentThumbnailTest(IntegrationTestCase):
 		finally:
 			frappe.set_user("Administrator")
 		self.assertEqual(listed, [source.name])
+
+	def test_the_upgrade_clears_thumbnail_urls_this_app_did_not_set(self):
+		from crm.patches.v1_0.clear_untrusted_thumbnail_urls import execute
+
+		victim = self.attach(b"quote", file_name=f"quote-{frappe.generate_hash(length=6)}.txt")
+		planted = self.attach(b"mine", file_name=f"mine-{frappe.generate_hash(length=6)}.txt", user=OTHER)
+		frappe.db.set_value("File", planted.name, "thumbnail_url", victim.file_url)
+		# what frappe's own make_thumbnail used to leave: a public _small copy only this row uses
+		legacy = self.attach(photo(), is_private=0)
+		small = frappe.get_site_path("public", "files", f"legacy-{legacy.name}_small.jpg")
+		with open(small, "wb") as handle:
+			handle.write(b"old public thumbnail")
+		self.addCleanup(lambda: os.path.exists(small) and os.remove(small))
+		frappe.db.set_value("File", legacy.name, "thumbnail_url", f"/files/{os.path.basename(small)}")
+		ours = self.attach(photo())
+		our_url = thumbnails.make_thumbnail(ours.name)
+		# another File may not borrow ours either
+		frappe.db.set_value("File", planted.name, "thumbnail_url", our_url)
+		frappe.db.set_value("File", victim.name, "thumbnail_url", victim.file_url)
+
+		execute()
+		execute()  # idempotent
+
+		self.assertEqual(frappe.db.get_value("File", ours.name, "thumbnail_url"), our_url)
+		for row in (planted, legacy, victim):
+			self.assertFalse(frappe.db.get_value("File", row.name, "thumbnail_url"), row.file_name)
+		# only references are dropped: no file is deleted
+		self.assertTrue(os.path.isfile(small))
+		self.assertTrue(
+			os.path.isfile(frappe.get_site_path("private", "files", os.path.basename(victim.file_url)))
+		)
+		self.assertTrue(os.path.isfile(frappe.get_site_path("private", "files", os.path.basename(our_url))))

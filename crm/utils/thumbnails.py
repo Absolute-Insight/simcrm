@@ -63,6 +63,13 @@ MAX_PIXELS = 50_000_000
 #: 8 MP 126 MB. Above them a file is refused from its header alone.
 MAX_PIXELS_DECODED = 16_000_000
 MAX_PIXELS_WEBP = 8_000_000
+#: A *progressive* JPEG is the exception to draft(): libjpeg keeps every DCT
+#: coefficient of the whole image, two bytes a sample, whatever scale it
+#: outputs. So its cap is a budget of samples, divided by the samples a pixel
+#: carries (1.5 for 4:2:0 colour, 3 for 4:4:4, 1 grey, 4 CMYK): 4:2:0 at
+#: 21 MP, 4:4:4 at 10.6 MP, grey at 32 MP, CMYK at 8 MP. Measured at those
+#: caps: 66-71 MB. Baseline JPEGs, which phones write, stay at MAX_PIXELS.
+PROGRESSIVE_SAMPLES = 32_000_000
 
 #: The formats Pillow may open, whatever the file is called, and each one's cap.
 RASTER_FORMATS = {
@@ -338,6 +345,8 @@ def render(path: str) -> bytes:
 			cap = formats.get(image.format)
 			if cap is None:
 				raise Refused(f"format {image.format} is not thumbnailed")
+			if image.format in ("JPEG", "MPO") and _progressive(image):
+				cap = min(cap, int(PROGRESSIVE_SAMPLES / _samples_per_pixel(image)))
 			width, height = image.size
 			if width * height > cap:
 				raise Refused(f"{width}x{height} {image.format} is more than {cap} pixels")
@@ -347,7 +356,7 @@ def render(path: str) -> bytes:
 				# truncated or corrupt: expected of uploads, not an error to chase
 				raise Refused(f"could not be decoded: {e}") from e
 
-	small = _orient(small, orientation)
+	small = _orient(_eight_bit(small), orientation)
 	rgb = _flatten(_to_srgb(small, profile))
 	rgb.thumbnail(BOX, Image.Resampling.LANCZOS)
 	# a new image from the pixels alone: nothing from the source's info rides along
@@ -356,6 +365,20 @@ def render(path: str) -> bytes:
 	out = io.BytesIO()
 	clean.save(out, "JPEG", quality=JPEG_QUALITY, optimize=True, progressive=True)
 	return out.getvalue()
+
+
+def _progressive(image) -> bool:
+	return bool(image.info.get("progressive") or image.info.get("progression"))
+
+
+def _samples_per_pixel(image) -> float:
+	"""How many coefficients a pixel costs: each component, by its sampling factors."""
+	layers = getattr(image, "layer", None) or []
+	if not layers:
+		return float(len(image.getbands()))
+	h_max = max(h for _id, h, _v, _q in layers)
+	v_max = max(v for _id, _h, v, _q in layers)
+	return sum(h * v for _id, h, v, _q in layers) / (h_max * v_max)
 
 
 #: Rough size to decode down to before the finishing resize.
@@ -376,8 +399,9 @@ def _decode_small(image):
 	factor = max(1, min(image.width // WORKING[0], image.height // WORKING[1]))
 	if factor == 1:
 		return image.copy(), orientation, profile
-	if image.mode in ("1", "P"):
-		# palette indices cannot be averaged; NEAREST keeps the palette and the memory
+	if image.mode in ("1", "P") or image.mode.startswith("I"):
+		# palette indices cannot be averaged, and reduce() refuses 16- and 32-bit
+		# grey; NEAREST keeps the palette, the depth and the memory
 		small = image.resize((image.width // factor, image.height // factor), Image.Resampling.NEAREST)
 	elif len(image.getbands()) == 1:
 		small = image.reduce(factor)
@@ -390,6 +414,13 @@ def _decode_small(image):
 	if "transparency" in image.info:
 		small.info["transparency"] = image.info["transparency"]
 	return small, orientation, profile
+
+
+def _eight_bit(image):
+	"""16- or 32-bit grey (a PNG's ``I;16``/``I``) as 8-bit ``L``, scaled, not clipped."""
+	if not image.mode.startswith("I"):
+		return image
+	return image.convert("I").point(lambda value: value * (1 / 256)).convert("L")
 
 
 ORIENTATION_TAG = 0x0112
@@ -462,63 +493,61 @@ def make_thumbnail(name: str) -> str | None:
 	The background job. Returns the thumbnail's URL, or None when there is none.
 
 	The render runs unlocked -- it is the slow part -- and everything after it
-	under a lock on the source row, re-read: a source deleted meanwhile gets
-	nothing, and one made public or private meanwhile is rendered again from
-	where its file now is, so a thumbnail is never filed with privacy its source
-	no longer has. A run that finds a thumbnail already made stops there.
+	under a lock on the source row, re-read: a source deleted or made public or
+	private meanwhile gets nothing from this run (the change queued its own), so
+	a thumbnail is never filed with privacy its source no longer has. A run that
+	finds a thumbnail already made stops there.
 	"""
 	if not ready():
 		return None
-	for _attempt in range(3):
-		source = frappe.db.get_value("File", name, SOURCE_FIELDS, as_dict=True)
-		if not source or not is_candidate(source):
-			return None
-		existing = frappe.db.get_value("File", {FIELD: name}, "file_url")
-		if existing and source.thumbnail_url == existing:
-			return existing
+	source = frappe.db.get_value("File", name, SOURCE_FIELDS, as_dict=True)
+	if not source or not is_candidate(source):
+		return None
+	existing = frappe.db.get_value("File", {FIELD: name}, "file_url")
+	if existing and source.thumbnail_url == existing:
+		return existing
 
-		path = _local_path(source.file_url)
-		content = failure = None
-		try:
-			if not path or not os.path.isfile(path):
-				raise Refused("not on this site's disk")
-			content = render(path)
-		except Refused as e:
-			failure = e
-		except Exception as e:
-			failure = e
+	path = _local_path(source.file_url)
+	content = failure = None
+	try:
+		if not path or not os.path.isfile(path):
+			raise Refused("not on this site's disk")
+		content = render(path)
+	except Exception as e:
+		failure = e
 
-		locked = frappe.db.get_value("File", name, SOURCE_FIELDS, as_dict=True, for_update=True)
-		if not locked:
-			return None  # deleted while it was being drawn
-		if (locked.file_url, locked.is_private) != (source.file_url, source.is_private):
-			# made public or private while it was being drawn -- which moves the
-			# file, so a render that failed may have failed for that alone
-			continue
-		if isinstance(failure, Refused):
-			frappe.logger("crm.thumbnails").info(f"no thumbnail for File {name}: {failure}")
-			return None
-		if failure is not None:
-			frappe.log_error(
-				title=f"Thumbnail failed for File {name}",
-				message="".join(traceback.format_exception(failure)),
-			)
-			return None
-		existing = frappe.db.get_value("File", {FIELD: name}, "file_url")
-		if existing and locked.thumbnail_url == existing:
-			return existing  # another run got there first
+	locked = frappe.db.get_value("File", name, SOURCE_FIELDS, as_dict=True, for_update=True)
+	if not locked:
+		return None  # deleted while it was being drawn
+	if (locked.file_url, locked.is_private) != (source.file_url, source.is_private):
+		# made public or private while it was being drawn (which also moves the
+		# file, so a failed render may have failed for that alone). on_file_update
+		# has queued a fresh, undeduplicated job for the row as it is now; this
+		# one files nothing.
+		return None
+	if isinstance(failure, Refused):
+		frappe.logger("crm.thumbnails").info(f"no thumbnail for File {name}: {failure}")
+		return None
+	if failure is not None:
+		frappe.log_error(
+			title=f"Thumbnail failed for File {name}",
+			message="".join(traceback.format_exception(failure)),
+		)
+		return None
+	existing = frappe.db.get_value("File", {FIELD: name}, "file_url")
+	if existing and locked.thumbnail_url == existing:
+		return existing  # another run got there first
 
-		# a half-made one from a run that died, or a thumbnail_url frappe's own
-		# make_thumbnail wrote under the public folder: neither is kept
-		drop_thumbnails(name)
-		try:
-			url = _store(locked, content)
-		except Exception:
-			frappe.log_error(title=f"Thumbnail failed for File {name}")
-			url = None
-		frappe.db.set_value("File", name, "thumbnail_url", url, update_modified=False)
-		return url
-	return None
+	# a half-made one from a run that died, or a thumbnail_url frappe's own
+	# make_thumbnail wrote under the public folder: neither is kept
+	drop_thumbnails(name)
+	try:
+		url = _store(locked, content)
+	except Exception:
+		frappe.log_error(title=f"Thumbnail failed for File {name}")
+		url = None
+	frappe.db.set_value("File", name, "thumbnail_url", url, update_modified=False)
+	return url
 
 
 def _store(source, content: bytes) -> str:
