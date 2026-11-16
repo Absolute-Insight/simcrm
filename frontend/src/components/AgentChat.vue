@@ -193,7 +193,7 @@
           "
           :aria-label="__('Dictate')"
           :tooltip="__('Dictate (up to {0} seconds)', [maxClipSeconds])"
-          :disabled="dictation.state.value === 'transcribing'"
+          :disabled="dictation.state.value !== 'idle'"
           @click="dictation.start()"
         />
         <Button
@@ -373,7 +373,8 @@ function failureText(failure) {
 
 function send(text) {
   const question = (text || '').trim()
-  if (!question || props.asking) return
+  // not while a picked file is still being read: it would go without it
+  if (!question || props.asking || reading.value) return
   draft.value = ''
   attachNotice.value = ''
   autosize()

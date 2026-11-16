@@ -204,4 +204,13 @@ describe('createChatStore', () => {
     expect(store.failure.value).toBe('rejected')
     expect(store.failureReason.value).toBe('That PDF is password-protected.')
   })
+  it('says a refused-as-too-large request is about the file, not the weather', async () => {
+    const store = makeStore()
+    callMock.mockRejectedValueOnce(
+      Object.assign(new Error('x'), { status: 413 }),
+    )
+    await store.ask('q')
+    expect(store.failure.value).toBe('rejected')
+    expect(store.failureReason.value).toMatch(/too large/)
+  })
 })

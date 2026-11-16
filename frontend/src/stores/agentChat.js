@@ -130,9 +130,17 @@ export function createChatStore({
       // a 500) is the same story as a degraded status: no answer, try again.
       const described = describeError(error)
       const excType = String(error?.exc_type || error?.excType || '')
+      const status = error?.status ?? error?.response?.status
       if (described.message && /ValidationError/.test(excType)) {
         failure.value = 'rejected'
         failureReason.value = described.message
+      } else if (status === 413) {
+        // the proxy or the site refused the body: an attachment too large
+        // for this server, which no retry will fix
+        failure.value = 'rejected'
+        failureReason.value = __(
+          'That file is too large for this server. Attach a smaller one.',
+        )
       } else {
         failure.value = 'unavailable'
       }

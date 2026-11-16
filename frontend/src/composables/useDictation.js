@@ -7,7 +7,7 @@
  * its own at the server's clip limit, so a forgotten microphone does not run
  * for minutes and then get refused.
  *
- * state: 'idle' | 'recording' | 'transcribing'
+ * state: 'idle' | 'starting' | 'recording' | 'transcribing'
  * error: '' | 'unsupported' | 'denied' | 'nothing' | 'failed' | 'unavailable'
  */
 import { call } from 'frappe-ui'
@@ -47,6 +47,7 @@ export function useDictation({ onText, maxSeconds = MAX_CLIP_SECONDS }) {
   let ticker = null
   let startedAt = 0
   let cancelled = false
+  let unmounted = false
 
   function release() {
     clearInterval(ticker)
@@ -63,8 +64,14 @@ export function useDictation({ onText, maxSeconds = MAX_CLIP_SECONDS }) {
       error.value = 'unsupported'
       return
     }
+    // 'starting' while the browser asks for the microphone: a second click
+    // must not open a second stream, and an unmount during the wait must not
+    // leave a live one behind
+    state.value = 'starting'
+    unmounted = false
+    let opened
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
+      opened = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
           echoCancellation: true,
@@ -72,15 +79,29 @@ export function useDictation({ onText, maxSeconds = MAX_CLIP_SECONDS }) {
         },
       })
     } catch (e) {
+      state.value = 'idle'
       error.value =
         e?.name === 'NotAllowedError' || e?.name === 'SecurityError'
           ? 'denied'
           : 'unsupported'
       return
     }
+    if (unmounted) {
+      opened.getTracks().forEach((track) => track.stop())
+      return
+    }
+    stream = opened
     chunks = []
     cancelled = false
-    recorder = new MediaRecorder(stream)
+    try {
+      recorder = new MediaRecorder(stream)
+    } catch {
+      recorder = null
+      release()
+      state.value = 'idle'
+      error.value = 'unsupported'
+      return
+    }
     recorder.ondataavailable = (event) => {
       if (event.data?.size) chunks.push(event.data)
     }
@@ -146,6 +167,7 @@ export function useDictation({ onText, maxSeconds = MAX_CLIP_SECONDS }) {
   }
 
   onBeforeUnmount(() => {
+    unmounted = true
     cancelled = true
     if (recorder && recorder.state !== 'inactive') recorder.stop()
     release()
