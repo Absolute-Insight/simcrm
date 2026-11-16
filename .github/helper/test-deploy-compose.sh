@@ -244,17 +244,41 @@ SHIMS = {
 	"rclone": r"""#!/bin/sh
 for a in "$@"; do printf '%s | ' "$a"; done >> "$SHIM_LOG/rclone.log"; echo >> "$SHIM_LOG/rclone.log"
 cmd="$1"; shift
+target=""
+for a in "$@"; do case "$a" in *:*) target="$a"; break ;; esac; done
 case "$cmd" in
   obscure) cat >/dev/null; echo OBSCURED ;;
-  config) echo "Configuration file is stored at:"; echo "$SHIM_STATE/rclone.conf" ;;
+  config)
+    case "$1" in
+      file) echo "Configuration file is stored at:"; echo "$SHIM_STATE/rclone.conf" ;;
+      show) printf '%s\n' "${RCLONE_CONFIG_SHOW:-}"; [ -n "${RCLONE_CONFIG_SHOW:-}" ] || exit 1 ;;
+    esac ;;
   lsd) exit "${RCLONE_LSD_RC:-0}" ;;
+  cat)
+    case "$target" in
+      hcping:*)
+        printf 'rclone-http: %s%s\n' "$RCLONE_CONFIG_HCPING_URL" "${target#hcping:}" >> "$SHIM_LOG/ping.log"
+        exit "${PING_RC:-0}" ;;
+      *.vectora-canary)
+        if [ "${RCLONE_CANARY:-}" = bad ]; then echo "failed to authenticate decrypted block - bad password?" >&2; exit 1; fi
+        f="$SHIM_STATE/canary-${target%%:*}"
+        if [ -e "$f" ]; then cat "$f"; exit 0; fi
+        echo "ERROR : .vectora-canary: object not found" >&2; exit 4 ;;
+      *)
+        if [ "${RCLONE_CANARY:-}" = bad ]; then echo "failed to authenticate decrypted block - bad password?" >&2; exit 1; fi
+        exit 0 ;;
+    esac ;;
+  rcat) cat > "$SHIM_STATE/canary-${target%%:*}"; exit 0 ;;
   copy)
     dest="$2"
     case "$dest" in
       *monthly*)
         for a in "$@"; do
-          case "$a" in "+ "*) m=$(printf '%s' "$a" | cut -c3-8); : > "$SHIM_STATE/monthly-$m" ;; esac
-        done ;;
+          case "$a" in "+ "*) stamp=$(printf '%s' "$a" | cut -c3-17); m=$(printf '%s' "$stamp" | cut -c1-6); echo "$stamp" > "$SHIM_STATE/monthly-$m" ;; esac
+        done
+        n=$(( $(cat "$SHIM_STATE/monthly-copies" 2>/dev/null || echo 0) + 1 ))
+        echo "$n" > "$SHIM_STATE/monthly-copies"
+        if [ "$n" -le "${RCLONE_MONTHLY_FAILS:-0}" ]; then exit 1; fi ;;
     esac
     exit "${RCLONE_COPY_RC:-0}" ;;
   lsf)
@@ -264,13 +288,21 @@ case "$cmd" in
         for a in "$@"; do
           case "$a" in [0-9][0-9][0-9][0-9][0-9][0-9]'*-database*')
             m=$(printf '%s' "$a" | cut -c1-6)
-            if [ -e "$SHIM_STATE/monthly-$m" ]; then echo "${m}01_020000-s-database.sql.gz"; exit 0; fi ;;
+            if [ -e "$SHIM_STATE/monthly-$m" ]; then echo "$(cat "$SHIM_STATE/monthly-$m")-s-database.sql.gz"; exit 0; fi ;;
           esac
         done
         exit "${RCLONE_LSF_MONTHLY_RC:-3}" ;;
-      *) printf '%s\n' "${RCLONE_LSF_DAILY-20261116_020000-s-database.sql.gz}" | grep . ; exit 0 ;;
+      *)
+        if [ -e "$SHIM_STATE/deleted" ]; then
+          case " $* " in *" --b2-versions "*) [ "${RCLONE_VERSIONS_SURVIVE:-0}" = 1 ] && printf '%s\n' "${RCLONE_LSF_DAILY}" ;; esac
+          exit 0
+        fi
+        printf '%s\n' "${RCLONE_LSF_DAILY-20261116_020000-s-database.sql.gz}" | grep . ; exit 0 ;;
     esac ;;
-  delete) [ -z "${RCLONE_DELETE_ERR:-}" ] || echo "$RCLONE_DELETE_ERR" >&2; exit "${RCLONE_DELETE_RC:-0}" ;;
+  delete)
+    [ -z "${RCLONE_DELETE_ERR:-}" ] || echo "$RCLONE_DELETE_ERR" >&2
+    [ "${RCLONE_DELETE_RC:-0}" != 0 ] || : > "$SHIM_STATE/deleted"
+    exit "${RCLONE_DELETE_RC:-0}" ;;
   *) exit 0 ;;
 esac
 """,
@@ -474,6 +506,27 @@ check(
 check("... the passphrase never reaches a command line", "correct horse" not in log(root, "rclone") and "battery" not in log(root, "rclone"))
 r = subprocess.run(["sh", "-c", hc_text.replace(f"run-plaintext", "run-encrypted")], env={**hc_env, "SHIM_STATE": f"{root}/state", "OFFSITE_CRYPT_PASSWORD": "x"}, capture_output=True, text=True)
 check("... and the healthcheck is green", r.returncode == 0, r.stdout)
+canaries = [f"{root}/state/canary-offsitecrypt", f"{root}/state/canary-offsitecryptmonthly"]
+check(
+	"... a passphrase canary is written to both crypt prefixes",
+	all(os.path.exists(c) and "vectora offsite canary" in open(c).read() for c in canaries) and "wrote and verified the passphrase canary" in out,
+	out,
+)
+# Restart with the same passphrase: the canary reads back, nothing is rewritten.
+open(f"{root}/log/rclone.log", "w").close()
+os.remove(f"{root}/state/sleeps")
+out = run_script(root, offsite_cmd, "sh", {**OFFSITE_ENV, "OFFSITE_CRYPT_PASSWORD": "correct horse"}, 1)
+check("... a restart with the same passphrase reads the canary and goes on", not calls(root, "rcat") and calls(root, "copy"), out)
+# A canary that decrypts to something else: refuse, copy nothing, ping /fail.
+open(canaries[0], "w").write("garbage")
+open(f"{root}/log/rclone.log", "w").close()
+os.remove(f"{root}/state/sleeps")
+out = run_script(root, offsite_cmd, "sh", {**OFFSITE_ENV, "OFFSITE_CRYPT_PASSWORD": "typo", "OFFSITE_PING_URL": f"https://hc.example/{SECRET}"}, 1)
+check("a canary that does not match: refuses to start and copies nothing", "refusing to start" in out and not calls(root, "copy"), out)
+check("... and pings /fail", f"{SECRET}/fail" in log(root, "ping"), log(root, "ping"))
+root, out = offsite("canary-bad-key", OFFSITE_CRYPT_PASSWORD="typo", RCLONE_CANARY="bad")
+check("a passphrase that cannot decrypt the prefix: refuses to start, copies nothing", "refusing to start" in out and not calls(root, "copy") and not calls(root, "rcat"), out)
+check("pruning never deletes the canary", "--exclude .vectora-canary" in offsite_cmd)
 
 # 4. Pings: start, success, failure, and the secret path never logged.
 root, out = offsite("ping-ok", OFFSITE_PING_URL=f"https://hc.example/ping/{SECRET}/")
@@ -506,7 +559,28 @@ check("an unreachable monitor does not stop the backup", "did not get through (i
 root = fresh("backup-no-ping")
 out = run_script(root, backup_cmd, "bash", {**env, "BACKUP_PING_URL": ""}, sleeps=2)
 check("no BACKUP_PING_URL, no pings", log(root, "ping") == "" and log(root, "bench"), out)
-check("pings are bounded in time", "timeout 15 curl" in backup_cmd and "-m 10" in backup_cmd and "timeout 15 wget" in offsite_cmd)
+check("pings are bounded in time", "timeout 15 curl" in backup_cmd and "-m 10" in backup_cmd and "timeout 15 rclone cat" in offsite_cmd)
+check(
+	"no ping URL is ever put on a command line (no wget fallback)",
+	not [l for l in offsite_cmd.splitlines() if "wget" in l and not l.lstrip().startswith("#")],
+)
+# The rclone image has no curl: pings go through rclone's http backend, with
+# the URL in the environment.
+root = fresh("ping-rclone")
+backup_set(root, "20261102_020000")
+nocurl = offsite_cmd.replace("command -v curl", "false")
+out = run_script(root, nocurl, "sh", {**OFFSITE_ENV, "OFFSITE_PING_URL": f"https://hc.example/{SECRET}"}, 1)
+pings = log(root, "ping")
+check(
+	"without curl, offsite pings /start and /0 through rclone's http backend",
+	f"rclone-http: https://hc.example/{SECRET}/start" in pings and f"rclone-http: https://hc.example/{SECRET}/0" in pings,
+	pings,
+)
+check("... with the URL only in the environment, never in rclone's argv", SECRET not in log(root, "rclone") and SECRET not in out, log(root, "rclone"))
+root = fresh("ping-rclone-fail")
+backup_set(root, "20261102_020000")
+out = run_script(root, nocurl, "sh", {**OFFSITE_ENV, "OFFSITE_PING_URL": f"https://hc.example/{SECRET}", "RCLONE_COPY_RC": "1"}, 1)
+check("... and /fail on a failed run", f"rclone-http: https://hc.example/{SECRET}/fail" in log(root, "ping"), log(root, "ping"))
 
 
 # 5. The monthly tier: the month's first set, once.
@@ -520,13 +594,16 @@ copies = monthly_copies(root)
 check("the first set of the month is copied to monthly/ once in three runs", len(copies) == 1, str(copies))
 check("... and it is the first set", copies and "+ 20261102_020000-*" in copies[0], str(copies))
 check("... without site_config_backup.json", copies and "- *site_config_backup*" in copies[0], str(copies))
-# A restart in the same month asks the destination, which has it.
+# A restart in the same month asks the destination, finds that set, and
+# re-runs the copy of THAT set (rclone skips what is there) -- never another.
 os.remove(f"{root}/state/sleeps")
 open(f"{root}/log/rclone.log", "w").close()
-run_script(root, offsite_cmd, "sh", {**OFFSITE_ENV, **MONTHLY, "FAKE_MONTH": "202611"}, 1)
-check("... and not again after a restart", not monthly_copies(root), log(root, "rclone"))
+run_script(root, offsite_cmd, "sh", {**OFFSITE_ENV, **MONTHLY, "FAKE_MONTH": "202611"}, 2)
+copies = monthly_copies(root)
+check("... and after a restart only that same set, once", len(copies) == 1 and "+ 20261102_020000-*" in copies[0], str(copies))
 backup_set(root, "20261201_020000")
 os.remove(f"{root}/state/sleeps")
+open(f"{root}/log/rclone.log", "w").close()
 run_script(root, offsite_cmd, "sh", {**OFFSITE_ENV, **MONTHLY, "FAKE_MONTH": "202612"}, 1)
 copies = monthly_copies(root)
 check("a new month gets its own copy", len(copies) == 1 and "+ 20261201_020000-*" in copies[0], str(copies))
@@ -536,6 +613,22 @@ run_script(root, offsite_cmd, "sh", {**OFFSITE_ENV, **MONTHLY, "FAKE_MONTH": "20
 check("a set still being written is not the monthly copy yet", not monthly_copies(root), log(root, "rclone"))
 root, out = offsite("monthly-list-error", FAKE_MONTH="202611", RCLONE_LSF_MONTHLY_RC="1", **MONTHLY, OFFSITE_PING_URL=f"https://hc.example/{SECRET}")
 check("a monthly listing that fails copies nothing and pings /fail", not monthly_copies(root) and f"{SECRET}/fail" in log(root, "ping"), out)
+# The dump reached monthly/ but the copy failed before the tars: the next run
+# completes the same set, and only a copy that exits 0 marks the month done.
+root, out = offsite("monthly-partial", sleeps=3, RCLONE_MONTHLY_FAILS="1", **MONTHLY, OFFSITE_PING_URL=f"https://hc.example/{SECRET}")
+copies = monthly_copies(root)
+check(
+	"a partial monthly copy is completed on the next run, same set, then left alone",
+	len(copies) == 2 and all("+ 20261102_020000-*" in c for c in copies),
+	str(copies),
+)
+check("... the failed run pinged /fail", f"{SECRET}/fail" in log(root, "ping"), log(root, "ping"))
+root = fresh("monthly-gone")
+backup_set(root, "20261103_020000")
+os.makedirs(f"{root}/state", exist_ok=True)
+open(f"{root}/state/monthly-202611", "w").write("20261101_020000\n")
+run_script(root, offsite_cmd, "sh", {**OFFSITE_ENV, **MONTHLY}, 2)
+check("a monthly set no longer on the host is left as it is, not replaced", not monthly_copies(root), log(root, "rclone"))
 
 
 # 6. The restore drill will not go near production.
@@ -594,6 +687,18 @@ check(
 	len(dels) == 1 and "--b2-hard-delete" in dels[0] and "- *.crypt/**" in dels[0] and "+ *site_config_backup*.json" in dels[0],
 	str(dels),
 )
+check("... and succeeds only once no version is left", r.returncode == 0 and "in any version" in r.stdout, r.stdout + r.stderr)
+check("... having listed with --b2-versions afterwards", any("--b2-versions" in a for a in calls(root, "lsf")[-1:]), log(root, "rclone"))
+root, r = purge("--delete", answer="vecbucket\n", RCLONE_VERSIONS_SURVIVE="1")
+check("purge fails when an old version survives the delete", r.returncode == 1 and "still recoverable" in r.stderr, r.stdout + r.stderr)
+# A remote defined only in rclone.conf: its type is read from there.
+root, r = purge("--delete", answer="vecbucket\n", RCLONE_CONFIG_OFFSITE_TYPE="", RCLONE_CONFIG_SHOW="[offsite]\ntype = b2\naccount = x")
+dels = [" | ".join(a) for a in calls(root, "delete")]
+check("a b2 remote from rclone.conf is still hard-deleted", len(dels) == 1 and "--b2-hard-delete" in dels[0], str(dels) + r.stderr)
+root, r = purge("--delete", answer="vecbucket\n", RCLONE_CONFIG_OFFSITE_TYPE="")
+check("a remote whose type cannot be told: --delete refuses", r.returncode == 2 and "cannot tell what kind of store" in r.stderr and not calls(root, "delete"), r.stderr)
+root, r = purge("--delete", answer="vecbucket\n", RCLONE_CONFIG_OFFSITE_TYPE="s3")
+check("a non-b2 versioning store: --delete refuses", r.returncode == 2 and not calls(root, "delete"), r.stderr)
 
 print()
 if failures:

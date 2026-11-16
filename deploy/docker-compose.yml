@@ -670,7 +670,6 @@ services:
         # Same protocol and rules as the `backup` service: <url>/start, <url>,
         # <url>/fail; 15 seconds at most; a failed ping is logged and ignored; the
         # URL is never logged past its host, because its path is the secret.
-        # This image has busybox wget rather than curl.
         ping_url="$${OFFSITE_PING_URL:-}"
         ping_url="$${ping_url%/}"
         redact() {
@@ -694,7 +693,15 @@ services:
             printf 'url = "%s%s"\n' "$$ping_url" "$$1" \
               | timeout 15 curl -fsS -m 10 -o /dev/null -K - >/dev/null 2>&1
           else
-            timeout 15 wget -q -T 10 -O /dev/null "$$ping_url$$1" >/dev/null 2>&1
+            # This image has no curl, and busybox wget takes a URL only on its
+            # command line, where `ps` on the host shows it. rclone's http
+            # backend takes it from the environment instead. It can only GET a
+            # path BELOW the URL, so success is <url>/0 -- the exit-status form
+            # of the same protocol (healthchecks.io: "/0" = success) -- not <url>.
+            path="$${1#/}"
+            [ -n "$$path" ] || path=0
+            RCLONE_CONFIG_HCPING_TYPE=http RCLONE_CONFIG_HCPING_URL="$$ping_url/" RCLONE_CONFIG_HCPING_NO_HEAD=true \
+              timeout 15 rclone cat "hcping:$$path" --contimeout 5s --timeout 10s --low-level-retries 1 -q >/dev/null 2>&1
           fi || echo "[offsite] ping $$(redact "$$ping_url")$$1 did not get through (ignored)"
           return 0
         }
@@ -743,6 +750,45 @@ services:
           dest="offsitecrypt:"
           mdest="offsitecryptmonthly:"
           encrypted=1
+
+          # The canary. A passphrase with a typo, or one rotated without moving
+          # to a new prefix, would otherwise write into <site>.crypt/ under a
+          # second key without a word -- and the half nobody can decrypt is
+          # only discovered at restore time. So each crypt prefix holds a small
+          # .vectora-canary written under its key: it must decrypt to the
+          # expected text, or this service refuses to start. A prefix with
+          # encrypted files but no canary (written before it existed) must
+          # decrypt its first file before a canary is added.
+          canary_name=.vectora-canary
+          canary_text="vectora offsite canary: written under this prefix's passphrase"
+          canary_check() {
+            got=$$(rclone cat "$$1$$canary_name" 2>/tmp/offsite.canary.err)
+            if [ "$$?" = 0 ]; then
+              [ "$$got" = "$$canary_text" ] && return 0
+              echo "[offsite] refusing to start: $$2/$$canary_name does not decrypt to the expected text -- OFFSITE_CRYPT_PASSWORD or OFFSITE_CRYPT_SALT differs from the one that wrote this prefix" >&2
+              return 1
+            fi
+            if ! grep -qiE 'not found|does ?n.t exist|no such' /tmp/offsite.canary.err; then
+              echo "[offsite] refusing to start: cannot decrypt $$2/$$canary_name -- OFFSITE_CRYPT_PASSWORD or OFFSITE_CRYPT_SALT differs from the one that wrote this prefix ($$(tail -n 1 /tmp/offsite.canary.err))" >&2
+              return 1
+            fi
+            one=$$(rclone lsf "$$1" --files-only --exclude "$$canary_name" 2>/dev/null | head -n 1)
+            if [ -n "$$one" ] && ! rclone cat --head 1 "$$1$$one" >/dev/null 2>&1; then
+              echo "[offsite] refusing to start: $$2/$$one does not decrypt with this OFFSITE_CRYPT_PASSWORD/OFFSITE_CRYPT_SALT; put the old values back, or point the copies at a new prefix" >&2
+              return 1
+            fi
+            if ! printf '%s' "$$canary_text" | rclone rcat "$$1$$canary_name" 2>/dev/null \
+              || [ "$$(rclone cat "$$1$$canary_name" 2>/dev/null)" != "$$canary_text" ]; then
+              echo "[offsite] refusing to start: could not write and read back $$2/$$canary_name" >&2
+              return 1
+            fi
+            echo "[offsite] wrote and verified the passphrase canary $$2/$$canary_name"
+          }
+          if ! canary_check offsitecrypt: "$${base}/$${SITE_NAME}.crypt" \
+            || ! canary_check offsitecryptmonthly: "$${base}/monthly/$${SITE_NAME}.crypt"; then
+            hc_ping /fail
+            exit 1
+          fi
         fi
         # Not encrypted is allowed -- a stack that predates OFFSITE_CRYPT_PASSWORD
         # keeps working exactly as before -- but it is never quiet: every hourly run
@@ -803,7 +849,7 @@ services:
             echo "[offsite] $$(date -Is) not pruning: no dump newer than $${OFFSITE_MAX_AGE_HOURS}h at the destination"
             return 0
           fi
-          if out=$$(rclone delete "$$dest" --min-age "$${keep}d" --log-level NOTICE --stats 0 2>&1); then
+          if out=$$(rclone delete "$$dest" --min-age "$${keep}d" --exclude .vectora-canary --log-level NOTICE --stats 0 2>&1); then
             if [ -n "$$out" ]; then printf '%s\n' "$$out"; fi
             echo "[offsite] $$(date -Is) pruned dailies older than $${keep}d"
             prune=script
@@ -827,8 +873,14 @@ services:
         # after a month. "Complete" means nothing in its set changed in the last hour
         # (the tars are written after the dump). "First" means the earliest of this
         # month still on the host -- the host keeps a week, so if this service was
-        # down for the 1st, the month's copy is the first night it can see. Once a
-        # month: the destination is asked, so a restart does not copy it again.
+        # down for the 1st, the month's copy is the first night it can see.
+        #
+        # Once a month, and completely: the month is done only when a copy of
+        # its set has exited 0. If monthly/ already holds a dump for the month
+        # (a restart, or a copy that died after the dump and before the tars),
+        # that SAME set is copied again -- rclone skips what is there and
+        # uploads what is missing -- rather than a later night starting a
+        # second one.
         #
         # Encrypted copies only (or plaintext that OFFSITE_ALLOW_PLAINTEXT=1
         # accepted): a stack that predates the passphrase keeps doing exactly
@@ -844,13 +896,7 @@ services:
           [ "$$monthly_on" = "1" ] || return 0
           month=$$(date +%Y%m)
           [ "$$monthly_done" = "$$month" ] && return 0
-          first=$$(ls "$$src" 2>/dev/null | grep -v -- '-partial-database' \
-            | sed -n "s/^\($${month}[0-3][0-9]_[0-9]\{6\}\)-.*-database\(-enc\)\{0,1\}\.sql\.gz$$/\1/p" \
-            | sort | head -n 1)
-          [ -n "$$first" ] || return 0
-          if find "$$src" -maxdepth 1 -name "$${first}-*" -mmin -60 | grep -q .; then
-            return 0
-          fi
+          stamps="s/^\($${month}[0-3][0-9]_[0-9]\{6\}\)-.*-database\(-enc\)\{0,1\}\.sql\.gz$$/\1/p"
           rclone lsf "$$mdest" --files-only --include "$${month}*-database*" > /tmp/offsite.monthly 2>/dev/null
           rc=$$?
           # 3 is rclone's "directory not found": the first monthly copy ever.
@@ -859,8 +905,18 @@ services:
             *) echo "[offsite] $$(date -Is) monthly: cannot list $$mdest (exit $$rc); retrying next hour"
                return 1 ;;
           esac
-          if [ "$$rc" = 0 ] && [ -s /tmp/offsite.monthly ]; then
-            monthly_done="$$month"
+          first=$$(grep -v -- '-partial-database' /tmp/offsite.monthly | sed -n "$$stamps" | sort | head -n 1)
+          if [ -n "$$first" ]; then
+            if ! ls "$$src" 2>/dev/null | grep -q "^$${first}-"; then
+              echo "[offsite] $$(date -Is) monthly: the $$first set at $$mdest is no longer on this host to complete; leaving it as it is"
+              monthly_done="$$month"
+              return 0
+            fi
+          else
+            first=$$(ls "$$src" 2>/dev/null | grep -v -- '-partial-database' | sed -n "$$stamps" | sort | head -n 1)
+            [ -n "$$first" ] || return 0
+          fi
+          if find "$$src" -maxdepth 1 -name "$${first}-*" -mmin -60 | grep -q .; then
             return 0
           fi
           if rclone copy "$$src" "$$mdest" "$$@" --filter "+ $${first}-*" --filter "- *" --log-level NOTICE --stats 0; then
