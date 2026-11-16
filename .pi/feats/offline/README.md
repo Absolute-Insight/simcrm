@@ -257,7 +257,8 @@ by `clear_override`. The Planner's cloud marker and the team week show it
 target* has a **Logged offline** count per rep and **Logged offline %**, its
 share of everything the rep logged (done or cancelled, plus any flagged row) in
 the period — blank when nothing was logged (`offline_rate`, computed in the
-same query as the count). The dashboard panel says "· N offline (P%)". Nothing is refused on the strength of it: the capture time is
+same query as the count). The dashboard panel says "· N of M logged offline" — the
+total named, since a bare percent beside "3 / 63" reads as a share of the target. Nothing is refused on the strength of it: the capture time is
 the phone's word and nothing on the server can witness it (a device id would
 be the phone's word too). Visibility is the control; the grace — 24 hours by
 default, MBP's call on 2026-11-16, reps do not stay on site overnight — bounds how far back a
