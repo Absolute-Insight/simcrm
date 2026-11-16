@@ -80,6 +80,7 @@ import {
 import { PhNetwork as LucideNetwork } from '@phosphor-icons/vue'
 import { PhTarget as LucideTarget } from '@phosphor-icons/vue'
 import { PhMapPin as LucideMapPin } from '@phosphor-icons/vue'
+import { PhUsersThree as LucideUsersThree } from '@phosphor-icons/vue'
 import { PhFlowArrow as LucideWorkflow } from '@phosphor-icons/vue'
 import { PhSparkle as LucideSparkles } from '@phosphor-icons/vue'
 import { PhBookOpenText as LucideBookOpenText } from '@phosphor-icons/vue'
@@ -106,6 +107,7 @@ import Users from '@/components/Settings/Users.vue'
 import Hierarchy from '@/components/Settings/Hierarchy/Hierarchy.vue'
 import Quotas from '@/components/Settings/Quotas.vue'
 import VisitTargets from '@/components/Settings/VisitTargets.vue'
+import DuplicateContacts from '@/components/Settings/DuplicateContacts.vue'
 import AccessControl from '@/components/Settings/AccessControl.vue'
 import AutomationRules from '@/components/Settings/AutomationRules.vue'
 import AssistantSettings from '@/components/Settings/AssistantSettings.vue'
@@ -210,6 +212,13 @@ const tabs = computed(() => {
           key: 'settings.calendar',
           icon: CalendarIcon,
           component: markRaw(CalendarSettings),
+        },
+        {
+          label: __('Duplicate Contacts'),
+          key: 'settings.duplicate_contacts',
+          icon: LucideUsersThree,
+          component: markRaw(DuplicateContacts),
+          condition: () => isManager(),
         },
       ],
       condition: () => isManager(),

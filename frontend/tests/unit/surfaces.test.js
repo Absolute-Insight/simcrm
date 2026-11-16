@@ -180,7 +180,7 @@ describe('SURFACES', () => {
 
   it('covers the nav links and the settings panes', () => {
     expect(surfacesByGroup('nav').length).toBe(14)
-    expect(surfacesByGroup('settings').length).toBe(28)
+    expect(surfacesByGroup('settings').length).toBe(29)
   })
 })
 

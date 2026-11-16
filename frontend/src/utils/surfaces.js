@@ -101,6 +101,13 @@ export const SURFACES = [
     floor: MANAGER_ROLE,
   },
   {
+    key: 'settings.duplicate_contacts',
+    group: 'settings',
+    section: 'System Configuration',
+    label: 'Duplicate Contacts',
+    floor: MANAGER_ROLE,
+  },
+  {
     key: 'settings.users',
     group: 'settings',
     section: 'User Management',
