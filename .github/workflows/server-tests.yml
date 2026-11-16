@@ -84,7 +84,7 @@ jobs:
                 # defaults to 10.6 until the operator runs "Upgrading MariaDB to
                 # 11.4" in deploy/README.md, and every release cut before then
                 # ships to a 10.6 database -- so 10.6 stays tested. 11.4 is what
-                # the devcontainer, the migration lane and e2e run. Drop the 10.6
+                # the devcontainer and e2e run. Drop the 10.6
                 # leg in the PR that records production's upgrade.
                 db:
                     - version: "10.6"
