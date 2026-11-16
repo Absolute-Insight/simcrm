@@ -1338,122 +1338,94 @@ services:
   # --- GPU model, opt-in ------------------------------------------------------
   # docker compose --profile gpu-model up -d
   #
-  # MiniCPM-V-4.7-35B-A3B (Apache-2.0) on llama.cpp, for a host with an NVIDIA
-  # card and the RAM to hold the experts. Use it instead of `local-model`, not
-  # beside it: one model per stack. Measured against LFM2.5-2.6B in
-  # crm/agent/evals (README.md, "Choosing the model").
+  # NVIDIA Nemotron 3.5 Bolt E4B (a post-trained Gemma 4 E4B; OpenMDW-1.1 over
+  # Apache-2.0) on ollama, on one NVIDIA card of its own. One model for every
+  # tier: summaries, drafts, the Analyst, the Assistant -- and, because it reads
+  # audio and images, the Assistant's dictation and photo attachments. Use it
+  # instead of `local-model`, not beside it: one model per stack. Measured on
+  # 2026-11-16 against the MiniCPM-V-4.7-35B it replaces (deploy/README.md,
+  # "A GPU host"): the same task probe, the injection corpus resisted with
+  # thinking on, and transcription as good as Whisper's.
   #
-  # Not ollama: no ollama release loads this model's architecture, and ollama
-  # splits a mixture-of-experts by whole layer. `--cpu-moe` keeps only the
-  # expert tensors in system RAM (~21 GB, mmap'd) and everything else --
-  # attention, KV cache -- on the GPU, about 3.5 GB of VRAM.
+  # The service keeps the name and port the llama.cpp server had, so a site
+  # already pointed at http://llm:8086/v1 needs only its model name changed.
   #
-  # `-c` is the window for all slots together: 32768 over `-np 2` is 16384 per
-  # request, which is what `context_tokens` in CRM Agent Settings must say.
-  # Larger there than here and llama.cpp refuses the prompt rather than
-  # truncating it -- the safe direction, but every long question fails.
+  # Thinking is ON by default for this model and is switched off per request
+  # (`reasoning_effort: none`): dictation always does so, and the other tiers
+  # follow "Turn off model reasoning" in Settings -> Assistant -- leave it off,
+  # because with reasoning the injection corpus never lands and without it one
+  # case does. Thinking spends `max_tokens`: set it to 8192 there.
+  #
+  # `OLLAMA_CONTEXT_LENGTH` is the window *each* of the `OLLAMA_NUM_PARALLEL`
+  # requests gets; `context_tokens` in CRM Agent Settings must not exceed it,
+  # or ollama truncates the prompt from the head -- the instruction -- and
+  # still answers 200. Four slots of 32768 hold ~11 GB of a 24 GB card.
+  # Four matches the CRM's own cap on concurrent model calls.
   llm:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b11641
+    image: ollama/ollama:0.40.16
     logging: *logging
     profiles: ["gpu-model"]
     restart: unless-stopped
-    depends_on:
-      llm-fetch:
-        condition: service_completed_successfully
+    environment:
+      OLLAMA_HOST: 0.0.0.0:8086
+      OLLAMA_KEEP_ALIVE: "-1"
+      OLLAMA_CONTEXT_LENGTH: ${VECTORA_LLM_CONTEXT:-32768}
+      OLLAMA_NUM_PARALLEL: "4"
+      OLLAMA_MAX_LOADED_MODELS: "1"
     volumes:
-      - llm-models:/models:ro
-    command:
-      - -m
-      - /models/${VECTORA_LLM_FILE:-MiniCPM-V-4_7-35B-A3B-Q4_K_M.gguf}
-      - --alias
-      - ${VECTORA_LLM_ALIAS:-minicpm-v4.7-35b}
-      - --cpu-moe
-      - -ngl
-      - "99"
-      - -c
-      - "32768"
-      - -np
-      - "2"
-      - -fa
-      - "on"
-      - -ctk
-      - q8_0
-      - -ctv
-      - q8_0
-      # prefill batch: 4096 is ~4.5x faster than the default 512 on a
-      # grounded Assistant prompt, and prefill is most of a short answer's wait
-      - -b
-      - "4096"
-      - -ub
-      - "4096"
-      # the experts run on the CPU, so this is the model's real speed knob;
-      # more threads than physical cores slows it down
-      - -t
-      - ${VECTORA_LLM_THREADS:-8}
-      - --jinja
-      # thinking off on the server, not per request: a site whose image
-      # predates the reasoning_off setting would otherwise think on every
-      # call, and on a one-key reply the whole answer lands in the
-      # reasoning channel -- Test connection then reports empty content
-      - --reasoning-budget
-      - "0"
-      - --no-webui
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8086"
+      - llm-ollama:/root/.ollama
     deploy:
       resources:
         reservations:
           devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8086/health || exit 1"]
+      test: ["CMD", "ollama", "list"]
       interval: 10s
       timeout: 5s
-      # loading 21 GB of weights from a cold page cache takes a minute or two
-      start_period: 300s
+      start_period: 60s
       retries: 30
 
-  # One-shot: check the weights against the pinned digest on every `up -d`,
-  # and fetch the pinned file when they are missing or differ. A model is code that
-  # writes to customers; a file that does not match the measured one does not
-  # get served. Hashing 21 GB takes about a minute.
+  # One-shot: pull the pinned model, check every digest in its manifest -- the
+  # weights, the audio/vision projector, the chat template and the parameters
+  # -- against the pinned fingerprint, and warm it. A tag on a registry can be
+  # re-pointed; a model is code that writes to customers, so one that does not
+  # match the measured one is deleted again and nothing is served. ollama
+  # itself checks each blob against its digest as it downloads, so the
+  # manifest's digests pin the bytes.
   llm-fetch:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b11641
+    image: ollama/ollama:0.40.16
     logging: *logging
     profiles: ["gpu-model"]
     restart: "no"
+    depends_on:
+      llm:
+        condition: service_healthy
     volumes:
-      - llm-models:/models
+      - llm-ollama:/root/.ollama
     environment:
-      FILE: ${VECTORA_LLM_FILE:-MiniCPM-V-4_7-35B-A3B-Q4_K_M.gguf}
-      URL: ${VECTORA_LLM_URL:-https://huggingface.co/openbmb/MiniCPM-V-4.7-35B-A3B-gguf/resolve/cf943fbe32f840b20ca05ccc146e7dc72baf9a9b/MiniCPM-V-4_7-35B-A3B-Q4_K_M.gguf}
-      SHA256: ${VECTORA_LLM_SHA256:-9ecf91e814d7e9adc64325b1b65f8628a9b1bb8da4f61a92869ca7489bfd888e}
+      OLLAMA_HOST: http://llm:8086
+      MODEL: ${VECTORA_LLM_MODEL:-nemotron-3.5-bolt:e4b-q8_0}
+      FINGERPRINT: ${VECTORA_LLM_FINGERPRINT:-9ee0607b4740d965e86dd24cc08bdca68c5ceb9405447c57e5acec91dfccb2ce}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -e
-        cd /models
-        if [ -f "$$FILE" ]; then
-          echo "Checking $$FILE"
-          if echo "$$SHA256  $$FILE" | sha256sum -c -; then exit 0; fi
-          # a file of the right name and the wrong digest is a different
-          # model (an older upload, a changed pin), not one to keep refusing
-          echo "$$FILE does not match the pinned digest; fetching the pinned file"
-          rm -f "$$FILE"
-        fi
-        echo "Downloading $$FILE (21 GB; resumes an interrupted download)"
-        curl -fL --retry 5 -C - -o "$$FILE.part" "$$URL"
-        echo "Checking the download"
-        if ! echo "$$SHA256  $$FILE.part" | sha256sum -c -; then
-          rm -f "$$FILE.part"
-          echo "Downloaded file does not match VECTORA_LLM_SHA256; nothing served"
+        echo "Pulling $$MODEL (about 10 GB the first time)"
+        ollama pull "$$MODEL"
+        name=$${MODEL%%:*}; tag=$${MODEL#*:}
+        manifest="/root/.ollama/models/manifests/registry.ollama.ai/library/$$name/$$tag"
+        got=$$(grep -o 'sha256:[0-9a-f]\{64\}' "$$manifest" | sort -u | sha256sum | cut -d' ' -f1)
+        if [ "$$got" != "$$FINGERPRINT" ]; then
+          echo "$$MODEL does not match VECTORA_LLM_FINGERPRINT (got $$got); deleting it, nothing served"
+          ollama rm "$$MODEL" || true
           exit 1
         fi
-        mv "$$FILE.part" "$$FILE"
+        echo "Warming $$MODEL"
+        ollama run --think=false "$$MODEL" "reply with the single word: ready" >/dev/null 2>&1 </dev/null
+        echo "Model ready at http://llm:8086/v1 as $$MODEL"
 
 volumes:
-  llm-models:
+  llm-ollama:
   ollama-models:
   db-data:
   redis-queue-data:
