@@ -1,13 +1,18 @@
 import json
+import re
+from html.parser import HTMLParser
 
 import frappe
 from bs4 import BeautifulSoup
 from frappe import _
+from frappe.core.doctype.communication.communication import (
+	has_permission as communication_has_permission,
+)
 from frappe.desk.form.load import add_comments, get_communication_data
 from frappe.model.utils.mask import mask_version_data
 from frappe.query_builder import JoinType
 from frappe.translate import get_translated_doctypes
-from frappe.utils import cint, get_datetime
+from frappe.utils import cint, get_datetime, sanitize_html
 
 from crm.fcrm.doctype.crm_call_log.crm_call_log import parse_call_logs, redact_hidden_references
 
@@ -15,6 +20,30 @@ from crm.fcrm.doctype.crm_call_log.crm_call_log import parse_call_logs, redact_h
 # the next page by asking for a longer one.
 TIMELINE_PAGE_LENGTH = 100
 MAX_TIMELINE_PAGE_LENGTH = 1000
+
+# The records whose timeline shows emails, and the kinds of email it shows.
+TIMELINE_DOCTYPES = ("CRM Deal", "CRM Lead")
+TIMELINE_COMMUNICATION_TYPES = ("Communication", "Automated Message")
+
+# An email's body is not part of the timeline: an Outlook thread is 20-100 KB of
+# html, and a page of 100 of them was megabytes on every load and reload. Each
+# row carries a plain-text snippet instead, and the body is fetched when the rep
+# opens it (get_email_body). The newest few open by default, so theirs ride along.
+SNIPPET_LENGTH = 200
+# The snippet is read from the start of the html only. A mail whose <head> is
+# longer than this (giant Outlook style sheets) gets no snippet, not a slow page.
+SNIPPET_SOURCE_CHARS = 16384
+EXPANDED_EMAILS = 2
+
+# frappe's docinfo columns, less the body.
+COMMUNICATION_FIELDS = f"""
+	C.name, C.communication_type, C.communication_medium,
+	C.communication_date, LEFT(C.content, {SNIPPET_SOURCE_CHARS}) AS content_head,
+	C.sender, C.sender_full_name, C.cc, C.bcc,
+	C.creation AS creation, C.subject, C.delivery_status,
+	C._liked_by, C.reference_doctype, C.reference_name,
+	C.read_by_recipient, C.recipients
+"""
 
 
 @frappe.whitelist()
@@ -25,11 +54,146 @@ def get_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 	"""
 	page_length = min(max(cint(page_length), 1), MAX_TIMELINE_PAGE_LENGTH)
 	if frappe.db.exists("CRM Deal", name):
-		return get_deal_activities(name, page_length)
+		result = get_deal_activities(name, page_length)
 	elif frappe.db.exists("CRM Lead", name):
-		return get_lead_activities(name, page_length)
+		result = get_lead_activities(name, page_length)
 	else:
 		frappe.throw(_("Document not found"), frappe.DoesNotExistError)
+	inline_newest_email_bodies(result[0])
+	return result
+
+
+@frappe.whitelist()
+def get_email_body(name: str) -> dict:
+	"""One timeline email's body, sanitised, for the reader who can see it there.
+
+	Visible means what the timeline means: the email is of a kind the timeline
+	shows, it belongs to a deal or lead the reader may open (as its reference or
+	through a timeline link), and frappe's own rule for the Communication -- its
+	reference document is readable -- holds as well. A missing email and a hidden
+	one get the same answer, so the endpoint cannot be used to probe for names.
+	"""
+	communication = None
+	if isinstance(name, str) and name:
+		communication = frappe.db.get_value(
+			"Communication",
+			name,
+			["name", "communication_type", "reference_doctype", "reference_name", "content"],
+			as_dict=True,
+		)
+	if not communication or not _can_read_email(communication):
+		frappe.throw(_("Email not found"), frappe.DoesNotExistError)
+	return {"name": communication.name, "content": sanitize_email_body(communication.content)}
+
+
+def _can_read_email(communication) -> bool:
+	if communication.communication_type not in TIMELINE_COMMUNICATION_TYPES:
+		return False
+	if not communication_has_permission(communication, "read"):
+		return False
+
+	parents = []
+	if communication.reference_doctype in TIMELINE_DOCTYPES and communication.reference_name:
+		parents.append((communication.reference_doctype, communication.reference_name))
+	parents += frappe.db.get_all(
+		"Communication Link",
+		filters={"parent": communication.name, "link_doctype": ("in", TIMELINE_DOCTYPES)},
+		fields=["link_doctype", "link_name"],
+		as_list=True,
+	)
+	return any(frappe.has_permission(doctype, "read", parent) for doctype, parent in parents)
+
+
+def sanitize_email_body(html: str | None) -> str:
+	"""frappe's html sanitiser, always applied: plain text is escaped, not trusted."""
+	return sanitize_html(html or "", always_sanitize=True)
+
+
+def inline_newest_email_bodies(activities: list[dict], count: int = EXPANDED_EMAILS) -> None:
+	"""Put the body on the newest ``count`` emails, which the timeline opens by default.
+
+	It saves those a round trip and lets them paint at full height at once, which
+	is what keeps "scroll to the newest" from landing short. One query for all.
+	"""
+	emails = [a for a in activities if a.get("activity_type") == "communication"]
+	newest = sorted(emails, key=lambda a: a["creation"], reverse=True)[:count]
+	if not newest:
+		return
+	rows = {
+		row.name: row
+		for row in frappe.db.get_all(
+			"Communication",
+			filters={"name": ("in", [a["name"] for a in newest])},
+			fields=["name", "reference_doctype", "reference_name", "content"],
+		)
+	}
+	for activity in newest:
+		row = rows.get(activity["name"])
+		# the timeline's reader passed the record's check already; this is the
+		# Communication's own, the same one get_email_body asks
+		if row and communication_has_permission(row, "read"):
+			activity["data"]["content"] = sanitize_email_body(row.content)
+
+
+class _TextOnly(HTMLParser):
+	"""The words of an html fragment, without what a mail client does not show."""
+
+	HIDDEN = frozenset({"head", "script", "style", "title", "template", "noscript"})
+
+	def __init__(self, limit: int):
+		super().__init__(convert_charrefs=True)
+		self.parts: list[str] = []
+		self.size = 0
+		self.hidden = 0
+		self.limit = limit
+
+	def handle_starttag(self, tag, attrs):
+		if tag in self.HIDDEN:
+			self.hidden += 1
+		else:
+			# a block or a <br> separates words even when the html has no space
+			self.parts.append(" ")
+
+	def handle_endtag(self, tag):
+		if tag in self.HIDDEN and self.hidden:
+			self.hidden -= 1
+		else:
+			self.parts.append(" ")
+
+	def handle_data(self, data):
+		if self.hidden:
+			return
+		self.parts.append(data)
+		self.size += len(data)
+		if self.size > self.limit * 4:
+			raise _Enough
+
+
+class _Enough(Exception):
+	pass
+
+
+# Zero-width characters Outlook and marketing mail pad their preheaders with.
+INVISIBLE = re.compile("[​-‏͏⁠﻿­]")
+
+
+def email_snippet(html: str | None, limit: int = SNIPPET_LENGTH) -> str:
+	"""Plain text of the start of an email: tags gone, entities decoded, one line.
+
+	Never html: the timeline draws it as text. At most ``limit`` characters.
+	"""
+	if not html:
+		return ""
+	parser = _TextOnly(limit)
+	try:
+		parser.feed(html)
+	except _Enough:
+		pass
+	text = INVISIBLE.sub("", "".join(parser.parts))
+	text = re.sub(r"\s+", " ", text).strip()
+	if len(text) > limit:
+		text = text[: limit - 1].rstrip() + "…"
+	return text
 
 
 def get_timeline_docinfo(doctype: str, name: str, page_length: int) -> frappe._dict:
@@ -52,7 +216,7 @@ def get_timeline_docinfo(doctype: str, name: str, page_length: int) -> frappe._d
 		order_by="creation desc",
 		limit=page_length + 1,
 	)
-	communications = get_communication_data(doctype, name, limit=page_length + 1)
+	communications = get_communication_data(doctype, name, limit=page_length + 1, fields=COMMUNICATION_FIELDS)
 	docinfo.has_more = len(versions) > page_length or len(communications) > page_length
 
 	docinfo.versions = mask_version_data(versions[:page_length], doctype)
@@ -204,7 +368,8 @@ def get_deal_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 			),
 			"data": {
 				"subject": communication.subject,
-				"content": communication.content,
+				# the body is fetched on expand: get_email_body
+				"snippet": email_snippet(communication.content_head),
 				"sender_full_name": communication.sender_full_name,
 				"sender": communication.sender,
 				"recipients": communication.recipients,
@@ -360,7 +525,8 @@ def get_lead_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 			),
 			"data": {
 				"subject": communication.subject,
-				"content": communication.content,
+				# the body is fetched on expand: get_email_body
+				"snippet": email_snippet(communication.content_head),
 				"sender_full_name": communication.sender_full_name,
 				"sender": communication.sender,
 				"recipients": communication.recipients,
