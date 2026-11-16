@@ -37,6 +37,41 @@
       />
     </div>
 
+    <div
+      v-if="canChangeLock && settings.doc?.lock_past_plans"
+      class="-mt-2 flex items-center justify-between gap-6 rounded-5 border border-outline-gray-1 px-3 py-2.5"
+    >
+      <div class="flex flex-col">
+        <label
+          for="offline-grace-hours"
+          class="text-p-base-medium text-ink-gray-7"
+        >
+          {{ __('Offline capture grace (hours)') }}
+        </label>
+        <div class="text-p-sm text-ink-gray-5">
+          {{
+            __(
+              'While the rule above is on, an activity captured on a phone with no signal is still accepted this long after the fact, and marked as logged offline. 1 to {0} hours.',
+              [GRACE_MAX_HOURS],
+            )
+          }}
+        </div>
+      </div>
+      <input
+        id="offline-grace-hours"
+        :value="graceHours"
+        type="number"
+        inputmode="numeric"
+        min="1"
+        :max="GRACE_MAX_HOURS"
+        class="w-20 shrink-0 rounded-[var(--v-radius-control)] border border-outline-gray-2 bg-surface-white px-2 py-1 text-right text-sm tabular-nums text-ink-gray-8 focus:border-outline-gray-3 focus:outline-none focus:ring-2 focus:ring-outline-gray-3"
+        :disabled="settings.setValue.loading"
+        @focus="$event.target.select()"
+        @blur="setGrace($event)"
+        @keydown.enter="$event.target.blur()"
+      />
+    </div>
+
     <SkeletonTable
       v-if="targets.loading && !targets.data"
       :columns="3"
@@ -176,6 +211,38 @@ async function setLock(value) {
     )
   } catch {
     // A refusal is toasted by the settings store's resource (stores/settings.js).
+  }
+}
+
+/* OFFLINE_GRACE_HOURS and OFFLINE_GRACE_MAX_HOURS in crm/api/offline.py; the
+   server refuses anything outside them, this only says so sooner. */
+const GRACE_DEFAULT_HOURS = 24
+const GRACE_MAX_HOURS = 168
+
+const graceHours = computed(
+  () => Number(settings.doc?.offline_grace_hours) || GRACE_DEFAULT_HOURS,
+)
+
+async function setGrace(event) {
+  const raw = event.target.value.trim()
+  const value = Number(raw)
+  if (raw === '' || !Number.isInteger(value) || value < 1) {
+    event.target.value = graceHours.value
+    toast.error(__('Enter a whole number of hours, 1 or more.'))
+    return
+  }
+  if (value > GRACE_MAX_HOURS) {
+    event.target.value = graceHours.value
+    toast.error(__('At most {0} hours (a week).', [GRACE_MAX_HOURS]))
+    return
+  }
+  if (value === graceHours.value) return
+  try {
+    await settings.setValue.submit({ offline_grace_hours: value })
+    toast.success(__('Offline captures accepted up to {0} hours late', [value]))
+  } catch {
+    // A refusal is toasted by the settings store's resource (stores/settings.js).
+    event.target.value = graceHours.value
   }
 }
 

@@ -17,7 +17,14 @@ from datetime import time as clock_time
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from crm.api.offline import LATE_AFTER_SECONDS, OFFLINE_GRACE_HOURS, get_pack, replay
+from crm.api.offline import (
+	LATE_AFTER_SECONDS,
+	OFFLINE_GRACE_HOURS,
+	OFFLINE_GRACE_MAX_HOURS,
+	get_pack,
+	offline_grace_hours,
+	replay,
+)
 from crm.api.rep_plan import get_plan, log_unplanned_visit, save_plan
 from crm.fcrm.doctype.crm_offline_receipt.crm_offline_receipt import RECEIPT_DAYS, purge_old_receipts
 from crm.install import ensure_visit_event_category
@@ -382,6 +389,114 @@ class PastLockTest(ReplayTestCase):
 		frappe.set_user(REP)
 		out = replay(new_id(), "log_activity", self.visit(), ago(hours=OFFLINE_GRACE_HOURS + 2))
 		self.assertEqual(out["status"], "applied")
+
+
+def set_grace(value) -> None:
+	"""FCRM Settings -> "Offline capture grace (hours)" as stored, valid or not."""
+	user = frappe.session.user
+	frappe.set_user("Administrator")
+	if value is None:
+		frappe.db.delete("Singles", {"doctype": "FCRM Settings", "field": "offline_grace_hours"})
+		frappe.db.value_cache["FCRM Settings"].pop("offline_grace_hours", None)
+	else:
+		frappe.db.set_single_value("FCRM Settings", "offline_grace_hours", value)
+	frappe.set_user(user)
+
+
+class GraceSettingTest(ReplayTestCase):
+	"""The grace is the site's to set, read as each entry arrives (the day lock on)."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value("FCRM Settings", "lock_past_plans", 1)
+		frappe.set_user(REP)
+
+	def test_unset_or_unusable_reads_as_a_day(self):
+		for value in (None, 0, -5, OFFLINE_GRACE_MAX_HOURS + 1, 10_000, "abc"):
+			set_grace(value)
+			self.assertEqual(offline_grace_hours(), OFFLINE_GRACE_HOURS, value)
+		for value in (1, 36, OFFLINE_GRACE_MAX_HOURS):
+			set_grace(value)
+			self.assertEqual(offline_grace_hours(), value)
+
+	def test_replay_honours_a_wider_window(self):
+		set_grace(30)
+		out = replay(new_id(), "log_activity", self.visit(), ago(hours=26))
+		self.assertEqual(out["status"], "applied")
+		with self.assertRaises(frappe.ValidationError) as refused:
+			replay(new_id(), "log_activity", self.visit(), ago(hours=31))
+		self.assertIn("30 hours", str(refused.exception))
+
+	def test_replay_honours_a_narrower_window(self):
+		set_grace(25)
+		with self.assertRaises(frappe.ValidationError) as refused:
+			replay(new_id(), "log_activity", self.visit(), ago(hours=26))
+		self.assertIn("25 hours", str(refused.exception))
+
+	def test_with_the_lock_off_the_window_does_not_apply(self):
+		set_grace(1)
+		frappe.set_user("Administrator")
+		frappe.db.set_single_value("FCRM Settings", "lock_past_plans", 0)
+		frappe.set_user(REP)
+		out = replay(new_id(), "log_activity", self.visit(), ago(hours=26))
+		self.assertEqual(out["status"], "applied")
+
+	def test_changing_the_window_leaves_what_is_recorded_alone(self):
+		set_grace(30)
+		replay(new_id(), "log_activity", self.visit(), ago(hours=26))
+		replay(new_id(), "log_activity", self.visit(note="On the day"), ago(seconds=5))
+
+		def flags():
+			return sorted(
+				(row["captured_offline"], row["status"])
+				for row in get_pack()["history"]
+				if row["organization"] == self.org
+			)
+
+		before = flags()
+		self.assertEqual(before, [(0, "Done"), (1, "Done")])
+		set_grace(1)
+		self.assertEqual(flags(), before)
+		set_grace(OFFLINE_GRACE_MAX_HOURS)
+		self.assertEqual(flags(), before)
+
+	def test_the_settings_form_keeps_the_window_inside_a_week(self):
+		frappe.set_user("Administrator")
+		settings = frappe.get_single("FCRM Settings")
+		settings.offline_grace_hours = OFFLINE_GRACE_MAX_HOURS + 1
+		with self.assertRaises(frappe.ValidationError):
+			settings.save()
+		settings.reload()
+		# blank is a site from before the field saving something else: the day
+		settings.offline_grace_hours = 0
+		settings.save()
+		self.assertEqual(frappe.db.get_single_value("FCRM Settings", "offline_grace_hours"), 24)
+		settings.offline_grace_hours = 48
+		settings.save()
+		self.assertEqual(offline_grace_hours(), 48)
+
+	def test_a_bad_value_already_stored_does_not_block_other_settings(self):
+		# written past the form (an import, a console): every later save of the
+		# brand or currency must not be refused for a field nobody touched
+		set_grace(OFFLINE_GRACE_MAX_HOURS + 100)
+		frappe.set_user("Administrator")
+		settings = frappe.get_single("FCRM Settings")
+		settings.brand_name = "Grace test brand"
+		settings.save()
+		self.assertEqual(frappe.db.get_single_value("FCRM Settings", "brand_name"), "Grace test brand")
+		# and it still reads as the default day
+		self.assertEqual(offline_grace_hours(), OFFLINE_GRACE_HOURS)
+
+	def test_a_rep_cannot_set_the_window(self):
+		from frappe.client import set_value
+
+		set_grace(24)
+		frappe.set_user(REP)
+		with self.assertRaises(frappe.PermissionError):
+			set_value("FCRM Settings", "FCRM Settings", "offline_grace_hours", OFFLINE_GRACE_MAX_HOURS)
+		frappe.set_user("Administrator")
+		self.assertEqual(offline_grace_hours(), 24)
 
 
 class PlannedItemTest(ReplayTestCase):
