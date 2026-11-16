@@ -423,6 +423,11 @@ services:
       BACKUP_HOUR: ${BACKUP_HOUR:-2}
       SITE_NAME: ${SITE_NAME:?set SITE_NAME in .env}
       BACKUP_MAX_AGE_HOURS: ${BACKUP_MAX_AGE_HOURS:-26}
+      # Optional dead-man's switch (healthchecks.io or anything that speaks
+      # its protocol): GET <url>/start before each run, <url> after one that
+      # worked, <url>/fail after one that did not. Unset = no pings. README.md,
+      # "Being told when a backup did not happen".
+      BACKUP_PING_URL: ${BACKUP_PING_URL:-}
     # Is there a database dump younger than a day and a bit? The loop below can
     # only log a failure and sleep until tomorrow, and nothing reads that log
     # -- a full volume or a database that was down at 02:00 left the container
@@ -437,8 +442,9 @@ services:
     # ends it early. So an existing site goes healthy within a minute, and a
     # new one the morning after.
     #
-    # Nothing in this stack alerts on it. See "Knowing when a backup did not
-    # happen" in README.md for how to have something watch.
+    # Nothing in this stack alerts on it by itself: BACKUP_PING_URL above is the
+    # push half, this is the pull half. See "Knowing when a backup did not
+    # happen" in README.md.
     healthcheck:
       test:
         - CMD-SHELL
@@ -473,6 +479,38 @@ services:
           ""|*[!0-9]*)
             echo "[backup] BACKUP_MAX_AGE_HOURS='$${BACKUP_MAX_AGE_HOURS:-}' is not a whole number of hours; the healthcheck is using 26" >&2 ;;
         esac
+
+        # Dead-man's-switch pings. The URL's path is the secret (anyone who
+        # has it can mark a run as passed), so it is never logged past the
+        # host, and it reaches curl on stdin rather than in argv. A ping is
+        # bounded at 15 seconds and its failure is logged and ignored: an
+        # unreachable monitor must never cost a backup.
+        ping_url="$${BACKUP_PING_URL:-}"
+        ping_url="$${ping_url%/}"
+        redact() {
+          rest="$${1#*://}"; host="$${rest%%/*}"; host="$${host##*@}"
+          printf '%s://%s/...' "$${1%%://*}" "$$host"
+        }
+        case "$$ping_url" in
+          "") ;;
+          *[[:space:]\"\\]*)
+            echo "[backup] BACKUP_PING_URL contains whitespace, a quote or a backslash; pings are off" >&2
+            ping_url="" ;;
+          http://*|https://*)
+            echo "[backup] pinging $$(redact "$$ping_url") at the start and end of each run" ;;
+          *)
+            echo "[backup] BACKUP_PING_URL must start with http:// or https://; pings are off" >&2
+            ping_url="" ;;
+        esac
+        hc_ping() {
+          [ -n "$$ping_url" ] || return 0
+          if ! printf 'url = "%s%s"\n' "$$ping_url" "$$1" \
+            | timeout 15 curl -fsS -m 10 --retry 2 --retry-max-time 12 -o /dev/null -K - >/dev/null 2>&1; then
+            echo "[backup] ping $$(redact "$$ping_url")$$1 did not get through (ignored)"
+          fi
+          return 0
+        }
+
         while true; do
           # Sleep until the next BACKUP_HOUR, recomputed each pass so the
           # schedule survives a restart at any time of day.
@@ -493,13 +531,16 @@ services:
           sleep $$((next - now))
 
           echo "[backup] $$(date -Is) starting"
+          hc_ping /start
           # Taking the backup is all this service does. Getting it off the
           # host is the `backup-offsite` service below, on an image that
           # actually carries rclone.
           if bench --site all backup --with-files; then
             echo "[backup] $$(date -Is) done"
+            hc_ping ""
           else
             echo "[backup] $$(date -Is) FAILED"
+            hc_ping /fail
           fi
         done
     deploy:
@@ -531,6 +572,14 @@ services:
   # can read the bucket. The price is that the encryption key must be kept
   # somewhere else for a restore onto a new host to be complete; README.md,
   # "Restoring onto a new host", is the procedure.
+  #
+  # Layout at the destination, BACKUP_TARGET being remote:bucket[/path]:
+  #   <site>/                 dailies, unencrypted (no OFFSITE_CRYPT_PASSWORD)
+  #   <site>.crypt/           dailies, encrypted
+  #   monthly/<site>.crypt/   the first backup of each month, encrypted
+  #   monthly/<site>/         the same, unencrypted (only if plaintext is accepted)
+  # No prefix is a prefix of another, so each can carry its own bucket
+  # lifecycle rule -- README.md, "Immutable copies, and how long they are kept".
   backup-offsite:
     image: rclone/rclone:1.76.0@sha256:7cbeec24a44f206067597c0368be4de90ae19a64d5113c7d1938bd737a81e466
     logging: *logging
@@ -569,37 +618,83 @@ services:
       #
       # Client-side encryption: set a passphrase and the copies go through an
       # rclone `crypt` remote, so the bucket only ever holds ciphertext.
+      # Unset, the copies still run, as they always have -- but every hourly
+      # run logs a warning and the healthcheck reports it, until a passphrase
+      # is set or OFFSITE_ALLOW_PLAINTEXT=1 accepts plaintext.
       OFFSITE_CRYPT_PASSWORD: ${OFFSITE_CRYPT_PASSWORD:-}
       OFFSITE_CRYPT_SALT: ${OFFSITE_CRYPT_SALT:-}
+      OFFSITE_ALLOW_PLAINTEXT: ${OFFSITE_ALLOW_PLAINTEXT:-0}
       # 1 = also copy site_config_backup.json. Honoured only when the copies
       # are encrypted.
       OFFSITE_INCLUDE_SITE_CONFIG: ${OFFSITE_INCLUDE_SITE_CONFIG:-0}
-      # Days to keep at the destination; 0 = never delete there (the default).
+      # Days to keep dailies at the destination; 0 = never delete there (the
+      # default, and with it no delete is ever attempted). Prefer lifecycle
+      # rules on the bucket and a key that cannot delete.
       OFFSITE_RETENTION_DAYS: ${OFFSITE_RETENTION_DAYS:-0}
       # How old the newest dump at the destination may be before this service
       # reports unhealthy. Two hours more than the backup's own 26: the copy
       # runs hourly and a night's files take a while to upload.
       OFFSITE_MAX_AGE_HOURS: ${OFFSITE_MAX_AGE_HOURS:-28}
+      # Optional dead-man's switch, as BACKUP_PING_URL on `backup`, pinged
+      # around every hourly run.
+      OFFSITE_PING_URL: ${OFFSITE_PING_URL:-}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -u
-        # What the `:?` above used to do, but scoped to this service. Only
-        # reachable when somebody actually activates the offsite profile.
+        # What a `:?` on the credentials used to do, but scoped to this service.
+        # Only reachable when somebody actually activates the offsite profile.
         if [ -z "$${RCLONE_CONFIG_OFFSITE_ACCOUNT}" ] || [ -z "$${RCLONE_CONFIG_OFFSITE_KEY}" ]; then
           echo "[offsite] refusing to start: set B2_ACCOUNT_ID and B2_APPLICATION_KEY in .env to run the offsite profile" >&2
           exit 1
         fi
         src="/data/sites/$${SITE_NAME}/private/backups"
-        dest="$${BACKUP_TARGET}/$${SITE_NAME}"
+        base="$${BACKUP_TARGET%/}"
+        dest="$${base}/$${SITE_NAME}"
+        mdest="$${base}/monthly/$${SITE_NAME}"
 
-        # Opt-in client-side encryption. The crypt remote is written to
-        # rclone's own config file rather than exported, so that `docker
-        # compose exec backup-offsite rclone ...` and the healthcheck see the
-        # same remote this loop does. The passphrase goes to `rclone obscure`
-        # on stdin, never as an argument. Encrypted copies get a prefix of
-        # their own (<site>.crypt): a directory holding both would hide the
-        # plaintext half from every listing made through the crypt remote.
+        # --- Dead-man's-switch pings (OFFSITE_PING_URL) ---------------------------
+        # Same protocol and rules as the `backup` service: <url>/start, <url>,
+        # <url>/fail; 15 seconds at most; a failed ping is logged and ignored; the
+        # URL is never logged past its host, because its path is the secret.
+        # This image has busybox wget rather than curl.
+        ping_url="$${OFFSITE_PING_URL:-}"
+        ping_url="$${ping_url%/}"
+        redact() {
+          rest="$${1#*://}"; host="$${rest%%/*}"; host="$${host##*@}"
+          printf '%s://%s/...' "$${1%%://*}" "$$host"
+        }
+        case "$$ping_url" in
+          "") ;;
+          *[[:space:]\"\\]*)
+            echo "[offsite] OFFSITE_PING_URL contains whitespace, a quote or a backslash; pings are off" >&2
+            ping_url="" ;;
+          http://*|https://*)
+            echo "[offsite] pinging $$(redact "$$ping_url") at the start and end of each hourly run" ;;
+          *)
+            echo "[offsite] OFFSITE_PING_URL must start with http:// or https://; pings are off" >&2
+            ping_url="" ;;
+        esac
+        hc_ping() {
+          [ -n "$$ping_url" ] || return 0
+          if command -v curl >/dev/null 2>&1; then
+            printf 'url = "%s%s"\n' "$$ping_url" "$$1" \
+              | timeout 15 curl -fsS -m 10 -o /dev/null -K - >/dev/null 2>&1
+          else
+            timeout 15 wget -q -T 10 -O /dev/null "$$ping_url$$1" >/dev/null 2>&1
+          fi || echo "[offsite] ping $$(redact "$$ping_url")$$1 did not get through (ignored)"
+          return 0
+        }
+
+        # --- Client-side encryption -------------------------------------------------
+        # The crypt remotes are written to rclone's own config file rather than
+        # exported, so that `docker compose exec backup-offsite rclone ...` and the
+        # healthcheck see the same remotes this loop does. The passphrase goes to
+        # `rclone obscure` on stdin, never as an argument. Encrypted copies get
+        # prefixes of their own (<site>.crypt, monthly/<site>.crypt): a directory
+        # holding both would hide the plaintext half from every listing made through
+        # the crypt remote, and an operator switching on encryption must be able to
+        # tell the two archives apart and age the old one out on its own.
         encrypted=0
         if [ -n "$${OFFSITE_CRYPT_PASSWORD}" ]; then
           umask 077
@@ -616,28 +711,47 @@ services:
               exit 1
             fi
           fi
-          conf="$$(rclone config file | tail -n 1)"
-          mkdir -p "$$(dirname "$$conf")"
-          {
-            echo "[offsitecrypt]"
+          stanza() {
+            echo "[$$1]"
             echo "type = crypt"
-            echo "remote = $${dest}.crypt"
+            echo "remote = $$2"
             echo "password = $$pass"
             if [ -n "$$salt" ]; then echo "password2 = $$salt"; fi
-            # Contents are encrypted; names are not, so the bucket's own
-            # console still shows which nights are there.
+            # Contents are encrypted; names are not, so the bucket's own console
+            # still shows which nights are there.
             echo "filename_encryption = off"
             echo "directory_name_encryption = false"
-          } > "$$conf" || { echo "[offsite] refusing to start: cannot write $$conf" >&2; exit 1; }
+            echo
+          }
+          conf="$$(rclone config file | tail -n 1)"
+          mkdir -p "$$(dirname "$$conf")"
+          { stanza offsitecrypt "$${dest}.crypt" && stanza offsitecryptmonthly "$${mdest}.crypt"; } > "$$conf" \
+            || { echo "[offsite] refusing to start: cannot write $$conf" >&2; exit 1; }
           dest="offsitecrypt:"
+          mdest="offsitecryptmonthly:"
           encrypted=1
         fi
+        # Not encrypted is allowed -- a stack that predates OFFSITE_CRYPT_PASSWORD
+        # keeps working exactly as before -- but it is never quiet: every hourly run
+        # says so, and the healthcheck reports it until a passphrase is set or the
+        # operator accepts plaintext with OFFSITE_ALLOW_PLAINTEXT=1.
+        warn_plaintext() {
+          if [ "$${OFFSITE_ALLOW_PLAINTEXT:-0}" = "1" ]; then
+            echo "[offsite] WARNING: copies leave this host UNENCRYPTED (accepted: OFFSITE_ALLOW_PLAINTEXT=1)" >&2
+          else
+            echo "[offsite] WARNING: copies leave this host UNENCRYPTED. Anyone who can read the bucket can read every customer record. Set OFFSITE_CRYPT_PASSWORD -- deploy/README.md, 'Encrypting the copies'." >&2
+          fi
+        }
+
         # For the healthcheck, and for anyone looking by hand:
         #   docker compose exec backup-offsite sh -c 'rclone ls "$$(cat /tmp/offsite.dest)"'
+        #   docker compose exec backup-offsite cat /tmp/offsite.status
         printf '%s\n' "$$dest" > /tmp/offsite.dest
 
-        # The filter, as the positional parameters: sh has no arrays.
-        set -- --exclude "*site_config_backup*"
+        # The filter, as the positional parameters: sh has no arrays. --filter rather
+        # than --exclude so the monthly copy below can add its own rules after it
+        # without mixing the two flag kinds (rclone warns about that).
+        set -- --filter "- *site_config_backup*"
         if [ "$${OFFSITE_INCLUDE_SITE_CONFIG}" = "1" ]; then
           if [ "$$encrypted" = "1" ]; then
             set --
@@ -646,68 +760,190 @@ services:
           fi
         fi
 
-        # Opt-in pruning. Whole days only, and never fewer than 14: the host
-        # keeps a week of backups, so anything shorter deletes a file here
-        # that the next hourly copy would upload again.
+        # --- Retention ----------------------------------------------------------------
+        # Off unless OFFSITE_RETENTION_DAYS is set: with it unset this service never
+        # issues a delete of any kind. The recommended setup is a key that cannot
+        # delete and lifecycle rules on the bucket (README.md, "Immutable copies");
+        # against such a key a prune is refused, and that is reported once as
+        # "delegated", not as a failure. Whole days only, and never fewer than 14:
+        # the host keeps a week, so anything shorter deletes a file here that the next
+        # hourly copy would upload again. Dailies only -- monthly/ is never pruned here.
         keep="$${OFFSITE_RETENTION_DAYS}"
         case "$$keep" in
           ""|*[!0-9]*)
             echo "[offsite] OFFSITE_RETENTION_DAYS='$$keep' is not a whole number of days; nothing will be deleted at the destination" >&2
             keep=0 ;;
         esac
+        while [ "$${keep#0}" != "$$keep" ]; do keep="$${keep#0}"; done
+        [ -n "$$keep" ] || keep=0
         if [ "$$keep" -gt 0 ] && [ "$$keep" -lt 14 ]; then
           echo "[offsite] OFFSITE_RETENTION_DAYS=$$keep is below the minimum of 14; nothing will be deleted at the destination" >&2
           keep=0
         fi
+        prune=off
+        [ "$$keep" -gt 0 ] && prune=script
 
-        echo "[offsite] copying $$src -> $$dest, hourly (encrypted=$$encrypted, retention=$${keep}d, 0 = keep everything)"
+        prune_old() {
+          # Only while fresh dumps are arriving: an archive that has stopped
+          # receiving is the last copy there is, and must not be aged away.
+          if ! rclone lsf "$$dest" --files-only --max-age "$${OFFSITE_MAX_AGE_HOURS}h" --include "*-database*.sql.gz" 2>/dev/null | grep -q .; then
+            echo "[offsite] $$(date -Is) not pruning: no dump newer than $${OFFSITE_MAX_AGE_HOURS}h at the destination"
+            return 0
+          fi
+          if out=$$(rclone delete "$$dest" --min-age "$${keep}d" --log-level NOTICE --stats 0 2>&1); then
+            if [ -n "$$out" ]; then printf '%s\n' "$$out"; fi
+            echo "[offsite] $$(date -Is) pruned dailies older than $${keep}d"
+            prune=script
+            return 0
+          fi
+          printf '%s\n' "$$out"
+          if printf '%s\n' "$$out" | grep -qiE 'unauthori[sz]ed|not.?authori[sz]ed|access.?denied|forbidden|not.?allowed|insufficient|capabilit|permission|object.?lock|retention|(^|[^0-9])(401|403)([^0-9]|$$)'; then
+            echo "[offsite] $$(date -Is) pruning is delegated to the bucket's lifecycle rules: this key may not delete, which is the recommended setup. OFFSITE_RETENTION_DAYS is ignored from now on; unset it to silence this."
+            prune=delegated
+            keep=0
+            return 0
+          fi
+          echo "[offsite] $$(date -Is) PRUNE FAILED"
+          prune=failed
+          return 1
+        }
+
+        # --- Monthly tier ---------------------------------------------------------------
+        # The first complete backup of each month is copied once more, to monthly/,
+        # so that a lifecycle rule can keep it for a year while the dailies age out
+        # after a month. "Complete" means nothing in its set changed in the last hour
+        # (the tars are written after the dump). "First" means the earliest of this
+        # month still on the host -- the host keeps a week, so if this service was
+        # down for the 1st, the month's copy is the first night it can see. Once a
+        # month: the destination is asked, so a restart does not copy it again.
+        #
+        # Encrypted copies only (or plaintext that OFFSITE_ALLOW_PLAINTEXT=1
+        # accepted): a stack that predates the passphrase keeps doing exactly
+        # what it did, and does not start keeping a year of plaintext dumps in
+        # a third party's bucket because it was upgraded.
+        monthly_done=""
+        monthly_on=1
+        if [ "$$encrypted" != "1" ] && [ "$${OFFSITE_ALLOW_PLAINTEXT:-0}" != "1" ]; then
+          monthly_on=0
+          monthly_done="off (copies not encrypted)"
+        fi
+        monthly_copy() {
+          [ "$$monthly_on" = "1" ] || return 0
+          month=$$(date +%Y%m)
+          [ "$$monthly_done" = "$$month" ] && return 0
+          first=$$(ls "$$src" 2>/dev/null | grep -v -- '-partial-database' \
+            | sed -n "s/^\($${month}[0-3][0-9]_[0-9]\{6\}\)-.*-database\(-enc\)\{0,1\}\.sql\.gz$$/\1/p" \
+            | sort | head -n 1)
+          [ -n "$$first" ] || return 0
+          if find "$$src" -maxdepth 1 -name "$${first}-*" -mmin -60 | grep -q .; then
+            return 0
+          fi
+          rclone lsf "$$mdest" --files-only --include "$${month}*-database*" > /tmp/offsite.monthly 2>/dev/null
+          rc=$$?
+          # 3 is rclone's "directory not found": the first monthly copy ever.
+          case "$$rc" in
+            0|3) ;;
+            *) echo "[offsite] $$(date -Is) monthly: cannot list $$mdest (exit $$rc); retrying next hour"
+               return 1 ;;
+          esac
+          if [ "$$rc" = 0 ] && [ -s /tmp/offsite.monthly ]; then
+            monthly_done="$$month"
+            return 0
+          fi
+          if rclone copy "$$src" "$$mdest" "$$@" --filter "+ $${first}-*" --filter "- *" --log-level NOTICE --stats 0; then
+            echo "[offsite] $$(date -Is) monthly: copied the $$first set to $$mdest"
+            monthly_done="$$month"
+            return 0
+          fi
+          echo "[offsite] $$(date -Is) MONTHLY COPY FAILED"
+          return 1
+        }
+
+        write_status() {
+          {
+            if [ "$$encrypted" = "1" ]; then echo "encryption=on"; else echo "encryption=off"; fi
+            echo "plaintext_accepted=$${OFFSITE_ALLOW_PLAINTEXT:-0}"
+            echo "prune=$$prune"
+            echo "monthly=$$monthly_done"
+            echo "last_run=$$(date -Is)"
+            echo "last_result=$$1"
+            echo "last_ok=$$last_ok"
+          } > /tmp/offsite.status.new && mv /tmp/offsite.status.new /tmp/offsite.status
+        }
+
+        if [ "$$encrypted" = "1" ]; then
+          where="$${base}/$${SITE_NAME}.crypt, encrypted"
+          mwhere="$${base}/monthly/$${SITE_NAME}.crypt"
+        else
+          where="$${base}/$${SITE_NAME}, NOT encrypted"
+          mwhere="$${base}/monthly/$${SITE_NAME}"
+        fi
+        [ "$$monthly_on" = "1" ] || mwhere="nowhere: the monthly tier needs encrypted copies"
+        echo "[offsite] copying $$src -> $$where, hourly; the first backup of each month also -> $$mwhere (retention=$${keep}d, 0 = keep everything)"
         if [ "$$#" -gt 0 ]; then
           echo "[offsite] NOT copied: *site_config_backup.json (it holds the site's encryption_key and db_password). Keep the key somewhere else -- deploy/README.md, 'What is not copied' and 'Restoring onto a new host'."
         fi
+        last_ok=""
         while true; do
+          [ "$$encrypted" = "1" ] || warn_plaintext
           if [ -d "$$src" ]; then
-            if rclone copy "$$src" "$$dest" "$$@" --log-level NOTICE --stats 0; then
+            hc_ping /start
+            result=ok
+            # --min-age: leave a dump that is still being written for the next run.
+            # Uploaded half-written it would fail the run, and on a bucket with
+            # Object Lock it would sit there, locked, for the whole retention period.
+            if rclone copy "$$src" "$$dest" "$$@" --min-age 15m --log-level NOTICE --stats 0; then
               echo "[offsite] $$(date -Is) ok"
-              if [ "$$keep" -gt 0 ]; then
-                # Only behind a copy that just succeeded, and only while fresh
-                # dumps are arriving: an archive that has stopped receiving is
-                # the last copy there is, and must not be aged away.
-                if rclone lsf "$$dest" --files-only --max-age "$${OFFSITE_MAX_AGE_HOURS}h" --include "*-database*.sql.gz" 2>/dev/null | grep -q .; then
-                  if rclone delete "$$dest" --min-age "$${keep}d" --log-level NOTICE --stats 0; then
-                    echo "[offsite] $$(date -Is) pruned files older than $${keep}d"
-                  else
-                    echo "[offsite] $$(date -Is) PRUNE FAILED (does the key allow deleteFiles?)"
-                  fi
-                else
-                  echo "[offsite] $$(date -Is) not pruning: no dump newer than $${OFFSITE_MAX_AGE_HOURS}h at the destination"
-                fi
-              fi
+              last_ok=$$(date -Is)
+              monthly_copy "$$@" || result=fail
+              if [ "$$keep" -gt 0 ]; then prune_old || result=fail; fi
             else
               echo "[offsite] $$(date -Is) COPY FAILED"
+              result=fail
             fi
+            write_status "$$result"
+            if [ "$$result" = "ok" ]; then hc_ping ""; else hc_ping /fail; fi
           else
             echo "[offsite] $$(date -Is) no backups directory yet at $$src"
+            write_status waiting
           fi
           sleep 3600
         done
     healthcheck:
-      # Two questions. Can this service still reach the bucket with the key it
-      # was given? A silent credential expiry is the failure that leaves an
+      # Three questions, each printed when it fails (docker inspect shows the
+      # output). Can this service still reach the bucket with the key it was
+      # given? A silent credential expiry is the failure that leaves an
       # operator believing they have off-host copies when they stopped weeks
-      # ago. And is the newest dump THERE recent? The key opening the bucket
-      # says nothing about whether anything has arrived lately -- this used to
-      # stay green while copying nothing.
+      # ago. Is the newest dump THERE recent? The key opening the bucket says
+      # nothing about whether anything has arrived lately. And are the copies
+      # encrypted? Unencrypted still copies, and is reported here so that it
+      # reaches whatever watches this state rather than staying in a log.
       #
       # A host with no dump yet has nothing to be late with, so the second
       # question is only asked once the first local backup exists.
       test:
         - CMD-SHELL
         - |
-          rclone lsd "$$BACKUP_TARGET" >/dev/null 2>&1 || exit 1
-          ls "/data/sites/$$SITE_NAME/private/backups"/*-database*.sql.gz >/dev/null 2>&1 || exit 0
-          dest=$$(cat /tmp/offsite.dest 2>/dev/null)
-          [ -n "$$dest" ] || exit 1
-          rclone lsf "$$dest" --files-only --max-age "$${OFFSITE_MAX_AGE_HOURS:-28}h" --include "*-database*.sql.gz" 2>/dev/null | grep -q .
+          rclone lsd "$$BACKUP_TARGET" >/dev/null 2>&1 || { echo "cannot list $$BACKUP_TARGET with this key"; exit 1; }
+          bad=0
+          if ls "/data/sites/$$SITE_NAME/private/backups"/*-database*.sql.gz >/dev/null 2>&1; then
+            dest=$$(cat /tmp/offsite.dest 2>/dev/null)
+            [ -n "$$dest" ] || { echo "the copy loop has not started"; exit 1; }
+            if ! rclone lsf "$$dest" --files-only --max-age "$${OFFSITE_MAX_AGE_HOURS:-28}h" --include "*-database*.sql.gz" 2>/dev/null | grep -q .; then
+              echo "no database dump newer than $${OFFSITE_MAX_AGE_HOURS:-28}h at $$dest"
+              bad=1
+            fi
+          fi
+          if [ -z "$${OFFSITE_CRYPT_PASSWORD:-}" ] && [ "$${OFFSITE_ALLOW_PLAINTEXT:-0}" != "1" ]; then
+            echo "copies are NOT encrypted: set OFFSITE_CRYPT_PASSWORD, or OFFSITE_ALLOW_PLAINTEXT=1 to accept plaintext"
+            bad=1
+          fi
+          if grep -qx 'prune=failed' /tmp/offsite.status 2>/dev/null; then
+            echo "pruning at the destination failed; see the log"
+            bad=1
+          fi
+          [ "$$bad" = 0 ] && echo "ok"
+          exit "$$bad"
       interval: 300s
       timeout: 60s
       retries: 3
