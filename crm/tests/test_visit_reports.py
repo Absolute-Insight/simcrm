@@ -364,6 +364,47 @@ class VisitsByRepTest(VisitFixture, IntegrationTestCase):
 		self.assertEqual(row["attainment"], 60)
 		self.assertEqual(row["on_track"], "Behind")
 
+	def test_activities_logged_offline_are_counted_beside_the_rest(self):
+		self.assertEqual(self.row()["offline"], 0)
+		plan = frappe.get_doc("CRM Rep Plan", {"user": REP, "week_start": self.monday})
+		for item in plan.items[:2]:
+			frappe.db.set_value(
+				"CRM Rep Plan Item", item.name, {"captured_offline": 1, "offline_delay_minutes": 300}
+			)
+		row = self.row()
+		self.assertEqual(row["offline"], 2)
+		# counted beside, never instead of: a visit logged offline is still a visit
+		self.assertEqual(row["completed"], 3)
+
+	def test_a_rep_whose_only_items_were_logged_offline_still_has_a_row(self):
+		make_plan(
+			OUTSIDER,
+			self.monday,
+			[{"activity_type": "Call", "planned_date": self.day(1), "status": "Done", "captured_offline": 1}],
+		)
+		rows = {r["user"]: r for r in visits_by_rep(self.start, self.end, OUTSIDER)}
+		self.assertEqual(rows[OUTSIDER]["offline"], 1)
+		self.assertEqual(rows[OUTSIDER]["scheduled"], 0)
+
+	def test_a_manager_sees_offline_counts_only_for_their_team(self):
+		self.make_hierarchy()
+		make_plan(
+			OUTSIDER,
+			self.monday,
+			[
+				{
+					"activity_type": "Visit",
+					"planned_date": self.day(1),
+					"status": "Done",
+					"captured_offline": 1,
+				}
+			],
+		)
+		frappe.set_user(MANAGER)
+		users = {r["user"] for r in visits_by_rep(self.start, self.end)}
+		self.assertIn(REP, users)
+		self.assertNotIn(OUTSIDER, users)
+
 	def test_meeting_the_target_due_so_far_is_on_track(self):
 		make_target(REP, 3)
 		row = self.row()

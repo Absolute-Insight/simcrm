@@ -47,6 +47,7 @@ ITEM_FIELDS = (
 	"fulfilled_by",
 	"manual_override",
 	"captured_offline",
+	"offline_delay_minutes",
 	"suggestion",
 )
 
@@ -221,6 +222,7 @@ def _stage_items(plan, items: list[dict]) -> set[str]:
 				"fulfilled_by": existing.fulfilled_by,
 				"manual_override": existing.manual_override,
 				"captured_offline": existing.captured_offline,
+				"offline_delay_minutes": existing.offline_delay_minutes,
 			}
 		staged.append(clean)
 
@@ -587,6 +589,10 @@ def mark_fulfilled(item: str, fulfilled_by_doctype: str | None = None, fulfilled
 	values = {
 		"status": "Done",
 		"manual_override": 1,
+		# a new outcome by hand: an earlier one captured offline no longer
+		# describes the row (a replay that is itself late flags it again)
+		"captured_offline": 0,
+		"offline_delay_minutes": 0,
 		"fulfilled_by_doctype": fulfilled_by_doctype,
 		"fulfilled_by": fulfilled_by,
 	}
@@ -618,6 +624,10 @@ def mark_missed(item: str):
 		{
 			"status": "Missed",
 			"manual_override": 1,
+			# a new outcome by hand: an earlier one captured offline no longer
+			# describes the row (a replay that is itself late flags it again)
+			"captured_offline": 0,
+			"offline_delay_minutes": 0,
 			"fulfilled_by_doctype": None,
 			"fulfilled_by": None,
 		},
@@ -640,6 +650,7 @@ def clear_override(item: str):
 			"manual_override": 0,
 			# what was captured offline was the outcome being withdrawn here
 			"captured_offline": 0,
+			"offline_delay_minutes": 0,
 			"outcome": None,
 			"fulfilled_by_doctype": None,
 			"fulfilled_by": None,
@@ -810,6 +821,10 @@ def complete_item(item: str, outcome: str, when: str | None = None):
 		{
 			"status": "Done",
 			"manual_override": 1,
+			# a new outcome by hand: an earlier one captured offline no longer
+			# describes the row (a replay that is itself late flags it again)
+			"captured_offline": 0,
+			"offline_delay_minutes": 0,
 			"outcome": outcome,
 			"fulfilled_by_doctype": "Event" if event else None,
 			"fulfilled_by": event,
@@ -859,6 +874,10 @@ def cancel_item(item: str, reason: str):
 		{
 			"status": "Cancelled",
 			"manual_override": 1,
+			# a new outcome by hand: an earlier one captured offline no longer
+			# describes the row (a replay that is itself late flags it again)
+			"captured_offline": 0,
+			"offline_delay_minutes": 0,
 			"outcome": reason,
 			"fulfilled_by_doctype": "Event" if event else None,
 			"fulfilled_by": event,
@@ -996,6 +1015,7 @@ def log_activity(
 	activity_type: str = "Visit",
 	*,
 	captured_offline: bool = False,
+	offline_delay_minutes: int = 0,
 ):
 	"""Record an activity that was never planned -- a rep called to site for a
 	breakdown, a delivery dropped off, a phone call -- as already done, in one step.
@@ -1005,8 +1025,9 @@ def log_activity(
 	which has already bounded how old ``when`` may be). Such an entry is let past
 	"activities are logged on the day they happen" -- the rep did log it on the
 	day, on a phone that could not say so -- and the row is flagged, so a manager
-	reading the week can tell the device's word from the server's. A request can
-	never set it: the whitelisted door above does not pass it.
+	reading the week can tell the device's word from the server's, and how late
+	it arrived (``offline_delay_minutes``). A request can never set either: the
+	whitelisted door above does not pass them.
 
 	A visit, delivery or unplanned meeting creates the calendar Event the matcher
 	would have looked for, against the customer; every kind gets a plan item that
@@ -1074,6 +1095,7 @@ def log_activity(
 				"status": "Done",
 				"manual_override": 1,
 				"captured_offline": 1 if captured_offline else 0,
+				"offline_delay_minutes": max(0, int(offline_delay_minutes)) if captured_offline else 0,
 				"fulfilled_by_doctype": "Event" if event else None,
 				"fulfilled_by": event,
 			},

@@ -436,6 +436,12 @@ REPORTS = {
 				"type": "number",
 				"description": "Unplanned meetings logged in the period; not counted against the target",
 			},
+			{
+				"key": "offline",
+				"label": "Logged offline",
+				"type": "number",
+				"description": "Activities of any kind logged on a phone with no connection and sent later, so their time is the phone's word. Expected for remote sites; worth a look when it is most of a rep's week",
+			},
 		],
 		"get_rows": _visits_by_rep,
 	},

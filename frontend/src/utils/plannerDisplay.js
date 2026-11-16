@@ -49,3 +49,25 @@ export function statusLabel(status) {
   if (status === 'Cancelled') return __('Cancelled')
   return __('Planned')
 }
+
+/**
+ * How late an item logged offline reached the server, in words: "sent 3 hours
+ * later". The delay is stored when it arrives (`offline_delay_minutes`); an
+ * item flagged before that existed has none, and says only that it was
+ * logged offline.
+ */
+export function offlineDelayLabel(minutes) {
+  const m = Number(minutes)
+  if (!Number.isFinite(m) || m <= 0) return __('Logged offline')
+  if (m < 60) return __('Logged offline, sent {0} min later', [Math.round(m)])
+  const hours = Math.round(m / 60)
+  if (hours < 24) {
+    return hours === 1
+      ? __('Logged offline, sent 1 hour later')
+      : __('Logged offline, sent {0} hours later', [hours])
+  }
+  const days = Math.round(m / 1440)
+  return days === 1
+    ? __('Logged offline, sent 1 day later')
+    : __('Logged offline, sent {0} days later', [days])
+}

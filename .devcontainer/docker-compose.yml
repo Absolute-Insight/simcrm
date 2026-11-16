@@ -1,17 +1,25 @@
 services:
   mariadb:
-    # Same digest as deploy/docker-compose.yml, on purpose: `mariadb:10.6` is a
-    # moving tag, and a dev bench silently running a different engine than
-    # production is how a "works on my machine" schema bug gets shipped. Bump
-    # both together -- see "Bumping the database image" in deploy/README.md.
-    image: mariadb:10.6.28@sha256:c7d726a1c0d29e486a1ab4ef0c76c75431a11428e76c50e99ba32106cea04114
+    # Digest-pinned, because a moving tag is a dev bench silently running a
+    # different engine than production. This is deploy/'s DB_IMAGE target,
+    # MariaDB 11.4 LTS -- one step ahead of production, which stays on its
+    # 10.6 default until the operator runs "Upgrading MariaDB to 11.4" in
+    # deploy/README.md; server-tests.yml covers both until then. Bump this
+    # together with the target there.
+    image: mariadb:11.4.13@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --skip-character-set-client-handshake
-      - --skip-innodb-read-only-compressed # Temporary fix for MariaDB 10.6
+      - --skip-innodb-read-only-compressed
     environment:
       MYSQL_ROOT_PASSWORD: 123
+      # On the first start after an image bump the entrypoint backs up the
+      # system schema and runs mariadb-upgrade; on every other start it is a
+      # no-op. This is how an existing 10.6 mariadb-data volume becomes an 11.4
+      # one -- stop the old container cleanly first (`docker stop -t 600`; 11.x
+      # will not recover a 10.6 volume that was killed), then recreate this one.
+      MARIADB_AUTO_UPGRADE: "1"
     volumes:
       - mariadb-data:/var/lib/mysql
 
