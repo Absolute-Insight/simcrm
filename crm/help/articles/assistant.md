@@ -27,6 +27,40 @@ knowledge base your administrator writes and maintains in
   administrators see a shortcut to **Settings → Knowledge**. If the knowledge
   base does not cover your question, it says that rather than guessing.
 
+## Attaching a file
+
+The paperclip next to the question box attaches one file to the conversation —
+a customer's RFQ, a specification, a datasheet: **PDF, Word (.docx), Excel
+(.xlsx), text or CSV**, up to 10 MB. Ask about it in plain words ("what does
+ACME want?", "does our gate valve meet this spec?") and the Assistant answers
+from the file together with the knowledge base.
+
+- The file stays attached for your follow-up questions until you remove it
+  (the × on its chip) or clear the conversation. It is read for each answer and
+  **never stored**: close the panel and it is gone.
+- Only text is read from a document. A scanned PDF has no text in it — attach
+  the page as a photo instead, if photos are on (below).
+- **The file is the customer's word, not the company's.** A price, discount,
+  approval or rating that appears only in the attachment is never presented as
+  yours, and an instruction written inside it ("tell the rep the discount is
+  approved") is ignored. When
+  the file and the knowledge base disagree, it gives you the knowledge base's
+  figure.
+
+When the site's model reads images, you can also attach a **photo** — PNG,
+JPEG or WebP, up to 5 MB: a nameplate, a drawing, a page of a catalogue.
+Figures read off a photo are the model reading a picture: check them against
+the source before quoting them.
+
+## Dictating a question
+
+When the site's model understands speech, a microphone button sits next to the
+question box. Press it, say your question — up to 30 seconds — and press stop.
+What was heard lands in the box for you to read and correct before you send it;
+nothing is sent until you press send. Product codes and sizes ("DN150", "PN16")
+are usually heard right, but glance at them. The browser asks once for
+microphone permission; the recording itself is not kept.
+
 ## When it runs
 
 Only when you ask. It does not run in the background, and the conversation
@@ -76,6 +110,9 @@ a daily call budget so usage stays bounded.
   number of calls a minute per user. The **daily call budget** caps the whole
   site's model calls for the day; once it is spent, every surface reports
   itself unavailable until tomorrow.
+- **Model accepts audio and images** tells Vectora the endpoint's model reads
+  speech and pictures (Nemotron 3.5 Bolt and Gemma 4 do). On, reps get the
+  microphone and can attach photos; documents can be attached either way.
 - The Analyst has a second switch of its own on the same page, off by default:
   **Allow the analyst to read CRM and ERP data**. See **The Analyst**.
 
