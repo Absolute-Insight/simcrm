@@ -476,3 +476,23 @@ export function activitySummary(rows, order = []) {
   )
   return { totals, types }
 }
+
+/**
+ * The dashboard's visits-against-target cell: "3 / 63 · 2 of 40 logged offline".
+ * The offline count is of every activity logged, of any kind -- not of the
+ * visit target beside it -- so it names its own denominator rather than a bare
+ * percent that reads as a share of the target (the report has the percent).
+ * Logged offline is shown, not judged -- the tone stays the target's.
+ */
+export function visitsCell(row) {
+  let text =
+    row.target == null
+      ? `${row.completed} · ${__('No target')}`
+      : `${row.completed} / ${row.target}`
+  if (row.offline) {
+    text += row.logged
+      ? ` · ${__('{0} of {1} logged offline', [row.offline, Math.max(row.logged, row.offline)])}`
+      : ` · ${__('{0} logged offline', [row.offline])}`
+  }
+  return text
+}

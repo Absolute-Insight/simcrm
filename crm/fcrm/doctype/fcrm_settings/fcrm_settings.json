@@ -11,6 +11,7 @@
   "enable_forecasting",
   "enable_sales_hierarchy",
   "lock_past_plans",
+  "offline_grace_hours",
   "auto_update_expected_deal_value",
   "update_timestamp_on_new_communication",
   "auto_mark_replied_on_response",
@@ -100,6 +101,15 @@
    "fieldname": "lock_past_plans",
    "fieldtype": "Check",
    "label": "Plan only for today or later"
+  },
+  {
+   "default": "24",
+   "depends_on": "eval:doc.lock_past_plans",
+   "description": "Applies only while \"Plan only for today or later\" is on: how long after the fact an activity captured on a phone with no signal is still accepted, flagged as logged offline. 1 to 168 hours (a week).",
+   "fieldname": "offline_grace_hours",
+   "fieldtype": "Int",
+   "label": "Offline capture grace (hours)",
+   "non_negative": 1
   },
   {
    "fieldname": "currency",
@@ -232,7 +242,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-16 18:00:00.000000",
+ "modified": "2026-11-16 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "FCRM Settings",

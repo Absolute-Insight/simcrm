@@ -1,5 +1,29 @@
 <template>
+  <!-- Listed on this record, but stored against one the reader cannot open:
+       the server sends only who on our side was involved and when, so the
+       row says that and offers nothing to open or answer. -->
   <div
+    v-if="hidden"
+    class="flex min-w-0 items-start gap-2 rounded-[var(--v-radius-card)] border border-dashed border-outline-gray-2 px-3 py-2 text-base leading-5 text-ink-gray-6"
+    :title="__('You don\'t have access to this email')"
+    data-email-hidden
+  >
+    <LucideLock class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+    <p class="min-w-0 flex-1 break-words">
+      <span class="sr-only">{{ __('Restricted email:') }} </span>
+      <span data-email-hidden-summary>{{ hiddenSummary }}</span>
+    </p>
+    <span class="shrink-0">
+      <TimelineTimestamp
+        :date="
+          scheduled ? activity.data.send_after : activity.communication_date
+        "
+        class-name="text-sm text-ink-gray-6"
+      />
+    </span>
+  </div>
+  <div
+    v-else
     class="v-glass v-glass-hover cursor-pointer flex flex-col rounded-[var(--v-radius-card)] px-3 py-1.5 text-base transition-all duration-300 ease-in-out"
   >
     <div
@@ -43,7 +67,7 @@
             :loading="busy"
           />
         </Dropdown>
-        <div v-if="!scheduled && !hidden" class="flex gap-0.5">
+        <div v-if="!scheduled" class="flex gap-0.5">
           <Button
             :tooltip="__('Reply')"
             variant="ghost"
@@ -65,25 +89,7 @@
          truncated, so a closed row is the same height however long its
          recipients or body: rows above the newest cannot grow while the
          timeline scrolls to it. -->
-    <div
-      v-if="hidden"
-      class="flex min-w-0 flex-col gap-1 text-base leading-5 text-ink-gray-8"
-      data-email-hidden
-    >
-      <div class="truncate">{{ activity.data.subject }}</div>
-      <div class="truncate">
-        <span class="mr-1 text-ink-gray-5"> {{ __('To') }}: </span>
-        <span>{{ activity.data.recipients }}</span>
-      </div>
-      <div class="flex min-w-0 items-center gap-1.5 text-p-sm text-ink-gray-6">
-        <LucideLock class="size-3.5 shrink-0" aria-hidden="true" />
-        <span class="truncate">
-          {{ __("You don't have access to this email's content") }}
-        </span>
-      </div>
-    </div>
     <button
-      v-else
       type="button"
       class="flex min-w-0 items-start gap-2 rounded text-left text-base leading-5 text-ink-gray-8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-outline-gray-3"
       :aria-expanded="expanded ? 'true' : 'false'"
@@ -201,9 +207,17 @@ const emit = defineEmits(['reload'])
 const attachments = computed(() => props.activity.data?.attachments || [])
 
 // Listed on this record through a timeline link, but referenced to a record
-// the reader cannot see: the server sends who, to whom and when, and nothing
-// of what -- so there is nothing to open, retry or quote.
+// the reader cannot see: the server sends only the colleague involved, the
+// direction and the date (crm.api.activities.hide_email_content) -- no
+// subject, no outside address -- so there is nothing to open, retry or quote.
 const hidden = computed(() => !!props.activity.data?.hidden)
+
+const hiddenSummary = computed(() => {
+  const party = props.activity.data?.internal_party || __('A colleague')
+  return props.activity.data?.sent_or_received === 'Received'
+    ? __('{0} received an email from this contact', [party])
+    : __('{0} emailed this contact', [party])
+})
 
 // The timeline sends the body only with the newest emails, which open by
 // default and so paint at full height at once; any other is a snippet until

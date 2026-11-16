@@ -1,5 +1,6 @@
 import json
 import re
+from email.utils import parseaddr
 from html.parser import HTMLParser
 
 import frappe
@@ -12,8 +13,9 @@ from frappe.desk.form.load import add_comments, get_communication_data
 from frappe.model.utils.mask import mask_version_data
 from frappe.query_builder import JoinType
 from frappe.translate import get_translated_doctypes
-from frappe.utils import cint, get_datetime, sanitize_html
+from frappe.utils import cint, get_datetime, sanitize_html, split_emails
 
+from crm.api.session import crm_user_names
 from crm.fcrm.doctype.crm_call_log.crm_call_log import parse_call_logs, redact_hidden_references
 from crm.utils.thumbnails import not_a_thumbnail
 
@@ -131,18 +133,87 @@ def get_hidden_communications(communications: list, doctype: str, name: str) -> 
 	return hidden
 
 
-def hide_email_content(activity: dict) -> None:
-	"""Keep the row -- who wrote to whom, and when -- but none of what it says.
+# What a hidden email's row keeps: when it happened and which way it went. Kept
+# by name, not removed by name, so a field added to the row later is withheld
+# until someone decides it is safe.
+HIDDEN_EMAIL_KEPT_FIELDS = ("sent_or_received", "delivery_status", "send_after")
 
-	CC and BCC go too: the row shows sender and To only, and a blind copy is
-	exactly what a reader without access to the email should not learn."""
+
+def _addresses(*fields: str | None) -> list[str]:
+	"""The bare, lower-cased addresses in comma-separated address fields, in order."""
+	found = []
+	for field in fields:
+		for entry in split_emails(field or ""):
+			address = parseaddr(entry)[1].strip().lower()
+			if address and address not in found:
+				found.append(address)
+	return found
+
+
+def get_crm_users_by_email(communications: list) -> dict[str, frappe._dict]:
+	"""The CRM users among these emails' senders and recipients, keyed by address.
+
+	One query for the whole timeline. Only accounts with a CRM role count: a
+	hidden row may name a colleague, never anyone else who happens to have a User.
+	"""
+	addresses = set()
+	for communication in communications:
+		addresses.update(
+			_addresses(communication.sender, communication.recipients, communication.cc, communication.bcc)
+		)
+	if not addresses:
+		return {}
+	crm_users = crm_user_names()
+	return {
+		row.email.lower(): row
+		for row in frappe.get_all(
+			"User",
+			filters={"email": ("in", sorted(addresses)), "enabled": 1},
+			fields=["name", "email", "full_name"],
+		)
+		if row.name in crm_users and row.email
+	}
+
+
+def hide_email_content(activity: dict, communication, crm_users: dict[str, frappe._dict]) -> None:
+	"""Keep only who on our side was involved, and when -- nothing of what, nor with whom.
+
+	A reader without access to the email learns that a colleague emailed this
+	contact (or was emailed by them) and the date. The subject, the body, the
+	files, and every outside address -- sender, To, CC and BCC -- stay on the
+	server: the row is rebuilt from a short list, so none of it is in the payload.
+
+	``internal_party`` names the CRM user who sent it, or for received mail the
+	one it was addressed to; when no CRM user is on it, "A colleague".
+	"""
 	data = activity["data"]
-	data.pop("snippet", None)
-	data.pop("content", None)
-	data.pop("cc", None)
-	data.pop("bcc", None)
-	data["attachments"] = []
-	data["hidden"] = True
+	direction = data.get("sent_or_received") or communication.sent_or_received
+	if direction == "Received":
+		ours = _addresses(communication.recipients, communication.cc)
+	else:
+		ours = _addresses(communication.sender)
+	user = next((crm_users[a] for a in ours if a in crm_users), None)
+
+	activity["data"] = {
+		**{field: data[field] for field in HIDDEN_EMAIL_KEPT_FIELDS if field in data},
+		"sent_or_received": direction,
+		"hidden": True,
+		"internal_party": (user.full_name or user.name) if user else _("A colleague"),
+		"internal_party_user": user.name if user else None,
+		"attachments": [],
+	}
+
+
+def hide_emails(activities: list[dict], communications: list, hidden: set[str]) -> None:
+	"""Strip every hidden email's row down to who on our side and when, in place."""
+	if not hidden:
+		return
+	hidden_communications = {c.name: c for c in communications if c.name in hidden}
+	crm_users = get_crm_users_by_email(list(hidden_communications.values()))
+	for activity in activities:
+		communication = hidden_communications.get(activity.get("name"))
+		if activity.get("activity_type") == "communication" and communication:
+			hide_email_content(activity, communication, crm_users)
 
 
 def inline_newest_email_bodies(activities: list[dict], count: int = EXPANDED_EMAILS) -> None:
@@ -448,9 +519,8 @@ def get_deal_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 			},
 			"is_lead": False,
 		}
-		if communication.name in hidden_emails:
-			hide_email_content(activity)
 		activities.append(activity)
+	hide_emails(activities, communications, hidden_emails)
 
 	for attachment_log in docinfo.attachment_logs:
 		activity = {
@@ -608,9 +678,8 @@ def get_lead_activities(name: str, page_length: int = TIMELINE_PAGE_LENGTH):
 			},
 			"is_lead": True,
 		}
-		if communication.name in hidden_emails:
-			hide_email_content(activity)
 		activities.append(activity)
+	hide_emails(activities, communications, hidden_emails)
 
 	for attachment_log in docinfo.attachment_logs:
 		activity = {

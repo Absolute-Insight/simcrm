@@ -239,18 +239,69 @@ describe('EmailArea reply on a closed email', () => {
 })
 
 describe('EmailArea the reader may not open', () => {
-  const hidden = () =>
-    email('c-9', { hidden: true, snippet: undefined, attachments: [] })
+  // What crm.api.activities.hide_email_content sends: the colleague on it,
+  // the direction and the date -- no subject, no address.
+  const hidden = (data = {}) => ({
+    name: 'c-9',
+    activity_type: 'communication',
+    communication_type: 'Communication',
+    communication_date: '2026-11-03 09:00:00',
+    data: {
+      hidden: true,
+      internal_party: 'Emily Chen',
+      internal_party_user: 'emily@mbp-engineering.co.za',
+      sent_or_received: 'Sent',
+      delivery_status: 'Sent',
+      attachments: [],
+      ...data,
+    },
+  })
+  const summary = (el) =>
+    el.querySelector('[data-email-hidden-summary]').textContent.trim()
 
-  it('says so, and offers nothing to open, retry or reply to', () => {
+  it('names the colleague who emailed the contact, and nothing else', () => {
     const { el } = render(hidden())
-    expect(el.querySelector('[data-email-hidden]').textContent).toContain(
-      "You don't have access to this email's content",
+    expect(summary(el)).toBe('Emily Chen emailed this contact')
+    const row = el.querySelector('[data-email-hidden]')
+    expect(row.className).toContain('text-ink-gray-6')
+    expect(row.textContent).toContain('Restricted email:')
+    // the lock is decoration; the words carry the meaning
+    expect(row.firstElementChild.getAttribute('aria-hidden')).toBe('true')
+    expect(row.textContent).not.toContain('undefined')
+    // no status badge, no To line, no snippet or files
+    expect(row.textContent).not.toContain('Sent')
+    expect(row.textContent).not.toContain('To')
+    expect(el.querySelector('[data-email-snippet]')).toBeNull()
+  })
+
+  it('says the colleague received it for inbound mail', () => {
+    const { el } = render(hidden({ sent_or_received: 'Received' }))
+    expect(summary(el)).toBe('Emily Chen received an email from this contact')
+  })
+
+  it('says a colleague when no one on our side is named', () => {
+    const { el } = render(
+      hidden({ internal_party: undefined, internal_party_user: null }),
+    )
+    expect(summary(el)).toBe('A colleague emailed this contact')
+  })
+
+  it('offers nothing to open, retry, reply to or reschedule', () => {
+    const { el } = render(
+      hidden({
+        delivery_status: 'Scheduled',
+        send_after: '2026-11-20 09:00:00',
+        scheduled_by_me: true,
+      }),
     )
     expect(el.querySelector('[data-email-toggle]')).toBeNull()
     expect(el.querySelector('[data-email-retry]')).toBeNull()
     expect(el.querySelector('[data-tooltip="Reply"]')).toBeNull()
     expect(el.querySelector('[data-tooltip="Reply All"]')).toBeNull()
+    expect(
+      el.querySelector('[data-tooltip="Scheduled email actions"]'),
+    ).toBeNull()
+    expect(el.querySelector('button')).toBeNull()
     expect(call).not.toHaveBeenCalled()
   })
 })

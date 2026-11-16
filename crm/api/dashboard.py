@@ -2360,6 +2360,21 @@ def _tidy(value: float) -> float | int:
 	return int(rounded) if rounded == int(rounded) else rounded
 
 
+# The outcomes an activity is logged with -- by a rep, on the web or a phone.
+# "Missed" is the server's verdict on a day that passed, not something logged.
+LOGGED_STATUSES = ("Done", "Cancelled")
+
+
+def offline_rate(offline: int, logged: int) -> int | None:
+	"""Logged offline as a whole percent of everything logged; None with nothing logged.
+
+	Nothing logged is not 0% offline -- there is no share to speak of.
+	"""
+	if not logged:
+		return None
+	return round(min(offline, logged) / logged * 100)
+
+
 def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list[dict]:
 	"""Customer visits per rep in the period, against their visit target.
 
@@ -2376,6 +2391,11 @@ def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list
 	settled (the same rule as ``plan_adherence``). A rep is "On track" when they
 	have completed at least that many, so a manager reading the month on the
 	10th is not told everyone is behind on visits that are not due yet.
+
+	``offline`` counts the activities of any kind logged on a phone with no
+	connection; ``logged`` everything the rep logged in the period, and
+	``offline_rate`` the first as a percent of the second (None when nothing was
+	logged).
 
 	One row per rep in scope who has a target or any visit in the period.
 	"""
@@ -2403,13 +2423,25 @@ def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list
 	# server's (crm.api.offline). Not a fault -- a rep at a site with no signal
 	# logs it there -- but a number a manager should be able to see, because
 	# nothing on the server witnessed when it happened.
+	#
+	# Beside it, in the same pass, what it is a share of: every activity the
+	# rep logged in the period, of any kind -- done or cancelled, the outcomes
+	# a phone can send -- and any flagged row whatever became of it since, so
+	# the share never passes 100%.
 	query, PlanItem, Plan = _plan_items_in(from_date, to_date, user)
-	offline = dict(
-		query.where(PlanItem.captured_offline == 1)
-		.select(Plan.user, Count(PlanItem.name))
+	is_offline = PlanItem.captured_offline == 1
+	logged_rows = (
+		query.where(is_offline | PlanItem.status.isin(LOGGED_STATUSES))
+		.select(
+			Plan.user.as_("user"),
+			Count(PlanItem.name).as_("logged"),
+			Count(Case().when(is_offline, PlanItem.name).else_(None)).as_("offline"),
+		)
 		.groupby(Plan.user)
-		.run()
+		.run(as_dict=True)
 	)
+	offline = {row.user: int(row.offline or 0) for row in logged_rows if row.offline}
+	logged = {row.user: int(row.logged or 0) for row in logged_rows}
 
 	# a rep whose only items in the period were logged offline -- calls,
 	# deliveries -- still gets the row that shows it
@@ -2453,7 +2485,9 @@ def visits_by_rep(from_date: str, to_date: str, user: str | None = None) -> list
 					"missed": int(row.get("missed") or 0),
 					"open": int(row.get("open") or 0),
 					"unplanned": int(unplanned.get(rep) or 0),
-					"offline": int(offline.get(rep) or 0),
+					"offline": offline.get(rep, 0),
+					"logged": logged.get(rep, 0),
+					"offline_rate": offline_rate(offline.get(rep, 0), logged.get(rep, 0)),
 					# no target is not 0% of one -- the quota report's rule
 					"attainment": round(completed / target * 100) if target else None,
 					"on_track": on_track,
