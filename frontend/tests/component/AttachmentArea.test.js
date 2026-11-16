@@ -136,6 +136,19 @@ describe('AttachmentArea thumbnails', () => {
     expect(original.getAttribute('src')).toBe('/private/files/site-2.jpg')
   })
 
+  // A thumbnail is refused to someone the photo alone was shared with (a
+  // DocShare on the File is not copied to it): they get the original instead.
+  it('falls back to the original once when the thumbnail will not load', () => {
+    const [img] = thumbnails([
+      photo(1, { thumbnail_url: '/private/files/thumb-FILE-1-abc.jpg' }),
+    ])
+    img.dispatchEvent(new Event('error'))
+    expect(img.getAttribute('src')).toBe('/private/files/site-1.jpg')
+    img.dispatchEvent(new Event('error'))
+    expect(img.getAttribute('src')).toBe('/private/files/site-1.jpg')
+    expect(img.dataset.fellBack).toBe('1')
+  })
+
   it('still opens the original, not the thumbnail', () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
     const w = mount(AttachmentArea, {

@@ -262,6 +262,14 @@ doc_events = {
 	"Event Participants": {
 		"validate": ["crm.permissions.customers.refuse_direct_participant_save"],
 	},
+	# a private-safe thumbnail per image: see crm/utils/thumbnails.py
+	"File": {
+		"before_insert": ["crm.utils.thumbnails.guard_marker"],
+		"validate": ["crm.utils.thumbnails.guard_marker"],
+		"after_insert": ["crm.utils.thumbnails.on_file_insert"],
+		"on_update": ["crm.utils.thumbnails.on_file_update"],
+		"after_delete": ["crm.utils.thumbnails.on_file_delete"],
+	},
 	"Notification Log": {
 		"before_insert": ["crm.extends.notification_log.before_insert"],
 	},
@@ -397,6 +405,8 @@ scheduler_events = {
 		# re-deriving on every dashboard load. Long queue: it is feature
 		# extraction over every open deal, and must not hold up the short one
 		"crm.agent.predict.score_open_deals",
+		# thumbnails for images uploaded before they were made on insert, 200 a run
+		"crm.utils.thumbnails.backfill_thumbnails",
 	],
 	"monthly_long": ["crm.lead_syncing.background_sync.sync_leads_from_sources_monthly"],
 	"cron": {

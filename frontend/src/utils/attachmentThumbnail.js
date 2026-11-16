@@ -1,8 +1,9 @@
 // The URL a small preview of an attachment should load.
 //
-// frappe keeps a reduced copy of an image in File.thumbnail_url when one has
-// been made; the original is a phone photo of several megabytes, and the
-// Attachments tab draws it 44px square. Only a file on this site is taken from
+// crm/utils/thumbnails.py keeps a reduced copy of an image in
+// File.thumbnail_url once it has made one (as private as the original, its
+// metadata stripped); the original is a phone photo of several megabytes, and
+// the Attachments tab draws it 44px square. Only a file on this site is taken from
 // that field -- anything else falls back to the file itself -- so a row whose
 // thumbnail was pointed somewhere else cannot make every viewer's browser
 // fetch it.
