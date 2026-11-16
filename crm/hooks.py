@@ -374,6 +374,7 @@ scheduler_events = {
 		"crm.agent.signals.purge_old_suggestions",
 		"crm.fcrm.doctype.crm_offline_receipt.crm_offline_receipt.purge_old_receipts",
 		"crm.fcrm.doctype.crm_erp_write.crm_erp_write.purge_settled",
+		"crm.fcrm.doctype.crm_event_reminder_sent.crm_event_reminder_sent.purge_old",
 		"crm.telemetry.capture_feature_state",
 	],
 	"weekly": [
@@ -557,15 +558,12 @@ after_migrate = [
 # frappe.clear_cache() deletes every other key on the site -- and frappe.rename_doc
 # calls it, so the Acumatica sync renaming an organization ran it mid-sync. Dropping
 # the shared API token leaves its login holding one of the API user's concurrent-login
-# slots until it expires (a logout needs the token): wasteful, not unsafe. The
-# Acumatica in-flight markers are in the database (CRM ERP Write), not here.
-#
-# The event-reminder sent ledger is state (crm.api.event.SENT_REMINDER_KEY): it
-# is the only record that a reminder has gone out, so a clear_cache inside the
-# catch-up hour mailed every participant, customers included, a second time.
+# slots until it expires (a logout needs the token): wasteful, not unsafe, so it may
+# also be evicted. What must never be lost -- the Acumatica in-flight markers and the
+# event-reminder sent ledger -- is in the database (CRM ERP Write, CRM Event Reminder
+# Sent), not here.
 persistent_cache_keys = [
 	"acumatica_token::*",
-	"crm:event_reminder_sent:*",
 ]
 
 standard_dropdown_items = [

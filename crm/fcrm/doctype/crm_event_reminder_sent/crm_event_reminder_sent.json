@@ -1,0 +1,80 @@
+{
+ "actions": [],
+ "autoname": "field:reminder_key",
+ "creation": "2026-11-16 12:00:00.000000",
+ "description": "One row per event reminder that has gone out, so no sweep sends it twice. Written by the reminder sweep only.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "reminder_key",
+  "event",
+  "notification_type",
+  "column_break_when",
+  "trigger_at",
+  "sent_at"
+ ],
+ "fields": [
+  {
+   "description": "The event, the reminder's type and its trigger time. Unique: a second sweep's claim of the same reminder fails.",
+   "fieldname": "reminder_key",
+   "fieldtype": "Data",
+   "label": "Reminder Key",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "description": "Plain text, not a link: a row must never stop an event from being deleted.",
+   "fieldname": "event",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Event",
+   "read_only": 1
+  },
+  {
+   "fieldname": "notification_type",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Notification Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_when",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "trigger_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Trigger At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sent_at",
+   "fieldtype": "Datetime",
+   "label": "Sent At",
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-16 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FCRM",
+ "name": "CRM Event Reminder Sent",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

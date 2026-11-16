@@ -34,9 +34,13 @@ def ensure_rep():
 
 
 def forget_sent_reminders():
-	"""The sent ledger outlives a rolled-back test, and event names are reused
-	once their series is rolled back, so each test starts from a clean one."""
-	frappe.cache.delete_keys("crm:event_reminder_sent:")
+	"""The sent ledger is written on its own connection, so it outlives a
+	rolled-back test, and event names are reused once their series is rolled
+	back: each test starts from a clean one."""
+	from crm.utils.autonomous import autonomous_db
+
+	with autonomous_db() as db:
+		db.sql("delete from `tabCRM Event Reminder Sent`")
 
 
 class ReminderSweepTest(IntegrationTestCase):
@@ -318,38 +322,96 @@ class ReminderCadenceTest(IntegrationTestCase):
 class ReminderLedgerSurvivesClearCacheTest(IntegrationTestCase):
 	"""The sent ledger is the only record that a reminder went out. ``frappe.clear_cache``
 	deletes every site key no hook names, and ``rename_doc`` -- which the Acumatica
-	sync runs on a renamed customer -- calls it, as do migrate and a Role save."""
+	sync runs on a renamed customer -- calls it, as do migrate and a Role save; and a
+	cache redis that is bounded evicts, or restarts empty. So it is a table."""
+
+	REMINDER = frappe._dict(
+		event_name="EV-LEDGER-CLEAR-CACHE",
+		notification_type="Email",
+		trigger_datetime=datetime(2026, 3, 2, 9, 50),
+	)
 
 	def setUp(self):
 		super().setUp()
 		forget_sent_reminders()
 		self.addCleanup(forget_sent_reminders)
 
-	def test_the_ledger_is_a_persistent_cache_key(self):
+	def test_the_ledger_needs_nothing_kept_in_the_cache(self):
 		from crm import hooks
-		from crm.api.event import SENT_REMINDER_KEY
 
-		self.assertIn(f"{SENT_REMINDER_KEY}*", hooks.persistent_cache_keys)
+		self.assertFalse(
+			[key for key in hooks.persistent_cache_keys if "event_reminder" in key],
+			"the sent ledger is in the database; nothing of it may depend on the cache",
+		)
 
 	def test_a_claimed_reminder_stays_claimed_across_a_clear_cache(self):
 		from crm.api.event import _claim_reminder
 
-		reminder = frappe._dict(
-			event_name="EV-LEDGER-CLEAR-CACHE",
-			notification_type="Email",
-			trigger_datetime=datetime(2026, 3, 2, 9, 50),
-		)
-		# clear_cache reads persistent_cache_keys from hooks cached per site,
-		# possibly by a process running other code; start from this code's
-		frappe.clear_cache()
-		self.assertTrue(_claim_reminder(reminder))
+		self.assertTrue(_claim_reminder(self.REMINDER))
 
 		frappe.clear_cache()
+		# and every key the site has in the cache redis, as a flush or a restart would
+		frappe.cache.delete_keys("")
 
-		self.assertFalse(_claim_reminder(reminder), "the reminder would be mailed a second time")
+		self.assertFalse(_claim_reminder(self.REMINDER), "the reminder would be mailed a second time")
 
-	def test_an_ordinary_cache_key_is_still_cleared(self):
-		"""The control: the exemption is the ledger's, not the whole ``crm:`` space."""
-		frappe.cache.set_value("crm:event_reminder_other", 1)
-		frappe.clear_cache()
-		self.assertIsNone(frappe.cache.get_value("crm:event_reminder_other"))
+	def test_a_claim_outlives_the_sweeps_own_rollback(self):
+		"""The mail goes out before the job commits; a job that then fails must not
+		forget it sent it."""
+		from crm.api.event import _claim_reminder
+
+		self.assertTrue(_claim_reminder(self.REMINDER))
+		frappe.db.rollback()
+		self.assertFalse(_claim_reminder(self.REMINDER))
+
+	def test_two_sweeps_at_once_send_a_reminder_once(self):
+		"""Each sweep in its own worker, with its own database connection, claiming the
+		same reminder at the same moment: exactly one may send it."""
+		import threading
+
+		site, sites_path = frappe.local.site, frappe.local.sites_path
+		barrier = threading.Barrier(2)
+		claims, errors = [], []
+
+		def sweep():
+			frappe.init(site, sites_path=sites_path)
+			frappe.connect()
+			try:
+				from crm.api.event import _claim_reminder
+
+				barrier.wait(timeout=30)
+				claims.append(_claim_reminder(self.REMINDER))
+			except Exception as e:
+				errors.append(e)
+			finally:
+				frappe.destroy()
+
+		threads = [threading.Thread(target=sweep) for _ in range(2)]
+		for thread in threads:
+			thread.start()
+		for thread in threads:
+			thread.join(timeout=60)
+
+		self.assertEqual(errors, [])
+		self.assertEqual(sorted(claims), [False, True])
+
+	def test_old_rows_are_purged_and_recent_ones_kept(self):
+		from frappe.utils import add_days
+
+		from crm.api.event import _claim_reminder
+		from crm.fcrm.doctype.crm_event_reminder_sent.crm_event_reminder_sent import KEEP_DAYS, purge_old
+		from crm.utils.autonomous import autonomous_db
+
+		old = frappe._dict(self.REMINDER, event_name="EV-LEDGER-OLD")
+		self.assertTrue(_claim_reminder(old))
+		self.assertTrue(_claim_reminder(self.REMINDER))
+		with autonomous_db() as db:
+			db.sql(
+				"update `tabCRM Event Reminder Sent` set sent_at = %s where event = %s",
+				(add_days(now_datetime(), -KEEP_DAYS - 1), "EV-LEDGER-OLD"),
+			)
+
+		purge_old()
+
+		self.assertTrue(_claim_reminder(old), "a purged row frees nothing that could still fire")
+		self.assertFalse(_claim_reminder(self.REMINDER))
