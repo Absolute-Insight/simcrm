@@ -74,3 +74,5 @@ crm.patches.v1_0.encrypt_facebook_page_access_token
 crm.patches.v1_0.trust_existing_internal_erp_hosts
 crm.patches.v1_0.add_file_thumbnail_field
 crm.patches.v1_0.clear_untrusted_thumbnail_urls
+crm.patches.v1_0.carry_acumatica_inflight_markers_to_ledger
+crm.patches.v1_0.carry_event_reminder_claims_to_ledger

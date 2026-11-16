@@ -22,12 +22,9 @@ from frappe import _
 from frappe.utils import add_to_date, escape_html, format_datetime, get_time, now_datetime
 
 # How late a reminder may still go out. It covers a delayed sweep and a reminder
-# set after its time (a meeting booked five minutes before it starts), and it
-# bounds what losing the sent ledger below can cost: at most the last hour's
-# reminders are sent a second time.
+# set after its time (a meeting booked five minutes before it starts). The sent
+# ledger (CRM Event Reminder Sent) keeps its rows well past it.
 REMINDER_CATCH_UP = timedelta(hours=1)
-# Sent ledger, in the cache: one key per reminder per trigger time.
-SENT_REMINDER_KEY = "crm:event_reminder_sent:"
 
 
 def trigger_offset_event_notifications():
@@ -198,21 +195,18 @@ def _claim_reminder(notification) -> bool:
 	Keyed by what the reminder is rather than by its row: the frontend re-saves
 	an event's reminder rows under new names, and a moved event's reminder is a
 	new one and should fire again. Two rows of the same type that land on the
-	same minute are one reminder. SET NX makes the claim atomic, so two sweeps
-	running at once cannot both send it.
+	same minute are one reminder. The claim is an insert under a UNIQUE key,
+	committed on its own connection before anything is sent, so two sweeps
+	running at once cannot both send it, and neither a rollback of this job nor
+	a flush of the cache forgets it.
 	"""
+	from crm.fcrm.doctype.crm_event_reminder_sent.crm_event_reminder_sent import claim
 
-	# make_key prefixes the site's db_name, exactly as set_value would, so one
-	# site's ledger never answers for another's. set_value cannot be used: it
-	# has no NX, and a get-then-set pair would let two sweeps both send.
-	key = frappe.cache.make_key(
-		f"{SENT_REMINDER_KEY}{notification.event_name}:{notification.notification_type}:"
+	key = (
+		f"{notification.event_name}:{notification.notification_type}:"
 		f"{notification.trigger_datetime.isoformat()}"
 	)
-	# kept past the end of the catch-up window, after which it cannot fire again
-	expires = int(REMINDER_CATCH_UP.total_seconds()) + 600
-	# nosemgrep: frappe-semgrep-rules.rules.frappe-cache-breaks-multitenancy -- key is site-prefixed by make_key above
-	return bool(frappe.cache.set(key, 1, ex=expires, nx=True))
+	return claim(key, notification.event_name, notification.notification_type, notification.trigger_datetime)
 
 
 def _calculate_trigger_datetime(event_start, before_value, interval, all_day_event, time_of_day):

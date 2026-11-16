@@ -921,7 +921,24 @@ frappe patches and track themselves — re-running migrate is safe.
 **Reverting the image is not a rollback once `migrate` has run.** Patches have
 already changed the schema, and old code does not know about those changes;
 some patches drop or rewrite columns and cannot be undone by running older code
-over them. The only reliable path back is the backup from step 0:
+over them. The only reliable path back is the backup from step 0 — after the
+check below.
+
+**Open ERP writes do not survive a rollback.** From the release that added the
+ERP write ledger, an Acumatica Customer or SalesOrder write whose answer never
+came is recorded only as an open row in **CRM ERP Write** — the previous release
+cannot read it, and restoring a pre-upgrade backup drops it. Before rolling back
+(or restoring), look for open rows and settle each one in Acumatica by hand —
+link the customer or record the quote the write may have made — or the old code
+may send it a second time:
+
+```bash
+docker compose exec backend bench --site <site> mariadb -e \
+  "select target, state, started_at, remote_id, error from \`tabCRM ERP Write\`
+   where state in ('In Flight','Unknown')"
+```
+
+Then:
 
 ```bash
 # put the old tag back in .env first

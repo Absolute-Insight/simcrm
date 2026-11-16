@@ -1,0 +1,167 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-11-16 12:00:00.000000",
+ "description": "Every write the CRM sent to the ERP that has no key of its own, and what came of it. Written by the integration only.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "target",
+  "kind",
+  "reference_doctype",
+  "reference_name",
+  "state",
+  "remote_id",
+  "column_break_when",
+  "attempts",
+  "version",
+  "started_at",
+  "finished_at",
+  "triggered_by",
+  "section_break_detail",
+  "error",
+  "marker",
+  "open_key"
+ ],
+ "fields": [
+  {
+   "description": "What is being written: the kind and the CRM record, as kind::name.",
+   "fieldname": "target",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Target",
+   "length": 255,
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Kind",
+   "options": "Customer\nCustomerContact\nSalesOrder",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "label": "Reference DocType",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "description": "Plain text, not a link: a rename moves the open row itself, and a deleted record keeps its history.",
+   "fieldname": "reference_name",
+   "fieldtype": "Data",
+   "label": "Reference Name",
+   "length": 255,
+   "read_only": 1
+  },
+  {
+   "description": "In Flight and Unknown are open: the next attempt looks for what this one may have made before it sends anything.",
+   "fieldname": "state",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "State",
+   "options": "In Flight\nUnknown\nApplied\nRefused\nAbandoned",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "remote_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Remote ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_when",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "attempts",
+   "fieldtype": "Int",
+   "label": "Attempts",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Moves on every write to the row: a retry takes the row over only if it is unchanged since it was read.",
+   "fieldname": "version",
+   "fieldtype": "Int",
+   "label": "Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "finished_at",
+   "fieldtype": "Datetime",
+   "label": "Finished At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "triggered_by",
+   "fieldtype": "Data",
+   "label": "Triggered By",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_detail",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error",
+   "read_only": 1
+  },
+  {
+   "description": "What the attempt sent that recovery needs to find what it made.",
+   "fieldname": "marker",
+   "fieldtype": "Code",
+   "label": "Marker",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "description": "The target while the row is open, empty once it is settled. Unique: at most one open write per target.",
+   "fieldname": "open_key",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Open Key",
+   "length": 255,
+   "read_only": 1,
+   "unique": 1
+  }
+ ],
+ "in_create": 1,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-16 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "FCRM",
+ "name": "CRM ERP Write",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "target"
+}

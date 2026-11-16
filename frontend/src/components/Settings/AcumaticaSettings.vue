@@ -622,7 +622,12 @@ async function confirmNewCustomer({ hideDialog }) {
   try {
     const out = await call(
       'crm.integrations.acumatica.api.confirm_new_customer',
-      { organization: issue.remote_id },
+      {
+        organization: issue.remote_id,
+        // the unanswered push this row showed, if any: that one is released
+        write: issue.open_write?.name,
+        version: issue.open_write?.version,
+      },
     )
     toast.success(
       out?.queued

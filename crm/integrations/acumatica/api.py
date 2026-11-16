@@ -1,9 +1,11 @@
 import json
 import re
+from math import ceil
 
 import frappe
 import requests
 from frappe import _
+from frappe.utils import cint, get_datetime, now_datetime
 from frappe.utils.background_jobs import is_job_enqueued
 
 from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
@@ -13,6 +15,7 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 	get_settings,
 	open_sync_issues,
 )
+from crm.fcrm.doctype.crm_erp_write import crm_erp_write as ledger
 from crm.integrations.acumatica.client import AcumaticaClient, AcumaticaError, v
 
 # Both describe the sync rather than this button -- the timeout is how long one takes,
@@ -169,6 +172,18 @@ def get_open_sync_issues() -> list[dict]:
 				"candidates": candidates,
 				"detected_on": issue.detected_on,
 			}
+		)
+	# An unanswered push holding an organization: what confirm_new_customer is told
+	# to release is the one the manager is looking at, not whatever is open by then.
+	writes = ledger.open_writes(
+		{_customer_write(row["remote_id"]) for row in out if row["entity"] == "Customer"}
+	)
+	for row in out:
+		held = writes.get(_customer_write(row["remote_id"])) if row["entity"] == "Customer" else None
+		row["open_write"] = (
+			{"name": held.name, "version": held.version, "state": held.state, "started_at": held.started_at}
+			if held
+			else None
 		)
 	return out
 
@@ -378,6 +393,14 @@ def link_existing_customer(organization: str, customer_id: str) -> dict:
 		customer_id,
 	)
 	dismiss_sync_issues("Customer", org.name, _RESOLVED)
+	# an unanswered push's write is settled by this answer -- once it commits
+	# Linking is the answer whatever the push's row says: the organization is linked,
+	# and no push sends for a linked one.
+	open_write = ledger.open_write(_customer_write(org.name))
+	if open_write:
+		_settle_open_write(
+			org.name, ledger.APPLIED, remote_id=customer_id, why="linked by hand", row=open_write
+		)
 	return {"organization": org.name, "customer_id": customer_id}
 
 
@@ -397,17 +420,22 @@ def _refuse_held(customer_id: str, holder: str) -> None:
 
 
 @frappe.whitelist(methods=["POST"])
-def confirm_new_customer(organization: str) -> dict:
+def confirm_new_customer(organization: str, write: str | None = None, version: int | None = None) -> dict:
 	"""A manager looked at the possible duplicates and this is a new customer -- a
 	same-VAT match included, since one taxpayer can hold several accounts (MBP keeps
 	branches apart). What they confirmed is recorded as a fingerprint of the name,
 	VAT number and primary-contact email (outbound.confirmation_hash) of the deal
 	waiting on it: the push skips the duplicate checks only while the organization
-	still matches it."""
+	still matches it.
+
+	``write`` and ``version`` name the unanswered push the manager's panel showed on
+	the organization (``open_write``), which this releases -- that one, unchanged,
+	and not one younger than outbound.CONFIRM_SETTLE_SECONDS, which may still land."""
 	frappe.only_for(["System Manager", "Sales Manager"], True)
 	org = _unlinked_organization(organization)
 	if org.acumatica_id or org.acumatica_noteid:
 		frappe.throw(_("This organization is already linked to an Acumatica customer"))
+	open_write = _releasable_write(org.name, write, version)
 	# confirmed past the candidates the manager was shown, and only those: one that
 	# turns up later still blocks
 	candidates = [
@@ -462,5 +490,60 @@ def confirm_new_customer(organization: str) -> dict:
 	# A job of its own: one already running for this organization would swallow a
 	# deduplicated enqueue under the ordinary id -- and, having read the organization
 	# before this, report the duplicate all over again.
+	# An unanswered push whose customer could not be picked out holds the organization
+	# until somebody decides; confirming it new is that decision. Released before the
+	# queued push runs (after_commit runs in order), and only if this commits.
+	if open_write:
+		_settle_open_write(
+			org.name, ledger.ABANDONED, why="confirmed as a new customer", row=open_write, exact=True
+		)
 	_enqueue_push(deal, org.name, job_suffix="_confirm")
 	return {"organization": org.name, "queued": True}
+
+
+def _customer_write(organization: str) -> str:
+	from crm.integrations.acumatica.outbound import _inflight_key
+
+	return _inflight_key("Customer", organization)
+
+
+def _releasable_write(organization: str, write, version):
+	"""The organization's open customer write, checked for a manager to release; None
+	when there is none. Refused while it may still land, and when it is not the one
+	the manager was shown."""
+	from crm.integrations.acumatica.outbound import CONFIRM_SETTLE_SECONDS
+
+	row = ledger.open_write(_customer_write(organization))
+	if not row:
+		return None
+	age = (now_datetime() - get_datetime(row.started_at)).total_seconds() if row.started_at else None
+	if age is None or age < CONFIRM_SETTLE_SECONDS:
+		wait = max(1, ceil((CONFIRM_SETTLE_SECONDS - (age or 0)) / 60))
+		frappe.throw(
+			_(
+				"A push to Acumatica for this customer is still being settled; try again in {0} minutes."
+			).format(wait)
+		)
+	if not write or write != row.name or cint(version) != row.version:
+		frappe.throw(
+			_(
+				"The push to Acumatica for this customer changed since this page was loaded. "
+				"Refresh it and look again before confirming."
+			)
+		)
+	return row
+
+
+def _settle_open_write(
+	organization: str, state: str, remote_id=None, why: str = "", row=None, exact: bool = False
+) -> None:
+	"""Close the organization's open customer write once this commits -- that row, and
+	with ``exact`` only at the version it had -- recording who decided."""
+	ledger.close_after_commit(
+		_customer_write(organization),
+		state,
+		remote_id=remote_id,
+		error=f"{why} by {frappe.session.user} at {now_datetime()}",
+		name=row.name if row else None,
+		version=row.version if row and exact else None,
+	)

@@ -104,9 +104,10 @@ if pool:
 	)
 
 # infra-9, and why it is NOT fixed the obvious way. redis-cache also holds
-# keys that must outlive memory pressure and restarts: the Acumatica in-flight
-# markers that stop a retried quote being written to the ERP twice, and the
-# event-reminder ledger. So it must neither evict nor stop persisting, and a
+# keys that should outlive memory pressure and restarts: the Acumatica API
+# token, and -- for the one release whose migrate carries them into the
+# database -- the legacy in-flight markers and event-reminder claims an
+# upgrade must still find. So it must neither evict nor stop persisting, and a
 # well-meant "it is only a cache" edit has to fail here. Redis's defaults are
 # noeviction and RDB snapshots, so the safe states are: no flag at all, or the
 # flag set to exactly that.

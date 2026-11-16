@@ -18,8 +18,12 @@ from crm.fcrm.doctype.crm_acumatica_settings.crm_acumatica_settings import (
 	open_sync_issues,
 	upsert_sync_issue,
 )
+from crm.fcrm.doctype.crm_erp_write import crm_erp_write as ledger
 from crm.integrations.acumatica.client import (
+	LOGIN_TIMEOUT,
+	LOGIN_WAIT_IN_JOB,
 	TIMEOUT,
+	WRITE_TIMEOUT,
 	AcumaticaAuthError,
 	AcumaticaClient,
 	AcumaticaError,
@@ -32,36 +36,105 @@ from crm.integrations.acumatica.matching import name_match, normalise_name, norm
 # Customer under AutoNumber -- is a PUT with no key in the body: sending it again makes
 # a second record in the client's ERP. So a write leaves a marker until its outcome is
 # known, and the next attempt looks for what the unanswered one made before it sends
-# anything. In redis, not the database: the request or job that set it is the one that
-# is rolled back, or killed, when the answer never comes. hooks.persistent_cache_keys
-# keeps frappe.clear_cache() off it.
-INFLIGHT_PREFIX = "acumatica_inflight::"
-INFLIGHT_TTL = 30 * 24 * 3600
+# anything. The marker is an open row in the ERP write ledger (CRM ERP Write), written
+# on a connection of its own: the request or job that set it is the one that is rolled
+# back, or killed, when the answer never comes, and the cache redis it used to live in
+# forgot it on a flush, an eviction or a restart.
 # How long Acumatica may still be working on a quote after we stopped waiting for it.
 # Inside this, finding no order proves nothing yet.
 QUOTE_SETTLE_SECONDS = 300
+# How long after a customer write was acquired its PUT may still land. started_at is
+# stamped before the client call, and the client can spend, in the worst case: a wait
+# for the login lock plus a login (connect + read), then the PUT -- whose scalar
+# timeout requests applies to connect and to read separately -- and all of that twice,
+# because a 401 retries with a fresh login. Acumatica may then still be working on it
+# for QUOTE_SETTLE_SECONDS. A manager may not release an unanswered write younger than
+# this.
+_ONE_ATTEMPT_SECONDS = LOGIN_WAIT_IN_JOB + sum(LOGIN_TIMEOUT) + 2 * WRITE_TIMEOUT
+CONFIRM_SETTLE_SECONDS = 2 * _ONE_ATTEMPT_SECONDS + QUOTE_SETTLE_SECONDS
 
 
 def _inflight_key(entity: str, name: str) -> str:
-	return f"{INFLIGHT_PREFIX}{entity}::{name}"
+	return ledger.target_key(entity, name)
 
 
-def _mark_inflight(key: str, value=None) -> None:
-	frappe.cache().set_value(key, value or time.time(), expires_in_sec=INFLIGHT_TTL)
+def _open_marker(key: str):
+	"""The open ledger row for ``key`` (its ``marker`` parsed), or None. Raises when the
+	ledger cannot be read: "could not look" is not "nothing in flight"."""
+	return ledger.open_write(key)
 
 
-def _settle_inflight(key: str) -> None:
+def _mark_inflight(key: str, value=None, expected=None) -> str | None:
+	"""Open the write before it is sent; None when another attempt holds it. With
+	``expected`` -- the open row this attempt read and recovered from -- that row is
+	taken over only if nobody else took it meanwhile. Raises when the ledger cannot be
+	written: then nothing may be sent."""
+	marker = value if isinstance(value, dict) else {"sent_at": value or time.time()}
+	return ledger.acquire(key, marker, expected)
+
+
+def _settle_inflight(key: str, remote_id=None, name=None) -> None:
 	"""The write's outcome is on record -- once it is committed. A rollback after a
 	successful PUT (a worker killed before its commit) must leave the marker, so the
-	next attempt finds the record instead of making another."""
-	frappe.db.after_commit.add(lambda: frappe.cache().delete_value(key))
+	next attempt finds the record instead of making another. A settle that fails is
+	tried once more in a job of its own, and then shown to managers: left open, the
+	row only makes the next attempt look first -- but it must not sit there unseen."""
+
+	def retry(error):
+		frappe.enqueue(
+			"crm.integrations.acumatica.outbound.settle_left_open",
+			key=key,
+			remote_id=remote_id,
+			name=name,
+			queue="short",
+		)
+
+	ledger.close_after_commit(key, ledger.APPLIED, remote_id=remote_id, on_failure=retry, name=name)
+
+
+def settle_left_open(key: str, remote_id=None, name=None) -> None:
+	"""Job: close a write whose settle failed after its commit. Failing again, it is a
+	Push Failed row in the panel managers already watch."""
+	try:
+		ledger.close(key, ledger.APPLIED, remote_id=remote_id, name=name)
+		return
+	except Exception as e:
+		error = e
+		frappe.log_error(frappe.get_traceback(), "ERP write ledger: could not settle a write")
+	kind, _sep, reference = key.partition("::")
+	upsert_sync_issue(
+		"Sales Quote" if kind == "SalesOrder" else "Customer",
+		reference,
+		PUSH_FAILED,
+		f"{remote_id or 'the record'} is in Acumatica, but its write-ledger row ({key}) could not be "
+		f"closed: {error}. Nothing is sent twice -- the next attempt looks for it first, and a "
+		"linked customer or a stored quote number stops it anyway. If this keeps coming back, "
+		"the database is refusing writes: an administrator can find the row in CRM ERP Write.",
+	)
+
+
+def _close_inflight(key: str, state: str, error=None) -> None:
+	"""Close the write now: Acumatica answered and nothing was made, or there is
+	nothing left to do. Never raises -- an open row left behind only makes the next
+	attempt look before it sends."""
+	try:
+		ledger.close(key, state, error=error)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "ERP write ledger: could not close a write")
+
+
+def _unknown_inflight(key: str, error) -> None:
+	"""No answer: the row stays open (it already is); this only records why."""
+	try:
+		ledger.record_unknown(key, error)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "ERP write ledger: could not record an unanswered write")
 
 
 def _marker_stored(key: str) -> bool:
-	"""Whether redis really holds the marker. frappe's set_value swallows a redis
-	connection error, so a marker just "set" may not exist."""
+	"""Whether the ledger really holds the marker."""
 	try:
-		return bool(frappe.cache().get_value(key, use_local_cache=False))
+		return bool(_open_marker(key))
 	except Exception:
 		return False
 
@@ -179,8 +252,10 @@ SWEEP_LIMIT = 100
 # organizations read per run; waiting ones with nothing new are passed over
 SWEEP_PAGE = 500
 SWEEP_EVERY = 20 * 3600
-_SWEEP_RAN = f"{INFLIGHT_PREFIX}CustomerPushSweep::ran"
-_SWEEP_CURSOR = f"{INFLIGHT_PREFIX}CustomerPushSweep::cursor"
+# Throttle and bookmark only: losing them runs the pass once more, from the top.
+_SWEEP_RAN = "acumatica_sweep::CustomerPushSweep::ran"
+_SWEEP_CURSOR = "acumatica_sweep::CustomerPushSweep::cursor"
+SWEEP_CURSOR_TTL = 30 * 24 * 3600
 
 
 def queue_pending_customer_pushes(settings=None, force: bool = False) -> int:
@@ -240,7 +315,7 @@ def queue_pending_customer_pushes(settings=None, force: bool = False) -> int:
 		cache.set_value(
 			_SWEEP_CURSOR,
 			last if len(rows) >= SWEEP_PAGE or len(queued) >= SWEEP_LIMIT else "",
-			expires_in_sec=INFLIGHT_TTL,
+			expires_in_sec=SWEEP_CURSOR_TTL,
 		)
 		cache.set_value(_SWEEP_RAN, time.time(), expires_in_sec=SWEEP_EVERY)
 		for organization, deal in queued.items():
@@ -328,7 +403,7 @@ def push_customer_for_deal(deal: str) -> None:
 		# accepts acumatica_id as sufficient linkage; the push follows the same rule.
 		if not doc.get("acumatica_customer") and org.get("acumatica_id"):
 			frappe.db.set_value("CRM Deal", doc.name, "acumatica_customer", org.get("acumatica_id"))
-		if org.get("acumatica_id") and frappe.cache().get_value(_contact_followup_key(org.name)):
+		if org.get("acumatica_id") and _open_marker(_contact_followup_key(org.name)):
 			# the customer is ours, but setting its primary contact failed last time
 			_push_primary_contact(AcumaticaClient(settings), org.name, org.acumatica_id)
 		return
@@ -353,32 +428,9 @@ def push_customer_for_deal(deal: str) -> None:
 	payload = _customer_payload(facts, settings)
 
 	inflight = _inflight_key("Customer", org.name)
-	started_with = frappe.cache().get_value(inflight, use_local_cache=False)
-	marker = _read_marker(started_with)
-	if marker:
-		# An earlier push never heard back, and the next deal save fired this one. Under
-		# AutoNumber a second PUT is a second customer; under From Organization Name the
-		# collision check below would refuse the id the first one took. Link what it
-		# made instead -- but only what it can only have made, looked for by what it
-		# SENT: the organization may have been renamed since.
-		try:
-			earlier, why_not = _earlier_customer(client, payload, marker)
-		except (AcumaticaError, requests.RequestException, ValueError) as e:
-			_issue(
-				org.name,
-				f"could not look for the customer an unanswered push may have created: {_failure(e)}",
-			)
-			return
-		if why_not:
-			# the marker stays: nothing is sent until somebody links the right one
-			_issue(org.name, why_not)
-			return
-		if earlier:
-			_link_customer(org.name, doc.name, earlier)
-			_settle_inflight(inflight)
-			_commit()
-			_after_customer_created(client, org.name, v(earlier, "CustomerID"), facts.contact, doc, settings)
-			return
+	started_with = _open_marker(inflight)
+	if started_with and _recovered(client, payload, started_with, inflight, org, doc, facts, settings):
+		return
 
 	# Decided without a lock: the reads below go to Acumatica, and a row lock held
 	# across them would stall a rep's save of the organization, or a manager's
@@ -430,29 +482,56 @@ def push_customer_for_deal(deal: str) -> None:
 		as_dict=True,
 		for_update=True,
 	)
-	if locked and (locked.acumatica_noteid or locked.acumatica_id):
+	if not locked:
+		# Renamed (or deleted) while this push waited on the lock: the name it was about
+		# to push no longer exists. The deal follows a rename -- push for the new name.
+		moved_to = frappe.db.get_value("CRM Deal", doc.name, "organization", for_update=True)
+		if moved_to and moved_to != org.name:
+			_enqueue_push(doc.name, moved_to)
+		return
+	if locked.acumatica_noteid or locked.acumatica_id:
 		if not doc.get("acumatica_customer") and locked.acumatica_id:
 			frappe.db.set_value("CRM Deal", doc.name, "acumatica_customer", locked.acumatica_id)
 		return
-	if locked and (locked.get("acumatica_confirmed_for") or "") != confirmation:
+	if (locked.get("acumatica_confirmed_for") or "") != confirmation:
 		return
-	current = frappe.cache().get_value(inflight, use_local_cache=False)
-	if current and current != started_with:
-		# Another job for this organization took the lock first and sent its PUT, which
-		# got no answer: the customer may exist. Sending ours too would make a second;
-		# the next push recovers what that one made.
+	try:
+		current = _open_marker(inflight)
+		if current and not _same_attempt(current, started_with):
+			# Another job for this organization took the lock first and sent its PUT, which
+			# got no answer: the customer may exist. Sending ours too would make a second;
+			# the next push recovers what that one made.
+			return
+	except Exception as e:
+		frappe.log_error(frappe.get_traceback(), "ERP write ledger: could not read a customer push")
+		_issue(org.name, f"not sent: the push could not be recorded before sending it: {e}")
 		return
-
-	_mark_inflight(
-		inflight,
-		{
-			"sent_at": time.time(),
-			"preexisting": preexisting,
-			# what was sent, so recovery after a rename looks for the right thing
-			"name": payload["CustomerName"],
-			"customer_id": payload.get("CustomerID"),
-		},
-	)
+	if current and _recovered(client, payload, current, inflight, org, doc, facts, settings):
+		# The write this run recovered from before the lock is still the open one -- but
+		# it may have been in flight then (a worker since killed mid-PUT), so what it
+		# made may only exist now. Looked for again, now that no other push for this
+		# organization can be sending.
+		return
+	try:
+		acquired = _mark_inflight(
+			inflight,
+			{
+				"sent_at": time.time(),
+				"preexisting": preexisting,
+				# what was sent, so recovery after a rename looks for the right thing
+				"name": payload["CustomerName"],
+				"customer_id": payload.get("CustomerID"),
+			},
+			expected=current,
+		)
+	except Exception as e:
+		# no record that it went out, so it does not go out
+		frappe.log_error(frappe.get_traceback(), "ERP write ledger: could not open a customer push")
+		_issue(org.name, f"not sent: the push could not be recorded before sending it: {e}")
+		return
+	if not acquired:
+		# another worker opened it between the read and the insert: same as above
+		return
 	try:
 		created = client.put("Customer", payload)
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
@@ -464,16 +543,46 @@ def push_customer_for_deal(deal: str) -> None:
 		detail = f"{_failure(e)}"
 		if _outcome_unknown(e):
 			# the marker stays: the customer may exist, and the next push looks first
+			_unknown_inflight(inflight, detail)
 			detail = f"{detail} -- Acumatica may have created the customer anyway; the next push looks for it before sending another"
 		else:
-			frappe.cache().delete_value(inflight)
+			_close_inflight(inflight, ledger.REFUSED, detail)
 		_issue(org.name, detail)
 		return
 
 	_link_customer(org.name, doc.name, created)
-	_settle_inflight(inflight)
+	_settle_inflight(inflight, v(created, "CustomerID"), name=acquired)
 	_commit()
 	_after_customer_created(client, org.name, v(created, "CustomerID"), facts.contact, doc, settings)
+
+
+def _recovered(client, payload, row, inflight, org, doc, facts, settings) -> bool:
+	"""An earlier push never heard back, and the next deal save fired this one. Under
+	AutoNumber a second PUT is a second customer; under From Organization Name the
+	collision check would refuse the id the first one took. Link what it made instead
+	-- but only what it can only have made, looked for by what it SENT: the
+	organization may have been renamed since. True when this run is done: it linked,
+	or it must not send."""
+	marker = _read_marker(row.marker) or {"sent_at": None, "preexisting": None}
+	try:
+		earlier, why_not = _earlier_customer(client, payload, marker)
+	except (AcumaticaError, requests.RequestException, ValueError) as e:
+		_issue(
+			org.name,
+			f"could not look for the customer an unanswered push may have created: {_failure(e)}",
+		)
+		return True
+	if why_not:
+		# the marker stays: nothing is sent until somebody links the right one
+		_issue(org.name, why_not)
+		return True
+	if earlier:
+		_link_customer(org.name, doc.name, earlier)
+		_settle_inflight(inflight, v(earlier, "CustomerID"), name=row.name)
+		_commit()
+		_after_customer_created(client, org.name, v(earlier, "CustomerID"), facts.contact, doc, settings)
+		return True
+	return False
 
 
 def _link_customer(org_name: str, deal_name: str, customer) -> None:
@@ -483,6 +592,12 @@ def _link_customer(org_name: str, deal_name: str, customer) -> None:
 		{"acumatica_noteid": v(customer, "NoteID"), "acumatica_id": v(customer, "CustomerID")},
 	)
 	frappe.db.set_value("CRM Deal", deal_name, "acumatica_customer", v(customer, "CustomerID"))
+
+
+def _same_attempt(row, other) -> bool:
+	"""Whether two reads of the open row saw it unchanged: any write to it -- a new
+	attempt, an unanswered one recorded -- moves its version."""
+	return bool(other) and row.name == other.name and row.version == other.version
 
 
 def _read_marker(raw) -> dict | None:
@@ -525,15 +640,23 @@ def _confirmed_past(raw: str, facts) -> set:
 def move_markers_on_rename(doc, method, old: str, new: str, merge: bool = False) -> None:
 	"""CRM Organization after_rename: the in-flight markers are keyed by the docname,
 	and one orphaned by a rename is a push that forgot it may already have created the
-	customer -- the next one sends a second."""
-	cache = frappe.cache()
-	for entity in ("Customer", "CustomerContact"):
-		value = cache.get_value(_inflight_key(entity, old))
-		if not value:
-			continue
-		if not cache.get_value(_inflight_key(entity, new)):
-			cache.set_value(_inflight_key(entity, new), value, expires_in_sec=INFLIGHT_TTL)
-		cache.delete_value(_inflight_key(entity, old))
+	customer -- the next one sends a second.
+
+	Moved when the rename commits, and only if it is still there then: a rename can
+	be undone without a rollback hook running -- the sync renames inside a per-record
+	savepoint -- and a row moved for a rename that was undone is a guard nobody looks
+	under. The push that reads it next runs after this commit, in another job. (A
+	commit that fails after the move leaves the row under the new name: the one
+	window this does not close.)"""
+
+	def move_if_renamed():
+		if frappe.db.exists("CRM Organization", new) and not frappe.db.exists("CRM Organization", old):
+			for entity in ("Customer", "CustomerContact"):
+				# raises if the ledger cannot be written: the commit -- and the rename --
+				# fail rather than leave the guard under a name that no longer exists
+				ledger.move(_inflight_key(entity, old), _inflight_key(entity, new))
+
+	frappe.db.before_commit.add(move_if_renamed)
 	_move_issues_on_rename(old, new)
 
 
@@ -931,7 +1054,7 @@ def _notify_owner(deal_doc, message: str) -> None:
 
 
 def _contact_followup_key(org_name: str) -> str:
-	# under the in-flight prefix so frappe.clear_cache() keeps it (hooks.persistent_cache_keys)
+	# an open ledger row while the customer's primary contact is still to be set
 	return _inflight_key("CustomerContact", org_name)
 
 
@@ -950,8 +1073,12 @@ def _after_customer_created(client, org_name: str, customer_id, contact, deal_do
 	if not contact or contact.get("acumatica_id"):
 		# a contact already linked is somebody's in Acumatica; it is not ours to re-home
 		return
-	frappe.cache().set_value(_contact_followup_key(org_name), contact.name, expires_in_sec=INFLIGHT_TTL)
-	_push_primary_contact(client, org_name, customer_id)
+	try:
+		ledger.put_marker(_contact_followup_key(org_name), {"contact": contact.name})
+	except Exception:
+		# only the retry is lost: this attempt goes ahead without its record
+		frappe.log_error(frappe.get_traceback(), "ERP write ledger: could not record the contact follow-up")
+	_push_primary_contact(client, org_name, customer_id, contact.name)
 
 
 def _push_salesperson(client, org_name: str, customer_id: str, deal_doc, settings) -> None:
@@ -975,17 +1102,19 @@ def _push_salesperson(client, org_name: str, customer_id: str, deal_doc, setting
 		)
 
 
-def _push_primary_contact(client, org_name: str, customer_id: str) -> None:
+def _push_primary_contact(client, org_name: str, customer_id: str, contact_name: str | None = None) -> None:
 	"""PUT the primary contact under the new customer and make it the customer's
 	primary contact. Idempotent: the contact is looked for under the customer before
 	one is created, and a contact already linked here is only re-pointed."""
 	key = _contact_followup_key(org_name)
-	contact_name = frappe.cache().get_value(key)
+	if not contact_name:
+		row = _open_marker(key)
+		contact_name = ((row.marker if row else None) or {}).get("contact")
 	contact = (
 		frappe.db.get_value("Contact", contact_name, _CONTACT_FIELDS, as_dict=True) if contact_name else None
 	)
 	if not contact:
-		frappe.cache().delete_value(key)
+		_close_inflight(key, ledger.ABANDONED, "the contact is gone")
 		return
 	try:
 		contact_id = contact.acumatica_id
@@ -1275,8 +1404,8 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 
 	client = AcumaticaClient(settings)
 	inflight = _inflight_key("SalesOrder", deal.name)
-	sent_at = frappe.cache().get_value(inflight)
-	if sent_at:
+	earlier_attempt = _open_marker(inflight)
+	if earlier_attempt:
 		# An earlier attempt never heard back -- a timeout, or the proxy giving up on
 		# the request first. Adopt the order it made rather than PUT a second one.
 		try:
@@ -1290,8 +1419,9 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 			)
 		if earlier:
 			frappe.db.set_value("CRM Deal", deal.name, "acumatica_sales_quote", earlier)
-			_settle_inflight(inflight)
+			_settle_inflight(inflight, earlier, name=earlier_attempt.name)
 			return earlier
+		sent_at = (earlier_attempt.marker or {}).get("sent_at") or 0
 		if time.time() - float(sent_at) < QUOTE_SETTLE_SECONDS:
 			frappe.throw(
 				_(
@@ -1300,25 +1430,44 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 				)
 			)
 
-	_mark_inflight(inflight)
+	try:
+		acquired = _mark_inflight(inflight, expected=earlier_attempt)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), "ERP write ledger: could not open a sales quote")
+		acquired = None
+		recorded = False
+	else:
+		recorded = True
+	if not acquired:
+		if recorded:
+			# another request opened it between the read and now
+			frappe.throw(
+				_(
+					"Another attempt to create this quote is still waiting for Acumatica. "
+					"Try again in a few minutes."
+				)
+			)
+		frappe.throw(
+			_("Vectora could not record the quote before sending it, so no quote was sent. Try again.")
+		)
 	try:
 		created = client.put("SalesOrder", payload, timeout=_quote_write_timeout())
 	except (AcumaticaError, requests.RequestException, ValueError) as e:
 		if isinstance(e, AcumaticaAuthError):
 			# Acumatica refused nothing: the request was never sent
-			frappe.cache().delete_value(inflight)
+			_close_inflight(inflight, ledger.REFUSED, _failure(e))
 			frappe.throw(
 				_("Vectora could not sign in to Acumatica, so no quote was sent: {0}").format(_reason(e))
 			)
 		if not _outcome_unknown(e):
-			frappe.cache().delete_value(inflight)
+			_close_inflight(inflight, ledger.REFUSED, _failure(e))
 			# The status line alone ("PUT ... -> 422") tells a rep nothing; the reason
 			# Acumatica gave is in the body.
 			frappe.throw(_("Acumatica refused the sales quote: {0}").format(_reason(e)))
 		# Not "it failed": the order may well exist. The marker stays, so the retry
 		# this invites adopts it instead of making a second one -- if it is there at
-		# all: set_value swallows a redis connection error, and with no marker the
-		# retry would send another.
+		# all: with no marker the retry would send another.
+		_unknown_inflight(inflight, _failure(e))
 		if not _marker_stored(inflight):
 			frappe.throw(
 				_(
@@ -1346,7 +1495,7 @@ def create_sales_quote_from_deal(crm_deal: str) -> str:
 					"will pick the quote up rather than create another."
 				).format(order_nbr)
 			)
-		_settle_inflight(inflight)
+		_settle_inflight(inflight, order_nbr, name=acquired)
 	return order_nbr
 
 
