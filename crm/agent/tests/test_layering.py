@@ -38,6 +38,9 @@ ALLOWED_SIBLING_IMPORTS = {
 	# reference answers from reference-sheet rows and checks the figures.
 	# Pure for the same reason: rows in, messages and verdicts out.
 	"reference": set(),
+	# media reads what a rep sends besides text -- a dictated clip, one attached
+	# file -- and fences it. Pure for the same reason: bytes in, text out.
+	"media": {"knowledge", "prompting"},
 	"client": {"config", "errors", "prompting", "schemas"},
 	"tools": set(),
 	# actions is the write-tier proposal layer: drafts only. It may reach the
@@ -53,6 +56,7 @@ ALLOWED_SIBLING_IMPORTS = {
 		"context",
 		"errors",
 		"knowledge",
+		"media",
 		"reference",
 		"schemas",
 		"tools",
@@ -117,6 +121,7 @@ class LayeringTest(UnitTestCase):
 			"errors",
 			"context",
 			"knowledge",
+			"media",
 			"prompting",
 			"reference",
 			"analyst",

@@ -101,6 +101,14 @@ class AnalystAnswer(BaseModel):
 	caveats: list[str] = Field(default_factory=list, max_length=3)
 
 
+class Transcript(BaseModel):
+	"""A dictated clip as text. It goes into the rep's draft, never straight to a model."""
+
+	model_config = ConfigDict(extra="forbid")
+
+	text: str = Field(default="", max_length=2000)
+
+
 class ReplyDraft(BaseModel):
 	"""A reply the rep can edit and send. A draft, never a sent message."""
 

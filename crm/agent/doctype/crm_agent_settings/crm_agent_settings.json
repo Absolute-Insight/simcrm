@@ -15,6 +15,7 @@
   "max_tokens",
   "context_tokens",
   "reasoning_off",
+  "media_input",
   "daily_call_budget",
   "surfaces_section",
   "assistant_reads_products",
@@ -92,6 +93,13 @@
    "fieldname": "reasoning_off",
    "fieldtype": "Check",
    "label": "Turn Off Model Reasoning"
+  },
+  {
+   "default": "0",
+   "description": "The model reads audio and images (OpenAI input_audio and image_url parts), as Nemotron 3.5 Bolt and Gemma 4 do. On, reps can dictate to the Assistant and attach photos; documents can be attached either way.",
+   "fieldname": "media_input",
+   "fieldtype": "Check",
+   "label": "Model Accepts Audio and Images"
   },
   {
    "default": "500",
@@ -180,7 +188,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-28 12:00:00.000000",
+ "modified": "2026-11-16 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Agent",
  "name": "CRM Agent Settings",

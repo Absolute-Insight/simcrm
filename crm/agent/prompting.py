@@ -47,9 +47,32 @@ def estimate_tokens(text) -> int:
 	return math.ceil(len(str(text or "")) / CHARS_PER_TOKEN)
 
 
+# What one non-text part of a message costs. An image or a clip is encoded by the
+# model's own tower into a fixed-ish number of tokens, whatever its base64 is
+# long: counted as text, one photo read as 400k tokens and pushed every turn of
+# history and the grounding out of the prompt.
+MEDIA_PART_TOKENS = {"image_url": 1100, "input_audio": 800}
+
+
+def estimate_content(content) -> int:
+	"""Tokens for one message's ``content``: a string, or a list of OpenAI content parts."""
+	if not isinstance(content, list):
+		return estimate_tokens(content)
+	total = 0
+	for part in content:
+		kind = part.get("type") if isinstance(part, dict) else None
+		if kind == "text":
+			total += estimate_tokens(part.get("text", ""))
+		elif kind in MEDIA_PART_TOKENS:
+			total += MEDIA_PART_TOKENS[kind]
+		else:
+			total += estimate_tokens(part)
+	return total
+
+
 def estimate_messages(messages: list[dict]) -> int:
 	"""The same estimate for a whole chat request, role framing included."""
-	return sum(estimate_tokens(message.get("content", "")) + MESSAGE_OVERHEAD_TOKENS for message in messages)
+	return sum(estimate_content(message.get("content", "")) + MESSAGE_OVERHEAD_TOKENS for message in messages)
 
 
 def tokens_to_chars(tokens: int) -> int:

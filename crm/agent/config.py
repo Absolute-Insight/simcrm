@@ -64,6 +64,11 @@ DEFAULT_SETTINGS = {
 	# and the Analyst reading the site's figures is a grant an admin makes.
 	"assistant_reads_products": 0,
 	"analyst_enabled": 0,
+	# The endpoint's model reads audio and images (OpenAI ``input_audio`` and
+	# ``image_url`` parts). Off, the Assistant offers no dictation and takes
+	# only documents it can turn into text; a text-only model sent either part
+	# answers 400 or, worse, ignores it and answers anyway.
+	"media_input": 0,
 }
 
 # The deterministic tier's thresholds. Kept apart from DEFAULT_SETTINGS because they
@@ -130,6 +135,7 @@ class AgentConfig:
 	analyst_enabled: bool = False
 	api_key: str = ""
 	reasoning_off: bool = False
+	media_input: bool = False
 
 	@classmethod
 	def from_settings(cls, settings: dict) -> AgentConfig:
@@ -175,6 +181,7 @@ class AgentConfig:
 			analyst_enabled=bool(to_int("analyst_enabled", 0)),
 			api_key=str(merged.get("api_key") or ""),
 			reasoning_off=bool(to_int("reasoning_off", DEFAULT_SETTINGS["reasoning_off"])),
+			media_input=bool(to_int("media_input", 0)),
 		)
 
 	def with_overrides(
