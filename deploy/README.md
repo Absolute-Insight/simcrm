@@ -1117,11 +1117,19 @@ protocol when given a check URL:
 | `BACKUP_PING_URL` | `backup`, once a night | period 1 day, grace 3 hours |
 | `OFFSITE_PING_URL` | `backup-offsite`, every hour | period 1 hour, grace 2 hours |
 
-Each run sends `GET <url>/start` when it begins, then `GET <url>` when it
+Each run sends `GET <url>/start` when it begins, then a success ping when it
 worked or `GET <url>/fail` when it did not, so the monitor alerts on a failure
 straight away and on a missing run after the grace period, and shows how long
 each run took. For the off-host copy, "worked" means the copy, the monthly
 copy and any pruning all succeeded.
+
+The success ping is `GET <url>` from `backup`, and `GET <url>/0` from
+`backup-offsite` — the exit-status form of the same protocol, which
+healthchecks.io (hosted or self-hosted) reads as success. The reason is the
+secret below: the rclone image has no curl, busybox wget takes a URL only on
+its command line (where `ps` on the host would show it), so the offsite
+service pings through rclone's own HTTP client with the URL in its
+environment — and that client can only fetch a path *below* the URL.
 
 1. Create two checks (healthchecks.io → Add Check, one per row above), set
    their period and grace, and connect the alert channels you actually read
@@ -1145,15 +1153,18 @@ the variable is set and starts with `http://` or `https://`; each is bounded
 at 15 seconds; a ping that fails is logged as `did not get through (ignored)`
 and the run carries on. **The URL's path is the secret** — anyone who has it
 can mark a run as passed — so the services log it only up to the host
-(`https://hc-ping.com/...`), and `backup` hands it to curl on stdin rather than
-on the command line. Keep it as you keep the rest of `.env`.
+(`https://hc-ping.com/...`), and neither service ever puts it on a command
+line: `backup` hands it to curl on stdin, `backup-offsite` to rclone in its
+environment. Keep it as you keep the rest of `.env`.
 
 **Self-hosted alternative.** healthchecks.io is open source
 ([healthchecks/healthchecks](https://github.com/healthchecks/healthchecks));
-run it — or Uptime Kuma's "Push" monitors, which accept the same plain GET —
-on a machine *other than this one* (a monitor on the host it watches goes down
-with it) and use its ping URLs instead. Anything that alerts when an expected
-HTTP GET stops arriving will do.
+run it on a machine *other than this one* (a monitor on the host it watches
+goes down with it) and use its ping URLs instead. Another monitor works if it
+alerts when an expected HTTP GET stops arriving *and* accepts the `/start`,
+`/fail` and (for the offsite check) `/0` paths — Uptime Kuma's "Push"
+monitors, for instance, do not, so with one of those only the nightly
+`backup` check is meaningful.
 
 #### Or: a cron line on the host
 
@@ -1222,14 +1233,17 @@ stay there, locked, for the whole retention period).
 
 **The monthly tier** (encrypted copies only, or plaintext that
 `OFFSITE_ALLOW_PLAINTEXT=1` accepted — an upgraded stack without a passphrase
-does not start keeping a year of plaintext dumps). After each successful hourly copy, the service checks
-whether this month's first backup set is under `monthly/`, and copies it there
-if not — once a month, whatever restarts in between, because it asks the
-destination rather than remembering. "First" is the earliest set of the month
-still on the host (the host keeps a week, so after an outage spanning the 1st
-it is the first night it can see); a set is only taken once nothing in it has
-changed for an hour. Lifecycle rules then keep `monthly/` longer than the
-dailies. `OFFSITE_RETENTION_DAYS`, if set, never touches it.
+does not start keeping a year of plaintext dumps). After each successful
+hourly copy, the service copies this month's first backup set to `monthly/` —
+one set a month, whatever restarts in between, because it asks the destination
+rather than remembering: if `monthly/` already has a dump for the month, it is
+*that* set that gets copied again (rclone uploads only what is missing, so a
+copy that died between the dump and the tars is completed), and the month
+counts as done only once a copy has exited cleanly. "First" is the earliest
+set of the month still on the host (the host keeps a week, so after an outage
+spanning the 1st it is the first night it can see); a set is only taken once
+nothing in it has changed for an hour. Lifecycle rules then keep `monthly/`
+longer than the dailies. `OFFSITE_RETENTION_DAYS`, if set, never touches it.
 
 Check it is still working, rather than assuming:
 
@@ -1306,8 +1320,10 @@ first encrypted copy:
 3. Then turn it on, and prove it reads back (below).
 
 Changing the passphrase or the salt later makes everything already encrypted
-unreadable under the new values; to rotate, set new values, let the new
-copies land, and keep the old values until the old copies have aged out.
+unreadable under the new values, and the canary (below) stops the service
+rather than let that happen in the same prefix. To rotate, point the copies at
+a new prefix as well (a new `BACKUP_TARGET` path), set the new values, let the
+new copies land, and keep the old values until the old copies have aged out.
 
 **It is not protected on this host, and is not meant to be.** It sits in `.env`
 in the clear, shows in `docker inspect` of the container like every other
@@ -1321,6 +1337,15 @@ bucket. Anyone who can read this host's `.env` already has the database.
 - With a passphrase set, `OFFSITE_INCLUDE_SITE_CONFIG=1` also copies
   `site_config_backup.json`, which makes the archive self-contained. Without
   one that setting is ignored, and the log says so.
+- **The canary.** Each encrypted prefix holds a small `.vectora-canary`,
+  written under its passphrase the first time. On every start the service
+  decrypts it; if the passphrase or salt in `.env` is not the one that wrote
+  the prefix — a typo, a rotation done in place — it logs `refusing to start:
+  ... differs from the one that wrote this prefix`, pings `/fail` and exits,
+  rather than putting a second key's files into the same archive where only
+  a restore would find them. A prefix that already holds encrypted files but
+  no canary must decrypt its first file before the canary is added. Pruning
+  never deletes it.
 
 **Without a passphrase**, nothing breaks: an install that predates this keeps
 copying, unencrypted, to the same `<site>/` prefix as before. But it is never
@@ -1405,13 +1430,27 @@ locked for their whole life, give them a second bucket with
 is a year of storage nobody can remove.
 
 **Governance or compliance.** In *governance* mode a key with the
-`bypassGovernance` capability (the master key, kept offline) can still shorten
-or remove a lock — the escape hatch for a mistake. In *compliance* mode nobody
-can, Backblaze included, until the retention ends. Governance is the sensible
-default; compliance is for when a regulator, not you, sets the rule.
+`bypassGovernance` capability can still shorten or remove a lock — the escape
+hatch for a mistake. That includes the master key and, through the web
+console, **anyone who can log in to the Backblaze account**. So governance
+mode protects against this host being taken over, not against the account
+being taken over. In *compliance* mode nobody can shorten a lock, Backblaze
+included, until the retention ends.
+
+- Whatever the mode: turn on two-factor authentication for the Backblaze
+  account (in its sign-in settings), keep the master
+  application key offline, and give no one else the account login.
+- Governance is the sensible default when the threat you are guarding against
+  is this server: a compromised host holds a key that cannot delete, and the
+  account stays out of reach behind 2FA.
+- Choose **compliance** when account takeover is in scope — a phished or
+  shared login, an insider with console access — or when a regulator sets the
+  rule. The price is real: nothing locked can be removed early, by you either,
+  so start with a short `LOCK_DAYS` and lengthen it once the bill is known.
 
 With the [b2 command-line tool](https://www.backblaze.com/docs/cloud-storage-command-line-tools)
-(v4 syntax shown; check `b2 bucket create --help` on the version you have),
+(v4 syntax, written from its documentation and not run against an account
+here — check `b2 bucket update --help` on the version you have),
 authorised with the master key **on your own machine, not this host**:
 
 ```bash
@@ -1421,9 +1460,15 @@ b2 account authorize        # master keyID + key, interactively
 #    switched on from its settings in the console; it can never be switched off.)
 b2 bucket create --file-lock-enabled --default-server-side-encryption SSE-B2 "$BUCKET" allPrivate
 
-# 2. default retention for every new upload
+# 2. default retention for every new upload. The period is "<n> days" or
+#    "<n> years", space and all: the v4 parser rejects "30d".
 b2 bucket update --default-retention-mode governance \
-  --default-retention-period "${LOCK_DAYS}d" "$BUCKET" allPrivate
+  --default-retention-period "${LOCK_DAYS} days" "$BUCKET" allPrivate
+
+# 2a. and check it took, before anything relies on it: this must print mode
+#     "governance" (or "compliance") and a period of LOCK_DAYS days. An empty
+#     or null defaultRetention means uploads are NOT locked -- stop and fix it.
+b2 bucket get "$BUCKET" | python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin).get("fileLockConfiguration"), indent=2))'
 
 # 3. lifecycle: one rule per prefix (encrypted and plaintext, daily and monthly)
 b2 bucket update "$BUCKET" allPrivate \
@@ -1436,8 +1481,10 @@ b2 key create --bucket "$BUCKET" "vectora-$SITE-offsite" listBuckets,listFiles,r
 #    -> put its keyID in B2_ACCOUNT_ID and the key in B2_APPLICATION_KEY, then
 #       BACKUP_TARGET=offsite:$BUCKET, and recreate backup-offsite
 
-# 5. check
-b2 bucket get "$BUCKET"     # fileLockConfiguration, defaultRetention, lifecycleRules
+# 5. check all of it: fileLockConfiguration (as in 2a), the three
+#    lifecycleRules, and the key's capabilities (no deleteFiles)
+b2 bucket get "$BUCKET"
+b2 key list --long | grep "vectora-$SITE-offsite"
 ```
 
 The same in the web console: **Buckets → Create a Bucket**, Private, Default
@@ -1613,9 +1660,15 @@ It touches only `*site_config_backup*.json` outside the `*.crypt/` prefixes
 (an encrypted archive's copies are ciphertext and are what make it
 self-contained), deletes them permanently on B2 (`--b2-hard-delete` — a plain
 delete only hides, and the hidden version keeps the secret), then lists again
-including old versions and says what is left. Files still under Object Lock
-retention cannot be deleted until it ends; if it reports some, delete them
-from the console's *Show versions* view after their retain-until date.
+*including old versions* and exits non-zero, saying the secrets are still
+recoverable, if any version of any of them is left. It must know the remote is
+B2 to do that: it takes the type from `PURGE_B2_*` / `RCLONE_CONFIG_<REMOTE>_TYPE`,
+or from `rclone config show <remote>` when the remote is defined in your
+`rclone.conf`, and refuses `--delete` when it cannot tell (or when the remote
+is another kind of store, where it cannot prove old versions are gone). Files
+still under Object Lock retention cannot be deleted until it ends; if it
+reports some, delete them from the console's *Show versions* view after their
+retain-until date.
 
 The unencrypted dumps beside them still hold every customer record; they go
 when the plaintext prefix is retired after [switching to encrypted
