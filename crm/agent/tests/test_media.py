@@ -74,7 +74,25 @@ def pdf(text: str) -> bytes:
 	return out
 
 
-PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+def png(width=8, height=8) -> bytes:
+	from PIL import Image
+
+	buf = io.BytesIO()
+	Image.new("RGB", (width, height), "white").save(buf, "PNG")
+	return buf.getvalue()
+
+
+def png_claiming(width: int, height: int) -> bytes:
+	"""A tiny PNG whose header declares a ``width`` x ``height`` canvas."""
+	import zlib
+
+	data = png()
+	ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+	chunk = b"IHDR" + ihdr
+	return data[:8] + struct.pack(">I", 13) + chunk + struct.pack(">I", zlib.crc32(chunk)) + data[33:]
+
+
+PNG = png()
 
 
 class Base64Test(UnitTestCase):
@@ -181,6 +199,39 @@ class AttachmentTest(UnitTestCase):
 		got = media.read_attachment("photo.png", PNG, images_allowed=True)
 		self.assertEqual(got.kind, "image")
 		self.assertTrue(got.data_url.startswith("data:image/png;base64,"))
+
+	def test_an_image_that_declares_a_huge_canvas_is_refused_before_any_decoder_sees_it(self):
+		with self.assertRaises(media.MediaRejected) as raised:
+			media.read_attachment("bomb.png", png_claiming(60000, 60000), images_allowed=True)
+		self.assertIn("too large", str(raised.exception))
+
+	def test_an_image_whose_header_will_not_parse_is_refused(self):
+		with self.assertRaises(media.MediaRejected):
+			media.read_attachment("x.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, images_allowed=True)
+
+	def test_a_sheet_that_declares_every_column_is_read_within_a_fixed_window(self):
+		from openpyxl import Workbook
+
+		book = Workbook()
+		book.active.append(["Item", "Qty"])
+		book.active.cell(row=1, column=16384, value="far away")
+		for n in range(media.MAX_SHEETS + 5):
+			book.create_sheet(f"S{n}").append(["x"])
+		buf = io.BytesIO()
+		book.save(buf)
+		got = media.read_attachment("wide.xlsx", buf.getvalue(), images_allowed=False)
+		self.assertIn("Item | Qty", got.text)
+		self.assertNotIn("far away", got.text)
+		self.assertEqual(got.text.count("[Sheet "), media.MAX_SHEETS)
+
+	def test_a_corrupt_pdf_or_word_file_is_a_refusal_not_a_server_error(self):
+		broken_docx = bytearray(docx("hello world " * 50))
+		# corrupt the deflate stream of the document member
+		at = bytes(broken_docx).index(b"word/document.xml") + 40
+		broken_docx[at : at + 20] = b"\xff" * 20
+		for name, data in (("x.pdf", b"%PDF-1.4\n" + b"\x00garbage" * 50), ("x.docx", bytes(broken_docx))):
+			with self.subTest(name=name), self.assertRaises(media.MediaRejected):
+				media.read_attachment(name, data, images_allowed=False)
 
 	def test_oversized_files_are_refused(self):
 		with self.assertRaises(media.MediaRejected):

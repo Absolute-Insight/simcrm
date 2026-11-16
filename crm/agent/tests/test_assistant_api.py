@@ -212,6 +212,16 @@ def encoded(data: bytes) -> str:
 	return base64.b64encode(data).decode()
 
 
+def tiny_png() -> bytes:
+	import io
+
+	from PIL import Image
+
+	buf = io.BytesIO()
+	Image.new("RGB", (8, 8), "white").save(buf, "PNG")
+	return buf.getvalue()
+
+
 class AssistantAttachmentTest(IntegrationTestCase):
 	"""One attached file: quoted as untrusted material, never kept, and refused when
 	this site's model cannot read it."""
@@ -253,7 +263,7 @@ class AssistantAttachmentTest(IntegrationTestCase):
 		complete.assert_called_once()
 
 	def test_an_image_goes_to_the_model_as_an_image_part_when_the_model_reads_images(self):
-		png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+		png = tiny_png()
 		result, complete = self.ask(MEDIA, {"name": "drawing.png", "data": encoded(png)})
 
 		self.assertEqual(result["status"], "ok")
@@ -263,7 +273,7 @@ class AssistantAttachmentTest(IntegrationTestCase):
 		self.assertTrue(content[1]["image_url"]["url"].startswith("data:image/png;base64,"))
 
 	def test_an_image_is_refused_when_the_model_cannot_read_one(self):
-		png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+		png = tiny_png()
 		with self.assertRaises(frappe.ValidationError):
 			self.ask(ENABLED, {"name": "drawing.png", "data": encoded(png)})
 
@@ -271,6 +281,49 @@ class AssistantAttachmentTest(IntegrationTestCase):
 		for attachment in ("not json", {"name": "x.txt", "data": "%%%"}, ["x"]):
 			with self.subTest(attachment=attachment), self.assertRaises(frappe.ValidationError):
 				self.ask(ENABLED, attachment)
+
+	def test_a_refused_file_gives_back_the_budget_unit_and_is_parsed_only_after_the_throttle(self):
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod.client, "complete") as complete,
+			mock.patch.object(api_mod, "_throttled", return_value=None),
+			mock.patch.object(api_mod, "_refund_budget") as refund,
+			self.assertRaises(frappe.ValidationError),
+		):
+			api_mod.ask_assistant(
+				"what is this?", attachment={"name": "x.pdf", "data": encoded(b"not a pdf")}
+			)
+		refund.assert_called_once()
+		complete.assert_not_called()
+
+		with (
+			mock.patch.object(api_mod, "get_config", return_value=ENABLED),
+			mock.patch.object(api_mod, "_throttled", return_value="rate_limited"),
+			mock.patch.object(api_mod.media, "read_attachment") as read,
+		):
+			make_article("Gate valves", "Gate valves isolate a line.")
+			result = api_mod.ask_assistant(
+				"gate valves?", attachment={"name": "x.txt", "data": encoded(b"hi")}
+			)
+		self.assertEqual(result["status"], "unavailable")
+		read.assert_not_called()
+
+	def test_a_long_document_leaves_room_for_the_knowledge_base(self):
+		make_article("Gate valves", "Gate valves isolate a line. Sizes DN50 to DN600. " * 20)
+		cfg = AgentConfig(
+			enabled=True, base_url="http://x/v1", model="m", timeout=5, max_tokens=4096, context_tokens=8192
+		)
+		long_doc = ("Clause: general terms and conditions apply to gate valves. " * 2000).encode()
+		result, complete = self.ask(
+			cfg, {"name": "terms.txt", "data": encoded(long_doc)}, "gate valves sizes?"
+		)
+		self.assertEqual(result["status"], "ok")
+		messages = complete.call_args[0][2]
+		self.assertIn("Gate valves isolate a line", messages[0]["content"])
+		total = sum(len(m["content"]) for m in messages)
+		from crm.agent import client
+
+		self.assertLessEqual(total, client.prompt_char_budget(cfg) + 500)
 
 	def test_the_attachment_arrives_as_json_text_from_the_wire(self):
 		import json

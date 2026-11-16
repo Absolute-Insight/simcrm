@@ -84,6 +84,8 @@ ASSISTANT_QUESTION_MAX_CHARS = 2000
 # stays with the knowledge base, the reference rows and the conversation: an
 # attachment is the customer's side of the question, the articles are ours.
 ATTACHMENT_PROMPT_SHARE = 0.5
+# The fence markers, the file name line and the separators around the quote.
+ATTACHMENT_FRAME_CHARS = 300
 
 BUDGET_CACHE_KEY = "crm_agent_daily_calls"
 
@@ -468,17 +470,26 @@ def ask_assistant(
 	if not cfg.enabled:
 		return {"status": "disabled"}
 
-	attached = _read_attachment(cfg, attachment)
+	sent_a_file = attachment not in (None, "", {})
 
 	articles = _knowledge_articles(cfg, question)
 	entries, index = reference_api.load_entries()
-	if not articles and not entries and not _reads_a_catalogue(cfg) and not attached:
+	if not articles and not entries and not _reads_a_catalogue(cfg) and not sent_a_file:
 		return {"status": "empty"}
 
 	rows = reference.select_entries(question, entries, index=index)
 
 	if reason := _throttled(cfg):
 		return _sheet_answer(rows) if rows else _unavailable(reason)
+
+	# Parsed only after the throttle: a refused question costs no PDF extraction,
+	# and the browser resends the file with every follow-up. A file refused here
+	# was charged to the budget by the throttle, and is given back.
+	try:
+		attached = _read_attachment(cfg, attachment)
+	except frappe.ValidationError:
+		_refund_budget(cfg)
+		raise
 
 	selected = knowledge.select_articles(question, articles)
 	company = frappe.db.get_single_value("FCRM Settings", "brand_name") or "the company"
@@ -487,7 +498,6 @@ def ask_assistant(
 		system_prompt += "\n\n" + reference.reference_block(rows, company)
 	max_chars = client.prompt_char_budget(cfg)
 	asked = question
-	quoted = ""
 	if attached:
 		system_prompt += media.ATTACHMENT_RULE
 		if attached.kind == "image":
@@ -495,7 +505,12 @@ def ask_assistant(
 			max_chars = max(0, max_chars - media.IMAGE_CHARS)
 			asked = f"{media.fenced(attached, '(the attached image)')}\n\n{question}"
 		else:
-			quoted = media.excerpt(attached.text, question, int(max_chars * ATTACHMENT_PROMPT_SHARE))
+			# a share of what is left once the instruction, the reference rows
+			# and the question are in -- not of the whole window, or the file
+			# alone could leave no room for the knowledge base it is weighed
+			# against, and the question is never trimmed to make room
+			left = max_chars - len(system_prompt) - len(question) - ATTACHMENT_FRAME_CHARS
+			quoted = media.excerpt(attached.text, question, int(max(0, left) * ATTACHMENT_PROMPT_SHARE))
 			asked = f"{media.fenced(attached, quoted)}\n\n{question}"
 	messages = knowledge.build_assistant_messages(
 		asked,
@@ -524,10 +539,11 @@ def ask_assistant(
 		return _sheet_answer(rows) if rows else failed
 
 	if rows:
-		# A figure the customer's own document states is supported by that
-		# document. An image cannot be checked figure by figure, so it supports
-		# nothing: an answer resting on it falls back to the rows.
-		return _reference_answer(reply, rows, selected, extra_support=[quoted] if quoted else [])
+		# The attachment supports nothing here. A figure that is only in the
+		# customer's file is not one the company's rows or articles back, and
+		# counting it would let a planted price pass as verified -- an answer
+		# resting on it falls back to the rows.
+		return _reference_answer(reply, rows, selected)
 
 	titles = {article["name"]: article["title"] for article in articles}
 	cited = [name for name in reply.related_articles if name in titles]
@@ -710,9 +726,7 @@ def _complete_chat(
 		return _model_call(cfg, log_title, lambda: client.complete(cfg, schema, messages))
 
 
-def _reference_answer(
-	reply: ReferenceAnswer, rows: list[dict], articles: list[dict], extra_support: list[str] | None = None
-) -> dict:
+def _reference_answer(reply: ReferenceAnswer, rows: list[dict], articles: list[dict]) -> dict:
 	"""The model's answer if every figure in it is on a row it can be traced to; else the rows.
 
 	``articles`` are the ones that were in the prompt: an article the model
@@ -728,7 +742,7 @@ def _reference_answer(
 		answer,
 		rows,
 		reference.resolve_cited(reply.cited_rows, rows),
-		[titles[name]["content"] for name in support] + list(extra_support or []),
+		[titles[name]["content"] for name in support],
 	)
 	if used is None:
 		frappe.logger("crm.agent").info(

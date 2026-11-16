@@ -54,10 +54,18 @@ TRANSCRIBE_PROMPT = (
 
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+# A small file can declare an enormous canvas (a decompression bomb), and the
+# model server decodes it in full before it resizes. A phone photo is ~12 MP.
+MAX_IMAGE_PIXELS = 40_000_000
 # A zip member inflating past this is refused before it is read.
 MAX_INFLATED_BYTES = 40 * 1024 * 1024
 MAX_PDF_PAGES = 40
 MAX_SHEET_ROWS = 2000
+# openpyxl's read-only rows are padded to the width the sheet *declares*, and a
+# two-kilobyte file can declare A1:XFD1048576 on a hundred sheets. Read a fixed
+# window of each sheet, whatever it claims.
+MAX_SHEET_COLUMNS = 60
+MAX_SHEETS = 20
 # Text kept from one file, before it is sized to the prompt. A 300-page manual
 # is not an attachment the Assistant can read whole, and pretending otherwise
 # only moves the cut to somewhere the rep cannot see.
@@ -219,6 +227,7 @@ def read_attachment(name: str, data: bytes, images_allowed: bool) -> Attachment:
 		mime = _image_mime(data)
 		if mime is None:
 			raise MediaRejected("That file is not a PNG, JPEG or WebP image.")
+		_check_image_size(data)
 		url = f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 		return Attachment(name=name, kind="image", mime=mime, data_url=url)
 	if len(data) > MAX_ATTACHMENT_BYTES:
@@ -305,6 +314,23 @@ def _image_mime(data: bytes) -> str | None:
 	return None
 
 
+def _check_image_size(data: bytes) -> None:
+	"""Refuse an image whose declared canvas is too large to decode, reading the header only."""
+	from PIL import Image
+
+	too_large = MediaRejected("That image is too large. Attach a smaller photo or a screenshot.")
+	try:
+		with Image.open(io.BytesIO(data)) as image:
+			width, height = image.size
+	except Image.DecompressionBombError:
+		# Pillow's own guard, at about four times our cap: the same refusal
+		raise too_large from None
+	except Exception:
+		raise MediaRejected("That image could not be read.") from None
+	if width <= 0 or height <= 0 or width * height > MAX_IMAGE_PIXELS:
+		raise too_large
+
+
 def _plain_text(data: bytes) -> str:
 	if b"\x00" in data[:4096]:
 		raise MediaRejected("That file is not text.")
@@ -320,7 +346,6 @@ def _pdf_text(data: bytes) -> str:
 	if not data.startswith(b"%PDF"):
 		raise MediaRejected("That file is not a PDF.")
 	from pypdf import PdfReader
-	from pypdf.errors import PdfReadError
 
 	try:
 		reader = PdfReader(io.BytesIO(data))
@@ -337,7 +362,10 @@ def _pdf_text(data: bytes) -> str:
 		return "\n\n".join(parts)
 	except MediaRejected:
 		raise
-	except (PdfReadError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
+	except Exception:
+		# pypdf raises a long tail of types on a malformed file (IndexError,
+		# struct.error, zlib.error, ZeroDivisionError...). Any of them means the
+		# same thing to the rep, and none may surface as a 500.
 		raise MediaRejected("That PDF could not be read.") from None
 
 
@@ -367,7 +395,9 @@ def _docx_text(data: bytes) -> str:
 	archive = _open_zip(data, "word/document.xml")
 	try:
 		xml = archive.read("word/document.xml").decode("utf-8", errors="replace")
-	except (zipfile.BadZipFile, KeyError, RuntimeError, NotImplementedError):
+	except Exception:
+		# BadZipFile, a corrupt deflate stream (zlib.error), a truncated member
+		# (EOFError), an unsupported method: all one refusal
 		raise MediaRejected("That file could not be read.") from None
 	paragraphs = []
 	for block in _W_PARAGRAPH.split(xml):
@@ -388,11 +418,11 @@ def _xlsx_text(data: bytes) -> str:
 	parts = []
 	total = 0
 	try:
-		for sheet in workbook.worksheets:
+		for sheet in workbook.worksheets[:MAX_SHEETS]:
 			lines = [f"[Sheet {sheet.title}]"]
-			for number, row in enumerate(sheet.iter_rows(values_only=True)):
-				if number >= MAX_SHEET_ROWS or total >= MAX_EXTRACTED_CHARS:
-					lines.append("[... more rows not read]")
+			rows = sheet.iter_rows(values_only=True, max_row=MAX_SHEET_ROWS, max_col=MAX_SHEET_COLUMNS)
+			for row in rows:
+				if total >= MAX_EXTRACTED_CHARS:
 					break
 				cells = ["" if value is None else str(value) for value in row]
 				while cells and not cells[-1]:
