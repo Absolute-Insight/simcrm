@@ -237,3 +237,44 @@ describe('EmailArea reply on a closed email', () => {
     expect(emailBox.inserted).toEqual([])
   })
 })
+
+describe('EmailArea the reader may not open', () => {
+  const hidden = () =>
+    email('c-9', { hidden: true, snippet: undefined, attachments: [] })
+
+  it('says so, and offers nothing to open, retry or reply to', () => {
+    const { el } = render(hidden())
+    expect(el.querySelector('[data-email-hidden]').textContent).toContain(
+      "You don't have access to this email's content",
+    )
+    expect(el.querySelector('[data-email-toggle]')).toBeNull()
+    expect(el.querySelector('[data-email-retry]')).toBeNull()
+    expect(el.querySelector('[data-tooltip="Reply"]')).toBeNull()
+    expect(el.querySelector('[data-tooltip="Reply All"]')).toBeNull()
+    expect(call).not.toHaveBeenCalled()
+  })
+})
+
+describe('EmailArea reply on two closed emails in turn', () => {
+  it('fills the composer with the latest click, not the slower fetch', async () => {
+    const answers = {}
+    call.mockImplementation(
+      (_, { name }) => new Promise((r) => (answers[name] = r)),
+    )
+    const emailBox = composer()
+    const a = render(email('c-10', { subject: 'First' }), emailBox).el
+    const b = render(email('c-11', { subject: 'Second' }), emailBox).el
+
+    a.querySelector('[data-tooltip="Reply"]').click()
+    b.querySelector('[data-tooltip="Reply"]').click()
+    answers['c-11']({ content: '<p>second body</p>' })
+    await flush()
+    answers['c-10']({ content: '<p>first body</p>' })
+    await flush()
+
+    expect(emailBox.inserted).toEqual([
+      '<blockquote><p>second body</p></blockquote>',
+    ])
+    expect(emailBox.editor.subject).toBe('Re: Second')
+  })
+})

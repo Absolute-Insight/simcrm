@@ -43,7 +43,7 @@
             :loading="busy"
           />
         </Dropdown>
-        <div v-if="!scheduled" class="flex gap-0.5">
+        <div v-if="!scheduled && !hidden" class="flex gap-0.5">
           <Button
             :tooltip="__('Reply')"
             variant="ghost"
@@ -65,7 +65,25 @@
          truncated, so a closed row is the same height however long its
          recipients or body: rows above the newest cannot grow while the
          timeline scrolls to it. -->
+    <div
+      v-if="hidden"
+      class="flex min-w-0 flex-col gap-1 text-base leading-5 text-ink-gray-8"
+      data-email-hidden
+    >
+      <div class="truncate">{{ activity.data.subject }}</div>
+      <div class="truncate">
+        <span class="mr-1 text-ink-gray-5"> {{ __('To') }}: </span>
+        <span>{{ activity.data.recipients }}</span>
+      </div>
+      <div class="flex min-w-0 items-center gap-1.5 text-p-sm text-ink-gray-5">
+        <LucideLock class="size-3.5 shrink-0" aria-hidden="true" />
+        <span class="truncate">
+          {{ __("You don't have access to this email's content") }}
+        </span>
+      </div>
+    </div>
     <button
+      v-else
       type="button"
       class="flex min-w-0 items-start gap-2 rounded text-left text-base leading-5 text-ink-gray-8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-outline-gray-3"
       :aria-expanded="expanded ? 'true' : 'false'"
@@ -163,7 +181,9 @@ import LoadingIndicator from '@/components/Icons/LoadingIndicator.vue'
 import { createDialog } from '@/utils/dialogs'
 import {
   cachedEmailBody,
+  claimReply,
   fetchEmailBody,
+  isLatestReply,
   rememberEmailBody,
 } from '@/composables/useEmailBody'
 import { Badge, Dropdown, call, dayjsLocal, toast } from 'frappe-ui'
@@ -179,6 +199,11 @@ const props = defineProps({
 const emit = defineEmits(['reload'])
 
 const attachments = computed(() => props.activity.data?.attachments || [])
+
+// Listed on this record through a timeline link, but referenced to a record
+// the reader cannot see: the server sends who, to whom and when, and nothing
+// of what -- so there is nothing to open, retry or quote.
+const hidden = computed(() => !!props.activity.data?.hidden)
 
 // The timeline sends the body only with the newest emails, which open by
 // default and so paint at full height at once; any other is a snippet until
@@ -210,6 +235,7 @@ async function loadBody() {
 }
 
 function toggle() {
+  if (hidden.value) return
   expanded.value = !expanded.value
   if (expanded.value) loadBody()
 }
@@ -316,11 +342,15 @@ function deleteScheduled() {
 }
 
 // Reply quotes the body, so a closed email's is fetched first. A body already
-// here replies at once, in the same tick as the click.
+// here replies at once, in the same tick as the click. Only the latest Reply
+// click on the page fills the composer: a slow fetch for an email clicked
+// earlier must not overwrite the reply the rep has moved on to.
 function reply(email, reply_all = false) {
-  if (!props.emailBox) return
+  if (!props.emailBox || hidden.value) return
+  const ticket = claimReply()
   if (body.value != null) return quoteInReply(email, body.value, reply_all)
   loadBody().then((content) => {
+    if (!isLatestReply(ticket)) return
     if (content == null) {
       toast.error(__('Could not load this email to reply to it'))
       return
