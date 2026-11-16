@@ -503,26 +503,217 @@ docker compose logs db | tail -40          # look for a mariadb-upgrade prompt
 docker compose exec backend bench --site <site> doctor
 ```
 
-Across a **patch** bump inside 10.6 the on-disk format does not change and
-nothing else is needed. Across a **minor** bump (10.6 → 10.11) the system
-tables do change and `mariadb-upgrade` has to run; this stack leaves
-`MARIADB_AUTO_UPGRADE` unset deliberately, so that never happens behind your
-back. Rehearse a minor bump on a restore of a real backup before doing it on
-the host that holds the data.
-
-The same digest is pinned in `.devcontainer/docker-compose.yml` and in the
-three CI workflows that run a database. Bump all five together, or a schema bug
-gets to hide behind "works on my machine". Dependabot now proposes digest and
-patch bumps for the two compose files (`.github/dependabot.yml`); it does not
-edit the three workflows, so finish those in the same PR, and treat the PR as
-the start of the procedure above, not as a routine merge.
+Across a **patch** bump inside a series the on-disk format does not change and
+nothing else is needed. Across a **series** bump the system tables do change and
+`mariadb-upgrade` has to run. That only happens when `db.env` (below) sets
+`MARIADB_AUTO_UPGRADE=1`, and since the image is pinned by digest, a version
+change is never something that happens behind your back either way.
 
 **MariaDB 10.6 is past its upstream end of life** (July 2026), so the series
 will receive no further fixes and the patch bump above has nowhere left to go.
-The way out is the minor bump to an LTS series (10.11 or 11.4), which is the
-`mariadb-upgrade` case just described: rehearse it on a restore of a real
-backup, then schedule it. It is deliberately not something Dependabot will
-propose.
+The way out is the series bump to 11.4 LTS in the next section. Until production
+has made it, the engines are deliberately split: production on the 10.6 default
+here, the devcontainer, the migration lane and e2e on 11.4, and
+`server-tests.yml` running both. Dependabot proposes patch bumps only, and only
+where it can read a literal `image:` -- the devcontainer, not the `DB_IMAGE`
+default here.
+
+### Upgrading MariaDB to 11.4
+
+The engine is chosen by one variable. Unset, `db` runs the 10.6.28 digest in
+`docker-compose.yml`; set, it runs whatever `.env` says:
+
+```bash
+# .env -- the target, as .env.example carries it (commented out)
+DB_IMAGE=mariadb:11.4.13@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532
+```
+
+**Setting it is the upgrade, and it is one way.** 11.4 rewrites the data
+directory (the redo log format changed in 10.8, the system tables in 11.x), and
+10.6 cannot open the result. Commenting the line out again does not roll back --
+it starts a 10.6 that refuses its own volume. The rollback is below, and it is a
+restore. Merging the change that introduced `DB_IMAGE` did nothing to a running
+stack: unset, the service resolves to exactly what it did before, so its config
+hash is unchanged and `up -d` leaves the database alone (checked with
+`docker compose config --hash db` against the previous file).
+
+Frappe supports it: the pinned framework warns only outside 10.6–11.8
+(`frappe/database/mariadb/setup_db.py`, `check_compatible_versions`) and runs
+its own CI on 11.8. Two things differ from 10.6 that matter here:
+
+- **The `mysql*` command names are gone** from the 11.x image -- `mariadb`,
+  `mariadb-admin`, `mariadb-dump` only. Nothing in this stack calls the old
+  names (`db`'s healthcheck is `healthcheck.sh`, the app image's client is its
+  own 10.11), but a habit of `docker compose exec db mysql` will stop working.
+- **A bare `utf8mb4` now means `utf8mb4_uca1400_ai_ci`** (11.4's
+  `character_set_collations`). Every frappe table and database names
+  `utf8mb4_unicode_ci` explicitly, and the existing data keeps its collation;
+  what changes is the default collation of a connection that does not name
+  one, which is what frappe's upstream CI on 11.8 runs with too. The rehearsal
+  fails if the swap or a migrate leaves any table or column on `uca1400`. If a
+  query ever reports "Illegal mix of collations", the fix is a `db` flag,
+  `--character-set-collations=utf8mb4=utf8mb4_unicode_ci` (it recreates `db`
+  on the next `up -d`).
+
+#### Before the window
+
+1. **Run a release that has `DB_IMAGE`.** `grep DB_IMAGE docker-compose.yml`
+   must find it, and `docker compose config --images | grep mariadb` must show
+   the 10.6.28 digest -- i.e. nothing has been switched yet.
+2. **A fresh backup, and a copy of it somewhere other than this host.** The
+   rollback depends on it.
+
+   ```bash
+   docker compose exec backend bench --site all backup --with-files
+   docker compose exec backend ls -lt sites/<site>/private/backups | head -5
+   ```
+
+   Then confirm the off-host copy has it (`backup-offsite`, see
+   [Getting them off the host](#getting-them-off-the-host)), or copy the
+   `-database.sql.gz` and the `-site_config_backup.json` off by hand. The
+   second file holds the site's database password and encryption key: treat
+   both as secrets.
+3. **Rehearse on that backup.** From a checkout of this repository on a host
+   with docker (this one is fine -- it never touches the `vectora` project):
+
+   ```bash
+   mkdir -m 700 ~/mdb-rehearsal
+   docker compose cp backend:/home/frappe/frappe-bench/sites/<site>/private/backups/<stamp>-<site>-database.sql.gz ~/mdb-rehearsal/
+   docker compose cp backend:/home/frappe/frappe-bench/sites/<site>/private/backups/<stamp>-<site>-site_config_backup.json ~/mdb-rehearsal/
+   scripts/rehearse-mariadb-upgrade.sh --app ghcr.io/absolute-insight/simcrm:<VECTORA_TAG production runs> ~/mdb-rehearsal
+   rm -rf ~/mdb-rehearsal     # afterwards: it is a copy of production
+   ```
+
+   It restores the dump onto 10.6 in a throwaway project (internal network, no
+   ports, torn down with `down -v` on exit), counts every table's rows and
+   checksums the CRM's main tables, shuts 10.6 down slowly, starts 11.4 on the
+   same volume with `MARIADB_AUTO_UPGRADE=1`, compares everything again, runs
+   `bench migrate`, logs in through the API and reads, and takes a backup from
+   the new engine. It must end in `RESULT: PASS`. Its `timings` line sizes the
+   window: on the dev site (12 MB of SQL) restore took 13 s, the 11.4 start
+   with its upgrade 16 s, migrate 5 s; production's upgrade step is dominated by
+   the start-up, not the data, so expect a similar figure plus the shutdown.
+
+#### In the window
+
+```bash
+# 1. close the site and stop everything that writes
+docker compose exec backend bench --site <site> set-maintenance-mode on
+docker compose stop scheduler queue-short queue-long backup
+docker compose exec backend bench --site all backup        # the last one on 10.6
+docker compose stop frontend websocket backend
+
+# a count to compare afterwards
+docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mariadb -uroot -N <db_name>' \
+  <<< 'SELECT (SELECT COUNT(*) FROM `tabCRM Lead`), (SELECT COUNT(*) FROM `tabCRM Deal`), (SELECT COUNT(*) FROM `tabCommunication`)'
+
+# 2. a SLOW, complete shutdown of 10.6 -- never a kill
+docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mariadb -uroot -e "SET GLOBAL innodb_fast_shutdown = 0"'
+docker compose stop -t 600 db
+docker compose logs db | tail -3                           # must end in "Shutdown complete"
+
+# 3. a cold copy of the 10.6 data directory: the fast rollback
+docker run --rm -v vectora_db-data:/from:ro -v vectora_db-data-pre-11-4:/to \
+  mariadb:10.6.28@sha256:c7d726a1c0d29e486a1ab4ef0c76c75431a11428e76c50e99ba32106cea04114 \
+  cp -a /from/. /to/
+
+# 4. switch: the image, and the entrypoint's upgrade step
+#    uncomment DB_IMAGE in .env, then:
+printf 'MARIADB_AUTO_UPGRADE=1\n' > db.env
+docker compose config --images | grep mariadb              # the 11.4.13 digest
+docker compose pull db
+docker compose up -d db
+docker compose ps db                                       # wait for (healthy)
+docker compose logs db | grep -E 'Entrypoint|ERROR'
+
+# 5. the app, on the new engine
+docker compose up -d
+docker compose exec backend bench --site all migrate
+docker compose exec backend bench --site <site> set-maintenance-mode off
+```
+
+**Step 2's flags are the important ones.** `docker compose stop` gives a
+container ten seconds before SIGKILL, and a 10.6 that is killed leaves redo log
+to replay -- which 11.4 will not do across the redo-log format change ("Upgrade
+after a crash is not supported", per MariaDB's upgrade notes; not reproduced
+here). If that happens, comment `DB_IMAGE` out, let 10.6 start and recover,
+and do step 2 again. `-t 600` and the slow shutdown leave nothing to replay.
+
+**Step 4's log is supposed to have errors in it.** The entrypoint starts the
+new server on the old system tables to back them up before upgrading them, and
+in that window it logs `[ERROR] Incorrect definition of table
+mysql.column_stats` several times. What matters is what follows: `Backing up
+system database`, `Starting mariadb-upgrade`, `Finished mariadb-upgrade`, then
+`ready for connections`, with no `ERROR` after it. The system-schema backup
+lands in the data directory as `system_mysql_backup_*.sql.zst`.
+
+Leave `db.env` in place afterwards. It does nothing on a start where the
+version has not changed, and the next 11.4 patch bump then upgrades the system
+tables by itself.
+
+#### Verifying
+
+```bash
+docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mariadb -uroot -N -e "SELECT VERSION()"'   # 11.4.13-MariaDB
+docker compose exec -T db cat /var/lib/mysql/mariadb_upgrade_info                                           # 11.4.13-MariaDB
+# the same three counts as before step 2
+docker compose exec backend bench --site <site> doctor
+docker compose exec backend bench --site all backup                     # a dump from the new engine
+curl -fsS -H "Host: <site>" http://127.0.0.1:${HTTP_PORT:-8080}/api/method/ping
+docker compose ps                                                      # everything (healthy)
+```
+
+Then log in as a rep and open a deal, a lead list and the dashboard.
+
+#### Rolling back
+
+**Before reopening** (steps 4–5 failed, or verification did not match): put
+back the cold copy from step 3. Nothing has been written since.
+
+```bash
+docker compose stop -t 600 db
+# comment DB_IMAGE out again in .env, then:
+rm db.env
+docker run --rm -v vectora_db-data:/to -v vectora_db-data-pre-11-4:/from:ro \
+  mariadb:10.6.28@sha256:c7d726a1c0d29e486a1ab4ef0c76c75431a11428e76c50e99ba32106cea04114 \
+  sh -c 'rm -rf /to/* /to/.[!.]* 2>/dev/null; cp -a /from/. /to/'
+docker compose up -d
+docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mariadb -uroot -N -e "SELECT VERSION()"'   # 10.6.28
+```
+
+**After reopening** the cold copy would lose everything written since, so the
+way back is a dump taken from 11.4 and restored onto an empty 10.6 -- a logical
+restore, which 10.6 can read because every table is still on
+`utf8mb4_unicode_ci`:
+
+```bash
+docker compose exec backend bench --site <site> set-maintenance-mode on
+docker compose exec backend bench --site all backup        # from 11.4
+docker compose stop -t 600 db
+# comment DB_IMAGE out again in .env, then:
+rm db.env
+docker compose rm -f db
+docker volume rm vectora_db-data                           # the 11.4 data directory
+docker compose up -d db                                    # a new, empty 10.6
+# the restore from "Rolling back" above, with that dump -- in a one-off
+# container, because `up` would start create-site against a database that is
+# not there yet. The guard and both root flags are explained there.
+: "${DB_ROOT_PASSWORD:?set it from .env before restoring}"
+docker compose run --rm --no-deps -T backend bench --site <site> restore --force \
+  --db-root-username root --db-root-password "$DB_ROOT_PASSWORD" \
+  /home/frappe/frappe-bench/sites/<site>/private/backups/<that dump>.sql.gz
+docker compose up -d
+docker compose exec backend bench --site <site> set-maintenance-mode off
+```
+
+Keep `vectora_db-data-pre-11-4` until the new engine has run through a week
+of nightly backups, then `docker volume rm vectora_db-data-pre-11-4`.
+
+#### Afterwards
+
+In a pull request: make the 11.4 digest the default in `docker-compose.yml`
+(it resolves to what `.env` already says, so it recreates nothing), drop the
+10.6 leg from `server-tests.yml`, and record the date here.
 
 ### Sizing the database
 
