@@ -65,7 +65,11 @@ HISTORY_DAYS = 90
 
 # The phone drops its copy after this long without a successful sync. Sent in
 # the pack so the client and the server cannot disagree about the number.
-PACK_MAX_AGE_DAYS = 14
+#
+# A week, the user's call (2026-11-16): reps are back in signal every day, so
+# a shorter shelf life costs them nothing, and it halves how long a lost phone
+# holds customer data. A rep back from leave opens Vectora once with signal.
+PACK_MAX_AGE_DAYS = 7
 
 # Set by crm/www/crm.py on every page render, deleted on logout: the user a
 # cached shell may show a saved copy for. Mirrored in the frontend's

@@ -445,7 +445,8 @@ class FieldPackTest(IntegrationTestCase):
 		pack = self.pack()
 		self.assertEqual(pack["user"], REP)
 		self.assertEqual(pack["today"], str(frappe.utils.getdate()))
-		self.assertGreater(pack["max_age_days"], 0)
+		# a week: reps are in signal every day, and a lost phone holds less
+		self.assertEqual(pack["max_age_days"], 7)
 		self.assertIn("Visit", pack["rules"]["activity_types"])
 
 	def test_the_pack_carries_the_sites_offline_grace(self):
