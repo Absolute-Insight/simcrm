@@ -448,6 +448,14 @@ class FieldPackTest(IntegrationTestCase):
 		self.assertGreater(pack["max_age_days"], 0)
 		self.assertIn("Visit", pack["rules"]["activity_types"])
 
+	def test_the_pack_carries_the_sites_offline_grace(self):
+		frappe.db.set_single_value("FCRM Settings", "offline_grace_hours", 36)
+		self.assertEqual(self.pack()["rules"]["offline_grace_hours"], 36)
+		# a site that never set it carries the default day
+		frappe.db.delete("Singles", {"doctype": "FCRM Settings", "field": "offline_grace_hours"})
+		frappe.db.value_cache["FCRM Settings"].pop("offline_grace_hours", None)
+		self.assertEqual(self.pack()["rules"]["offline_grace_hours"], 24)
+
 	# --- who may ask ----------------------------------------------------------------
 
 	def test_someone_without_a_sales_role_gets_no_pack(self):

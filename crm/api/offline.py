@@ -93,10 +93,25 @@ RECEIPT = "CRM Offline Receipt"
 # happens. A phone with no signal cannot, so one captured offline is accepted
 # this long after the fact -- and flagged. Past it, the lock stands.
 #
-# A day, MBP's call (2026-11-16): reps do not stay at a site overnight, so a
-# visit is back on the network by the next morning at the latest. Longer would
-# only widen what a forged capture time can back-date.
+# A day by default, MBP's call (2026-11-16): reps do not stay at a site
+# overnight, so a visit is back on the network by the next morning at the
+# latest. Longer only widens what a forged capture time can back-date, so a
+# site that wants it says so in FCRM Settings -> "Offline capture grace
+# (hours)", and no further than a week.
 OFFLINE_GRACE_HOURS = 24
+OFFLINE_GRACE_MAX_HOURS = 168
+
+
+def offline_grace_hours() -> int:
+	"""FCRM Settings -> "Offline capture grace (hours)", or the default.
+
+	Unset (a site from before the field), zero, negative or past the week cap is
+	not a setting anyone chose: the default stands rather than a window that is
+	closed or open-ended.
+	"""
+	value = frappe.utils.cint(frappe.db.get_single_value("FCRM Settings", "offline_grace_hours"))
+	return value if 1 <= value <= OFFLINE_GRACE_MAX_HOURS else OFFLINE_GRACE_HOURS
+
 
 # An entry that took longer than this to arrive was captured without a
 # connection, and its time is the device's word. Shorter is just a slow line.
@@ -261,7 +276,7 @@ def _pack_body() -> dict:
 			"lock_past_plans": bool(past_days_locked()),
 			"horizon_weeks": MATCH_HORIZON_WEEKS,
 			"history_days": HISTORY_DAYS,
-			"offline_grace_hours": OFFLINE_GRACE_HOURS,
+			"offline_grace_hours": offline_grace_hours(),
 			"plannable_types": [kind for kind in ACTIVITY_TYPES if kind != "Unplanned Meeting"],
 		},
 		"plans": _plans(today),
@@ -592,9 +607,10 @@ def replay(
 	device's clock corrected for the skew the last handshake measured. It is
 	never trusted to be in the future, and it only earns a rep anything -- a
 	way past "activities are logged on the day they happen" -- inside
-	``OFFLINE_GRACE_HOURS``, with the row flagged ``captured_offline``. Nor is
-	an entry taken that is older than the receipts are kept (``RECEIPT_DAYS``):
-	by then the receipt that would have called it a duplicate may be gone.
+	``offline_grace_hours()`` (FCRM Settings, a day by default), with the row
+	flagged ``captured_offline``. Nor is an entry taken that is older than the
+	receipts are kept (``RECEIPT_DAYS``): by then the receipt that would have
+	called it a duplicate may be gone.
 
 	The action is one of ``ACTIONS`` and nothing else: this is not a generic
 	method dispatcher. Each handler does its own permission check as the
@@ -805,17 +821,17 @@ def _replay_log_activity(payload: dict, moment: datetime, late: bool) -> None:
 	# minutes old and already "yesterday", and without this the day lock
 	# refused it for good.
 	past = moment.date() < frappe.utils.getdate()
-	if (
-		past
-		and past_days_locked()
-		and frappe.utils.now_datetime() - moment > timedelta(hours=OFFLINE_GRACE_HOURS)
-	):
-		frappe.throw(
-			_(
-				"This was captured more than {0} hours ago. Activities are logged on the day they happen."
-			).format(OFFLINE_GRACE_HOURS),
-			frappe.ValidationError,
-		)
+	if past and past_days_locked():
+		# read as the entry arrives: changing the setting moves the window for
+		# what is still to come, and touches nothing already recorded
+		grace = offline_grace_hours()
+		if frappe.utils.now_datetime() - moment > timedelta(hours=grace):
+			frappe.throw(
+				_(
+					"This was captured more than {0} hours ago. Activities are logged on the day they happen."
+				).format(grace),
+				frappe.ValidationError,
+			)
 	log_activity(
 		organization=_customer(_name(payload, "organization")),
 		note=_text(payload.get("note"), NOTE_TEXT_LIMIT),

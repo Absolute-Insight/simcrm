@@ -65,6 +65,28 @@ class FCRMSettings(Document):
 		self.setup_forecasting()
 		self.make_currency_read_only()
 		self.guard_sales_hierarchy_toggle()
+		self.validate_offline_grace_hours()
+
+	def validate_offline_grace_hours(self):
+		"""How long a capture made offline may lag, past the day lock (``crm.api.offline``).
+
+		Blank or 0 is a site from before the field, saving something else: it
+		takes the default rather than refusing that save. Anything else outside
+		1..168 is refused -- a window wider than a week only widens what a forged
+		capture time can back-date.
+		"""
+		from crm.api.offline import OFFLINE_GRACE_HOURS, OFFLINE_GRACE_MAX_HOURS
+
+		value = frappe.utils.cint(self.offline_grace_hours)
+		if not value:
+			self.offline_grace_hours = OFFLINE_GRACE_HOURS
+			return
+		if not 1 <= value <= OFFLINE_GRACE_MAX_HOURS:
+			frappe.throw(
+				_("Offline capture grace must be between 1 and {0} hours.").format(OFFLINE_GRACE_MAX_HOURS),
+				frappe.ValidationError,
+			)
+		self.offline_grace_hours = value
 
 	def guard_sales_hierarchy_toggle(self):
 		"""``enable_sales_hierarchy`` decides what every manager can read (see
