@@ -295,11 +295,14 @@ be the phone's word too). Visibility is the control; the grace — 24 hours by
 default, MBP's call on 2026-11-16, reps do not stay on site overnight — bounds how far back a
 forged time can reach.
 
-**A manager's pack is narrowed.** A rep carries what they may see, unclaimed
-customers included (they may be sent to one). A manager may see the whole site;
-their phone carries only the customers of the reps they lead (where the sales
-hierarchy names a team), and the customers on their own plans and open deals
-(`_managers_customers`). Deals and notes travel only with a carried customer,
+**A team manager's pack is narrowed.** A rep carries what they may see, unclaimed
+customers included (they may be sent to one). A manager who leads a team (the
+sales hierarchy names one) carries only the customers of the reps they lead,
+and the customers on their own plans and open deals (`_managers_customers`).
+A manager who leads no team carries what they may read, like a rep: narrowing
+them to their own plans and deals left every such manager on production with an
+empty field mode (user's call, 2026-11-17; the busiest rep already carries two
+thirds of the customers). Deals and notes travel only with a carried customer,
 for everyone: field mode never shows a deal anywhere else.
 
 ## What is on the device, and when it goes
@@ -314,8 +317,8 @@ for everyone: field mode never shows a deal anywhere else.
 The store clears go through `clearOfflineCache()` / `claimOfflineCache()`.
 A logout from the **desk** runs none of that: the data stays on disk until
 the next `/crm` load or the 7-day expiry, but the shell will not open for
-it, because the cookie is gone. A manager who sees every record carries
-every record, up to the caps — that is the app's own rule, not narrowed here.
+it, because the cookie is gone. A manager with no team who sees every
+record carries every record, up to the caps.
 The expiry is re-checked whenever the tab comes back, and a `syncedAt` ahead
 of the clock counts as expired.
 Caps and windows (`HISTORY_DAYS`, `PACK_MAX_AGE_DAYS`, row limits) are
