@@ -183,7 +183,9 @@ def release_media(media_ids: list | str) -> dict:
 	released = 0
 	for media_id in ids:
 		name = _staged(_media_id(media_id), user)
-		if name:
+		# locked and asked again: a replay of the same note may have claimed it
+		# since, and a claimed file is the note's, not this request's to drop
+		if name and frappe.db.get_value("File", name, "attached_to_doctype", for_update=True) == "User":
 			frappe.delete_doc("File", name, ignore_permissions=True, force=True)
 			released += 1
 	return {"released": released}
@@ -218,6 +220,8 @@ def claim_media(note: str, ids: list[str]) -> None:
 	kinds = [_kind(frappe.db.get_value("File", name, "file_name")) for name in files]
 	if kinds.count("photo") > MAX_PHOTOS or kinds.count("voice") > MAX_RECORDINGS:
 		frappe.throw(_("That note has too many photos or recordings."), frappe.ValidationError)
+	# File.validate takes file_size from the request when there is one
+	frappe.form_dict.pop("file_size", None)
 	for name in files:
 		# a save, not set_value: the thumbnail hook (crm.utils.thumbnails) moves
 		# a thumbnail made while the file was staged onto the note with it
