@@ -396,16 +396,17 @@ def _whole_files_only():
 	looks like a photo. Whether that import has happened yet depends on what
 	the worker did before, so the answer was not even the same twice.
 	"""
-	from PIL import ImageFile
-
 	# Pillow's own switch, and the only one it has: set for this decode and put
-	# back, to undo for our files what frappe's module-level patch does to all
+	# back, to undo for our files what frappe's module-level patch does to all.
+	# (The rule's match starts at the import, so that is where it is answered.)
+	from PIL import ImageFile  # nosemgrep: frappe-monkey-patching-not-allowed
+
 	before = ImageFile.LOAD_TRUNCATED_IMAGES
-	ImageFile.LOAD_TRUNCATED_IMAGES = False  # nosemgrep: frappe-monkey-patching-not-allowed
+	ImageFile.LOAD_TRUNCATED_IMAGES = False
 	try:
 		yield
 	finally:
-		ImageFile.LOAD_TRUNCATED_IMAGES = before  # nosemgrep: frappe-monkey-patching-not-allowed
+		ImageFile.LOAD_TRUNCATED_IMAGES = before
 
 
 def _decode_small(image):
