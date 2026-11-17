@@ -3301,7 +3301,8 @@ def quotes_raised_by_user(users: list[str], from_date: str, to_date: str) -> dic
 	"""Quotes each rep in ``users`` raised in the period: ``{user: count}``.
 
 	A quote is a deal, counted on the day it was created and against the rep who
-	owns it -- whoever raised it, not everyone later assigned to help. Where the
+	owns it now -- not everyone assigned to help, and a deal handed to another
+	rep counts for them from then on. Where the
 	ERP link is installed only deals that carry a quote number count, so a deal
 	typed in ahead of its quote is not one yet. Scoped to what the caller may
 	read, like every other deal aggregate.

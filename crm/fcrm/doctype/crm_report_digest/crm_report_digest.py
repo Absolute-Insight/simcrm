@@ -35,6 +35,7 @@ class CRMReportDigest(Document):
 			"plan_adherence_by_rep",
 			"forecast_vs_actual",
 			"quota_attainment_by_rep",
+			"quotes_against_budget_by_rep",
 			"pipeline_by_segment",
 			"client_reliability",
 			"visits_by_rep",

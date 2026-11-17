@@ -189,7 +189,8 @@ def _pipeline_by_segment(from_date, to_date, user, territory=None):
 def _quota_attainment_by_rep(from_date, to_date, user, territory=None):
 	from crm.api.dashboard import quota_by_user, visible_reps, won_value_by_user
 
-	reps = set(frappe.get_all("CRM Quota", pluck="user", distinct=True))
+	# a row can hold a quotes target alone; that rep has no revenue target
+	reps = set(frappe.get_all("CRM Quota", filters={"amount": (">", 0)}, pluck="user", distinct=True))
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
 	won_owners = (
@@ -264,14 +265,16 @@ def _quotes_against_budget_by_rep(from_date, to_date, user, territory=None):
 	raised = quotes_raised_by_user(list(reps), from_date, to_date)
 	rows = []
 	for rep in sorted(reps):
-		target = round(targets.get(rep, 0.0))
+		# one decimal, as the visit target: a few days of a small monthly
+		# target must not round to "no target"
+		target = round(targets.get(rep, 0.0), 1)
 		count = raised.get(rep, 0)
 		rows.append(
 			{
 				"user": rep,
 				"target": target,
 				"quotes": count,
-				"gap": count - target,
+				"gap": round(count - target, 1),
 				"attainment": round(count / target * 100) if target else None,
 			}
 		)

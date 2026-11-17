@@ -18,6 +18,9 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import get_first_day, getdate
 
+# far above any real month and well inside the Int column
+MAX_QUOTES_PER_MONTH = 100000
+
 
 class CRMQuota(Document):
 	# begin: auto-generated types
@@ -47,8 +50,8 @@ class CRMQuota(Document):
 		self.stamp_base_currency()
 		if (self.amount or 0) < 0:
 			frappe.throw(_("Quota cannot be negative."))
-		if (self.quotes or 0) < 0:
-			frappe.throw(_("A quotes target cannot be negative."))
+		if not 0 <= (self.quotes or 0) <= MAX_QUOTES_PER_MONTH:
+			frappe.throw(_("Enter a whole number of quotes, 0 to {0}.").format(MAX_QUOTES_PER_MONTH))
 
 	def snap_period_to_month_start(self):
 		"""A quota is a month, so the date that identifies it is that month's first day."""
