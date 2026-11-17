@@ -6,6 +6,7 @@ import { viewsStore } from '@/stores/views'
 import { accessStore } from '@/stores/access'
 import { reloadOnceForStaleChunk } from '@/utils/staleChunk'
 import { retryWithBackoff } from '@/utils/retry'
+import { isSessionGone } from '@/utils/sessionExpiry'
 import { MOBILE_BREAKPOINT_PX } from '@/composables/settings'
 import { connectivity, reachableForNavigation } from '@/offline/connectivity'
 
@@ -362,6 +363,7 @@ router.beforeEach(async (to, from, next) => {
           delays: isFirstLoad ? FIRST_LOAD_RETRY_DELAYS_MS : [],
           // Neither a refusal nor a dead session gets better on a retry.
           shouldRetry: (error) =>
+            !isSessionGone(error, document.cookie) &&
             !['PermissionError', 'AuthenticationError'].includes(
               error?.exc_type,
             ),
@@ -371,6 +373,11 @@ router.beforeEach(async (to, from, next) => {
       console.error('Error loading users', error)
       // the line dropped under this very request: same answer as above
       if (!(await reachableForNavigation())) return toField()
+      // A lapsed session: the request layer (redirectIfSessionGone) is already
+      // on its way to the login page, with this page as where to come back
+      // to. Moving now could land first and make that Load Failed or Not
+      // Permitted instead.
+      if (isSessionGone(error, document.cookie)) return next(false)
       // Only a PermissionError means "not a CRM user". Anything else (a timeout,
       // a 502 during a deploy) left isCrmUser() false for a real CRM user and
       // sent them to Not Permitted; stay put instead -- or, with nowhere to

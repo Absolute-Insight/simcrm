@@ -302,7 +302,9 @@ describe('a first load that cannot fetch the users', () => {
       process.on('unhandledRejection', listener)
     }
     expect(
-      unhandled.every((m) => ['502 Bad Gateway', 'denied'].includes(m)),
+      unhandled.every((m) =>
+        ['502 Bad Gateway', 'denied', 'session gone'].includes(m),
+      ),
     ).toBe(true)
   })
 
@@ -352,4 +354,30 @@ describe('a first load that cannot fetch the users', () => {
     // without waiting out a retry: a refusal does not get better
     expect(performance.now() - started).toBeLessThan(400)
   })
+
+  /* The request layer sends a lapsed session to the login page with the page
+     on screen as where to come back to; a guard redirect landing first made
+     that "come back to Load Failed". */
+  for (const [shape, error] of [
+    ['an AuthenticationError', { exc_type: 'AuthenticationError' }],
+    [
+      'an expired-session refusal',
+      { exc_type: 'PermissionError', session_expired: 1 },
+    ],
+  ]) {
+    it(`leaves ${shape} to the login redirect`, async () => {
+      const { router } = await bootTab({
+        views: noViews,
+        users: () => {
+          throw Object.assign(new Error('session gone'), error)
+        },
+      })
+      const started = performance.now()
+      const landed = await navigate(router, '/deals')
+      expect(landed).not.toBe('Load Failed')
+      expect(landed).not.toBe('Not Permitted')
+      expect(landed).not.toBe('Deals')
+      expect(performance.now() - started).toBeLessThan(400)
+    })
+  }
 })
