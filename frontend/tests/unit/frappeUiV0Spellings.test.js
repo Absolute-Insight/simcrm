@@ -60,3 +60,21 @@ describe('frappe-ui v0 spellings that v1 silently ignores', () => {
     ).toEqual([])
   })
 })
+
+describe("the timeline composers' attachments", () => {
+  // The record they attach to, and private: a comment or email attachment
+  // must neither land unlinked in Home nor be world-readable.
+  for (const name of [
+    'components/CommentBox.vue',
+    'components/EmailEditor.vue',
+  ]) {
+    it(`${name} uploads onto its record, privately`, () => {
+      const { source } = files.find((f) => f.name === name)
+      const tags = source.match(/<FileUploader\b(?:(?!<[/A-Za-z])[\s\S])*?>/g)
+      expect(tags).toHaveLength(1)
+      expect(tags[0]).toMatch(/\s:doctype="doctype"/)
+      expect(tags[0]).toMatch(/\s:docname="modelValue\.name"/)
+      expect(tags[0]).toMatch(/\s:private="true"/)
+    })
+  }
+})
