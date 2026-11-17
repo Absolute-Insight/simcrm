@@ -63,7 +63,7 @@ MANIFEST_NAME = "history-manifest.json"
 COMPANY_MAP_NAME = "company-map.json"
 CANDIDATES_NAME = "company-map-candidates.json"
 REPORT_GLOB = "report_*.csv"
-# CRM Rep Plan Item.note is a Data field
+# the line a plan card shows; the whole note is the event description
 NOTE_LIMIT = 140
 VISIT_LENGTH = timedelta(hours=1)
 
@@ -169,7 +169,7 @@ def shape_row(
 
 
 def short_note(note: str) -> str:
-	"""What goes on the plan item, a one-line Data field. When the old app
+	"""What goes on the plan item, one line for the card. When the old app
 	appended a conclusion, that is the line worth keeping: the text above it is
 	the plan ("Routine visit per agreement with customer ..."), the conclusion is
 	what happened. The full note is kept on the visit's event."""

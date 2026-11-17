@@ -70,9 +70,10 @@ EDITABLE_ITEM_FIELDS = (
 
 # a logged activity's note is the first line of its outcome, which holds the whole account
 NOTE_LIMIT = 140
-# what a rep may write in a plan item's note or an outcome; far above any note a
-# person types, and it keeps one row from growing without bound
-TEXT_LIMIT = 2000
+# what a rep may write in a plan item's note or an outcome: the same ceiling as the
+# phone's outbox (crm.api.offline.NOTE_TEXT_LIMIT), so an entry the phone accepted
+# offline is never refused when it is replayed
+TEXT_LIMIT = 5000
 
 # a plan item points at the record it is about, and only these are plannable
 REFERENCE_DOCTYPES = ("CRM Deal", "CRM Lead")
@@ -782,7 +783,9 @@ def _visit_event(
 	participants = []
 	if organization:
 		participants.append({"reference_doctype": "CRM Organization", "reference_docname": organization})
-	if contact:
+	if contact and _contact_available(contact):
+		# a contact deleted or moved to another rep's customer since the item was
+		# planned is left off: the visit still closes, and nobody's details are copied
 		participants.append({"reference_doctype": "Contact", "reference_docname": contact})
 	event = frappe.get_doc(
 		{
@@ -1113,8 +1116,10 @@ def log_activity(
 		reference_docname = None
 	if reference_docname and not _can_reference(reference_doctype, reference_docname):
 		frappe.throw(_("You cannot log a visit against that record."), frappe.PermissionError)
-	if contact and not frappe.db.exists("Contact", contact):
-		frappe.throw(_("That contact no longer exists."), frappe.ValidationError)
+	if contact and not _contact_available(contact):
+		# one answer for "no such person" and "at another rep's customer", as for
+		# the customer above
+		frappe.throw(_("That contact is not available to you."), frappe.PermissionError)
 
 	when_dt = frappe.utils.get_datetime(when) if when else frappe.utils.now_datetime()
 	if when_dt > frappe.utils.now_datetime():
@@ -1157,7 +1162,7 @@ def log_activity(
 			{
 				"activity_type": activity_type,
 				"planned_date": when_dt.date(),
-				# note is a one-line Data field; the whole account is the outcome
+				# the note is the account's first line; the whole account is the outcome
 				"note": _one_line(note),
 				"organization": organization,
 				"contact": contact or None,
@@ -1182,6 +1187,13 @@ def log_activity(
 			if attempt:
 				raise
 	return get_plan(str(monday), user)
+
+
+def _contact_available(contact: str) -> bool:
+	"""Whether the caller may name this contact: it exists and is at a customer they see."""
+	from crm.permissions.customers import contact_visible
+
+	return bool(frappe.db.exists("Contact", contact)) and contact_visible(contact)
 
 
 def _customer_available(organization: str) -> bool:

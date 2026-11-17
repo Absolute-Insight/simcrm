@@ -934,8 +934,10 @@ function itemDialogFields(current = null) {
   ]
 }
 
-/* Narrowed to the customer chosen above it; with none chosen yet, anyone. A
-   contact's company and a deal's customer are matched on the customer's name. */
+/* Narrowed to the customer chosen above it, matched on its docname, which is
+   what the Acumatica sync and the CRM's own customer picker write. With none
+   chosen yet, anyone at some customer: a contact or deal with no customer at
+   all does not match '%', and is not what a visit is planned with. */
 const FOR_CUSTOMER = "eval:doc.organization || '%'"
 
 /* The person being met: the old rep app recorded one on every activity, and

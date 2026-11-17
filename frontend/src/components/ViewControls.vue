@@ -714,9 +714,11 @@ function updateSelections(selections) {
 async function exportRows() {
   let fields = JSON.stringify(list.value.data.columns.map((f) => f.key))
   const userId = getUser()?.name
+  // the page's own filters last, as get_data applies them, so the export is
+  // the list on screen
   let filters = {
-    ...props.filters,
     ...list.value.params.filters,
+    ...props.filters,
   }
 
   // Only resolve @me placeholders when we know the current user; otherwise

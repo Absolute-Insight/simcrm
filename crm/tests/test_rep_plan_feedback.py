@@ -99,8 +99,31 @@ class ContactOnTheActivityTest(FeedbackTestCase):
 		plan = save_plan(this_monday(), [{**row, "note": "Deliveries, rescheduled"}])
 		self.assertIsNone(plan["items"][0]["contact"])
 
+	def test_a_visit_whose_contact_was_deleted_still_closes(self):
+		row = self.plan(contact=self.contact)
+		frappe.set_user("Administrator")
+		frappe.delete_doc("Contact", self.contact, force=True, ignore_permissions=True)
+		frappe.set_user(REP)
+		event = complete_item(row["name"], "Deliveries done")["items"][0]["fulfilled_by"]
+		names = [p.reference_docname for p in frappe.get_doc("Event", event).event_participants]
+		self.assertEqual(names, [self.org.name])
+
+	def test_logging_answers_the_same_for_a_missing_and_a_colleagues_contact(self):
+		for contact in (self.their_contact, "Nobody-At-All"):
+			with self.assertRaises(frappe.PermissionError):
+				log_unplanned_visit(self.org.name, "Breakdown", contact=contact)
+
 
 class RoomToWriteTest(FeedbackTestCase):
+	def test_what_the_phone_accepts_offline_is_accepted_here(self):
+		from crm.api.offline import NOTE_TEXT_LIMIT
+
+		self.assertEqual(TEXT_LIMIT, NOTE_TEXT_LIMIT)
+		row = self.plan()
+		long_account = ("Gate valve survey. " * 200).strip()
+		self.assertLessEqual(len(long_account), NOTE_TEXT_LIMIT)
+		self.assertEqual(complete_item(row["name"], long_account)["items"][0]["outcome"], long_account)
+
 	def test_a_note_longer_than_a_line_is_kept_whole(self):
 		note = "Deliveries. " * 30
 		self.assertGreater(len(note), 140)
