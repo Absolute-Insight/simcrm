@@ -37,7 +37,7 @@ vi.mock('vue-router', async () => {
 vi.mock('vuedraggable', () => ({ default: { render: () => null } }))
 vi.mock('@/stores/views', () => ({
   viewsStore: () => ({
-    reload: () => Promise.resolve(),
+    reload: () => (vc.reloadViews ? vc.reloadViews() : Promise.resolve()),
     getDefaultView: () => null,
     getView: (view) => (view ? vc.views[view] : vc.standard ?? null),
   }),
@@ -141,6 +141,7 @@ beforeEach(() => {
     actionErrors: [],
     quickFilters: [],
     isManager: false,
+    reloadViews: null,
     getData: (params) => later(payload(params)),
   })
 })
@@ -1011,5 +1012,40 @@ describe('clicking a cell filters on the stored value', () => {
         'Gauteng',
       ),
     ).toBe('Gauteng')
+  })
+})
+
+describe('switching views while a save of the standard view settles', () => {
+  /* Saving the standard view re-reads the views store, and the list ignores
+     views-store changes until that re-read settles, so the echo of its own
+     save cannot rewind a quick filter. A switch to another saved view inside
+     that window is not an echo. */
+  async function saveStandardThenSwitch() {
+    savedView(51, { filters: JSON.stringify({ status: 'Lost' }) })
+    setRoute({})
+    let release = null
+    vc.reloadViews = () => new Promise((resolve) => (release = resolve))
+    const m = await mountVC()
+    m.vc().applyFilter({
+      event: click(),
+      idx: 1,
+      column: { key: 'status', type: 'Select' },
+      item: 'Open',
+      firstColumn: { key: 'lead_name' },
+    })
+    await settle()
+    expect(release).toBeTypeOf('function') // the re-read is still out
+    const { useRoute } = await import('vue-router')
+    useRoute().query = { view: '51' }
+    await settle()
+    return { m, release }
+  }
+
+  it('shows the view switched to', async () => {
+    const { release } = await saveStandardThenSwitch()
+    release()
+    await settle()
+    expect(vc.fetches.at(-1).filters).toEqual({ status: 'Lost' })
+    expect(vc.fetches.at(-1).view.custom_view_name).toBe(51)
   })
 })

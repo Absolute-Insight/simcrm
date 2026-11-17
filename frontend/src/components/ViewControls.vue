@@ -1323,18 +1323,43 @@ function loadMoreKanban(columnName) {
 //
 // Each save-triggered re-read holds a token from the moment it starts until
 // it has settled and Vue has flushed the watchers its data change queued
-// (nextTick). The watcher stands down while any token is held. The window is
-// tied to the re-read's own lifetime, not to the watcher firing, so a re-read
-// that changes nothing cannot leave a stale skip behind to swallow a later,
-// real change.
-const selfViewReloads = new Set()
+// (nextTick). The window is tied to the re-read's own lifetime, not to the
+// watcher firing, so a re-read that changes nothing cannot leave a stale skip
+// behind to swallow a later, real change.
+//
+// A token records which view it was taken for, and the watcher stands down
+// only while it is still looking at that view: the echo of our own save. A
+// switch to another view or view type inside the window is a real change, so
+// it reloads, and drops the tokens, which no longer describe what is shown.
+const selfViewReloads = new Map()
+
+function currentViewIdentity() {
+  return JSON.stringify([
+    props.doctype,
+    route.name,
+    route.query.view || '',
+    route.params.viewType || 'list',
+  ])
+}
 
 function reloadViewAfterSave() {
   const token = Symbol('self-view-reload')
-  selfViewReloads.add(token)
+  selfViewReloads.set(token, currentViewIdentity())
   return reloadView().finally(() =>
     nextTick(() => selfViewReloads.delete(token)),
   )
+}
+
+function isEchoOfOwnSave() {
+  if (!selfViewReloads.size) return false
+  const identity = currentViewIdentity()
+  for (const taken of selfViewReloads.values()) {
+    if (taken !== identity) {
+      selfViewReloads.clear()
+      return false
+    }
+  }
+  return true
 }
 
 function createOrUpdateStandardView() {
@@ -1727,7 +1752,7 @@ defineExpose({
 watch(
   () => getView(route.query.view, route.params.viewType, props.doctype),
   (value, old_value) => {
-    if (selfViewReloads.size) return
+    if (isEchoOfOwnSave()) return
     if (isEqual(value, old_value)) return
     reload()
   },
