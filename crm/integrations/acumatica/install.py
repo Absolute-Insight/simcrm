@@ -80,6 +80,33 @@ def ensure_custom_fields() -> None:
 					"permlevel": 1,
 					"insert_after": "tax_registration_id",
 				},
+				{
+					# Acumatica's ParentRecord: MBP keeps a mine's plants and shafts as
+					# customers of their own under one head account (a mine's concentrator
+					# and workshop under the mine). Written by the sync only --
+					# permlevel 1 like the code it is keyed on -- and a search field
+					# (ensure_customer_code_search), so the head account's name finds its sites.
+					"fieldname": "head_account",
+					"fieldtype": "Link",
+					"options": "CRM Organization",
+					"label": "Head Account",
+					"read_only": 1,
+					"permlevel": 1,
+					"insert_after": "acumatica_confirmed_for",
+				},
+				{
+					# the head account's customer code as Acumatica sent it, kept so a
+					# site that arrives before its head account is linked once that
+					# one is imported (sweeps page in NoteID order, not parents first)
+					"fieldname": "acumatica_parent",
+					"fieldtype": "Data",
+					"label": "Head Account Code",
+					"hidden": 1,
+					"read_only": 1,
+					"permlevel": 1,
+					"search_index": 1,
+					"insert_after": "head_account",
+				},
 			],
 			"Contact": _identity_fields("company_name"),
 			"CRM Product": _identity_fields("product_code"),
@@ -144,25 +171,29 @@ def ensure_customer_push_defaults() -> None:
 
 
 def ensure_customer_code_search() -> None:
-	"""Make the customer code a search field of CRM Organization.
+	"""Make the customer code and the head account search fields of CRM Organization.
 
 	A link search then matches "C-SIB" as well as the name, and returns the code
 	as the option's description, so every organization picker shows it under the
-	name. A Property Setter rather than the doctype JSON: the field is custom,
-	and the doctype syncs before after_migrate creates it. Any search field an
-	admin already set is kept.
+	name. The head account does the same for a site: searching a mine's name
+	finds its concentrator, filed in Acumatica under that head account, and the
+	picker says which head account each site belongs to. A Property Setter rather
+	than the doctype JSON: the fields are custom, and the doctype syncs before
+	after_migrate creates them. Any search field an admin already set is kept.
 	"""
 	from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 
 	current = frappe.get_meta("CRM Organization").search_fields or ""
 	fields = [f.strip() for f in current.split(",") if f.strip()]
-	if "acumatica_id" in fields:
+	if "acumatica_id" in fields and "head_account" in fields:
 		return
+	# the code first (the picker's description leads with it), the head account next
+	rest = [f for f in fields if f not in ("acumatica_id", "head_account")]
 	make_property_setter(
 		"CRM Organization",
 		None,
 		"search_fields",
-		",".join(["acumatica_id", *fields]),
+		",".join(["acumatica_id", "head_account", *rest]),
 		"Data",
 		for_doctype=True,
 		validate_fields_for_doctype=False,
@@ -199,7 +230,7 @@ def ensure_deal_quote_search() -> None:
 LAYOUT_FIELDS = {
 	"CRM Deal-Side Panel": ["acumatica_customer", "acumatica_sales_quote"],
 	"CRM Deal-Data Fields": ["acumatica_customer", "acumatica_sales_quote"],
-	"CRM Organization-Side Panel": ["acumatica_id", "tax_registration_id"],
+	"CRM Organization-Side Panel": ["acumatica_id", "tax_registration_id", "head_account"],
 }
 LAYOUT_SECTION = {"label": "Acumatica", "name": "acumatica_section", "opened": True}
 

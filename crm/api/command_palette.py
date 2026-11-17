@@ -54,7 +54,7 @@ SEARCH_TYPES = {
 		"route": "Organization",
 		"title": "organization_name",
 		"detail": "acumatica_id",
-		"search": ["organization_name", "website", "acumatica_id"],
+		"search": ["organization_name", "website", "acumatica_id", "head_account"],
 	},
 }
 
