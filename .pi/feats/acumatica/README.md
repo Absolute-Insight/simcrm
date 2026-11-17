@@ -454,6 +454,22 @@ Written against documentation; none of this has met a live instance yet.
 - Stock item descriptions run past `product_name`'s 140 characters: the name is
   cut with an ellipsis and the full text kept in `description`.
 
+## Head accounts (sites as customers)
+
+MBP files a mine's plants and shafts as customers of their own under a head
+account (`Customer.ParentRecord`). Locations (`CustomerLocation`) are not used -- every quote
+is `MAIN`, and the API user has no rights to AR303020. The sync writes the
+parent's code to `acumatica_parent` and the link to `head_account` (both
+permlevel 1, sync-only); a site imported before its head account is linked when
+the head account arrives (`_link_waiting_sites`). A record without the field
+(the spreadsheet import) leaves both alone. `link_head_accounts` is the one-off
+GET pass (two columns, every customer) the patch `link_customer_head_accounts`
+queues on a site with the integration on. `head_account` is a search field
+after `acumatica_id`, so pickers and Ctrl K find a site by its head account's
+name and show the head account under it. Not a list quick filter: a rep often
+cannot read the head account itself (another rep's, or unclaimed under a
+narrower scope), so filtering by it would be a dead end.
+
 ## Known limitations
 
 - A contact's primary email is only ever appended to, never replaced: if the
