@@ -491,6 +491,19 @@ class AttachmentThumbnailTest(IntegrationTestCase):
 		self.assertIsNone(thumbnails.make_thumbnail(source.name))
 		self.assertEqual(frappe.db.count("Error Log"), errors)
 
+	def test_a_truncated_photo_is_refused_whatever_the_process_has_told_pillow(self):
+		from PIL import ImageFile
+
+		# frappe.utils.image turns this on at import, for every later decode
+		before = ImageFile.LOAD_TRUNCATED_IMAGES
+		ImageFile.LOAD_TRUNCATED_IMAGES = True
+		self.addCleanup(setattr, ImageFile, "LOAD_TRUNCATED_IMAGES", before)
+		source = self.attach(photo(size=(1200, 900))[:2000], file_name="cut.jpg")
+		self.assertIsNone(thumbnails.make_thumbnail(source.name))
+		self.assertFalse(frappe.db.exists("File", {FIELD: source.name}))
+		# and the process's own setting is put back
+		self.assertTrue(ImageFile.LOAD_TRUNCATED_IMAGES)
+
 	def test_the_backfill_moves_its_cursor_before_it_renders(self):
 		source = self.attach(photo())
 		saved = frappe.db.get_global(thumbnails.BACKFILL_CURSOR)
