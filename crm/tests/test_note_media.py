@@ -156,6 +156,19 @@ class NoteMediaTest(ReplayTestCase):
 		frappe.set_user(OTHER)
 		self.assertEqual(get_note_media([note]), {})
 
+	def test_a_photos_thumbnail_is_not_listed_as_another_photo(self):
+		from crm.utils.thumbnails import make_thumbnail
+
+		photo = media_id()
+		stage_media(photo, "photo", jpeg(1200, 900))
+		replay(new_id(), "add_note", self.note([photo]))
+		note = self.last_note().name
+		source = frappe.db.get_value("File", {"file_name": f"{PREFIX}{photo}.jpg"}, "name")
+		self.assertTrue(make_thumbnail(source))
+		# the thumbnail sits on the note beside its photo
+		self.assertEqual(len(self.files_on(note)), 2)
+		self.assertEqual([m["name"] for m in get_note_media([note])[note]], [source])
+
 	def test_unclaimed_uploads_are_removed_after_the_outbox_horizon(self):
 		old, fresh = media_id(), media_id()
 		stage_media(old, "photo", jpeg())
