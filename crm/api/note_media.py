@@ -149,6 +149,21 @@ def stage_media(media_id: str, kind: str, data: str) -> dict:
 	return {"media_id": media_id, "status": "staged"}
 
 
+def _on_note(media_id: str, user: str, note: str) -> bool:
+	"""Whether the caller's own file for ``media_id`` is already on ``note``."""
+	return bool(
+		frappe.db.exists(
+			"File",
+			{
+				"file_name": ("like", f"{PREFIX}{media_id}.%"),
+				"owner": user,
+				"attached_to_doctype": "FCRM Note",
+				"attached_to_name": note,
+			},
+		)
+	)
+
+
 def _refuse_hoarding(user: str, incoming: int) -> None:
 	waiting = frappe.get_all(
 		"File",
@@ -234,7 +249,9 @@ def claim_media(note: str, ids: list[str]) -> None:
 		files.append(name)
 	kinds = [_kind(frappe.db.get_value("File", name, "file_name")) for name in files]
 	# with what the note already holds: a note edited later takes no more than
-	# one written in a single go
+	# one written in a single go. The note's row is held while it is counted
+	# and filled, so two saves at once cannot each see room for the same photo.
+	frappe.db.get_value("FCRM Note", note, "name", for_update=True)
 	kinds += [
 		_kind(file_name)
 		for file_name in frappe.get_all(
@@ -277,7 +294,12 @@ def attach_media(note: str, media: list | str) -> dict:
 	ids = media_ids(frappe.parse_json(media) if isinstance(media, str) else media)
 	if not ids:
 		frappe.throw(_("Add a photo or a voice note first."), frappe.ValidationError)
-	claim_media(note, ids)
+	# safe to repeat: a file this call already put on the note (the answer was
+	# lost, the dialog asked again) is done, not missing
+	user = frappe.session.user
+	waiting = [i for i in ids if not _on_note(i, user, note)]
+	if waiting:
+		claim_media(note, waiting)
 	return {"note": note, "attached": len(ids)}
 
 

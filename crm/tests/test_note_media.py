@@ -214,6 +214,18 @@ class NoteMediaTest(ReplayTestCase):
 		attach_media(note, frappe.as_json([more]))
 		self.assertEqual(len(get_note_media([note])[note]), 3)
 
+	def test_asking_again_after_a_lost_answer_is_not_a_refusal(self):
+		note = self.own_note()
+		photo, later = media_id(), media_id()
+		stage_media(photo, "photo", jpeg())
+		attach_media(note, [photo])
+		# the dialog never heard back and sends the same photo, plus a new one
+		self.assertEqual(stage_media(photo, "photo", jpeg())["status"], "duplicate")
+		stage_media(later, "photo", jpeg())
+		attach_media(note, [photo, later])
+		attach_media(note, [photo, later])
+		self.assertEqual(len(self.files_on(note)), 2)
+
 	def test_a_note_edited_later_takes_no_more_than_one_written_in_one_go(self):
 		note = self.own_note()
 		first = [media_id() for _ in range(MAX_PHOTOS)]

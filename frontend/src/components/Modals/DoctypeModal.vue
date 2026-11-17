@@ -215,20 +215,19 @@ async function sendMedia(note) {
 const _create = createResource({
   url: 'frappe.client.insert',
   onSuccess: async (d) => {
-    const sent = await sendMedia(d.name)
     resetNewDocument(document, props.doctype)
+    // told now, not after the upload: a dialog closed while its photos are
+    // still going would never say the note exists
     emit('afterInsert', d)
-    if (sent) {
-      show.value = false
-      return
+    if (!(await sendMedia(d.name))) {
+      // the note exists: say so, rather than leave a form that would create
+      // it a second time
+      toast.warning(
+        __(
+          'The note was saved without its photos or voice note. Open it to add them again.',
+        ),
+      )
     }
-    // the note exists now: say so, rather than leave a form that would
-    // create it a second time
-    toast.warning(
-      __(
-        'The note was saved without its photos or voice note. Open it to add them again.',
-      ),
-    )
     show.value = false
   },
   onError: (err) => {
@@ -251,7 +250,7 @@ const _create = createResource({
 const creating = ref(false)
 
 async function create() {
-  if (creating.value || stillRecording()) return
+  if (creating.value || attaching.value || stillRecording()) return
   creating.value = true
   try {
     await triggerOnBeforeCreate?.()
@@ -275,10 +274,8 @@ async function update() {
   if (!document.isDirty) {
     if (media.value?.count) {
       // only photos or a recording were added to the note
-      if (await sendMedia(props.docname)) {
-        emit('afterUpdate', document.doc)
-        show.value = false
-      }
+      emit('afterUpdate', document.doc)
+      if (await sendMedia(props.docname)) show.value = false
       return
     }
     toast.info(__('Nothing to update'))
@@ -287,9 +284,8 @@ async function update() {
   }
   document.save.submit(null, {
     onSuccess: async (d) => {
-      const sent = await sendMedia(props.docname)
       emit('afterUpdate', d)
-      if (sent) show.value = false
+      if (await sendMedia(props.docname)) show.value = false
     },
     onError: (err) => {
       error.value = err.messages?.[0] || 'Could not update document'
