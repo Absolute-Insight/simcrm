@@ -953,7 +953,7 @@ def _replay_add_note(payload: dict, moment: datetime, late: bool) -> None:
 		_name(payload, "reference_docname"),
 		NOTE_DOCTYPES,
 	)
-	from crm.api.note_media import claim_media, media_ids
+	from crm.api.note_media import claim_media, media_ids, media_title
 
 	content = _text(payload.get("content"), NOTE_TEXT_LIMIT)
 	media = media_ids(payload.get("media"))
@@ -963,7 +963,7 @@ def _replay_add_note(payload: dict, moment: datetime, late: bool) -> None:
 	title = (
 		_text(payload.get("title"), TITLE_LIMIT)
 		or (content.splitlines()[0][:TITLE_LIMIT] if content else "")
-		or _("Photos and voice note")
+		or media_title(media)
 	)
 	note = frappe.get_doc(
 		{

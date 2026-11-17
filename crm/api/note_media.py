@@ -202,6 +202,20 @@ def media_ids(value) -> list[str]:
 	return list(dict.fromkeys(ids))
 
 
+def media_title(ids: list[str]) -> str:
+	"""What a note holding only ``ids`` is called: named for what it holds."""
+	user = frappe.session.user
+	# a file that never arrived has no kind; claim_media refuses the note for it
+	staged = [name for name in (_staged(i, user) for i in ids) if name]
+	kinds = [_kind(frappe.db.get_value("File", name, "file_name")) for name in staged]
+	photos, voice = kinds.count("photo"), "voice" in kinds
+	if photos and voice:
+		return _("Photos and voice note") if photos > 1 else _("Photo and voice note")
+	if voice:
+		return _("Voice note")
+	return _("Photos") if photos > 1 else _("Photo")
+
+
 def claim_media(note: str, ids: list[str]) -> None:
 	"""Move the caller's staged files onto ``note``. Every one must be there:
 	a note missing a photo the rep took is not the note they saved, so the
