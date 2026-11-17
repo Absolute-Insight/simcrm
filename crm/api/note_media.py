@@ -20,13 +20,10 @@ from datetime import timedelta
 
 import frappe
 from frappe import _
-from frappe.query_builder.functions import IfNull
 
 from crm.agent.media import MediaRejected, _check_image_size, _image_mime, decode_base64
 from crm.utils import sales_user_only, user_rate_limited
-from crm.utils.thumbnails import FIELD as THUMBNAIL_FIELD
 from crm.utils.thumbnails import not_a_thumbnail
-from crm.utils.thumbnails import ready as thumbnails_ready
 
 MAX_PHOTOS = 4
 MAX_RECORDINGS = 1
@@ -235,28 +232,20 @@ def media_title(ids: list[str]) -> str:
 
 
 def _held_by(note: str) -> list[str]:
-	"""The file names of the photos and recordings on ``note``, for a count that
-	two saves at once cannot both pass.
+	"""The file names of the photos and recordings already on ``note``.
 
-	The note's row is taken first, so the saves queue; and the files are read
-	with a lock as well, because a locking read sees what has been committed
-	since this request began, where a plain one sees the note as it was then --
-	the save that waited would count the note without the first one's photos.
+	A plain read, on purpose. Two saves to one note in the same instant can each
+	see room and together pass the limit by a few of the caller's own files. A
+	locking read would close that, but it locks the gap in File's attachment
+	index, and two unrelated notes taking their first photo at once -- two
+	phones replaying -- would then deadlock. The limit is a courtesy to the
+	page, not a boundary; storage is bounded by the upload caps.
 	"""
-	from frappe.query_builder import DocType
-
-	frappe.db.get_value("FCRM Note", note, "name", for_update=True)
-	File = DocType("File")
-	query = (
-		frappe.qb.from_(File)
-		.select(File.file_name)
-		.where((File.attached_to_doctype == "FCRM Note") & (File.attached_to_name == note))
-		.for_update()
+	return frappe.get_all(
+		"File",
+		filters={"attached_to_doctype": "FCRM Note", "attached_to_name": note, **not_a_thumbnail()},
+		pluck="file_name",
 	)
-	if thumbnails_ready():
-		# a photo's thumbnail is a File on the same note; it is not a second photo
-		query = query.where(IfNull(File[THUMBNAIL_FIELD], "") == "")
-	return query.run(pluck=True)
 
 
 def claim_media(note: str, ids: list[str]) -> None:
