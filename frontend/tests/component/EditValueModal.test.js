@@ -13,11 +13,12 @@ vi.mock('frappe-ui', async (importOriginal) => {
     // The field picker: an <input> whose change emits the chosen field.
     Combobox: {
       name: 'Combobox',
-      props: ['options'],
+      props: ['options', 'placeholder'],
       emits: ['update:selected-option'],
       render() {
         return h('input', {
           class: 'pick-field',
+          placeholder: this.placeholder,
           onChange: (e) =>
             this.$emit(
               'update:selected-option',
@@ -38,6 +39,12 @@ vi.mock('frappe-ui', async (importOriginal) => {
           fieldtype: 'Select',
           options: 'New\nRenewal\nUpsell',
           value: 'custom_deal_type',
+        },
+        {
+          fieldname: 'custom_po_number',
+          fieldtype: 'Data',
+          label: 'PO Number',
+          value: 'custom_po_number',
         },
       ],
       fetch() {},
@@ -99,5 +106,31 @@ describe('EditValueModal (list Bulk Edit)', () => {
     expect(await bulkEdit('custom_deal_type', 'Renewal')).toEqual({
       custom_deal_type: 'Renewal',
     })
+  })
+})
+
+describe('EditValueModal hints', () => {
+  // The Value box used to carry "Contact Us" (a Source option) whatever the
+  // field, which read as a value already filled in.
+  it('names the field to pick and then the field being set', async () => {
+    const w = mount(EditValueModal, {
+      props: {
+        modelValue: true,
+        doctype: 'CRM Deal',
+        selectedValues: new Set(['DEAL-1']),
+      },
+      stubs: modalStubs,
+      plugins: [translation],
+    })
+    await flush()
+    const picker = w.el.querySelector('input.pick-field')
+    expect(picker.getAttribute('placeholder')).toBe('Select a field')
+
+    picker.value = 'custom_po_number'
+    picker.dispatchEvent(new Event('change'))
+    await flush()
+    const value = w.el.querySelector('input:not(.pick-field)')
+    expect(value.getAttribute('placeholder')).toBe('PO Number')
+    w.unmount()
   })
 })

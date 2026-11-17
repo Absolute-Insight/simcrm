@@ -8,7 +8,7 @@
           trigger="button"
           :model-value="field.fieldname"
           :options="fields.data || []"
-          :placeholder="__('Source')"
+          :placeholder="__('Select a field')"
           @update:selected-option="(e) => changeField(e)"
         />
       </div>
@@ -18,7 +18,7 @@
           :is="getValueComponent(field)"
           :value="newValue"
           size="md"
-          :placeholder="__('Contact Us')"
+          :placeholder="valuePlaceholder"
           @change="(v) => updateValue(v)"
         />
       </div>
@@ -109,6 +109,12 @@ const field = ref({
   fieldname: '',
   options: '',
 })
+
+// The greyed hint names the chosen field rather than showing a sample value,
+// which reads as data already filled in and goes stale when the field changes.
+const valuePlaceholder = computed(() =>
+  field.value.label ? __(field.value.label) : __('Value'),
+)
 
 const newValue = ref('')
 const loading = ref(false)
