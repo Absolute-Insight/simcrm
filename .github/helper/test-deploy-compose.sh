@@ -778,7 +778,7 @@ check("a non-b2 versioning store: --delete refuses", r.returncode == 2 and not c
 front = services["frontend"]
 check(
 	"frontend takes the upstream baseline before nginx starts",
-	"vectora-upstream-watch.sh && exec nginx-entrypoint.sh" in front["command"][-1] and "exec nginx-entrypoint.sh" in front["command"][-1],
+	front["command"][-1].endswith("vectora-upstream-watch.sh && exec nginx-entrypoint.sh"),
 	str(front["command"]),
 )
 check(
@@ -793,31 +793,54 @@ watch = os.path.join(repo, "deploy/nginx/upstream-watch.sh")
 check("the watcher parses", subprocess.run(["bash", "-n", watch]).returncode == 0)
 
 
-def run_watch(steps, **env):
+check(
+	"... and its healthcheck fails when the watcher stops beating",
+	"/tmp/upstream-watch.beat -mmin -1" in front["healthcheck"]["test"][-1],
+	str(front["healthcheck"]),
+)
+
+
+def run_watch(steps, nginx="master", until=None, **env):
 	"""Run the watcher against a getent that answers from files and an nginx that
-	logs its reloads; `steps` change the answers while it runs."""
+	logs every call; `steps` change the world while it runs. `nginx` is what the
+	pidfile names: a live master, some other process (a stale pid), or nothing."""
 	root = tempfile.mkdtemp(dir=work)
 	bin_dir = os.path.join(root, "bin")
 	os.makedirs(bin_dir)
 	for name, body in {
-		"getent": '#!/bin/sh\nf="$WATCH_STATE/$2"; [ -s "$f" ] || exit 2\nprintf "%s STREAM %s\\n" "$(cat "$f")" "$2"\n',
-		"nginx": '#!/bin/sh\necho "$*" >> "$WATCH_STATE/nginx.log"\nexit "${NGINX_RC:-0}"\n',
+		# one address per line in the file; empty means the name does not resolve
+		"getent": '#!/bin/sh\nf="$WATCH_STATE/$2"; [ -s "$f" ] || exit 2\nwhile read -r a; do printf "%s STREAM %s\\n" "$a" "$2"; done < "$f"\n',
+		# -t fails while $WATCH_STATE/t-fails exists; -s reload always "succeeds",
+		# as the real one does once the signal is sent
+		"nginx": '#!/bin/sh\necho "$*" >> "$WATCH_STATE/nginx.log"\n[ "$1" = -t ] && [ -e "$WATCH_STATE/t-fails" ] && exit 1\nexit 0\n',
 	}.items():
 		path = os.path.join(bin_dir, name)
 		with open(path, "w") as f:
 			f.write(body)
 		os.chmod(path, 0o755)
 
-	def answer(host, addr):
+	def answer(host, *addrs):
 		with open(os.path.join(root, host), "w") as f:
-			f.write(addr)
+			f.write("".join(a + "\n" for a in addrs))
+
+	def t_fails(on):
+		path = os.path.join(root, "t-fails")
+		if on:
+			open(path, "w").close()
+		elif os.path.exists(path):
+			os.remove(path)
 
 	answer("backend", "172.21.0.5")
 	answer("websocket", "172.21.0.8")
 	pid = os.path.join(root, "nginx.pid")
-	if not env.pop("NO_PID", None):
+	master = None
+	if nginx == "master":
+		master = subprocess.Popen(["bash", "-c", 'exec -a "nginx: master process nginx" sleep 60'])
 		with open(pid, "w") as f:
-			f.write("1\n")
+			f.write(f"{master.pid}\n")
+	elif nginx == "stale":
+		with open(pid, "w") as f:
+			f.write(f"{os.getpid()}\n")  # alive, and not nginx
 	log = open(os.path.join(root, "out.log"), "w")
 	proc = subprocess.Popen(
 		["bash", watch],
@@ -825,6 +848,7 @@ def run_watch(steps, **env):
 			"PATH": f"{bin_dir}:{os.environ['PATH']}",
 			"WATCH_STATE": root,
 			"WATCH_INTERVAL": "0.05",
+			"WATCH_BEAT": os.path.join(root, "beat"),
 			"NGINX_PID": pid,
 			"BACKEND": "backend:8000",
 			"SOCKETIO": "websocket:9000",
@@ -835,34 +859,79 @@ def run_watch(steps, **env):
 		start_new_session=True,
 	)
 	returned = proc.wait(timeout=5)  # the baseline is taken, the watch left running
-	time.sleep(0.4)
+
+	def reloads():
+		path = os.path.join(root, "nginx.log")
+		return open(path).read().count("-s reload") if os.path.exists(path) else 0
+
+	def settle(want=None):
+		# Poll rather than trust a fixed sleep on a busy runner: wait for the
+		# expected count, or give a "nothing happens" case a fair number of ticks.
+		deadline = time.time() + (5 if want else 0.5)
+		while time.time() < deadline and (want is None or reloads() < want):
+			time.sleep(0.05)
+		time.sleep(0.2)
+
+	settle()
 	for step in steps:
-		step(answer)
-		time.sleep(0.4)
-	os.killpg(proc.pid, 15)
+		want = step(answer, t_fails)
+		settle(want)
+	try:
+		os.killpg(proc.pid, 15)
+	except ProcessLookupError:
+		pass
+	if master:
+		master.kill()
 	log.close()
 	out = open(os.path.join(root, "out.log")).read() + f"[exit {returned}]"
-	reloads = open(os.path.join(root, "nginx.log")).read().split() if os.path.exists(os.path.join(root, "nginx.log")) else []
-	return reloads, out
+	beat = os.path.exists(os.path.join(root, "beat"))
+	return reloads(), out, beat
 
 
-reloads, out = run_watch([])
-check("the watcher leaves nginx alone while nothing moves", reloads == [], out)
-reloads, out = run_watch([lambda a: a("websocket", "172.21.0.9")])
-check("websocket on a new address: nginx is reloaded once", reloads == ["-s", "reload"], f"{reloads} {out}")
-check("... and the change is logged", "websocket=172.21.0.9" in out, out)
-reloads, out = run_watch([lambda a: a("backend", "172.21.0.6")])
-check("backend on a new address: nginx is reloaded", reloads == ["-s", "reload"], f"{reloads} {out}")
-reloads, out = run_watch([lambda a: a("websocket", ""), lambda a: a("websocket", "172.21.0.8")])
-check("a container down and back on the same address: no reload", reloads == [], f"{reloads} {out}")
-reloads, out = run_watch([lambda a: a("websocket", ""), lambda a: a("websocket", "172.21.0.9")])
-check("down, then back on a new address: one reload, once it resolves", reloads == ["-s", "reload"], f"{reloads} {out}")
-reloads, out = run_watch([lambda a: a("websocket", "172.21.0.9")], NGINX_RC="1")
-check("a reload that fails is tried again", len(reloads) >= 4, f"{reloads} {out}")
-reloads, out = run_watch([])
-check("the watcher hands back to nginx once the baseline is taken", out.endswith("[exit 0]"), out)
-reloads, out = run_watch([lambda a: a("websocket", "172.21.0.9")], NO_PID="1")
-check("no reload is sent before nginx is up", reloads == [], f"{reloads} {out}")
+def move(host, *addrs, want=None):
+	def step(answer, t_fails):
+		answer(host, *addrs)
+		return want
+	return step
+
+
+def nginx_t(fails, want=None):
+	def step(answer, t_fails):
+		t_fails(fails)
+		return want
+	return step
+
+
+n, out, beat = run_watch([])
+check("the watcher leaves nginx alone while nothing moves", n == 0, out)
+check("... hands back to nginx once the baseline is taken", out.endswith("[exit 0]"), out)
+check("... and beats", beat, out)
+n, out, _ = run_watch([move("websocket", "172.21.0.9", want=1)])
+check("websocket on a new address: nginx is reloaded once", n == 1, f"{n} {out}")
+check("... and the reload is logged", "websocket=172.21.0.9: nginx reloaded" in out, out)
+n, out, _ = run_watch([move("backend", "172.21.0.6", want=1)])
+check("backend on a new address: nginx is reloaded", n == 1, f"{n} {out}")
+n, out, _ = run_watch([move("websocket"), move("websocket", "172.21.0.9", want=1)])
+check("down, then back on a new address: one reload, once it resolves", n == 1, f"{n} {out}")
+n, out, _ = run_watch([move("websocket"), move("websocket", "172.21.0.8", want=1)])
+check("down and back on the same address: one reload (a reload sent as it went may not have taken)", n == 1, f"{n} {out}")
+n, out, _ = run_watch([nginx_t(True), move("websocket", "172.21.0.9"), nginx_t(False, want=1)])
+check("a config nginx would reject is not reloaded, and is tried again once it would not", n == 1, f"{n} {out}")
+n, out, _ = run_watch([nginx_t(True), move("websocket", "172.21.0.9")])
+check("... while it would reject it, nothing is sent", n == 0, f"{n} {out}")
+n, out, _ = run_watch(
+	[
+		move("backend", "172.21.0.5", "172.21.0.6", want=1),  # a second container: a real change
+		move("backend", "172.21.0.6", "172.21.0.5"),  # then DNS rotating the answer
+		move("backend", "172.21.0.5", "172.21.0.6"),
+		move("backend", "172.21.0.6", "172.21.0.5"),
+	]
+)
+check("two containers behind one name, answered in either order: one reload, not one per tick", n == 1, f"{n} {out}")
+n, out, _ = run_watch([move("websocket", "172.21.0.9")], nginx="none")
+check("no reload is sent before nginx is up", n == 0, f"{n} {out}")
+n, out, _ = run_watch([move("websocket", "172.21.0.9")], nginx="stale")
+check("a pidfile naming something other than nginx is not signalled", n == 0, f"{n} {out}")
 
 print()
 if failures:

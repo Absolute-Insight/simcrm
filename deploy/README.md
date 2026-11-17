@@ -873,19 +873,27 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<site>/api/method/login
 # 503 while closed, 200 once the config cache has expired
 ```
 
-**Restarting `backend` or `websocket` alone is safe.** nginx in the `frontend`
-service resolves both addresses only when it loads its config, so either one
-coming back on a new container IP used to leave every request (or every
-socket.io connection) 502ing until nginx was restarted too. `frontend` now runs
-`nginx/upstream-watch.sh` beside nginx: it looks both names up every 5 seconds
-and reloads nginx, gracefully, when one moves. A reload shows in the logs:
+**After restarting `backend` or `websocket` alone, check that `frontend`
+followed.** nginx in the `frontend` service resolves both addresses only when it
+loads its config, so either one coming back on a new container IP leaves every
+request (or every socket.io connection) 502ing until nginx reloads.
+`frontend` runs `nginx/upstream-watch.sh` beside nginx for exactly this: it looks
+both names up every 5 seconds and reloads nginx, gracefully, once they have moved
+and both resolve. Expect up to that long of 502s, and none of it while either
+container is still down -- nginx refuses a config naming an upstream that does
+not resolve. A reload shows in the logs, and a dead watcher turns the
+healthcheck red:
 
 ```bash
 docker compose logs frontend | grep upstream-watch
 ```
 
-On a stack older than that, reload nginx by hand after any restart that moved
-one: `docker compose exec frontend nginx -s reload`.
+If 502s outlast the container coming back (or on a stack without the watcher),
+reload by hand -- no connection is dropped:
+
+```bash
+docker compose exec frontend nginx -s reload
+```
 
 *Rehearsed (2026-08-18), and worth being exact about what that did and did not
 prove.* `migrate` was run against a scratch site restored from a real

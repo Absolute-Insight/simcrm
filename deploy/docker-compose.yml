@@ -1168,11 +1168,12 @@ services:
       - "${HTTP_BIND_ADDRESS:-127.0.0.1}:${HTTP_PUBLISH_PORT:-8080}:8080"
     healthcheck:
       # Through nginx to the backend, so a green check means routing works,
-      # not only that nginx is listening.
+      # not only that nginx is listening. And the upstream watcher's heartbeat:
+      # a dead watcher is otherwise invisible until the next address move 502s.
       test:
         [
           "CMD-SHELL",
-          "curl -fsS -o /dev/null http://localhost:8080/api/method/ping || exit 1",
+          "curl -fsS -o /dev/null http://localhost:8080/api/method/ping && find /tmp/upstream-watch.beat -mmin -1 | grep -q . || exit 1",
         ]
       interval: 30s
       timeout: 5s
