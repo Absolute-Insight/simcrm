@@ -114,6 +114,9 @@ def blank_bucket(column):
 # came second among MBP's "salespeople".
 SYSTEM_OWNERS = ("Administrator",)
 
+# the ERP quote a deal stands for, where the Acumatica link has added the field
+QUOTE_NUMBER_FIELD = "acumatica_sales_quote"
+
 
 def owner_bucket(column):
 	"""The owner to group a sales figure on: NULL for nobody -- NULL, ``''`` and the
@@ -3263,6 +3266,66 @@ def quota_by_user(users: list[str], from_date: str, to_date: str) -> dict[str, f
 	)
 	for row in rows:
 		totals[row.user] += _prorated_quota(row, from_date, to_date)
+	return totals
+
+
+def quotes_target_by_user(users: list[str], from_date: str, to_date: str) -> dict[str, float]:
+	"""How many quotes each rep in ``users`` is expected to raise in the period.
+
+	The quotes target sits on the same monthly ``CRM Quota`` row as the revenue
+	one and is pro-rated the same way, so a part month asks for part of it.
+	The caller has already decided who it may read, as for :func:`quota_by_user`.
+	"""
+	users = sorted({u for u in users if u})
+	totals: dict[str, float] = dict.fromkeys(users, 0.0)
+	if not users:
+		return totals
+	from_date, to_date = getdate(from_date), getdate(to_date)
+	if to_date < from_date:
+		return totals
+	rows = frappe.get_all(
+		"CRM Quota",
+		filters={
+			"user": ("in", users),
+			"quotes": (">", 0),
+			"period_start": ("between", [get_first_day(from_date), get_last_day(to_date)]),
+		},
+		fields=["user", "quotes as amount", "period_start"],
+	)
+	for row in rows:
+		totals[row.user] += _prorated_quota(row, from_date, to_date)
+	return totals
+
+
+def quotes_raised_by_user(users: list[str], from_date: str, to_date: str) -> dict[str, int]:
+	"""Quotes each rep in ``users`` raised in the period: ``{user: count}``.
+
+	A quote is a deal, counted on the day it was created and against the rep who
+	owns it now -- not everyone assigned to help, and a deal handed to another
+	rep counts for them from then on. Where the
+	ERP link is installed only deals that carry a quote number count, so a deal
+	typed in ahead of its quote is not one yet. Scoped to what the caller may
+	read, like every other deal aggregate.
+	"""
+	users = sorted({u for u in users if u})
+	totals: dict[str, int] = dict.fromkeys(users, 0)
+	if not users:
+		return totals
+	Deal = DocType("CRM Deal")
+	query = (
+		frappe.qb.from_(Deal)
+		.select(Deal.deal_owner, Count(Deal.name))
+		.where(
+			(Deal.creation >= getdate(from_date))
+			& (Deal.creation < frappe.utils.add_days(getdate(to_date), 1))
+			& Deal.deal_owner.isin(users)
+		)
+		.groupby(Deal.deal_owner)
+	)
+	if frappe.get_meta("CRM Deal").has_field(QUOTE_NUMBER_FIELD):
+		query = query.where(IfNull(Deal[QUOTE_NUMBER_FIELD], "") != "")
+	for owner, count in scope_deals(query).run():
+		totals[owner] = int(count or 0)
 	return totals
 
 

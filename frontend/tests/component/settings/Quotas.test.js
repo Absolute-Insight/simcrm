@@ -40,6 +40,7 @@ const gridFor = (year) => ({
       user: 'rep@x.test',
       full_name: 'Rep',
       quota: { [`${year}-02-01`]: 100000 },
+      quotes: { [`${year}-02-01`]: 40 },
       actual: 0,
     },
   ],
@@ -123,6 +124,35 @@ describe('Sales Targets grid', () => {
     blur(repMar)
     await flush()
     expect(saves().map((r) => r.params.amount)).toEqual([300000])
+  })
+
+  it('switches to the quotes target and saves a whole number of quotes', async () => {
+    backend.handlers['crm.api.quota.set_quota'] = ({ quotes }) => ({ quotes })
+    const { el } = mount(Quotas)
+    await flush()
+    const quotesTab = [...el.querySelectorAll('button')].find(
+      (b) => b.textContent.trim() === 'Quotes',
+    )
+    quotesTab.click()
+    await flush()
+    // the same cell now shows the count, not the revenue figure
+    const repFeb = cell(el, 'Rep', `${YEAR}-02-01`)
+    expect(repFeb.value).toBe('40')
+
+    focus(repFeb)
+    type(repFeb, '12.5')
+    blur(repFeb)
+    await flush()
+    expect(saves()).toEqual([])
+    expect(backend.toasts.at(-1)[1]).toMatch(/whole number/)
+
+    focus(repFeb)
+    type(repFeb, '45')
+    blur(repFeb)
+    await flush()
+    expect(saves().map((r) => r.params)).toEqual([
+      { user: 'rep@x.test', period_start: `${YEAR}-02-01`, quotes: 45 },
+    ])
   })
 
   it('refuses a target it cannot read rather than saving a different one', async () => {

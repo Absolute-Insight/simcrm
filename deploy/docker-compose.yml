@@ -1120,7 +1120,14 @@ services:
 
   frontend:
     <<: *app
-    command: ["nginx-entrypoint.sh"]
+    # nginx looks up backend and websocket once, at start; the watcher reloads it
+    # when either comes back on a new address -- nginx/upstream-watch.sh.
+    command:
+      [
+        "bash",
+        "-c",
+        "bash /etc/nginx/vectora-upstream-watch.sh && exec nginx-entrypoint.sh",
+      ]
     # Repeats x-app's two volumes on purpose: a `volumes:` key here replaces the
     # merged list outright rather than extending it, so dropping either line
     # takes the site data with it. The third adds the Service-Worker-Allowed
@@ -1134,6 +1141,7 @@ services:
       # only place a `map` is allowed -- the snippet above is included inside
       # the generated server block.
       - ./nginx/csp_map.conf:/etc/nginx/conf.d/00-vectora-csp.conf:ro
+      - ./nginx/upstream-watch.sh:/etc/nginx/vectora-upstream-watch.sh:ro
     environment:
       BACKEND: backend:8000
       SOCKETIO: websocket:9000
@@ -1160,11 +1168,12 @@ services:
       - "${HTTP_BIND_ADDRESS:-127.0.0.1}:${HTTP_PUBLISH_PORT:-8080}:8080"
     healthcheck:
       # Through nginx to the backend, so a green check means routing works,
-      # not only that nginx is listening.
+      # not only that nginx is listening. And the upstream watcher's heartbeat:
+      # a dead watcher is otherwise invisible until the next address move 502s.
       test:
         [
           "CMD-SHELL",
-          "curl -fsS -o /dev/null http://localhost:8080/api/method/ping || exit 1",
+          "curl -fsS -o /dev/null http://localhost:8080/api/method/ping && find /tmp/upstream-watch.beat -mmin -1 | grep -q . || exit 1",
         ]
       interval: 30s
       timeout: 5s
