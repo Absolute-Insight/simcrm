@@ -83,6 +83,22 @@ attainment.
 Managers set targets in **Settings → Sales Targets** (a rep × month grid with a
 "fill year" shortcut); reps see their own row read-only.
 
+### Quotes target
+
+The same row carries `quotes`: how many quotes the rep is expected to raise in
+the month (MBP budgets quotes per rep as well as rands). The grid's
+**Revenue / Quotes** switch edits one or the other; `set_quota(amount=…)` and
+`set_quota(quotes=…)` each leave the other alone, and the row is deleted only
+when neither is left. Pro-rated like the revenue target
+(`quotes_target_by_user`).
+
+A quote raised is a deal counted on its `creation` day against its
+`deal_owner` (`quotes_raised_by_user`) — the owner only, not every assignee,
+because the question is who raised it. Where the Acumatica link has added
+`acumatica_sales_quote`, only deals with a quote number count. The
+**Quotes against budget** report lists reps with a quotes target in a month the
+period touches.
+
 ## Visit targets
 
 `CRM Visit Target` is one row per rep: customer visits per **working week**
@@ -132,9 +148,10 @@ showing only the columns that can differ.
 
 ## Reports
 
-Eleven built-ins, all registry entries over the metrics layer:
+Twelve built-ins, all registry entries over the metrics layer:
 pipeline by stage, funnel conversion, plan adherence by rep, forecast vs actual,
-pipeline by segment, quota attainment by rep, client reliability, visits against
+pipeline by segment, quota attainment by rep, quotes against budget, client
+reliability, visits against
 target, activities by type, customer interaction, customers with no
 interaction. The last four are territory-blind (rep plans have no territory;
 customer interaction could narrow by the organization's territory and does not

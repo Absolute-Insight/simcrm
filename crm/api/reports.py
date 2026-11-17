@@ -189,7 +189,8 @@ def _pipeline_by_segment(from_date, to_date, user, territory=None):
 def _quota_attainment_by_rep(from_date, to_date, user, territory=None):
 	from crm.api.dashboard import quota_by_user, visible_reps, won_value_by_user
 
-	reps = set(frappe.get_all("CRM Quota", pluck="user", distinct=True))
+	# a row can hold a quotes target alone; that rep has no revenue target
+	reps = set(frappe.get_all("CRM Quota", filters={"amount": (">", 0)}, pluck="user", distinct=True))
 	Deal = DocType("CRM Deal")
 	Status = DocType("CRM Deal Status")
 	won_owners = (
@@ -230,6 +231,51 @@ def _quota_attainment_by_rep(from_date, to_date, user, territory=None):
 				# no target is not 0% of one: a rep who closed business before a
 				# target was set has nothing to attain, and 0 ranked them worst
 				"attainment": round(actual / quota * 100) if quota else None,
+			}
+		)
+	return _rep_display(rows)
+
+
+def _quotes_against_budget_by_rep(from_date, to_date, user, territory=None):
+	from crm.api.dashboard import quotes_raised_by_user, quotes_target_by_user, visible_reps
+
+	# everyone with a quotes target in a month the period touches
+	reps = set(
+		frappe.get_all(
+			"CRM Quota",
+			filters={
+				"quotes": (">", 0),
+				"period_start": (
+					"between",
+					[frappe.utils.get_first_day(from_date), frappe.utils.get_last_day(to_date)],
+				),
+			},
+			pluck="user",
+			distinct=True,
+		)
+	)
+	if user:
+		reps &= {user}
+	else:
+		visible = visible_reps()
+		if visible is not None:
+			reps &= set(visible)
+
+	targets = quotes_target_by_user(list(reps), from_date, to_date)
+	raised = quotes_raised_by_user(list(reps), from_date, to_date)
+	rows = []
+	for rep in sorted(reps):
+		# one decimal, as the visit target: a few days of a small monthly
+		# target must not round to "no target"
+		target = round(targets.get(rep, 0.0), 1)
+		count = raised.get(rep, 0)
+		rows.append(
+			{
+				"user": rep,
+				"target": target,
+				"quotes": count,
+				"gap": round(count - target, 1),
+				"attainment": round(count / target * 100) if target else None,
 			}
 		)
 	return _rep_display(rows)
@@ -394,6 +440,28 @@ REPORTS = {
 		],
 		"get_rows": _quota_attainment_by_rep,
 	},
+	"quotes_against_budget_by_rep": {
+		"title": "Quotes against budget",
+		"description": "Quotes each rep raised in the period against their monthly quotes target, pro-rated for part months",
+		"columns": [
+			{"key": "rep", "label": "Rep", "type": "text"},
+			{
+				"key": "target",
+				"label": "Quotes target",
+				"type": "number",
+				"description": "The monthly number of quotes from Settings, Sales Targets, pro-rated to the days in the period",
+			},
+			{
+				"key": "quotes",
+				"label": "Quotes raised",
+				"type": "number",
+				"description": "Quotes created in the period, counted against the rep who owns them",
+			},
+			{"key": "gap", "label": "Gap", "type": "number"},
+			{"key": "attainment", "label": "% of target", "type": "percent"},
+		],
+		"get_rows": _quotes_against_budget_by_rep,
+	},
 	"client_reliability": {
 		"title": "Client reliability",
 		"description": "Activity outcomes by client, most rescheduled and cancelled first",
@@ -547,6 +615,7 @@ TERRITORY_BLIND = frozenset(
 	{
 		"plan_adherence_by_rep",
 		"quota_attainment_by_rep",
+		"quotes_against_budget_by_rep",
 		"client_reliability",
 		"visits_by_rep",
 		"rep_summary",

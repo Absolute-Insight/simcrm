@@ -10,11 +10,14 @@ query handles that) but may not author one.
 
 from __future__ import annotations
 
+import math
+
 import frappe
 from frappe import _
 from frappe.utils import cint, flt, get_first_day, getdate
 
 from crm.api.dashboard import get_base_currency, visible_reps
+from crm.fcrm.doctype.crm_quota.crm_quota import MAX_QUOTES_PER_MONTH
 
 
 def _is_manager() -> bool:
@@ -87,11 +90,16 @@ def get_quota_grid(year: int | str | None = None):
 			"user": ("in", users),
 			"period_start": ("between", [months[0], f"{year}-12-31"]),
 		},
-		fields=["user", "period_start", "amount"],
+		fields=["user", "period_start", "amount", "quotes"],
 	)
 	by_user: dict[str, dict[str, float]] = {}
+	quotes_by_user: dict[str, dict[str, int]] = {}
 	for row in rows:
-		by_user.setdefault(row.user, {})[str(row.period_start)] = flt(row.amount)
+		# a row can hold either target without the other
+		if flt(row.amount):
+			by_user.setdefault(row.user, {})[str(row.period_start)] = flt(row.amount)
+		if cint(row.quotes):
+			quotes_by_user.setdefault(row.user, {})[str(row.period_start)] = cint(row.quotes)
 
 	user_meta = {
 		u.name: u.full_name
@@ -111,6 +119,7 @@ def get_quota_grid(year: int | str | None = None):
 				"full_name": user_meta.get(user) or user,
 				"quota": by_user.get(user, {}),
 				"actual": actual.get(user, 0.0),
+				"quotes": quotes_by_user.get(user, {}),
 			}
 			for user in sorted(users, key=lambda u: (user_meta.get(u) or u).lower())
 		],
@@ -130,9 +139,44 @@ def _sales_users() -> list[str]:
 	)
 
 
+KINDS = ("amount", "quotes")
+
+
+def _kind(kind: str | None) -> str:
+	kind = kind or "amount"
+	if kind not in KINDS:
+		frappe.throw(_("Unknown target."), frappe.ValidationError)
+	return kind
+
+
+def _write_target(user: str, period_start, kind: str, value):
+	"""Set one target on a rep-month. The row goes when neither target is left."""
+	name = frappe.db.exists("CRM Quota", {"user": user, "period_start": period_start})
+	if not name:
+		if not value:
+			return 0
+		doc = frappe.get_doc({"doctype": "CRM Quota", "user": user, "period_start": period_start})
+		doc.set(kind, value)
+		doc.insert(ignore_permissions=True)
+		return doc.get(kind)
+	doc = frappe.get_doc("CRM Quota", name)
+	doc.set(kind, value)
+	if not flt(doc.amount) and not cint(doc.quotes):
+		frappe.delete_doc("CRM Quota", name, ignore_permissions=True)
+		return 0
+	doc.save(ignore_permissions=True)
+	return doc.get(kind)
+
+
 @frappe.whitelist()
-def set_quota(user: str, period_start: str, amount: float | str):
-	"""Upsert one cell of the grid. Zero or blank clears the target for that month."""
+def set_quota(
+	user: str,
+	period_start: str,
+	amount: float | str | None = None,
+	quotes: int | str | None = None,
+):
+	"""Upsert one cell of the grid: the revenue target (``amount``) or the number
+	of quotes (``quotes``). Zero or blank clears that target for the month."""
 	_only_managers()
 	_only_own_team(user)
 	_not_the_caller(user)
@@ -140,32 +184,35 @@ def set_quota(user: str, period_start: str, amount: float | str):
 		frappe.throw(_("{0} is not a sales user.").format(user))
 
 	period_start = get_first_day(getdate(period_start))
+	if (quotes is None) == (amount is None):
+		# one cell, one target: with both, guessing which was meant could clear
+		# the other; with neither there is nothing to set
+		frappe.throw(_("Set one target at a time."), frappe.ValidationError)
+	if quotes is not None:
+		try:
+			count = float(quotes or 0)
+		except (TypeError, ValueError):
+			count = -1
+		# nan and inf are floats too, and neither is a number of quotes
+		if not math.isfinite(count) or count < 0 or count != int(count) or count > MAX_QUOTES_PER_MONTH:
+			frappe.throw(
+				_("Enter a whole number of quotes, 0 to {0}.").format(MAX_QUOTES_PER_MONTH),
+				frappe.ValidationError,
+			)
+		return {"quotes": _write_target(user, period_start, "quotes", int(count))}
+
 	amount = flt(amount)
 	if amount < 0:
 		frappe.throw(_("Quota cannot be negative."))
-
-	name = frappe.db.exists("CRM Quota", {"user": user, "period_start": period_start})
-	if not amount:
-		if name:
-			frappe.delete_doc("CRM Quota", name, ignore_permissions=True)
-		return {"amount": 0}
-
-	if name:
-		doc = frappe.get_doc("CRM Quota", name)
-		doc.amount = amount
-		doc.save(ignore_permissions=True)
-	else:
-		doc = frappe.get_doc(
-			{"doctype": "CRM Quota", "user": user, "period_start": period_start, "amount": amount}
-		).insert(ignore_permissions=True)
-	return {"amount": doc.amount}
+	return {"amount": _write_target(user, period_start, "amount", amount)}
 
 
 @frappe.whitelist()
-def copy_quota_forward(user: str, from_period: str, months: int | str = 11):
+def copy_quota_forward(user: str, from_period: str, months: int | str = 11, kind: str = "amount"):
 	"""Repeat one month's target across the following ``months`` — the common case
 	when a target is flat for a year, and far less error-prone than typing twelve cells."""
 	_only_managers()
+	kind = _kind(kind)
 	# scoped before the source is read, so the copy neither reveals nor
 	# rewrites a target outside the caller's subtree
 	_only_own_team(user)
@@ -173,13 +220,13 @@ def copy_quota_forward(user: str, from_period: str, months: int | str = 11):
 	# read; refusing here stops the call before it reads anything
 	_not_the_caller(user)
 	source = get_first_day(getdate(from_period))
-	amount = frappe.db.get_value("CRM Quota", {"user": user, "period_start": source}, "amount")
-	if not amount:
+	value = frappe.db.get_value("CRM Quota", {"user": user, "period_start": source}, kind)
+	if not value:
 		frappe.throw(_("Set the first month's quota before copying it forward."))
 
 	# at most the rest of a year: the grid is twelve cells wide, and an
 	# unbounded count is a write loop the caller sizes
 	months = max(0, min(cint(months), 11))
 	for offset in range(1, months + 1):
-		set_quota(user, frappe.utils.add_months(source, offset), amount)
+		set_quota(user, frappe.utils.add_months(source, offset), **{kind: value})
 	return {"copied": months}
