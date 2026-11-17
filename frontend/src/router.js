@@ -1,10 +1,11 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, START_LOCATION } from 'vue-router'
 import { call } from 'frappe-ui'
 import { usersStore } from '@/stores/users'
 import { sessionStore } from '@/stores/session'
 import { viewsStore } from '@/stores/views'
 import { accessStore } from '@/stores/access'
 import { reloadOnceForStaleChunk } from '@/utils/staleChunk'
+import { retryWithBackoff } from '@/utils/retry'
 import { MOBILE_BREAKPOINT_PX } from '@/composables/settings'
 import { connectivity, reachableForNavigation } from '@/offline/connectivity'
 
@@ -217,7 +218,17 @@ const routes = [
     name: 'Not Permitted',
     component: () => import('@/pages/NotPermitted.vue'),
   },
+  {
+    path: '/load-failed',
+    name: 'Load Failed',
+    component: () => import('@/pages/LoadFailed.vue'),
+  },
 ]
+
+/* Waits before the 2nd and 3rd try at loading users on a cold start: long
+   enough to ride out a worker restart, short enough that a real outage gets to
+   the Load Failed page in about two seconds. */
+const FIRST_LOAD_RETRY_DELAYS_MS = [500, 1500]
 
 /**
  * The mobile or desktop variant of a record page.
@@ -333,19 +344,45 @@ router.beforeEach(async (to, from, next) => {
   }
   if (isLoggedIn && to.meta.offline && !connectivity.online) return next()
 
+  // It explains that the users could not be loaded, and its Try again reloads
+  // the page; nothing below can be decided without them.
+  if (to.name === 'Load Failed') return next()
+
   if (isLoggedIn && !users.fetched) {
+    // On the first navigation there is no page to stay on: next(false) left
+    // the shell blank until the person thought to reload. Ride out a blip
+    // first, then say what happened.
+    const isFirstLoad = from === START_LOCATION
     try {
       // A failed fetch leaves its rejected promise behind, so retry rather than
       // re-await it, or one network blip would refuse every later navigation.
-      await (users.error ? users.reload() : users.promise)
+      await retryWithBackoff(
+        () => (users.error ? users.reload() : users.promise),
+        {
+          delays: isFirstLoad ? FIRST_LOAD_RETRY_DELAYS_MS : [],
+          // Neither a refusal nor a dead session gets better on a retry.
+          shouldRetry: (error) =>
+            !['PermissionError', 'AuthenticationError'].includes(
+              error?.exc_type,
+            ),
+        },
+      )
     } catch (error) {
       console.error('Error loading users', error)
       // the line dropped under this very request: same answer as above
       if (!(await reachableForNavigation())) return toField()
       // Only a PermissionError means "not a CRM user". Anything else (a timeout,
       // a 502 during a deploy) left isCrmUser() false for a real CRM user and
-      // sent them to Not Permitted; stay put instead.
+      // sent them to Not Permitted; stay put instead -- or, with nowhere to
+      // stay, show why the page is empty.
       if (error?.exc_type !== 'PermissionError') {
+        if (isFirstLoad) {
+          return next({
+            name: 'Load Failed',
+            query: { redirect: to.fullPath },
+            replace: true,
+          })
+        }
         return next(false)
       }
     }

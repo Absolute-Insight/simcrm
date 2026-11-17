@@ -38,7 +38,7 @@ const REP = 'rep@example.com'
  * `respond(url)` (throw to fail the request). Returns the router and the
  * URLs it was asked for.
  */
-async function bootTab({ role = 'Sales User', hidden = [], views }) {
+async function bootTab({ role = 'Sales User', hidden = [], views, users }) {
   const user = { name: REP, email: REP, full_name: 'Rep', role }
   const requests = []
   vi.resetModules()
@@ -48,7 +48,9 @@ async function bootTab({ role = 'Sales User', hidden = [], views }) {
   const { setConfig } = await import('frappe-ui')
   setConfig('resourceFetcher', async ({ url }) => {
     requests.push(url)
-    if (url === 'crm.api.session.get_users') return [[user], [user]]
+    if (url === 'crm.api.session.get_users') {
+      return users ? users() : [[user], [user]]
+    }
     if (url === 'crm.api.access.get_visibility') return { role, hidden }
     if (url === 'crm.api.views.get_views') return views()
     return null
@@ -277,5 +279,77 @@ describe('with no server', () => {
     expect(await navigate(router, '/planner')).toBe('Field')
     connectivity.online = true
     expect(await navigate(router, '/planner')).toBe('Planner')
+  })
+})
+
+describe('a first load that cannot fetch the users', () => {
+  /* The users store starts its own `auto` fetch, so its failure is an
+     unhandled rejection whatever the guard does with it -- set aside, and
+     checked to be that and nothing else. */
+  let vitestListeners, unhandled
+  const recordUnhandled = (reason) =>
+    unhandled.push(String(reason?.message ?? reason?.exc_type))
+  beforeEach(() => {
+    unhandled = []
+    vitestListeners = process.listeners('unhandledRejection')
+    process.removeAllListeners('unhandledRejection')
+    process.on('unhandledRejection', recordUnhandled)
+  })
+  afterEach(async () => {
+    await new Promise((r) => setTimeout(r, 0))
+    process.off('unhandledRejection', recordUnhandled)
+    for (const listener of vitestListeners) {
+      process.on('unhandledRejection', listener)
+    }
+    expect(
+      unhandled.every((m) => ['502 Bad Gateway', 'denied'].includes(m)),
+    ).toBe(true)
+  })
+
+  const noViews = () => []
+  const getUsers = (requests) =>
+    requests.filter((u) => u === 'crm.api.session.get_users').length
+
+  it('says so, instead of leaving a blank shell', async () => {
+    // next(false) on the very first navigation leaves no route to render.
+    const { router, requests } = await bootTab({
+      views: noViews,
+      users: () => {
+        throw new Error('502 Bad Gateway')
+      },
+    })
+    expect(await navigate(router, '/deals')).toBe('Load Failed')
+    expect(router.currentRoute.value.query.redirect).toBe('/deals')
+    // the store's own try, then two more (and maybe its idle full-list
+    // fetch, which asks the same endpoint)
+    expect(getUsers(requests)).toBeGreaterThanOrEqual(3)
+  }, 10000)
+
+  it('rides out a blip', async () => {
+    let failuresLeft = 1
+    const { router } = await bootTab({
+      views: noViews,
+      users: () => {
+        if (failuresLeft-- > 0) throw new Error('502 Bad Gateway')
+        const rep = { name: REP, email: REP, full_name: 'Rep' }
+        return [[rep], [rep]]
+      },
+    })
+    expect(await navigate(router, '/deals')).toBe('Deals')
+  })
+
+  it('sends a refusal to Not Permitted, as before', async () => {
+    const { router } = await bootTab({
+      views: noViews,
+      users: () => {
+        throw Object.assign(new Error('denied'), {
+          exc_type: 'PermissionError',
+        })
+      },
+    })
+    const started = performance.now()
+    expect(await navigate(router, '/deals')).toBe('Not Permitted')
+    // without waiting out a retry: a refusal does not get better
+    expect(performance.now() - started).toBeLessThan(400)
   })
 })
