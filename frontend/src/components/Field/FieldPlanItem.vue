@@ -51,7 +51,7 @@
           class="mt-1 flex min-w-0 items-center gap-1.5 text-sm text-ink-gray-6"
         >
           <LucideFactory class="size-3.5 shrink-0" aria-hidden="true" />
-          <span class="truncate">{{ item.site }}</span>
+          <span class="truncate" :title="item.site">{{ item.site }}</span>
         </div>
         <p
           v-if="text.detail"
