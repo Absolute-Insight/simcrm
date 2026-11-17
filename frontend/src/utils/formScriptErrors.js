@@ -24,3 +24,30 @@ export function validationErrorMessage(error, fallback) {
   const message = typeof error === 'string' ? error : error?.message
   return String(message || '').trim() || fallback
 }
+
+/**
+ * Tell the caller of a save that it was blocked before it was sent.
+ *
+ * `useDocument` wraps `save.submit` so a failing `onValidate` or a missing
+ * mandatory field stops the request. Returning early skipped the caller's
+ * per-submit `onError`, and that is where `updateField` puts the edited value
+ * back -- so a value that was never saved stayed on screen as if it had been.
+ * A blocked save now reaches the same handler a failed one does.
+ *
+ * Only the per-submit handler is called: the resource-level `onError` reports
+ * a server failure and runs the script's own onError, and the block has
+ * already been reported by whatever blocked it.
+ *
+ * @param {Array} submitArgs The arguments `save.submit` was called with,
+ *   `(params, options)`.
+ * @param {string} message Why the save did not go through.
+ * @returns {Error} The error handed to `onError`, with the `messages` shape a
+ *   server error has, so a handler that shows `err.messages[0]` still works.
+ */
+export function rejectBlockedSave(submitArgs, message) {
+  const error = new Error(message)
+  error.messages = message ? [message] : []
+  error.blocked = true
+  submitArgs?.[1]?.onError?.(error)
+  return error
+}

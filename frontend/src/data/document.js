@@ -8,7 +8,10 @@ import { showSettings, activeSettingsPage } from '@/composables/settings'
 import { runSequentially, parseAssignees, sanitizeText } from '@/utils'
 import { findMissingMandatory } from '@/utils/fieldTransforms'
 import { quiet } from '@/utils/quiet'
-import { validationErrorMessage } from '@/utils/formScriptErrors'
+import {
+  rejectBlockedSave,
+  validationErrorMessage,
+} from '@/utils/formScriptErrors'
 import { createDocumentResource, createResource, toast } from 'frappe-ui'
 import { ref, reactive, getCurrentInstance } from 'vue'
 
@@ -203,10 +206,16 @@ export function useDocument(doctype, docname, resourceOverrides = {}) {
           )
           if (message) toast.error(message)
           console.error(err)
+          // Let the caller undo its optimistic edit, as it does on a failure.
+          // `message` is null only for a throwError, which carries its own.
+          rejectBlockedSave(args, message || err?.message)
           return
         }
         const mandatory = checkMandatory(documentsCache[doctype][docname].doc)
-        if (mandatory) return
+        if (mandatory) {
+          rejectBlockedSave(args, mandatory)
+          return
+        }
         return _originalSubmit.apply(_save, args)
       }
     } else {
