@@ -230,8 +230,10 @@ watch(assistantVisible, (open) => {
 })
 useEventListener(window, 'keydown', (event) => {
   if (event.key !== 'Escape' || !props.mobile || !assistantVisible.value) return
-  // a dialog opened from the panel (a reference sheet) closes first
+  // a dialog open above the panel (a reference sheet, Settings, the help
+  // center, the command palette) takes this Escape; the panel takes the next
   if (referenceOpen.value) return
+  if (document.querySelector('[role="dialog"][data-state="open"]')) return
   toggleAssistant()
 })
 
