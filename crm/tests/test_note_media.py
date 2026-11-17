@@ -66,11 +66,26 @@ class NoteMediaTest(ReplayTestCase):
 		self.assertEqual(stage_media(voice, "voice", WEBM)["status"], "staged")
 		replay(new_id(), "add_note", self.note([photo, voice]))
 		note = self.last_note()
-		self.assertEqual(note.title, "Photos and voice note")
+		self.assertEqual(note.title, "Photo and voice note")
 		self.assertEqual(
 			sorted(self.files_on(note.name)), sorted([f"{PREFIX}{photo}.jpg", f"{PREFIX}{voice}.webm"])
 		)
 		self.assertTrue(all(frappe.get_all("File", {"attached_to_name": note.name}, pluck="is_private")))
+
+	def test_a_note_with_no_words_is_named_for_what_it_holds(self):
+		def title_of(kinds, content=""):
+			ids = [media_id() for _kind in kinds]
+			for one, kind in zip(ids, kinds, strict=True):
+				stage_media(one, kind, jpeg() if kind == "photo" else WEBM)
+			replay(new_id(), "add_note", self.note(ids, content))
+			return self.last_note().title
+
+		self.assertEqual(title_of(["photo"]), "Photo")
+		self.assertEqual(title_of(["photo", "photo"]), "Photos")
+		self.assertEqual(title_of(["voice"]), "Voice note")
+		self.assertEqual(title_of(["photo", "photo", "voice"]), "Photos and voice note")
+		# words win: the note is named for its first line
+		self.assertEqual(title_of(["photo"], "Gland leaking\nsee photo"), "Gland leaking")
 
 	def test_a_retried_upload_is_kept_once(self):
 		photo = media_id()
