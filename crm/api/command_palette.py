@@ -107,7 +107,8 @@ def _sites_of(heads, config: dict, search_fields: list[str]) -> list[dict]:
 		"CRM Organization",
 		filters={"head_account": ["in", list(found)], "name": ["not in", list(found)]},
 		fields=["name", "head_account"],
-		limit=SEARCH_LIMIT * 4,
+		# candidates only; get_list below keeps the readable ones
+		limit=200,
 	)
 	if not under:
 		return []

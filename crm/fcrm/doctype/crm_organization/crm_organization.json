@@ -197,11 +197,6 @@
    "permlevel": 2,
    "read": 1,
    "role": "System Manager"
-  },
-  {
-   "permlevel": 2,
-   "read": 1,
-   "role": "Sales Manager"
   }
  ],
  "row_format": "Dynamic",

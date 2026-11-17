@@ -465,12 +465,15 @@ every quote is `MAIN`, and the API user has no rights to AR303020.
   head account arrives (`_link_waiting_sites`, a lookup first so the common
   nothing-waiting case writes nothing). A record without the field (the
   spreadsheet import) leaves both alone.
-- **Permlevel 2, managers only.** A rep may read a site whose head account is
-  another rep's customer; the Link value would name it. So neither field is a
+- **Permlevel 2, System Manager only.** A rep, or a Sales Manager scoped to a
+  team, may read a site whose head account is someone else's customer; the Link
+  value would name it. So neither field is a
   search field, and the command palette follows a head account to its sites only
   when its search already found the head account through `get_list`
   (`_sites_of`), returning only sites the rep can read. A customised
-  CRM Organization (Custom DocPerm) gets the level-2 rows from the patch.
+  CRM Organization (Custom DocPerm) gets the level-2 row from the patch.
+  `ensure_customer_code_search` drops a stale `head_account` search field (a
+  pre-release build added one; a search over a level-2 field refuses the picker).
 - `link_head_accounts` is the full pass (GETs, two columns, every customer),
   queued by the patch `link_customer_head_accounts` on a site with the
   integration on. It holds the sync's file lock and records a failure in

@@ -84,7 +84,8 @@ def ensure_custom_fields() -> None:
 					# Acumatica's ParentRecord: MBP keeps a mine's plants and shafts as
 					# customers of their own under one head account (a mine's concentrator
 					# and workshop under the mine). Written by the sync only. Permlevel 2,
-					# which only managers read: a rep may read a site whose head account
+					# which only System Managers read: a rep, or a Sales Manager scoped
+					# to a team, may read a site whose head account
 					# belongs to another rep, and the value is that customer's name
 					# (crm.permissions.customers keeps a hidden customer from being named
 					# from the side). The command palette finds a site by its head
@@ -186,8 +187,14 @@ def ensure_customer_code_search() -> None:
 
 	current = frappe.get_meta("CRM Organization").search_fields or ""
 	fields = [f.strip() for f in current.split(",") if f.strip()]
-	if "acumatica_id" in fields:
+	# head_account was a search field on a pre-release build of #428; it is
+	# permlevel 2 now, and a search over it refuses every rep's picker
+	stale = "head_account" in fields
+	fields = [f for f in fields if f != "head_account"]
+	if "acumatica_id" in fields and not stale:
 		return
+	if "acumatica_id" in fields:
+		fields.remove("acumatica_id")
 	make_property_setter(
 		"CRM Organization",
 		None,

@@ -187,6 +187,15 @@ class HeadAccountVisibilityTest(ImporterTestCase):
 		self.assertIsNone(doc.get("head_account"))
 		self.assertIsNone(doc.get("acumatica_parent"))
 
+	def test_a_sales_manager_cannot_read_it_either(self):
+		frappe.set_user("Administrator")
+		user = frappe.get_doc("User", "ha-alice@crmtest.test")
+		user.add_roles("Sales Manager")
+		frappe.set_user("ha-alice@crmtest.test")
+		doc = frappe.get_doc("CRM Organization", self.hidden_site)
+		doc.apply_fieldlevel_read_permissions()
+		self.assertIsNone(doc.get("head_account"))
+
 	def test_searching_a_readable_head_account_finds_its_sites(self):
 		self.assertEqual(set(self.names("Openmine")), {self.open_head, self.open_site})
 
@@ -216,8 +225,29 @@ class HeadAccountPatchTest(ImporterTestCase):
 		self.assertEqual(meta.get_field("head_account").permlevel, 2)
 		self.assertEqual(meta.get_field("acumatica_parent").permlevel, 2)
 		levels = {(p.role, p.permlevel) for p in meta.permissions if p.read}
-		self.assertIn(("Sales Manager", 2), levels)
+		self.assertIn(("System Manager", 2), levels)
+		self.assertNotIn(("Sales Manager", 2), levels)
 		self.assertNotIn(("Sales User", 2), levels)
+
+	def test_a_stale_head_account_search_field_is_dropped(self):
+		from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+		from crm.integrations.acumatica.install import ensure_customer_code_search
+
+		make_property_setter(
+			"CRM Organization",
+			None,
+			"search_fields",
+			"acumatica_id,head_account,industry",
+			"Data",
+			for_doctype=True,
+		)
+		frappe.clear_cache(doctype="CRM Organization")
+		ensure_customer_code_search()
+		frappe.clear_cache(doctype="CRM Organization")
+		self.assertEqual(frappe.get_meta("CRM Organization").search_fields, "acumatica_id,industry")
+		frappe.db.rollback()
+		frappe.clear_cache(doctype="CRM Organization")
 
 	def test_the_patch_queues_nothing_with_the_integration_off(self):
 		from crm.patches.v1_0 import link_customer_head_accounts as patch_module

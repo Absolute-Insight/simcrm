@@ -7,8 +7,9 @@ already imported would wait for an edit in Acumatica. This queues one read of
 every customer's parent (``importer.link_head_accounts``, GETs only) on a site
 with the integration on.
 
-The field is permlevel 2, read by managers only; the doctype JSON carries those
-rows. Custom DocPerm replaces a doctype's permissions wholesale, so a site that
+The field is permlevel 2, read by System Managers only: a Sales Manager can be
+scoped to a team's customers, and the value names another team's. The doctype
+JSON carries that row. Custom DocPerm replaces a doctype's permissions wholesale, so a site that
 customised CRM Organization's gets them here (same rule as
 ``grant_acumatica_identity_permlevel``). Idempotent.
 """
@@ -16,7 +17,7 @@ customised CRM Organization's gets them here (same rule as
 import frappe
 
 DOCTYPE = "CRM Organization"
-READERS = ("System Manager", "Sales Manager")
+READERS = ("System Manager",)
 
 
 def _grant_level_two():
