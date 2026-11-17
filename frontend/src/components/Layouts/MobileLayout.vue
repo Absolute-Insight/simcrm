@@ -12,6 +12,9 @@
          it would close with the drawer. -->
     <Settings />
     <GlobalModals />
+    <!-- Over the whole screen: a phone has no room beside the sidebar for the
+         panel the desktop slides out. -->
+    <Assistant mobile />
   </div>
 </template>
 <script setup>
@@ -19,4 +22,5 @@ import MobileSidebar from '@/components/Mobile/MobileSidebar.vue'
 import MobileAppHeader from '@/components/Mobile/MobileAppHeader.vue'
 import GlobalModals from '@/components/Modals/GlobalModals.vue'
 import Settings from '@/components/Settings/Settings.vue'
+import Assistant from '@/components/Assistant.vue'
 </script>

@@ -3,28 +3,49 @@
     <div
       v-if="assistantVisible"
       ref="target"
-      class="v-panel absolute z-20 h-screen"
-      :style="{
-        'box-shadow': 'var(--elevation-lg)',
-        'max-width': 'min(420px, 100vw)',
-        'min-width': 'min(420px, 100vw)',
-        left: 'calc(100% + 1px)',
-      }"
+      class="v-panel"
+      :class="
+        mobile ? 'fixed inset-0 z-30 h-dvh w-screen' : 'absolute z-20 h-screen'
+      "
+      :style="
+        mobile
+          ? {}
+          : {
+              'box-shadow': 'var(--elevation-lg)',
+              'max-width': 'min(420px, 100vw)',
+              'min-width': 'min(420px, 100vw)',
+              left: 'calc(100% + 1px)',
+            }
+      "
+      :role="mobile ? 'dialog' : undefined"
+      :aria-label="mobile ? __('Assistant') : undefined"
     >
-      <div class="flex h-screen flex-col text-ink-gray-9">
+      <div
+        class="flex flex-col text-ink-gray-9"
+        :class="mobile ? 'h-dvh' : 'h-screen'"
+      >
         <div class="flex items-center justify-between">
           <div class="v-title-sm px-4 pb-3 pt-[15px] text-ink-gray-8">
             {{ __('Assistant') }}
           </div>
-          <Button
-            v-if="assistantMessages.length"
-            class="mr-3"
-            :tooltip="__('Clear the conversation')"
-            :aria-label="__('Clear the conversation')"
-            icon="lucide-eraser"
-            variant="ghost"
-            @click="clearAssistant"
-          />
+          <div class="mr-3 flex items-center gap-1">
+            <Button
+              v-if="assistantMessages.length"
+              :tooltip="__('Clear the conversation')"
+              :aria-label="__('Clear the conversation')"
+              icon="lucide-eraser"
+              variant="ghost"
+              @click="clearAssistant"
+            />
+            <!-- Full screen has no "outside" to tap, so it closes by name. -->
+            <Button
+              v-if="mobile"
+              :aria-label="__('Close the assistant')"
+              icon="lucide-x"
+              variant="ghost"
+              @click="toggleAssistant"
+            />
+          </div>
         </div>
 
         <AgentChat
@@ -177,6 +198,11 @@ import { ref, watch } from 'vue'
 
 const { isAdmin } = usersStore()
 
+const props = defineProps({
+  // a phone: over the whole screen, closed by its own button
+  mobile: { type: Boolean, default: false },
+})
+
 watch(
   assistantVisible,
   (open) => {
@@ -248,7 +274,8 @@ function openSettingsPage(page) {
 onClickOutside(
   target,
   () => {
-    if (assistantVisible.value) toggleAssistant()
+    // nothing is outside a panel that covers the screen
+    if (assistantVisible.value && !props.mobile) toggleAssistant()
   },
   {
     ignore: ['#assistant-btn', '.field-layout-dialog', '[role="dialog"]'],

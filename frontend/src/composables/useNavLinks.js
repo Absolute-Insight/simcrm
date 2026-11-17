@@ -51,15 +51,15 @@ export function useNavLinks({ mobile = () => false } = {}) {
     // The one entry that is not a place. Assistant opens a slide-over, so it
     // carries `action` instead of `to` and the row renders as a toggle -- it sits
     // second because it is the surface a rep reaches for from the dashboard, not
-    // because it is a route. On mobile the panel has nowhere to slide from, the
-    // same condition it carried when it lived above this list.
+    // because it is a route. On a phone there is nowhere to slide from, so the
+    // same row opens it over the whole screen (MobileLayout mounts it).
     {
       label: 'Assistant',
       key: 'nav.assistant',
       icon: SparkleIcon,
       action: 'assistant',
       tint: 'text-ink-violet-6',
-      condition: () => canSee('nav.assistant') && !mobile(),
+      condition: () => canSee('nav.assistant'),
     },
     // The Analyst is the second AI agent, admin-only: it sits with the
     // Assistant, ahead of the planning and pipeline surfaces.

@@ -16,6 +16,7 @@
               :key="example"
               variant="outline"
               size="sm"
+              class="!h-auto min-h-7 max-w-full whitespace-normal py-1 text-left"
               :label="example"
               @click="send(example)"
             />

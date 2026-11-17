@@ -108,6 +108,13 @@ function navGates(src) {
   return itemGates(links, 'nav')
 }
 
+describe('the Assistant on a phone', () => {
+  it('is offered in the phone menu too, where it opens over the whole screen', () => {
+    // it used to carry `&& !mobile()`: a rep on a phone had no Assistant at all
+    expect(navGates(navLinksSrc).get('nav.assistant')).not.toMatch(/mobile/)
+  })
+})
+
 describe('SURFACES', () => {
   it('gives every surface a key the server will accept', () => {
     for (const surface of SURFACES) {

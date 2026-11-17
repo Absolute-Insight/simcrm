@@ -136,7 +136,7 @@
                 "
                 @click="
                   link.action === 'assistant'
-                    ? toggleAssistant()
+                    ? openAssistant()
                     : selectItem($event, link.key)
                 "
               >
@@ -451,6 +451,13 @@ function currentRouteKey() {
 // Modified clicks open a new tab without navigating this one, so they must not
 // move the highlight here.
 const activeItem = ref(currentRouteKey())
+
+/* On a phone the assistant covers the screen, and the drawer this row sits in
+   would be left open underneath it. */
+function openAssistant() {
+  toggleAssistant()
+  if (props.mobile) mobileSidebarOpened.value = false
+}
 
 function selectItem(event, key) {
   if (
