@@ -1,51 +1,42 @@
-"""Show each customer's head account, and fill it in from Acumatica once.
+"""Fill in each customer's head account from Acumatica, once.
 
 MBP keeps a mine's plants and shafts as customers of their own under a head
 account (Customer.ParentRecord). The sync now records it on every customer it
 reads, but it reads only customers modified since its last run, so the sites
 already imported would wait for an edit in Acumatica. This queues one read of
 every customer's parent (``importer.link_head_accounts``, GETs only) on a site
-with the integration on, and puts the field beside the customer code on the
-organization side panel where the Acumatica section already is -- the same
-reasoning as ``add_vat_number_to_organization_side_panel``. Idempotent.
-"""
+with the integration on.
 
-import json
+The field is permlevel 2, read by managers only; the doctype JSON carries those
+rows. Custom DocPerm replaces a doctype's permissions wholesale, so a site that
+customised CRM Organization's gets them here (same rule as
+``grant_acumatica_identity_permlevel``). Idempotent.
+"""
 
 import frappe
 
-LAYOUT = "CRM Organization-Side Panel"
-ANCHOR = "tax_registration_id"
-FALLBACK_ANCHOR = "acumatica_id"
-FIELD = "head_account"
+DOCTYPE = "CRM Organization"
+READERS = ("System Manager", "Sales Manager")
 
 
-def _columns(layout):
-	for section in layout:
-		yield from section.get("columns", [])
-		for nested in section.get("sections", []):
-			yield from nested.get("columns", [])
-
-
-def _place_on_side_panel():
-	if not frappe.db.exists("CRM Fields Layout", LAYOUT):
+def _grant_level_two():
+	if not frappe.db.exists("Custom DocPerm", {"parent": DOCTYPE}):
 		return
-	doc = frappe.get_doc("CRM Fields Layout", LAYOUT)
-	try:
-		layout = json.loads(doc.layout or "[]")
-	except (ValueError, TypeError):
-		return
-	columns = list(_columns(layout))
-	if any(FIELD in column.get("fields", []) for column in columns):
-		return
-	for anchor in (ANCHOR, FALLBACK_ANCHOR):
-		for column in columns:
-			fields = column.get("fields", [])
-			if anchor in fields:
-				fields.insert(fields.index(anchor) + 1, FIELD)
-				doc.layout = json.dumps(layout)
-				doc.save(ignore_permissions=True)
-				return
+	for role in READERS:
+		if frappe.db.exists("Custom DocPerm", {"parent": DOCTYPE, "role": role, "permlevel": 2}):
+			continue
+		frappe.get_doc(
+			{
+				"doctype": "Custom DocPerm",
+				"parent": DOCTYPE,
+				"parenttype": "DocType",
+				"parentfield": "permissions",
+				"role": role,
+				"permlevel": 2,
+				"read": 1,
+			}
+		).insert(ignore_permissions=True)
+	frappe.clear_cache(doctype=DOCTYPE)
 
 
 def execute():
@@ -53,12 +44,19 @@ def execute():
 	from crm.integrations.acumatica.install import ensure_custom_fields
 
 	ensure_custom_fields()
-	if not frappe.get_meta("CRM Organization").has_field(FIELD):
+	_grant_level_two()
+	if not frappe.db.get_single_value("CRM Acumatica Settings", "enabled"):
 		return
-	_place_on_side_panel()
-	if frappe.db.get_single_value("CRM Acumatica Settings", "enabled"):
+	try:
+		# On a worker after the migrate commits. frappe.enqueue runs the job inline
+		# when redis is unreachable; a failed Acumatica read must not then fail the
+		# migrate -- the job is safe to run again by hand.
 		frappe.enqueue(
 			"crm.integrations.acumatica.importer.link_head_accounts",
 			queue="long",
+			job_id="acumatica_link_head_accounts",
+			deduplicate=True,
 			enqueue_after_commit=True,
 		)
+	except Exception:
+		frappe.log_error(title="Linking Acumatica head accounts failed; run it again by hand")

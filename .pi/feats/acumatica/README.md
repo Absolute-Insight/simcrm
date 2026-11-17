@@ -457,18 +457,29 @@ Written against documentation; none of this has met a live instance yet.
 ## Head accounts (sites as customers)
 
 MBP files a mine's plants and shafts as customers of their own under a head
-account (`Customer.ParentRecord`). Locations (`CustomerLocation`) are not used -- every quote
-is `MAIN`, and the API user has no rights to AR303020. The sync writes the
-parent's code to `acumatica_parent` and the link to `head_account` (both
-permlevel 1, sync-only); a site imported before its head account is linked when
-the head account arrives (`_link_waiting_sites`). A record without the field
-(the spreadsheet import) leaves both alone. `link_head_accounts` is the one-off
-GET pass (two columns, every customer) the patch `link_customer_head_accounts`
-queues on a site with the integration on. `head_account` is a search field
-after `acumatica_id`, so pickers and Ctrl K find a site by its head account's
-name and show the head account under it. Not a list quick filter: a rep often
-cannot read the head account itself (another rep's, or unclaimed under a
-narrower scope), so filtering by it would be a dead end.
+account (`Customer.ParentRecord`). Locations (`CustomerLocation`) are not used:
+every quote is `MAIN`, and the API user has no rights to AR303020.
+
+- The sync writes the parent's code to `acumatica_parent` and the link to
+  `head_account`. A site imported before its head account is linked when the
+  head account arrives (`_link_waiting_sites`, a lookup first so the common
+  nothing-waiting case writes nothing). A record without the field (the
+  spreadsheet import) leaves both alone.
+- **Permlevel 2, managers only.** A rep may read a site whose head account is
+  another rep's customer; the Link value would name it. So neither field is a
+  search field, and the command palette follows a head account to its sites only
+  when its search already found the head account through `get_list`
+  (`_sites_of`), returning only sites the rep can read. A customised
+  CRM Organization (Custom DocPerm) gets the level-2 rows from the patch.
+- `link_head_accounts` is the full pass (GETs, two columns, every customer),
+  queued by the patch `link_customer_head_accounts` on a site with the
+  integration on. It holds the sync's file lock and records a failure in
+  `last_sync_error`. Re-run by hand:
+  `bench --site <site> execute crm.integrations.acumatica.importer.link_head_accounts`.
+  Also the fix if Acumatica turns out to omit an empty `ParentRecord` (a site
+  moved off its head account would then stay linked until this pass).
+- A head account cannot be deleted while sites link to it (LinkExistsError);
+  merge it with a rename instead.
 
 ## Known limitations
 

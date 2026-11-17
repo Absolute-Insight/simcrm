@@ -170,6 +170,4 @@ class CustomerCodeShownTest(IntegrationTestCase):
 		ensure_customer_code_search()
 		ensure_customer_code_search()
 		frappe.clear_cache(doctype="CRM Organization")
-		self.assertEqual(
-			frappe.get_meta("CRM Organization").search_fields, "acumatica_id,head_account,website"
-		)
+		self.assertEqual(frappe.get_meta("CRM Organization").search_fields, "acumatica_id,website")

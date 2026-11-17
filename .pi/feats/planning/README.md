@@ -57,8 +57,9 @@
   the rep, for a place Acumatica does not hold as a customer of its own (a plant
   known by a short name). Trimmed, blank is None, longer than `SITE_LIMIT` is
   refused with a message; shown on the card and in the visit event's subject
-  ("Visit: <customer> · <site>"). Sites Acumatica *does* hold are customers
-  linked to their head account -- see the Acumatica README.
+  ("Visit: <customer> · <site>"). Sites Acumatica *does* hold are customers of
+  their own, found by their own names -- see "Head accounts" in the Acumatica
+  README.
 
 ## Model
 

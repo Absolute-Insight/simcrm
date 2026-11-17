@@ -6,13 +6,11 @@ linked when the head account arrives, and a one-off pass fills in the customers
 imported before the field existed.
 """
 
-import json
 from unittest.mock import MagicMock, patch
 
 import frappe
 
 from crm.integrations.acumatica import importer
-from crm.integrations.acumatica.install import ensure_customer_code_search
 from crm.integrations.acumatica.test_importer import C, ImporterTestCase
 
 
@@ -115,54 +113,126 @@ class LinkHeadAccountsTest(ImporterTestCase):
 			0,
 		)
 
+	def test_a_failure_is_recorded_where_the_syncs_are(self):
+		client = MagicMock()
+		client.iter_all.side_effect = RuntimeError("tenant down")
+		with (
+			patch.object(importer, "get_settings", return_value=frappe._dict(enabled=True)),
+			patch.object(importer, "AcumaticaClient", return_value=client),
+			patch.object(importer.frappe.db, "commit"),
+			patch.object(importer.frappe.db, "rollback"),
+			self.assertRaises(RuntimeError),
+		):
+			importer.link_head_accounts()
+		self.assertIn(
+			"tenant down", frappe.db.get_single_value("CRM Acumatica Settings", "last_sync_error") or ""
+		)
+		client.logout.assert_called_once()
+
+	def test_it_stands_aside_while_a_sweep_runs(self):
+		from frappe.utils.synchronization import filelock
+
+		with (
+			patch.object(importer, "get_settings", return_value=frappe._dict(enabled=True)),
+			patch.object(importer, "AcumaticaClient") as client,
+			filelock(importer.SYNC_JOB_ID),
+		):
+			self.assertIn("skipped", importer.link_head_accounts())
+		client.assert_not_called()
+
 	def test_it_does_nothing_with_the_integration_off(self):
 		result, client = self._run([], enabled=False)
 		self.assertIn("skipped", result)
 		client.iter_all.assert_not_called()
 
 
-class HeadAccountSearchTest(ImporterTestCase):
-	def test_the_head_account_is_a_search_field(self):
-		ensure_customer_code_search()
-		fields = frappe.get_meta("CRM Organization").search_fields.split(",")
-		self.assertIn("acumatica_id", fields)
-		self.assertIn("head_account", fields)
+class HeadAccountVisibilityTest(ImporterTestCase):
+	"""A rep never reads a head account's name, and finds a site by it only when
+	the head account is theirs to read too."""
 
-	def test_an_older_search_setup_gains_the_head_account(self):
-		from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+	def setUp(self):
+		from crm.tests.test_row_permissions import ensure_rep
 
-		make_property_setter(
-			"CRM Organization", None, "search_fields", "acumatica_id,industry", "Data", for_doctype=True
+		ensure_rep("ha-alice@crmtest.test", "Alice")
+		ensure_rep("ha-bob@crmtest.test", "Bob")
+		frappe.db.set_single_value("CRM Access Settings", "rep_customer_scope", "Own and unclaimed customers")
+		self.open_head = importer.upsert_organization(
+			C(NoteID="hv-1", CustomerID="C-HV001", CustomerName="Openmine Group")
 		)
-		frappe.clear_cache(doctype="CRM Organization")
-		ensure_customer_code_search()
-		frappe.clear_cache(doctype="CRM Organization")
-		fields = frappe.get_meta("CRM Organization").search_fields.split(",")
-		self.assertEqual(fields, ["acumatica_id", "head_account", "industry"])
-		frappe.db.rollback()
-		frappe.clear_cache(doctype="CRM Organization")
+		self.open_site = importer.upsert_organization(
+			C(NoteID="hv-1a", CustomerID="C-HV001A", CustomerName="Eastplant Works", ParentRecord="C-HV001")
+		)
+		self.hidden_head = importer.upsert_organization(
+			C(NoteID="hv-2", CustomerID="C-HV002", CustomerName="Hiddenmine Group")
+		)
+		self.hidden_site = importer.upsert_organization(
+			C(NoteID="hv-2a", CustomerID="C-HV002A", CustomerName="Westplant Works", ParentRecord="C-HV002")
+		)
+		frappe.db.set_value("CRM Organization", self.hidden_head, "account_owner", "ha-bob@crmtest.test")
+		frappe.db.set_value("CRM Organization", self.hidden_site, "account_owner", "ha-alice@crmtest.test")
+		frappe.set_user("ha-alice@crmtest.test")
 
-	def test_the_side_panel_patch_puts_it_beside_the_vat_number(self):
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def names(self, query):
+		from crm.api.command_palette import search
+
+		return [m["name"] for m in search(query)["matches"] if m["doctype"] == "CRM Organization"]
+
+	def test_a_rep_cannot_read_the_head_account_field(self):
+		doc = frappe.get_doc("CRM Organization", self.hidden_site)
+		doc.apply_fieldlevel_read_permissions()
+		self.assertIsNone(doc.get("head_account"))
+		self.assertIsNone(doc.get("acumatica_parent"))
+
+	def test_searching_a_readable_head_account_finds_its_sites(self):
+		self.assertEqual(set(self.names("Openmine")), {self.open_head, self.open_site})
+
+	def test_searching_a_hidden_head_account_finds_nothing(self):
+		self.assertEqual(self.names("Hiddenmine"), [])
+
+	def test_a_found_site_carries_no_hidden_name(self):
+		from crm.api.command_palette import search
+
+		[match] = [m for m in search("Westplant")["matches"] if m["name"] == self.hidden_site]
+		self.assertNotIn("Hiddenmine", f"{match['keywords']} {match['detail']} {match['title']}")
+
+	def test_a_link_search_does_not_describe_a_site_by_its_head_account(self):
+		from frappe.desk.search import search_link
+
+		results = search_link("CRM Organization", "Westplant")
+		self.assertTrue(results)
+		self.assertNotIn("Hiddenmine", str(results))
+
+
+class HeadAccountPatchTest(ImporterTestCase):
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def test_the_fields_are_for_managers_only(self):
+		meta = frappe.get_meta("CRM Organization")
+		self.assertEqual(meta.get_field("head_account").permlevel, 2)
+		self.assertEqual(meta.get_field("acumatica_parent").permlevel, 2)
+		levels = {(p.role, p.permlevel) for p in meta.permissions if p.read}
+		self.assertIn(("Sales Manager", 2), levels)
+		self.assertNotIn(("Sales User", 2), levels)
+
+	def test_the_patch_queues_nothing_with_the_integration_off(self):
 		from crm.patches.v1_0 import link_customer_head_accounts as patch_module
 
-		layout = [
-			{"name": "s", "columns": [{"name": "c", "fields": ["acumatica_id", "tax_registration_id"]}]}
-		]
-		name = patch_module.LAYOUT
-		existed = frappe.db.exists("CRM Fields Layout", name)
-		doc = (
-			frappe.get_doc("CRM Fields Layout", name)
-			if existed
-			else frappe.new_doc("CRM Fields Layout").update({"dt": "CRM Organization", "type": "Side Panel"})
-		)
-		doc.layout = json.dumps(layout)
-		doc.save(ignore_permissions=True)
 		with patch.object(patch_module.frappe, "enqueue") as enqueue:
 			patch_module.execute()
+		enqueue.assert_not_called()
+
+	def test_a_failing_enqueue_does_not_fail_the_migrate(self):
+		from crm.patches.v1_0 import link_customer_head_accounts as patch_module
+
+		with (
+			patch.object(patch_module.frappe.db, "get_single_value", return_value=1),
+			patch.object(patch_module.frappe, "enqueue", side_effect=ConnectionError("no redis")),
+			patch.object(patch_module.frappe, "log_error") as log_error,
+		):
 			patch_module.execute()
-		fields = json.loads(frappe.db.get_value("CRM Fields Layout", name, "layout"))[0]["columns"][0][
-			"fields"
-		]
-		self.assertEqual(fields, ["acumatica_id", "tax_registration_id", "head_account"])
-		enqueue.assert_not_called()  # the integration is off on the test site
-		frappe.db.rollback()
+		log_error.assert_called_once()
