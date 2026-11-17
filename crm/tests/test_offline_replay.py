@@ -351,6 +351,11 @@ class PastLockTest(ReplayTestCase):
 		row = next(item for item in get_pack()["history"] if item["organization"] == self.org)
 		self.assertEqual((row["status"], row["captured_offline"]), ("Done", 1))
 
+	def test_a_site_typed_on_the_phone_is_kept_on_the_logged_visit(self):
+		replay(new_id(), "log_activity", self.visit() | {"site": "Concentrator plant"})
+		row = next(item for item in get_pack()["history"] if item["organization"] == self.org)
+		self.assertEqual(row["site"], "Concentrator plant")
+
 	def test_a_visit_that_crossed_midnight_on_its_way_is_not_refused(self):
 		# captured at 23:52, delivered at 00:03: eleven minutes old, not "late",
 		# and already yesterday -- the day lock used to refuse it for good
@@ -765,6 +770,27 @@ class PlanOfflineTest(ReplayTestCase):
 		# the row that was already there is the same row, not a copy
 		self.assertIn(existing, {row["name"] for row in rows})
 		self.assertEqual([row["status"] for row in rows], ["Planned", "Planned"])
+
+	def test_a_site_typed_on_the_phone_is_kept_on_the_planned_visit(self):
+		day = str(frappe.utils.getdate())
+		replay(
+			new_id(),
+			"plan_item",
+			{
+				"activity_type": "Visit",
+				"planned_date": day,
+				"organization": self.org,
+				"site": "  North   shaft ",
+			},
+		)
+		self.assertEqual([row.get("site") for row in self.planned(day)], ["North shaft"])
+		too_long = {
+			"activity_type": "Visit",
+			"planned_date": day,
+			"organization": self.org,
+			"site": "x" * 141,
+		}
+		self.assertEqual(self.refusal(replay, new_id(), "plan_item", too_long)[0], "ValidationError")
 
 	def test_what_the_week_already_held_keeps_its_outcome(self):
 		done = self.plan_one()

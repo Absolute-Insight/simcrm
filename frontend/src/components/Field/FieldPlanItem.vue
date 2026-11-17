@@ -46,6 +46,13 @@
             <span class="tabular-nums">{{ shortDate(item.planned_date) }}</span>
           </template>
         </div>
+        <div
+          v-if="item.site"
+          class="mt-1 flex min-w-0 items-center gap-1.5 text-sm text-ink-gray-6"
+        >
+          <LucideFactory class="size-3.5 shrink-0" aria-hidden="true" />
+          <span class="truncate" :title="item.site">{{ item.site }}</span>
+        </div>
         <p
           v-if="text.detail"
           class="mt-2 whitespace-pre-line border-l-2 border-outline-gray-2 pl-2.5 text-p-sm text-ink-gray-7"
@@ -97,6 +104,7 @@ import { statusColor, statusLabel, typeIcon } from '@/utils/plannerDisplay'
 import { computed } from 'vue'
 import LucideCloudOff from '~icons/lucide/cloud-off'
 import LucideCloudUpload from '~icons/lucide/cloud-upload'
+import LucideFactory from '~icons/lucide/factory'
 
 const props = defineProps({
   item: { type: Object, required: true },

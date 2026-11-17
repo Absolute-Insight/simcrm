@@ -23,6 +23,7 @@ from frappe import _
 
 from crm.agent.media import MediaRejected, _check_image_size, _image_mime, decode_base64
 from crm.utils import sales_user_only, user_rate_limited
+from crm.utils.thumbnails import not_a_thumbnail
 
 MAX_PHOTOS = 4
 MAX_RECORDINGS = 1
@@ -251,7 +252,12 @@ def get_note_media(notes: list | str) -> dict:
 		return {}
 	rows = frappe.get_all(
 		"File",
-		filters={"attached_to_doctype": "FCRM Note", "attached_to_name": ("in", readable)},
+		# a photo's thumbnail is a File on the same note; it is not a second photo
+		filters={
+			"attached_to_doctype": "FCRM Note",
+			"attached_to_name": ("in", readable),
+			**not_a_thumbnail(),
+		},
 		fields=["name", "file_url", "file_name", "attached_to_name", "creation"],
 		order_by="creation asc",
 	)
