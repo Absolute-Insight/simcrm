@@ -490,6 +490,7 @@ describe('toSavePayload', () => {
         reference_doctype: 'CRM Deal',
         reference_docname: '000012',
         organization: null,
+        contact: null,
         suggestion: 'SUG-0004',
       },
     ])

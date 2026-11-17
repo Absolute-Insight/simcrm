@@ -100,7 +100,7 @@ vi.mock('@/stores/settings', () => ({
   getSettings: () => ({ _settings: { doc: { lock_past_plans: 0 } } }),
 }))
 vi.mock('@/utils/renderFieldLayoutDialog', () => ({
-  renderFieldLayoutDialog: async () => ui.dialog?.(),
+  renderFieldLayoutDialog: async (options) => ui.dialog?.(options),
 }))
 
 const ME = 'mgr@x'
@@ -364,5 +364,108 @@ describe('Planner while a save is in flight', () => {
     expect(text(el)).toContain('Visit Eskom')
     expect(text(el)).not.toMatch(/\d+ unsaved/)
     expect(button(el, 'Add an activity')).not.toBeNull()
+  })
+})
+
+describe('Planner dialogs, as MBP reps asked for them', () => {
+  it('asks for a contact and one optional deal, and sends them with the plan', async () => {
+    const el = await open()
+    let asked = null
+    ui.dialog = (options) => {
+      asked = options
+      return {
+        activity_type: 'Visit',
+        planned_date: addDays(W0, 1),
+        note: 'Deliveries\nand the new valve enquiry',
+        organization: 'Western Platinum',
+        contact: 'Jaco Gouws',
+        quote: 'CRM-DEAL-0001',
+      }
+    }
+    button(el, 'Add an activity').click()
+    await flush()
+
+    const fields = Object.fromEntries(asked.fields.map((f) => [f.fieldname, f]))
+    // no doctype picker to puzzle over, and room to write
+    expect(fields.reference_doctype).toBeUndefined()
+    expect(fields.reference_docname).toBeUndefined()
+    expect(fields.note.fieldtype).toBe('Small Text')
+    expect(fields.contact.options).toBe('Contact')
+    expect(fields.quote.options).toBe('CRM Deal')
+    // both narrowed to the customer chosen above them
+    expect(fields.contact.link_filters).toContain('doc.organization')
+    expect(fields.quote.link_filters).toContain('doc.organization')
+
+    button(el, 'Save plan').click()
+    await flush()
+    const [row] = callTo('save_plan').args.items
+    expect(row).toMatchObject({
+      contact: 'Jaco Gouws',
+      reference_doctype: 'CRM Deal',
+      reference_docname: 'CRM-DEAL-0001',
+    })
+  })
+
+  it('keeps a lead an older item points at when the deal is left empty', async () => {
+    const old = {
+      ...item(5, addDays(W0, 2), 'Visit Sasol'),
+      reference_doctype: 'CRM Lead',
+      reference_docname: 'LEAD-1',
+    }
+    const el = await open(week(W0, [old], ME, '2026-10-03 08:00:00'))
+    ui.dialog = (options) => ({
+      ...options.defaults,
+      note: 'Visit Sasol again',
+    })
+    card(el, 'Visit Sasol').querySelector('button[data-label="Edit"]').click()
+    await flush()
+    button(el, 'Save plan').click()
+    await flush()
+    const [row] = callTo('save_plan').args.items
+    expect(row).toMatchObject({
+      note: 'Visit Sasol again',
+      reference_doctype: 'CRM Lead',
+      reference_docname: 'LEAD-1',
+    })
+  })
+
+  it("lets a done visit's outcome be added to afterwards", async () => {
+    const done = {
+      ...item(9, addDays(W0, 1), 'Deliveries', 'Done'),
+      outcome: 'Deliveries done',
+      manual_override: 1,
+    }
+    const el = await open(week(W0, [done], ME, '2026-10-03 08:00:00'))
+    let asked = null
+    ui.dialog = (options) => {
+      asked = options
+      return { outcome: 'Deliveries done. Quote for 4 gate valves to follow.' }
+    }
+    card(el, 'Deliveries')
+      .querySelector('button[data-label="Edit the outcome…"]')
+      .click()
+    await flush()
+    expect(asked.defaults.outcome).toBe('Deliveries done')
+    const edit = callTo('update_outcome')
+    expect(edit.args).toEqual({
+      item: 9,
+      outcome: 'Deliveries done. Quote for 4 gate valves to follow.',
+    })
+    answer(
+      edit,
+      week(
+        W0,
+        [
+          {
+            ...done,
+            outcome: 'Deliveries done. Quote for 4 gate valves to follow.',
+          },
+        ],
+        ME,
+        '2026-10-03 08:00:00',
+      ),
+    )
+    await flush()
+    expect(text(el)).toContain('Quote for 4 gate valves to follow.')
   })
 })

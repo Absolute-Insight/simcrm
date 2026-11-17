@@ -41,14 +41,26 @@
   Unplanned Meeting in the UI): unplanned work of any kind, recorded as Done.
   A visit kind needs a customer; the whole account is the outcome, the
   one-line note its first 140 characters.
+- **Adding to an outcome later** (`update_outcome`, 2026-11-17, MBP's reps
+  after their first week): a Done, Cancelled or Missed item's outcome can be
+  rewritten -- on a locked past day too, since only the words change, never
+  the status, day or fulfilment. The Visit event the rep's own word wrote gets
+  the same words as its description; one the matcher found is left alone.
+- **Who was met** (`contact`, same date): optional, offered from the chosen
+  customer's contacts, checked like a deal's contact (`assert_contact_allowed`)
+  and added to the visit event's participants beside the customer. The note
+  is multi-line (Small Text, capped at `TEXT_LIMIT`), and the dialogs' old
+  "Related to" + "Record" pair is one optional "Deal or quote" picker,
+  narrowed to the customer and searchable by Acumatica quote number
+  (`ensure_deal_quote_search`). An existing Lead reference is kept on edit.
 
 ## Model
 
 - `CRM Rep Plan` — one per `(user, Monday)`. Enforced by a **unique index**
   (`unique_user_week`, added in `on_doctype_update`), not by a read-then-throw
   in `validate`, because two concurrent first saves both passed that check.
-- `CRM Rep Plan Item` (child) — activity type, planned date, note, optional
-  Deal/Lead reference, and the fulfilment link the matcher writes
+- `CRM Rep Plan Item` (child) — activity type, planned date, note, customer,
+  optional contact, optional Deal/Lead reference, and the fulfilment link the matcher writes
   (`fulfilled_by_doctype`, `fulfilled_by`, `status`).
 - `manual_override` — set when a rep corrects an item by hand. The daily job
   never touches an overridden row.

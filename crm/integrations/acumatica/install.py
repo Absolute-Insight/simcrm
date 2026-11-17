@@ -111,6 +111,7 @@ def ensure_custom_fields() -> None:
 		ignore_validate=True,
 	)
 	ensure_customer_code_search()
+	ensure_deal_quote_search()
 
 
 # Defaults a new field on the settings Single would never get on an existing site:
@@ -162,6 +163,32 @@ def ensure_customer_code_search() -> None:
 		None,
 		"search_fields",
 		",".join(["acumatica_id", *fields]),
+		"Data",
+		for_doctype=True,
+		validate_fields_for_doctype=False,
+	)
+
+
+def ensure_deal_quote_search() -> None:
+	"""Make the Acumatica quote number a search field of CRM Deal.
+
+	A deal's title is its customer, so a picker of one customer's deals -- the
+	planner's "Quote" -- listed the same name over and over. With the quote number
+	as a search field it shows under each one and "QT104142" finds it. Reps read
+	the field (it is permlevel 1, granted to Sales User). Same Property Setter
+	rule as :func:`ensure_customer_code_search`.
+	"""
+	from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+	current = frappe.get_meta("CRM Deal").search_fields or ""
+	fields = [f.strip() for f in current.split(",") if f.strip()]
+	if "acumatica_sales_quote" in fields:
+		return
+	make_property_setter(
+		"CRM Deal",
+		None,
+		"search_fields",
+		",".join(["acumatica_sales_quote", *fields]),
 		"Data",
 		for_doctype=True,
 		validate_fields_for_doctype=False,
