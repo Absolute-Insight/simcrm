@@ -233,6 +233,16 @@ def claim_media(note: str, ids: list[str]) -> None:
 			)
 		files.append(name)
 	kinds = [_kind(frappe.db.get_value("File", name, "file_name")) for name in files]
+	# with what the note already holds: a note edited later takes no more than
+	# one written in a single go
+	kinds += [
+		_kind(file_name)
+		for file_name in frappe.get_all(
+			"File",
+			filters={"attached_to_doctype": "FCRM Note", "attached_to_name": note, **not_a_thumbnail()},
+			pluck="file_name",
+		)
+	]
 	if kinds.count("photo") > MAX_PHOTOS or kinds.count("voice") > MAX_RECORDINGS:
 		frappe.throw(_("That note has too many photos or recordings."), frappe.ValidationError)
 	# File.validate takes file_size from the request when there is one
@@ -244,6 +254,31 @@ def claim_media(note: str, ids: list[str]) -> None:
 		doc.attached_to_doctype = "FCRM Note"
 		doc.attached_to_name = note
 		doc.save(ignore_permissions=True)
+
+
+@frappe.whitelist(methods=["POST"])
+@sales_user_only
+def attach_media(note: str, media: list | str) -> dict:
+	"""Put the caller's uploaded photos and recording on a note they may edit.
+
+	For the note dialog, online: the files are uploaded with ``stage_media``
+	and the note, which exists by then, is named here. Field mode does the
+	same in one step through the outbox (``crm.api.offline``)."""
+	if user_rate_limited(MEDIA_RATE_SCOPE, MEDIA_RATE_LIMIT):
+		frappe.throw(_("Too many requests. Try again shortly."), frappe.TooManyRequestsError)
+	note = frappe.utils.cstr(note)
+	# one answer for "no such note" and "not yours to edit"
+	if (
+		not note
+		or not frappe.db.exists("FCRM Note", note)
+		or not frappe.has_permission("FCRM Note", "write", note)
+	):
+		frappe.throw(_("That note is no longer available."), frappe.PermissionError)
+	ids = media_ids(frappe.parse_json(media) if isinstance(media, str) else media)
+	if not ids:
+		frappe.throw(_("Add a photo or a voice note first."), frappe.ValidationError)
+	claim_media(note, ids)
+	return {"note": note, "attached": len(ids)}
 
 
 def _kind(file_name: str | None) -> str | None:

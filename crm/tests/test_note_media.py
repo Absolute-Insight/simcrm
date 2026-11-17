@@ -18,6 +18,7 @@ from crm.api.note_media import (
 	MAX_UNCLAIMED_FILES,
 	PREFIX,
 	UNCLAIMED_DAYS,
+	attach_media,
 	get_note_media,
 	purge_unclaimed_media,
 	release_media,
@@ -183,6 +184,74 @@ class NoteMediaTest(ReplayTestCase):
 		# the thumbnail sits on the note beside its photo
 		self.assertEqual(len(self.files_on(note)), 2)
 		self.assertEqual([m["name"] for m in get_note_media([note])[note]], [source])
+
+	# --- the note dialog, online: upload, then name the note ---------------
+
+	def own_note(self) -> str:
+		return (
+			frappe.get_doc(
+				{
+					"doctype": "FCRM Note",
+					"title": "Typed at a desk",
+					"reference_doctype": "CRM Organization",
+					"reference_docname": self.org,
+				}
+			)
+			.insert()
+			.name
+		)
+
+	def test_a_photo_and_a_recording_are_added_to_a_note_already_written(self):
+		note = self.own_note()
+		photo, voice = media_id(), media_id()
+		stage_media(photo, "photo", jpeg())
+		stage_media(voice, "voice", WEBM)
+		self.assertEqual(attach_media(note, [photo, voice])["attached"], 2)
+		self.assertEqual(sorted(m["kind"] for m in get_note_media([note])[note]), ["photo", "voice"])
+		# and as the browser sends a list: JSON text
+		more = media_id()
+		stage_media(more, "photo", jpeg())
+		attach_media(note, frappe.as_json([more]))
+		self.assertEqual(len(get_note_media([note])[note]), 3)
+
+	def test_a_note_edited_later_takes_no_more_than_one_written_in_one_go(self):
+		note = self.own_note()
+		first = [media_id() for _ in range(MAX_PHOTOS)]
+		for one in first:
+			stage_media(one, "photo", jpeg())
+		attach_media(note, first)
+		extra = media_id()
+		stage_media(extra, "photo", jpeg())
+		name, _message = self.refusal(attach_media, note, [extra])
+		self.assertEqual(name, "ValidationError")
+		voice, second = media_id(), media_id()
+		stage_media(voice, "voice", WEBM)
+		attach_media(note, [voice])
+		stage_media(second, "voice", WEBM)
+		self.assertEqual(self.refusal(attach_media, note, [second])[0], "ValidationError")
+		self.assertEqual(len(self.files_on(note)), MAX_PHOTOS + 1)
+
+	def test_media_cannot_be_put_on_a_note_the_caller_may_not_edit(self):
+		note = self.own_note()
+		frappe.set_user(OTHER)
+		photo = media_id()
+		stage_media(photo, "photo", jpeg())
+		refused = self.refusal(attach_media, note, [photo])
+		self.assertEqual(refused[0], "PermissionError")
+		# the same answer for a note that does not exist
+		self.assertEqual(self.refusal(attach_media, "no-such-note", [photo]), refused)
+		frappe.set_user(REP)
+		self.assertEqual(self.files_on(note), [])
+
+	def test_another_reps_upload_cannot_be_put_on_my_note(self):
+		frappe.set_user(OTHER)
+		theirs = media_id()
+		stage_media(theirs, "photo", jpeg())
+		frappe.set_user(REP)
+		note = self.own_note()
+		self.assertEqual(self.refusal(attach_media, note, [theirs])[0], "ValidationError")
+		self.assertEqual(self.refusal(attach_media, note, [])[0], "ValidationError")
+		self.assertEqual(self.files_on(note), [])
 
 	def test_unclaimed_uploads_are_removed_after_the_outbox_horizon(self):
 		old, fresh = media_id(), media_id()
