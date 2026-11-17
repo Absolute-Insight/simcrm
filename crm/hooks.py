@@ -193,6 +193,7 @@ permission_query_conditions = {
 	"CRM Forecast Snapshot": "crm.fcrm.doctype.crm_forecast_snapshot.crm_forecast_snapshot.get_permission_query_conditions",
 	"CRM View Settings": "crm.fcrm.doctype.crm_view_settings.crm_view_settings.get_permission_query_conditions",
 	"CRM Telephony Agent": "crm.fcrm.doctype.crm_telephony_agent.crm_telephony_agent.get_permission_query_conditions",
+	"CRM Event Attendee": "crm.permissions.customers.get_event_attendee_permission_query_conditions",
 }
 
 has_permission = {
@@ -219,6 +220,7 @@ has_permission = {
 	"CRM Forecast Snapshot": "crm.fcrm.doctype.crm_forecast_snapshot.crm_forecast_snapshot.has_permission",
 	"CRM View Settings": "crm.fcrm.doctype.crm_view_settings.crm_view_settings.has_permission",
 	"CRM Telephony Agent": "crm.fcrm.doctype.crm_telephony_agent.crm_telephony_agent.has_permission",
+	"CRM Event Attendee": "crm.permissions.customers.has_event_attendee_permission",
 }
 
 # DocType Class
@@ -235,6 +237,9 @@ extend_doctype_class = {
 	"Contact": ["crm.overrides.contact.ContactListView"],
 	"Email Template": ["crm.overrides.email_template.EmailTemplateListView"],
 	"Assignment Rule": ["crm.overrides.assignment_rule.AssignmentRuleRun"],
+	# an attendee typed by address names no Contact on the event (crm.api.attendees)
+	"Event": ["crm.overrides.event.EventTypedAttendees"],
+	"Event Participants": ["crm.overrides.event.TypedAttendeeRow"],
 }
 
 # Document Events
@@ -247,12 +252,17 @@ doc_events = {
 			"crm.api.contact.validate",
 			"crm.integrations.acumatica.install.guard_contact_identity",
 		],
+		"on_update": ["crm.api.attendees.link_waiting_attendees"],
+		"on_trash": ["crm.api.attendees.drop_contact_attendees"],
 	},
 	"Address": {
 		"validate": ["crm.permissions.customers.validate_address_links"],
 	},
 	"Event": {
+		"before_validate": ["crm.api.attendees.resolve_event_attendees"],
 		"validate": ["crm.permissions.customers.validate_event_participants"],
+		"on_update": ["crm.api.attendees.sync_event_attendees"],
+		"on_trash": ["crm.api.attendees.drop_event_attendees"],
 	},
 	# a note, a task or a call goes onto a record its author can read; asked
 	# here as well as in has_permission, after frappe has normalised the links
@@ -563,6 +573,8 @@ after_migrate = [
 	"crm.fcrm.doctype.crm_forecast_snapshot.crm_forecast_snapshot.on_doctype_update",
 	# frappe's table: the rep scoping sub-select filters it by assignee
 	"crm.permissions.org_hierarchy.ensure_todo_index",
+	# the attendee lookup and the duplicates review read Contact Email by address
+	"crm.api.attendees.ensure_contact_email_index",
 ]
 
 # frappe.clear_cache() deletes every other key on the site -- and frappe.rename_doc

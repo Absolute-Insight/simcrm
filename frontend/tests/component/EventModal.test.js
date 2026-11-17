@@ -163,26 +163,28 @@ describe('EventModal save re-entry', () => {
   }
   async function release() {
     for (let i = 0; i < 20; i++) {
-      // what crm.api.contact.find_by_email answers: the Contact's name
-      while (S.gates.length) S.gates.shift()('CT-1')
+      // nothing should be waiting on the server: the save resolves attendees
+      while (S.gates.length) S.gates.shift()(null)
       await flush()
     }
   }
 
-  it('a second Save while the attendee Contacts resolve creates one event', async () => {
+  it('a second Save while the attendees are prepared creates one event', async () => {
     const m = await open()
     m._event.title = 'Site visit'
     m._event.event_participants = [typedAttendee]
-    m.update() // parks on the Contact lookup
+    m.update()
     expect(m.saving).toBe(true)
     m.update() // the second click
     await release()
     expect(S.insert).toHaveLength(1)
-    expect(S.insert[0].event_participants[0].reference_docname).toBe('CT-1')
+    // the address alone: the event's save gives it its Contact
+    expect(S.insert[0].event_participants[0].reference_docname).toBe('')
+    expect(S.gates).toHaveLength(0)
     expect(m.saving).toBe(false)
   })
 
-  it('a second Update while the attendee Contacts resolve saves once', async () => {
+  it('a second Update while the attendees are prepared saves once', async () => {
     const m = await open({
       name: 'EV-9',
       subject: 'Call',
