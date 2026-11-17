@@ -32,7 +32,8 @@ import {
   renewToken,
   serverNow,
 } from './connectivity'
-import { hasIndexedDB, outboxStore } from './db'
+import { hasIndexedDB, mediaStore, outboxStore } from './db'
+import { blobToBase64 } from '@/utils/noteMedia'
 import { onPackSynced, packState, syncPackFresh } from './pack'
 
 export const outbox = reactive({
@@ -91,7 +92,74 @@ async function persist(entry) {
 
 function forget(entry) {
   outbox.entries = outbox.entries.filter((other) => other.id !== entry.id)
-  if (hasIndexedDB()) return outboxStore.del(entry.id).catch(() => {})
+  if (!hasIndexedDB()) return
+  dropMedia(entry)
+  return outboxStore.del(entry.id).catch(() => {})
+}
+
+/* The ids of the photos and recordings an entry carries. */
+const mediaOf = (entry) =>
+  Array.isArray(entry?.payload?.media) ? entry.payload.media : []
+
+function dropMedia(entry) {
+  for (const id of mediaOf(entry)) mediaStore.del(id).catch(() => {})
+}
+
+/**
+ * Keep the photos and recordings of a note that is about to be captured.
+ * Each is `{ id, kind, blob }`. Rejects when the device cannot keep them,
+ * before the entry naming them is stored.
+ */
+export async function keepMedia(items) {
+  if (!items.length) return
+  try {
+    if (!hasIndexedDB()) throw new Error('no IndexedDB')
+    for (const { id, kind, blob } of items) {
+      await mediaStore.set(id, { id, kind, blob })
+    }
+  } catch {
+    forgetMedia(items.map((item) => item.id))
+    throw new Error(
+      __(
+        'This device cannot keep the photos or the recording. Free some space, or save the note without them.',
+      ),
+    )
+  }
+}
+
+/** Drop kept media by id: a note that was not captured after all. */
+export function forgetMedia(ids) {
+  if (!hasIndexedDB()) return
+  for (const id of ids) mediaStore.del(id).catch(() => {})
+}
+
+/* Upload what the entry carries and the server does not have yet. Each one is
+   kept by the server under its own id, so a retry after a lost answer is
+   answered "already have it", never stored twice. */
+async function stageMedia(entry) {
+  const staged = new Set(entry.staged || [])
+  for (const id of mediaOf(entry)) {
+    if (staged.has(id)) continue
+    const item = await mediaStore.get(id)
+    if (!item?.blob) {
+      const error = new Error(
+        __(
+          'A photo or recording on this note is no longer on this device. Discard the note and write it again.',
+        ),
+      )
+      error.exc_type = 'ValidationError'
+      error.lostMedia = true
+      throw error
+    }
+    await call('crm.api.note_media.stage_media', {
+      media_id: id,
+      kind: item.kind,
+      data: await blobToBase64(item.blob),
+    })
+    staged.add(id)
+    entry.staged = [...staged]
+    await persist(entry).catch(() => {})
+  }
 }
 
 let loading = null
@@ -172,6 +240,7 @@ function unsavedError() {
 
 async function send(entry) {
   entry.attempts += 1
+  await stageMedia(entry)
   await call('crm.api.offline.replay', {
     request_id: entry.id,
     action: entry.action,
@@ -344,6 +413,8 @@ async function sendPending() {
       entry.stalls = 0
       entry.stall_at = 0
       await persist(entry).catch(() => {})
+      // the server has the files now
+      dropMedia(entry)
     }
   } finally {
     outbox.flushing = false

@@ -36,6 +36,10 @@ function lazyStore(database, name) {
 
 export const packStore = lazyStore('vectora-field-pack', 'pack')
 export const outboxStore = lazyStore('vectora-field-outbox', 'outbox')
+/* The photos and recordings on outbox entries, as Blobs, keyed by the id the
+   entry's payload names them by. A store of its own so the outbox entries stay
+   small enough to load and sort as they are; emptied with its entry. */
+export const mediaStore = lazyStore('vectora-field-media', 'media')
 
 export function hasIndexedDB() {
   return typeof indexedDB !== 'undefined'

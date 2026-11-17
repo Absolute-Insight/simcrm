@@ -37,6 +37,7 @@
       editor-class="prose-sm text-p-sm max-w-none text-ink-gray-5 focus:outline-none"
       class="flex-1 overflow-hidden"
     />
+    <NoteMedia :note="note.name" />
     <div class="mt-1 flex items-center justify-between gap-2">
       <div class="flex items-center gap-2 truncate">
         <UserAvatar :user="note.owner" size="xs" />
@@ -56,6 +57,7 @@
 </template>
 <script setup>
 import UserAvatar from '@/components/UserAvatar.vue'
+import NoteMedia from '@/components/Notes/NoteMedia.vue'
 import TimelineTimestamp from '@/components/Activities/TimelineTimestamp.vue'
 import { Dropdown, call, toast } from 'frappe-ui'
 // parked in experimental for v1 (frappe-ui migration doc)
