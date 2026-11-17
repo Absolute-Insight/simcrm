@@ -92,6 +92,17 @@
           "
           @update:model-value="draft.reasoning_off = $event ? 1 : 0"
         />
+        <Switch
+          :model-value="!!draft.media_input"
+          size="sm"
+          :label="__('Model accepts audio and images')"
+          :description="
+            __(
+              'For a model that reads speech and pictures, such as Nemotron 3.5 Bolt or Gemma 4. Reps can then dictate to the Assistant and attach photos. Documents can be attached either way.',
+            )
+          "
+          @update:model-value="draft.media_input = $event ? 1 : 0"
+        />
 
         <!-- Tests the *saved* settings: base_url is the target of a server-side
              POST carrying the API key, so the endpoint reads it from the
@@ -337,6 +348,7 @@ const FIELDS = [
   'timeout',
   'max_tokens',
   'reasoning_off',
+  'media_input',
   'daily_call_budget',
   'assistant_reads_products',
   'analyst_enabled',

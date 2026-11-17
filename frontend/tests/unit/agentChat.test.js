@@ -169,4 +169,48 @@ describe('createChatStore', () => {
       { role: 'assistant', content: 'a' },
     ])
   })
+  it('sends extra params read at send time, and shows user extras without sending them as history', async () => {
+    let attached = { name: 'rfq.pdf', data: 'AAAA' }
+    const store = makeStore({
+      params: () => (attached ? { attachment: attached } : {}),
+      userExtras: () => (attached ? { attachmentName: attached.name } : {}),
+    })
+    callMock.mockResolvedValue({ status: 'ok', answer: 'a' })
+    await store.ask('what is this?')
+    expect(callMock.mock.calls[0][1].attachment).toEqual(attached)
+    expect(store.messages.value[0]).toEqual({
+      role: 'user',
+      content: 'what is this?',
+      attachmentName: 'rfq.pdf',
+    })
+
+    attached = null
+    await store.ask('and now?')
+    expect(callMock.mock.calls[1][1]).not.toHaveProperty('attachment')
+    expect(callMock.mock.calls[1][1].history[0]).toEqual({
+      role: 'user',
+      content: 'what is this?',
+    })
+  })
+
+  it("shows the server's own words when it refuses what was sent", async () => {
+    const store = makeStore()
+    const refusal = Object.assign(new Error('ValidationError'), {
+      exc_type: 'ValidationError',
+      messages: ['That PDF is password-protected.'],
+    })
+    callMock.mockRejectedValueOnce(refusal)
+    await store.ask('q')
+    expect(store.failure.value).toBe('rejected')
+    expect(store.failureReason.value).toBe('That PDF is password-protected.')
+  })
+  it('says a refused-as-too-large request is about the file, not the weather', async () => {
+    const store = makeStore()
+    callMock.mockRejectedValueOnce(
+      Object.assign(new Error('x'), { status: 413 }),
+    )
+    await store.ask('q')
+    expect(store.failure.value).toBe('rejected')
+    expect(store.failureReason.value).toMatch(/too large/)
+  })
 })

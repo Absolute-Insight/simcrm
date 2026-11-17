@@ -27,6 +27,7 @@ from crm.agent import (
 	client,
 	context,
 	knowledge,
+	media,
 	reference,
 	tools,
 )
@@ -40,6 +41,7 @@ from crm.agent.schemas import (
 	ConnectionProbe,
 	ReferenceAnswer,
 	ThreadSummary,
+	Transcript,
 )
 from crm.api import reference as reference_api
 from crm.api.dashboard import get_base_currency
@@ -77,6 +79,13 @@ USER_DAILY_BUDGET_SHARE = 5
 # The longest question the assistant accepts. Anything past this is a paste,
 # not a question, and a paste belongs in the record it came from.
 ASSISTANT_QUESTION_MAX_CHARS = 2000
+
+# The share of the Assistant's prompt an attached document may take. The rest
+# stays with the knowledge base, the reference rows and the conversation: an
+# attachment is the customer's side of the question, the articles are ours.
+ATTACHMENT_PROMPT_SHARE = 0.5
+# The fence markers, the file name line and the separators around the quote.
+ATTACHMENT_FRAME_CHARS = 300
 
 BUDGET_CACHE_KEY = "crm_agent_daily_calls"
 
@@ -430,7 +439,9 @@ PRODUCT_SEARCH_FIELDS = ("product_name", "product_code", "description")
 @frappe.whitelist()
 @sales_user_only
 @rate_limit(limit=SUMMARISE_RATE_LIMIT, seconds=60)
-def ask_assistant(question: str, history: str | list | None = None) -> dict:
+def ask_assistant(
+	question: str, history: str | list | None = None, attachment: str | dict | None = None
+) -> dict:
 	"""Answer a rep's question about the company's offering from the knowledge base.
 
 	Returns ``{"status": "ok", "answer": str, "sources": [{"name", "title"}],
@@ -446,6 +457,12 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 	checked: every figure must be on a row, claim by claim, or the rows
 	themselves are returned instead (``"from_sheet": true``). The same happens
 	when the model cannot be asked -- a lookup table does not need one.
+
+	``attachment`` is one file the rep attached, ``{"name", "data"}`` with
+	``data`` base64 (see :mod:`crm.agent.media`). It is read in memory for this
+	request only and quoted as untrusted material; the browser sends it again
+	with each follow-up. A file this site's model cannot take is refused with a
+	``ValidationError`` the rep reads.
 	"""
 	question = _clean_question(question)
 
@@ -453,9 +470,11 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 	if not cfg.enabled:
 		return {"status": "disabled"}
 
+	sent_a_file = attachment not in (None, "", {})
+
 	articles = _knowledge_articles(cfg, question)
 	entries, index = reference_api.load_entries()
-	if not articles and not entries and not _reads_a_catalogue(cfg):
+	if not articles and not entries and not _reads_a_catalogue(cfg) and not sent_a_file:
 		return {"status": "empty"}
 
 	rows = reference.select_entries(question, entries, index=index)
@@ -463,20 +482,56 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 	if reason := _throttled(cfg):
 		return _sheet_answer(rows) if rows else _unavailable(reason)
 
+	# Parsed only after the throttle: a refused question costs no PDF extraction,
+	# and the browser resends the file with every follow-up. A file refused here
+	# was charged to the budget by the throttle, and is given back.
+	try:
+		attached = _read_attachment(cfg, attachment)
+	except frappe.ValidationError:
+		_refund_budget(cfg)
+		raise
+
 	selected = knowledge.select_articles(question, articles)
 	company = frappe.db.get_single_value("FCRM Settings", "brand_name") or "the company"
 	system_prompt = knowledge.ASSISTANT_SYSTEM_PROMPT.format(company=company)
 	if rows:
 		system_prompt += "\n\n" + reference.reference_block(rows, company)
+	max_chars = client.prompt_char_budget(cfg)
+	asked = question
+	if attached:
+		system_prompt += media.ATTACHMENT_RULE
+		if attached.kind == "image":
+			# the picture's tokens come out of the same window as the text's
+			max_chars = max(0, max_chars - media.IMAGE_CHARS)
+			asked = f"{media.fenced(attached, '(the attached image)')}\n\n{question}"
+		else:
+			# a share of what is left once the instruction, the reference rows
+			# and the question are in -- not of the whole window, or the file
+			# alone could leave no room for the knowledge base it is weighed
+			# against, and the question is never trimmed to make room
+			left = max_chars - len(system_prompt) - len(question) - ATTACHMENT_FRAME_CHARS
+			quoted = media.excerpt(attached.text, question, int(max(0, left) * ATTACHMENT_PROMPT_SHARE))
+			asked = f"{media.fenced(attached, quoted)}\n\n{question}"
 	messages = knowledge.build_assistant_messages(
-		question,
+		asked,
 		selected,
 		_parse_history(history),
 		system_prompt=system_prompt,
-		no_match_note=reference.NO_ARTICLE_NOTE if rows else knowledge.ASSISTANT_NO_MATCH_NOTE,
+		no_match_note=(
+			reference.NO_ARTICLE_NOTE
+			if rows
+			else media.ATTACHMENT_NO_MATCH_NOTE
+			if attached
+			else knowledge.ASSISTANT_NO_MATCH_NOTE
+		),
 		heading="Knowledge base",
-		max_chars=client.prompt_char_budget(cfg),
+		max_chars=max_chars,
 	)
+	if attached and attached.kind == "image":
+		messages[-1] = {
+			"role": "user",
+			"content": [{"type": "text", "text": messages[-1]["content"]}, media.image_part(attached)],
+		}
 
 	schema = ReferenceAnswer if rows else AssistantAnswer
 	reply, failed = _complete_chat(cfg, messages, "CRM assistant answer failed", schema)
@@ -484,16 +539,104 @@ def ask_assistant(question: str, history: str | list | None = None) -> dict:
 		return _sheet_answer(rows) if rows else failed
 
 	if rows:
+		# The attachment supports nothing here. A figure that is only in the
+		# customer's file is not one the company's rows or articles back, and
+		# counting it would let a planted price pass as verified -- an answer
+		# resting on it falls back to the rows.
 		return _reference_answer(reply, rows, selected)
 
 	titles = {article["name"]: article["title"] for article in articles}
 	cited = [name for name in reply.related_articles if name in titles]
-	if not cited:
+	if not cited and not attached:
 		# same rule as the Mentor: an answer grounded on articles the model did
-		# not name is still an answer from those articles
+		# not name is still an answer from those articles. Not with a file
+		# attached: then the answer may rest on the file alone, and a chip for
+		# an article it never used would say otherwise.
 		cited = [article["name"] for article in selected[:MAX_CITATIONS]]
 	sources = [{"name": name, "title": titles[name]} for name in cited]
 	return {"status": "ok", "answer": reply.answer, "sources": sources}
+
+
+def _read_attachment(cfg, attachment) -> media.Attachment | None:
+	"""The rep's attached file, read and checked, or ``None`` when there is none."""
+	if attachment in (None, "", {}):
+		return None
+	if isinstance(attachment, str):
+		try:
+			attachment = frappe.parse_json(attachment)
+		except ValueError:
+			attachment = None
+	if not isinstance(attachment, dict):
+		frappe.throw(frappe._("The attachment could not be read."), frappe.ValidationError)
+	try:
+		data = media.decode_base64(attachment.get("data"), media.MAX_ATTACHMENT_BYTES, "attachment")
+		return media.read_attachment(attachment.get("name"), data, images_allowed=cfg.media_input)
+	except media.MediaRejected as exc:
+		frappe.throw(frappe._(str(exc)), frappe.ValidationError)
+
+
+@frappe.whitelist()
+@sales_user_only
+@rate_limit(limit=SUMMARISE_RATE_LIMIT, seconds=60)
+def transcribe(audio: str) -> dict:
+	"""A dictated clip as text, for the rep to read and send themselves.
+
+	``audio`` is a base64 WAV clip, 16 kHz mono PCM16, at most
+	:data:`media.MAX_CLIP_SECONDS` -- the browser records and converts it. Returns
+	``{"status": "ok", "text"}`` or a degrade status; ``disabled`` when the
+	tier is off or the site's model does not take audio. The text is never sent
+	anywhere from here: it goes into the rep's draft, where they can see and
+	correct it, which is why a mis-heard "PN16" costs a keystroke and not a
+	wrong answer.
+
+	Thinking is off for this call whatever the site's setting: a reasoning pass
+	over a transcription paraphrases it.
+	"""
+	cfg = get_config()
+	if not (cfg.enabled and cfg.media_input):
+		return {"status": "disabled"}
+	try:
+		clip = media.decode_base64(audio, media.MAX_CLIP_BYTES, "recording")
+		media.clip_seconds(clip)
+	except media.MediaRejected as exc:
+		frappe.throw(frappe._(str(exc)), frappe.ValidationError)
+	if reason := _throttled(cfg):
+		return _unavailable(reason)
+
+	listen = cfg.with_overrides(reasoning_off=True)
+	with _model_call_slot() as free:
+		if not free:
+			_refund_budget(cfg)
+			return {"status": "unavailable"}
+		heard, failed = _model_call(
+			cfg,
+			"CRM agent transcription failed",
+			lambda: client.complete(listen, Transcript, media.transcription_messages(clip)),
+		)
+		if failed:
+			return failed
+	return {"status": "ok", "text": " ".join(heard.text.split())}
+
+
+@frappe.whitelist()
+@sales_user_only
+def chat_capabilities() -> dict:
+	"""What the Assistant's input box may offer on this site: attachments, and
+	whether images and dictation are among them."""
+	cfg = get_config()
+	media_on = bool(cfg.enabled and cfg.media_input)
+	return {
+		"attachments": bool(cfg.enabled),
+		"images": media_on,
+		"dictation": media_on,
+		"accept": [
+			ext
+			for ext in media.ACCEPTED_EXTENSIONS
+			if media_on or ext not in (".png", ".jpg", ".jpeg", ".webp")
+		],
+		"max_attachment_mb": media.MAX_ATTACHMENT_BYTES // (1024 * 1024),
+		"max_clip_seconds": media.MAX_CLIP_SECONDS,
+	}
 
 
 def _knowledge_articles(cfg, question: str) -> list[dict]:
@@ -908,6 +1051,7 @@ def get_settings() -> dict:
 		"max_tokens": cfg.max_tokens,
 		"context_tokens": cfg.context_tokens,
 		"reasoning_off": int(cfg.reasoning_off),
+		"media_input": int(cfg.media_input),
 		"daily_call_budget": cfg.daily_call_budget,
 		"assistant_reads_products": int(cfg.assistant_reads_products),
 		"analyst_enabled": int(cfg.analyst_enabled),

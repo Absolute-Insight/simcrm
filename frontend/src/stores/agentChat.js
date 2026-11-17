@@ -18,6 +18,8 @@
 import { call } from 'frappe-ui'
 import { ref } from 'vue'
 
+import { describeError } from '@/utils/describeError'
+
 /** How many prior turns accompany a question. The server trims again anyway. */
 export const HISTORY_TURNS_SENT = 8
 
@@ -27,11 +29,18 @@ export const HISTORY_TURNS_SENT = 8
  * @param {(result: object) => object} options.mapResult  ok result → the
  *   assistant turn's fields; must include `content`
  * @param {number} [options.historyTurns]
+ * @param {() => object} [options.params]  extra arguments for each call (the
+ *   Assistant's attached file); read at send time, so a retry sends what is
+ *   attached now
+ * @param {() => object} [options.userExtras]  extra fields on the user turn,
+ *   for display only -- history still carries role and content alone
  */
 export function createChatStore({
   method,
   mapResult,
   historyTurns = HISTORY_TURNS_SENT,
+  params = () => ({}),
+  userExtras = () => ({}),
 }) {
   const visible = ref(false)
 
@@ -42,10 +51,12 @@ export function createChatStore({
 
   /**
    * Why the last question got no answer:
-   * '' | 'disabled' | 'empty' | 'unavailable'. Cleared on the next attempt.
-   * 'disabled' is configuration (the tier is off), 'empty' is content (the
-   * surface has nothing to answer from yet), 'unavailable' is weather
-   * (endpoint down, budget spent) and worth retrying.
+   * '' | 'disabled' | 'empty' | 'unavailable' | 'rejected'. Cleared on the
+   * next attempt. 'disabled' is configuration (the tier is off), 'empty' is
+   * content (the surface has nothing to answer from yet), 'unavailable' is
+   * weather (endpoint down, budget spent) and worth retrying. 'rejected' is
+   * the server refusing what was sent -- a file it cannot read -- and
+   * `failureReason` then holds the server's own sentence, as plain text.
    */
   const failure = ref('')
 
@@ -90,14 +101,18 @@ export function createChatStore({
       .slice(-historyTurns)
       .map(({ role, content }) => ({ role, content }))
 
-    messages.value.push({ role: 'user', content: trimmed })
+    messages.value.push({ role: 'user', content: trimmed, ...userExtras() })
     asking.value = true
     failure.value = ''
     failureReason.value = ''
     const askedIn = session
 
     try {
-      const result = await call(method, { question: trimmed, history })
+      const result = await call(method, {
+        question: trimmed,
+        history,
+        ...params(),
+      })
       if (askedIn !== session) return
       if (result?.status === 'ok') {
         messages.value.push({ role: 'assistant', ...mapResult(result) })
@@ -108,10 +123,27 @@ export function createChatStore({
             : 'unavailable'
         failureReason.value = result?.reason || ''
       }
-    } catch {
-      // A thrown call (network, rate limit) is the same story as a degraded
-      // status for the person reading the panel: no answer, try again.
-      if (askedIn === session) failure.value = 'unavailable'
+    } catch (error) {
+      if (askedIn !== session) return
+      // A refusal the server worded for a person ("That PDF is
+      // password-protected.") is shown as written; anything else (network,
+      // a 500) is the same story as a degraded status: no answer, try again.
+      const described = describeError(error)
+      const excType = String(error?.exc_type || error?.excType || '')
+      const status = error?.status ?? error?.response?.status
+      if (described.message && /ValidationError/.test(excType)) {
+        failure.value = 'rejected'
+        failureReason.value = described.message
+      } else if (status === 413) {
+        // the proxy or the site refused the body: an attachment too large
+        // for this server, which no retry will fix
+        failure.value = 'rejected'
+        failureReason.value = __(
+          'That file is too large for this server. Attach a smaller one.',
+        )
+      } else {
+        failure.value = 'unavailable'
+      }
     } finally {
       if (askedIn === session) asking.value = false
     }
