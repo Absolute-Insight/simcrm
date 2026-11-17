@@ -15,7 +15,9 @@ import frappe
 
 from crm.api.note_media import (
 	MAX_PHOTOS,
+	MAX_UNCLAIMED_FILES,
 	PREFIX,
+	UNCLAIMED_DAYS,
 	get_note_media,
 	purge_unclaimed_media,
 	stage_media,
@@ -108,6 +110,12 @@ class NoteMediaTest(ReplayTestCase):
 		name, _message = self.refusal(replay, new_id(), "add_note", self.note(ids))
 		self.assertEqual(name, "ValidationError")
 
+	def test_a_rep_cannot_pile_up_uploads_no_note_claims(self):
+		for _ in range(MAX_UNCLAIMED_FILES):
+			stage_media(media_id(), "photo", jpeg())
+		name, _message = self.refusal(stage_media, media_id(), "photo", jpeg())
+		self.assertEqual(name, "ValidationError")
+
 	def test_an_empty_note_with_nothing_attached_is_still_refused(self):
 		name, _message = self.refusal(replay, new_id(), "add_note", self.note([]))
 		self.assertEqual(name, "ValidationError")
@@ -123,13 +131,11 @@ class NoteMediaTest(ReplayTestCase):
 		self.assertEqual(get_note_media([note]), {})
 
 	def test_unclaimed_uploads_are_removed_after_the_outbox_horizon(self):
-		from crm.fcrm.doctype.crm_offline_receipt.crm_offline_receipt import RECEIPT_DAYS
-
 		old, fresh = media_id(), media_id()
 		stage_media(old, "photo", jpeg())
 		stage_media(fresh, "photo", jpeg())
 		frappe.set_user("Administrator")
-		stale = frappe.utils.now_datetime() - timedelta(days=RECEIPT_DAYS + 2)
+		stale = frappe.utils.now_datetime() - timedelta(days=UNCLAIMED_DAYS + 1)
 		frappe.db.set_value(
 			"File", {"file_name": f"{PREFIX}{old}.jpg"}, "creation", stale, update_modified=False
 		)

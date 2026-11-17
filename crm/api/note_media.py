@@ -9,8 +9,8 @@ kept small (``crm.api.offline.MAX_PAYLOAD_BYTES``) and a photo is not.
 A staged file is a private File attached to its uploader's own User record and
 named after the id the phone gave it, so a retry finds it rather than storing it
 twice, and nobody else can claim it. One that is never claimed -- the rep
-discarded the note -- is removed after the outbox's own horizon
-(:func:`purge_unclaimed_media`).
+discarded the note -- is removed after ``UNCLAIMED_DAYS``
+(:func:`purge_unclaimed_media`); "Send again" on a note uploads its files afresh.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ import frappe
 from frappe import _
 
 from crm.agent.media import MediaRejected, _check_image_size, _image_mime, decode_base64
-from crm.fcrm.doctype.crm_offline_receipt.crm_offline_receipt import RECEIPT_DAYS
 from crm.utils import sales_user_only, user_rate_limited
 
 MAX_PHOTOS = 4
@@ -32,6 +31,14 @@ MAX_RECORDINGS = 1
 MAX_PHOTO_BYTES = 2 * 1024 * 1024
 # three minutes of the browser's own compressed audio, with room to spare
 MAX_VOICE_BYTES = 4 * 1024 * 1024
+# what one rep may have uploaded and not yet claimed: a few notes' worth. A
+# phone uploads a note's files only right before sending the note, so more
+# than this waiting is not a phone catching up.
+MAX_UNCLAIMED_FILES = 20
+MAX_UNCLAIMED_BYTES = 40 * 1024 * 1024
+# how long an unclaimed upload is kept: the note's replay follows its files
+# within seconds, and "Send again" on a set-aside note uploads them afresh
+UNCLAIMED_DAYS = 2
 MEDIA_RATE_SCOPE = "note_media"
 MEDIA_RATE_LIMIT = 30
 PREFIX = "field-media-"
@@ -115,6 +122,7 @@ def stage_media(media_id: str, kind: str, data: str) -> dict:
 	if _staged(media_id, user):
 		return {"media_id": media_id, "status": "duplicate"}
 	content, extension = _read(frappe.utils.cstr(kind), data)
+	_refuse_hoarding(user, len(content))
 	frappe.get_doc(
 		{
 			"doctype": "File",
@@ -126,6 +134,27 @@ def stage_media(media_id: str, kind: str, data: str) -> dict:
 		}
 	).insert(ignore_permissions=True)
 	return {"media_id": media_id, "status": "staged"}
+
+
+def _refuse_hoarding(user: str, incoming: int) -> None:
+	waiting = frappe.get_all(
+		"File",
+		filters={
+			"owner": user,
+			"attached_to_doctype": "User",
+			"attached_to_name": user,
+			"file_name": ("like", f"{PREFIX}%"),
+		},
+		pluck="file_size",
+	)
+	if (
+		len(waiting) >= MAX_UNCLAIMED_FILES
+		or sum(size or 0 for size in waiting) + incoming > MAX_UNCLAIMED_BYTES
+	):
+		frappe.throw(
+			_("Too many photos and recordings are waiting to be sent. Send or discard the notes first."),
+			frappe.ValidationError,
+		)
 
 
 def media_ids(value) -> list[str]:
@@ -148,7 +177,9 @@ def claim_media(note: str, ids: list[str]) -> None:
 		name = _staged(media_id, user)
 		if not name:
 			frappe.throw(
-				_("A photo or recording on this note has not arrived yet. It will be sent again."),
+				_(
+					"A photo or recording on this note did not reach the server. Send it again from the phone that took it."
+				),
 				frappe.ValidationError,
 			)
 		files.append(name)
@@ -156,12 +187,12 @@ def claim_media(note: str, ids: list[str]) -> None:
 	if kinds.count("photo") > MAX_PHOTOS or kinds.count("voice") > MAX_RECORDINGS:
 		frappe.throw(_("That note has too many photos or recordings."), frappe.ValidationError)
 	for name in files:
-		frappe.db.set_value(
-			"File",
-			name,
-			{"attached_to_doctype": "FCRM Note", "attached_to_name": note},
-			update_modified=False,
-		)
+		# a save, not set_value: the thumbnail hook (crm.utils.thumbnails) moves
+		# a thumbnail made while the file was staged onto the note with it
+		doc = frappe.get_doc("File", name)
+		doc.attached_to_doctype = "FCRM Note"
+		doc.attached_to_name = note
+		doc.save(ignore_permissions=True)
 
 
 def _kind(file_name: str | None) -> str | None:
@@ -199,8 +230,8 @@ def get_note_media(notes: list | str) -> dict:
 
 
 def purge_unclaimed_media() -> None:
-	"""Daily: remove staged files no note claimed while a phone could still send it."""
-	cutoff = frappe.utils.now_datetime() - timedelta(days=RECEIPT_DAYS + 1)
+	"""Daily: remove staged files no note claimed within UNCLAIMED_DAYS."""
+	cutoff = frappe.utils.now_datetime() - timedelta(days=UNCLAIMED_DAYS)
 	for name in frappe.get_all(
 		"File",
 		filters={

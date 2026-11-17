@@ -955,9 +955,10 @@ describe('photos and voice notes on a note', () => {
     expect(disk.has(entry.id)).toBe(false)
   })
 
-  it('a note whose photo is no longer on the device is set aside, not sent', async () => {
+  it('a note whose photo is no longer on the device is still asked about', async () => {
+    // another tab sent it and let the files go: the server knows it already
     const { enqueue, flushOutbox, outbox } = await load()
-    server.replay = async () => ({ status: 'applied' })
+    server.replay = async () => ({ status: 'duplicate' })
     await enqueue('add_note', {
       reference_doctype: 'CRM Deal',
       reference_docname: 'D-1',
@@ -965,10 +966,40 @@ describe('photos and voice notes on a note', () => {
       media: ['media-gone-000000001'],
     })
     await flushOutbox()
-    expect(
-      server.calls.some((c) => c.method === 'crm.api.offline.replay'),
-    ).toBe(false)
-    expect(outbox.entries[0]).toMatchObject({ status: 'rejected' })
+    const methods = server.calls.map((c) => c.method)
+    expect(methods).not.toContain('crm.api.note_media.stage_media')
+    expect(methods).toContain('crm.api.offline.replay')
+    expect(outbox.entries.every((e) => e.status !== 'rejected')).toBe(true)
+  })
+
+  it('a note discarded while its photo uploads is not sent', async () => {
+    const { enqueue, keepMedia, flushOutbox, discardEntry } = await load({
+      online: false,
+    })
+    await keepMedia([
+      { id: 'media-photo-0000002', kind: 'photo', blob: blob() },
+    ])
+    const entry = await enqueue('add_note', {
+      reference_doctype: 'CRM Deal',
+      reference_docname: 'D-1',
+      content: '',
+      media: ['media-photo-0000002'],
+    })
+    server.replay = async (args) => {
+      if (args.media_id) {
+        await discardEntry(entry.id)
+        return { status: 'staged' }
+      }
+      return { status: 'applied' }
+    }
+    const { connectivity } = await import('@/offline/connectivity')
+    connectivity.online = true
+    await flushOutbox()
+    await settle()
+    expect(server.calls.map((c) => c.method)).not.toContain(
+      'crm.api.offline.replay',
+    )
+    expect(disk.has(entry.id)).toBe(false)
   })
 
   it('discarding the note drops its files from the device', async () => {

@@ -243,8 +243,14 @@ minutes at most). Never transcribed -- that is the Assistant's dictation.
   `claim_media` moves them onto the new note. A missing one refuses the whole
   replay, so a note never lands without a photo the rep took. The entry records
   `staged` ids, so a replay retry does not upload again.
-- Staged files no note claimed are removed daily after `RECEIPT_DAYS + 1`
-  (`purge_unclaimed_media`).
+- A rep may hold at most `MAX_UNCLAIMED_FILES` / `MAX_UNCLAIMED_BYTES` of
+  unclaimed uploads, and they are removed daily after `UNCLAIMED_DAYS`
+  (`purge_unclaimed_media`): a phone uploads a note's files seconds before the
+  note, and "Send again" clears `staged` so a set-aside note uploads afresh.
+- A file missing from the device does not stop the note: it is replayed anyway,
+  and the server answers `duplicate` (another tab sent it) or refuses it.
+  Discarding while an upload is on the wire stops the note there. Claiming is a
+  File save, not set_value, so the thumbnail hook moves the thumbnail too.
 - Desk shows them on the Notes page and the deal's notes (`Notes/NoteMedia.vue`),
   one batched `get_note_media` call per render tick, scoped by `get_list` on
   FCRM Note.

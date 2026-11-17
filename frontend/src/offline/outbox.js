@@ -135,31 +135,48 @@ export function forgetMedia(ids) {
 
 /* Upload what the entry carries and the server does not have yet. Each one is
    kept by the server under its own id, so a retry after a lost answer is
-   answered "already have it", never stored twice. */
+   answered "already have it", never stored twice.
+
+   A file that is no longer on this device is not a verdict: another tab may
+   have sent the note and let the files go. The note is replayed anyway; the
+   server answers "already have it", or refuses a note whose file it never got,
+   in its own words. */
 async function stageMedia(entry) {
   const staged = new Set(entry.staged || [])
   for (const id of mediaOf(entry)) {
     if (staged.has(id)) continue
-    const item = await mediaStore.get(id)
-    if (!item?.blob) {
-      const error = new Error(
-        __(
-          'A photo or recording on this note is no longer on this device. Discard the note and write it again.',
+    let item
+    let data
+    try {
+      item = await mediaStore.get(id)
+      data = item?.blob ? await blobToBase64(item.blob) : null
+    } catch {
+      // the device's storage failed to answer (iOS drops its IndexedDB
+      // connection now and then): worth asking again, and worth saying so
+      throw Object.assign(
+        new Error(
+          __('This device could not read a photo or recording on this note.'),
         ),
+        { status: 503, exc_type: 'DeviceStorageError' },
       )
-      error.exc_type = 'ValidationError'
-      error.lostMedia = true
-      throw error
     }
+    if (!data) continue
     await call('crm.api.note_media.stage_media', {
       media_id: id,
       kind: item.kind,
-      data: await blobToBase64(item.blob),
+      data,
     })
+    // discarded while it was on the wire: nothing more of it goes, and it is
+    // not written back onto the device
+    if (!held(entry)) throw discardedError()
     staged.add(id)
     entry.staged = [...staged]
     await persist(entry).catch(() => {})
   }
+}
+
+function discardedError() {
+  return Object.assign(new Error('discarded'), { discarded: true })
 }
 
 let loading = null
@@ -241,6 +258,7 @@ function unsavedError() {
 async function send(entry) {
   entry.attempts += 1
   await stageMedia(entry)
+  if (!held(entry)) throw discardedError()
   await call('crm.api.offline.replay', {
     request_id: entry.id,
     action: entry.action,
@@ -481,6 +499,9 @@ export async function retryEntry(id) {
   entry.error = null
   entry.stalls = 0
   entry.stall_at = 0
+  // the server keeps an upload no note claimed for two days only
+  // (crm/api/note_media.py UNCLAIMED_DAYS): send the files again with it
+  entry.staged = []
   await persist(entry).catch(() => {})
   // a run already under way has been past this entry once and will not look
   // at it again: let it finish, then start one that will

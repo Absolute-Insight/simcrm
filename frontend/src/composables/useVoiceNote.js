@@ -48,6 +48,7 @@ export function useVoiceNote({ onRecorded, maxSeconds = MAX_VOICE_SECONDS }) {
   let startedAt = 0
   let discard = false
   let gone = false
+  let abandoned = false
 
   function release() {
     clearInterval(ticker)
@@ -65,6 +66,7 @@ export function useVoiceNote({ onRecorded, maxSeconds = MAX_VOICE_SECONDS }) {
     }
     state.value = 'starting'
     gone = false
+    abandoned = false
     let opened
     try {
       opened = await navigator.mediaDevices.getUserMedia({
@@ -82,8 +84,10 @@ export function useVoiceNote({ onRecorded, maxSeconds = MAX_VOICE_SECONDS }) {
           : 'unsupported'
       return
     }
-    if (gone) {
+    if (gone || abandoned) {
+      // closed while the browser was asking for the microphone
       opened.getTracks().forEach((track) => track.stop())
+      state.value = 'idle'
       return
     }
     stream = opened
@@ -124,6 +128,10 @@ export function useVoiceNote({ onRecorded, maxSeconds = MAX_VOICE_SECONDS }) {
   }
 
   function cancel() {
+    if (state.value === 'starting') {
+      abandoned = true
+      return
+    }
     if (state.value !== 'recording') return
     discard = true
     stop()
