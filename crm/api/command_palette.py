@@ -88,7 +88,46 @@ def _search_doctype(doctype: str, config: dict, query: str):
 		order_by="modified desc",
 		limit_page_length=SEARCH_LIMIT,
 	)
-	return [{**_record(row, doctype, config), "keywords": _keywords(row, search_fields)} for row in rows]
+	records = [{**_record(row, doctype, config), "keywords": _keywords(row, search_fields)} for row in rows]
+	if doctype == "CRM Organization":
+		records += _sites_of(rows, config, search_fields)
+	return records
+
+
+def _sites_of(heads, config: dict, search_fields: list[str]) -> list[dict]:
+	"""The sites filed under the head accounts a search found: "a mine" finds its
+	plants too. Only head accounts the user can read are followed -- ``heads``
+	came through get_list -- and only sites the user can read come back, so no
+	hidden customer is named either way. ``head_account`` itself is permlevel 2,
+	which reps do not read; it is matched here with get_all, never returned."""
+	if not heads or not frappe.get_meta("CRM Organization").has_field("head_account"):
+		return []
+	found = {row.name for row in heads}
+	under = frappe.get_all(
+		"CRM Organization",
+		filters={"head_account": ["in", list(found)], "name": ["not in", list(found)]},
+		fields=["name", "head_account"],
+		# candidates only; get_list below keeps the readable ones
+		limit=200,
+	)
+	if not under:
+		return []
+	head_of = {row.name: row.head_account for row in under}
+	sites = frappe.get_list(
+		"CRM Organization",
+		fields=_record_fields("CRM Organization", config, search_fields),
+		filters={"name": ["in", list(head_of)]},
+		order_by="modified desc",
+		limit_page_length=SEARCH_LIMIT,
+	)
+	return [
+		{
+			**_record(row, "CRM Organization", config),
+			# the head account's name, which the user can read, is what matched
+			"keywords": f"{_keywords(row, search_fields)} {head_of[row.name]}",
+		}
+		for row in sites
+	]
 
 
 def _existing_fields(doctype: str, fields: list[str]) -> list[str]:

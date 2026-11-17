@@ -152,7 +152,13 @@ def upsert_organization(rec) -> str:
 	vat = (v(rec, "TaxRegistrationID") or "").strip()
 	if vat:
 		doc.tax_registration_id = vat
+	if "ParentRecord" in rec:
+		# only from a record that carries the field: the spreadsheet import does not,
+		# and must not unlink a site from the head account the live sync found
+		doc.acumatica_parent = _parent_code(rec, customer_id)
+		doc.head_account = _find_by_acumatica_id("CRM Organization", doc.acumatica_parent)
 	doc.save(ignore_permissions=True)
+	_link_waiting_sites(customer_id, doc.name)
 	# A record already under its "Name (CustomerID)" form keeps it: it was disambiguated
 	# on purpose, and following the plain name back and forth would rename it every time
 	# the other holder came and went.
@@ -163,6 +169,104 @@ def upsert_organization(rec) -> str:
 	):
 		return _rename_organization(doc.name, organization_name)
 	return doc.name
+
+
+def _parent_code(rec, customer_id) -> str | None:
+	"""The head account's customer code, or None for a customer that has none (or
+	names itself, which Acumatica refuses but an API answer cannot be trusted on)."""
+	parent = (v(rec, "ParentRecord") or "").strip()
+	return parent if parent and parent != customer_id else None
+
+
+def _link_waiting_sites(customer_id, name) -> None:
+	"""Point the sites filed under ``customer_id`` at it. A site imported before its
+	head account kept only the code; this is where it gets the link. A rename later
+	is followed by rename_doc, which rewrites Link columns.
+
+	Looked up first and written by name: this runs for every customer the sweep
+	reads, almost always with nothing waiting, and a set_value on a filter clears
+	the doctype's whole document cache (a redis KEYS scan) every time."""
+	if not customer_id or not frappe.get_meta("CRM Organization").has_field("acumatica_parent"):
+		# the new image can sweep before migrate has added the column
+		return
+	waiting = frappe.get_all(
+		"CRM Organization",
+		filters={"acumatica_parent": customer_id, "name": ("!=", name)},
+		or_filters=[["head_account", "is", "not set"], ["head_account", "!=", name]],
+		pluck="name",
+	)
+	for site in waiting:
+		frappe.db.set_value("CRM Organization", site, "head_account", name, update_modified=False)
+
+
+# one IN list per query when matching every customer code against the CRM
+_CODE_CHUNK = 500
+
+
+def link_head_accounts() -> dict:
+	"""Fill every customer's head account from Acumatica.
+
+	The sweep only reads customers modified since the last run, so the sites
+	already imported would wait for an edit in Acumatica before they were linked.
+	One read of two columns for every customer (a few pages), then writes only
+	where the CRM differs. GETs only. Queued by the patch that ships the field;
+	safe to run again by hand (``bench execute
+	crm.integrations.acumatica.importer.link_head_accounts``). Holds the sync's
+	lock, so it never shares the API login limit with a sweep, and a failure is
+	written where the sync's own are (last_sync_error) rather than lost in a
+	worker log."""
+	_run_as_the_system()
+	settings = get_settings()
+	if not settings.enabled:
+		return {"skipped": "the integration is off"}
+	try:
+		with filelock(SYNC_JOB_ID, timeout=0):
+			return _link_head_accounts(settings)
+	except LockTimeoutError:
+		return {"skipped": "another sync is running"}
+	except Exception as e:
+		reason = f"{e} :: {e.detail(400)}" if isinstance(e, AcumaticaError) else str(e)
+		frappe.db.rollback()
+		frappe.db.set_single_value(
+			"CRM Acumatica Settings", "last_sync_error", f"Linking head accounts: {reason}"[:500]
+		)
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
+		raise
+
+
+def _link_head_accounts(settings) -> dict:
+	client = AcumaticaClient(settings)
+	try:
+		parents = {}
+		for rec in client.iter_all("Customer", page_size=500, select="CustomerID,ParentRecord"):
+			customer_id = v(rec, "CustomerID")
+			if customer_id:
+				parents[customer_id] = _parent_code(rec, customer_id)
+	finally:
+		client.logout()
+	codes = list(parents)
+	rows = []
+	for i in range(0, len(codes), _CODE_CHUNK):
+		rows += frappe.get_all(
+			"CRM Organization",
+			filters={"acumatica_id": ["in", codes[i : i + _CODE_CHUNK]]},
+			fields=["name", "acumatica_id", "acumatica_parent", "head_account"],
+		)
+	by_code = {row.acumatica_id: row.name for row in rows}
+	changed = 0
+	for row in rows:
+		parent = parents[row.acumatica_id]
+		head = by_code.get(parent) if parent else None
+		if (row.acumatica_parent or None, row.head_account or None) != (parent, head):
+			frappe.db.set_value(
+				"CRM Organization",
+				row.name,
+				{"acumatica_parent": parent, "head_account": head},
+				update_modified=False,
+			)
+			changed += 1
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
+	return {"customers": len(parents), "sites": sum(1 for p in parents.values() if p), "changed": changed}
 
 
 def _rename_organization(old: str, new: str) -> str:

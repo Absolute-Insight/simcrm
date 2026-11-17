@@ -9,6 +9,7 @@
   "planned_date",
   "note",
   "organization",
+  "site",
   "contact",
   "reference_doctype",
   "reference_docname",
@@ -53,6 +54,13 @@
    "label": "Customer",
    "options": "CRM Organization",
    "search_index": 1
+  },
+  {
+   "fieldname": "site",
+   "fieldtype": "Data",
+   "label": "Site",
+   "length": 140,
+   "description": "Where at the customer, when Acumatica does not hold it as a customer of its own (a plant, a shaft)"
   },
   {
    "fieldname": "contact",
@@ -141,7 +149,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-11-17 12:00:00.000000",
+ "modified": "2026-11-17 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM Rep Plan Item",

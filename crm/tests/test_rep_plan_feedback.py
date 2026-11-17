@@ -213,3 +213,33 @@ class DealQuoteSearchTest(FeedbackTestCase):
 		ensure_deal_quote_search()
 		frappe.clear_cache(doctype="CRM Deal")
 		self.assertEqual(frappe.get_meta("CRM Deal").search_fields, "acumatica_sales_quote,lead_name")
+
+
+class SiteOnTheActivityTest(FeedbackTestCase):
+	"""A site Acumatica does not hold as a customer (a plant known by a short name)."""
+
+	def test_the_site_is_kept_trimmed(self):
+		row = self.plan(site="  EPL   plant ")
+		self.assertEqual(row["site"], "EPL plant")
+		self.assertEqual(get_plan(this_monday())["items"][0]["site"], "EPL plant")
+
+	def test_a_blank_site_is_none(self):
+		self.assertIsNone(self.plan(site="   ")["site"])
+
+	def test_a_site_too_long_for_the_column_is_refused_with_a_reason(self):
+		from crm.api.rep_plan import SITE_LIMIT
+
+		with self.assertRaisesRegex(frappe.ValidationError, "site name"):
+			self.plan(site="x" * (SITE_LIMIT + 1))
+
+	def test_the_visit_event_names_the_site(self):
+		row = self.plan(site="EPL")
+		event = complete_item(row["name"], "Deliveries done")["items"][0]["fulfilled_by"]
+		self.assertEqual(frappe.db.get_value("Event", event, "subject"), f"Visit: {self.org.name} · EPL")
+
+	def test_a_logged_visit_keeps_its_site(self):
+		plan = log_unplanned_visit(self.org.name, "Breakdown on the crusher", site="No. 4 shaft")
+		logged = [i for i in plan["items"] if i["site"] == "No. 4 shaft"]
+		self.assertEqual(len(logged), 1)
+		subject = frappe.db.get_value("Event", logged[0]["fulfilled_by"], "subject")
+		self.assertTrue(subject.endswith("· No. 4 shaft"))

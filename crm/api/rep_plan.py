@@ -41,6 +41,7 @@ ITEM_FIELDS = (
 	"reference_doctype",
 	"reference_docname",
 	"organization",
+	"site",
 	"contact",
 	"status",
 	"outcome",
@@ -64,6 +65,7 @@ EDITABLE_ITEM_FIELDS = (
 	"reference_doctype",
 	"reference_docname",
 	"organization",
+	"site",
 	"contact",
 	"suggestion",
 )
@@ -74,6 +76,8 @@ NOTE_LIMIT = 140
 # phone's outbox (crm.api.offline.NOTE_TEXT_LIMIT), so an entry the phone accepted
 # offline is never refused when it is replayed
 TEXT_LIMIT = 5000
+# the site at a customer, typed by the rep (CRM Rep Plan Item.site is Data(140))
+SITE_LIMIT = 140
 
 # a plan item points at the record it is about, and only these are plannable
 REFERENCE_DOCTYPES = ("CRM Deal", "CRM Lead")
@@ -220,6 +224,7 @@ def _stage_items(plan, items: list[dict]) -> set[str]:
 			frappe.throw(
 				_("A note can be at most {0} characters.").format(TEXT_LIMIT), frappe.ValidationError
 			)
+		clean["site"] = _site(clean.get("site"))
 		existing = preserved.get(str(row.get("name") or ""))
 		if existing:
 			# rescheduling a row is not the same as replacing it: it keeps its name,
@@ -680,6 +685,7 @@ def _item_row(item: str):
 			"planned_date",
 			"note",
 			"organization",
+			"site",
 			"contact",
 			"reference_doctype",
 			"reference_docname",
@@ -733,6 +739,17 @@ def _required_text(value: str | None, message: str) -> str:
 	return text
 
 
+def _site(site) -> str | None:
+	"""A rep's site name, trimmed; None for a blank one. Longer than the column is
+	refused here rather than by the database, with a message the rep can act on."""
+	site = " ".join(frappe.utils.cstr(site).split())
+	if len(site) > SITE_LIMIT:
+		frappe.throw(
+			_("A site name can be at most {0} characters.").format(SITE_LIMIT), frappe.ValidationError
+		)
+	return site or None
+
+
 def _refuse_long_text(text: str) -> None:
 	if len(text) > TEXT_LIMIT:
 		frappe.throw(_("Keep it to {0} characters.").format(TEXT_LIMIT), frappe.ValidationError)
@@ -771,6 +788,7 @@ def _visit_event(
 	reference_doctype: str | None = None,
 	reference_docname: str | None = None,
 	contact: str | None = None,
+	site: str | None = None,
 ) -> str:
 	"""The calendar Event behind a visit, delivery or unplanned meeting.
 
@@ -780,6 +798,9 @@ def _visit_event(
 	person met, when the rep named one, is a participant beside the customer.
 	"""
 	label = organization or _(kind)
+	if site:
+		# the site is what the rep and the calendar know the visit by ("East plant")
+		label = f"{label} · {site}"
 	participants = []
 	if organization:
 		participants.append({"reference_doctype": "CRM Organization", "reference_docname": organization})
@@ -838,6 +859,7 @@ def complete_item(item: str, outcome: str, when: str | None = None):
 			row.reference_doctype,
 			row.reference_docname,
 			row.contact,
+			row.site,
 		)
 	frappe.db.set_value(
 		"CRM Rep Plan Item",
@@ -927,6 +949,7 @@ def cancel_item(item: str, reason: str):
 			row.reference_doctype,
 			row.reference_docname,
 			row.contact,
+			row.site,
 		)
 	frappe.db.set_value(
 		"CRM Rep Plan Item",
@@ -1062,10 +1085,18 @@ def log_unplanned_visit(
 	reference_docname: str | None = None,
 	activity_type: str = "Visit",
 	contact: str | None = None,
+	site: str | None = None,
 ):
 	"""Record an activity that was never planned, as already done. See :func:`log_activity`."""
 	return log_activity(
-		organization, note, when, reference_doctype, reference_docname, activity_type, contact=contact
+		organization,
+		note,
+		when,
+		reference_doctype,
+		reference_docname,
+		activity_type,
+		contact=contact,
+		site=site,
 	)
 
 
@@ -1080,6 +1111,7 @@ def log_activity(
 	captured_offline: bool = False,
 	offline_delay_minutes: int = 0,
 	contact: str | None = None,
+	site: str | None = None,
 ):
 	"""Record an activity that was never planned -- a rep called to site for a
 	breakdown, a delivery dropped off, a phone call -- as already done, in one step.
@@ -1101,6 +1133,7 @@ def log_activity(
 	"""
 	note = _required_text(note, _("Say what happened."))
 	_refuse_long_text(note)
+	site = _site(site)
 	if activity_type not in LOGGABLE_TYPES:
 		frappe.throw(_("{0} cannot be logged here.").format(activity_type), frappe.ValidationError)
 	if activity_type in EVENT_KINDS and not organization:
@@ -1150,6 +1183,7 @@ def log_activity(
 			reference_doctype,
 			reference_docname,
 			contact,
+			site,
 		)
 
 	user = frappe.session.user
@@ -1165,6 +1199,7 @@ def log_activity(
 				# the note is the account's first line; the whole account is the outcome
 				"note": _one_line(note),
 				"organization": organization,
+				"site": site,
 				"contact": contact or None,
 				"outcome": note,
 				"reference_doctype": reference_doctype,
