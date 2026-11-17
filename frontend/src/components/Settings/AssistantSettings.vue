@@ -71,6 +71,17 @@
             v-model.number="draft.max_tokens"
             type="number"
             :label="__('Max tokens')"
+            :description="__('The longest reply, including any reasoning.')"
+          />
+          <FormControl
+            v-model.number="draft.context_tokens"
+            type="number"
+            :label="__('Context window (tokens)')"
+            :description="
+              __(
+                'What the model server is configured to serve, never more. Prompts are trimmed to this minus Max tokens.',
+              )
+            "
           />
           <FormControl
             v-model.number="draft.daily_call_budget"
@@ -347,6 +358,7 @@ const FIELDS = [
   'model',
   'timeout',
   'max_tokens',
+  'context_tokens',
   'reasoning_off',
   'media_input',
   'daily_call_budget',
