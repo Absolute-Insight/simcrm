@@ -379,6 +379,7 @@ describe('Planner dialogs, as MBP reps asked for them', () => {
         note: 'Deliveries\nand the new valve enquiry',
         organization: 'Western Platinum',
         contact: 'Jaco Gouws',
+        site: '  East plant ',
         quote: 'CRM-DEAL-0001',
       }
     }
@@ -391,6 +392,7 @@ describe('Planner dialogs, as MBP reps asked for them', () => {
     expect(fields.reference_docname).toBeUndefined()
     expect(fields.note.fieldtype).toBe('Small Text')
     expect(fields.contact.options).toBe('Contact')
+    expect(fields.site.fieldtype).toBe('Data')
     expect(fields.quote.options).toBe('CRM Deal')
     // both narrowed to the customer chosen above them
     expect(fields.contact.link_filters).toContain('doc.organization')
@@ -401,6 +403,7 @@ describe('Planner dialogs, as MBP reps asked for them', () => {
     const [row] = callTo('save_plan').args.items
     expect(row).toMatchObject({
       contact: 'Jaco Gouws',
+      site: 'East plant',
       reference_doctype: 'CRM Deal',
       reference_docname: 'CRM-DEAL-0001',
     })

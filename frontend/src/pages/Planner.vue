@@ -379,6 +379,14 @@
               >
                 {{ item.organization }}
               </router-link>
+              <div
+                v-if="item.site"
+                class="mt-0.5 flex items-center gap-1 truncate text-xs text-ink-gray-6"
+                :title="item.site"
+              >
+                <LucideFactory class="size-3 shrink-0" aria-hidden="true" />
+                <span class="truncate">{{ item.site }}</span>
+              </div>
 
               <router-link
                 v-if="item.contact"
@@ -465,6 +473,7 @@
 // meaning intact.
 import LucideCalendarClock from '~icons/lucide/calendar-clock'
 import LucideCloudOff from '~icons/lucide/cloud-off'
+import LucideFactory from '~icons/lucide/factory'
 import LucideMapPin from '~icons/lucide/map-pin'
 import { PhSparkle as LucideSparkles } from '@phosphor-icons/vue'
 import { PhUserCheck as LucideUserCheck } from '@phosphor-icons/vue'
@@ -927,6 +936,7 @@ function itemDialogFields(current = null) {
       label: __('Customer'),
       options: 'CRM Organization',
     },
+    SITE_FIELD,
     CONTACT_FIELD,
     { fieldname: 'planned_date', fieldtype: 'Date', label: __('Day') },
     { fieldname: 'note', fieldtype: 'Small Text', label: __('Note') },
@@ -939,6 +949,15 @@ function itemDialogFields(current = null) {
    chosen yet, anyone at some customer: a contact or deal with no customer at
    all does not match '%', and is not what a visit is planned with. */
 const FOR_CUSTOMER = "eval:doc.organization || '%'"
+
+/* Where at the customer, in the rep's words ("East plant", "No. 4 shaft"): a site
+   Acumatica does not keep as a customer of its own. */
+const SITE_FIELD = {
+  fieldname: 'site',
+  fieldtype: 'Data',
+  label: __('Site (optional)'),
+  placeholder: __('e.g. plant, shaft or workshop'),
+}
 
 /* The person being met: the old rep app recorded one on every activity, and
    MBP's reps missed it ("where is my client's name?"). */
@@ -989,6 +1008,7 @@ function normaliseDialogData(data, item = null) {
     planned_date: data.planned_date,
     note: data.note || null,
     organization: data.organization || null,
+    site: data.site?.trim() || null,
     contact: data.contact || null,
     ...referenceFromDialog(data, item),
   }
@@ -1321,6 +1341,7 @@ function logDialog(defaults) {
         label: __('Customer'),
         options: 'CRM Organization',
       },
+      SITE_FIELD,
       CONTACT_FIELD,
       { fieldname: 'when', fieldtype: 'Datetime', label: __('When') },
       {
@@ -1360,6 +1381,7 @@ async function logVisit() {
       note: data.note,
       when: data.when || undefined,
       contact: data.contact || undefined,
+      site: data.site?.trim() || undefined,
       reference_doctype: data.quote ? 'CRM Deal' : undefined,
       reference_docname: data.quote || undefined,
     })

@@ -30,6 +30,7 @@ export const EDITABLE_ITEM_FIELDS = [
   'reference_doctype',
   'reference_docname',
   'organization',
+  'site',
   'contact',
   'suggestion',
 ]
