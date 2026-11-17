@@ -381,6 +381,14 @@
               </router-link>
 
               <router-link
+                v-if="item.contact"
+                :to="{ name: 'Contact', params: { contactId: item.contact } }"
+                class="mt-0.5 block truncate rounded-4 text-xs text-ink-gray-6 underline-offset-2 hover:text-ink-gray-8 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+              >
+                {{ contactTitle(item.contact) }}
+              </router-link>
+
+              <router-link
                 v-if="referenceRoute(item)"
                 :to="referenceRoute(item)"
                 class="mt-1 block truncate rounded-4 text-xs text-ink-gray-5 underline-offset-2 hover:text-ink-gray-7 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
@@ -860,13 +868,30 @@ async function fetchTitles(doctype, names, fields, pick) {
   }
 }
 
+function contactTitle(name) {
+  return titles[`Contact:${name}`] || name
+}
+
 function loadReferenceTitles(items) {
+  const contacts = [
+    ...new Set((items || []).map((i) => i.contact).filter(Boolean)),
+  ]
+  fetchTitles(
+    'Contact',
+    contacts,
+    ['full_name', 'first_name', 'last_name'],
+    (row) =>
+      row.full_name ||
+      [row.first_name, row.last_name].filter(Boolean).join(' '),
+  )
   const { deals, leads } = referenceNames(items)
   fetchTitles(
     'CRM Deal',
     deals,
-    ['organization', 'lead_name'],
-    (row) => row.organization || row.lead_name,
+    // the customer is already on the card above it; the quote number is what
+    // tells one deal at that customer from the next
+    ['organization', 'lead_name', 'acumatica_sales_quote'],
+    (row) => row.acumatica_sales_quote || row.organization || row.lead_name,
   )
   fetchTitles(
     'CRM Lead',
@@ -902,42 +927,68 @@ function itemDialogFields(current = null) {
       label: __('Customer'),
       options: 'CRM Organization',
     },
+    CONTACT_FIELD,
     { fieldname: 'planned_date', fieldtype: 'Date', label: __('Day') },
-    { fieldname: 'note', fieldtype: 'Data', label: __('Note') },
-    {
-      // One doctype picker plus one Dynamic Link, so there is no precedence
-      // rule to get wrong when both a deal and a lead are filled in.
-      fieldname: 'reference_doctype',
-      fieldtype: 'Select',
-      label: __('Related to'),
-      options: [
-        { label: '', value: '' },
-        { label: __('Deal'), value: 'CRM Deal' },
-        { label: __('Lead'), value: 'CRM Lead' },
-      ],
-    },
-    {
-      fieldname: 'reference_docname',
-      fieldtype: 'Dynamic Link',
-      label: __('Record'),
-      options: 'reference_doctype',
-    },
+    { fieldname: 'note', fieldtype: 'Small Text', label: __('Note') },
+    QUOTE_FIELD,
   ]
 }
 
-function normaliseDialogData(data) {
-  const reference_doctype = data.reference_doctype || null
+/* Narrowed to the customer chosen above it; with none chosen yet, anyone. A
+   contact's company and a deal's customer are matched on the customer's name. */
+const FOR_CUSTOMER = "eval:doc.organization || '%'"
+
+/* The person being met: the old rep app recorded one on every activity, and
+   MBP's reps missed it ("where is my client's name?"). */
+const CONTACT_FIELD = {
+  fieldname: 'contact',
+  fieldtype: 'Link',
+  label: __('Contact'),
+  options: 'Contact',
+  link_filters: JSON.stringify([['company_name', 'like', FOR_CUSTOMER]]),
+}
+
+/* One optional picker for the deal (an Acumatica quote) a visit is about. The
+   old pair -- "Related to" then "Record" -- asked reps to choose a doctype,
+   which nobody understood, and leads are never what a visit is planned
+   against. A lead an item already points at is kept (keptLead). */
+const QUOTE_FIELD = {
+  fieldname: 'quote',
+  fieldtype: 'Link',
+  label: __('Deal or quote (optional)'),
+  options: 'CRM Deal',
+  link_filters: JSON.stringify([['organization', 'like', FOR_CUSTOMER]]),
+}
+
+function quoteDefault(item) {
+  return item?.reference_doctype === 'CRM Deal' ? item.reference_docname : null
+}
+
+/* What the item keeps when its quote picker is left empty: a lead reference
+   set before the picker changed, so editing an old item does not drop it. */
+function keptLead(item) {
+  return item?.reference_doctype === 'CRM Lead' && item.reference_docname
+    ? {
+        reference_doctype: 'CRM Lead',
+        reference_docname: item.reference_docname,
+      }
+    : { reference_doctype: null, reference_docname: null }
+}
+
+function referenceFromDialog(data, item = null) {
+  return data.quote
+    ? { reference_doctype: 'CRM Deal', reference_docname: data.quote }
+    : keptLead(item)
+}
+
+function normaliseDialogData(data, item = null) {
   return {
     activity_type: data.activity_type,
     planned_date: data.planned_date,
     note: data.note || null,
     organization: data.organization || null,
-    reference_doctype,
-    // clearing the doctype has to clear the name with it, or the row keeps a
-    // dangling reference the server will happily store
-    reference_docname: reference_doctype
-      ? data.reference_docname || null
-      : null,
+    contact: data.contact || null,
+    ...referenceFromDialog(data, item),
   }
 }
 
@@ -956,12 +1007,14 @@ async function addItem(date) {
     ...localItems.list,
     withUid({ ...normaliseDialogData(data), status: 'Planned' }),
   ]
+  loadReferenceTitles(localItems.list)
 }
 
 async function editItem(item) {
   if (!canEdit.value || isLockedDay(item.planned_date)) return
   const defaults = {}
   for (const field of EDITABLE_ITEM_FIELDS) defaults[field] = item[field]
+  defaults.quote = quoteDefault(item)
   const data = await renderFieldLayoutDialog({
     title: __('Edit planned activity'),
     size: 'md',
@@ -977,9 +1030,10 @@ async function editItem(item) {
   // state and the suggestion link survive the save.
   localItems.list = localItems.list.map((candidate) =>
     candidate === item
-      ? { ...candidate, ...normaliseDialogData(data) }
+      ? { ...candidate, ...normaliseDialogData(data, item) }
       : candidate,
   )
+  loadReferenceTitles(localItems.list)
 }
 
 function removeItem(item) {
@@ -1089,6 +1143,15 @@ function itemActions(item) {
         onClick: () => completeItem(item),
       })
     }
+    // what the rep wrote on the day is only the first word: the rest of the
+    // account can follow from a desk, on a past day too
+    if (item.status !== 'Planned' && item.outcome) {
+      actions.push({
+        label: __('Edit the outcome…'),
+        icon: 'lucide-pencil',
+        onClick: () => editOutcome(item),
+      })
+    }
     // a done item holds its visit record; cancelling over it would count the
     // visit both ways, so it is handed back to the matcher first
     if (item.status !== 'Cancelled' && item.status !== 'Done') {
@@ -1177,6 +1240,35 @@ async function completeItem(item) {
   }
 }
 
+async function editOutcome(item) {
+  const data = await renderFieldLayoutDialog({
+    title: __('Edit the outcome'),
+    size: 'md',
+    fields: [
+      {
+        fieldname: 'outcome',
+        fieldtype: 'Small Text',
+        label: __('What happened'),
+      },
+    ],
+    required: ['outcome'],
+    defaults: { outcome: item.outcome },
+    submitLabel: __('Save outcome'),
+    cancelLabel: __('Cancel'),
+  })
+  if (!data || data.outcome === item.outcome) return
+  try {
+    const plan = await call('crm.api.rep_plan.update_outcome', {
+      item: item.name,
+      outcome: data.outcome,
+    })
+    if (isOnScreen(plan)) mergeServerPlan(plan)
+    toast.success(__('Outcome saved.'))
+  } catch (error) {
+    toast.error(errorText(error))
+  }
+}
+
 async function cancelItem(item) {
   const data = await renderFieldLayoutDialog({
     title: __('Cancel this activity'),
@@ -1227,28 +1319,14 @@ function logDialog(defaults) {
         label: __('Customer'),
         options: 'CRM Organization',
       },
+      CONTACT_FIELD,
       { fieldname: 'when', fieldtype: 'Datetime', label: __('When') },
       {
         fieldname: 'note',
         fieldtype: 'Small Text',
         label: __('What happened'),
       },
-      {
-        fieldname: 'reference_doctype',
-        fieldtype: 'Select',
-        label: __('Related to'),
-        options: [
-          { label: '', value: '' },
-          { label: __('Deal'), value: 'CRM Deal' },
-          { label: __('Lead'), value: 'CRM Lead' },
-        ],
-      },
-      {
-        fieldname: 'reference_docname',
-        fieldtype: 'Dynamic Link',
-        label: __('Record'),
-        options: 'reference_doctype',
-      },
+      QUOTE_FIELD,
     ],
     required: ['activity_type', 'note'],
     defaults,
@@ -1279,10 +1357,9 @@ async function logVisit() {
       organization: data.organization || undefined,
       note: data.note,
       when: data.when || undefined,
-      reference_doctype: data.reference_doctype || undefined,
-      reference_docname: data.reference_doctype
-        ? data.reference_docname || undefined
-        : undefined,
+      contact: data.contact || undefined,
+      reference_doctype: data.quote ? 'CRM Deal' : undefined,
+      reference_docname: data.quote || undefined,
     })
     // The visit may belong to a different week than the one on screen; only
     // adopt the payload when it is this week, otherwise just say where it went.
