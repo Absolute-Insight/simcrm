@@ -5,7 +5,9 @@
       ref="target"
       class="v-panel"
       :class="
-        mobile ? 'fixed inset-0 z-30 h-dvh w-screen' : 'absolute z-20 h-screen'
+        mobile
+          ? 'fixed inset-0 z-30 h-dvh w-screen !border-r-0 pb-[env(safe-area-inset-bottom)]'
+          : 'absolute z-20 h-screen'
       "
       :style="
         mobile
@@ -18,11 +20,12 @@
             }
       "
       :role="mobile ? 'dialog' : undefined"
+      :aria-modal="mobile ? 'true' : undefined"
       :aria-label="mobile ? __('Assistant') : undefined"
     >
       <div
         class="flex flex-col text-ink-gray-9"
-        :class="mobile ? 'h-dvh' : 'h-screen'"
+        :class="mobile ? 'h-full' : 'h-screen'"
       >
         <div class="flex items-center justify-between">
           <div class="v-title-sm px-4 pb-3 pt-[15px] text-ink-gray-8">
@@ -192,9 +195,10 @@ import {
 } from '@/utils/agentStatus'
 import { usersStore } from '@/stores/users'
 import { activeSettingsPage, showSettings } from '@/composables/settings'
-import { onClickOutside } from '@vueuse/core'
+import { onClickOutside, useEventListener } from '@vueuse/core'
 import { Badge } from 'frappe-ui'
 import { ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 const { isAdmin } = usersStore()
 
@@ -212,6 +216,35 @@ watch(
 )
 
 const target = ref(null)
+
+/* On a phone the panel opens from the menu drawer, and the drawer hands focus
+   back to its own button as it closes -- after the chat has focused its box.
+   So the box is focused again once the drawer has gone, and Escape is heard on
+   the window rather than on a panel that may not hold the focus. */
+const DRAWER_LEAVE_MS = 250
+watch(assistantVisible, (open) => {
+  if (!open || !props.mobile) return
+  setTimeout(() => {
+    if (assistantVisible.value) target.value?.querySelector('textarea')?.focus()
+  }, DRAWER_LEAVE_MS)
+})
+useEventListener(window, 'keydown', (event) => {
+  if (event.key !== 'Escape' || !props.mobile || !assistantVisible.value) return
+  // a dialog opened from the panel (a reference sheet) closes first
+  if (referenceOpen.value) return
+  toggleAssistant()
+})
+
+/* Over the whole screen, the page underneath is out of sight: going back, or
+   following a link in an answer, must not leave the panel covering the page
+   the rep has just moved to. */
+const route = useRoute()
+watch(
+  () => route.fullPath,
+  () => {
+    if (props.mobile && assistantVisible.value) toggleAssistant()
+  },
+)
 
 const referenceOpen = ref(false)
 const openRow = ref(null)

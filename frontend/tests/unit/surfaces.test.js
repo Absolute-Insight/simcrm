@@ -113,6 +113,18 @@ describe('the Assistant on a phone', () => {
     // it used to carry `&& !mobile()`: a rep on a phone had no Assistant at all
     expect(navGates(navLinksSrc).get('nav.assistant')).not.toMatch(/mobile/)
   })
+
+  it('has a panel to open: the phone layout mounts it', () => {
+    // the row only toggles a flag; without this mount it would toggle nothing
+    const layout = readFileSync(
+      path.resolve(
+        import.meta.dirname,
+        '../../src/components/Layouts/MobileLayout.vue',
+      ),
+      'utf8',
+    )
+    expect(layout).toMatch(/<Assistant mobile \/>/)
+  })
 })
 
 describe('SURFACES', () => {
