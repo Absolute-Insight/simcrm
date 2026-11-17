@@ -381,3 +381,19 @@ describe('a first load that cannot fetch the users', () => {
     })
   }
 })
+
+describe('the Load Failed page opened with the users loaded', () => {
+  const noViews = () => []
+
+  it('goes on to the page it names', async () => {
+    const { router } = await bootTab({ views: noViews })
+    expect(await navigate(router, '/load-failed?redirect=/deals')).toBe('Deals')
+  })
+
+  it('goes home when what it names is not a page of this app', async () => {
+    const { router } = await bootTab({ views: noViews })
+    expect(await navigate(router, '/load-failed?redirect=//evil.example')).toBe(
+      'Planner',
+    )
+  })
+})

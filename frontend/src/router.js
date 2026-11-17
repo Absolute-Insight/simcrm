@@ -6,6 +6,7 @@ import { viewsStore } from '@/stores/views'
 import { accessStore } from '@/stores/access'
 import { reloadOnceForStaleChunk } from '@/utils/staleChunk'
 import { retryWithBackoff } from '@/utils/retry'
+import { inAppRedirectPath } from '@/utils/inAppRedirect'
 import { isSessionGone } from '@/utils/sessionExpiry'
 import { MOBILE_BREAKPOINT_PX } from '@/composables/settings'
 import { connectivity, reachableForNavigation } from '@/offline/connectivity'
@@ -346,8 +347,25 @@ router.beforeEach(async (to, from, next) => {
   if (isLoggedIn && to.meta.offline && !connectivity.online) return next()
 
   // It explains that the users could not be loaded, and its Try again reloads
-  // the page; nothing below can be decided without them.
-  if (to.name === 'Load Failed') return next()
+  // the page; nothing below can be decided without them. Opened with the
+  // users loaded (a bookmark, Back), there is nothing to explain: go on to
+  // where it would have sent them.
+  if (to.name === 'Load Failed') {
+    if (isLoggedIn && !users.fetched) {
+      try {
+        await (users.error ? users.reload() : users.promise)
+      } catch {
+        // still failing: the page is the right answer
+      }
+    }
+    if (isLoggedIn && users.fetched) {
+      return next({
+        path: inAppRedirectPath(to.query.redirect),
+        replace: true,
+      })
+    }
+    return next()
+  }
 
   if (isLoggedIn && !users.fetched) {
     // On the first navigation there is no page to stay on: next(false) left

@@ -28,6 +28,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { inAppRedirectPath } from '@/utils/inAppRedirect'
 
 const route = useRoute()
 const retrying = ref(false)
@@ -38,13 +39,6 @@ const retrying = ref(false)
    followed, so the query cannot send the person elsewhere. */
 function retry() {
   retrying.value = true
-  const target = route.query.redirect
-  const path =
-    typeof target === 'string' &&
-    target.startsWith('/') &&
-    !target.startsWith('//')
-      ? target
-      : '/'
-  window.location.assign('/crm' + path)
+  window.location.assign('/crm' + inAppRedirectPath(route.query.redirect))
 }
 </script>
