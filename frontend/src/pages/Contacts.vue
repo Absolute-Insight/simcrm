@@ -4,6 +4,12 @@
       <ViewBreadcrumbs v-model="viewControls" routeName="Contacts" />
     </template>
     <template #right-header>
+      <TabButtons
+        v-if="mine.available.value"
+        v-model="mine.scope.value"
+        :options="mine.options"
+        :aria-label="__('Which contacts to show')"
+      />
       <CustomActions
         v-if="contactsListView?.customListActions"
         :actions="contactsListView.customListActions"
@@ -17,12 +23,15 @@
     </template>
   </LayoutHeader>
   <ViewControls
+    v-if="mine.ready.value"
+    :key="mine.scope.value"
     ref="viewControls"
     v-model="contacts"
     v-model:loadMore="loadMore"
     v-model:resizeColumn="triggerResize"
     v-model:updatedPageCount="updatedPageCount"
     doctype="Contact"
+    :filters="mine.filters.value"
   />
   <!-- Loading and failure had no branch at all: the chain went straight from
        "has data" to EmptyState, so a list still fetching and a list whose
@@ -92,6 +101,17 @@ import { organizationsStore } from '@/stores/organizations.js'
 import { formatDate } from '@/utils'
 import { timestampCell } from '@/composables/useTimelinePreferences'
 import { ref, computed } from 'vue'
+import { TabButtons } from 'frappe-ui'
+import { sessionStore } from '@/stores/session'
+import { useMineScope } from '@/composables/useMineScope'
+
+// "Mine": the people who work at the user's own customers. A contact's
+// company is free text, so it is matched on every name those customers go by.
+const mine = useMineScope(
+  'contacts',
+  (names) => ({ company_name: ['in', names] }),
+  sessionStore().user,
+)
 
 const { getFormattedPercent, getFormattedFloat, getFormattedCurrency } =
   getMeta('Contact')

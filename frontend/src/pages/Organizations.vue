@@ -4,6 +4,12 @@
       <ViewBreadcrumbs v-model="viewControls" routeName="Organizations" />
     </template>
     <template #right-header>
+      <TabButtons
+        v-if="mine.available.value"
+        v-model="mine.scope.value"
+        :options="mine.options"
+        :aria-label="__('Which customers to show')"
+      />
       <!-- MBP's reps identify an account by its Acumatica code (C-IMP003E),
            which is what both screens of their old app searched on. -->
       <!-- Not on a phone: with it the header ran past the screen and took
@@ -36,13 +42,18 @@
       />
     </template>
   </LayoutHeader>
+  <!-- Keyed on the switch: the list's filters are fixed when it mounts, and
+       waiting for the switch's answer avoids loading the whole book first. -->
   <ViewControls
+    v-if="mine.ready.value"
+    :key="mine.scope.value"
     ref="viewControls"
     v-model="organizations"
     v-model:loadMore="loadMore"
     v-model:resizeColumn="triggerResize"
     v-model:updatedPageCount="updatedPageCount"
     doctype="CRM Organization"
+    :filters="mine.filters.value"
   />
   <!-- Loading and failure had no branch at all: the chain went straight from
        "has data" to EmptyState, so a list still fetching and a list whose
@@ -104,12 +115,14 @@ import OrganizationsListView from '@/components/ListViews/OrganizationsListView.
 import ViewControls from '@/components/ViewControls.vue'
 import { getMeta } from '@/stores/meta'
 import { usersStore } from '@/stores/users'
+import { sessionStore } from '@/stores/session'
+import { useMineScope } from '@/composables/useMineScope'
 import { isMobileView } from '@/composables/settings'
 import { formatDate, website } from '@/utils'
 import { timestampCell } from '@/composables/useTimelinePreferences'
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { call, toast } from 'frappe-ui'
+import { call, toast, TabButtons } from 'frappe-ui'
 import EmptyState from '../components/ListViews/EmptyState.vue'
 import { renderFieldLayoutDialog } from '@/utils/renderFieldLayoutDialog'
 
@@ -118,6 +131,13 @@ const { getFormattedPercent, getFormattedFloat, getFormattedCurrency } =
 
 const router = useRouter()
 const { getUser } = usersStore()
+
+// "Mine": the customers whose account owner the user is
+const mine = useMineScope(
+  'organizations',
+  (_names, user) => ({ account_owner: user }),
+  sessionStore().user,
+)
 
 const organizationsListView = ref(null)
 const showOrganizationModal = ref(false)
