@@ -501,6 +501,11 @@ class AttachmentThumbnailTest(IntegrationTestCase):
 		source = self.attach(photo(size=(1200, 900))[:2000], file_name="cut.jpg")
 		self.assertIsNone(thumbnails.make_thumbnail(source.name))
 		self.assertFalse(frappe.db.exists("File", {FIELD: source.name}))
+		# a PNG decodes on its first metadata read, not on load()
+		whole = photo(size=(1200, 900), fmt="PNG")
+		cut = self.attach(whole[: len(whole) // 2], file_name="cut.png")
+		self.assertIsNone(thumbnails.make_thumbnail(cut.name))
+		self.assertFalse(frappe.db.exists("File", {FIELD: cut.name}))
 		# and the process's own setting is put back
 		self.assertTrue(ImageFile.LOAD_TRUNCATED_IMAGES)
 

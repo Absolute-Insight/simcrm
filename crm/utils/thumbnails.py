@@ -413,9 +413,10 @@ def _decode_small(image):
 	image.seek(0)  # an animated GIF's first frame
 	# a JPEG decodes straight to 1/2, 1/4 or 1/8 of its size: never full-size
 	image.draft("RGB", WORKING)
-	orientation = image.getexif().get(ORIENTATION_TAG)
-	profile = image.info.get("icc_profile")
+	# getexif() too: for a PNG it is what decodes the pixels
 	with _whole_files_only():
+		orientation = image.getexif().get(ORIENTATION_TAG)
+		profile = image.info.get("icc_profile")
 		image.load()
 
 	factor = max(1, min(image.width // WORKING[0], image.height // WORKING[1]))
