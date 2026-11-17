@@ -80,6 +80,17 @@
           </template>
         </div>
 
+        <!-- A place Acumatica does not hold as a customer: a plant, a shaft. -->
+        <FormControl
+          v-if="kind === 'log' || kind === 'plan'"
+          v-model="values.site"
+          type="text"
+          :label="__('Site (optional)')"
+          :placeholder="__('e.g. plant, shaft or workshop')"
+          :maxlength="SITE_LIMIT"
+          autocomplete="off"
+        />
+
         <FormControl
           v-if="kind === 'note' && aboutOptions.length > 1"
           v-model="values.about"
@@ -257,7 +268,7 @@ import {
 } from '@/utils/noteMedia'
 import { newEntryId } from '@/utils/fieldOutbox'
 import { useField } from '@/offline/useField'
-import { entryProblem } from '@/utils/fieldOutbox'
+import { entryProblem, SITE_LIMIT } from '@/utils/fieldOutbox'
 import { searchCustomers, shortDate, weekdayName } from '@/utils/fieldPack'
 import { activityLabel, LOGGABLE_TYPES, PLANNABLE_TYPES } from '@/utils/planner'
 import { Dialog, ErrorMessage, FormControl, TextInput, toast } from 'frappe-ui'
@@ -274,6 +285,7 @@ const values = reactive({
   about: '',
   title: '',
   due_date: '',
+  site: '',
   text: '',
 })
 const customerQuery = ref('')
@@ -376,6 +388,7 @@ watch(
         : '',
       title: '',
       due_date: '',
+      site: '',
       text: '',
     })
     customerQuery.value = ''
@@ -537,6 +550,7 @@ function entry() {
           planned_date: context.value.date,
           organization: values.organization || null,
           note: text,
+          ...siteOf(),
         },
       ]
     case 'task':
@@ -560,9 +574,16 @@ function entry() {
           activity_type: values.activity_type,
           organization: values.organization || null,
           note: text,
+          ...siteOf(),
         },
       ]
   }
+}
+
+// only when given: an entry without one reads as it always has
+function siteOf() {
+  const site = values.site.split(/\s+/).filter(Boolean).join(' ')
+  return site ? { site } : {}
 }
 
 async function save() {

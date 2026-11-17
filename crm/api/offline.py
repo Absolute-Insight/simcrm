@@ -843,6 +843,7 @@ def _replay_log_activity(payload: dict, moment: datetime, late: bool) -> None:
 		reference_doctype=_name(payload, "reference_doctype") or None,
 		reference_docname=_name(payload, "reference_docname") or None,
 		activity_type=_name(payload, "activity_type") or "Unplanned Meeting",
+		site=payload.get("site"),
 		# flagged whenever the server did not witness the day it is dated
 		captured_offline=late or past,
 		offline_delay_minutes=_delay_minutes(),
@@ -907,6 +908,8 @@ def _replay_plan_item(payload: dict, moment: datetime, late: bool) -> None:
 		"planned_date": str(day),
 		"note": _text(payload.get("note"), TITLE_LIMIT),
 		"organization": organization,
+		# save_plan trims it and refuses one too long for the column
+		"site": payload.get("site"),
 	}
 	current = get_plan(str(monday))
 	kept = [

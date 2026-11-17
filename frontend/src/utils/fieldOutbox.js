@@ -23,6 +23,8 @@ export const ACTIONS = [
 /* NOTE_TEXT_LIMIT and TITLE_LIMIT in crm/api/offline.py. */
 export const TEXT_LIMIT = 5000
 export const TITLE_LIMIT = 140
+/* SITE_LIMIT in crm/api/rep_plan.py. */
+export const SITE_LIMIT = 140
 /* NOTE_LIMIT in crm/api/rep_plan.py: a plan item's one-line note. */
 const NOTE_LINE = 140
 
@@ -73,6 +75,9 @@ export function entryProblem(action, payload, rules = {}) {
     case 'log_activity': {
       if (!text(payload.note)) return __('Say what happened.')
       if (tooLong(payload.note, TEXT_LIMIT)) return __('That is too long.')
+      if (tooLong(payload.site, SITE_LIMIT)) {
+        return __('Keep the site under {0} characters.', [SITE_LIMIT])
+      }
       const visitKinds = rules.event_kinds ?? [
         'Visit',
         'Unplanned Meeting',
@@ -110,6 +115,9 @@ export function entryProblem(action, payload, rules = {}) {
       if (!payload.planned_date) return __('Choose the day.')
       if (tooLong(payload.note, TITLE_LIMIT)) {
         return __('Keep the note under {0} characters.', [TITLE_LIMIT])
+      }
+      if (tooLong(payload.site, SITE_LIMIT)) {
+        return __('Keep the site under {0} characters.', [SITE_LIMIT])
       }
       const visitKinds = rules.event_kinds ?? ['Visit', 'Delivery']
       if (visitKinds.includes(payload.activity_type) && !payload.organization) {
@@ -240,6 +248,7 @@ export function applyOutbox(pack, entries, dateOf) {
         planned_date: date,
         note: oneLine(payload.note),
         organization: payload.organization || null,
+        site: text(payload.site) || null,
         reference_doctype: payload.reference_doctype || null,
         reference_docname: payload.reference_docname || null,
         outcome: text(payload.note),
@@ -254,6 +263,7 @@ export function applyOutbox(pack, entries, dateOf) {
         planned_date: payload.planned_date,
         note: text(payload.note),
         organization: payload.organization || null,
+        site: text(payload.site) || null,
         status: 'Planned',
         pending: true,
       })

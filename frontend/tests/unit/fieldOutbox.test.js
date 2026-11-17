@@ -115,6 +115,20 @@ describe('entryProblem', () => {
     expect(entryProblem('add_note', { content: 'x'.repeat(5001) })).toBeTruthy()
     expect(entryProblem('create_task', { title: 'x'.repeat(141) })).toBeTruthy()
     expect(entryProblem('create_task', { title: 'x'.repeat(140) })).toBe('')
+    const visit = {
+      activity_type: 'Call',
+      note: 'x',
+      planned_date: '2026-11-18',
+    }
+    expect(
+      entryProblem('plan_item', { ...visit, site: 'x'.repeat(141) }),
+    ).toBeTruthy()
+    expect(
+      entryProblem('log_activity', { ...visit, site: 'x'.repeat(141) }),
+    ).toBeTruthy()
+    expect(entryProblem('plan_item', { ...visit, site: 'x'.repeat(140) })).toBe(
+      '',
+    )
   })
 
   it('refuses an action that is not one', () => {
@@ -248,6 +262,7 @@ describe('applyOutbox', () => {
         entry('log_activity', {
           activity_type: 'Visit',
           organization: 'Impala',
+          site: 'Smelter',
           note: 'Replaced the knife gate',
         }),
       ],
@@ -258,6 +273,7 @@ describe('applyOutbox', () => {
       status: 'Done',
       planned_date: '2026-11-13',
       organization: 'Impala',
+      site: 'Smelter',
       pending: true,
     })
     expect(out.plans[1].items).toEqual([])
