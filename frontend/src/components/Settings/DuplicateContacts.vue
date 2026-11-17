@@ -94,6 +94,13 @@
                   >
                     {{ contact.full_name || contact.name }}
                   </router-link>
+                  <div
+                    v-if="group.contacts.length > 1"
+                    class="truncate text-p-xs text-ink-gray-6"
+                    data-contact-tell
+                  >
+                    {{ tellApart(contact) }}
+                  </div>
                 </td>
                 <td
                   class="max-w-48 truncate px-3 py-1.5 text-ink-gray-7"
@@ -223,6 +230,18 @@ function formatCreated(value) {
   return value ? dayjs(value).format('D MMM YYYY') : ''
 }
 
+// Two contacts in a group often share a name (the same person entered twice),
+// so the row and the confirmation also say what tells them apart: the record
+// ID, and the mobile number when there is one.
+function tellApart(contact) {
+  return [contact.name, contact.mobile_no].filter(Boolean).join(' · ')
+}
+
+function confirmLabel(contact) {
+  const name = contact.full_name || contact.name
+  return name === contact.name ? name : `${name} (${contact.name})`
+}
+
 const confirmOpen = ref(false)
 const pending = ref(null)
 
@@ -231,10 +250,7 @@ const confirmMessage = computed(() => {
   const { keep, others } = pending.value
   return __(
     'Merge {0} into {1}? Their deals, events, calls and emails move to {1}, and {0} will be deleted. Anyone who could see any of these contacts, through a deal, a share or the customer, will see {1} with all of it. This cannot be undone.',
-    [
-      others.map((c) => c.full_name || c.name).join(', '),
-      keep.full_name || keep.name,
-    ],
+    [others.map(confirmLabel).join(', '), confirmLabel(keep)],
   )
 })
 

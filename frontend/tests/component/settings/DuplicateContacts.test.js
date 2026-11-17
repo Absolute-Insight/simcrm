@@ -91,6 +91,38 @@ describe('Duplicate contacts', () => {
     expect(loads()).toHaveLength(2)
   })
 
+  it('tells apart two contacts that share a name, in the rows and when asking', async () => {
+    backend.handlers['crm.api.contact.get_duplicate_contacts'] = () =>
+      page([
+        {
+          email: 'jane@impala.test',
+          contacts: [
+            contact('Jane Smith', { mobile_no: '+27110000001' }),
+            contact('Jane Smith-1', {
+              full_name: 'Jane Smith',
+              mobile_no: '+27110000002',
+            }),
+          ],
+        },
+      ])
+    const { el } = render()
+    await flush()
+
+    const tells = [...el.querySelectorAll('[data-contact-tell]')].map((n) =>
+      n.textContent.trim(),
+    )
+    expect(tells).toEqual([
+      'Jane Smith · +27110000001',
+      'Jane Smith-1 · +27110000002',
+    ])
+
+    el.querySelectorAll('[data-label="Keep"]')[0].click()
+    await flush()
+    expect(el.textContent).toContain(
+      'Merge Jane Smith (Jane Smith-1) into Jane Smith?',
+    )
+  })
+
   it("toasts the server's refusal and keeps the dialog open", async () => {
     backend.handlers['crm.api.contact.merge_duplicate_contacts'] = () => {
       throw failure('Jane is linked to Acumatica')
