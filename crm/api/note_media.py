@@ -73,6 +73,13 @@ def _media_id(value) -> str:
 	return media_id
 
 
+def _uploaded(media_id: str, user: str):
+	"""The caller's own file for ``media_id``, staged or already on a note."""
+	return frappe.db.get_value(
+		"File", {"file_name": ("like", f"{PREFIX}{media_id}.%"), "owner": user}, "name"
+	)
+
+
 def _staged(media_id: str, user: str):
 	"""The caller's own staged file for ``media_id``, or None."""
 	return frappe.db.get_value(
@@ -119,10 +126,15 @@ def stage_media(media_id: str, kind: str, data: str) -> dict:
 		frappe.throw(_("Too many requests. Try again shortly."), frappe.TooManyRequestsError)
 	media_id = _media_id(media_id)
 	user = frappe.session.user
-	if _staged(media_id, user):
+	if _uploaded(media_id, user):
+		# staged already, or on its note already: "Send again" on a note the
+		# server applied re-sends its files, and they must not land twice
 		return {"media_id": media_id, "status": "duplicate"}
 	content, extension = _read(frappe.utils.cstr(kind), data)
 	_refuse_hoarding(user, len(content))
+	# File.validate takes file_size from the request when there is one; the cap
+	# counts what was stored, not what the caller said
+	frappe.form_dict.pop("file_size", None)
 	frappe.get_doc(
 		{
 			"doctype": "File",
@@ -152,9 +164,29 @@ def _refuse_hoarding(user: str, incoming: int) -> None:
 		or sum(size or 0 for size in waiting) + incoming > MAX_UNCLAIMED_BYTES
 	):
 		frappe.throw(
-			_("Too many photos and recordings are waiting to be sent. Send or discard the notes first."),
+			_(
+				"Too many photos and recordings are waiting on the server. Send the notes "
+				"that hold them, or discard them, and try again."
+			),
 			frappe.ValidationError,
 		)
+
+
+@frappe.whitelist(methods=["POST"])
+@sales_user_only
+def release_media(media_ids: list | str) -> dict:
+	"""Drop the caller's staged uploads for a note discarded on the phone."""
+	ids = frappe.parse_json(media_ids) if isinstance(media_ids, str) else media_ids
+	if not isinstance(ids, list) or len(ids) > MAX_PHOTOS + MAX_RECORDINGS:
+		frappe.throw(_("That cannot be released."), frappe.ValidationError)
+	user = frappe.session.user
+	released = 0
+	for media_id in ids:
+		name = _staged(_media_id(media_id), user)
+		if name:
+			frappe.delete_doc("File", name, ignore_permissions=True, force=True)
+			released += 1
+	return {"released": released}
 
 
 def media_ids(value) -> list[str]:

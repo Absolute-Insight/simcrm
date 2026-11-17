@@ -20,6 +20,7 @@ from crm.api.note_media import (
 	UNCLAIMED_DAYS,
 	get_note_media,
 	purge_unclaimed_media,
+	release_media,
 	stage_media,
 )
 from crm.api.offline import replay
@@ -109,6 +110,31 @@ class NoteMediaTest(ReplayTestCase):
 			stage_media(one, "photo", jpeg())
 		name, _message = self.refusal(replay, new_id(), "add_note", self.note(ids))
 		self.assertEqual(name, "ValidationError")
+
+	def test_a_file_already_on_its_note_is_not_stored_again(self):
+		photo = media_id()
+		stage_media(photo, "photo", jpeg())
+		replay(new_id(), "add_note", self.note([photo]))
+		self.assertEqual(stage_media(photo, "photo", jpeg())["status"], "duplicate")
+		self.assertEqual(frappe.db.count("File", {"file_name": ("like", f"{PREFIX}{photo}%")}), 1)
+
+	def test_a_size_claimed_by_the_request_is_not_believed(self):
+		frappe.form_dict.file_size = 1
+		self.addCleanup(frappe.form_dict.pop, "file_size", None)
+		photo = media_id()
+		data = jpeg()
+		stage_media(photo, "photo", data)
+		size = frappe.db.get_value("File", {"file_name": ("like", f"{PREFIX}{photo}%")}, "file_size")
+		self.assertEqual(size, len(base64.b64decode(data)))
+
+	def test_a_discarded_note_releases_its_uploads(self):
+		photo = media_id()
+		stage_media(photo, "photo", jpeg())
+		frappe.set_user(OTHER)
+		self.assertEqual(release_media([photo])["released"], 0)
+		frappe.set_user(REP)
+		self.assertEqual(release_media([photo])["released"], 1)
+		self.assertFalse(frappe.db.exists("File", {"file_name": ("like", f"{PREFIX}{photo}%")}))
 
 	def test_a_rep_cannot_pile_up_uploads_no_note_claims(self):
 		for _ in range(MAX_UNCLAIMED_FILES):

@@ -105,6 +105,16 @@ function dropMedia(entry) {
   for (const id of mediaOf(entry)) mediaStore.del(id).catch(() => {})
 }
 
+/* A discarded note's uploads the server is holding for it: let them go now
+   rather than count against the rep's allowance until the daily purge.
+   Best effort -- offline, the purge does it. */
+function releaseStaged(entry) {
+  if (entry.status === 'sent' || !entry.staged?.length) return
+  call('crm.api.note_media.release_media', { media_ids: entry.staged }).catch(
+    () => {},
+  )
+}
+
 /**
  * Keep the photos and recordings of a note that is about to be captured.
  * Each is `{ id, kind, blob }`. Rejects when the device cannot keep them,
@@ -512,7 +522,9 @@ export async function retryEntry(id) {
 /** Throw an entry away. The only way one leaves without the server's say. */
 export function discardEntry(id) {
   const entry = outbox.entries.find((other) => other.id === id)
-  if (entry) return forget(entry)
+  if (!entry) return
+  releaseStaged(entry)
+  return forget(entry)
 }
 
 let started = false
