@@ -810,9 +810,12 @@ def run_watch(steps, nginx="master", until=None, **env):
 	for name, body in {
 		# one address per line in the file; empty means the name does not resolve
 		"getent": '#!/bin/sh\nf="$WATCH_STATE/$2"; [ -s "$f" ] || exit 2\nwhile read -r a; do printf "%s STREAM %s\\n" "$a" "$2"; done < "$f"\n',
-		# -t fails while $WATCH_STATE/t-fails exists; -s reload always "succeeds",
-		# as the real one does once the signal is sent
-		"nginx": '#!/bin/sh\necho "$*" >> "$WATCH_STATE/nginx.log"\n[ "$1" = -t ] && [ -e "$WATCH_STATE/t-fails" ] && exit 1\nexit 0\n',
+		# -t fails while $WATCH_STATE/t-fails exists. -s reload HUPs the pidfile's
+		# process and exits 0 regardless, as the real one does.
+		"nginx": '#!/bin/sh\necho "$*" >> "$WATCH_STATE/nginx.log"\nif [ "$1" = -t ]; then [ -e "$WATCH_STATE/t-fails" ] && { echo "host not found in upstream"; exit 1; }; exit 0; fi\n[ "$1 $2" = "-s reload" ] && kill -HUP "$(cat "$NGINX_PID")" 2>/dev/null\nexit 0\n',
+		# A master that starts a new worker on HUP -- unless $WATCH_STATE/reject
+		# exists: a config the master refuses after -t passed, so no new workers.
+		"fake-master": '#!/bin/bash\nspawn() { (exec -a "nginx: worker process" sleep 60) & }\ntrap \'[ -e "$WATCH_STATE/reject" ] || spawn\' HUP\nspawn\nwhile :; do wait; done\n',
 	}.items():
 		path = os.path.join(bin_dir, name)
 		with open(path, "w") as f:
@@ -823,8 +826,8 @@ def run_watch(steps, nginx="master", until=None, **env):
 		with open(os.path.join(root, host), "w") as f:
 			f.write("".join(a + "\n" for a in addrs))
 
-	def t_fails(on):
-		path = os.path.join(root, "t-fails")
+	def flag(name, on):
+		path = os.path.join(root, name)
 		if on:
 			open(path, "w").close()
 		elif os.path.exists(path):
@@ -835,7 +838,11 @@ def run_watch(steps, nginx="master", until=None, **env):
 	pid = os.path.join(root, "nginx.pid")
 	master = None
 	if nginx == "master":
-		master = subprocess.Popen(["bash", "-c", 'exec -a "nginx: master process nginx" sleep 60'])
+		master = subprocess.Popen(
+			["bash", "-c", f'exec -a "nginx: master process nginx" bash {bin_dir}/fake-master'],
+			env={**os.environ, "WATCH_STATE": root},
+			start_new_session=True,
+		)
 		with open(pid, "w") as f:
 			f.write(f"{master.pid}\n")
 	elif nginx == "stale":
@@ -848,6 +855,7 @@ def run_watch(steps, nginx="master", until=None, **env):
 			"PATH": f"{bin_dir}:{os.environ['PATH']}",
 			"WATCH_STATE": root,
 			"WATCH_INTERVAL": "0.05",
+			"WATCH_RELOAD_WAIT": "1",
 			"WATCH_BEAT": os.path.join(root, "beat"),
 			"NGINX_PID": pid,
 			"BACKEND": "backend:8000",
@@ -864,24 +872,37 @@ def run_watch(steps, nginx="master", until=None, **env):
 		path = os.path.join(root, "nginx.log")
 		return open(path).read().count("-s reload") if os.path.exists(path) else 0
 
+	def logged():
+		return open(os.path.join(root, "out.log")).read().count("nginx reloaded")
+
 	def settle(want=None):
 		# Poll rather than trust a fixed sleep on a busy runner: wait for the
-		# expected count, or give a "nothing happens" case a fair number of ticks.
-		deadline = time.time() + (5 if want else 0.5)
-		while time.time() < deadline and (want is None or reloads() < want):
+		# expected number of reloads to have been sent and judged, or give a
+		# "nothing happens" case a fair number of ticks.
+		deadline = time.time() + (8 if want else 0.6)
+		while time.time() < deadline and (want is not None and not (reloads() >= want and logged() + out_fails() >= want)):
 			time.sleep(0.05)
+		if want is None:
+			while time.time() < deadline:
+				time.sleep(0.05)
 		time.sleep(0.2)
+
+	def out_fails():
+		return open(os.path.join(root, "out.log")).read().count("did not take the reload")
 
 	settle()
 	for step in steps:
-		want = step(answer, t_fails)
+		want = step(answer, flag)
 		settle(want)
 	try:
 		os.killpg(proc.pid, 15)
 	except ProcessLookupError:
 		pass
 	if master:
-		master.kill()
+		try:
+			os.killpg(master.pid, 9)
+		except ProcessLookupError:
+			pass
 	log.close()
 	out = open(os.path.join(root, "out.log")).read() + f"[exit {returned}]"
 	beat = os.path.exists(os.path.join(root, "beat"))
@@ -889,15 +910,22 @@ def run_watch(steps, nginx="master", until=None, **env):
 
 
 def move(host, *addrs, want=None):
-	def step(answer, t_fails):
+	def step(answer, flag):
 		answer(host, *addrs)
 		return want
 	return step
 
 
 def nginx_t(fails, want=None):
-	def step(answer, t_fails):
-		t_fails(fails)
+	def step(answer, flag):
+		flag("t-fails", fails)
+		return want
+	return step
+
+
+def master_rejects(on, want=None):
+	def step(answer, flag):
+		flag("reject", on)
 		return want
 	return step
 
@@ -919,6 +947,12 @@ n, out, _ = run_watch([nginx_t(True), move("websocket", "172.21.0.9"), nginx_t(F
 check("a config nginx would reject is not reloaded, and is tried again once it would not", n == 1, f"{n} {out}")
 n, out, _ = run_watch([nginx_t(True), move("websocket", "172.21.0.9")])
 check("... while it would reject it, nothing is sent", n == 0, f"{n} {out}")
+check("... and why is logged once, not every tick", out.count("nginx -t refuses the config") == 1, out)
+n, out, _ = run_watch([master_rejects(True), move("websocket", "172.21.0.9", want=1), master_rejects(False, want=2)])
+check("a reload the master did not take (no new workers) is tried again", n >= 2, f"{n} {out}")
+check("... said so, then reloaded", "did not take the reload" in out and out.rstrip().count("nginx reloaded") == 1, out)
+n, out, beat = run_watch([], BACKEND="10.0.0.5:8000", SOCKETIO="[fd00::6]:9000")
+check("upstreams given as addresses: nothing to watch, still beats", n == 0 and beat and "waiting" not in out, out)
 n, out, _ = run_watch(
 	[
 		move("backend", "172.21.0.5", "172.21.0.6", want=1),  # a second container: a real change
