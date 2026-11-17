@@ -37,6 +37,7 @@ import io
 import os
 import traceback
 import warnings
+from contextlib import contextmanager
 
 import frappe
 from frappe.core.doctype.file.utils import get_content_hash
@@ -385,6 +386,29 @@ def _samples_per_pixel(image) -> float:
 WORKING = (BOX[0] * 2, BOX[1] * 2)
 
 
+@contextmanager
+def _whole_files_only():
+	"""Have Pillow refuse a file that stops short, whatever the process has set.
+
+	``frappe.utils.image`` turns ``LOAD_TRUNCATED_IMAGES`` on for the whole
+	process the moment it is imported, and with it a photo cut off in upload
+	decodes to its first rows over grey -- a thumbnail of a broken file that
+	looks like a photo. Whether that import has happened yet depends on what
+	the worker did before, so the answer was not even the same twice.
+	"""
+	# Pillow's own switch, and the only one it has: set for this decode and put
+	# back, to undo for our files what frappe's module-level patch does to all.
+	# (The rule's match starts at the import, so that is where it is answered.)
+	from PIL import ImageFile  # nosemgrep: frappe-monkey-patching-not-allowed
+
+	before = ImageFile.LOAD_TRUNCATED_IMAGES
+	ImageFile.LOAD_TRUNCATED_IMAGES = False
+	try:
+		yield
+	finally:
+		ImageFile.LOAD_TRUNCATED_IMAGES = before
+
+
 def _decode_small(image):
 	"""(``image`` at about WORKING size, its EXIF orientation, its ICC profile)."""
 	from PIL import Image
@@ -392,9 +416,11 @@ def _decode_small(image):
 	image.seek(0)  # an animated GIF's first frame
 	# a JPEG decodes straight to 1/2, 1/4 or 1/8 of its size: never full-size
 	image.draft("RGB", WORKING)
-	orientation = image.getexif().get(ORIENTATION_TAG)
-	profile = image.info.get("icc_profile")
-	image.load()
+	# getexif() too: for a PNG it is what decodes the pixels
+	with _whole_files_only():
+		orientation = image.getexif().get(ORIENTATION_TAG)
+		profile = image.info.get("icc_profile")
+		image.load()
 
 	factor = max(1, min(image.width // WORKING[0], image.height // WORKING[1]))
 	if factor == 1:
