@@ -894,3 +894,16 @@ input[type='checkbox']:checked {
 [data-slot='sidebar-item'] .rounded-4 {
   border-radius: var(--v-radius-control);
 }
+
+/* frappe-ui's Select, once any of side/align/offset is set, opens as a popper
+   menu and asks to be at least as wide as its trigger with
+   `min-w-[--reka-select-trigger-width]`. That is tailwind-3 shorthand: v3
+   wrapped a bare `--var` in var(), v4 emits it verbatim as
+   `min-width: --reka-select-trigger-width`, which the browser drops. So every
+   `side="bottom"` select (email template For / Content Type, the quick-filter
+   select) opened narrower than the field it belongs to. Restates the rule
+   with the var() it meant; delete when frappe-ui writes `min-w-(--…)`
+   (tests/unit/selectMenuWidth.test.js says when). */
+[data-slot='content'].min-w-\[--reka-select-trigger-width\] {
+  min-width: var(--reka-select-trigger-width);
+}

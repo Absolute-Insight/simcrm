@@ -93,7 +93,7 @@
 
 <script setup>
 import FilesUploaderArea from '@/components/FilesUploader/FilesUploaderArea.vue'
-import FilesUploadHandler from './filesUploaderHandler'
+import FilesUploadHandler, { uploadErrorMessage } from './filesUploaderHandler'
 import { isMobileView } from '@/composables/settings'
 import { toast } from 'frappe-ui'
 import { ref, computed } from 'vue'
@@ -218,14 +218,7 @@ function attachFile(file) {
 
   return uploader.value.upload(file, args || {}).catch((error) => {
     file.uploading = false
-    let errorMessage = 'Error Uploading File'
-    if (error?._server_messages) {
-      errorMessage = JSON.parse(JSON.parse(error._server_messages)[0]).message
-    } else if (error?.exc) {
-      errorMessage = JSON.parse(error.exc)[0].split('\n').slice(-2, -1)[0]
-    } else if (typeof error === 'string') {
-      errorMessage = error
-    }
+    const errorMessage = uploadErrorMessage(error, 'Error Uploading File')
     file.errorMessage = errorMessage
     throw errorMessage
   })

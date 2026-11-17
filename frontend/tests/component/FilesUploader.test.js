@@ -29,7 +29,8 @@ vi.mock('@/components/FilesUploader/FilesUploaderArea.vue', () => ({
     },
   },
 }))
-vi.mock('@/components/FilesUploader/filesUploaderHandler', () => ({
+vi.mock('@/components/FilesUploader/filesUploaderHandler', async (orig) => ({
+  ...(await orig()),
   default: class {
     constructor() {
       this.listeners = {}
@@ -152,5 +153,16 @@ describe('FilesUploader batch', () => {
     expect(spinning()).toBe(false)
     expect(state.afters).toEqual([])
     expect(S.area.props.modelValue[0].errorMessage).toBe('Server error')
+  })
+
+  it('shows an error for a failure whose body it cannot parse', async () => {
+    // The catch parsed _server_messages blind; a throw there skipped the rest
+    // of it, and the file sat in the list failed with no error beside it.
+    const { spinning } = await attach(['a.pdf'])
+    S.uploads[0].reject({ _server_messages: '<html>Bad Gateway</html>' })
+    await settle()
+
+    expect(spinning()).toBe(false)
+    expect(S.area.props.modelValue[0].errorMessage).toBe('Error Uploading File')
   })
 })

@@ -1,6 +1,7 @@
 <template>
   <FrappeUIProvider>
     <NotPermitted v-if="$route.name === 'Not Permitted'" />
+    <LoadFailed v-else-if="$route.name === 'Load Failed'" />
     <router-view v-else-if="$route.name === 'Onboarding'" />
     <!-- Field mode brings its own chrome: the app shell's sidebar,
          notifications and settings each need a server it may not have. -->
@@ -18,6 +19,7 @@
 
 <script setup>
 import NotPermitted from '@/pages/NotPermitted.vue'
+import LoadFailed from '@/pages/LoadFailed.vue'
 import EventNotificationPopup from '@/components/EventNotificationPopup.vue'
 import DoctypeModals from '@/components/Modals/DoctypeModals.vue'
 import { Dialogs } from '@/utils/dialogs'

@@ -36,9 +36,12 @@
           </Button>
         </template>
       </Dropdown>
+      <!-- Left, not the default top: the header is at the top of the page, so
+           a top tooltip flipped down over the record ID in the side panel. -->
       <Tooltip
         :disabled="!isLeadConversionDisabled"
         :text="__('Cannot convert a lost lead to deal')"
+        side="left"
       >
         <div class="inline-flex">
           <Button

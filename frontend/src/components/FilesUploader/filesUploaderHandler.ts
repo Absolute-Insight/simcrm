@@ -54,6 +54,48 @@ export function parseUploadFailure(
   return { error: safeJsonParse(responseText), failed: status !== 403 }
 }
 
+/**
+ * The sentence to show for a rejected upload, never throwing.
+ *
+ * FilesUploader's catch used to parse `_server_messages` and `exc` blind. Both
+ * are JSON strings nested in JSON, and either can be malformed or not what we
+ * expect; a throw there skipped the rest of the catch, so a failed file was
+ * left in the list with no error beside it and a web link was toasted a
+ * SyntaxError. Whatever the shape, this returns text.
+ */
+export function uploadErrorMessage(error: unknown, fallback: string): string {
+  if (typeof error === 'string') return error.trim() || fallback
+  if (!error || typeof error !== 'object') return fallback
+
+  const { _server_messages, exc } = error as {
+    _server_messages?: unknown
+    exc?: unknown
+  }
+
+  if (typeof _server_messages === 'string') {
+    const entries = safeJsonParse(_server_messages)
+    const first = Array.isArray(entries) ? entries[0] : undefined
+    const parsed = typeof first === 'string' ? safeJsonParse(first) : first
+    const message =
+      parsed && typeof parsed === 'object'
+        ? (parsed as { message?: unknown }).message
+        : parsed
+    if (typeof message === 'string' && message.trim()) return message
+  }
+
+  if (typeof exc === 'string') {
+    const frames = safeJsonParse(exc)
+    const trace = Array.isArray(frames) ? frames[0] : undefined
+    if (typeof trace === 'string') {
+      // The last line of a Python traceback is the exception and its message.
+      const last = trace.trim().split('\n').pop()?.trim()
+      if (last) return last
+    }
+  }
+
+  return fallback
+}
+
 class FilesUploadHandler {
   listeners: { [event: string]: ((...args: unknown[]) => void)[] }
   failed: boolean

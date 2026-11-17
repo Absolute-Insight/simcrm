@@ -31,8 +31,11 @@ export const usersStore = defineStore('crm-users', () => {
       return { allUsers, crmUsers }
     },
     onError(error) {
+      // Created outside a component (the router guard is the first to ask),
+      // useRouter() has no router to give, and a throw here replaced the
+      // AuthenticationError the guard needs to see with a TypeError.
       if (error && error.exc_type === 'AuthenticationError') {
-        router.push('/login')
+        router?.push('/login')
       }
     },
     onSuccess() {
