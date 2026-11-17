@@ -398,12 +398,14 @@ def _whole_files_only():
 	"""
 	from PIL import ImageFile
 
+	# Pillow's own switch, and the only one it has: set for this decode and put
+	# back, to undo for our files what frappe's module-level patch does to all
 	before = ImageFile.LOAD_TRUNCATED_IMAGES
-	ImageFile.LOAD_TRUNCATED_IMAGES = False
+	ImageFile.LOAD_TRUNCATED_IMAGES = False  # nosemgrep: frappe-monkey-patching-not-allowed
 	try:
 		yield
 	finally:
-		ImageFile.LOAD_TRUNCATED_IMAGES = before
+		ImageFile.LOAD_TRUNCATED_IMAGES = before  # nosemgrep: frappe-monkey-patching-not-allowed
 
 
 def _decode_small(image):
