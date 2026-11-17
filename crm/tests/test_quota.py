@@ -349,8 +349,15 @@ class QuotaGridApiTest(IntegrationTestCase):
 		self.assertEqual(row["quota"], {})
 		self.assertEqual(quota_in_period("2026-05-01", "2026-05-31", USER), 0)
 
+	def test_one_call_sets_one_target(self):
+		with self.assertRaises(frappe.ValidationError):
+			quota_api.set_quota(USER, "2026-05-01", 12_000, 40)
+		with self.assertRaises(frappe.ValidationError):
+			quota_api.set_quota(USER, "2026-05-01")
+		self.assertFalse(frappe.db.exists("CRM Quota", {"user": USER}))
+
 	def test_a_quotes_target_is_a_whole_number_within_reason(self):
-		for bad in (-1, 2.5, "many", quota_api.MAX_QUOTES_PER_MONTH + 1):
+		for bad in (-1, 2.5, "many", "nan", "inf", quota_api.MAX_QUOTES_PER_MONTH + 1):
 			with self.assertRaises(frappe.ValidationError):
 				quota_api.set_quota(USER, "2026-05-01", quotes=bad)
 		self.assertFalse(frappe.db.exists("CRM Quota", {"user": USER}))
@@ -412,7 +419,7 @@ class QuotaGridApiTest(IntegrationTestCase):
 		# ten of March's 31 days, one quote in them
 		self.assertEqual(
 			{k: rows[USER][k] for k in ("target", "quotes", "gap", "attainment")},
-			{"target": 10, "quotes": 1, "gap": -9, "attainment": 10},
+			{"target": 10.0, "quotes": 1, "gap": -9.0, "attainment": 10},
 		)
 
 	def test_a_rep_reads_only_their_own_row_of_the_quotes_report(self):
@@ -582,6 +589,37 @@ class QuotaScopeTest(IntegrationTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			quota_api.copy_quota_forward(OTHER, "2026-03-01", 3)
 		self.assertEqual(frappe.db.count("CRM Quota", {"user": OTHER}), 1)
+
+	def test_an_in_tree_manager_cannot_set_or_copy_a_quotes_target_outside_their_subtree(self):
+		frappe.set_user("Administrator")
+		quota_api.set_quota(OTHER, "2026-03-01", quotes=40)
+		frappe.set_user(self.MANAGER)
+		with self.assertRaises(frappe.PermissionError):
+			quota_api.set_quota(OTHER, "2026-03-01", quotes=5)
+		with self.assertRaises(frappe.PermissionError):
+			quota_api.copy_quota_forward(OTHER, "2026-03-01", 3, kind="quotes")
+		with self.assertRaises(frappe.PermissionError):
+			quota_api.set_quota(self.MANAGER, "2026-03-01", quotes=5)
+		self.assertEqual(frappe.db.get_all("CRM Quota", {"user": OTHER}, pluck="quotes"), [40])
+
+	def test_the_quotes_report_and_grid_stop_at_an_in_tree_managers_subtree(self):
+		frappe.set_user("Administrator")
+		quota_api.set_quota(OTHER, "2026-03-01", quotes=40)
+		quota_api.set_quota(USER, "2026-03-01", quotes=30)
+		frappe.set_user(self.MANAGER)
+		report = get_report("quotes_against_budget_by_rep", "2026-03-01", "2026-03-31")
+		self.assertEqual([row["user"] for row in report["rows"]], [USER])
+		with self.assertRaises(frappe.PermissionError):
+			get_report("quotes_against_budget_by_rep", "2026-03-01", "2026-03-31", OTHER)
+		rows = {r["user"]: r for r in quota_api.get_quota_grid(2026)["rows"]}
+		self.assertEqual(rows[USER]["quotes"], {"2026-03-01": 30})
+		self.assertNotIn(OTHER, rows)
+
+	def test_a_rep_with_only_a_quotes_target_is_not_on_the_revenue_report(self):
+		frappe.set_user("Administrator")
+		quota_api.set_quota(USER, "2026-03-01", quotes=30)
+		report = get_report("quota_attainment_by_rep", "2026-03-01", "2026-03-31")
+		self.assertNotIn(USER, [row["user"] for row in report["rows"]])
 
 	def test_an_in_tree_manager_sets_and_lists_their_own_subtree(self):
 		frappe.set_user(self.MANAGER)

@@ -10,11 +10,14 @@ query handles that) but may not author one.
 
 from __future__ import annotations
 
+import math
+
 import frappe
 from frappe import _
 from frappe.utils import cint, flt, get_first_day, getdate
 
 from crm.api.dashboard import get_base_currency, visible_reps
+from crm.fcrm.doctype.crm_quota.crm_quota import MAX_QUOTES_PER_MONTH
 
 
 def _is_manager() -> bool:
@@ -67,7 +70,7 @@ def get_quota_grid(year: int | str | None = None):
 	Managers get the whole team; a rep gets only their own row, so the same screen
 	serves "set the team's targets" and "what is mine".
 	"""
-	from crm.api.dashboard import quotes_raised_by_user, won_value_by_user
+	from crm.api.dashboard import won_value_by_user
 
 	year = cint(year) or getdate().year
 	months = _months(year)
@@ -105,7 +108,6 @@ def get_quota_grid(year: int | str | None = None):
 
 	# one grouped read for the whole grid rather than a closed-won query per rep
 	actual = won_value_by_user(users, months[0], f"{year}-12-31")
-	raised = quotes_raised_by_user(users, months[0], f"{year}-12-31")
 
 	return {
 		"year": year,
@@ -118,7 +120,6 @@ def get_quota_grid(year: int | str | None = None):
 				"quota": by_user.get(user, {}),
 				"actual": actual.get(user, 0.0),
 				"quotes": quotes_by_user.get(user, {}),
-				"quotes_raised": raised.get(user, 0),
 			}
 			for user in sorted(users, key=lambda u: (user_meta.get(u) or u).lower())
 		],
@@ -137,9 +138,6 @@ def _sales_users() -> list[str]:
 		distinct=True,
 	)
 
-
-# far above any real month and well inside the Int column
-MAX_QUOTES_PER_MONTH = 100000
 
 KINDS = ("amount", "quotes")
 
@@ -186,12 +184,17 @@ def set_quota(
 		frappe.throw(_("{0} is not a sales user.").format(user))
 
 	period_start = get_first_day(getdate(period_start))
+	if (quotes is None) == (amount is None):
+		# one cell, one target: with both, guessing which was meant could clear
+		# the other; with neither there is nothing to set
+		frappe.throw(_("Set one target at a time."), frappe.ValidationError)
 	if quotes is not None:
 		try:
 			count = float(quotes or 0)
 		except (TypeError, ValueError):
 			count = -1
-		if count < 0 or count != int(count) or count > MAX_QUOTES_PER_MONTH:
+		# nan and inf are floats too, and neither is a number of quotes
+		if not math.isfinite(count) or count < 0 or count != int(count) or count > MAX_QUOTES_PER_MONTH:
 			frappe.throw(
 				_("Enter a whole number of quotes, 0 to {0}.").format(MAX_QUOTES_PER_MONTH),
 				frappe.ValidationError,
