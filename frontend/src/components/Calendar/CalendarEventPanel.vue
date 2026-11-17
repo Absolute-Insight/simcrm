@@ -533,7 +533,7 @@
       <TabButtons
         v-model="attending"
         class="w-full [&_button]:w-full [&_div]:w-full [&_button>span]:w-full"
-        :buttons="[
+        :options="[
           {
             label: __('Yes'),
             value: 'Yes',
