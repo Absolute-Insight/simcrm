@@ -163,31 +163,64 @@ class FieldPackTest(IntegrationTestCase):
 		names = {row["name"] for row in self.pack()["organizations"]}
 		self.assertTrue({self.mine, self.theirs} <= names)
 
-	def test_a_manager_who_sees_everything_does_not_carry_everything(self):
-		# A Sales Manager outside the tree may read every customer on the site;
-		# the phone carries only the ones on their own plans and deals.
+	def test_a_manager_without_a_team_carries_what_they_may_read(self):
+		# A Sales Manager outside the tree leads no team: rather than an empty
+		# field mode, the phone carries what they may read, as a rep's does.
 		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
-		planned = self.org("Manager planned", REP)
+		names = {row["name"] for row in self.pack(MANAGER)["organizations"]}
+		self.assertTrue({self.mine, self.theirs} <= names)
+
+	def test_a_team_manager_also_carries_their_own_plans_and_deals(self):
+		self.lead_a_team()
+		planned = self.org("Manager planned", OTHER)
 		dealt = self.org("Manager dealt", OTHER)
 		self.deal(dealt, MANAGER)
-		frappe.set_user(MANAGER)
-		save_plan(
-			this_monday(),
-			[
-				{
-					"activity_type": "Visit",
-					"planned_date": str(frappe.utils.getdate()),
-					"organization": planned,
-				}
-			],
-		)
-		frappe.set_user("Administrator")
+		# inserted as Administrator: the Planner refuses another team's customer,
+		# but a plan row is still a route the manager may read it by
+		frappe.get_doc(
+			{
+				"doctype": "CRM Rep Plan",
+				"user": MANAGER,
+				"week_start": this_monday(),
+				"items": [
+					{
+						"activity_type": "Visit",
+						"planned_date": str(frappe.utils.getdate()),
+						"organization": planned,
+					}
+				],
+			}
+		).insert(ignore_permissions=True)
 		names = {row["name"] for row in self.pack(MANAGER)["organizations"]}
-		self.assertEqual(names, {planned, dealt})
-		self.assertNotIn(self.mine, names)
+		self.assertTrue({self.mine, planned, dealt} <= names)
+		# OTHER's other customers are not on the manager's team
 		self.assertNotIn(self.theirs, names)
 
-	def test_a_manager_with_a_team_carries_the_teams_customers(self):
+	def test_a_manager_on_own_records_only_still_gets_a_field_mode(self):
+		# the regression this rule fixes: no team, no plans, no deals was an empty pack
+		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "Own records only")
+		unclaimed = frappe.get_doc(
+			{
+				"doctype": "CRM Organization",
+				"organization_name": f"Pack Free {frappe.generate_hash(length=6)}",
+			}
+		).insert(ignore_permissions=True)
+		readable = set(frappe.get_list("CRM Organization", pluck="name", user=MANAGER, limit=0))
+		self.assertIn(unclaimed.name, readable)
+		self.assertIn(unclaimed.name, {row["name"] for row in self.pack(MANAGER)["organizations"]})
+
+	def test_a_manager_in_the_tree_with_no_one_under_them_is_not_narrowed(self):
+		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
+		frappe.db.delete("CRM Sales Hierarchy", {"user": ("in", [MANAGER, REP, OTHER])})
+		frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": MANAGER}).insert(ignore_permissions=True)
+		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
+		self.addCleanup(frappe.cache.delete_value, "crm_sales_hierarchy_subtree")
+		readable = set(frappe.get_list("CRM Organization", pluck="name", user=MANAGER, limit=0))
+		names = {row["name"] for row in self.pack(MANAGER)["organizations"]}
+		self.assertTrue(readable)
+		self.assertEqual(names, readable)
+
+	def lead_a_team(self):
 		frappe.db.set_single_value("FCRM Settings", "enable_sales_hierarchy", 1)
 		frappe.db.delete("CRM Sales Hierarchy", {"user": ("in", [MANAGER, REP, OTHER])})
 		top = frappe.get_doc({"doctype": "CRM Sales Hierarchy", "user": MANAGER}).insert(
@@ -198,6 +231,9 @@ class FieldPackTest(IntegrationTestCase):
 		)
 		frappe.cache.delete_value("crm_sales_hierarchy_subtree")
 		self.addCleanup(frappe.cache.delete_value, "crm_sales_hierarchy_subtree")
+
+	def test_a_manager_with_a_team_carries_the_teams_customers(self):
+		self.lead_a_team()
 		names = {row["name"] for row in self.pack(MANAGER)["organizations"]}
 		self.assertIn(self.mine, names)
 		# OTHER is not on the manager's team
@@ -230,11 +266,6 @@ class FieldPackTest(IntegrationTestCase):
 	def test_a_system_manager_who_leads_a_team_carries_it(self):
 		frappe.get_doc("User", MANAGER).add_roles("System Manager")
 		self.test_a_manager_with_a_team_carries_the_teams_customers()
-
-	def test_a_manager_with_nothing_of_their_own_carries_nothing(self):
-		frappe.db.set_single_value("CRM Access Settings", "manager_outside_hierarchy", "All records")
-		pack = self.pack(MANAGER)
-		self.assertEqual((pack["organizations"], pack["contacts"], pack["deals"]), ([], [], []))
 
 	def test_a_rep_still_carries_unclaimed_customers(self):
 		# the narrowing is for managers: a rep may be sent to an unclaimed one

@@ -369,10 +369,18 @@ def _managers_customers() -> set[str] | None:
 	a phone, which is the most data at risk if it is lost and the most work for
 	the server on every sync, for someone who visits a handful.
 
-	So a manager carries the customers of the reps they lead, where the sales
-	hierarchy names a team; the customers on their own plans (this window and
-	next week) and on the open deals they own. Row scoping still applies on top:
-	this only ever narrows what ``frappe.get_list`` would return.
+	So a manager who leads a team carries the customers of the reps they lead,
+	where the sales hierarchy names one, plus the customers on their own plans
+	(this window and next week) and on the open deals they own.
+
+	A manager who leads no team is not narrowed: they carry what they may read,
+	as a rep does. Narrowing them to their own plans and deals left most of
+	them with an empty field mode (on production on 2026-11-17, every such
+	manager), and the busiest rep already carries two thirds of the customers,
+	so the extra exposure is small. The user's call, 2026-11-17.
+
+	Row scoping applies either way: this only ever narrows what
+	``frappe.get_list`` would return.
 	"""
 	from crm.permissions.customers import is_manager
 	from crm.permissions.org_hierarchy import _in_hierarchy, _team_mem_query, hierarchy_enabled
@@ -389,15 +397,16 @@ def _managers_customers() -> set[str] | None:
 		team = [member for member in (_team_mem_query(user).run(pluck=True) or []) if member != user]
 	else:
 		team = []
-	if team:
-		carried.update(
-			frappe.get_all(
-				"CRM Organization",
-				filters={"account_owner": ("in", team)},
-				pluck="name",
-				limit=MAX_ORGANIZATIONS,
-			)
+	if not team:
+		return None
+	carried.update(
+		frappe.get_all(
+			"CRM Organization",
+			filters={"account_owner": ("in", team)},
+			pluck="name",
+			limit=MAX_ORGANIZATIONS,
 		)
+	)
 
 	since = frappe.utils.getdate() - timedelta(days=HISTORY_DAYS)
 	monday, _sunday = week_of(since)
