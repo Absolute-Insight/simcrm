@@ -191,6 +191,8 @@ class HeadAccountVisibilityTest(ImporterTestCase):
 		frappe.set_user("Administrator")
 		user = frappe.get_doc("User", "ha-alice@crmtest.test")
 		user.add_roles("Sales Manager")
+		# rollback undoes the role, not the role cache the tests after this read
+		self.addCleanup(frappe.clear_cache, user="ha-alice@crmtest.test")
 		frappe.set_user("ha-alice@crmtest.test")
 		doc = frappe.get_doc("CRM Organization", self.hidden_site)
 		doc.apply_fieldlevel_read_permissions()
