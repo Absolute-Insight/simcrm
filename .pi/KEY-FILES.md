@@ -93,7 +93,8 @@ gotcha, not a location, and it stays in `AGENTS.md`.
 | `crm/fcrm/doctype/crm_offline_receipt/` | One row per replayed entry: what makes a retry a no-op |
 | `frontend/src/offline/sheets.js` | Reference sheets kept on the device: download, index, remove |
 | `frontend/src/offline/db.js` | The three IndexedDB stores (pack, outbox, the outbox's photos and recordings) and when each is cleared |
-| `crm/api/note_media.py` | Photos and voice notes on a field-mode note: `stage_media`, `claim_media`, `get_note_media`, daily purge |
+| `crm/api/note_media.py` | Photos and voice notes on a note: `stage_media`, `claim_media` (field mode, through the outbox), `attach_media` (the note dialog, online), `get_note_media`, daily purge |
+| `frontend/src/components/Notes/NoteMediaPicker.vue` | The "Add photo" / "Record voice note" control shared by the field-mode note form and the note dialog (`DoctypeModal` for FCRM Note) |
 | `frontend/src/utils/fieldPack.js` | Pure helpers: index by customer, search, expiry, display |
 | `frontend/src/pages/Field.vue` + `components/Field/` | The standalone Field surface: week, customers, customer, tasks |
 

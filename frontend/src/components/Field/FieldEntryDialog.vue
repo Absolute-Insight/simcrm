@@ -125,108 +125,7 @@
 
         <!-- Photos and a voice note: kept on the phone with the note and sent
              with it, so they work with no signal at all. -->
-        <div v-if="kind === 'note'" class="flex flex-col gap-2">
-          <div
-            v-if="photos.length || voice"
-            class="flex flex-wrap items-center gap-2"
-          >
-            <div
-              v-for="photo in photos"
-              :key="photo.id"
-              class="relative size-20 overflow-hidden rounded-5 bg-surface-gray-2"
-            >
-              <img
-                :src="photo.url"
-                :alt="__('Photo for this note')"
-                class="size-full object-cover"
-              />
-              <button
-                type="button"
-                class="absolute right-1 top-1 flex size-6 items-center justify-center rounded-full bg-surface-gray-7/80 text-ink-white focus-visible:outline focus-visible:outline-2"
-                :aria-label="__('Remove photo')"
-                @click="removePhoto(photo)"
-              >
-                <LucideX class="size-3.5" aria-hidden="true" />
-              </button>
-            </div>
-            <div
-              v-if="voice"
-              class="flex min-h-10 w-full items-center gap-2 rounded-5 bg-surface-gray-2 px-2"
-            >
-              <audio
-                :src="voice.url"
-                controls
-                preload="metadata"
-                class="h-9 min-w-0 flex-1"
-                :aria-label="__('Voice note')"
-              />
-              <Button
-                variant="ghost"
-                icon="lucide-trash-2"
-                :aria-label="__('Remove voice note')"
-                @click="removeVoice"
-              />
-            </div>
-          </div>
-
-          <div
-            v-if="recorder.state.value === 'recording'"
-            class="flex min-h-10 items-center justify-between gap-2 rounded-5 bg-surface-red-1 px-3"
-            role="status"
-          >
-            <span
-              class="flex items-center gap-2 whitespace-nowrap text-base tabular-nums text-ink-red-9"
-            >
-              <span
-                class="size-2 animate-pulse rounded-full bg-surface-red-5"
-                aria-hidden="true"
-              />
-              <span class="sr-only sm:not-sr-only">{{ __('Recording') }}</span>
-              {{ clock(recorder.elapsed.value) }} /
-              {{ clock(MAX_VOICE_SECONDS) }}
-            </span>
-            <div class="flex gap-1">
-              <Button
-                variant="ghost"
-                :label="__('Cancel')"
-                @click="recorder.cancel()"
-              />
-              <Button
-                variant="solid"
-                :label="__('Stop')"
-                icon-left="lucide-square"
-                @click="recorder.stop()"
-              />
-            </div>
-          </div>
-          <div v-else class="flex flex-wrap gap-2">
-            <Button
-              :label="__('Add photo')"
-              icon-left="lucide-camera"
-              :disabled="photos.length >= MAX_PHOTOS || busyPhoto"
-              :loading="busyPhoto"
-              @click="photoInput?.click()"
-            />
-            <Button
-              v-if="voiceNotesSupported()"
-              :label="__('Record voice note')"
-              icon-left="lucide-mic"
-              :disabled="!!voice || recorder.state.value === 'starting'"
-              @click="recorder.start()"
-            />
-            <input
-              ref="photoInput"
-              type="file"
-              accept="image/*"
-              capture="environment"
-              class="hidden"
-              @change="addPhotos"
-            />
-          </div>
-          <p v-if="mediaHint" class="text-p-sm text-ink-gray-6">
-            {{ mediaHint }}
-          </p>
-        </div>
+        <NoteMediaPicker v-if="kind === 'note'" ref="media" camera />
 
         <ErrorMessage :message="problem" />
       </form>
@@ -255,24 +154,16 @@
 </template>
 
 <script setup>
-import LucideX from '~icons/lucide/x'
-import { voiceNotesSupported, useVoiceNote } from '@/composables/useVoiceNote'
+import NoteMediaPicker from '@/components/Notes/NoteMediaPicker.vue'
 import { connectivity } from '@/offline/connectivity'
 import { fieldDialog } from '@/offline/fieldDialog'
 import { enqueue, forgetMedia, keepMedia } from '@/offline/outbox'
-import {
-  MAX_PHOTOS,
-  MAX_VOICE_SECONDS,
-  clock,
-  scalePhoto,
-} from '@/utils/noteMedia'
-import { newEntryId } from '@/utils/fieldOutbox'
 import { useField } from '@/offline/useField'
 import { entryProblem, SITE_LIMIT } from '@/utils/fieldOutbox'
 import { searchCustomers, shortDate, weekdayName } from '@/utils/fieldPack'
 import { activityLabel, LOGGABLE_TYPES, PLANNABLE_TYPES } from '@/utils/planner'
 import { Dialog, ErrorMessage, FormControl, TextInput, toast } from 'frappe-ui'
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 
 const { pack, index } = useField()
 
@@ -292,88 +183,8 @@ const customerQuery = ref('')
 const problem = ref('')
 const saving = ref(false)
 
-/* The note's photos and voice note, until it is saved: { id, blob, url }.
-   The object URLs are released whenever they leave the form. */
-const photos = ref([])
-const voice = ref(null)
-const photoInput = ref(null)
-const busyPhoto = ref(false)
-const mediaProblem = ref('')
-
-const release = (item) => item?.url && URL.revokeObjectURL(item.url)
-const withUrl = (blob) => ({
-  id: newEntryId(),
-  blob,
-  url: URL.createObjectURL(blob),
-})
-
-function clearMedia() {
-  photos.value.forEach(release)
-  release(voice.value)
-  photos.value = []
-  voice.value = null
-  mediaProblem.value = ''
-}
-
-const recorder = useVoiceNote({
-  onRecorded: ({ blob }) => {
-    release(voice.value)
-    voice.value = withUrl(blob)
-  },
-})
-
-const mediaHint = computed(() => {
-  if (mediaProblem.value) return mediaProblem.value
-  switch (recorder.error.value) {
-    case 'denied':
-      return __('Allow the microphone for this site to record a voice note.')
-    case 'unsupported':
-      return __('This browser cannot record a voice note.')
-    case 'nothing':
-      return __('Nothing was recorded. Try again.')
-    case 'large':
-      return __('That recording is too large. Keep it under {0} minutes.', [
-        MAX_VOICE_SECONDS / 60,
-      ])
-    default:
-      return ''
-  }
-})
-
-async function addPhotos(event) {
-  const files = [...(event.target.files || [])]
-  event.target.value = ''
-  mediaProblem.value = ''
-  busyPhoto.value = true
-  try {
-    for (const file of files) {
-      if (photos.value.length >= MAX_PHOTOS) {
-        mediaProblem.value = __('A note takes up to {0} photos.', [MAX_PHOTOS])
-        break
-      }
-      try {
-        photos.value = [...photos.value, withUrl(await scalePhoto(file))]
-      } catch (error) {
-        mediaProblem.value =
-          error?.message || __('That photo could not be read.')
-      }
-    }
-  } finally {
-    busyPhoto.value = false
-  }
-}
-
-function removePhoto(photo) {
-  release(photo)
-  photos.value = photos.value.filter((other) => other !== photo)
-}
-
-function removeVoice() {
-  release(voice.value)
-  voice.value = null
-}
-
-onBeforeUnmount(clearMedia)
+// the note's photos and voice note, until it is saved (NoteMediaPicker)
+const media = ref(null)
 
 // a fresh form each time it opens, seeded with what the screen knew
 watch(
@@ -394,7 +205,7 @@ watch(
     customerQuery.value = ''
     problem.value = ''
     saving.value = false
-    clearMedia()
+    media.value?.clear()
   },
 )
 
@@ -402,7 +213,7 @@ watch(
 watch(
   () => fieldDialog.open,
   (open) => {
-    if (!open) recorder.cancel()
+    if (!open) media.value?.cancelRecording()
   },
 )
 
@@ -531,14 +342,16 @@ function entry() {
       const cut = values.about.indexOf('::')
       const doctype = values.about.slice(0, cut)
       const name = values.about.slice(cut + 2)
-      const media = [...photos.value, ...(voice.value ? [voice.value] : [])]
+      const attached = media.value?.items() ?? []
       return [
         'add_note',
         {
           reference_doctype: doctype,
           reference_docname: name,
           content: text,
-          ...(media.length ? { media: media.map((item) => item.id) } : {}),
+          ...(attached.length
+            ? { media: attached.map((item) => item.id) }
+            : {}),
         },
       ]
     }
@@ -591,7 +404,7 @@ async function save() {
   const [action, payload] = entry()
   problem.value = entryProblem(action, payload, pack.value?.rules)
   if (problem.value) return
-  if (recorder.state.value === 'recording') {
+  if (media.value?.recording) {
     problem.value = __('Stop the recording first.')
     return
   }
@@ -600,19 +413,11 @@ async function save() {
     if (action === 'add_note') {
       // on the device before the entry that names them, so an entry never
       // points at a file the phone does not have
-      await keepMedia([
-        ...photos.value.map(({ id, blob }) => ({ id, kind: 'photo', blob })),
-        ...(voice.value
-          ? [{ id: voice.value.id, kind: 'voice', blob: voice.value.blob }]
-          : []),
-      ])
+      await keepMedia(media.value?.items() ?? [])
     }
     await enqueue(action, payload)
     // the outbox holds them now; the form lets go of its own copies
-    photos.value.forEach(release)
-    release(voice.value)
-    photos.value = []
-    voice.value = null
+    media.value?.clear()
     fieldDialog.open = false
     toast.success(
       connectivity.online

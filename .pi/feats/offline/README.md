@@ -254,6 +254,14 @@ minutes at most). Never transcribed -- that is the Assistant's dictation.
 - Desk shows them on the Notes page and the deal's notes (`Notes/NoteMedia.vue`),
   one batched `get_note_media` call per render tick, scoped by `get_list` on
   FCRM Note.
+- **The note dialog takes them too, online** (Notes page, and notes on a deal
+  or lead): `DoctypeModal` shows `Notes/NoteMediaPicker.vue` for FCRM Note --
+  the same control field mode uses, without `capture` so the device offers the
+  gallery as well as the camera. The note is saved first; then each file goes
+  up with `stage_media` and `attach_media(note, ids)` files them against it
+  (`utils/noteMediaUpload.js`). `attach_media` needs write on the note and
+  answers "not yours" and "no such note" alike. `claim_media` counts what the
+  note already holds, so editing a note later cannot take it past the limits.
 
 ### 5. Planning offline, and kept sheets
 

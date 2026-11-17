@@ -86,6 +86,16 @@
               {{ __('No history for this task yet.') }}
             </div>
           </div>
+          <!-- A note's photos and voice note: what it holds already, and
+               room to add up to the limit. -->
+          <div v-if="isNote" class="mt-4 flex flex-col gap-3">
+            <NoteMedia v-if="docname" :note="docname" />
+            <NoteMediaPicker
+              ref="media"
+              :max-photos="photoRoom"
+              :allow-voice="voiceRoom"
+            />
+          </div>
           <ErrorMessage v-if="error" class="mt-4" :message="__(error)" />
         </div>
       </div>
@@ -94,7 +104,9 @@
           <Button
             variant="solid"
             :label="editMode ? __('Update') : __('Create')"
-            :loading="editMode ? document.save.loading : creating"
+            :loading="
+              (editMode ? document.save.loading : creating) || attaching
+            "
             @click="editMode ? update() : create()"
           />
         </div>
@@ -115,6 +127,11 @@ import { showQuickEntryModal, quickEntryProps } from '@/composables/modals'
 import { isMobileView } from '@/composables/settings'
 import { setupCustomizations, formatDate } from '@/utils'
 import { resetNewDocument } from '@/utils/newDocument'
+import NoteMedia from '@/components/Notes/NoteMedia.vue'
+import NoteMediaPicker from '@/components/Notes/NoteMediaPicker.vue'
+import { noteMedia } from '@/composables/useNoteMedia'
+import { MAX_PHOTOS, MAX_RECORDINGS } from '@/utils/noteMedia'
+import { attachNoteMedia } from '@/utils/noteMediaUpload'
 import { call, createResource, toast } from 'frappe-ui'
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
@@ -156,11 +173,61 @@ const layout = createResource({
 const error = ref(null)
 const editMode = computed(() => Boolean(document.doc?.name))
 
+/* A note takes photos and a voice note (NoteMediaPicker). They are sent once
+   the note itself is saved, because they are filed against its name. */
+const isNote = computed(() => props.doctype === 'FCRM Note')
+const media = ref(null)
+const attaching = ref(false)
+const held = computed(() => (props.docname ? noteMedia(props.docname) : []))
+const photoRoom = computed(
+  () => MAX_PHOTOS - held.value.filter((m) => m.kind === 'photo').length,
+)
+const voiceRoom = computed(
+  () => held.value.filter((m) => m.kind === 'voice').length < MAX_RECORDINGS,
+)
+
+function stillRecording() {
+  if (!media.value?.recording) return false
+  error.value = __('Stop the recording first.')
+  return true
+}
+
+/* True when there was nothing to send or it all went. A failure leaves the
+   dialog open on the saved note, with the files still in it to send again. */
+async function sendMedia(note) {
+  const items = media.value?.items() ?? []
+  if (!items.length) return true
+  attaching.value = true
+  try {
+    await attachNoteMedia(note, items)
+    media.value?.clear()
+    return true
+  } catch (err) {
+    error.value =
+      err.messages?.[0] ||
+      __('The note was saved, but its photos or voice note were not.')
+    return false
+  } finally {
+    attaching.value = false
+  }
+}
+
 const _create = createResource({
   url: 'frappe.client.insert',
-  onSuccess: (d) => {
+  onSuccess: async (d) => {
     resetNewDocument(document, props.doctype)
+    // told now, not after the upload: a dialog closed while its photos are
+    // still going would never say the note exists
     emit('afterInsert', d)
+    if (!(await sendMedia(d.name))) {
+      // the note exists: say so, rather than leave a form that would create
+      // it a second time
+      toast.warning(
+        __(
+          'The note was saved without its photos or voice note. Open it to add them again.',
+        ),
+      )
+    }
     show.value = false
   },
   onError: (err) => {
@@ -183,7 +250,7 @@ const _create = createResource({
 const creating = ref(false)
 
 async function create() {
-  if (creating.value) return
+  if (creating.value || attaching.value || stillRecording()) return
   creating.value = true
   try {
     await triggerOnBeforeCreate?.()
@@ -201,17 +268,24 @@ async function create() {
   }
 }
 
-function update() {
+async function update() {
+  if (attaching.value || stillRecording()) return
   // frappe-ui skips saving an unchanged doc without calling back, so handle it here
   if (!document.isDirty) {
+    if (media.value?.count) {
+      // only photos or a recording were added to the note
+      emit('afterUpdate', document.doc)
+      if (await sendMedia(props.docname)) show.value = false
+      return
+    }
     toast.info(__('Nothing to update'))
     show.value = false
     return
   }
   document.save.submit(null, {
-    onSuccess: (d) => {
+    onSuccess: async (d) => {
       emit('afterUpdate', d)
-      show.value = false
+      if (await sendMedia(props.docname)) show.value = false
     },
     onError: (err) => {
       error.value = err.messages?.[0] || 'Could not update document'
