@@ -20,10 +20,13 @@ from datetime import timedelta
 
 import frappe
 from frappe import _
+from frappe.query_builder.functions import IfNull
 
 from crm.agent.media import MediaRejected, _check_image_size, _image_mime, decode_base64
 from crm.utils import sales_user_only, user_rate_limited
+from crm.utils.thumbnails import FIELD as THUMBNAIL_FIELD
 from crm.utils.thumbnails import not_a_thumbnail
+from crm.utils.thumbnails import ready as thumbnails_ready
 
 MAX_PHOTOS = 4
 MAX_RECORDINGS = 1
@@ -231,6 +234,31 @@ def media_title(ids: list[str]) -> str:
 	return _("Photos") if photos > 1 else _("Photo")
 
 
+def _held_by(note: str) -> list[str]:
+	"""The file names of the photos and recordings on ``note``, for a count that
+	two saves at once cannot both pass.
+
+	The note's row is taken first, so the saves queue; and the files are read
+	with a lock as well, because a locking read sees what has been committed
+	since this request began, where a plain one sees the note as it was then --
+	the save that waited would count the note without the first one's photos.
+	"""
+	from frappe.query_builder import DocType
+
+	frappe.db.get_value("FCRM Note", note, "name", for_update=True)
+	File = DocType("File")
+	query = (
+		frappe.qb.from_(File)
+		.select(File.file_name)
+		.where((File.attached_to_doctype == "FCRM Note") & (File.attached_to_name == note))
+		.for_update()
+	)
+	if thumbnails_ready():
+		# a photo's thumbnail is a File on the same note; it is not a second photo
+		query = query.where(IfNull(File[THUMBNAIL_FIELD], "") == "")
+	return query.run(pluck=True)
+
+
 def claim_media(note: str, ids: list[str]) -> None:
 	"""Move the caller's staged files onto ``note``. Every one must be there:
 	a note missing a photo the rep took is not the note they saved, so the
@@ -249,17 +277,8 @@ def claim_media(note: str, ids: list[str]) -> None:
 		files.append(name)
 	kinds = [_kind(frappe.db.get_value("File", name, "file_name")) for name in files]
 	# with what the note already holds: a note edited later takes no more than
-	# one written in a single go. The note's row is held while it is counted
-	# and filled, so two saves at once cannot each see room for the same photo.
-	frappe.db.get_value("FCRM Note", note, "name", for_update=True)
-	kinds += [
-		_kind(file_name)
-		for file_name in frappe.get_all(
-			"File",
-			filters={"attached_to_doctype": "FCRM Note", "attached_to_name": note, **not_a_thumbnail()},
-			pluck="file_name",
-		)
-	]
+	# one written in a single go
+	kinds += [_kind(file_name) for file_name in _held_by(note)]
 	if kinds.count("photo") > MAX_PHOTOS or kinds.count("voice") > MAX_RECORDINGS:
 		frappe.throw(_("That note has too many photos or recordings."), frappe.ValidationError)
 	# File.validate takes file_size from the request when there is one
