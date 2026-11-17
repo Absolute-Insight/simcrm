@@ -7,28 +7,39 @@
         </h2>
         <p class="text-p-sm text-ink-gray-5">
           {{
-            __(
-              'Monthly revenue target per rep. Quarter, year and team numbers are summed from these — set the months and everything else follows.',
-            )
+            counting
+              ? __(
+                  'How many quotes each rep is expected to raise in a month. The "Quotes against budget" report compares it with the quotes they raised.',
+                )
+              : __(
+                  'Monthly revenue target per rep. Quarter, year and team numbers are summed from these — set the months and everything else follows.',
+                )
           }}
         </p>
       </div>
-      <div class="flex shrink-0 items-center gap-1">
-        <Button
-          variant="ghost"
-          icon="lucide-chevron-left"
-          :aria-label="__('Previous year')"
-          @click="year -= 1"
+      <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
+        <TabButtons
+          v-model="kind"
+          :options="kindOptions"
+          :aria-label="__('Which target to show')"
         />
-        <div class="w-14 text-center text-base font-medium tabular-nums">
-          {{ year }}
+        <div class="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            icon="lucide-chevron-left"
+            :aria-label="__('Previous year')"
+            @click="year -= 1"
+          />
+          <div class="w-14 text-center text-base font-medium tabular-nums">
+            {{ year }}
+          </div>
+          <Button
+            variant="ghost"
+            icon="lucide-chevron-right"
+            :aria-label="__('Next year')"
+            @click="year += 1"
+          />
         </div>
-        <Button
-          variant="ghost"
-          icon="lucide-chevron-right"
-          :aria-label="__('Next year')"
-          @click="year += 1"
-        />
       </div>
     </div>
 
@@ -140,10 +151,10 @@
                 v-if="canEdit(row)"
                 :value="cellValue(row, month)"
                 class="w-full rounded-[var(--v-radius-control)] border border-transparent bg-transparent px-1.5 py-1 text-right text-sm tabular-nums text-ink-gray-8 transition placeholder:text-ink-gray-4 hover:border-outline-gray-2 focus:border-outline-gray-3 focus:bg-surface-white focus:outline-none focus:ring-2 focus:ring-outline-gray-3"
-                inputmode="decimal"
+                :inputmode="counting ? 'numeric' : 'decimal'"
                 placeholder="—"
                 :aria-label="`${row.full_name} ${month}`"
-                :title="exactTitle(row.quota?.[month])"
+                :title="exactTitle(row[field]?.[month])"
                 @focus="onFocus($event, row, month)"
                 @input="onInput"
                 @blur="onBlur($event, row, month)"
@@ -152,7 +163,7 @@
               <div
                 v-else
                 class="px-1.5 py-1 text-right text-sm tabular-nums text-ink-gray-7"
-                :title="exactTitle(row.quota?.[month])"
+                :title="exactTitle(row[field]?.[month])"
               >
                 {{ displayValue(row, month) || '—' }}
               </div>
@@ -189,9 +200,14 @@
 
     <p v-if="shown" class="shrink-0 text-p-xs text-ink-gray-5">
       {{
-        __('Amounts are in {0}. Deal values are converted before comparison.', [
-          shown.currency,
-        ])
+        counting
+          ? __(
+              'A quote counts on the day it was created, for the rep who owns it.',
+            )
+          : __(
+              'Amounts are in {0}. Deal values are converted before comparison.',
+              [shown.currency],
+            )
       }}
     </p>
   </div>
@@ -202,6 +218,7 @@ import { PhTarget as LucideTarget } from '@phosphor-icons/vue'
 import { usersStore } from '@/stores/users'
 import {
   Button,
+  TabButtons,
   call,
   createResource,
   frappeRequest,
@@ -218,6 +235,16 @@ import { quiet } from '@/utils/quiet'
 const { isManager, isAdmin, getUser } = usersStore()
 
 const year = ref(new Date().getFullYear())
+
+/* Two targets on the same rep x month grid: revenue, and how many quotes to
+   raise. `field` is where a row keeps the one being shown. */
+const kind = ref('amount')
+const kindOptions = [
+  { label: __('Revenue'), value: 'amount' },
+  { label: __('Quotes'), value: 'quotes' },
+]
+const counting = computed(() => kind.value === 'quotes')
+const field = computed(() => (counting.value ? 'quotes' : 'quota'))
 const editable = computed(() => isManager())
 
 const isOwnRow = (row) => row.user === getUser().name
@@ -258,6 +285,7 @@ const grid = createResource({
 })
 
 watch(year, () => quiet(grid.reload()))
+watch(kind, () => (editing.value = null))
 
 // The grid for the year in the header, and nothing while that year loads: the
 // previous year's data must not be shown, or edited, under the new heading.
@@ -292,6 +320,7 @@ function money(value) {
    sales target. Currency included, matching what the CSV export writes — the
    two surfaces used to disagree about the same cell. */
 function exactMoney(value) {
+  if (counting.value) return formatCell(value, 'number')
   return formatCell(value, 'currency', grid.data?.currency || '')
 }
 
@@ -303,7 +332,7 @@ function exactTitle(value) {
 }
 
 function displayValue(row, month) {
-  const amount = row.quota?.[month]
+  const amount = row[field.value]?.[month]
   // Compact, like the column totals. Twelve months across a settings dialog
   // leaves each cell around 40px, and "250,000" clips to "250,0" there -- a
   // target you cannot read back. `onFocus` swaps in the exact digits and the
@@ -313,11 +342,17 @@ function displayValue(row, month) {
 }
 
 function rowTotal(row) {
-  return Object.values(row.quota || {}).reduce((sum, v) => sum + (v || 0), 0)
+  return Object.values(row[field.value] || {}).reduce(
+    (sum, v) => sum + (v || 0),
+    0,
+  )
 }
 
 function columnTotal(month) {
-  return rows.value.reduce((sum, row) => sum + (row.quota?.[month] || 0), 0)
+  return rows.value.reduce(
+    (sum, row) => sum + (row[field.value]?.[month] || 0),
+    0,
+  )
 }
 
 const grandTotal = computed(() =>
@@ -340,7 +375,11 @@ function cellValue(row, month) {
 
 function onFocus(event, row, month) {
   // digits only while editing — grouping separators are for reading, not typing
-  editing.value = { user: row.user, month, text: `${row.quota?.[month] || ''}` }
+  editing.value = {
+    user: row.user,
+    month,
+    text: `${row[field.value]?.[month] || ''}`,
+  }
   event.target.value = editing.value.text
   event.target.select()
 }
@@ -351,7 +390,10 @@ function onInput(event) {
 
 async function onBlur(event, row, month) {
   const amount = parseAmount(event.target.value)
-  const previous = row.quota?.[month] || 0
+  // the kind the cell was edited under, should the switch move before the save
+  const key = field.value
+  const param = kind.value
+  const previous = row[key]?.[month] || 0
   // the cell shows its compact label again from the next render
   editing.value = null
 
@@ -359,26 +401,30 @@ async function onBlur(event, row, month) {
     toast.error(__('Enter a number of {0} or more.', [0]))
     return
   }
+  if (param === 'quotes' && !Number.isInteger(amount)) {
+    toast.error(__('Enter a whole number of quotes.'))
+    return
+  }
   if (amount === previous) return
 
   // paint the new value first so the grid totals move with the keystroke, then
   // reconcile with what the server actually stored
-  row.quota = { ...row.quota, [month]: amount }
+  row[key] = { ...row[key], [month]: amount }
   try {
     await call('crm.api.quota.set_quota', {
       user: row.user,
       period_start: month,
-      amount,
+      [param]: amount,
     })
   } catch (error) {
-    row.quota = { ...row.quota, [month]: previous }
+    row[key] = { ...row[key], [month]: previous }
     toast.error(error.messages?.[0] || __('Could not save that target'))
   }
 }
 
 async function copyForward(row) {
   const january = shown.value.months[0]
-  if (!row.quota?.[january]) {
+  if (!row[field.value]?.[january]) {
     toast.error(__('Set January first, then fill the year from it.'))
     return
   }
@@ -387,6 +433,7 @@ async function copyForward(row) {
       user: row.user,
       from_period: january,
       months: 11,
+      kind: kind.value,
     })
     await grid.reload()
     toast.success(__('Filled {0} from January', [year.value]))
