@@ -347,6 +347,27 @@ def kanban_column_counts(doctype: str, column_field: str, filters: dict) -> dict
 	return counts
 
 
+@frappe.whitelist()
+def my_customer_names() -> list[str]:
+	"""The names the caller's own customers go by, for the "Mine" switch.
+
+	A rep sees their own customers and every unclaimed one, which on a live ERP
+	book is most of the company's. The switch narrows Customers to
+	``account_owner`` = the caller and Contacts to the people whose company is one
+	of these. A contact's company is free text: the import writes the docname, a
+	person typing writes the display name, which differ for a customer named by
+	its code, so both are returned. Only the caller's own rows, so nothing here
+	is anybody else's to see.
+	"""
+	rows = frappe.get_all(
+		"CRM Organization",
+		filters={"account_owner": frappe.session.user},
+		fields=["name", "organization_name"],
+		limit_page_length=0,
+	)
+	return sorted({n for row in rows for n in (row.name, row.organization_name) if n})
+
+
 def apply_comments_filter(doctype, filters):
 	"""Match the Comments filter against the Comment doctype instead of `_comments`.
 

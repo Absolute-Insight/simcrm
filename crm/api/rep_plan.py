@@ -41,6 +41,7 @@ ITEM_FIELDS = (
 	"reference_doctype",
 	"reference_docname",
 	"organization",
+	"contact",
 	"status",
 	"outcome",
 	"fulfilled_by_doctype",
@@ -63,11 +64,15 @@ EDITABLE_ITEM_FIELDS = (
 	"reference_doctype",
 	"reference_docname",
 	"organization",
+	"contact",
 	"suggestion",
 )
 
-# CRM Rep Plan Item.note is a Data field; anything longer goes in the outcome
+# a logged activity's note is the first line of its outcome, which holds the whole account
 NOTE_LIMIT = 140
+# what a rep may write in a plan item's note or an outcome; far above any note a
+# person types, and it keeps one row from growing without bound
+TEXT_LIMIT = 2000
 
 # a plan item points at the record it is about, and only these are plannable
 REFERENCE_DOCTYPES = ("CRM Deal", "CRM Lead")
@@ -210,6 +215,10 @@ def _stage_items(plan, items: list[dict]) -> set[str]:
 			frappe.throw(_("Cannot plan against {0}.").format(reference_doctype))
 
 		clean = {f: row.get(f) for f in EDITABLE_ITEM_FIELDS}
+		if len(frappe.utils.cstr(clean.get("note"))) > TEXT_LIMIT:
+			frappe.throw(
+				_("A note can be at most {0} characters.").format(TEXT_LIMIT), frappe.ValidationError
+			)
 		existing = preserved.get(str(row.get("name") or ""))
 		if existing:
 			# rescheduling a row is not the same as replacing it: it keeps its name,
@@ -297,6 +306,7 @@ def _drop_dangling_links(rows) -> None:
 def _links_of(row):
 	"""(field, the field naming its doctype or None, doctype) for each link a plan row can hold."""
 	yield "organization", None, "CRM Organization"
+	yield "contact", None, "Contact"
 	yield "suggestion", None, "CRM Suggestion"
 	if row.get("reference_doctype") in REFERENCE_DOCTYPES:
 		yield "reference_docname", "reference_doctype", row.get("reference_doctype")
@@ -669,6 +679,7 @@ def _item_row(item: str):
 			"planned_date",
 			"note",
 			"organization",
+			"contact",
 			"reference_doctype",
 			"reference_docname",
 			"status",
@@ -721,6 +732,11 @@ def _required_text(value: str | None, message: str) -> str:
 	return text
 
 
+def _refuse_long_text(text: str) -> None:
+	if len(text) > TEXT_LIMIT:
+		frappe.throw(_("Keep it to {0} characters.").format(TEXT_LIMIT), frappe.ValidationError)
+
+
 def _when_in_week(when: str | None, planned_date, week_start) -> datetime:
 	"""The moment an activity happened, defaulting to its planned day.
 
@@ -753,14 +769,21 @@ def _visit_event(
 	description: str,
 	reference_doctype: str | None = None,
 	reference_docname: str | None = None,
+	contact: str | None = None,
 ) -> str:
 	"""The calendar Event behind a visit, delivery or unplanned meeting.
 
 	Category Visit is what the matcher, the calendar and client reliability all
 	read; the subject keeps the kind so a delivery does not look like a sales
-	call on the calendar. Private, and owned by the session user -- the rep.
+	call on the calendar. Private, and owned by the session user -- the rep. The
+	person met, when the rep named one, is a participant beside the customer.
 	"""
 	label = organization or _(kind)
+	participants = []
+	if organization:
+		participants.append({"reference_doctype": "CRM Organization", "reference_docname": organization})
+	if contact:
+		participants.append({"reference_doctype": "Contact", "reference_docname": contact})
 	event = frappe.get_doc(
 		{
 			"doctype": "Event",
@@ -774,11 +797,7 @@ def _visit_event(
 			"send_reminder": 0,
 			"reference_doctype": reference_doctype,
 			"reference_docname": reference_docname,
-			"event_participants": (
-				[{"reference_doctype": "CRM Organization", "reference_docname": organization}]
-				if organization
-				else []
-			),
+			"event_participants": participants,
 		}
 	).insert(ignore_permissions=True)
 	return event.name
@@ -797,6 +816,7 @@ def complete_item(item: str, outcome: str, when: str | None = None):
 	"""
 	plan = _own_plan_of(item)
 	outcome = _required_text(outcome, _("Say what happened."))
+	_refuse_long_text(outcome)
 	row = _item_row(item)
 	if row.status == "Done":
 		frappe.throw(_("This activity is already done."), frappe.ValidationError)
@@ -814,6 +834,7 @@ def complete_item(item: str, outcome: str, when: str | None = None):
 			outcome,
 			row.reference_doctype,
 			row.reference_docname,
+			row.contact,
 		)
 	frappe.db.set_value(
 		"CRM Rep Plan Item",
@@ -835,6 +856,40 @@ def complete_item(item: str, outcome: str, when: str | None = None):
 
 @frappe.whitelist()
 @sales_user_only
+def update_outcome(item: str, outcome: str):
+	"""Change or add to what the rep wrote about an activity already closed.
+
+	Reps finish a visit with a line on the day and want to come back with the
+	rest -- what was quoted, who else was there -- once they are at a desk. Only
+	the words change: the status, the day and what fulfilled the item stay, so
+	nothing here can move a visit into another week or count it twice. The
+	calendar event the outcome was written to, when the rep's own word made it,
+	gets the same words, so the customer's timeline says what the plan says.
+	"""
+	plan = _own_plan_of(item)
+	outcome = _required_text(outcome, _("Say what happened."))
+	_refuse_long_text(outcome)
+	row = _item_row(item)
+	if row.status not in ("Done", "Cancelled", "Missed"):
+		frappe.throw(_("Log the outcome first."), frappe.ValidationError)
+	_refuse_outside_horizon(plan.week_start)
+	frappe.db.set_value("CRM Rep Plan Item", item, "outcome", outcome)
+	if row.manual_override and row.fulfilled_by_doctype == "Event" and row.fulfilled_by:
+		event = frappe.db.get_value("Event", row.fulfilled_by, ["owner", "event_category"], as_dict=True)
+		# only the event the rep's own word wrote: one the matcher found is a
+		# record somebody else may have written
+		if event and event.owner == plan.user and event.event_category == "Visit":
+			frappe.db.set_value(
+				"Event",
+				row.fulfilled_by,
+				"description",
+				frappe.utils.escape_html(outcome).replace("\n", "<br>"),
+			)
+	return get_plan(str(plan.week_start), plan.user)
+
+
+@frappe.whitelist()
+@sales_user_only
 def cancel_item(item: str, reason: str):
 	"""Cancel one of the caller's own planned items, saying why.
 
@@ -845,6 +900,7 @@ def cancel_item(item: str, reason: str):
 	"""
 	plan = _own_plan_of(item)
 	reason = _required_text(reason, _("Say why it was cancelled."))
+	_refuse_long_text(reason)
 	row = _item_row(item)
 	if row.status == "Cancelled":
 		frappe.throw(_("This activity is already cancelled."), frappe.ValidationError)
@@ -867,6 +923,7 @@ def cancel_item(item: str, reason: str):
 			reason,
 			row.reference_doctype,
 			row.reference_docname,
+			row.contact,
 		)
 	frappe.db.set_value(
 		"CRM Rep Plan Item",
@@ -1001,9 +1058,12 @@ def log_unplanned_visit(
 	reference_doctype: str | None = None,
 	reference_docname: str | None = None,
 	activity_type: str = "Visit",
+	contact: str | None = None,
 ):
 	"""Record an activity that was never planned, as already done. See :func:`log_activity`."""
-	return log_activity(organization, note, when, reference_doctype, reference_docname, activity_type)
+	return log_activity(
+		organization, note, when, reference_doctype, reference_docname, activity_type, contact=contact
+	)
 
 
 def log_activity(
@@ -1016,6 +1076,7 @@ def log_activity(
 	*,
 	captured_offline: bool = False,
 	offline_delay_minutes: int = 0,
+	contact: str | None = None,
 ):
 	"""Record an activity that was never planned -- a rep called to site for a
 	breakdown, a delivery dropped off, a phone call -- as already done, in one step.
@@ -1036,6 +1097,7 @@ def log_activity(
 	here, exactly as in ``mark_fulfilled``.
 	"""
 	note = _required_text(note, _("Say what happened."))
+	_refuse_long_text(note)
 	if activity_type not in LOGGABLE_TYPES:
 		frappe.throw(_("{0} cannot be logged here.").format(activity_type), frappe.ValidationError)
 	if activity_type in EVENT_KINDS and not organization:
@@ -1051,6 +1113,8 @@ def log_activity(
 		reference_docname = None
 	if reference_docname and not _can_reference(reference_doctype, reference_docname):
 		frappe.throw(_("You cannot log a visit against that record."), frappe.PermissionError)
+	if contact and not frappe.db.exists("Contact", contact):
+		frappe.throw(_("That contact no longer exists."), frappe.ValidationError)
 
 	when_dt = frappe.utils.get_datetime(when) if when else frappe.utils.now_datetime()
 	if when_dt > frappe.utils.now_datetime():
@@ -1073,7 +1137,14 @@ def log_activity(
 	event = None
 	if activity_type in EVENT_KINDS:
 		event = _visit_event(
-			activity_type, organization, when_dt, "Completed", note, reference_doctype, reference_docname
+			activity_type,
+			organization,
+			when_dt,
+			"Completed",
+			note,
+			reference_doctype,
+			reference_docname,
+			contact,
 		)
 
 	user = frappe.session.user
@@ -1089,6 +1160,7 @@ def log_activity(
 				# note is a one-line Data field; the whole account is the outcome
 				"note": _one_line(note),
 				"organization": organization,
+				"contact": contact or None,
 				"outcome": note,
 				"reference_doctype": reference_doctype,
 				"reference_docname": reference_docname,

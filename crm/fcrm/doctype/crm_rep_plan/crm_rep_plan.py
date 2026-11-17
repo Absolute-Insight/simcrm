@@ -177,15 +177,16 @@ class CRMRepPlan(Document):
 		path to guard. Only rows whose customer is new or changed are checked, so
 		an old visit to a customer since reassigned does not lock the week.
 		"""
-		from crm.permissions.customers import assert_customer_allowed
+		from crm.permissions.customers import assert_contact_allowed, assert_customer_allowed
 
 		for item in self.items:
-			if not item.organization:
-				continue
 			stored = item.get_doc_before_save()
-			if stored is not None and stored.get("organization") == item.organization:
-				continue
-			assert_customer_allowed(item.organization)
+			if item.organization and (stored is None or stored.get("organization") != item.organization):
+				assert_customer_allowed(item.organization)
+			# the card shows the contact's name, so naming one is a way to read it,
+			# exactly as on a deal
+			if item.get("contact") and (stored is None or stored.get("contact") != item.contact):
+				assert_contact_allowed(item.contact)
 
 	def _refuse_client_fulfilment(self):
 		"""An item's status and what fulfilled it are the server's to write.
