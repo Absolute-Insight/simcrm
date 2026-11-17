@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-"""A rep's revenue target for one month.
+"""A rep's targets for one month: revenue, and how many quotes to raise.
 
 Monthly-per-rep is the whole model. Quarter, year and team quotas are sums over
 these rows and are never stored, so a team number can never disagree with the
@@ -31,6 +31,7 @@ class CRMQuota(Document):
 		amount: DF.Currency
 		currency: DF.Link | None
 		period_start: DF.Date
+		quotes: DF.Int
 		user: DF.Link
 	# end: auto-generated types
 
@@ -44,8 +45,10 @@ class CRMQuota(Document):
 	def validate(self):
 		self.snap_period_to_month_start()
 		self.stamp_base_currency()
-		if self.amount < 0:
+		if (self.amount or 0) < 0:
 			frappe.throw(_("Quota cannot be negative."))
+		if (self.quotes or 0) < 0:
+			frappe.throw(_("A quotes target cannot be negative."))
 
 	def snap_period_to_month_start(self):
 		"""A quota is a month, so the date that identifies it is that month's first day."""
