@@ -54,6 +54,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 
 services = json.load(open(sys.argv[1]))["services"]
@@ -772,6 +773,96 @@ root, r = purge("--delete", answer="vecbucket\n", RCLONE_CONFIG_OFFSITE_TYPE="")
 check("a remote whose type cannot be told: --delete refuses", r.returncode == 2 and "cannot tell what kind of store" in r.stderr and not calls(root, "delete"), r.stderr)
 root, r = purge("--delete", answer="vecbucket\n", RCLONE_CONFIG_OFFSITE_TYPE="s3")
 check("a non-b2 versioning store: --delete refuses", r.returncode == 2 and not calls(root, "delete"), r.stderr)
+
+# --- frontend: nginx is reloaded when an upstream changes address -----------------
+front = services["frontend"]
+check(
+	"frontend takes the upstream baseline before nginx starts",
+	"vectora-upstream-watch.sh && exec nginx-entrypoint.sh" in front["command"][-1] and "exec nginx-entrypoint.sh" in front["command"][-1],
+	str(front["command"]),
+)
+check(
+	"... from the file in deploy/nginx",
+	any(
+		v.get("target") == "/etc/nginx/vectora-upstream-watch.sh" and v.get("source", "").endswith("nginx/upstream-watch.sh")
+		for v in front["volumes"]
+	),
+	str(front["volumes"]),
+)
+watch = os.path.join(repo, "deploy/nginx/upstream-watch.sh")
+check("the watcher parses", subprocess.run(["bash", "-n", watch]).returncode == 0)
+
+
+def run_watch(steps, **env):
+	"""Run the watcher against a getent that answers from files and an nginx that
+	logs its reloads; `steps` change the answers while it runs."""
+	root = tempfile.mkdtemp(dir=work)
+	bin_dir = os.path.join(root, "bin")
+	os.makedirs(bin_dir)
+	for name, body in {
+		"getent": '#!/bin/sh\nf="$WATCH_STATE/$2"; [ -s "$f" ] || exit 2\nprintf "%s STREAM %s\\n" "$(cat "$f")" "$2"\n',
+		"nginx": '#!/bin/sh\necho "$*" >> "$WATCH_STATE/nginx.log"\nexit "${NGINX_RC:-0}"\n',
+	}.items():
+		path = os.path.join(bin_dir, name)
+		with open(path, "w") as f:
+			f.write(body)
+		os.chmod(path, 0o755)
+
+	def answer(host, addr):
+		with open(os.path.join(root, host), "w") as f:
+			f.write(addr)
+
+	answer("backend", "172.21.0.5")
+	answer("websocket", "172.21.0.8")
+	pid = os.path.join(root, "nginx.pid")
+	if not env.pop("NO_PID", None):
+		with open(pid, "w") as f:
+			f.write("1\n")
+	log = open(os.path.join(root, "out.log"), "w")
+	proc = subprocess.Popen(
+		["bash", watch],
+		env={
+			"PATH": f"{bin_dir}:{os.environ['PATH']}",
+			"WATCH_STATE": root,
+			"WATCH_INTERVAL": "0.05",
+			"NGINX_PID": pid,
+			"BACKEND": "backend:8000",
+			"SOCKETIO": "websocket:9000",
+			**env,
+		},
+		stdout=log,
+		stderr=subprocess.STDOUT,
+		start_new_session=True,
+	)
+	returned = proc.wait(timeout=5)  # the baseline is taken, the watch left running
+	time.sleep(0.4)
+	for step in steps:
+		step(answer)
+		time.sleep(0.4)
+	os.killpg(proc.pid, 15)
+	log.close()
+	out = open(os.path.join(root, "out.log")).read() + f"[exit {returned}]"
+	reloads = open(os.path.join(root, "nginx.log")).read().split() if os.path.exists(os.path.join(root, "nginx.log")) else []
+	return reloads, out
+
+
+reloads, out = run_watch([])
+check("the watcher leaves nginx alone while nothing moves", reloads == [], out)
+reloads, out = run_watch([lambda a: a("websocket", "172.21.0.9")])
+check("websocket on a new address: nginx is reloaded once", reloads == ["-s", "reload"], f"{reloads} {out}")
+check("... and the change is logged", "websocket=172.21.0.9" in out, out)
+reloads, out = run_watch([lambda a: a("backend", "172.21.0.6")])
+check("backend on a new address: nginx is reloaded", reloads == ["-s", "reload"], f"{reloads} {out}")
+reloads, out = run_watch([lambda a: a("websocket", ""), lambda a: a("websocket", "172.21.0.8")])
+check("a container down and back on the same address: no reload", reloads == [], f"{reloads} {out}")
+reloads, out = run_watch([lambda a: a("websocket", ""), lambda a: a("websocket", "172.21.0.9")])
+check("down, then back on a new address: one reload, once it resolves", reloads == ["-s", "reload"], f"{reloads} {out}")
+reloads, out = run_watch([lambda a: a("websocket", "172.21.0.9")], NGINX_RC="1")
+check("a reload that fails is tried again", len(reloads) >= 4, f"{reloads} {out}")
+reloads, out = run_watch([])
+check("the watcher hands back to nginx once the baseline is taken", out.endswith("[exit 0]"), out)
+reloads, out = run_watch([lambda a: a("websocket", "172.21.0.9")], NO_PID="1")
+check("no reload is sent before nginx is up", reloads == [], f"{reloads} {out}")
 
 print()
 if failures:

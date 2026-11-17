@@ -873,15 +873,19 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<site>/api/method/login
 # 503 while closed, 200 once the config cache has expired
 ```
 
-**If you do restart to force the issue, do not restart `backend` alone.** nginx
-in the `frontend` service resolves the backend's address when it loads its
-config, so a backend that comes back on a new container IP leaves `frontend`
-proxying to an address nothing answers on, and every request 502s until nginx
-restarts too. Restart the pair, or the whole stack:
+**Restarting `backend` or `websocket` alone is safe.** nginx in the `frontend`
+service resolves both addresses only when it loads its config, so either one
+coming back on a new container IP used to leave every request (or every
+socket.io connection) 502ing until nginx was restarted too. `frontend` now runs
+`nginx/upstream-watch.sh` beside nginx: it looks both names up every 5 seconds
+and reloads nginx, gracefully, when one moves. A reload shows in the logs:
 
 ```bash
-docker compose restart backend frontend
+docker compose logs frontend | grep upstream-watch
 ```
+
+On a stack older than that, reload nginx by hand after any restart that moved
+one: `docker compose exec frontend nginx -s reload`.
 
 *Rehearsed (2026-08-18), and worth being exact about what that did and did not
 prove.* `migrate` was run against a scratch site restored from a real
