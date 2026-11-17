@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   parseUploadFailure,
   safeJsonParse,
+  uploadErrorMessage,
 } from '@/components/FilesUploader/filesUploaderHandler'
 
 describe('safeJsonParse', () => {
@@ -58,5 +59,74 @@ describe('parseUploadFailure', () => {
       const { error } = parseUploadFailure(status, '')
       expect(error).toBeDefined()
     }
+  })
+})
+
+describe('uploadErrorMessage', () => {
+  const FALLBACK = 'Error Uploading File'
+
+  it('reads the first server message', () => {
+    const error = {
+      _server_messages: JSON.stringify([
+        JSON.stringify({ message: 'Invalid URL' }),
+      ]),
+    }
+    expect(uploadErrorMessage(error, FALLBACK)).toBe('Invalid URL')
+  })
+
+  it('reads the exception line from a traceback', () => {
+    const error = {
+      exc: JSON.stringify([
+        'Traceback (most recent call last):\n  File "x.py"\nfrappe.exceptions.ValidationError: Bad link\n',
+      ]),
+    }
+    expect(uploadErrorMessage(error, FALLBACK)).toBe(
+      'frappe.exceptions.ValidationError: Bad link',
+    )
+  })
+
+  it('passes a string error through', () => {
+    expect(uploadErrorMessage('Size exceeds the limit', FALLBACK)).toBe(
+      'Size exceeds the limit',
+    )
+  })
+
+  it('never throws on a malformed or absent error', () => {
+    /* The bug: a throw inside the catch skipped the toast and the reset, so a
+       web link's button kept spinning. */
+    const shapes = [
+      undefined,
+      null,
+      '',
+      42,
+      {},
+      { _server_messages: 'not json' },
+      { _server_messages: '[]' },
+      { _server_messages: '["not json either"]' },
+      { _server_messages: '[{"message": 5}]' },
+      { _server_messages: '"a string"' },
+      { exc: 'not json' },
+      { exc: '[]' },
+      { exc: '[null]' },
+      { _server_messages: '[]', exc: '{}' },
+    ]
+    for (const error of shapes) {
+      expect(() => uploadErrorMessage(error, FALLBACK)).not.toThrow()
+      expect(uploadErrorMessage(error, FALLBACK)).toBeTruthy()
+    }
+  })
+
+  it('uses a non-JSON server message as written', () => {
+    expect(
+      uploadErrorMessage({ _server_messages: '["Plain sentence"]' }, FALLBACK),
+    ).toBe('Plain sentence')
+  })
+
+  it('falls back to the exception when server messages say nothing', () => {
+    const error = {
+      _server_messages: '[]',
+      exc: JSON.stringify(['Traceback\nValueError: nope\n']),
+    }
+    expect(uploadErrorMessage(error, FALLBACK)).toBe('ValueError: nope')
   })
 })
