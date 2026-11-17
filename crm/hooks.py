@@ -391,6 +391,8 @@ scheduler_events = {
 		"crm.fcrm.doctype.crm_view_settings.crm_view_settings.clear_old_versions",
 		"crm.agent.signals.purge_old_suggestions",
 		"crm.fcrm.doctype.crm_offline_receipt.crm_offline_receipt.purge_old_receipts",
+		# photos and recordings a phone uploaded for a note it then never sent
+		"crm.api.note_media.purge_unclaimed_media",
 		"crm.fcrm.doctype.crm_erp_write.crm_erp_write.purge_settled",
 		"crm.fcrm.doctype.crm_event_reminder_sent.crm_event_reminder_sent.purge_old",
 		"crm.telemetry.capture_feature_state",

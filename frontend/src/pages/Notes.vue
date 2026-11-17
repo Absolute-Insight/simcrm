@@ -95,6 +95,7 @@
           editor-class="prose-sm text-p-sm max-w-none text-ink-gray-5 focus:outline-none"
           class="flex-1 overflow-hidden"
         />
+        <NoteMedia :note="note.name" />
         <div class="mt-2 flex items-center justify-between gap-2">
           <div class="flex items-center gap-2">
             <UserAvatar :user="note.owner" size="xs" />
@@ -126,6 +127,7 @@
 
 <script setup>
 import ViewBreadcrumbs from '@/components/ViewBreadcrumbs.vue'
+import NoteMedia from '@/components/Notes/NoteMedia.vue'
 import LayoutHeader from '@/components/LayoutHeader.vue'
 import UserAvatar from '@/components/UserAvatar.vue'
 import NoteIcon from '@/components/Icons/NoteIcon.vue'

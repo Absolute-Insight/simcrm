@@ -32,7 +32,8 @@ import {
   renewToken,
   serverNow,
 } from './connectivity'
-import { hasIndexedDB, outboxStore } from './db'
+import { hasIndexedDB, mediaStore, outboxStore } from './db'
+import { blobToBase64 } from '@/utils/noteMedia'
 import { onPackSynced, packState, syncPackFresh } from './pack'
 
 export const outbox = reactive({
@@ -91,7 +92,101 @@ async function persist(entry) {
 
 function forget(entry) {
   outbox.entries = outbox.entries.filter((other) => other.id !== entry.id)
-  if (hasIndexedDB()) return outboxStore.del(entry.id).catch(() => {})
+  if (!hasIndexedDB()) return
+  dropMedia(entry)
+  return outboxStore.del(entry.id).catch(() => {})
+}
+
+/* The ids of the photos and recordings an entry carries. */
+const mediaOf = (entry) =>
+  Array.isArray(entry?.payload?.media) ? entry.payload.media : []
+
+function dropMedia(entry) {
+  for (const id of mediaOf(entry)) mediaStore.del(id).catch(() => {})
+}
+
+/* A discarded note's uploads the server is holding for it: let them go now
+   rather than count against the rep's allowance until the daily purge.
+   Best effort -- offline, the purge does it. */
+function releaseStaged(entry) {
+  if (entry.status === 'sent' || !entry.staged?.length) return
+  call('crm.api.note_media.release_media', { media_ids: entry.staged }).catch(
+    () => {},
+  )
+}
+
+/**
+ * Keep the photos and recordings of a note that is about to be captured.
+ * Each is `{ id, kind, blob }`. Rejects when the device cannot keep them,
+ * before the entry naming them is stored.
+ */
+export async function keepMedia(items) {
+  if (!items.length) return
+  try {
+    if (!hasIndexedDB()) throw new Error('no IndexedDB')
+    for (const { id, kind, blob } of items) {
+      await mediaStore.set(id, { id, kind, blob })
+    }
+  } catch {
+    forgetMedia(items.map((item) => item.id))
+    throw new Error(
+      __(
+        'This device cannot keep the photos or the recording. Free some space, or save the note without them.',
+      ),
+    )
+  }
+}
+
+/** Drop kept media by id: a note that was not captured after all. */
+export function forgetMedia(ids) {
+  if (!hasIndexedDB()) return
+  for (const id of ids) mediaStore.del(id).catch(() => {})
+}
+
+/* Upload what the entry carries and the server does not have yet. Each one is
+   kept by the server under its own id, so a retry after a lost answer is
+   answered "already have it", never stored twice.
+
+   A file that is no longer on this device is not a verdict: another tab may
+   have sent the note and let the files go. The note is replayed anyway; the
+   server answers "already have it", or refuses a note whose file it never got,
+   in its own words. */
+async function stageMedia(entry) {
+  const staged = new Set(entry.staged || [])
+  for (const id of mediaOf(entry)) {
+    if (staged.has(id)) continue
+    let item
+    let data
+    try {
+      item = await mediaStore.get(id)
+      data = item?.blob ? await blobToBase64(item.blob) : null
+    } catch {
+      // the device's storage failed to answer (iOS drops its IndexedDB
+      // connection now and then): worth asking again, and worth saying so
+      throw Object.assign(
+        new Error(
+          __('This device could not read a photo or recording on this note.'),
+        ),
+        { status: 503, exc_type: 'DeviceStorageError' },
+      )
+    }
+    if (!data) continue
+    await call('crm.api.note_media.stage_media', {
+      media_id: id,
+      kind: item.kind,
+      data,
+    })
+    // discarded while it was on the wire: nothing more of it goes, and it is
+    // not written back onto the device
+    if (!held(entry)) throw discardedError()
+    staged.add(id)
+    entry.staged = [...staged]
+    await persist(entry).catch(() => {})
+  }
+}
+
+function discardedError() {
+  return Object.assign(new Error('discarded'), { discarded: true })
 }
 
 let loading = null
@@ -172,6 +267,8 @@ function unsavedError() {
 
 async function send(entry) {
   entry.attempts += 1
+  await stageMedia(entry)
+  if (!held(entry)) throw discardedError()
   await call('crm.api.offline.replay', {
     request_id: entry.id,
     action: entry.action,
@@ -344,6 +441,8 @@ async function sendPending() {
       entry.stalls = 0
       entry.stall_at = 0
       await persist(entry).catch(() => {})
+      // the server has the files now
+      dropMedia(entry)
     }
   } finally {
     outbox.flushing = false
@@ -410,6 +509,9 @@ export async function retryEntry(id) {
   entry.error = null
   entry.stalls = 0
   entry.stall_at = 0
+  // the server keeps an upload no note claimed for two days only
+  // (crm/api/note_media.py UNCLAIMED_DAYS): send the files again with it
+  entry.staged = []
   await persist(entry).catch(() => {})
   // a run already under way has been past this entry once and will not look
   // at it again: let it finish, then start one that will
@@ -420,7 +522,9 @@ export async function retryEntry(id) {
 /** Throw an entry away. The only way one leaves without the server's say. */
 export function discardEntry(id) {
   const entry = outbox.entries.find((other) => other.id === id)
-  if (entry) return forget(entry)
+  if (!entry) return
+  releaseStaged(entry)
+  return forget(entry)
 }
 
 let started = false

@@ -44,6 +44,10 @@ vi.mock('@/components/UserAvatar.vue', () => ({
 vi.mock('@/components/Activities/TimelineTimestamp.vue', () => ({
   default: { render: () => null },
 }))
+// its own request for the note's photos is not what this test is about
+vi.mock('@/components/Notes/NoteMedia.vue', () => ({
+  default: { render: () => null },
+}))
 
 const Button = { render: () => h('button') }
 

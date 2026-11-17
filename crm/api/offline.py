@@ -944,11 +944,19 @@ def _replay_add_note(payload: dict, moment: datetime, late: bool) -> None:
 		_name(payload, "reference_docname"),
 		NOTE_DOCTYPES,
 	)
+	from crm.api.note_media import claim_media, media_ids
+
 	content = _text(payload.get("content"), NOTE_TEXT_LIMIT)
-	if not content:
+	media = media_ids(payload.get("media"))
+	if not content and not media:
 		frappe.throw(_("Write the note first."), frappe.ValidationError)
-	title = _text(payload.get("title"), TITLE_LIMIT) or content.splitlines()[0][:TITLE_LIMIT]
-	frappe.get_doc(
+	# a note that is only a photo or a recording is named for what it holds
+	title = (
+		_text(payload.get("title"), TITLE_LIMIT)
+		or (content.splitlines()[0][:TITLE_LIMIT] if content else "")
+		or _("Photos and voice note")
+	)
+	note = frappe.get_doc(
 		{
 			"doctype": "FCRM Note",
 			"title": title,
@@ -957,6 +965,8 @@ def _replay_add_note(payload: dict, moment: datetime, late: bool) -> None:
 			"reference_docname": name,
 		}
 	).insert()
+	if media:
+		claim_media(note.name, media)
 
 
 def _replay_create_task(payload: dict, moment: datetime, late: bool) -> None:

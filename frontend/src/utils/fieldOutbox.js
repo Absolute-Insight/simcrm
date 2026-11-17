@@ -90,7 +90,10 @@ export function entryProblem(action, payload, rules = {}) {
       if (!text(payload.reason)) return __('Say why it was cancelled.')
       return tooLong(payload.reason, TEXT_LIMIT) ? __('That is too long.') : ''
     case 'add_note':
-      if (!text(payload.content)) return __('Write the note first.')
+      // a photo or a voice note is a note on its own
+      if (!text(payload.content) && !payload.media?.length) {
+        return __('Write the note, or add a photo or a voice note.')
+      }
       if (tooLong(payload.title, TITLE_LIMIT)) {
         return __('Keep the title under {0} characters.', [TITLE_LIMIT])
       }

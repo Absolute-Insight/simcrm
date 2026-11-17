@@ -224,6 +224,37 @@ entry stays as `sent`, still laid over the pack (`applyOutbox`), until the
 next pack sync brings the server's own version; then it is deleted. Rejected
 entries are never shown as done anywhere but the outbox.
 
+### Photos and voice notes on a note (`crm/api/note_media.py`)
+
+MBP's reps asked to keep a photo (a nameplate, a drawing) or a voice note with a
+note while at a client (2026-11-17). The note dialog takes up to `MAX_PHOTOS`
+photos (scaled on the phone to 1600 px JPEG, `utils/noteMedia.scalePhoto`) and
+one recording (`composables/useVoiceNote`, the browser's own Opus/AAC, three
+minutes at most). Never transcribed -- that is the Assistant's dictation.
+
+- The Blobs live in a third IndexedDB store (`mediaStore`,
+  `vectora-field-media`), keyed by an id the `add_note` payload lists under
+  `media`. They are written before the entry that names them, dropped once the
+  entry is sent, and dropped with it on discard.
+- Sending is two steps because a replayed entry is capped at
+  `MAX_PAYLOAD_BYTES` (20 KB): `stage_media` takes each file first (base64, type
+  checked by its bytes, private File attached to the uploader's own User, named
+  `field-media-<id>.<ext>`, so a retry answers `duplicate`), and the replay's
+  `claim_media` moves them onto the new note. A missing one refuses the whole
+  replay, so a note never lands without a photo the rep took. The entry records
+  `staged` ids, so a replay retry does not upload again.
+- A rep may hold at most `MAX_UNCLAIMED_FILES` / `MAX_UNCLAIMED_BYTES` of
+  unclaimed uploads, and they are removed daily after `UNCLAIMED_DAYS`
+  (`purge_unclaimed_media`): a phone uploads a note's files seconds before the
+  note, and "Send again" clears `staged` so a set-aside note uploads afresh.
+- A file missing from the device does not stop the note: it is replayed anyway,
+  and the server answers `duplicate` (another tab sent it) or refuses it.
+  Discarding while an upload is on the wire stops the note there. Claiming is a
+  File save, not set_value, so the thumbnail hook moves the thumbnail too.
+- Desk shows them on the Notes page and the deal's notes (`Notes/NoteMedia.vue`),
+  one batched `get_note_media` call per render tick, scoped by `get_list` on
+  FCRM Note.
+
 ### 5. Planning offline, and kept sheets
 
 **Planning adds, never replaces.** The Planner saves a whole week under an

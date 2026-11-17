@@ -92,7 +92,8 @@ gotcha, not a location, and it stays in `AGENTS.md`.
 | `frontend/src/components/Field/FieldEntryDialog.vue` | The one capture dialog (log, outcome, cancel, note, task) |
 | `crm/fcrm/doctype/crm_offline_receipt/` | One row per replayed entry: what makes a retry a no-op |
 | `frontend/src/offline/sheets.js` | Reference sheets kept on the device: download, index, remove |
-| `frontend/src/offline/db.js` | The two IndexedDB stores (pack, outbox) and when each is cleared |
+| `frontend/src/offline/db.js` | The three IndexedDB stores (pack, outbox, the outbox's photos and recordings) and when each is cleared |
+| `crm/api/note_media.py` | Photos and voice notes on a field-mode note: `stage_media`, `claim_media`, `get_note_media`, daily purge |
 | `frontend/src/utils/fieldPack.js` | Pure helpers: index by customer, search, expiry, display |
 | `frontend/src/pages/Field.vue` + `components/Field/` | The standalone Field surface: week, customers, customer, tasks |
 

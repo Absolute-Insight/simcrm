@@ -910,3 +910,111 @@ describe('an entry older than the server’s memory of what it applied', () => {
     expect(server.calls).toHaveLength(1)
   })
 })
+
+describe('photos and voice notes on a note', () => {
+  const blob = () => new Blob(['jpeg-bytes'], { type: 'image/jpeg' })
+
+  it('uploads each file before the note, once, and forgets it once sent', async () => {
+    const { enqueue, keepMedia, flushOutbox } = await load({ online: false })
+    await keepMedia([
+      { id: 'media-photo-0000001', kind: 'photo', blob: blob() },
+    ])
+    const entry = await enqueue('add_note', {
+      reference_doctype: 'CRM Deal',
+      reference_docname: 'D-1',
+      content: '',
+      media: ['media-photo-0000001'],
+    })
+    // the note fails once after its photo went: the photo is not sent again
+    let first = true
+    server.replay = async (args) => {
+      if (args.media_id) return { status: 'staged' }
+      if (first) {
+        first = false
+        throw Object.assign(new Error('busy'), { status: 502 })
+      }
+      return { status: 'applied' }
+    }
+    const { connectivity } = await import('@/offline/connectivity')
+    connectivity.online = true
+    await flushOutbox()
+    await flushOutbox()
+    const methods = server.calls.map((c) => c.method)
+    expect(methods.filter((m) => m.endsWith('stage_media'))).toHaveLength(1)
+    expect(methods.indexOf('crm.api.note_media.stage_media')).toBeLessThan(
+      methods.indexOf('crm.api.offline.replay'),
+    )
+    const staged = server.calls.find((c) => c.media_id)
+    expect(staged).toMatchObject({
+      media_id: 'media-photo-0000001',
+      kind: 'photo',
+    })
+    expect(atob(staged.data)).toBe('jpeg-bytes')
+    await settle()
+    expect(disk.has('media-photo-0000001')).toBe(false)
+    expect(disk.has(entry.id)).toBe(false)
+  })
+
+  it('a note whose photo is no longer on the device is still asked about', async () => {
+    // another tab sent it and let the files go: the server knows it already
+    const { enqueue, flushOutbox, outbox } = await load()
+    server.replay = async () => ({ status: 'duplicate' })
+    await enqueue('add_note', {
+      reference_doctype: 'CRM Deal',
+      reference_docname: 'D-1',
+      content: 'x',
+      media: ['media-gone-000000001'],
+    })
+    await flushOutbox()
+    const methods = server.calls.map((c) => c.method)
+    expect(methods).not.toContain('crm.api.note_media.stage_media')
+    expect(methods).toContain('crm.api.offline.replay')
+    expect(outbox.entries.every((e) => e.status !== 'rejected')).toBe(true)
+  })
+
+  it('a note discarded while its photo uploads is not sent', async () => {
+    const { enqueue, keepMedia, flushOutbox, discardEntry } = await load({
+      online: false,
+    })
+    await keepMedia([
+      { id: 'media-photo-0000002', kind: 'photo', blob: blob() },
+    ])
+    const entry = await enqueue('add_note', {
+      reference_doctype: 'CRM Deal',
+      reference_docname: 'D-1',
+      content: '',
+      media: ['media-photo-0000002'],
+    })
+    server.replay = async (args) => {
+      if (args.media_id) {
+        await discardEntry(entry.id)
+        return { status: 'staged' }
+      }
+      return { status: 'applied' }
+    }
+    const { connectivity } = await import('@/offline/connectivity')
+    connectivity.online = true
+    await flushOutbox()
+    await settle()
+    expect(server.calls.map((c) => c.method)).not.toContain(
+      'crm.api.offline.replay',
+    )
+    expect(disk.has(entry.id)).toBe(false)
+  })
+
+  it('discarding the note drops its files from the device', async () => {
+    const { enqueue, keepMedia, discardEntry } = await load({ online: false })
+    await keepMedia([
+      { id: 'media-voice-0000001', kind: 'voice', blob: blob() },
+    ])
+    const entry = await enqueue('add_note', {
+      reference_doctype: 'CRM Deal',
+      reference_docname: 'D-1',
+      content: '',
+      media: ['media-voice-0000001'],
+    })
+    await discardEntry(entry.id)
+    await settle()
+    expect(disk.has('media-voice-0000001')).toBe(false)
+  })
+})
