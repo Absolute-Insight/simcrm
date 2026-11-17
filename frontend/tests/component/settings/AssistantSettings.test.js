@@ -17,6 +17,7 @@ const SETTINGS = {
   model: 'minicpm',
   timeout: 50,
   max_tokens: 800,
+  context_tokens: 8192,
   reasoning_off: 0,
   daily_call_budget: 0,
   assistant_reads_products: 0,
@@ -74,5 +75,16 @@ describe('AssistantSettings', () => {
     // and a further edit is dirty against what was just saved
     await enter(el, 'Model', 'minicpm')
     expect(state().saveDisabled).toBe(false)
+  })
+  it('the context window is shown and saved with the rest', async () => {
+    const { el } = mount(AssistantSettings)
+    await flush()
+    expect(field(el, 'Context window (tokens)').value).toBe('8192')
+
+    await enter(el, 'Context window (tokens)', '32768')
+    field(el, 'Save').click()
+    await flush()
+    const sent = backend.log.find((r) => r.url === 'frappe.client.set_value')
+    expect(Number(sent.params.fieldname.context_tokens)).toBe(32768)
   })
 })
