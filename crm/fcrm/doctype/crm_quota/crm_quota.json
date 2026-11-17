@@ -9,7 +9,8 @@
   "period_start",
   "column_break_quota",
   "amount",
-  "currency"
+  "currency",
+  "quotes"
  ],
  "fields": [
   {
@@ -43,8 +44,7 @@
    "fieldtype": "Currency",
    "in_list_view": 1,
    "label": "Quota",
-   "options": "currency",
-   "reqd": 1
+   "options": "currency"
   },
   {
    "description": "Always the CRM base currency — deal values are normalised to it before they are compared with quota.",
@@ -54,11 +54,18 @@
    "label": "Currency",
    "options": "Currency",
    "read_only": 1
+  },
+  {
+   "description": "How many quotes the rep is expected to raise in the month",
+   "fieldname": "quotes",
+   "fieldtype": "Int",
+   "label": "Quotes target",
+   "non_negative": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-08-14 19:40:00.000000",
+ "modified": "2026-11-17 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "FCRM",
  "name": "CRM Quota",
