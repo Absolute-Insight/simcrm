@@ -3,28 +3,52 @@
     <div
       v-if="assistantVisible"
       ref="target"
-      class="v-panel absolute z-20 h-screen"
-      :style="{
-        'box-shadow': 'var(--elevation-lg)',
-        'max-width': 'min(420px, 100vw)',
-        'min-width': 'min(420px, 100vw)',
-        left: 'calc(100% + 1px)',
-      }"
+      class="v-panel"
+      :class="
+        mobile
+          ? 'fixed inset-0 z-30 h-dvh w-screen !border-r-0 pb-[env(safe-area-inset-bottom)]'
+          : 'absolute z-20 h-screen'
+      "
+      :style="
+        mobile
+          ? {}
+          : {
+              'box-shadow': 'var(--elevation-lg)',
+              'max-width': 'min(420px, 100vw)',
+              'min-width': 'min(420px, 100vw)',
+              left: 'calc(100% + 1px)',
+            }
+      "
+      :role="mobile ? 'dialog' : undefined"
+      :aria-modal="mobile ? 'true' : undefined"
+      :aria-label="mobile ? __('Assistant') : undefined"
     >
-      <div class="flex h-screen flex-col text-ink-gray-9">
+      <div
+        class="flex flex-col text-ink-gray-9"
+        :class="mobile ? 'h-full' : 'h-screen'"
+      >
         <div class="flex items-center justify-between">
           <div class="v-title-sm px-4 pb-3 pt-[15px] text-ink-gray-8">
             {{ __('Assistant') }}
           </div>
-          <Button
-            v-if="assistantMessages.length"
-            class="mr-3"
-            :tooltip="__('Clear the conversation')"
-            :aria-label="__('Clear the conversation')"
-            icon="lucide-eraser"
-            variant="ghost"
-            @click="clearAssistant"
-          />
+          <div class="mr-3 flex items-center gap-1">
+            <Button
+              v-if="assistantMessages.length"
+              :tooltip="__('Clear the conversation')"
+              :aria-label="__('Clear the conversation')"
+              icon="lucide-eraser"
+              variant="ghost"
+              @click="clearAssistant"
+            />
+            <!-- Full screen has no "outside" to tap, so it closes by name. -->
+            <Button
+              v-if="mobile"
+              :aria-label="__('Close the assistant')"
+              icon="lucide-x"
+              variant="ghost"
+              @click="toggleAssistant"
+            />
+          </div>
         </div>
 
         <AgentChat
@@ -171,11 +195,17 @@ import {
 } from '@/utils/agentStatus'
 import { usersStore } from '@/stores/users'
 import { activeSettingsPage, showSettings } from '@/composables/settings'
-import { onClickOutside } from '@vueuse/core'
+import { onClickOutside, useEventListener } from '@vueuse/core'
 import { Badge } from 'frappe-ui'
 import { ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 const { isAdmin } = usersStore()
+
+const props = defineProps({
+  // a phone: over the whole screen, closed by its own button
+  mobile: { type: Boolean, default: false },
+})
 
 watch(
   assistantVisible,
@@ -186,6 +216,37 @@ watch(
 )
 
 const target = ref(null)
+
+/* On a phone the panel opens from the menu drawer, and the drawer hands focus
+   back to its own button as it closes -- after the chat has focused its box.
+   So the box is focused again once the drawer has gone, and Escape is heard on
+   the window rather than on a panel that may not hold the focus. */
+const DRAWER_LEAVE_MS = 250
+watch(assistantVisible, (open) => {
+  if (!open || !props.mobile) return
+  setTimeout(() => {
+    if (assistantVisible.value) target.value?.querySelector('textarea')?.focus()
+  }, DRAWER_LEAVE_MS)
+})
+useEventListener(window, 'keydown', (event) => {
+  if (event.key !== 'Escape' || !props.mobile || !assistantVisible.value) return
+  // a dialog open above the panel (a reference sheet, Settings, the help
+  // center, the command palette) takes this Escape; the panel takes the next
+  if (referenceOpen.value) return
+  if (document.querySelector('[role="dialog"][data-state="open"]')) return
+  toggleAssistant()
+})
+
+/* Over the whole screen, the page underneath is out of sight: going back, or
+   following a link in an answer, must not leave the panel covering the page
+   the rep has just moved to. */
+const route = useRoute()
+watch(
+  () => route.fullPath,
+  () => {
+    if (props.mobile && assistantVisible.value) toggleAssistant()
+  },
+)
 
 const referenceOpen = ref(false)
 const openRow = ref(null)
@@ -248,7 +309,8 @@ function openSettingsPage(page) {
 onClickOutside(
   target,
   () => {
-    if (assistantVisible.value) toggleAssistant()
+    // nothing is outside a panel that covers the screen
+    if (assistantVisible.value && !props.mobile) toggleAssistant()
   },
   {
     ignore: ['#assistant-btn', '.field-layout-dialog', '[role="dialog"]'],

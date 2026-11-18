@@ -108,6 +108,25 @@ function navGates(src) {
   return itemGates(links, 'nav')
 }
 
+describe('the Assistant on a phone', () => {
+  it('is offered in the phone menu too, where it opens over the whole screen', () => {
+    // it used to carry `&& !mobile()`: a rep on a phone had no Assistant at all
+    expect(navGates(navLinksSrc).get('nav.assistant')).not.toMatch(/mobile/)
+  })
+
+  it('has a panel to open: the phone layout mounts it', () => {
+    // the row only toggles a flag; without this mount it would toggle nothing
+    const layout = readFileSync(
+      path.resolve(
+        import.meta.dirname,
+        '../../src/components/Layouts/MobileLayout.vue',
+      ),
+      'utf8',
+    )
+    expect(layout).toMatch(/<Assistant mobile \/>/)
+  })
+})
+
 describe('SURFACES', () => {
   it('gives every surface a key the server will accept', () => {
     for (const surface of SURFACES) {
