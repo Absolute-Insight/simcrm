@@ -22,10 +22,7 @@ import re
 BREAKS = ("Section Break", "Column Break", "Tab Break")
 
 # JavaScript's \s, which is what the page's ws() skips and String.trim() drops.
-_JS_SPACE = (
-	"\t\n\v\f\r              "
-	"    　﻿"
-)
+_JS_SPACE = "\t\n\v\f\r              " "    　﻿"
 _NUMBER = re.compile(r"-?\d+(?:\.\d+)?", re.ASCII)
 _NAME = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
 _OPERATORS = ("===", "!==", "==", "!=", "<=", ">=", "<", ">")
@@ -402,6 +399,10 @@ def review_submission(fields, values: dict) -> tuple[list[str], list]:
 		if not is_visible(f, doc):
 			hidden.append(fieldname)
 			continue
-		if is_required(f, doc) and not is_read_only(f, doc) and _is_empty(_get(f, "fieldtype"), doc[fieldname]):
+		if (
+			is_required(f, doc)
+			and not is_read_only(f, doc)
+			and _is_empty(_get(f, "fieldtype"), doc[fieldname])
+		):
 			missing.append(f)
 	return hidden, missing

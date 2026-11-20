@@ -140,7 +140,12 @@ class TestFormConditionsOnSubmission(IntegrationTestCase):
 	def test_nothing_changes_outside_a_web_form_submission(self):
 		make_form("cond-desk", fields=CONDITIONAL_FIELDS)
 		frappe.get_doc(
-			{"doctype": "CRM Lead", "first_name": "Ada", "organization": "Acme", "email": "cond-g@test.invalid"}
+			{
+				"doctype": "CRM Lead",
+				"first_name": "Ada",
+				"organization": "Acme",
+				"email": "cond-g@test.invalid",
+			}
 		).insert(ignore_permissions=True)
 
 	def test_the_draft_preview_applies_the_same_rules(self):
