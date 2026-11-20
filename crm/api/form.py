@@ -713,13 +713,59 @@ def test_submit_form(name: str, values: dict | str) -> dict:
 		values = json.loads(values or "{}")
 
 	doc = _get_crm_form(name)
-	for f in doc.web_form_fields:
-		if f.fieldtype in ("Section Break", "Column Break"):
-			continue
-		value = values.get(f.fieldname)
-		if f.reqd and (value is None or value == ""):
-			frappe.throw(_("{0} is required").format(f.label or f.fieldname))
+	_check_form_answers(doc.web_form_fields, values)
 	return {"test": True}
+
+
+# accept() stores an upload only after the record is inserted, so at before_insert
+# the field is still empty although the visitor attached a file; frappe checks these
+# itself (`validate_mandatory`, with the uploaded fields)
+_UPLOAD_FIELDTYPES = ("Attach", "Attach Image")
+
+
+def _check_form_answers(fields, values: dict) -> list[str]:
+	"""Refuse a submission the public page would have refused: a field that is
+	required -- by `reqd` or by its "required if" -- while it is shown and editable,
+	and left empty. Returns the fieldnames the page would have hidden, and so not
+	sent.
+
+	The page enforces this in the browser only and frappe's accept() checks a plain
+	`reqd` and nothing else, so without it a POST straight to accept() can skip a
+	"required if" answer. The rules are the page's own, ported with JavaScript's
+	semantics (crm.utils.form_conditions), so a correct submission is never refused."""
+	from crm.utils.form_conditions import review_submission
+
+	hidden, missing = review_submission(
+		[f for f in fields if f.get("fieldtype") not in _UPLOAD_FIELDTYPES], values
+	)
+	if missing:
+		f = missing[0]
+		frappe.throw(_("{0} is required").format(f.get("label") or f.get("fieldname")), frappe.MandatoryError)
+	return hidden
+
+
+def _enforce_form_conditions(doc):
+	"""Apply the submitting form's field conditions to a record accept() is inserting:
+	refuse a missing required answer, and drop any answer to a field the page would
+	have hidden (the page never sends one, and accept() then stores "")."""
+	web_form = frappe.form_dict.get("web_form")
+	if not web_form:
+		return
+	# `web_form` comes from the (client-controllable) POST body; accept() applies that
+	# form's fields, so only its rules count, and only for a form of this doctype
+	if frappe.db.get_value("Web Form", web_form, "doc_type") != doc.doctype:
+		return
+	fields = frappe.get_all(
+		"Web Form Field",
+		filters={"parent": web_form, "parenttype": "Web Form"},
+		fields=["fieldname", "fieldtype", "label", "reqd", *CONDITION_KEYS],
+		order_by="idx",
+	)
+	fields = [f for f in fields if f.fieldname and doc.meta.has_field(f.fieldname)]
+	# before_insert runs before any casting, so these are the values as posted
+	values = {f.fieldname: doc.get(f.fieldname) for f in fields}
+	for fieldname in _check_form_answers(fields, values):
+		doc.set(fieldname, "")
 
 
 # Public form serving + submission run through the framework's own Web Form engine:
@@ -741,6 +787,7 @@ def enrich_form_submission(doc):
 	if doc.doctype not in ALLOWED_DOCTYPES:
 		return
 
+	_enforce_form_conditions(doc)
 	_apply_hidden_defaults(doc)
 
 	# stamp the source so form records are identifiable/filterable

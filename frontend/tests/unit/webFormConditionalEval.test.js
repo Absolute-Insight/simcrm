@@ -102,3 +102,26 @@ describe('crm_form.html evaluator agrees with the server-side store check', () =
     expect(parses(expr)).toBe(false)
   })
 })
+
+// The server enforces a submission with a port of this evaluator
+// (crm.utils.form_conditions), so a "required if" can't be skipped by posting to
+// accept() directly. Both run this list, so they agree on every case: where they
+// differ, the server refuses what the page accepted, or accepts what it hid.
+const evaluation = JSON.parse(
+  readFileSync(
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../../crm/tests/form_condition_cases.json',
+    ),
+    'utf8',
+  ),
+)
+
+describe('crm_form.html evaluator agrees with the server-side enforcement', () => {
+  it.each(evaluation.cases)(
+    '%j with %j (fallback %j) → %j',
+    (expr, doc, fallback, expected) => {
+      expect(truthy(expr, doc, fallback)).toBe(expected)
+    },
+  )
+})
