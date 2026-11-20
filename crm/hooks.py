@@ -497,6 +497,8 @@ auth_hooks = ["crm.permissions.users.refuse_sign_in_field_queries"]
 # Request Events
 # ----------------
 before_request = [
+	# first: before anything of this request can build a list. See engine_guard.py.
+	"crm.permissions.engine_guard.install",
 	"crm.permissions.document_guard.reserve_action",
 	"crm.integrations.whatsapp.guards.refuse_upstream_methods_via_upload",
 ]
@@ -504,7 +506,11 @@ before_request = [
 
 # Job Events
 # ----------
-before_job = ["crm.permissions.document_guard.reserve_action"]
+before_job = [
+	# a worker builds lists too, as the user who enqueued the job
+	"crm.permissions.engine_guard.install",
+	"crm.permissions.document_guard.reserve_action",
+]
 # after_job = ["crm.utils.after_job"]
 
 # User Data Protection
@@ -545,6 +551,8 @@ on_logout = ["crm.api.auth.forget_field_user"]
 # ]
 
 after_migrate = [
+	# fails the migrate if this frappe's query builders can no longer be guarded
+	"crm.permissions.engine_guard.ensure_installed",
 	"crm.fcrm.doctype.fcrm_settings.fcrm_settings.after_migrate",
 	"crm.permissions.customers.stop_frappe_event_digest",
 	# a rep could read any colleague's User row, sign-in IP included
