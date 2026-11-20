@@ -1477,6 +1477,20 @@ nothing for this reason.
 - A rep still lists one User row, their own: frappe shares each user's record with
   them, and `has_permission` on the doctype passes on a share.
 
+- `refuse_sign_in_field_queries` (an `auth_hooks` entry) closes what the two above
+  cannot. Any doctype with a Link to User joins it: a rep's
+  `get_list("ToDo", fields=["assigned_by.last_ip"])` returned the manager's address,
+  and `[["deal_owner.last_ip", "like", "198.%"]]` probes one. Frappe checks nothing on
+  the joined doctype's columns when filtering, and lets every User column be joined
+  (core doctype), so no permission rule reaches it. Every such query must name the
+  column, and no CRM screen does, so any `/api/` call naming `last_login`,
+  `last_ip` or `last_active` is refused unless the caller is a System Manager.
+  `auth_hooks` rather than `before_request`, because they run after API keys and
+  OAuth have set the user. Monkeypatching `get_permitted_fields` was the other
+  option, and the repo's semgrep forbids it.
+- Still open to colleagues through such a join: the other profile columns (phone,
+  birth date and so on). Only sign-in details are guarded.
+
 The CRM's own reads of User are server-side `frappe.get_all` and did not need the
 right. An admin-written `link_filters` on a custom User field that names a column
 outside the allowlist is now refused; widen `PICKER_FILTER_FIELDS` if one appears.
