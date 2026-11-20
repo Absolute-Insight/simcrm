@@ -1304,7 +1304,10 @@ services:
   # still answers 200. Four slots of 32768 hold ~11 GB of a 24 GB card.
   # Four matches the CRM's own cap on concurrent model calls.
   llm:
-    image: ollama/ollama:0.40.16
+    # Pinned by digest like every other third-party image here: the model is
+    # checked against a fingerprint, and the server that runs it is the other
+    # half of what was measured.
+    image: ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592
     logging: *logging
     profiles: ["gpu-model"]
     restart: unless-stopped
@@ -1340,7 +1343,7 @@ services:
   # and `llm` is not started. ollama itself checks each blob against its digest
   # as it downloads, so the manifest's digests pin the bytes.
   llm-fetch:
-    image: ollama/ollama:0.40.16
+    image: ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592
     logging: *logging
     profiles: ["gpu-model"]
     restart: "no"

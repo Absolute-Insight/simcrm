@@ -202,7 +202,7 @@ check(
 )
 
 # infra-8: the images this stack depends on cannot move under it.
-for name in ("db", "redis-cache", "redis-queue", "backup-offsite"):
+for name in ("db", "redis-cache", "redis-queue", "backup-offsite", "llm", "llm-fetch"):
 	check(f"{name} is pinned by digest", "@sha256:" in services[name]["image"], services[name]["image"])
 
 # Every embedded script parses in the shell that will run it.
