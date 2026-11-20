@@ -3,9 +3,13 @@
 import click
 import frappe
 
+from crm.permissions.users import restore_user_select
+
 
 def before_uninstall():
 	delete_email_template_custom_fields()
+	# crm withdrew it and took over the User picker; frappe's picker needs it back
+	restore_user_select()
 
 
 def delete_email_template_custom_fields():

@@ -1447,3 +1447,54 @@ v16.0.4 and v16.1.0. The next port starts from `e5e73a3c9`.
     counts as empty, repeated until nothing changes. `reviewSubmission` / `review_submission`
     then decide what is left out and what is missing, and the shared cases cover both.
   - Attach fields are left to frappe, which checks them with the uploads in hand.
+
+---
+
+## Reps no longer read colleagues' User rows (2026-11-20)
+
+> **Completed.** Found by the prod rep QA (`~/dev/mbp/qa-rep`): a rep could list
+> the last sign-in time and IP address of every colleague.
+
+**Cause.** Frappe gives the Desk User role (every system user) `select` on User,
+for link pickers. User is in frappe's `CORE_DOCTYPES`, and for those
+`frappe.model.get_permitted_fields` returns every column without looking at
+permlevel. So `select` on User is a full read: `frappe.client.get_list` answered
+`last_login`, `last_ip`, `last_active`, phone, birth date, and any column could be
+probed through a filter. Raising the fields to permlevel 1 was tried first and does
+nothing for this reason.
+
+**Fix** (`crm/permissions/users.py`):
+
+- `close_user_select` copies User's standard rules to Custom DocPerm (what the Role
+  Permission Manager does) and drops the Desk User row. after_install and
+  after_migrate; idempotent. The copied rules are frozen at the frappe version that
+  first ran it.
+- `user_link_query` replaces frappe's `user_query` through `standard_queries`, so
+  `search_link` on User still works. It is its own access check: Desk User role
+  required, `name`/`full_name` out, filters only on `PICKER_FILTER_FIELDS`
+  (anything else is a PermissionError). Every picker in the app sends
+  `name in crmUsers` and `ignore_user_type`, which it accepts.
+- A rep still lists one User row, their own: frappe shares each user's record with
+  them, and `has_permission` on the doctype passes on a share.
+
+- `refuse_sign_in_field_queries` (an `auth_hooks` entry) is defence in depth.
+  While a role holds select or read on User, any doctype with a Link to User joins
+  it: under frappe's standard rules a rep's
+  `get_list("ToDo", fields=["assigned_by.last_ip"])` returned the manager's address,
+  and `[["deal_owner.last_ip", "like", "198.%"]]` probed one. With the Desk User rule
+  gone a rep reads User only through the share of their own row, and frappe holds
+  the joined row to that as well, so the join comes back empty. But frappe checks
+  nothing on a joined doctype's columns beyond that, so an admin re-granting User
+  access to any role would reopen it. Every such query must name the column, and
+  no CRM screen does, so any `/api/` call naming `last_login`, `last_ip` or
+  `last_active` is refused unless the caller is a System Manager. String arguments
+  are scanned again after JSON decoding, as frappe will read them (`\u005f` is
+  `_`). `auth_hooks` rather than `before_request`, because they run after API keys
+  and OAuth have set the user. Monkeypatching `get_permitted_fields` was the other
+  option, and the repo's semgrep forbids it.
+- If a role is granted User access again, the other profile columns (phone, birth
+  date and so on) become joinable again; only sign-in details have the guard.
+
+The CRM's own reads of User are server-side `frappe.get_all` and did not need the
+right. An admin-written `link_filters` on a custom User field that names a column
+outside the allowlist is now refused; widen `PICKER_FILTER_FIELDS` if one appears.
