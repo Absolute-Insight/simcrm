@@ -21,6 +21,7 @@ from typing import Any
 
 import frappe
 from frappe import _
+from frappe.utils import cint, sbool
 
 # The role frappe gives every desk user, and with it select on User.
 DESK_USER_ROLE = "Desk User"
@@ -53,47 +54,88 @@ def close_user_select() -> None:
 		frappe.clear_cache(doctype="User")
 
 
-def _filter_fieldname(condition: Any) -> str | None:
-	"""The column a list-form filter names: ``[field, op, value]`` or
-	``[doctype, field, op, value]``."""
-	if isinstance(condition, list | tuple):
-		if len(condition) >= 4:
-			return condition[1]
-		if condition:
-			return condition[0]
-	return None
+# Operators a picker filter may use; anything else is refused.
+PICKER_OPERATORS = frozenset({"=", "!=", "in", "not in", "like", "not like"})
+# The most a picker may ask for in one call, whatever page_len says.
+MAX_PAGE_LENGTH = 100
+
+
+def restore_user_select() -> None:
+	"""Put the desk-user ``select`` rule back, for uninstall: without crm's
+	``user_link_query`` frappe's own picker needs it, and every User link field on
+	the site would otherwise come back empty. Other rows an admin set are kept."""
+	if not frappe.db.exists("Custom DocPerm", {"parent": "User"}):
+		return
+	if frappe.db.exists("Custom DocPerm", {"parent": "User", "role": DESK_USER_ROLE, "permlevel": 0}):
+		return
+	frappe.get_doc(
+		{
+			"doctype": "Custom DocPerm",
+			"parent": "User",
+			"parenttype": "DocType",
+			"parentfield": "permissions",
+			"role": DESK_USER_ROLE,
+			"permlevel": 0,
+			"select": 1,
+		}
+	).insert(ignore_permissions=True)
+	frappe.clear_cache(doctype="User")
+
+
+def _refuse(what: Any) -> None:
+	raise frappe.PermissionError(_("Not permitted to filter users on {0}").format(frappe.as_json(what)))
+
+
+def _condition(fieldname: Any, operator: Any, value: Any) -> list:
+	"""One checked ``[field, op, value]``. The field and operator checked are the
+	ones returned: nothing the caller sent is passed on unchecked."""
+	if not isinstance(fieldname, str) or fieldname not in PICKER_FILTER_FIELDS:
+		_refuse(fieldname)
+	if not isinstance(operator, str) or operator.lower() not in PICKER_OPERATORS:
+		_refuse(operator)
+	return [fieldname, operator.lower(), value]
+
+
+def _list_condition(condition: Any) -> list:
+	"""``[field, value]``, ``[field, op, value]`` or ``["User", field, op, value]``,
+	and no other shape: a longer row once let the checked element differ from the
+	one queried."""
+	if not isinstance(condition, list | tuple):
+		_refuse(condition)
+	if len(condition) == 2:
+		return _condition(condition[0], "=", condition[1])
+	if len(condition) == 3:
+		return _condition(*condition)
+	if len(condition) == 4 and condition[0] == "User":
+		return _condition(*condition[1:])
+	_refuse(condition)
 
 
 def _picker_filters(filters: Any) -> tuple[list, bool]:
-	"""The caller's filters, refused if any names a column outside the picker's
-	set. Returns the conditions and whether ``ignore_user_type`` was asked for."""
+	"""The caller's filters as checked conditions, refused if any names a column
+	outside ``PICKER_FILTER_FIELDS``, an operator outside ``PICKER_OPERATORS``, or
+	has any other shape. Returns the conditions and whether ``ignore_user_type``
+	was asked for."""
 	if not filters:
 		return [], False
 	if isinstance(filters, str):
 		filters = frappe.parse_json(filters)
 
-	ignore_user_type = False
-	conditions: list = []
 	if isinstance(filters, dict):
 		filters = dict(filters)
-		ignore_user_type = bool(filters.pop("ignore_user_type", False))
-		items = list(filters.items())
-		for fieldname, _value in items:
-			if fieldname not in PICKER_FILTER_FIELDS:
-				raise frappe.PermissionError(_("Not permitted to filter users on {0}").format(fieldname))
-		conditions = [
-			[fieldname, "=", value] if not isinstance(value, list | tuple) else [fieldname, *value]
-			for fieldname, value in items
-		]
-	elif isinstance(filters, list | tuple):
-		for condition in filters:
-			fieldname = _filter_fieldname(condition)
-			if fieldname not in PICKER_FILTER_FIELDS:
-				raise frappe.PermissionError(_("Not permitted to filter users on {0}").format(fieldname))
-			conditions.append(list(condition[-3:]))
-	else:
-		raise frappe.PermissionError(_("Not permitted"))
-	return conditions, ignore_user_type
+		ignore_user_type = sbool(filters.pop("ignore_user_type", False)) is True
+		conditions = []
+		for fieldname, value in filters.items():
+			if isinstance(value, list | tuple):
+				if len(value) != 2:
+					_refuse({fieldname: value})
+				conditions.append(_condition(fieldname, value[0], value[1]))
+			else:
+				conditions.append(_condition(fieldname, "=", value))
+		return conditions, ignore_user_type
+	if isinstance(filters, list | tuple):
+		return [_list_condition(condition) for condition in filters], False
+	_refuse(filters)
 
 
 @frappe.whitelist()
@@ -125,8 +167,9 @@ def user_link_query(doctype: str, txt: str, searchfield: str, start: int, page_l
 		filters=conditions,
 		or_filters=or_filters,
 		fields=["name", "full_name"],
-		limit_start=start,
-		limit_page_length=page_len,
+		limit_start=max(cint(start), 0),
+		# 0 means "no limit" to get_all
+		limit_page_length=min(max(cint(page_len), 1), MAX_PAGE_LENGTH),
 		order_by="name asc",
 		as_list=True,
 	)

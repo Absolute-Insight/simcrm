@@ -12,7 +12,7 @@ from frappe.client import get_count
 from frappe.desk.search import search_link
 from frappe.tests import IntegrationTestCase
 
-from crm.permissions.users import close_user_select, user_link_query
+from crm.permissions.users import MAX_PAGE_LENGTH, close_user_select, restore_user_select, user_link_query
 
 REP = "signin-rep@crmtest.test"
 COLLEAGUE = "signin-colleague@crmtest.test"
@@ -35,10 +35,10 @@ def ensure_user(email: str, *roles: str, user_type: str | None = None) -> None:
 		frappe.get_doc("User", email).add_roles(*roles)
 
 
-def pick(txt: str = "", filters=None):
+def pick(txt: str = "", filters=None, page_len: int = 20):
 	"""The picker query itself. search_link turns its refusal into an empty answer
 	outside developer mode, which would pass these tests for the wrong reason."""
-	return user_link_query("User", txt, "name", 0, 20, filters)
+	return user_link_query("User", txt, "name", 0, page_len, filters)
 
 
 class UserSignInFieldsTest(IntegrationTestCase):
@@ -71,6 +71,57 @@ class UserSignInFieldsTest(IntegrationTestCase):
 			pick(filters={"last_ip": SIGN_IN["last_ip"]})
 		with self.assertRaises(frappe.PermissionError):
 			pick(filters=[["User", "last_ip", "like", "203.%"]])
+
+	def test_no_filter_shape_reaches_a_column_outside_the_allowlist(self):
+		# found in review: a five-element row was checked on [1] and queried on [-3:]
+		frappe.set_user(REP)
+		smuggled = [
+			[["x", "name", "last_ip", "like", "203.%"]],
+			[["x", "name", "roles.role", "=", "System Manager"]],
+			[["Has Role", "name", "like", "%"]],
+			[["roles.role", "=", "System Manager"]],
+			[["`tabUser`.`last_ip`", "like", "203.%"]],
+			[["name"]],
+			["last_ip"],
+			{"name": ["like", "%", "extra"]},
+			{"name": ["is", "set"]},
+			{"name": "x", "last_ip": "203.0.113.7"},
+			{"roles.role": "System Manager"},
+		]
+		for filters in smuggled:
+			with self.subTest(filters=filters), self.assertRaises(frappe.PermissionError):
+				pick(filters=filters)
+
+	def test_the_picker_returns_one_page_at_most(self):
+		frappe.set_user(REP)
+		self.assertLessEqual(len(pick(page_len=0)), MAX_PAGE_LENGTH)
+		self.assertEqual(len(pick("signin-", page_len=1)), 1)
+
+	def test_uninstall_gives_the_desk_user_rule_back_and_migrate_takes_it_again(self):
+		restore_user_select()
+		rule = {"parent": "User", "role": "Desk User", "permlevel": 0}
+		self.assertTrue(frappe.db.exists("Custom DocPerm", rule))
+		self.assertEqual(frappe.db.get_value("Custom DocPerm", rule, "select"), 1)
+		close_user_select()
+		self.assertFalse(frappe.db.exists("Custom DocPerm", rule))
+
+	def test_a_site_with_its_own_user_rules_keeps_them(self):
+		# an admin's Role Permission Manager rows: the copy is skipped, only Desk User goes
+		extra = frappe.get_doc(
+			{
+				"doctype": "Custom DocPerm",
+				"parent": "User",
+				"parenttype": "DocType",
+				"parentfield": "permissions",
+				"role": "Sales Manager",
+				"permlevel": 0,
+				"read": 1,
+			}
+		).insert(ignore_permissions=True)
+		restore_user_select()
+		close_user_select()
+		self.assertTrue(frappe.db.exists("Custom DocPerm", extra.name))
+		self.assertFalse(frappe.db.exists("Custom DocPerm", {"parent": "User", "role": "Desk User"}))
 
 	def test_the_user_picker_still_finds_a_colleague_by_name(self):
 		frappe.set_user(REP)
@@ -110,11 +161,13 @@ class UserSignInFieldsTest(IntegrationTestCase):
 		self.assertTrue(row.last_login and row.last_active)
 
 	def test_running_it_again_changes_nothing(self):
-		before = frappe.get_all("Custom DocPerm", filters={"parent": "User"}, fields=["role", "permlevel"])
+		fields = ["role", "permlevel", "select", "read", "write", "create", "delete"]
+		before = frappe.get_all("Custom DocPerm", filters={"parent": "User"}, fields=fields)
 		close_user_select()
-		after = frappe.get_all("Custom DocPerm", filters={"parent": "User"}, fields=["role", "permlevel"])
+		after = frappe.get_all("Custom DocPerm", filters={"parent": "User"}, fields=fields)
 		self.assertEqual(
 			sorted(map(tuple, (r.values() for r in before))), sorted(map(tuple, (r.values() for r in after)))
 		)
 		self.assertNotIn("Desk User", [r.role for r in after])
-		self.assertIn("System Manager", [r.role for r in after])
+		self.assertIn(("System Manager", 0), [(r.role, r.permlevel) for r in after])
+		self.assertIn(("System Manager", 1), [(r.role, r.permlevel) for r in after])
