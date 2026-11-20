@@ -77,12 +77,15 @@
 
         <!-- overflow-y-auto forces overflow-x to clip too, which would slice the
              active row's shadow. Widen the scroll box to the sidebar edges and
-             pad the content back in so the shadow has room. -->
+             pad the content back in so the shadow has room.
+             Its direct rows are shrink-0: once the views overflow the box, flex
+             would otherwise squeeze them below their h-7. -->
         <div class="-mx-2 mt-2 flex flex-1 flex-col gap-1 overflow-y-auto px-2">
           <!-- On a phone this lives in the top bar instead: reachable without
                opening the drawer, and clear of the drawer's focus trap. -->
           <SidebarItem
             v-if="!mobile"
+            class="shrink-0"
             :label="__('Search')"
             @click="openCommandPalette"
           >

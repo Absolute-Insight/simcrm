@@ -1365,3 +1365,71 @@ composer; upstream had not changed these files again by `d68ef63d1`.
   any queued mail). A scheduled email counts as sent from the moment it is written for the SLA's
   first response, the planner's Email match and the "touched today" signal. Only the person who
   scheduled an email can stop it; a manager cannot.
+
+## Upstream fixes — frappe/crm develop to e5e73a3c9
+
+**Completed 2026-11-20.** Branch `fix/upstream-to-e5e73a3c9`. Range `d68ef63d1..e5e73a3c9`
+(upstream develop, 2026-11-19), 349 commits in 42 PRs, plus the release notes for v16.0.3,
+v16.0.4 and v16.1.0. The next port starts from `e5e73a3c9`.
+
+### Taken
+
+- **#3484 sidebar rows squeezed.** The sidebar's scroll box is a flex column, and a row of fixed
+  `h-7` shrinks to its 20px text once the views overflow the box. Our Search row is the only
+  direct row there (Notifications moved into the header), so it alone gets `shrink-0`.
+
+### Already carried, in stricter form
+
+- **#3464 recording credentials** (v16.1.0): our `_is_provider_recording` checks the account's
+  own recording path as well as the provider's host, upstream checks the host only. Upstream
+  also trusts `*.exotel.in`. We don't, so a recording there plays only if it needs no auth.
+- **#3414 Exotel outgoing call** (v16.1.0): ours was already POST-only, `sales_user_only` and
+  rate-limited, and takes `from_number` from the caller's Telephony Agent. We still accept a
+  `caller_id`, but only one of the account's own exophones, so a rep can choose which one.
+- **#3214 / #3441 WhatsApp notify the assignees** (v16.1.0): recorded as carried in the
+  d68ef63d1 port.
+- **#3474 every changed field in the activity feed**: our `get_*_activities` already loop over
+  every `changed` entry.
+- **#3413 apps.json as a build secret**: our `builds.yml` already passes it as the `apps_json`
+  build secret (through `secrets:` rather than upstream's `secret-files:`).
+- **#3487 General Settings switches**: ours are `CheckSwitch` with `@update:model-value`
+  already. The fourth upstream switch, `enable_morning_digest`, belongs to Home.
+- **The password-strength check in #3497** is in `crm/api/user.py` already.
+
+### Not applicable: the code they touch is not in this fork
+
+- **#3486** (Flow `is_enabled`), **#3493** (WhatsApp template preview in Settings), **#3462**
+  (Frappe Cloud trial card), **#3481** (shared doc room: only `Activities.vue` joins a doc room here, so nothing else in it
+  can be dropped), **#3488 / #3489 / #3496** (fixes to upstream's Home page), **#3515 / #3511**
+  (appointment booking), **#3517 / #3501** (guided setup). The CI-only PRs (#3504, #3512, #3492,
+  #3483, #3420, #3385), the translation PRs (#3458, #3380) and #3491 (whatsapp pin) don't apply
+  either. Neither do the fixes buried in #3188 (`25a09eca0`, `1bc7e3886`, `08e01f3a9`,
+  `9313fb36e`, `e464655c2`, `3fb551565`): each touches Home, automations, reply alerts or
+  `@whatsapp/ui`. The same goes for its indexes (`5076b9f4d`, `c756bf32c`), which serve Home's
+  queries. The direct commits `59f4562d1` and `2312d928b` add upstream's SECURITY.md; we have our
+  own.
+
+### Left out, and why: features, which are product decisions
+
+- **#3188 / #3485 / #3516 CRM Home**, with its brief and digest; **#3500 appointment booking**;
+  **#2963 Insights dashboard**; **#3490 readable notifications**; **#3522 / #3523** push CRM
+  events to Google Calendar; **#3482** WhatsApp quick create; **#3531** sidebar Flow link;
+  **#3509** CRM implementation skill.
+- **#3497 / #3498 / #3519** guided setup and removing the getting-started checklist. Our
+  onboarding is our own; see the rep-onboarding notes.
+- **#3436 setting to disable onboarding** (v16.0.4): small, but it is a settings field and a
+  product call.
+- **#3494 WhatsApp optional**: restructures how the app depends on `frappe_whatsapp`, which this
+  fork pins and builds into the image.
+- **#3372 data import for sales roles** (v16.0.3): left out last port for the same reason.
+
+### Left out for now: a candidate follow-up
+
+- **`2531a6388` (inside #3500): web-form conditions checked on the server.** Our public form
+  (`crm/www/crm_form.html`) evaluates "show if" and "required if" in the browser only. Frappe's
+  `accept()` enforces a plain `reqd` and nothing else, so a direct POST can leave out a
+  "required if" answer. That's a data-quality gap, not an access one: a guest can post anything
+  to a public form either way. Upstream's fix is a new 238-line expression evaluator that must
+  match the browser's rules (theirs mirrors a page script we don't have). It needs its own change,
+  checked against `crm_form.html` and tested on the bench, and should not be slipped into a
+  port.
