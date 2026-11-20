@@ -1423,13 +1423,24 @@ v16.0.4 and v16.1.0. The next port starts from `e5e73a3c9`.
   fork pins and builds into the image.
 - **#3372 data import for sales roles** (v16.0.3): left out last port for the same reason.
 
-### Left out for now: a candidate follow-up
+### Taken as its own change: web-form conditions on the server
 
-- **`2531a6388` (inside #3500): web-form conditions checked on the server.** Our public form
-  (`crm/www/crm_form.html`) evaluates "show if" and "required if" in the browser only. Frappe's
-  `accept()` enforces a plain `reqd` and nothing else, so a direct POST can leave out a
-  "required if" answer. That's a data-quality gap, not an access one: a guest can post anything
-  to a public form either way. Upstream's fix is a new 238-line expression evaluator that must
-  match the browser's rules (theirs mirrors a page script we don't have). It needs its own change,
-  checked against `crm_form.html` and tested on the bench, and should not be slipped into a
-  port.
+- **`2531a6388` (inside #3500).** Our public form (`crm/www/crm_form.html`) evaluated "show if"
+  and "required if" in the browser only. Frappe's `accept()` enforces a plain `reqd` and nothing
+  else, so a POST straight to it could leave out a "required if" answer. This was a data-quality
+  gap, not an access one: a guest can post anything to a public form either way. It was left
+  out of the port, then written as its own change, `fix/web-form-conditions-server`, rather than
+  copied from upstream, whose evaluator mirrors a page script we don't have and compares values
+  differently from JavaScript.
+  - `crm/utils/form_conditions.py` ports the page's evaluator with JavaScript's semantics: loose
+    `==`, relational coercion, truthiness, `.length` and indexing. `_enforce_form_conditions`
+    (at `before_insert`, ahead of the hidden defaults) refuses a missing answer that is required,
+    shown and editable, and blanks an answer to a field the page would have hidden. The page
+    never sends one, and `accept()` stores "" in its place. The builder's draft preview
+    (`test_submit_form`) applies the same rules.
+  - `crm/tests/form_condition_cases.json` runs against both the page and the port. A
+    differential fuzz of 20,000 random expressions and values found no disagreement.
+  - Conditions are evaluated against the submitted values. The page evaluates them against every
+    input on it, including hidden ones, so a condition that reads a field which is itself hidden
+    can differ. No form of ours does that. Attach fields are left to frappe, which checks them
+    with the uploads in hand.
