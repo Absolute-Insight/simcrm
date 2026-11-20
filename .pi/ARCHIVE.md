@@ -1440,7 +1440,10 @@ v16.0.4 and v16.1.0. The next port starts from `e5e73a3c9`.
     (`test_submit_form`) applies the same rules.
   - `crm/tests/form_condition_cases.json` runs against both the page and the port. A
     differential fuzz of 20,000 random expressions and values found no disagreement.
-  - Conditions are evaluated against the submitted values. The page evaluates them against every
-    input on it, including hidden ones, so a condition that reads a field which is itself hidden
-    can differ. No form of ours does that. Attach fields are left to frappe, which checks them
-    with the uploads in hand.
+  - **The page changed too.** It used to evaluate conditions against every input, hidden ones
+    included, so a field hidden after the visitor typed into it kept counting towards other
+    fields' conditions. The server only sees "" for it, so a visitor the page accepted could be
+    refused. Both sides now share one rule, `resolveDoc` / `resolve_values`: a hidden field
+    counts as empty, repeated until nothing changes. `reviewSubmission` / `review_submission`
+    then decide what is left out and what is missing, and the shared cases cover both.
+  - Attach fields are left to frappe, which checks them with the uploads in hand.
