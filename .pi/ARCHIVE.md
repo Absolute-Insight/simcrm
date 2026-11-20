@@ -1447,3 +1447,36 @@ v16.0.4 and v16.1.0. The next port starts from `e5e73a3c9`.
     counts as empty, repeated until nothing changes. `reviewSubmission` / `review_submission`
     then decide what is left out and what is missing, and the shared cases cover both.
   - Attach fields are left to frappe, which checks them with the uploads in hand.
+
+---
+
+## Reps no longer read colleagues' User rows (2026-11-20)
+
+> **Completed.** Found by the prod rep QA (`~/dev/mbp/qa-rep`): a rep could list
+> the last sign-in time and IP address of every colleague.
+
+**Cause.** Frappe gives the Desk User role (every system user) `select` on User,
+for link pickers. User is in frappe's `CORE_DOCTYPES`, and for those
+`frappe.model.get_permitted_fields` returns every column without looking at
+permlevel. So `select` on User is a full read: `frappe.client.get_list` answered
+`last_login`, `last_ip`, `last_active`, phone, birth date, and any column could be
+probed through a filter. Raising the fields to permlevel 1 was tried first and does
+nothing for this reason.
+
+**Fix** (`crm/permissions/users.py`):
+
+- `close_user_select` copies User's standard rules to Custom DocPerm (what the Role
+  Permission Manager does) and drops the Desk User row. after_install and
+  after_migrate; idempotent. The copied rules are frozen at the frappe version that
+  first ran it.
+- `user_link_query` replaces frappe's `user_query` through `standard_queries`, so
+  `search_link` on User still works. It is its own access check: Desk User role
+  required, `name`/`full_name` out, filters only on `PICKER_FILTER_FIELDS`
+  (anything else is a PermissionError). Every picker in the app sends
+  `name in crmUsers` and `ignore_user_type`, which it accepts.
+- A rep still lists one User row, their own: frappe shares each user's record with
+  them, and `has_permission` on the doctype passes on a share.
+
+The CRM's own reads of User are server-side `frappe.get_all` and did not need the
+right. An admin-written `link_filters` on a custom User field that names a column
+outside the allowlist is now refused; widen `PICKER_FILTER_FIELDS` if one appears.
