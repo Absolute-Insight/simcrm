@@ -79,8 +79,8 @@ class AgentConfigTest(UnitTestCase):
 		self.assertEqual(cfg.with_overrides(), cfg)
 
 	def test_reasoning_stays_on_unless_switched_off(self):
-		"""Off is opt-in: the shipped model cannot switch its thinking off, and a
-		site that upgrades must send the request it always has."""
+		"""Off is opt-in: no request carries a reasoning field unless an admin asked
+		for one, and a site that upgrades must send the request it always has."""
 		self.assertFalse(AgentConfig.from_settings({}).reasoning_off)
 		self.assertTrue(AgentConfig.from_settings({"reasoning_off": "1"}).reasoning_off)
 		self.assertFalse(AgentConfig.from_settings({"reasoning_off": 0}).reasoning_off)

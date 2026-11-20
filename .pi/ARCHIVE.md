@@ -1498,3 +1498,40 @@ nothing for this reason.
 The CRM's own reads of User are server-side `frappe.get_all` and did not need the
 right. An admin-written `link_filters` on a custom User field that names a column
 outside the allowlist is now refused; widen `PICKER_FILTER_FIELDS` if one appears.
+
+## One shipped model: LFM2.5 and the `local-model` profile removed (2026-11-20)
+
+Production serves Nemotron 3.5 Bolt E4B (`nemotron-3.5-bolt:e4b-q8_0`, the
+`gpu-model` profile, measured 2026-11-16) while the code default, the doctype
+default, `create-site`'s seed and half of `deploy/README.md` still named
+`LFM2.5-2.6B` and the `local-model` profile that served it. Both are gone.
+
+- **The profile was removed, not repointed.** Nemotron is measured on one NVIDIA
+  card, on ollama 0.40.16, behind `llm-fetch`'s fingerprint check. `local-model`
+  was an unpinned pull on ollama 0.40.4 with no GPU reservation; serving the
+  same tag through it would have shipped a second, unmeasured way to run the
+  model. Production never created its services, so nothing it runs changed.
+- **`context_tokens` and `max_tokens` keep their defaults (8192 / 4096)** although
+  the profile wants 32768 / 8192. `get_config` reads them from the code defaults
+  on any site that never stored them — every site seeded only by
+  `apply_endpoint_defaults` — so raising the default would size prompts past
+  whatever such a site's endpoint serves, and ollama truncates from the head.
+  The larger values stay a documented setting.
+- **`replace_retired_default_agent_model`** acts only when the stored model is
+  exactly a default the app shipped *and* the stored endpoint is exactly the
+  removed profile's `http://ollama:11434/v1` — a site on the stack's own model
+  server. It then sets the new model and `http://llm:8086/v1`, puts
+  `reasoning_off` back to 0 (LFM ignored the switch, Nemotron obeys it and is
+  measured with thinking on) and removes a stored API key, which was entered
+  for the old endpoint. An admin's own endpoint keeps its model, LFM included.
+- **`llm` and `llm-fetch` are pinned by digest**, the digest of the
+  `ollama/ollama:0.40.16` production already ran. The image string changed, so
+  the next `up -d` with the profile recreates `llm` once: same bytes, a restart
+  and a model reload.
+- **The enrichment model fallback is unmeasured on Nemotron.** It is the one
+  surface that writes model output without a person reading it, the corpus has
+  no page-injection case for it, and `deploy/README.md` now says to leave it
+  off until it has one.
+- **The LFM-era measurements were not carried over.** The eleven-model table and
+  the licence threshold left `deploy/README.md`; the dated runs stay in
+  `.pi/feats/agent/README.md` under a note that the default has changed.

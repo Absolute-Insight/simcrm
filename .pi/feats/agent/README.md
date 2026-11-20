@@ -92,7 +92,8 @@ Import direction is one-way: `errors` ← `config`/`schemas`/`context` ← `clie
 `VECTORA_AGENT_ENABLED` and writes them into the Single. The compose stack passes them
 to `create-site`; the shipped `base_url` is `localhost`, which is right for a bench on a
 laptop and wrong inside a network where the inference server is a sibling container — so
-the `local-model` profile pulled several GB of weights that no code path could reach.
+a stack that pulled several GB of weights had no code path that could reach them. Unset,
+the compose file passes the `llm` service (`http://llm:8086/v1`) and the model it serves.
 
 **`after_install` only, never `after_migrate`.** This writes the admin's own settings. A
 value re-applied on every upgrade would revert an endpoint or model they had changed in
@@ -138,6 +139,14 @@ retry, and every failure mode — but a stub is not a model. **This gate has bee
 what it found is recorded below, and re-running it after any change to `client.py`,
 `context.py` or the schemas is cheap.
 
+> **The shipped model has since changed (2026-11-20).** The product ships and documents
+> one model, `nemotron-3.5-bolt:e4b-q8_0` (Nemotron 3.5 Bolt E4B), served by the
+> `gpu-model` compose profile; `LFM2.5-2.6B` and the `local-model` profile that served it
+> are removed. Its measurement is in `deploy/README.md`, *The model: Nemotron 3.5 Bolt
+> E4B*. The dated runs below are the record of how earlier defaults were chosen and are
+> kept as written — "the default" and "the shipped model" in them mean the model of that
+> date, not today's.
+
 ### Serving, without root and without torch
 
 ollama ships its own CUDA runtime, so there is nothing to compile and no matching CUDA
@@ -147,14 +156,14 @@ and vLLM drags in torch, so on this box ollama is the short path.
 ```bash
 # One tarball, extracted into $HOME -- no sudo, no system packages.
 curl -sSL -o /tmp/ollama.tar.zst \
-  https://github.com/ollama/ollama/releases/download/v0.32.9/ollama-linux-amd64.tar.zst
+  https://github.com/ollama/ollama/releases/download/v0.40.16/ollama-linux-amd64.tar.zst
 mkdir -p ~/.local/ollama && tar --zstd -xf /tmp/ollama.tar.zst -C ~/.local/ollama
 
 export PATH=~/.local/ollama/bin:$PATH
 export LD_LIBRARY_PATH=~/.local/ollama/lib:$LD_LIBRARY_PATH
 export OLLAMA_KEEP_ALIVE=30m          # else the weights unload between arms
 ollama serve &                        # confirms the GPU in its first lines of log
-ollama pull hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M
+ollama pull nemotron-3.5-bolt:e4b-q8_0  # 10 GB; the build the deploy stack pins is 0.40.16
 ```
 
 `ollama serve` logs `inference compute ... library=CUDA compute=8.6 name="NVIDIA RTX
@@ -175,7 +184,7 @@ set_field() {
                'fieldname': '$1', 'value': '$2'}"
 }
 set_field base_url "http://127.0.0.1:11434/v1"
-set_field model    "hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M"
+set_field model    "nemotron-3.5-bolt:e4b-q8_0"
 set_field timeout  120     # dev only -- see the proxy ceiling below before copying this
 set_field enabled  1
 

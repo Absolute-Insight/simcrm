@@ -257,12 +257,13 @@ services:
       # Read by crm.agent.install.apply_endpoint_defaults during after_install,
       # and only there. The shipped base URL is localhost, which is correct for a
       # bench on a laptop and wrong in a compose network where the inference
-      # server is a sibling service -- so without this the local-model profile
-      # pulled several GB of weights that no code path could reach. Seeded once,
-      # never re-applied, so an admin who changes the endpoint in Settings keeps
-      # their change across upgrades.
-      VECTORA_AGENT_BASE_URL: ${VECTORA_AGENT_BASE_URL:-http://ollama:11434/v1}
-      VECTORA_AGENT_MODEL: ${VECTORA_AGENT_MODEL:-hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M}
+      # server is a sibling service -- so without this a stack that pulled
+      # several GB of weights had no code path that could reach them. Seeded
+      # once, never re-applied, so an admin who changes the endpoint in Settings
+      # keeps their change across upgrades. The defaults are the `llm` service
+      # below and the model it serves.
+      VECTORA_AGENT_BASE_URL: ${VECTORA_AGENT_BASE_URL:-http://llm:8086/v1}
+      VECTORA_AGENT_MODEL: ${VECTORA_AGENT_MODEL:-${VECTORA_LLM_MODEL:-nemotron-3.5-bolt:e4b-q8_0}}
       VECTORA_AGENT_ENABLED: ${VECTORA_AGENT_ENABLED:-0}
     entrypoint: ["bash", "-c"]
     # `bench new-site` writes enable_scheduler=0 into the new site's config, so
@@ -1267,8 +1268,8 @@ services:
           memory: 256m
           cpus: "0.5"
 
-  # --- Local model, opt-in ----------------------------------------------------
-  # docker compose --profile local-model up -d
+  # --- The model, opt-in ------------------------------------------------------
+  # docker compose --profile gpu-model up -d
   #
   # The agent tier is an HTTP client to any OpenAI-compatible endpoint, so it
   # does not care whether the model runs here, on another host, or at a vendor.
@@ -1277,83 +1278,15 @@ services:
   # these two services are not created at all and the stack is unchanged.
   #
   # No memory ceiling here on purpose: the model's working set is the weights,
-  # and a limit below them is an OOM-kill mid-answer. The README is explicit
-  # that the 4 GB host running the rest of this stack cannot also host a model.
-  # On a bigger host, size it to the model -- e.g. for LFM2.5-2.6B Q4 (1.7 GB):
-  #   deploy:
-  #     resources:
-  #       limits:
-  #         memory: 4g
-  #         cpus: "4"
-  # GPU: add a device reservation to `ollama` if the host has one --
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
-  # CPU-only works but is slow enough that the agent timeout needs raising, and
-  # the proxy ceiling with it. See README.md.
-  ollama:
-    image: ollama/ollama:0.40.4
-    logging: *logging
-    profiles: ["local-model"]
-    restart: unless-stopped
-    environment:
-      # Weights unload between calls without this, and the first call after a
-      # quiet period pays the reload before it answers.
-      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
-      # The window the model actually gets. ollama's default is 4096, and the
-      # Mentor and Assistant prompts -- grounding articles plus history -- run
-      # past that on a fourth follow-up. ollama truncates from the head, which
-      # is where the system instruction and the grounding live, and still
-      # answers 200: the answer arrives ungrounded, with citation chips
-      # pointing at articles the model never saw. Must agree with
-      # `context_tokens` in CRM Agent Settings, which is what the prompts are
-      # trimmed against.
-      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-16384}
-    volumes:
-      - ollama-models:/root/.ollama
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-
-  # One-shot: pull the weights, then make one throwaway call so the first real
-  # request from a rep is a warm one. Idempotent -- a pull of a model already
-  # present is a no-op, so `up -d` stays safe to re-run.
-  ollama-pull:
-    image: ollama/ollama:0.40.4
-    logging: *logging
-    profiles: ["local-model"]
-    restart: on-failure
-    depends_on:
-      ollama:
-        condition: service_healthy
-    environment:
-      OLLAMA_HOST: http://ollama:11434
-      MODEL: ${VECTORA_AGENT_MODEL:-hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        echo "Pulling $$MODEL (first run downloads several GB)"
-        ollama pull "$$MODEL"
-        echo "Warming $$MODEL"
-        ollama run "$$MODEL" "reply with the single word: ready" >/dev/null
-        echo "Local model ready at http://ollama:11434/v1"
-        echo "A site created with VECTORA_AGENT_ENABLED=1 is already pointed at it;"
-        echo "otherwise switch the tier on in Settings -> Assistant."
-
-  # --- GPU model, opt-in ------------------------------------------------------
-  # docker compose --profile gpu-model up -d
+  # and a limit below them is an OOM-kill mid-answer.
   #
   # NVIDIA Nemotron 3.5 Bolt E4B (a post-trained Gemma 4 E4B; OpenMDW-1.1 over
   # Apache-2.0) on ollama, on one NVIDIA card of its own. One model for every
   # tier: summaries, drafts, the Analyst, the Assistant -- and, because it reads
-  # audio and images, the Assistant's dictation and photo attachments. Use it
-  # instead of `local-model`, not beside it: one model per stack. Measured on
-  # 2026-11-16 against the MiniCPM-V-4.7-35B it replaces (deploy/README.md,
-  # "A GPU host"): the same task probe, the injection corpus resisted with
+  # audio and images, the Assistant's dictation and photo attachments. It is
+  # the only model this stack serves. Measured on 2026-11-16 against the
+  # MiniCPM-V-4.7-35B it replaces (deploy/README.md, "The model: Nemotron 3.5
+  # Bolt E4B"): the same task probe, the injection corpus resisted with
   # thinking on, and transcription as good as Whisper's.
   #
   # The service keeps the name and port the llama.cpp server had, so a site
@@ -1371,7 +1304,10 @@ services:
   # still answers 200. Four slots of 32768 hold ~11 GB of a 24 GB card.
   # Four matches the CRM's own cap on concurrent model calls.
   llm:
-    image: ollama/ollama:0.40.16
+    # Pinned by digest like every other third-party image here: the model is
+    # checked against a fingerprint, and the server that runs it is the other
+    # half of what was measured.
+    image: ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592
     logging: *logging
     profiles: ["gpu-model"]
     restart: unless-stopped
@@ -1407,7 +1343,7 @@ services:
   # and `llm` is not started. ollama itself checks each blob against its digest
   # as it downloads, so the manifest's digests pin the bytes.
   llm-fetch:
-    image: ollama/ollama:0.40.16
+    image: ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592
     logging: *logging
     profiles: ["gpu-model"]
     restart: "no"
@@ -1439,7 +1375,6 @@ services:
 
 volumes:
   llm-ollama:
-  ollama-models:
   db-data:
   redis-queue-data:
   sites:

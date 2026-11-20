@@ -30,7 +30,7 @@ ADMIN_PASSWORD=smoke-admin-pw
 EOF
 
 if ! docker compose -f "$compose" --env-file "$work/minimal.env" \
-	--profile offsite --profile local-model --profile gpu-model \
+	--profile offsite --profile gpu-model \
 	config --format json >"$work/config.json"; then
 	echo "FAIL  deploy/docker-compose.yml does not parse"
 	exit 1
@@ -202,7 +202,7 @@ check(
 )
 
 # infra-8: the images this stack depends on cannot move under it.
-for name in ("db", "redis-cache", "redis-queue", "backup-offsite"):
+for name in ("db", "redis-cache", "redis-queue", "backup-offsite", "llm", "llm-fetch"):
 	check(f"{name} is pinned by digest", "@sha256:" in services[name]["image"], services[name]["image"])
 
 # Every embedded script parses in the shell that will run it.
@@ -214,7 +214,6 @@ for service, key, shell in (
 	("backup-offsite", "command", "sh"),
 	("backup-offsite", "healthcheck.test", "sh"),
 	("scheduler", "healthcheck.test", "sh"),
-	("ollama-pull", "command", "sh"),
 	("llm-fetch", "command", "sh"),
 ):
 	path = f"{work}/{service}-{key}.sh"

@@ -22,18 +22,18 @@ DEFAULT_SETTINGS = {
 	# localhost:8000/v1 -- frappe's own web port -- so an admin who enabled the
 	# tier without editing it made the CRM POST to itself, collect a 404 and
 	# report "unavailable" with nothing to suggest why. 11434 is ollama's
-	# default and what the deploy stack's local-model profile serves, so the
-	# default is now either correct or refused at connect, which reads honestly.
+	# default, which is what a bench on a laptop has beside it, so the default
+	# is now either correct or refused at connect, which reads honestly. The
+	# deploy stack does not rely on it: create-site seeds the `llm` service's
+	# address (crm.agent.install.apply_endpoint_defaults).
 	"base_url": "http://localhost:11434/v1",
-	# The ollama reference, because the shipped local-model profile serves ollama
-	# and a bare tag resolves to nothing there. Chosen on measurement, not vendor:
-	# of eleven models run through this client, LFM2.5-2.6B is the only one that
-	# refused to draft the fraudulent discount in the injection corpus (0/7, where
-	# every Apache-licensed candidate confirmed it 7/7). Its licence is not
-	# permissive -- see deploy/README.md, "The model licence, and who it binds".
-	"model": "hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M",
+	# The ollama tag of the one model the product ships and is measured against:
+	# NVIDIA Nemotron 3.5 Bolt E4B, which the deploy stack's gpu-model profile
+	# pulls, checks against a pinned fingerprint and serves. See deploy/README.md,
+	# "Running the agent on a local model", for the measurement and the licence.
+	"model": "nemotron-3.5-bolt:e4b-q8_0",
 	"timeout": 30,
-	# 1024 truncates this model mid-JSON on a long thread -- the reply comes back
+	# 1024 truncates a reply mid-JSON on a long thread -- it comes back
 	# as `Invalid JSON: EOF while parsing a string` and the tier reports
 	# "unavailable" for what is really a budget too small to finish the object.
 	# Room for a reasoning model to think AND answer: its thinking is charged to this
@@ -44,19 +44,20 @@ DEFAULT_SETTINGS = {
 	# themselves against (``client.prompt_budget`` = this minus ``max_tokens``).
 	# It is *our* declaration of what the endpoint is serving, not something the
 	# endpoint tells us: an OpenAI-compatible API exposes no way to ask. 8192 is
-	# the smallest window worth pointing this tier at and the shipped model's
-	# own; ollama's default is 4096 and it truncates from the head -- dropping
-	# the system instruction and the grounding -- then answers 200, so a value
-	# larger than what the server actually serves is the one dangerous
-	# direction. See deploy/README.md: the ollama service sets
-	# OLLAMA_CONTEXT_LENGTH to match.
+	# the smallest window worth pointing this tier at; ollama's own default is
+	# 4096 and it truncates from the head -- dropping the system instruction and
+	# the grounding -- then answers 200, so a value larger than what the server
+	# actually serves is the one dangerous direction. The deploy stack's `llm`
+	# service serves 32768 per request (VECTORA_LLM_CONTEXT), and
+	# deploy/README.md says to raise this and ``max_tokens`` to match it there;
+	# the default stays at the floor because it also applies to every site that
+	# has not stored a value, whatever endpoint that site points at.
 	"context_tokens": 8192,
-	# Off, because the shipped model cannot switch its thinking off and ignores
-	# the request. On, every call carries ``reasoning_effort: "none"``. For a model
-	# that honours it (ollama's lfm3-vl) that was the difference between running
-	# out of budget on 21 of 53 corpus calls and answering every one in about a
-	# second. It did not make that model safe: it still confirms the fraudulent
-	# discount -- see .pi/feats/agent/README.md, the 2026-10-28 run.
+	# Off, and it stays off for the shipped model: Nemotron 3.5 Bolt thinks by
+	# default, and with its thinking the injection corpus never lands, where
+	# without it one case does (deploy/README.md, the 2026-11-16 measurement).
+	# On, every call carries ``reasoning_effort: "none"`` -- for an endpoint
+	# whose model spends the whole reply budget thinking and can be told not to.
 	"reasoning_off": 0,
 	"daily_call_budget": 500,
 	# What the chat surfaces may read beyond their own source. Both off by

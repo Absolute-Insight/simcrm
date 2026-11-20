@@ -64,7 +64,7 @@ covers putting a reverse proxy in front of it.
 Read [deploy/README.md](deploy/README.md) before the first upgrade: reverting the image
 is **not** a rollback once `migrate` has run, and the runbook explains what is.
 
-For the optional local-model profile, hardware guidance, and why the assistant's
+For the optional model profile (`gpu-model`), hardware guidance, and why the assistant's
 timeout has to clear your proxy's, see the same file.
 
 ## Development
