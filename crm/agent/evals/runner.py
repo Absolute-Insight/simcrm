@@ -219,7 +219,7 @@ def run_and_print(
 	the site aimed at the candidate if it dies halfway. ``max_tokens`` is the one
 	most often worth moving -- a budget too small for a model's reasoning channel
 	reads as an unanswering endpoint rather than as a budget. ``reasoning_off`` is
-	the other: lfm3-vl thinking at 4096 ran out of budget on 21 of 53 calls, and
+	the other: one thinking model at 4096 ran out of budget on 21 of 53 calls, and
 	with it off answered all of them. ``api_key`` is the candidate's own: the
 	site's key goes only to the site's endpoint.
 	"""

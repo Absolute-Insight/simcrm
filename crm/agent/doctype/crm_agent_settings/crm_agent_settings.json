@@ -51,7 +51,7 @@
    "label": "Base URL"
   },
   {
-   "default": "hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M",
+   "default": "nemotron-3.5-bolt:e4b-q8_0",
    "fieldname": "model",
    "fieldtype": "Data",
    "label": "Model"
@@ -188,7 +188,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-16 12:00:00.000000",
+ "modified": "2026-11-20 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Agent",
  "name": "CRM Agent Settings",

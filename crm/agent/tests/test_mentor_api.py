@@ -128,7 +128,7 @@ class HappyPathTest(IntegrationTestCase):
 
 class CitationFallbackTest(IntegrationTestCase):
 	def test_the_grounding_articles_are_cited_when_the_model_names_none(self):
-		"""LFM2.5, the shipped default, returned related_articles=[] on every live
+		"""The shipped default of the day returned related_articles=[] on every live
 		question while its answers came straight from the selected articles."""
 		answer = AssistantAnswer(answer="Set targets in Settings → Sales Targets.", related_articles=[])
 		with (

@@ -314,13 +314,13 @@ class GroundingTest(UnitTestCase):
 		self.assertEqual(ground(text, won(("2025-12", 4850975.6)))["answer"], text)
 
 	def test_a_year_with_no_data_may_be_called_missing_next_to_a_covered_month(self):
-		# caught live on LFM2.5-24B: a true sentence, dropped for naming December 2025
+		# caught live: a true sentence, dropped for naming December 2025
 		text = "There are no figures for 2024; the history starts in December 2025."
 		self.assertEqual(ground(text, won(("2025-12", 4850975.6)))["answer"], text)
 		self.assertEqual(ground("December 2025 is not available.", won(("2025-12", 1.0)))["dropped"], 1)
 
 	def test_a_total_beside_the_names_it_sums_is_not_misattributed(self):
-		"""Caught live on LFM2.5-24B: the 336 is the at-risk total, and the summary's
+		"""Caught live: the 336 is the at-risk total, and the summary's
 		"- No activity: 336 deals" line made it look like a figure owned by a row."""
 		rows = [
 			{

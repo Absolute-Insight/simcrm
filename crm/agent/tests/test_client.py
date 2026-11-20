@@ -24,7 +24,7 @@ from crm.agent.schemas import ThreadSummary
 CFG = AgentConfig(
 	enabled=True,
 	base_url="http://gpu.local:8000/v1",
-	model="lfm2.5-2.6b",
+	model="nemotron-3.5-bolt:e4b-q8_0",
 	timeout=5,
 	max_tokens=256,
 )
@@ -54,7 +54,7 @@ class ClientRequestShapeTest(UnitTestCase):
 		self.assertEqual(url, "http://gpu.local:8000/v1/chat/completions")
 		self.assertEqual(kwargs["timeout"], 5)
 		body = kwargs["json"]
-		self.assertEqual(body["model"], "lfm2.5-2.6b")
+		self.assertEqual(body["model"], "nemotron-3.5-bolt:e4b-q8_0")
 		self.assertEqual(body["temperature"], 0)
 		self.assertEqual(body["max_tokens"], 256)
 		self.assertEqual(body["response_format"]["type"], "json_schema")
