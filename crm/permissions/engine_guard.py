@@ -27,21 +27,42 @@ and the report view use on the pinned frappe (17.0.0-dev).
    case-sensitive turned that into an error (no table ``tabcrm deal``); now
    the builder refuses it whatever the database does.
 
-2. **A child table shared with a Single.** The same early return also leaves out
-   *which* parent a row belongs to. A child doctype used by a Single and by an
-   ordinary doctype (``Event Notifications``: FCRM Settings and Event) passed
-   check 1 honestly under the Single, and the list then held every Event's rows
-   too. ``install`` wraps ``Engine.add_permission_conditions``: under a Single
-   parent the rows are limited to ``parenttype`` = that Single.
+2. **A child table shared between parents.** frappe never asks *which* kind of
+   parent a row belongs to. Under a Single the early return adds nothing, so a
+   child doctype used by a Single and by an ordinary doctype (``Event
+   Notifications``: FCRM Settings and Event) passed check 1 honestly under the
+   Single and the list held every Event's rows too. Under an ordinary parent
+   frappe joins on ``child.parent = parent.name`` alone, so a reader of one
+   parent also got the rows of any other doctype's document that happens to
+   carry the same name as one they can read. ``install`` wraps
+   ``Engine.add_permission_conditions``: whenever a parent is named, the rows
+   are limited to ``parenttype`` = that parent. A child row always carries the
+   doctype whose table field holds it, so an honest list loses nothing.
 
 3. **``ignore_user_permissions`` from the request.** ``frappe.desk.reportview``
    does not strip it, so the report view, its count and export, and the kanban
    read it from the request and skip User Permission conditions. This app mirrors
    User Permissions between Item and CRM Product, so an administrator's
    restriction was one parameter deep. ``guard_request`` deletes that one key
-   from ``frappe.form_dict`` unless the method called is in
-   ``frappe.desk.search``, which honours it only after checking that the link
-   field named has the option set. It touches nothing else of the request.
+   from ``frappe.form_dict`` unless the method called is one of the two the
+   desk's link control sends it to: anything in ``frappe.desk.search``, and
+   ``frappe.client.validate_link_and_fetch``, which hands it to the same
+   ``search_widget``. That honours it only after checking that the link field
+   named has the option set, and neither does anything else with it. Dropping
+   it from the second made the desk clear a value its own search had just
+   offered. It touches nothing else of the request. ``install`` also adds the
+   key to ``frappe.desk.reportview.DISALLOWED_PARAMS``, which the report view,
+   its count and export, and the kanban strip from their arguments on every
+   call, so they drop it however the arguments came to be there. The link
+   search does not read its arguments through that list.
+
+4. **frappe's MCP endpoint.** Newer frappe serves ``/api/v2/mcp``, whose
+   ``call_method`` tool replaces ``frappe.form_dict`` with the tool's arguments
+   after the request hooks have run, so a flag inside them would pass check 3.
+   The pinned frappe has no such endpoint and nothing in this app serves or
+   calls one, so ``guard_request`` refuses the path: it answers 403 where it
+   answered 404, and stays shut if the pin moves. Whoever comes to want it
+   has to apply check 3 to the tool's arguments first.
 
 What this does not do. A virtual doctype's list never reaches the builder (its
 controller answers), so nothing here applies to one. A System Manager who adds a
@@ -73,6 +94,9 @@ from frappe import _
 _MARK = "_crm_parent_guard"
 _FLAG = "ignore_user_permissions"
 _SEARCH = "frappe.desk.search."
+# the link control's second call; it passes the flag on to search_widget and nowhere else
+_LINK_VALIDATION = "frappe.client.validate_link_and_fetch"
+_MCP_PATH = re.compile(r"/api/(?:v\d+/)?mcp(?:/.*)?", re.IGNORECASE)
 # /api/method/<method> and /api/v1/method/<method> call the first segment;
 # /api/v2/method/<method> calls it only when it is the whole path
 _RPC_PATH = re.compile(r"/api/(?:(?:v1/)?method/(?P<v1>[^/]+)(?:/.*)?|v2/method/(?P<v2>[^/]+))")
@@ -126,15 +150,12 @@ def _checks_the_parent(check_select):
 	return check_select_permission
 
 
-def _keeps_to_a_single_parent(add_conditions):
+def _keeps_to_the_parent_named(add_conditions):
 	def add_permission_conditions(self):
 		result = add_conditions(self)
-		if (
-			self.apply_permissions
-			and self.permission_doctype != self.doctype
-			and frappe.get_meta(self.permission_doctype).issingle
-		):
-			# frappe added nothing for this parent; a Single's rows carry its name
+		if self.apply_permissions and self.permission_doctype != self.doctype:
+			# frappe matches a row to its parent by name alone, and under a Single
+			# by nothing; a row carries the doctype it belongs to
 			self.query = self.query.where(self.table.parenttype == self.permission_doctype)
 		return result
 
@@ -156,7 +177,7 @@ def _engine_wraps():
 
 	return (
 		(Engine, "check_select_permission", _checks_the_parent),
-		(Engine, "add_permission_conditions", _keeps_to_a_single_parent),
+		(Engine, "add_permission_conditions", _keeps_to_the_parent_named),
 	)
 
 
@@ -171,13 +192,33 @@ def _legacy_wraps():
 	return ((DatabaseQuery, "check_read_permission", _checks_the_parent_legacy),)
 
 
+def _report_view_strips_the_flag(add: bool = False) -> bool:
+	"""Whether the report view drops the flag from its arguments; ``add`` makes it so.
+
+	``clean_params`` reads the tuple from its module on every call, so it is
+	replaced, not changed. A frappe without it is reported, never raised on.
+	"""
+	try:
+		from frappe.desk import reportview
+	except ImportError:
+		return False
+	params = getattr(reportview, "DISALLOWED_PARAMS", None)
+	if not isinstance(params, tuple | list):
+		return False
+	if add and _FLAG not in params:
+		reportview.DISALLOWED_PARAMS = (*params, _FLAG)
+	return _FLAG in reportview.DISALLOWED_PARAMS
+
+
 def install(**_job) -> None:
 	"""Wrap the builders' permission methods. Idempotent, and it only ever narrows.
 
 	Raises if ``Engine`` or one of its two methods is gone: a list that cannot be
-	guarded should not be served. ``before_job`` hands over the job's details,
-	hence the keyword arguments.
+	guarded should not be served. A report view whose list of stripped arguments
+	is gone does not raise here; ``ensure_installed`` reports it at migrate.
+	``before_job`` hands over the job's details, hence the keyword arguments.
 	"""
+	_report_view_strips_the_flag(add=True)
 	for owner, name, wrap in (*_engine_wraps(), *_legacy_wraps()):
 		current = getattr(owner, name)
 		if getattr(current, _MARK, False):
@@ -190,12 +231,15 @@ def install(**_job) -> None:
 
 
 def installed() -> bool:
-	"""Whether every method there is to wrap is wrapped in this process."""
+	"""Whether every method there is to wrap is wrapped in this process, and the
+	report view strips the flag."""
 	try:
 		wraps = (*_engine_wraps(), *_legacy_wraps())
 	except ImportError:
 		return False
-	return all(getattr(getattr(owner, name, None), _MARK, False) for owner, name, _wrap in wraps)
+	if not all(getattr(getattr(owner, name, None), _MARK, False) for owner, name, _wrap in wraps):
+		return False
+	return _report_view_strips_the_flag()
 
 
 def ensure_installed() -> None:
@@ -203,7 +247,8 @@ def ensure_installed() -> None:
 
 	``install`` wraps frappe methods by name. An upgrade that renames one of
 	``Engine``'s would leave every row-level rule open to a borrowed parent with
-	nothing to show for it; this is where that is noticed. Runs from after_migrate.
+	nothing to show for it; this is where that is noticed, and likewise a report
+	view that no longer keeps the list the flag is added to. Runs from after_migrate.
 	"""
 	message = _("Vectora could not guard the query builders of this Frappe.")
 	message += " See crm/permissions/engine_guard.py."
@@ -226,16 +271,25 @@ def _method_called() -> str | None:
 
 
 def drop_request_flag() -> None:
-	"""Delete ``ignore_user_permissions`` from the request, unless it is a link search."""
+	"""Delete ``ignore_user_permissions`` from the request, unless a link field is asking."""
 	form = getattr(frappe.local, "form_dict", None)
 	if not form or _FLAG not in form:
 		return
-	if (_method_called() or "").startswith(_SEARCH):
+	called = _method_called() or ""
+	if called.startswith(_SEARCH) or called == _LINK_VALIDATION:
 		return
 	del form[_FLAG]
 
 
+def refuse_mcp() -> None:
+	"""Refuse frappe's MCP endpoint, which sets a call's arguments after this hook has run."""
+	request = getattr(frappe.local, "request", None)
+	if _MCP_PATH.fullmatch(getattr(request, "path", None) or ""):
+		frappe.throw(_("This endpoint is not available."), frappe.PermissionError)
+
+
 def guard_request() -> None:
-	"""The ``before_request`` hook: the wraps, then the request's own flag."""
+	"""The ``before_request`` hook: the wraps, then what this request itself carries."""
 	install()
+	refuse_mcp()
 	drop_request_flag()

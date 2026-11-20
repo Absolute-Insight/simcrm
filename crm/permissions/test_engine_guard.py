@@ -37,6 +37,7 @@ SINGLE = "System Settings"
 SHARED_CHILD = "Event Notifications"  # a table of FCRM Settings and of Event
 REPORT_VIEW = "/api/method/frappe.desk.reportview.get"
 LINK_SEARCH = "frappe.desk.search.search_link"
+LINK_VALIDATION = "frappe.client.validate_link_and_fetch"
 REFUSAL = "parent it does not belong to"
 ENGINE_METHODS = ("check_select_permission", "add_permission_conditions")
 
@@ -326,6 +327,80 @@ class ListParentGuardTest(IntegrationTestCase):
 		leaked = frappe.get_list(SHARED_CHILD, parent_doctype="FCRM Settings", pluck="name", limit=0)
 		self.assertIn(theirs, leaked)
 
+	def same_named_row_of_another_parent(self) -> tuple[str, str]:
+		"""An event of Alice's, and a row of this table kept under another doctype's
+		document that happens to carry the event's name."""
+		frappe.set_user(ALICE)
+		event = frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "Alices event",
+				"event_type": "Private",
+				"starts_on": frappe.utils.now_datetime(),
+				"notifications": [{"type": "Notification", "before": 5, "interval": "minutes"}],
+			}
+		).insert(ignore_permissions=True)
+		frappe.set_user("Administrator")
+		self.addCleanup(frappe.delete_doc, "Event", event.name, force=True, ignore_permissions=True)
+		other = frappe.get_doc(
+			{
+				"doctype": SHARED_CHILD,
+				"parent": event.name,
+				"parenttype": "CRM Deal",
+				"parentfield": "notifications",
+				"type": "Email",
+				"before": 3,
+				"interval": "hours",
+			}
+		)
+		other.db_insert()
+		self.addCleanup(frappe.db.delete, SHARED_CHILD, {"name": other.name})
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(ALICE)
+		return event.notifications[0].name, other.name
+
+	def test_under_an_ordinary_parent_only_that_doctypes_rows_are_listed(self):
+		own, other = self.same_named_row_of_another_parent()
+		rows = get_list(SHARED_CHILD, fields=["name", "parenttype"], parent="Event", limit_page_length=0)
+		names = [row.name for row in rows]
+		self.assertIn(own, names)
+		self.assertNotIn(other, names)
+		self.assertEqual({row.parenttype for row in rows}, {"Event"})
+		self.assertNotIn(
+			other, reportview_execute(SHARED_CHILD, parent_doctype="Event", pluck="name", limit=0)
+		)
+
+	def test_without_the_guard_a_same_named_parent_of_another_doctype_leaks(self):
+		"""Why the wrap is not kept to Singles; when this fails frappe joins on parenttype."""
+		own, other = self.same_named_row_of_another_parent()
+		self.without(Engine, "add_permission_conditions")
+		leaked = frappe.get_list(SHARED_CHILD, parent_doctype="Event", pluck="name", limit=0)
+		self.assertIn(own, leaked)
+		self.assertIn(other, leaked)
+
+	def test_the_parenttype_condition_costs_an_honest_list_nothing(self):
+		"""Each table under its parent, with the wrap and without it: the same rows."""
+		reminder = self.bobs_event_reminder()
+		frappe.set_user("Administrator")
+		guarded = Engine.add_permission_conditions
+		compared = 0
+		for parent in ("Event", "CRM Deal", "CRM Lead", "Contact", "Address", "CRM Rep Plan"):
+			for df in frappe.get_meta(parent).get_table_fields():
+				with self.subTest(parent=parent, table=df.options):
+					with_it = frappe.get_list(df.options, parent_doctype=parent, pluck="name", limit=0)
+					with patch.object(Engine, "add_permission_conditions", guarded.__wrapped__):
+						without_it = frappe.get_list(df.options, parent_doctype=parent, pluck="name", limit=0)
+					self.assertCountEqual(with_it, without_it)
+					compared += len(with_it)
+		self.assertTrue(compared, "nothing was listed, so nothing was compared")
+		# a private event's rows are its owner's to list, whoever else is asking
+		frappe.set_user(BOB)
+		with_it = frappe.get_list(SHARED_CHILD, parent_doctype="Event", pluck="name", limit=0)
+		with patch.object(Engine, "add_permission_conditions", guarded.__wrapped__):
+			without_it = frappe.get_list(SHARED_CHILD, parent_doctype="Event", pluck="name", limit=0)
+		self.assertIn(reminder, with_it)
+		self.assertCountEqual(with_it, without_it)
+
 	def test_an_ordinary_parent_keeps_its_own_row_rules(self):
 		theirs = self.bobs_event_reminder()
 		self.assertNotIn(theirs, frappe.get_list(SHARED_CHILD, parent_doctype="Event", pluck="name", limit=0))
@@ -378,11 +453,59 @@ class ListParentGuardTest(IntegrationTestCase):
 
 	def test_without_the_guard_the_request_flag_lists_what_was_withheld(self):
 		"""Why the flag is dropped; when this fails the report view strips it itself."""
+		from frappe.desk import reportview
+
 		_allowed, withheld = self.restricted_to_one_lead()
 		self.request(REPORT_VIEW, doctype="CRM Lead", fields='["name"]')
 		self.assertNotIn(withheld, self.listed_by_the_report_view())
 		frappe.form_dict.ignore_user_permissions = "1"
-		self.assertIn(withheld, self.listed_by_the_report_view())
+		# as frappe ships it, without the key install() adds
+		shipped = tuple(p for p in reportview.DISALLOWED_PARAMS if p != "ignore_user_permissions")
+		with patch.object(reportview, "DISALLOWED_PARAMS", shipped):
+			self.assertIn(withheld, self.listed_by_the_report_view())
+
+	def test_the_report_view_drops_the_flag_however_it_got_there(self):
+		"""An endpoint that sets a call's arguments after before_request, as frappe's
+		MCP does, is past drop_request_flag; the report view strips the key itself."""
+		from frappe.desk import reportview
+		from frappe.desk.doctype.kanban_board.kanban_board import get_kanban_reportview_args
+
+		self.assertIn("ignore_user_permissions", reportview.DISALLOWED_PARAMS)
+		allowed, withheld = self.restricted_to_one_lead()
+		self.request(REPORT_VIEW, doctype="CRM Lead", fields='["name"]')
+		engine_guard.guard_request()
+		frappe.form_dict.ignore_user_permissions = "1"
+		names = self.listed_by_the_report_view()
+		self.assertIn(allowed, names)
+		self.assertNotIn(withheld, names)
+		self.assertNotIn("ignore_user_permissions", reportview.get_form_params())
+		frappe.form_dict.board_name = "a board"
+		self.assertNotIn("ignore_user_permissions", get_kanban_reportview_args()[-1])
+		# and what frappe stripped before is still stripped
+		for param in ("cmd", "data", "ignore_permissions", "view", "user", "csrf_token", "join"):
+			self.assertIn(param, reportview.DISALLOWED_PARAMS)
+
+	def test_the_flag_is_added_to_the_report_view_once_and_its_absence_is_reported(self):
+		from frappe.desk import reportview
+
+		before = reportview.DISALLOWED_PARAMS
+		engine_guard.install()
+		self.assertIs(reportview.DISALLOWED_PARAMS, before)
+		self.assertEqual(before.count("ignore_user_permissions"), 1)
+		shipped = tuple(p for p in before if p != "ignore_user_permissions")
+		with patch.object(reportview, "DISALLOWED_PARAMS", shipped):
+			self.assertFalse(engine_guard.installed())
+			engine_guard.install()
+			self.assertTrue(engine_guard.installed())
+			self.assertEqual(reportview.DISALLOWED_PARAMS, (*shipped, "ignore_user_permissions"))
+		# a frappe that no longer keeps the list: requests go on, the migrate does not
+		gone = types.ModuleType("frappe.desk.reportview")
+		with patch.dict(sys.modules, {"frappe.desk.reportview": gone}), patch("frappe.desk.reportview", gone):
+			engine_guard.guard_request()
+			self.assertFalse(engine_guard.installed())
+			with self.assertRaises(frappe.ValidationError):
+				engine_guard.ensure_installed()
+		self.assertTrue(engine_guard.installed())
 
 	def test_the_flag_is_dropped_however_the_method_is_named(self):
 		dropped = [
@@ -399,6 +522,11 @@ class ListParentGuardTest(IntegrationTestCase):
 			# v2 reads two segments as a doctype and its controller's method
 			(f"/api/v2/method/{LINK_SEARCH}/get", {}),
 			("/api/method/frappe.desk.searchx", {}),
+			# only the one method of frappe.client, by its whole name
+			("/api/method/frappe.client.get_list", {}),
+			("/api/method/frappe.client.get_count", {}),
+			(f"/api/method/{LINK_VALIDATION}x", {}),
+			(f"/api/method/{LINK_VALIDATION}", {"cmd": "frappe.desk.reportview.get"}),
 			(f"/app/{LINK_SEARCH}", {}),
 		]
 		for path, form in dropped:
@@ -415,12 +543,90 @@ class ListParentGuardTest(IntegrationTestCase):
 			(f"/api/v1/method/{LINK_SEARCH}", {}),
 			(f"/api/v2/method/{LINK_SEARCH}", {}),
 			("/", {"cmd": LINK_SEARCH}),
+			# the link control's second call, with the same arguments
+			(f"/api/method/{LINK_VALIDATION}", {}),
+			(f"/api/v2/method/{LINK_VALIDATION}", {}),
+			("/", {"cmd": LINK_VALIDATION}),
 		]
 		for path, form in kept:
 			with self.subTest(path=path, form=form):
 				self.request(path, ignore_user_permissions="1", **form)
 				engine_guard.guard_request()
 				self.assertEqual(frappe.form_dict.ignore_user_permissions, "1")
+
+	def test_link_validation_hands_the_flag_to_the_search_and_nowhere_else(self):
+		"""What makes it safe to keep: the day frappe uses it for more, this fails."""
+		import inspect
+
+		from frappe import client
+
+		source = inspect.getsource(client.validate_link_and_fetch)
+		self.assertNotIn("ignore_user_permissions", source)
+		self.assertIn("search_widget", source)
+		self.assertIn("**search_args", source)
+		self.assertNotIn("search_args", source.split("search_widget,", 1)[1].split(")", 1)[1])
+		from frappe.desk.search import search_widget
+
+		self.assertIn("validate_ignore_user_permissions", inspect.getsource(search_widget))
+
+	def test_a_link_field_that_ignores_user_permissions_validates_what_it_offered(self):
+		"""The desk searches, then validates, with one set of arguments. Dropping the
+		flag from the second cleared a value the first had just offered."""
+		from frappe.client import validate_link_and_fetch
+		from frappe.desk.search import search_link
+
+		allowed, withheld = self.restricted_to_one_lead()
+		field = frappe.get_meta("CRM Deal").get_field("lead")
+		self.assertEqual(field.options, "CRM Lead")
+		self.addCleanup(setattr, field, "ignore_user_permissions", field.ignore_user_permissions)
+		field.ignore_user_permissions = 1
+		args = {"reference_doctype": "CRM Deal", "link_fieldname": "lead", "ignore_user_permissions": "1"}
+
+		self.request(f"/api/method/{LINK_SEARCH}", doctype="CRM Lead", txt=withheld, **args)
+		frappe.local.request.method = "POST"
+		engine_guard.guard_request()
+		offered = [row["value"] for row in search_link(**frappe.form_dict)]
+		self.assertIn(withheld, offered)
+
+		self.request(f"/api/method/{LINK_VALIDATION}", doctype="CRM Lead", docname=withheld, **args)
+		frappe.local.request.method = "POST"
+		engine_guard.guard_request()
+		self.assertEqual(validate_link_and_fetch(**frappe.form_dict).get("name"), withheld)
+
+		# a field without the option gets no such favour, flag or not
+		field.ignore_user_permissions = 0
+		self.request(f"/api/method/{LINK_VALIDATION}", doctype="CRM Lead", docname=withheld, **args)
+		frappe.local.request.method = "POST"
+		engine_guard.guard_request()
+		self.assertEqual(frappe.form_dict.ignore_user_permissions, "1")
+		with self.assertRaises((frappe.ValidationError, frappe.PermissionError)):
+			validate_link_and_fetch(**frappe.form_dict)
+		frappe.form_dict.pop("ignore_user_permissions")
+		self.assertFalse(validate_link_and_fetch(**frappe.form_dict))
+		self.assertTrue(validate_link_and_fetch(doctype="CRM Lead", docname=allowed).get("name"))
+
+	# --- frappe's MCP endpoint ---------------------------------------------------
+
+	def test_the_mcp_endpoint_is_refused(self):
+		for path in ("/api/v2/mcp", "/api/v2/mcp/", "/api/v2/mcp/anything", "/api/mcp", "/api/V2/MCP"):
+			with self.subTest(path=path):
+				self.request(path, ignore_user_permissions="1")
+				with self.assertRaisesRegex(frappe.PermissionError, "not available"):
+					engine_guard.guard_request()
+				with self.assertRaisesRegex(frappe.PermissionError, "not available"):
+					document_guard.reserve_action()
+		for path in ("/api/v2/method/ping", "/api/v2/mcpx", "/api/method/mcp", "/app/mcp", "/mcp"):
+			with self.subTest(path=path):
+				self.request(path)
+				engine_guard.guard_request()
+
+	def test_this_frappe_has_no_mcp_endpoint_to_lose(self):
+		"""Refusing the path costs nothing while this holds. When it fails, frappe has
+		grown the endpoint: read engine_guard's note on it before allowing it."""
+		import importlib.util
+
+		self.assertIsNone(importlib.util.find_spec("frappe.mcp"))
+		self.assertNotIn("enable_mcp", [df.fieldname for df in frappe.get_meta("System Settings").fields])
 
 	def test_a_job_has_no_request_to_clean(self):
 		for attr in ("form_dict", "request"):
