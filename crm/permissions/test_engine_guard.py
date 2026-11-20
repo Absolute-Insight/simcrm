@@ -378,17 +378,28 @@ class ListParentGuardTest(IntegrationTestCase):
 		self.assertIn(own, leaked)
 		self.assertIn(other, leaked)
 
-	def test_every_table_lists_under_its_parent_what_is_stored_under_it(self):
-		"""The parenttype condition must cost an honest list nothing."""
+	def test_the_parenttype_condition_costs_an_honest_list_nothing(self):
+		"""Each table under its parent, with the wrap and without it: the same rows."""
+		reminder = self.bobs_event_reminder()
 		frappe.set_user("Administrator")
+		guarded = Engine.add_permission_conditions
+		compared = 0
 		for parent in ("Event", "CRM Deal", "CRM Lead", "Contact", "Address", "CRM Rep Plan"):
 			for df in frappe.get_meta(parent).get_table_fields():
 				with self.subTest(parent=parent, table=df.options):
-					listed = frappe.get_list(df.options, parent_doctype=parent, pluck="name", limit=0)
-					stored = frappe.get_all(
-						df.options, filters={"parenttype": parent, "parentfield": ("is", "set")}, pluck="name"
-					)
-					self.assertLessEqual(set(listed), set(stored))
+					with_it = frappe.get_list(df.options, parent_doctype=parent, pluck="name", limit=0)
+					with patch.object(Engine, "add_permission_conditions", guarded.__wrapped__):
+						without_it = frappe.get_list(df.options, parent_doctype=parent, pluck="name", limit=0)
+					self.assertCountEqual(with_it, without_it)
+					compared += len(with_it)
+		self.assertTrue(compared, "nothing was listed, so nothing was compared")
+		# a private event's rows are its owner's to list, whoever else is asking
+		frappe.set_user(BOB)
+		with_it = frappe.get_list(SHARED_CHILD, parent_doctype="Event", pluck="name", limit=0)
+		with patch.object(Engine, "add_permission_conditions", guarded.__wrapped__):
+			without_it = frappe.get_list(SHARED_CHILD, parent_doctype="Event", pluck="name", limit=0)
+		self.assertIn(reminder, with_it)
+		self.assertCountEqual(with_it, without_it)
 
 	def test_an_ordinary_parent_keeps_its_own_row_rules(self):
 		theirs = self.bobs_event_reminder()
@@ -442,11 +453,59 @@ class ListParentGuardTest(IntegrationTestCase):
 
 	def test_without_the_guard_the_request_flag_lists_what_was_withheld(self):
 		"""Why the flag is dropped; when this fails the report view strips it itself."""
+		from frappe.desk import reportview
+
 		_allowed, withheld = self.restricted_to_one_lead()
 		self.request(REPORT_VIEW, doctype="CRM Lead", fields='["name"]')
 		self.assertNotIn(withheld, self.listed_by_the_report_view())
 		frappe.form_dict.ignore_user_permissions = "1"
-		self.assertIn(withheld, self.listed_by_the_report_view())
+		# as frappe ships it, without the key install() adds
+		shipped = tuple(p for p in reportview.DISALLOWED_PARAMS if p != "ignore_user_permissions")
+		with patch.object(reportview, "DISALLOWED_PARAMS", shipped):
+			self.assertIn(withheld, self.listed_by_the_report_view())
+
+	def test_the_report_view_drops_the_flag_however_it_got_there(self):
+		"""An endpoint that sets a call's arguments after before_request, as frappe's
+		MCP does, is past drop_request_flag; the report view strips the key itself."""
+		from frappe.desk import reportview
+		from frappe.desk.doctype.kanban_board.kanban_board import get_kanban_reportview_args
+
+		self.assertIn("ignore_user_permissions", reportview.DISALLOWED_PARAMS)
+		allowed, withheld = self.restricted_to_one_lead()
+		self.request(REPORT_VIEW, doctype="CRM Lead", fields='["name"]')
+		engine_guard.guard_request()
+		frappe.form_dict.ignore_user_permissions = "1"
+		names = self.listed_by_the_report_view()
+		self.assertIn(allowed, names)
+		self.assertNotIn(withheld, names)
+		self.assertNotIn("ignore_user_permissions", reportview.get_form_params())
+		frappe.form_dict.board_name = "a board"
+		self.assertNotIn("ignore_user_permissions", get_kanban_reportview_args()[-1])
+		# and what frappe stripped before is still stripped
+		for param in ("cmd", "data", "ignore_permissions", "view", "user", "csrf_token", "join"):
+			self.assertIn(param, reportview.DISALLOWED_PARAMS)
+
+	def test_the_flag_is_added_to_the_report_view_once_and_its_absence_is_reported(self):
+		from frappe.desk import reportview
+
+		before = reportview.DISALLOWED_PARAMS
+		engine_guard.install()
+		self.assertIs(reportview.DISALLOWED_PARAMS, before)
+		self.assertEqual(before.count("ignore_user_permissions"), 1)
+		shipped = tuple(p for p in before if p != "ignore_user_permissions")
+		with patch.object(reportview, "DISALLOWED_PARAMS", shipped):
+			self.assertFalse(engine_guard.installed())
+			engine_guard.install()
+			self.assertTrue(engine_guard.installed())
+			self.assertEqual(reportview.DISALLOWED_PARAMS, (*shipped, "ignore_user_permissions"))
+		# a frappe that no longer keeps the list: requests go on, the migrate does not
+		gone = types.ModuleType("frappe.desk.reportview")
+		with patch.dict(sys.modules, {"frappe.desk.reportview": gone}), patch("frappe.desk.reportview", gone):
+			engine_guard.guard_request()
+			self.assertFalse(engine_guard.installed())
+			with self.assertRaises(frappe.ValidationError):
+				engine_guard.ensure_installed()
+		self.assertTrue(engine_guard.installed())
 
 	def test_the_flag_is_dropped_however_the_method_is_named(self):
 		dropped = [

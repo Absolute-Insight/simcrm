@@ -50,7 +50,11 @@ and the report view use on the pinned frappe (17.0.0-dev).
    ``search_widget``. That honours it only after checking that the link field
    named has the option set, and neither does anything else with it. Dropping
    it from the second made the desk clear a value its own search had just
-   offered. It touches nothing else of the request.
+   offered. It touches nothing else of the request. ``install`` also adds the
+   key to ``frappe.desk.reportview.DISALLOWED_PARAMS``, which the report view,
+   its count and export, and the kanban strip from their arguments on every
+   call, so they drop it however the arguments came to be there. The link
+   search does not read its arguments through that list.
 
 4. **frappe's MCP endpoint.** Newer frappe serves ``/api/v2/mcp``, whose
    ``call_method`` tool replaces ``frappe.form_dict`` with the tool's arguments
@@ -188,13 +192,33 @@ def _legacy_wraps():
 	return ((DatabaseQuery, "check_read_permission", _checks_the_parent_legacy),)
 
 
+def _report_view_strips_the_flag(add: bool = False) -> bool:
+	"""Whether the report view drops the flag from its arguments; ``add`` makes it so.
+
+	``clean_params`` reads the tuple from its module on every call, so it is
+	replaced, not changed. A frappe without it is reported, never raised on.
+	"""
+	try:
+		from frappe.desk import reportview
+	except ImportError:
+		return False
+	params = getattr(reportview, "DISALLOWED_PARAMS", None)
+	if not isinstance(params, tuple | list):
+		return False
+	if add and _FLAG not in params:
+		reportview.DISALLOWED_PARAMS = (*params, _FLAG)
+	return _FLAG in reportview.DISALLOWED_PARAMS
+
+
 def install(**_job) -> None:
 	"""Wrap the builders' permission methods. Idempotent, and it only ever narrows.
 
 	Raises if ``Engine`` or one of its two methods is gone: a list that cannot be
-	guarded should not be served. ``before_job`` hands over the job's details,
-	hence the keyword arguments.
+	guarded should not be served. A report view whose list of stripped arguments
+	is gone does not raise here; ``ensure_installed`` reports it at migrate.
+	``before_job`` hands over the job's details, hence the keyword arguments.
 	"""
+	_report_view_strips_the_flag(add=True)
 	for owner, name, wrap in (*_engine_wraps(), *_legacy_wraps()):
 		current = getattr(owner, name)
 		if getattr(current, _MARK, False):
@@ -207,12 +231,15 @@ def install(**_job) -> None:
 
 
 def installed() -> bool:
-	"""Whether every method there is to wrap is wrapped in this process."""
+	"""Whether every method there is to wrap is wrapped in this process, and the
+	report view strips the flag."""
 	try:
 		wraps = (*_engine_wraps(), *_legacy_wraps())
 	except ImportError:
 		return False
-	return all(getattr(getattr(owner, name, None), _MARK, False) for owner, name, _wrap in wraps)
+	if not all(getattr(getattr(owner, name, None), _MARK, False) for owner, name, _wrap in wraps):
+		return False
+	return _report_view_strips_the_flag()
 
 
 def ensure_installed() -> None:
@@ -220,7 +247,8 @@ def ensure_installed() -> None:
 
 	``install`` wraps frappe methods by name. An upgrade that renames one of
 	``Engine``'s would leave every row-level rule open to a borrowed parent with
-	nothing to show for it; this is where that is noticed. Runs from after_migrate.
+	nothing to show for it; this is where that is noticed, and likewise a report
+	view that no longer keeps the list the flag is added to. Runs from after_migrate.
 	"""
 	message = _("Vectora could not guard the query builders of this Frappe.")
 	message += " See crm/permissions/engine_guard.py."
