@@ -1,92 +1,994 @@
 {
-	"_comment": "How a public form's field condition evaluates. truthy() in crm_form.html (frontend/tests/unit/webFormConditionalEval.test.js) and crm.utils.form_conditions.truthy (test_form_conditions.py) are both run against this list, so the server enforces exactly what the page shows. Each case: [expression, doc, fallback, expected].",
+	"_comment": "How a public form's field condition evaluates. truthy() in crm_form.html (frontend/tests/unit/webFormConditionalEval.test.js) and crm.utils.form_conditions.truthy (test_form_conditions.py) are both run against this list, so the server enforces exactly what the page shows. Each case: [expression, doc, fallback, expected]. Each submission, run against reviewSubmission() on the page and review_submission() on the server: [fields, values, hidden, missing].",
 	"cases": [
-		["organization", {"organization": "Acme"}, false, true],
-		["organization", {"organization": ""}, true, false],
-		["missing", {}, true, false],
-		["items", {"items": []}, true, false],
-		["items", {"items": [1]}, false, true],
-		["zero", {"zero": "0"}, false, true],
-		["zero", {"zero": 0}, true, false],
-		["", {}, true, true],
-		["   ", {}, false, false],
-		["fn:check", {"check": 1}, false, false],
-		["fn:check", {"check": 1}, true, true],
-
-		["eval:doc.organization == \"Acme\"", {"organization": "Acme"}, false, true],
-		["eval:doc.organization == 'Other'", {"organization": "Acme"}, true, false],
-		["eval:doc.organization === 'Acme'", {"organization": "Acme"}, false, true],
-		["eval:doc.organization !== 'Acme'", {"organization": "Acme"}, true, false],
-		["eval:doc.n > 5", {"n": "10"}, false, true],
-		["eval:doc.n > 5", {"n": 3}, true, false],
-		["eval:doc.n == 10", {"n": "10"}, false, true],
-		["eval:doc.n == 10", {"n": " 10 "}, false, true],
-		["eval:doc.n == 10", {"n": "10.0"}, false, true],
-		["eval:doc.n == 16", {"n": "0x10"}, false, true],
-		["eval:doc.n >= -1.5", {"n": "-1.5"}, false, true],
-		["eval:doc.n > 'abc'", {"n": 5}, true, false],
-		["eval:doc.n < 'abc'", {"n": 5}, true, false],
-		["eval:doc.a < doc.b", {"a": "10", "b": "9"}, false, true],
-		["eval:doc.a < 9", {"a": "10"}, true, false],
-		["eval:doc.a <= doc.b", {"a": "x", "b": "x"}, false, true],
-		["eval:doc.a > doc.b", {"a": "b", "b": "a"}, false, true],
-		["eval:doc.s == 0", {"s": ""}, false, true],
-		["eval:doc.s == null", {"s": ""}, true, false],
-		["eval:doc.m == null", {}, false, true],
-		["eval:doc.m === null", {}, false, true],
-		["eval:doc.u == null", {"u": null}, false, true],
-		["eval:doc.u < 1", {"u": null}, false, true],
-		["eval:doc.m < 1", {}, true, false],
-		["eval:null == 0", {}, true, false],
-		["eval:doc.c == 1", {"c": 1}, false, true],
-		["eval:doc.c == true", {"c": 1}, false, true],
-		["eval:doc.c == true", {"c": "1"}, false, true],
-		["eval:doc.c == false", {"c": 0}, false, true],
-		["eval:doc.c == false", {"c": ""}, false, true],
-		["eval:doc.c == 'true'", {"c": true}, true, false],
-		["eval:doc.c != 1", {"c": "1"}, true, false],
-		["eval:doc.list == ''", {"list": []}, false, true],
-		["eval:doc.list == 'a,b'", {"list": ["a", "b"]}, false, true],
-
-		["eval:doc.first_name && doc.organization", {"first_name": "Al", "organization": "Acme"}, false, true],
-		["eval:doc.first_name && doc.organization", {"first_name": "Al", "organization": ""}, true, false],
-		["eval:doc.a || doc.b", {"a": "", "b": "x"}, false, true],
-		["eval:doc.a || doc.b", {"a": "", "b": 0}, true, false],
-		["eval:!doc.missing", {}, false, true],
-		["eval:!doc.z", {"z": "0"}, true, false],
-		["eval:!(doc.a == 1 || doc.b != 'x')", {"a": 2, "b": "x"}, false, true],
-		["eval:(doc.a || doc.organization) && doc.first_name", {"organization": "Acme", "first_name": "Al"}, false, true],
-
-		["eval:doc.x.length > 3", {"x": "abcd"}, false, true],
-		["eval:doc.x.length > 3", {"x": "ab"}, true, false],
-		["eval:doc.x.length", {"x": ""}, true, false],
-		["eval:doc.x[0] == 'a'", {"x": "abc"}, false, true],
-		["eval:doc.items[1] == 2", {"items": [1, 2]}, false, true],
-		["eval:doc.items.length == 2", {"items": [1, 2]}, false, true],
-		["eval:doc.m.y", {}, true, false],
-		["eval:doc.m.y == null", {}, false, true],
-		["eval:doc['first_name'] != null", {"first_name": "Al"}, false, true],
-		["eval:doc['first' ] == 'x'", {"first": "x"}, false, true],
-		["eval:parent.status === 'Open'", {"status": "Open"}, false, true],
-		["eval:doc.q == 'it\\'s'", {"q": "it's"}, false, true],
-		["eval:true", {}, false, true],
-		["eval:false", {}, true, false],
-		["eval:null", {}, true, false],
-		["eval:0", {}, true, false],
-		["eval:'0'", {}, false, true],
-		["eval:''", {}, true, false],
-		["eval: doc.items ", {"items": [1]}, false, true],
-		["  eval:doc.a == 'x'", {"a": "x"}, false, true],
-
-		["eval:", {}, true, true],
-		["eval:", {}, false, false],
-		["eval:window", {}, true, true],
-		["eval:alert(1)", {}, false, false],
-		["eval:doc.a; alert(1)", {"a": 1}, true, true],
-		["eval:doc.x = 1", {}, false, false],
-		["eval:(doc.a", {"a": 1}, true, true],
-		["eval:doc.a == `x`", {"a": "x"}, false, false],
-		["eval:doc.constructor.constructor(\"return 1\")()", {}, true, true],
-		["eval:new Date()", {}, false, false]
+		[
+			"organization",
+			{
+				"organization": "Acme"
+			},
+			false,
+			true
+		],
+		[
+			"organization",
+			{
+				"organization": ""
+			},
+			true,
+			false
+		],
+		[
+			"missing",
+			{},
+			true,
+			false
+		],
+		[
+			"items",
+			{
+				"items": []
+			},
+			true,
+			false
+		],
+		[
+			"items",
+			{
+				"items": [
+					1
+				]
+			},
+			false,
+			true
+		],
+		[
+			"zero",
+			{
+				"zero": "0"
+			},
+			false,
+			true
+		],
+		[
+			"zero",
+			{
+				"zero": 0
+			},
+			true,
+			false
+		],
+		[
+			"",
+			{},
+			true,
+			true
+		],
+		[
+			"   ",
+			{},
+			false,
+			false
+		],
+		[
+			"fn:check",
+			{
+				"check": 1
+			},
+			false,
+			false
+		],
+		[
+			"fn:check",
+			{
+				"check": 1
+			},
+			true,
+			true
+		],
+		[
+			"eval:doc.organization == \"Acme\"",
+			{
+				"organization": "Acme"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.organization == 'Other'",
+			{
+				"organization": "Acme"
+			},
+			true,
+			false
+		],
+		[
+			"eval:doc.organization === 'Acme'",
+			{
+				"organization": "Acme"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.organization !== 'Acme'",
+			{
+				"organization": "Acme"
+			},
+			true,
+			false
+		],
+		[
+			"eval:doc.n > 5",
+			{
+				"n": "10"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.n > 5",
+			{
+				"n": 3
+			},
+			true,
+			false
+		],
+		[
+			"eval:doc.n == 10",
+			{
+				"n": "10"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.n == 10",
+			{
+				"n": " 10 "
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.n == 10",
+			{
+				"n": "10.0"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.n == 16",
+			{
+				"n": "0x10"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.n >= -1.5",
+			{
+				"n": "-1.5"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.n > 'abc'",
+			{
+				"n": 5
+			},
+			true,
+			false
+		],
+		[
+			"eval:doc.n < 'abc'",
+			{
+				"n": 5
+			},
+			true,
+			false
+		],
+		[
+			"eval:doc.a < doc.b",
+			{
+				"a": "10",
+				"b": "9"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.a < 9",
+			{
+				"a": "10"
+			},
+			true,
+			false
+		],
+		[
+			"eval:doc.a <= doc.b",
+			{
+				"a": "x",
+				"b": "x"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.a > doc.b",
+			{
+				"a": "b",
+				"b": "a"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.s == 0",
+			{
+				"s": ""
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.s == null",
+			{
+				"s": ""
+			},
+			true,
+			false
+		],
+		[
+			"eval:doc.m == null",
+			{},
+			false,
+			true
+		],
+		[
+			"eval:doc.m === null",
+			{},
+			false,
+			true
+		],
+		[
+			"eval:doc.u == null",
+			{
+				"u": null
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.u < 1",
+			{
+				"u": null
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.m < 1",
+			{},
+			true,
+			false
+		],
+		[
+			"eval:null == 0",
+			{},
+			true,
+			false
+		],
+		[
+			"eval:doc.c == 1",
+			{
+				"c": 1
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.c == true",
+			{
+				"c": 1
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.c == true",
+			{
+				"c": "1"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.c == false",
+			{
+				"c": 0
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.c == false",
+			{
+				"c": ""
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.c == 'true'",
+			{
+				"c": true
+			},
+			true,
+			false
+		],
+		[
+			"eval:doc.c != 1",
+			{
+				"c": "1"
+			},
+			true,
+			false
+		],
+		[
+			"eval:doc.list == ''",
+			{
+				"list": []
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.list == 'a,b'",
+			{
+				"list": [
+					"a",
+					"b"
+				]
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.first_name && doc.organization",
+			{
+				"first_name": "Al",
+				"organization": "Acme"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.first_name && doc.organization",
+			{
+				"first_name": "Al",
+				"organization": ""
+			},
+			true,
+			false
+		],
+		[
+			"eval:doc.a || doc.b",
+			{
+				"a": "",
+				"b": "x"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.a || doc.b",
+			{
+				"a": "",
+				"b": 0
+			},
+			true,
+			false
+		],
+		[
+			"eval:!doc.missing",
+			{},
+			false,
+			true
+		],
+		[
+			"eval:!doc.z",
+			{
+				"z": "0"
+			},
+			true,
+			false
+		],
+		[
+			"eval:!(doc.a == 1 || doc.b != 'x')",
+			{
+				"a": 2,
+				"b": "x"
+			},
+			false,
+			true
+		],
+		[
+			"eval:(doc.a || doc.organization) && doc.first_name",
+			{
+				"organization": "Acme",
+				"first_name": "Al"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.x.length > 3",
+			{
+				"x": "abcd"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.x.length > 3",
+			{
+				"x": "ab"
+			},
+			true,
+			false
+		],
+		[
+			"eval:doc.x.length",
+			{
+				"x": ""
+			},
+			true,
+			false
+		],
+		[
+			"eval:doc.x[0] == 'a'",
+			{
+				"x": "abc"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.items[1] == 2",
+			{
+				"items": [
+					1,
+					2
+				]
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.items.length == 2",
+			{
+				"items": [
+					1,
+					2
+				]
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.m.y",
+			{},
+			true,
+			false
+		],
+		[
+			"eval:doc.m.y == null",
+			{},
+			false,
+			true
+		],
+		[
+			"eval:doc['first_name'] != null",
+			{
+				"first_name": "Al"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc['first' ] == 'x'",
+			{
+				"first": "x"
+			},
+			false,
+			true
+		],
+		[
+			"eval:parent.status === 'Open'",
+			{
+				"status": "Open"
+			},
+			false,
+			true
+		],
+		[
+			"eval:doc.q == 'it\\'s'",
+			{
+				"q": "it's"
+			},
+			false,
+			true
+		],
+		[
+			"eval:true",
+			{},
+			false,
+			true
+		],
+		[
+			"eval:false",
+			{},
+			true,
+			false
+		],
+		[
+			"eval:null",
+			{},
+			true,
+			false
+		],
+		[
+			"eval:0",
+			{},
+			true,
+			false
+		],
+		[
+			"eval:'0'",
+			{},
+			false,
+			true
+		],
+		[
+			"eval:''",
+			{},
+			true,
+			false
+		],
+		[
+			"eval: doc.items ",
+			{
+				"items": [
+					1
+				]
+			},
+			false,
+			true
+		],
+		[
+			"  eval:doc.a == 'x'",
+			{
+				"a": "x"
+			},
+			false,
+			true
+		],
+		[
+			"eval:",
+			{},
+			true,
+			true
+		],
+		[
+			"eval:",
+			{},
+			false,
+			false
+		],
+		[
+			"eval:window",
+			{},
+			true,
+			true
+		],
+		[
+			"eval:alert(1)",
+			{},
+			false,
+			false
+		],
+		[
+			"eval:doc.a; alert(1)",
+			{
+				"a": 1
+			},
+			true,
+			true
+		],
+		[
+			"eval:doc.x = 1",
+			{},
+			false,
+			false
+		],
+		[
+			"eval:(doc.a",
+			{
+				"a": 1
+			},
+			true,
+			true
+		],
+		[
+			"eval:doc.a == `x`",
+			{
+				"a": "x"
+			},
+			false,
+			false
+		],
+		[
+			"eval:doc.constructor.constructor(\"return 1\")()",
+			{},
+			true,
+			true
+		],
+		[
+			"eval:new Date()",
+			{},
+			false,
+			false
+		]
+	],
+	"submissions": [
+		[
+			[
+				{
+					"fieldname": "has_company",
+					"fieldtype": "Check"
+				},
+				{
+					"fieldname": "company",
+					"fieldtype": "Data",
+					"depends_on": "eval:doc.has_company"
+				},
+				{
+					"fieldname": "size",
+					"fieldtype": "Data",
+					"depends_on": "eval:doc.company"
+				},
+				{
+					"fieldname": "personal_id",
+					"fieldtype": "Data",
+					"mandatory_depends_on": "eval:!doc.company"
+				}
+			],
+			{
+				"has_company": 0,
+				"company": "Acme",
+				"size": "10",
+				"personal_id": ""
+			},
+			[
+				"company",
+				"size"
+			],
+			[
+				"personal_id"
+			]
+		],
+		[
+			[
+				{
+					"fieldname": "has_company",
+					"fieldtype": "Check"
+				},
+				{
+					"fieldname": "company",
+					"fieldtype": "Data",
+					"depends_on": "eval:doc.has_company"
+				},
+				{
+					"fieldname": "size",
+					"fieldtype": "Data",
+					"depends_on": "eval:doc.company"
+				},
+				{
+					"fieldname": "personal_id",
+					"fieldtype": "Data",
+					"mandatory_depends_on": "eval:!doc.company"
+				}
+			],
+			{
+				"has_company": 1,
+				"company": "Acme",
+				"size": "10",
+				"personal_id": ""
+			},
+			[],
+			[]
+		],
+		[
+			[
+				{
+					"fieldname": "email",
+					"fieldtype": "Data"
+				},
+				{
+					"fieldname": "nl",
+					"fieldtype": "Check",
+					"depends_on": "eval:doc.email"
+				},
+				{
+					"fieldname": "why",
+					"fieldtype": "Data",
+					"mandatory_depends_on": "eval:doc.nl == \"0\""
+				}
+			],
+			{
+				"email": "",
+				"nl": 0,
+				"why": ""
+			},
+			[
+				"nl"
+			],
+			[]
+		],
+		[
+			[
+				{
+					"fieldname": "email",
+					"fieldtype": "Data"
+				},
+				{
+					"fieldname": "nl",
+					"fieldtype": "Check",
+					"depends_on": "eval:doc.email"
+				},
+				{
+					"fieldname": "why",
+					"fieldtype": "Data",
+					"mandatory_depends_on": "eval:doc.nl == \"0\""
+				}
+			],
+			{
+				"email": "a@b.test",
+				"nl": 0,
+				"why": ""
+			},
+			[],
+			[
+				"why"
+			]
+		],
+		[
+			[
+				{
+					"fieldname": "a",
+					"fieldtype": "Data"
+				},
+				{
+					"fieldname": "b",
+					"fieldtype": "Data",
+					"mandatory_depends_on": "eval:doc.a == null"
+				}
+			],
+			{},
+			[],
+			[]
+		],
+		[
+			[
+				{
+					"fieldname": "a",
+					"fieldtype": "Data",
+					"reqd": 1
+				},
+				{
+					"fieldname": "b",
+					"fieldtype": "Data",
+					"reqd": 1
+				}
+			],
+			{
+				"b": "x"
+			},
+			[],
+			[
+				"a"
+			]
+		],
+		[
+			[
+				{
+					"fieldname": "locked",
+					"fieldtype": "Data",
+					"reqd": 1,
+					"read_only_depends_on": "eval:true"
+				}
+			],
+			{
+				"locked": ""
+			},
+			[],
+			[]
+		],
+		[
+			[
+				{
+					"fieldname": "agree",
+					"fieldtype": "Check",
+					"reqd": 1
+				}
+			],
+			{
+				"agree": 0
+			},
+			[],
+			[
+				"agree"
+			]
+		],
+		[
+			[
+				{
+					"fieldname": "agree",
+					"fieldtype": "Check",
+					"reqd": 1
+				}
+			],
+			{
+				"agree": "0"
+			},
+			[],
+			[
+				"agree"
+			]
+		],
+		[
+			[
+				{
+					"fieldname": "agree",
+					"fieldtype": "Check",
+					"reqd": 1
+				}
+			],
+			{
+				"agree": 1
+			},
+			[],
+			[]
+		],
+		[
+			[
+				{
+					"fieldname": "t",
+					"fieldtype": "Tab Break",
+					"reqd": 1
+				},
+				{
+					"fieldname": "s",
+					"fieldtype": "Section Break",
+					"reqd": 1
+				},
+				{
+					"fieldname": "c",
+					"fieldtype": "Column Break",
+					"reqd": 1
+				}
+			],
+			{},
+			[],
+			[]
+		],
+		[
+			[
+				{
+					"fieldname": "x",
+					"fieldtype": "Data",
+					"depends_on": "eval:doc.y"
+				},
+				{
+					"fieldname": "y",
+					"fieldtype": "Data",
+					"depends_on": "eval:!doc.x"
+				}
+			],
+			{
+				"x": "1",
+				"y": "2"
+			},
+			[
+				"x"
+			],
+			[]
+		],
+		[
+			[
+				{
+					"fieldname": "kind",
+					"fieldtype": "Data"
+				},
+				{
+					"fieldname": "vat",
+					"fieldtype": "Data",
+					"reqd": 1,
+					"depends_on": "eval:doc.kind == 'Company'"
+				}
+			],
+			{
+				"kind": "Person",
+				"vat": ""
+			},
+			[
+				"vat"
+			],
+			[]
+		],
+		[
+			[
+				{
+					"fieldname": "kind",
+					"fieldtype": "Data"
+				},
+				{
+					"fieldname": "vat",
+					"fieldtype": "Data",
+					"reqd": 1,
+					"depends_on": "eval:doc.kind == 'Company'"
+				}
+			],
+			{
+				"kind": "Company",
+				"vat": ""
+			},
+			[],
+			[
+				"vat"
+			]
+		],
+		[
+			[
+				{
+					"fieldname": "n",
+					"fieldtype": "Data"
+				},
+				{
+					"fieldname": "big",
+					"fieldtype": "Data",
+					"mandatory_depends_on": "eval:doc.n > 100"
+				}
+			],
+			{
+				"n": "250",
+				"big": ""
+			},
+			[],
+			[
+				"big"
+			]
+		],
+		[
+			[
+				{
+					"fieldname": "n",
+					"fieldtype": "Data"
+				},
+				{
+					"fieldname": "big",
+					"fieldtype": "Data",
+					"mandatory_depends_on": "eval:doc.n > 100"
+				}
+			],
+			{
+				"n": "",
+				"big": ""
+			},
+			[],
+			[]
+		]
 	]
 }

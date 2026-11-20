@@ -12,7 +12,7 @@ from crm.tests.test_form_api import make_form
 from crm.utils.form_conditions import review_submission, truthy
 
 with open(os.path.join(os.path.dirname(__file__), "form_condition_cases.json")) as f:
-	CASES = json.load(f)["cases"]
+	SHARED = json.load(f)
 
 
 class TestConditionEvaluation(UnitTestCase):
@@ -20,9 +20,18 @@ class TestConditionEvaluation(UnitTestCase):
 		"""The same list runs against truthy() in crm_form.html
 		(webFormConditionalEval.test.js): the server must enforce exactly what the
 		page shows, JavaScript's coercions included."""
-		for expr, doc, fallback, expected in CASES:
+		for expr, doc, fallback, expected in SHARED["cases"]:
 			with self.subTest(expr=expr, doc=doc, fallback=fallback):
 				self.assertIs(truthy(expr, doc, fallback), expected)
+
+	def test_reviews_a_submission_as_the_page_does(self):
+		"""...and these against the page's reviewSubmission(): which fields a
+		submission leaves out, and which required ones it lacks."""
+		for fields, values, hidden, missing in SHARED["submissions"]:
+			with self.subTest(fields=fields, values=values):
+				got_hidden, got_missing = review_submission(fields, values)
+				self.assertEqual(got_hidden, hidden)
+				self.assertEqual([f["fieldname"] for f in got_missing], missing)
 
 	def test_review_follows_the_page(self):
 		fields = [
@@ -100,6 +109,24 @@ class TestFormConditionsOnSubmission(IntegrationTestCase):
 			form, first_name="Bo", organization="Other", website="https://y.test", email="cond-e@test.invalid"
 		)
 		self.assertEqual(shown.website, "https://y.test")
+
+	def test_a_hidden_answer_counts_as_empty_for_other_conditions(self):
+		"""What accept() actually stores: "" for every field left out. A hidden
+		website still typed in must not satisfy a rule that reads it."""
+		form = make_form(
+			"cond-chain",
+			fields=[
+				{"fieldname": "first_name", "fieldtype": "Data", "reqd": 1},
+				{"fieldname": "organization", "fieldtype": "Data"},
+				{"fieldname": "website", "fieldtype": "Data", "depends_on": "eval:doc.organization"},
+				{"fieldname": "last_name", "fieldtype": "Data", "mandatory_depends_on": "eval:!doc.website"},
+			],
+		)
+		posted = {"first_name": "Ada", "organization": "", "website": "https://stale.test", "last_name": ""}
+		with self.assertRaises(frappe.MandatoryError):
+			self.submit(form, email="cond-h@test.invalid", **posted)
+		lead = self.submit(form, email="cond-i@test.invalid", **{**posted, "last_name": "L"})
+		self.assertFalse(lead.website)
 
 	def test_only_the_named_forms_rules_for_this_doctype_apply(self):
 		"""`web_form` is client-controlled: a Deal form's rules don't bind a Lead."""

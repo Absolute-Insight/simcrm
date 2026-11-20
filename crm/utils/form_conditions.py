@@ -352,30 +352,56 @@ def is_read_only(f, doc: dict) -> bool:
 
 
 def _is_empty(fieldtype: str, value) -> bool:
-	# the page sends a Check as 1/0 and requires it ticked; anything else must not be
-	# "" (an input's empty value) or missing
+	# a Check must be ticked; anything else must not be "" (an input's empty value)
 	if fieldtype == "Check":
 		return not js_truthy(value) or value == "0"
-	return value is None or value is UNDEFINED or value == "" or value == []
+	return value is None or value == ""
+
+
+def _is_field(f) -> bool:
+	return bool(_get(f, "fieldname")) and _get(f, "fieldtype") not in BREAKS
+
+
+def resolve_values(fields, values: dict) -> dict:
+	"""The page's resolveDoc(): the values every condition reads. A field the form
+	does not send reads as "" (what accept() stores for it), a hidden field counts as
+	empty however it was left, and hiding one can hide others, so repeat until
+	nothing changes. Values only ever move to "", so this ends within len(fields)
+	passes."""
+	doc = {}
+	for f in fields:
+		if _is_field(f):
+			fieldname = _get(f, "fieldname")
+			value = values.get(fieldname, "")
+			doc[fieldname] = "" if value is UNDEFINED else value
+	changed = True
+	while changed:
+		changed = False
+		for f in fields:
+			if not _is_field(f):
+				continue
+			fieldname = _get(f, "fieldname")
+			if not (isinstance(doc[fieldname], str) and doc[fieldname] == "") and not is_visible(f, doc):
+				doc[fieldname] = ""
+				changed = True
+	return doc
 
 
 def review_submission(fields, values: dict) -> tuple[list[str], list]:
-	"""Apply the page's rules to one submission.
+	"""The page's reviewSubmission(), applied to one submission.
 
 	Returns (hidden, missing): the fieldnames the page would have hidden, and so not
-	sent, and the field rows that are required, visible, editable and empty -- in
-	form order. Conditions are evaluated against everything submitted, as the page
-	evaluates them against every input on it."""
-	doc = dict(values)
+	sent, and the field rows that are required while shown and editable, and empty
+	-- in form order. Conditions read resolve_values(), as the page's do."""
+	doc = resolve_values(fields, values)
 	hidden, missing = [], []
 	for f in fields:
-		fieldtype = _get(f, "fieldtype")
-		fieldname = _get(f, "fieldname")
-		if not fieldname or fieldtype in BREAKS:
+		if not _is_field(f):
 			continue
+		fieldname = _get(f, "fieldname")
 		if not is_visible(f, doc):
 			hidden.append(fieldname)
 			continue
-		if is_required(f, doc) and not is_read_only(f, doc) and _is_empty(fieldtype, doc.get(fieldname)):
+		if is_required(f, doc) and not is_read_only(f, doc) and _is_empty(_get(f, "fieldtype"), doc[fieldname]):
 			missing.append(f)
 	return hidden, missing

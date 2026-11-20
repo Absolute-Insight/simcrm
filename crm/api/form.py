@@ -762,7 +762,8 @@ def _enforce_form_conditions(doc):
 		order_by="idx",
 	)
 	fields = [f for f in fields if f.fieldname and doc.meta.has_field(f.fieldname)]
-	# before_insert runs before any casting, so these are the values as posted
+	# before_insert runs before any casting: these are the values as posted, with ""
+	# for each field the page left out
 	values = {f.fieldname: doc.get(f.fieldname) for f in fields}
 	for fieldname in _check_form_answers(fields, values):
 		doc.set(fieldname, "")
