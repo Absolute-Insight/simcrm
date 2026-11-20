@@ -17,6 +17,7 @@ needed the right.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import frappe
@@ -58,6 +59,48 @@ def close_user_select() -> None:
 PICKER_OPERATORS = frozenset({"=", "!=", "in", "not in", "like", "not like"})
 # The most a picker may ask for in one call, whatever page_len says.
 MAX_PAGE_LENGTH = 100
+
+
+# When and from where someone signed in. Only a System Manager may read these.
+SIGN_IN_FIELDS = ("last_login", "last_ip", "last_active")
+_SIGN_IN_FIELD = re.compile(r"(?<![a-z0-9_])last_(?:login|ip|active)(?![a-z0-9_])", re.IGNORECASE)
+SIGN_IN_READERS = frozenset({"System Manager"})
+
+
+def _mentions_sign_in_field(value: Any) -> bool:
+	if isinstance(value, str):
+		return "last_" in value.lower() and bool(_SIGN_IN_FIELD.search(value))
+	if isinstance(value, dict):
+		return any(_mentions_sign_in_field(k) or _mentions_sign_in_field(v) for k, v in value.items())
+	if isinstance(value, list | tuple):
+		return any(_mentions_sign_in_field(item) for item in value)
+	return False
+
+
+def refuse_sign_in_field_queries() -> None:
+	"""auth_hooks: refuse an API call that names a sign-in field, unless the caller
+	is a System Manager.
+
+	Withdrawing select on User (``close_user_select``) stops direct User queries,
+	but any doctype with a Link to User can still join it: a rep's
+	``frappe.client.get_list("ToDo", fields=["assigned_by.last_ip"])`` returned the
+	manager's address, and a filter on ``deal_owner.last_ip`` probes one. Frappe
+	checks no permission on the joined doctype's columns when filtering, and treats
+	every User column as readable (User is a core doctype), so no permission rule
+	can close that. Every such query has to name the column, though, and no CRM
+	screen ever does, so the request is refused before any endpoint runs.
+
+	An auth hook rather than before_request: it runs after API keys, tokens and
+	OAuth have set the user, so a key-authenticated rep is checked as themselves.
+	"""
+	request = getattr(frappe.local, "request", None)
+	if not request or not (request.path.startswith("/api/") or frappe.form_dict.get("cmd")):
+		return
+	user = frappe.session.user
+	if user == "Administrator" or SIGN_IN_READERS & set(frappe.get_roles(user)):
+		return
+	if _mentions_sign_in_field(dict(frappe.form_dict)):
+		raise frappe.PermissionError(_("Not permitted to read sign-in details"))
 
 
 def restore_user_select() -> None:

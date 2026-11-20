@@ -7,12 +7,20 @@ than the columns hidden."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import frappe
 from frappe.client import get_count
 from frappe.desk.search import search_link
 from frappe.tests import IntegrationTestCase
 
-from crm.permissions.users import MAX_PAGE_LENGTH, close_user_select, restore_user_select, user_link_query
+from crm.permissions.users import (
+	MAX_PAGE_LENGTH,
+	close_user_select,
+	refuse_sign_in_field_queries,
+	restore_user_select,
+	user_link_query,
+)
 
 REP = "signin-rep@crmtest.test"
 COLLEAGUE = "signin-colleague@crmtest.test"
@@ -171,3 +179,69 @@ class UserSignInFieldsTest(IntegrationTestCase):
 		self.assertNotIn("Desk User", [r.role for r in after])
 		self.assertIn(("System Manager", 0), [(r.role, r.permlevel) for r in after])
 		self.assertIn(("System Manager", 1), [(r.role, r.permlevel) for r in after])
+
+
+class SignInFieldGuardTest(IntegrationTestCase):
+	"""The joins no permission rule reaches: any doctype with a Link to User."""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		ensure_user(REP, "Sales User")
+		ensure_user(ADMIN, "System Manager")
+		ensure_user(COLLEAGUE, "Sales Manager")
+
+	def setUp(self):
+		super().setUp()
+		self._request = getattr(frappe.local, "request", None)
+		self._form_dict = frappe.local.form_dict
+
+	def tearDown(self):
+		frappe.local.request = self._request
+		frappe.local.form_dict = self._form_dict
+		frappe.set_user("Administrator")
+		super().tearDown()
+
+	def call(self, user: str, path: str = "/api/method/frappe.client.get_list", **form):
+		frappe.set_user(user)
+		frappe.local.request = SimpleNamespace(path=path)
+		frappe.local.form_dict = frappe._dict(form)
+		refuse_sign_in_field_queries()
+
+	def test_a_rep_cannot_join_to_a_colleagues_sign_in_fields(self):
+		for form in (
+			{"doctype": "ToDo", "fields": '["name", "assigned_by.last_ip"]'},
+			{"doctype": "ToDo", "fields": ["name", "assigned_by.LAST_LOGIN"]},
+			{"doctype": "CRM Deal", "filters": '[["deal_owner.last_active", ">", "2026-01-01"]]'},
+			{"doctype": "CRM Deal", "filters": {"deal_owner.last_ip": ["like", "198.%"]}},
+			{"doctype": "CRM Deal", "order_by": "`tabUser`.`last_ip` desc"},
+			{"doctype": "User", "fieldname": "last_ip", "filters": COLLEAGUE},
+		):
+			with self.subTest(form=form), self.assertRaises(frappe.PermissionError):
+				self.call(REP, **form)
+
+	def test_the_guard_covers_every_api_route(self):
+		for path in (
+			"/api/resource/ToDo",
+			"/api/v2/method/frappe.client.get_list",
+			"/api/method/crm.api.doc.get_data",
+		):
+			with self.subTest(path=path), self.assertRaises(frappe.PermissionError):
+				self.call(REP, path, fields='["assigned_by.last_ip"]')
+
+	def test_ordinary_requests_and_lookalike_names_pass(self):
+		self.call(REP, doctype="ToDo", fields='["name", "assigned_by", "last_name", "last_login_hint"]')
+		self.call(REP, "/crm/deals", fields="last_ip")  # a page, not the API
+
+	def test_a_system_manager_may_still_ask(self):
+		self.call(ADMIN, doctype="ToDo", fields='["assigned_by.last_ip"]')
+
+	def test_the_join_it_closes_does_reach_the_column(self):
+		"""Why the guard exists: frappe itself returns the joined column to a rep."""
+		frappe.db.set_value("User", COLLEAGUE, SIGN_IN, update_modified=False)
+		todo = frappe.get_doc(
+			{"doctype": "ToDo", "description": "sign-in guard", "allocated_to": REP, "assigned_by": COLLEAGUE}
+		).insert(ignore_permissions=True)
+		frappe.set_user(REP)
+		rows = frappe.get_list("ToDo", fields=["name", "assigned_by.last_ip"], filters={"name": todo.name})
+		self.assertEqual(rows[0].last_ip, SIGN_IN["last_ip"])

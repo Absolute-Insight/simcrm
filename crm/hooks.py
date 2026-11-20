@@ -491,6 +491,9 @@ ignore_links_on_delete = [
 	"CRM Enrichment Run",
 ]
 
+# Runs inside frappe's validate_auth, once API keys / tokens have set the user.
+auth_hooks = ["crm.permissions.users.refuse_sign_in_field_queries"]
+
 # Request Events
 # ----------------
 before_request = [
