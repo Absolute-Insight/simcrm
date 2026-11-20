@@ -17,6 +17,7 @@ needed the right.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -67,13 +68,33 @@ _SIGN_IN_FIELD = re.compile(r"(?<![a-z0-9_])last_(?:login|ip|active)(?![a-z0-9_]
 SIGN_IN_READERS = frozenset({"System Manager"})
 
 
-def _mentions_sign_in_field(value: Any) -> bool:
+# How many layers of JSON-in-a-string to look through; frappe decodes one or two.
+_MAX_JSON_DEPTH = 4
+
+
+def _mentions_sign_in_field(value: Any, depth: int = 0) -> bool:
+	"""Whether a request value names a sign-in field, as frappe will read it.
+
+	Most query arguments arrive as JSON text that frappe decodes only inside the
+	endpoint, and JSON spells ``_`` as ``\\u005f`` too, so the raw text alone is not
+	what the query sees: a string that parses as JSON is scanned again decoded."""
 	if isinstance(value, str):
-		return "last_" in value.lower() and bool(_SIGN_IN_FIELD.search(value))
+		if _SIGN_IN_FIELD.search(value):
+			return True
+		text = value.strip()
+		if depth < _MAX_JSON_DEPTH and text[:1] in ("[", "{", '"'):
+			try:
+				decoded = json.loads(text)
+			except ValueError:
+				return False
+			return _mentions_sign_in_field(decoded, depth + 1)
+		return False
 	if isinstance(value, dict):
-		return any(_mentions_sign_in_field(k) or _mentions_sign_in_field(v) for k, v in value.items())
+		return any(
+			_mentions_sign_in_field(k, depth) or _mentions_sign_in_field(v, depth) for k, v in value.items()
+		)
 	if isinstance(value, list | tuple):
-		return any(_mentions_sign_in_field(item) for item in value)
+		return any(_mentions_sign_in_field(item, depth) for item in value)
 	return False
 
 
@@ -81,14 +102,15 @@ def refuse_sign_in_field_queries() -> None:
 	"""auth_hooks: refuse an API call that names a sign-in field, unless the caller
 	is a System Manager.
 
-	Withdrawing select on User (``close_user_select``) stops direct User queries,
-	but any doctype with a Link to User can still join it: a rep's
-	``frappe.client.get_list("ToDo", fields=["assigned_by.last_ip"])`` returned the
-	manager's address, and a filter on ``deal_owner.last_ip`` probes one. Frappe
-	checks no permission on the joined doctype's columns when filtering, and treats
-	every User column as readable (User is a core doctype), so no permission rule
-	can close that. Every such query has to name the column, though, and no CRM
-	screen ever does, so the request is refused before any endpoint runs.
+	Defence in depth behind ``close_user_select``. While a role holds select or read
+	on User, any doctype with a Link to User can join it: with frappe's standard
+	rules a rep's ``frappe.client.get_list("ToDo", fields=["assigned_by.last_ip"])``
+	returned the manager's address, and a filter on ``deal_owner.last_ip`` probed
+	one. Frappe checks nothing on the joined doctype's columns and treats every User
+	column as readable (User is a core doctype), so if an admin grants a role User
+	access again, permissions alone would reopen it. Every such query has to name the
+	column, and no CRM screen ever does, so the request is refused before any
+	endpoint runs.
 
 	An auth hook rather than before_request: it runs after API keys, tokens and
 	OAuth have set the user, so a key-authenticated rep is checked as themselves.

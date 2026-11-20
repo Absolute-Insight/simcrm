@@ -220,6 +220,19 @@ class SignInFieldGuardTest(IntegrationTestCase):
 			with self.subTest(form=form), self.assertRaises(frappe.PermissionError):
 				self.call(REP, **form)
 
+	def test_json_escapes_do_not_hide_a_sign_in_field(self):
+		# found in review: frappe decodes these strings after the hook, so \\u005f was
+		# "_" by the time the query ran
+		for form in (
+			{"doctype": "ToDo", "fields": '["name", "assigned_by.last\\u005fip"]'},
+			{"doctype": "ToDo", "fields": '["assigned_by.\\u006cast_login"]'},
+			{"doctype": "CRM Deal", "filters": '[["deal_owner.last\\u005factive", ">", "2026-01-01"]]'},
+			{"doctype": "CRM Deal", "filters": {"x": '["deal_owner.last\\u005fip"]'}},
+			{"doctype": "ToDo", "fields": '"[\\"assigned_by.last\\\\u005fip\\"]"'},
+		):
+			with self.subTest(form=form), self.assertRaises(frappe.PermissionError):
+				self.call(REP, **form)
+
 	def test_the_guard_covers_every_api_route(self):
 		for path in (
 			"/api/resource/ToDo",
@@ -236,12 +249,17 @@ class SignInFieldGuardTest(IntegrationTestCase):
 	def test_a_system_manager_may_still_ask(self):
 		self.call(ADMIN, doctype="ToDo", fields='["assigned_by.last_ip"]')
 
-	def test_the_join_it_closes_does_reach_the_column(self):
-		"""Why the guard exists: frappe itself returns the joined column to a rep."""
+	def test_with_select_withdrawn_a_join_reaches_no_colleague(self):
+		"""close_user_select already stops the join: a rep reads User only through the
+		share of their own row, and frappe holds the joined row to that too. The guard
+		is for a site where a role holds select or read on User again."""
+		close_user_select()
 		frappe.db.set_value("User", COLLEAGUE, SIGN_IN, update_modified=False)
 		todo = frappe.get_doc(
 			{"doctype": "ToDo", "description": "sign-in guard", "allocated_to": REP, "assigned_by": COLLEAGUE}
 		).insert(ignore_permissions=True)
 		frappe.set_user(REP)
 		rows = frappe.get_list("ToDo", fields=["name", "assigned_by.last_ip"], filters={"name": todo.name})
-		self.assertEqual(rows[0].last_ip, SIGN_IN["last_ip"])
+		self.assertIsNone(rows[0].last_ip)
+		probe = [["assigned_by.last_ip", "like", "203.%"], ["name", "=", todo.name]]
+		self.assertEqual(frappe.get_list("ToDo", filters=probe), [])
