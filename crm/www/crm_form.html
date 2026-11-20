@@ -745,7 +745,6 @@ already and are not touched by this. -#} {% autoescape true %}
             return fallback;
           }
         }
-        // [conditional-eval:end]
         function isVisible(f, doc) {
           return truthy(f.depends_on, doc, true);
         }
@@ -755,10 +754,54 @@ already and are not touched by this. -#} {% autoescape true %}
         function isReadOnly(f, doc) {
           return truthy(f.read_only_depends_on, doc, false);
         }
+        var LAYOUT_TYPES = { "Section Break": 1, "Column Break": 1, "Tab Break": 1 };
+        // The values every condition reads: a hidden field counts as empty, however it
+        // was left, and hiding it can hide others, so repeat until nothing changes. The
+        // server sees the same thing -- accept() stores "" for a field this page leaves
+        // out -- and runs the same rules (crm.utils.form_conditions), so the two agree.
+        function resolveDoc(fields, doc) {
+          var out = {};
+          fields.forEach(function (f) {
+            if (LAYOUT_TYPES[f.fieldtype] || !f.fieldname) return;
+            var v = Object.prototype.hasOwnProperty.call(doc, f.fieldname) ? doc[f.fieldname] : "";
+            out[f.fieldname] = v === undefined ? "" : v;
+          });
+          for (;;) {
+            var changed = false;
+            fields.forEach(function (f) {
+              if (LAYOUT_TYPES[f.fieldtype] || !f.fieldname) return;
+              if (out[f.fieldname] !== "" && !isVisible(f, out)) {
+                out[f.fieldname] = "";
+                changed = true;
+              }
+            });
+            if (!changed) return out;
+          }
+        }
+        // what a submission leaves out (hidden) and what it lacks (missing): a field
+        // required while shown and editable, and empty -- a Check must be ticked
+        function reviewSubmission(fields, doc) {
+          var d = resolveDoc(fields, doc);
+          var hidden = [];
+          var missing = [];
+          fields.forEach(function (f) {
+            if (LAYOUT_TYPES[f.fieldtype] || !f.fieldname) return;
+            if (!isVisible(f, d)) {
+              hidden.push(f.fieldname);
+              return;
+            }
+            var v = d[f.fieldname];
+            var empty =
+              f.fieldtype === "Check" ? !coerce(v) || v === "0" : v === "" || v === null;
+            if (isRequired(f, d) && !isReadOnly(f, d) && empty) missing.push(f.fieldname);
+          });
+          return { doc: d, hidden: hidden, missing: missing };
+        }
+        // [conditional-eval:end]
 
         // apply the rules to the DOM: toggle visibility, read-only, and the required *
         function refreshDeps() {
-          var doc = collectDoc();
+          var doc = resolveDoc(FIELDS, collectDoc());
           FIELDS.forEach(function (f) {
             if (BREAKS[f.fieldtype]) return;
             var el = document.getElementById(f.fieldname);
@@ -863,24 +906,18 @@ already and are not touched by this. -#} {% autoescape true %}
           errBox.style.display = "none";
           clearFieldErrors();
 
-          var doc = collectDoc();
+          // a field hidden by depends_on is neither sent nor checked; one the visitor
+          // can't edit (read-only) is never required, or required + read-only would
+          // deadlock the form
+          var review = reviewSubmission(FIELDS, collectDoc());
           var values = {};
           var missing = [];
           FIELDS.forEach(function (f) {
-            if (BREAKS[f.fieldtype]) return;
+            if (BREAKS[f.fieldtype] || review.hidden.indexOf(f.fieldname) !== -1) return;
             var el = document.getElementById(f.fieldname);
             if (!el) return;
-            if (!isVisible(f, doc)) return; // hidden by depends_on → not submitted/validated
-            var val = f.fieldtype === "Check" ? (el.checked ? 1 : 0) : el.value;
-            values[f.fieldname] = val;
-            // a required checkbox must be checked; unchecked is 0, not "empty"
-            var empty =
-              f.fieldtype === "Check"
-                ? val === 0
-                : val === "" || val === null || val === undefined;
-            // don't require a field the visitor can't edit (read-only) — otherwise a
-            // field that's both required and read-only would deadlock submission
-            if (isRequired(f, doc) && !isReadOnly(f, doc) && empty) {
+            values[f.fieldname] = review.doc[f.fieldname];
+            if (review.missing.indexOf(f.fieldname) !== -1) {
               missing.push(f);
               el.classList.add("has-error");
             }

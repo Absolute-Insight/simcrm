@@ -16,7 +16,9 @@ const src = html
   .split('// [conditional-eval:start]')[1]
   .split('// [conditional-eval:end]')[0]
 // eslint-disable-next-line no-new-func
-const { truthy } = new Function(`${src}; return { truthy };`)()
+const { truthy, reviewSubmission } = new Function(
+  `${src}; return { truthy, reviewSubmission };`,
+)()
 
 describe('crm_form.html conditional-logic evaluator', () => {
   const doc = { organization: 'Acme', first_name: 'Al', n: '10', items: [1] }
@@ -101,4 +103,38 @@ describe('crm_form.html evaluator agrees with the server-side store check', () =
   it.each(conditions.rejected)('refuses %j', (expr) => {
     expect(parses(expr)).toBe(false)
   })
+})
+
+// The server enforces a submission with a port of this evaluator
+// (crm.utils.form_conditions), so a "required if" can't be skipped by posting to
+// accept() directly. Both run this list, so they agree on every case: where they
+// differ, the server refuses what the page accepted, or accepts what it hid.
+const evaluation = JSON.parse(
+  readFileSync(
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../../crm/tests/form_condition_cases.json',
+    ),
+    'utf8',
+  ),
+)
+
+describe('crm_form.html evaluator agrees with the server-side enforcement', () => {
+  it.each(evaluation.cases)(
+    '%j with %j (fallback %j) → %j',
+    (expr, doc, fallback, expected) => {
+      expect(truthy(expr, doc, fallback)).toBe(expected)
+    },
+  )
+})
+
+describe('crm_form.html submission review agrees with the server-side enforcement', () => {
+  it.each(evaluation.submissions)(
+    'fields %j with %j → hidden %j, missing %j',
+    (fields, values, hidden, missing) => {
+      const review = reviewSubmission(fields, values)
+      expect(review.hidden).toEqual(hidden)
+      expect(review.missing).toEqual(missing)
+    },
+  )
 })
