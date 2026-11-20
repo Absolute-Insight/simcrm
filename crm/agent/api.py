@@ -405,8 +405,8 @@ def ask_mentor(question: str, history: str | list | None = None) -> dict:
 	known = {article["name"] for article in articles}
 	related = [name for name in reply.related_articles if name in known]
 	if not related:
-		# Small models seldom fill related_articles at all (the shipped default
-		# never did in a live run). The grounding set is what the answer was built
+		# Small models seldom fill related_articles at all (an earlier shipped
+		# default never did in a live run). The grounding set is what the answer was built
 		# from, so it is the honest citation when the model offers none -- and it
 		# stays empty when nothing scored, because then nothing was quoted.
 		related = [article["name"] for article in selected[:MAX_CITATIONS]]
