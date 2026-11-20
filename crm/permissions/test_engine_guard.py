@@ -37,6 +37,7 @@ SINGLE = "System Settings"
 SHARED_CHILD = "Event Notifications"  # a table of FCRM Settings and of Event
 REPORT_VIEW = "/api/method/frappe.desk.reportview.get"
 LINK_SEARCH = "frappe.desk.search.search_link"
+LINK_VALIDATION = "frappe.client.validate_link_and_fetch"
 REFUSAL = "parent it does not belong to"
 ENGINE_METHODS = ("check_select_permission", "add_permission_conditions")
 
@@ -326,6 +327,69 @@ class ListParentGuardTest(IntegrationTestCase):
 		leaked = frappe.get_list(SHARED_CHILD, parent_doctype="FCRM Settings", pluck="name", limit=0)
 		self.assertIn(theirs, leaked)
 
+	def same_named_row_of_another_parent(self) -> tuple[str, str]:
+		"""An event of Alice's, and a row of this table kept under another doctype's
+		document that happens to carry the event's name."""
+		frappe.set_user(ALICE)
+		event = frappe.get_doc(
+			{
+				"doctype": "Event",
+				"subject": "Alices event",
+				"event_type": "Private",
+				"starts_on": frappe.utils.now_datetime(),
+				"notifications": [{"type": "Notification", "before": 5, "interval": "minutes"}],
+			}
+		).insert(ignore_permissions=True)
+		frappe.set_user("Administrator")
+		self.addCleanup(frappe.delete_doc, "Event", event.name, force=True, ignore_permissions=True)
+		other = frappe.get_doc(
+			{
+				"doctype": SHARED_CHILD,
+				"parent": event.name,
+				"parenttype": "CRM Deal",
+				"parentfield": "notifications",
+				"type": "Email",
+				"before": 3,
+				"interval": "hours",
+			}
+		)
+		other.db_insert()
+		self.addCleanup(frappe.db.delete, SHARED_CHILD, {"name": other.name})
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user(ALICE)
+		return event.notifications[0].name, other.name
+
+	def test_under_an_ordinary_parent_only_that_doctypes_rows_are_listed(self):
+		own, other = self.same_named_row_of_another_parent()
+		rows = get_list(SHARED_CHILD, fields=["name", "parenttype"], parent="Event", limit_page_length=0)
+		names = [row.name for row in rows]
+		self.assertIn(own, names)
+		self.assertNotIn(other, names)
+		self.assertEqual({row.parenttype for row in rows}, {"Event"})
+		self.assertNotIn(
+			other, reportview_execute(SHARED_CHILD, parent_doctype="Event", pluck="name", limit=0)
+		)
+
+	def test_without_the_guard_a_same_named_parent_of_another_doctype_leaks(self):
+		"""Why the wrap is not kept to Singles; when this fails frappe joins on parenttype."""
+		own, other = self.same_named_row_of_another_parent()
+		self.without(Engine, "add_permission_conditions")
+		leaked = frappe.get_list(SHARED_CHILD, parent_doctype="Event", pluck="name", limit=0)
+		self.assertIn(own, leaked)
+		self.assertIn(other, leaked)
+
+	def test_every_table_lists_under_its_parent_what_is_stored_under_it(self):
+		"""The parenttype condition must cost an honest list nothing."""
+		frappe.set_user("Administrator")
+		for parent in ("Event", "CRM Deal", "CRM Lead", "Contact", "Address", "CRM Rep Plan"):
+			for df in frappe.get_meta(parent).get_table_fields():
+				with self.subTest(parent=parent, table=df.options):
+					listed = frappe.get_list(df.options, parent_doctype=parent, pluck="name", limit=0)
+					stored = frappe.get_all(
+						df.options, filters={"parenttype": parent, "parentfield": ("is", "set")}, pluck="name"
+					)
+					self.assertLessEqual(set(listed), set(stored))
+
 	def test_an_ordinary_parent_keeps_its_own_row_rules(self):
 		theirs = self.bobs_event_reminder()
 		self.assertNotIn(theirs, frappe.get_list(SHARED_CHILD, parent_doctype="Event", pluck="name", limit=0))
@@ -399,6 +463,11 @@ class ListParentGuardTest(IntegrationTestCase):
 			# v2 reads two segments as a doctype and its controller's method
 			(f"/api/v2/method/{LINK_SEARCH}/get", {}),
 			("/api/method/frappe.desk.searchx", {}),
+			# only the one method of frappe.client, by its whole name
+			("/api/method/frappe.client.get_list", {}),
+			("/api/method/frappe.client.get_count", {}),
+			(f"/api/method/{LINK_VALIDATION}x", {}),
+			(f"/api/method/{LINK_VALIDATION}", {"cmd": "frappe.desk.reportview.get"}),
 			(f"/app/{LINK_SEARCH}", {}),
 		]
 		for path, form in dropped:
@@ -415,12 +484,90 @@ class ListParentGuardTest(IntegrationTestCase):
 			(f"/api/v1/method/{LINK_SEARCH}", {}),
 			(f"/api/v2/method/{LINK_SEARCH}", {}),
 			("/", {"cmd": LINK_SEARCH}),
+			# the link control's second call, with the same arguments
+			(f"/api/method/{LINK_VALIDATION}", {}),
+			(f"/api/v2/method/{LINK_VALIDATION}", {}),
+			("/", {"cmd": LINK_VALIDATION}),
 		]
 		for path, form in kept:
 			with self.subTest(path=path, form=form):
 				self.request(path, ignore_user_permissions="1", **form)
 				engine_guard.guard_request()
 				self.assertEqual(frappe.form_dict.ignore_user_permissions, "1")
+
+	def test_link_validation_hands_the_flag_to_the_search_and_nowhere_else(self):
+		"""What makes it safe to keep: the day frappe uses it for more, this fails."""
+		import inspect
+
+		from frappe import client
+
+		source = inspect.getsource(client.validate_link_and_fetch)
+		self.assertNotIn("ignore_user_permissions", source)
+		self.assertIn("search_widget", source)
+		self.assertIn("**search_args", source)
+		self.assertNotIn("search_args", source.split("search_widget,", 1)[1].split(")", 1)[1])
+		from frappe.desk.search import search_widget
+
+		self.assertIn("validate_ignore_user_permissions", inspect.getsource(search_widget))
+
+	def test_a_link_field_that_ignores_user_permissions_validates_what_it_offered(self):
+		"""The desk searches, then validates, with one set of arguments. Dropping the
+		flag from the second cleared a value the first had just offered."""
+		from frappe.client import validate_link_and_fetch
+		from frappe.desk.search import search_link
+
+		allowed, withheld = self.restricted_to_one_lead()
+		field = frappe.get_meta("CRM Deal").get_field("lead")
+		self.assertEqual(field.options, "CRM Lead")
+		self.addCleanup(setattr, field, "ignore_user_permissions", field.ignore_user_permissions)
+		field.ignore_user_permissions = 1
+		args = {"reference_doctype": "CRM Deal", "link_fieldname": "lead", "ignore_user_permissions": "1"}
+
+		self.request(f"/api/method/{LINK_SEARCH}", doctype="CRM Lead", txt=withheld, **args)
+		frappe.local.request.method = "POST"
+		engine_guard.guard_request()
+		offered = [row["value"] for row in search_link(**frappe.form_dict)]
+		self.assertIn(withheld, offered)
+
+		self.request(f"/api/method/{LINK_VALIDATION}", doctype="CRM Lead", docname=withheld, **args)
+		frappe.local.request.method = "POST"
+		engine_guard.guard_request()
+		self.assertEqual(validate_link_and_fetch(**frappe.form_dict).get("name"), withheld)
+
+		# a field without the option gets no such favour, flag or not
+		field.ignore_user_permissions = 0
+		self.request(f"/api/method/{LINK_VALIDATION}", doctype="CRM Lead", docname=withheld, **args)
+		frappe.local.request.method = "POST"
+		engine_guard.guard_request()
+		self.assertEqual(frappe.form_dict.ignore_user_permissions, "1")
+		with self.assertRaises((frappe.ValidationError, frappe.PermissionError)):
+			validate_link_and_fetch(**frappe.form_dict)
+		frappe.form_dict.pop("ignore_user_permissions")
+		self.assertFalse(validate_link_and_fetch(**frappe.form_dict))
+		self.assertTrue(validate_link_and_fetch(doctype="CRM Lead", docname=allowed).get("name"))
+
+	# --- frappe's MCP endpoint ---------------------------------------------------
+
+	def test_the_mcp_endpoint_is_refused(self):
+		for path in ("/api/v2/mcp", "/api/v2/mcp/", "/api/v2/mcp/anything", "/api/mcp", "/api/V2/MCP"):
+			with self.subTest(path=path):
+				self.request(path, ignore_user_permissions="1")
+				with self.assertRaisesRegex(frappe.PermissionError, "not available"):
+					engine_guard.guard_request()
+				with self.assertRaisesRegex(frappe.PermissionError, "not available"):
+					document_guard.reserve_action()
+		for path in ("/api/v2/method/ping", "/api/v2/mcpx", "/api/method/mcp", "/app/mcp", "/mcp"):
+			with self.subTest(path=path):
+				self.request(path)
+				engine_guard.guard_request()
+
+	def test_this_frappe_has_no_mcp_endpoint_to_lose(self):
+		"""Refusing the path costs nothing while this holds. When it fails, frappe has
+		grown the endpoint: read engine_guard's note on it before allowing it."""
+		import importlib.util
+
+		self.assertIsNone(importlib.util.find_spec("frappe.mcp"))
+		self.assertNotIn("enable_mcp", [df.fieldname for df in frappe.get_meta("System Settings").fields])
 
 	def test_a_job_has_no_request_to_clean(self):
 		for attr in ("form_dict", "request"):
