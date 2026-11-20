@@ -19,7 +19,13 @@ and the report view use on the pinned frappe (17.0.0-dev).
    ``/api/resource/<doctype>?parent=``) or inside a number card or dashboard
    chart the request describes (``parent_document_type``). ``install`` wraps
    ``Engine.check_select_permission``: a list whose parent has no table field
-   for the listed doctype is refused before anything else is checked.
+   for the listed doctype is refused before anything else is checked. So is a
+   doctype or parent named in any spelling but its own: ``frappe.get_meta("crm
+   deal")`` finds CRM Deal, because the database compares names without case,
+   while the ``permission_query_conditions`` hooks are keyed on the exact
+   string and would find nothing. Only a database that keeps table names
+   case-sensitive turned that into an error (no table ``tabcrm deal``); now
+   the builder refuses it whatever the database does.
 
 2. **A child table shared with a Single.** The same early return also leaves out
    *which* parent a row belongs to. A child doctype used by a Single and by an
@@ -92,9 +98,27 @@ def _refuse() -> None:
 	frappe.throw(_("That list names a parent it does not belong to."), frappe.PermissionError)
 
 
+def spelled_as_named(doctype: str | None) -> bool:
+	"""Whether ``doctype`` is the doctype's own name, not a variant the database also finds."""
+	if not doctype or not isinstance(doctype, str):
+		return True
+	try:
+		# cached, and frappe's own check loads it next anyway
+		return frappe.get_meta(doctype).name == doctype
+	except frappe.DoesNotExistError:
+		# not a doctype: frappe's own check says so
+		return True
+
+
+def _refuse_spelling() -> None:
+	frappe.throw(_("That list names a doctype by another spelling."), frappe.PermissionError)
+
+
 def _checks_the_parent(check_select):
 	def check_select_permission(self):
 		# only ever called for a query that applies permissions
+		if not (spelled_as_named(self.doctype) and spelled_as_named(self.parent_doctype)):
+			_refuse_spelling()
 		if not belongs(self.doctype, self.parent_doctype):
 			_refuse()
 		return check_select(self)

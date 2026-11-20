@@ -203,6 +203,52 @@ class ListParentGuardTest(IntegrationTestCase):
 		leaked = frappe.get_list("CRM Lead", parent_doctype=SINGLE, pluck="name", limit=0)
 		self.assertIn(self.bobs_lead, leaked)
 
+	# --- a doctype by another spelling ------------------------------------------
+
+	def test_a_doctype_is_listed_only_by_its_own_name(self):
+		"""The row rules in hooks.py are keyed on the exact name; the database is not."""
+		self.assertIn("CRM Lead", frappe.get_hooks("permission_query_conditions"))
+		spelling = self.assertRaisesRegex(frappe.PermissionError, "another spelling")
+		for variant in ("crm lead", "CRM lead", "Crm Lead"):
+			with self.subTest(variant=variant):
+				self.assertEqual(frappe.get_meta(variant).name, "CRM Lead")
+				self.assertFalse(engine_guard.spelled_as_named(variant))
+				# the builder itself, which is as far as a database that folds
+				# table names would let the request get
+				with spelling:
+					frappe.qb.get_query(variant, fields=["name"], ignore_permissions=False)
+				with spelling:
+					frappe.qb.get_query(
+						"CRM Products", fields=["name"], ignore_permissions=False, parent_doctype=variant
+					)
+				# by the routes, this database (case-sensitive tables) stops it
+				# sooner; either way it is an error and never a list
+				for route in (
+					lambda: frappe.get_list(variant, pluck="name", limit=0),
+					lambda: get_list(variant, fields=["name"], limit_page_length=0),
+					lambda: reportview_execute(variant, fields=["name"], limit=0),
+				):
+					with self.assertRaises((frappe.PermissionError, frappe.db.TableMissingError)):
+						route()
+		# a parent is not looked up as a table first, so the routes reach the guard
+		for parent in ("event", "EVENT"):
+			with self.subTest(parent=parent), spelling:
+				get_list(SHARED_CHILD, fields=["name"], parent=parent)
+		with spelling:
+			get_list(SHARED_CHILD, fields=["name"], parent="fcrm settings")
+		with spelling:
+			frappe.get_list("CRM Lead", parent_doctype="crm lead", pluck="name")
+
+	def test_the_true_names_still_list(self):
+		self.assertNotIn(self.bobs_lead, frappe.get_list("CRM Lead", pluck="name", limit=0))
+		self.assertIsInstance(get_list(SHARED_CHILD, fields=["name"], parent="Event"), list)
+		self.assertTrue(engine_guard.spelled_as_named("CRM Lead"))
+		self.assertTrue(engine_guard.spelled_as_named(None))
+		# not a doctype at all: left for frappe's own check to refuse
+		self.assertTrue(engine_guard.spelled_as_named("No Such Doctype"))
+		with self.assertRaises(Exception):
+			frappe.get_list("No Such Doctype", pluck="name")
+
 	# --- honest lists are untouched -------------------------------------------
 
 	def test_a_child_table_still_lists_under_its_true_parent(self):
