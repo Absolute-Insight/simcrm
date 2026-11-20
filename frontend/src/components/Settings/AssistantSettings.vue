@@ -43,7 +43,7 @@
             :description="
               __('An OpenAI-compatible base URL. Local models included.')
             "
-            placeholder="http://ollama:11434/v1"
+            placeholder="http://llm:8086/v1"
           />
           <FormControl
             v-model="draft.model"

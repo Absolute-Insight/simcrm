@@ -96,7 +96,7 @@ connection** verifies the endpoint before reps ever see any of them. There is
 a daily call budget so usage stays bounded.
 
 - **Base URL** is an OpenAI-compatible endpoint including the version prefix —
-  `http://ollama:11434/v1`, `https://api.example.com/v1`. **API Key** only if
+  `http://llm:8086/v1`, `https://api.example.com/v1`. **API Key** only if
   the server requires one.
 - **Test connection** sends one real request and checks the reply's shape; it
   works with the model still off, and tells a wrong base URL from a model that

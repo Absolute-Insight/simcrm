@@ -211,19 +211,19 @@ it wrong is rarely the moment you expected to.
 
 **And after any recreation, put the model network back.** QA has no model
 server of its own; its backend and both queue workers reach production's
-`vectora-ollama-1` over a network that exists for that and nothing else. `up
+`vectora-llm-1` over a network that exists for that and nothing else. `up
 -d` drops the attachment every time, and the agent surfaces then fail
 *silently* — they render normally and never answer. Verify rather than assume:
 
 ```bash
 # once per host: a network with the model server on it and nothing else
 docker network create vectora-model-net 2>/dev/null || true
-docker network connect vectora-model-net vectora-ollama-1 2>/dev/null || true
+docker network connect vectora-model-net vectora-llm-1 2>/dev/null || true
 
 for c in vectora-qa-backend-1 vectora-qa-queue-short-1 vectora-qa-queue-long-1; do
   docker network connect vectora-model-net "$c" 2>/dev/null || true
   docker exec "$c" curl -s -o /dev/null -w "$c %{http_code}\n" \
-    http://vectora-ollama-1:11434/v1/models        # expect 200
+    http://vectora-llm-1:8086/v1/models            # expect 200
   docker exec "$c" getent hosts db redis-cache redis-queue   # expect ONE address each
 done
 ```
@@ -242,11 +242,9 @@ network, and `docker network disconnect vectora_default <container>` is the
 fix. On `vectora-model-net` the only production name QA can resolve is the model
 server's.
 
-`vectora-ollama-1` loses the attachment when it is recreated — which needs
-`--profile local-model`, so a routine `up -d` does not do it. Re-run the two
-"once per host" lines after any upgrade that did. On a host that runs the
-`gpu-model` profile instead, the container is `vectora-llm-1` and the URL is
-`http://vectora-llm-1:8086/v1/models`.
+`vectora-llm-1` loses the attachment when it is recreated — which needs
+`--profile gpu-model`, so a routine `up -d` does not do it. Re-run the two
+"once per host" lines after any upgrade that did.
 
 Sharing the tag is fine and deliberate: QA should run the same version as
 production. Stage an upgrade by setting `VECTORA_TAG` once, recreating
@@ -279,7 +277,8 @@ refused rather than published.
 
 It proves the image boots, `create-site` completes, the volume layout is right,
 nginx routes to the backend and the socket, the workers and scheduler come up,
-and — with `--profile local-model` — that ollama pulls and answers. That was
+and — with `--profile gpu-model`, on a host with an NVIDIA card — that the
+model is pulled, checked against its pin and answers. That was
 the whole unrehearsed half of the deployment until 2026-08-22; see *Upgrading*
 for what has since been run.
 
@@ -432,19 +431,20 @@ below, so a plain `up -d` leaves the old container running the old script:
 still uploading `site_config_backup.json`, and without the new healthcheck.
 See [Getting them off the host](#getting-them-off-the-host).
 
-**If you run the local model, say so on every `pull` and `up`** —
-`docker compose --profile local-model pull` and
-`docker compose --profile local-model up -d` (or set `COMPOSE_PROFILES=local-model`
+**If you run the model, say so on every `pull` and `up`** —
+`docker compose --profile gpu-model pull` and
+`docker compose --profile gpu-model up -d` (or set `COMPOSE_PROFILES=gpu-model`
 in `.env` once). A service behind a profile is invisible to a plain `up -d`, so
-`ollama` is never recreated and never picks up a changed setting. Production ran
-for seventeen days on a container created before `OLLAMA_CONTEXT_LENGTH` existed:
-the server stayed at ollama's 4096 default while prompts were sized for 8192, so
-the Analyst's larger tables were refused as `context_length` and long Assistant
-and Mentor prompts lost their head — the system instruction and the grounding.
-Check what the server is actually running with, not what the file says:
+`llm` is never recreated and never picks up a changed setting. Production once
+ran for seventeen days on a model container created before
+`OLLAMA_CONTEXT_LENGTH` existed: the server stayed at ollama's 4096 default
+while prompts were sized for 8192, so the Analyst's larger tables were refused
+as `context_length` and long Assistant and Mentor prompts lost their head — the
+system instruction and the grounding. Check what the server is actually running
+with, not what the file says:
 
 ```bash
-docker inspect <project>-ollama-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep OLLAMA_CONTEXT_LENGTH
+docker inspect <project>-llm-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep OLLAMA_CONTEXT_LENGTH
 ```
 
 **`--site all` is not "every directory under `sites/`".** Frappe counts a
@@ -2046,118 +2046,67 @@ shapes are supported:
 |---|---|---|
 | **Off** | nothing | The default. Every deterministic feature — signals, deal health, planner, digests, automation — works with the agent disabled by design. You lose only model-drafted content. |
 | **Hosted API** | per-token billing | Cheapest to run. Note that thread contents, including customer email, leave your infrastructure — a decision for whoever owns that data. |
-| **Local model** | one host with a GPU | Nothing leaves your network. |
+| **Local model** | one host with an NVIDIA card | Nothing leaves your network. |
 
-For the local shape this stack ships an opt-in profile. On a **first boot**, set
+For the local shape this stack ships one opt-in profile, `gpu-model`, and one
+model: NVIDIA's `Nemotron 3.5 Bolt E4B`. It is the only model the stack serves
+and the only one it is measured against. On a **first boot**, set
 `VECTORA_AGENT_ENABLED=1` in `.env` before bringing it up and the site is created
 already pointed at the model:
-
-```bash
-docker compose --profile local-model up -d
-docker compose logs -f ollama-pull    # first run downloads several GB
-```
-
-`create-site` passes `VECTORA_AGENT_BASE_URL`, `VECTORA_AGENT_MODEL` and
-`VECTORA_AGENT_ENABLED` to `after_install`, which writes them into **CRM Agent
-Settings** once. It is read at site creation and never again — an admin who
-later changes the endpoint in the UI keeps that change across upgrades, which a
-value re-applied on every deploy would silently undo.
-
-On a site that **already exists** those variables do nothing, because
-`create-site` skips. Set it in the UI instead: **Settings → Assistant** →
-`base_url` `http://ollama:11434/v1`, `model` the same value as
-`VECTORA_AGENT_MODEL`, `enabled` on.
-
-Either way the endpoint has to be the service name. `127.0.0.1` will not work:
-from inside the backend container that is the container itself — which is the
-one mistake that makes a correctly-pulled model look broken.
-
-`ollama-pull` is a one-shot that fetches the weights and then makes one
-throwaway call to warm them. It is idempotent, so `up -d` stays safe to re-run.
-
-**Hardware.** A GPU with 8GB or more is the sensible floor for the default
-model; add a device reservation to the `ollama` service (there is a commented
-example in `docker-compose.yml`). CPU-only inference does work, but a summary
-takes tens of seconds rather than about one, which pushes you into the timeout
-interaction described above — raise the agent `timeout`, and
-`PROXY_READ_TIMEOUT` with it, or every call will fail at the proxy. The 4GB VM
-that comfortably runs the rest of this stack is **not** enough to also host a
-model; put inference on its own machine.
-
-**Model choice.** `LFM2.5-2.6B` at Q4_K_M is the default and what this stack is
-verified against. Eleven models were run through the real `client.complete()`
-path — the same code a rep's summary goes through — on two axes: does guided
-decoding produce a schema-valid object, and does the model follow instructions
-planted in a customer's email. The second axis chose the default.
-
-| Model | Licence | Q4 | Warm | Injection cases landed |
-|---|---|---|---|---|
-| **LFM2.5-2.6B** | LFM1.0 | 1.7 GB | 2.8 s | **1 of 4** — refused the discount draft **0/7** |
-| granite-4.0-h-micro | Apache-2.0 | 1.9 GB | 1.1 s | 3 of 4 — discount **7/7** |
-| Qwen3.8-2B-Distill | Apache-2.0 | 1.3 GB | 1.7 s | 3 of 4 — discount **7/7** |
-| granite-4.0-h-tiny *(old default)* | Apache-2.0 | 4.2 GB | 0.8 s | discount **7/7**, and calls a plainly negative thread `neutral` |
-| antares-1b | Apache-2.0 | 1.1 GB | 0.5 s | 4 of 4 |
-| SmolLM3-3B | Apache-2.0 | 1.9 GB | 1.0 s | 4 of 4 |
-| granite-4.1-3b / 4.1-8b | Apache-2.0 | 2.1 / 5.0 GB | 1.0 / 3.0 s | 4 of 4 / no better at 8B |
-| openbmb/MiniCPM5-2B *(2026-09-08)* | Apache-2.0 | 1.6 GB | 4.6 s | **2 of 4** as shipped; **3 of 4** with reasoning off (0.7 s), every control clean |
-
-Four more could not run this workload at all, which is worth knowing before you
-try them: `InternScience/Agents-A1-4B` returns **empty content** under a schema,
-spending its whole budget in a `reasoning` channel — 39s, 84s and 95s at 2048,
-4096 and 8192 tokens, all empty. (`MiniCPM5-1B` was listed here for the same
-reason and no longer belongs: re-measured on 2026-09-08 that was the old
-1024-token budget, and at 2048 it answers. Do not use it regardless — with
-reasoning off it confirms the fraudulent discount 3 of 3.) `Qwen3-4B-Instruct-2507`
-invents keys the schema forbids; `Nanbeige4.2-3B` fails with
-`Failed to initialize samplers` because llama.cpp cannot build a grammar for it;
-`fuse-1-Lite` will not load — `unknown model architecture: 'fuse3'`.
-
-`XHToken/Spark-X2.5-4B` was checked on 2026-09-08 and is the fifth: ollama pulls
-the weights and the first call dies with `unknown model architecture: 'spark2_5'`,
-so this stack cannot serve it whatever the settings say. Upstream llama.cpp
-gained the architecture on 2026-09-06 and the ollama bump is still an open PR.
-It is worth knowing where it got to, because it is Apache-2.0 and it refused the
-discount draft **0/7** — on an llama.cpp endpoint *with reasoning suppressed*,
-where it also read the thread correctly and answered in 1.6 s. Left to reason,
-which is its default and what ollama would do, it spends the whole 2048-token
-budget in the reasoning channel and returns empty content on a quarter of the
-corpus, and at 4096 it takes the planted instruction and reports a plainly
-negative thread as `positive`. See `.pi/feats/agent/README.md`, *The 2026-09-08
-run*, for the full matrix and the conditions under which it becomes interesting.
-
-Scale does not buy resistance: `granite-4.1-8b` is no better than the 3B, and it
-inherits the same `neutral` sentiment error as `granite-4.0-h-tiny`.
-
-`max_tokens` must be **2048 or more** for this default. At 1024 a long thread
-comes back as `Invalid JSON: EOF while parsing a string` — a budget too small to
-finish the object, reported to the rep as `unavailable`.
-
-### A GPU host: Nemotron 3.5 Bolt E4B (`gpu-model`)
-
-On a host with an NVIDIA card it can give the model to itself (a 24 GB card
-holds it with room to spare), the `gpu-model` profile serves NVIDIA's
-`Nemotron 3.5 Bolt E4B` — a post-trained Gemma 4 E4B, 7.5B parameters, 10 GB at
-Q8_0 — on ollama. It is one model for every tier, and the only one measured
-here that also hears and sees: the Assistant's **dictation** and **photo
-attachments** need it (or another model that reads audio and images). Run this
-profile or `local-model`, not both.
 
 ```bash
 docker compose --profile gpu-model up -d
 docker compose logs -f llm-fetch     # first run downloads 10 GB; every `up -d` re-checks the pin before llm starts
 ```
 
-Like `local-model`, the profile has to be named on every `pull` and `up -d`
-(or set `COMPOSE_PROFILES=gpu-model` in `.env`). A plain upgrade never recreates
-`llm`. The service keeps the name and port the llama.cpp server it replaces
-had, so `base_url` does not change.
+`create-site` passes `VECTORA_AGENT_BASE_URL`, `VECTORA_AGENT_MODEL` and
+`VECTORA_AGENT_ENABLED` to `after_install`, which writes them into **CRM Agent
+Settings** once. Unset, the first two are the `llm` service
+(`http://llm:8086/v1`) and the model it serves (`VECTORA_LLM_MODEL`). It is
+read at site creation and never again — an admin who later changes the endpoint
+in the UI keeps that change across upgrades, which a value re-applied on every
+deploy would silently undo.
+
+On a site that **already exists** those variables do nothing, because
+`create-site` skips. Set it in the UI instead: **Settings → Assistant**, with
+the values in the table below.
+
+Either way the endpoint has to be the service name. `127.0.0.1` will not work:
+from inside the backend container that is the container itself — which is the
+one mistake that makes a correctly-pulled model look broken.
+
+**Hardware.** One NVIDIA card the model can have to itself; a 24 GB card holds
+it with room to spare. It has not been measured on a CPU, and nothing here
+supports running it on one. The 4GB VM that comfortably runs the rest of this
+stack is **not** enough to also host a model; put inference on its own machine,
+or on a card of its own.
+
+**Another model is a different product.** The tier will talk to any
+OpenAI-compatible endpoint, and every number below belongs to this model on
+this server. Point `base_url` somewhere else and none of them carries over:
+run the injection corpus (`crm.agent.evals.runner`) against that endpoint
+before a rep sees its output. What earlier candidates did on that corpus is
+recorded, dated, in `.pi/feats/agent/README.md`.
+
+### The model: Nemotron 3.5 Bolt E4B (`gpu-model`)
+
+The `gpu-model` profile serves NVIDIA's `Nemotron 3.5 Bolt E4B` — a
+post-trained Gemma 4 E4B, 7.5B parameters, 10 GB at Q8_0 — on ollama. It is one
+model for every tier, and it also hears and sees: the Assistant's **dictation**
+and **photo attachments** need it (or another model that reads audio and
+images).
+
+The profile has to be named on every `pull` and `up -d` (or set
+`COMPOSE_PROFILES=gpu-model` in `.env`). A plain upgrade never recreates `llm`.
+The service keeps the name and port the llama.cpp server it replaced had, so
+`base_url` does not change.
 
 Then **Settings → Assistant**:
 
 | Setting | Value | Why |
 |---|---|---|
-| `base_url` | `http://llm:8086/v1` | the service, never `127.0.0.1` |
-| `model` | `nemotron-3.5-bolt:e4b-q8_0` | as `VECTORA_LLM_MODEL` |
+| `base_url` | `http://llm:8086/v1` | the service, never `127.0.0.1`; a new site is created with it |
+| `model` | `nemotron-3.5-bolt:e4b-q8_0` | as `VECTORA_LLM_MODEL`; a new site is created with it |
 | `context_tokens` | **32768** | each of the four parallel requests gets `OLLAMA_CONTEXT_LENGTH`; more here and ollama truncates the instruction away |
 | `max_tokens` | **8192** | thinking is charged to it |
 | Turn off model reasoning | **off** | with thinking the injection corpus never lands; without it one case does |
@@ -2218,45 +2167,47 @@ old weights sit in the `llm-models` volume, which nothing uses any more:
 A host override that pinned `llm` to one card by `device_ids` still applies —
 the service name is unchanged.
 
+**Moving a host from the `local-model` profile (up to v3.36).** That profile
+— an `ollama` service on port 11434 serving `LFM2.5-2.6B` — is gone, and so is
+the model. `migrate` moves a site that still stores exactly the old shipped
+model name to this one, and its `base_url` with it if that is still exactly
+`http://ollama:11434/v1`; a model or endpoint an admin chose is left alone.
+Until `llm` is up the tier reports `unavailable`, as it does for any endpoint
+that does not answer.
+
+1. `docker compose --profile gpu-model up -d` on a host with an NVIDIA card.
+2. Set the rest of the table above in **Settings → Assistant**, Save, then
+   **Test connection**.
+3. Remove what the old profile left behind — compose no longer knows either:
+   `docker rm -f <project>-ollama-1 <project>-ollama-pull-1` and
+   `docker volume rm <project>_ollama-models`.
+4. Drop `OLLAMA_KEEP_ALIVE` and `OLLAMA_CONTEXT_LENGTH` from `.env`; nothing
+   reads them. Drop `VECTORA_AGENT_MODEL` and `VECTORA_AGENT_BASE_URL` too if
+   they still name the old model and `http://ollama:11434/v1`: they do nothing
+   to this site, and a site created later from the same `.env` would be
+   pointed at a model that is no longer served.
+
+A host without an NVIDIA card has no model in this stack any more: point
+`base_url` at an endpoint elsewhere, or leave the tier off.
+
 ### The model licence, and who it binds
 
-**`LFM2.5-2.6B` is not permissively licensed.** It ships under LFM1.0, whose own
-text defines a *Threshold* of **"annual revenue of 10 million United States
-dollars ($10,000,000) or more"** and limits Commercial Use above it. Apache-2.0
-models carry no such condition; this one was chosen anyway, because it is the
-only model measured here that refuses to draft a fraudulent discount.
+The licensee is whoever runs the weights — the customer, not us. Nemotron 3.5
+Bolt E4B ships under OpenMDW-1.1, over Apache-2.0 for its Gemma base: no
+field-of-use limits, no revenue threshold, no share-back, outputs unrestricted.
+Its one duty is a notice, and it applies only where the weights are
+distributed — see above. Nothing has to be bought to run it.
 
-The licensee is whoever runs the weights — the customer, not us. So the position
-has to be stated at the point of sale rather than discovered at an audit:
+A deployment that wants no model at all can leave the agent tier off, which is
+the shipped default and a supported state — the deterministic tier (assignment,
+SLA, automation rules, signals) runs without a model at all.
 
-- **Under the threshold:** run the default as shipped. Nothing to buy.
-- **At or above it:** two supported ways through, and the choice is theirs.
-  1. **Buy a commercial licence from Liquid AI** and keep the default, its
-     footprint and its behaviour unchanged.
-  2. **Move to hardware that can host a larger permissively-licensed model.**
-     The Apache field only becomes interesting further up the size curve than
-     the 1.7 GB default — that means a dedicated inference host with a real GPU,
-     not the 4 GB VM this stack runs on. Set `VECTORA_AGENT_MODEL` and
-     `VECTORA_AGENT_BASE_URL` accordingly; nothing in the code changes.
-
-     **Re-run the injection corpus on that endpoint.** None of the numbers above
-     survive a change of server: the default reads this thread as `negative` on
-     ollama and `neutral` on llama.cpp under `--jinja` — the same defect that
-     demoted `granite-4.0-h-tiny` — unless the endpoint suppresses reasoning
-     (`--reasoning-budget 0`), which also halves its warm latency. Nothing in
-     the code changes, and that is exactly why the measurement has to move with
-     the endpoint.
-
-Either way the endpoint is two settings fields. A deployment that wants neither
-can leave the agent tier off, which is the shipped default and a supported state
-— the deterministic tier (assignment, SLA, automation rules, signals) runs
-without a model at all.
-
-**What a local model does not fix.** Prompt injection — not even this one. The
-default resists the draft case and one summarise case; it still follows a
-planted instruction in the other three. Every other model tested is worse. That
-is why this tier has no write tools and why drafted replies are always shown to
-a human before sending. Running the model yourself changes where the weights
+**What a local model does not fix.** Prompt injection. This model resisted
+every case in the corpus on 2026-11-16 with its thinking on, and one case
+landed 5 of 5 with thinking off; its own model card warns it is more
+susceptible without rails. A corpus is the attacks somebody thought of. That is
+why this tier has no write tools and why drafted replies are always shown to a
+human before sending. Running the model yourself changes where the weights
 live, not whether the output can be steered by someone who emails your reps.
 
 ## First deployment (internal)
@@ -2297,8 +2248,8 @@ this point:
 6. **The integrations you intend to sell** — telephony, WhatsApp, ERPNext, lead
    syncing. All four are credential-gated and none has been exercised.
 7. **The agent tier last, and on its own machine.** The host running this stack
-   cannot also host a model. Bring it up with `--profile local-model`, confirm
-   the default answers, and leave drafted replies behind the human gate.
+   cannot also host a model. Bring it up with `--profile gpu-model`, confirm
+   the model answers, and leave drafted replies behind the human gate.
 
 **Then upgrade that host when the next release lands.** Following *Upgrading*
 against a machine carrying accumulated state is the only version of that test
@@ -2352,6 +2303,8 @@ bench shell. This deployment's IONOS account had to be created server-side.
 `ollama/ollama:0.12.12` has never been published; the series is 0.3x. Anyone
 following step 7 hit `failed to resolve reference` immediately. Now pinned to
 `0.32.15`, and to `0.40.4` on 2026-10-15. Check a pin resolves before shipping it.
+(The profile was removed with its model on 2026-11-20; `gpu-model` is the one
+that remains.)
 
 **`VECTORA_AGENT_ENABLED` does nothing on an existing site.**
 `apply_endpoint_defaults()` runs from `after_install` only — deliberately, so an
@@ -2396,8 +2349,9 @@ password, the cleared `append_to`, and the agent tier's endpoint and model. The
 container's `/tmp` does not survive, which matters only if you have staged
 scripts there.
 
-Run the profile you actually use — `docker compose --profile local-model up -d`
-rather than bare `up -d`, or the model service drops out of compose's view.
+Run the profile you actually use — `docker compose --profile gpu-model up -d`
+(it was `local-model` when this was written) rather than bare `up -d`, or the
+model service drops out of compose's view.
 
 **Still open here:** an offsite backup destination (decided: an S3-compatible
 bucket, not yet wired — step 3 cannot close until it exists), and every
