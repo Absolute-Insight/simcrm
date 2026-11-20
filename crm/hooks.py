@@ -498,7 +498,7 @@ auth_hooks = ["crm.permissions.users.refuse_sign_in_field_queries"]
 # ----------------
 before_request = [
 	# first: before anything of this request can build a list. See engine_guard.py.
-	"crm.permissions.engine_guard.install",
+	"crm.permissions.engine_guard.guard_request",
 	"crm.permissions.document_guard.reserve_action",
 	"crm.integrations.whatsapp.guards.refuse_upstream_methods_via_upload",
 ]
