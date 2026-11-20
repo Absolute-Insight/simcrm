@@ -463,6 +463,8 @@ someone other than me:
       Its LFM1.0 licence limits commercial use above $10M revenue, so deploy/README.md
       carries the two supported ways through for customers above that line. MiniCPM5-1B
       must not ship (returns empty content). **2 days.**
+      *Since replaced (2026-11-20): the one shipped model is Nemotron 3.5 Bolt E4B on the
+      `gpu-model` profile; LFM2.5 and the `local-model` profile are removed.*
 - [x] **No Agent settings UI.** Eleven configurable fields, including every signal
       threshold, with no pane in Vectora's own Settings — an admin had to drop to the raw
       Frappe desk to tune a pilot's thresholds. Now **Settings → Assistant**, gated on
