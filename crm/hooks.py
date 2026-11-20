@@ -170,6 +170,10 @@ before_uninstall = "crm.uninstall.before_uninstall"
 # -----------
 # Permissions evaluated in scripted ways
 
+# Desk users no longer hold select on User (crm.permissions.users), so the user
+# picker needs a query that does its own access check.
+standard_queries = {"User": "crm.permissions.users.user_link_query"}
+
 permission_query_conditions = {
 	"CRM Lead": "crm.permissions.org_hierarchy.get_lead_permission_query_conditions",
 	"CRM Deal": "crm.permissions.org_hierarchy.get_deal_permission_query_conditions",
@@ -540,6 +544,8 @@ on_logout = ["crm.api.auth.forget_field_user"]
 after_migrate = [
 	"crm.fcrm.doctype.fcrm_settings.fcrm_settings.after_migrate",
 	"crm.permissions.customers.stop_frappe_event_digest",
+	# a rep could read any colleague's User row, sign-in IP included
+	"crm.permissions.users.close_user_select",
 	# Navbar Settings' app_logo is site data, so a new image alone does not move
 	# it and an existing site never re-runs after_install -- the login page kept
 	# rendering the Frappe Framework logo. Deliberately a hook rather than a
