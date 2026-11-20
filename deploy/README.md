@@ -425,6 +425,28 @@ that follows it across the recreate. It is a cold restart of MariaDB all the
 same, so let it happen here, inside the maintenance window of step 2, and not
 as a surprise the next time somebody runs `up -d` to change a proxy setting.
 
+**The first `up -d` on a release after v3.36.0 also restarts the model
+server**, once, if you run the `gpu-model` profile: `llm` and `llm-fetch` are
+now pinned by digest — the same `ollama/ollama:0.40.16` they already run, and
+nothing else about either changed. `llm-fetch` re-checks the model's
+fingerprint, `llm` comes back on the same volume with no download, and the
+first question afterwards waits a few seconds for the weights to load. Until
+then every model surface reports `unavailable`.
+
+**That release also removes the `local-model` profile and the model it
+served.** There is no longer a model in this stack for a host without an NVIDIA
+card: `LFM2.5-2.6B` on the `ollama` service, which ran on a CPU or a small GPU,
+is gone, and the one model shipped now is served by `gpu-model` only. A host
+that ran `local-model` keeps its old container until it is removed, and its
+model surfaces report `unavailable` after `migrate` until `gpu-model` is up, or
+`base_url` is pointed at an endpoint elsewhere. The steps are under [The
+model](#the-model-nemotron-35-bolt-e4b-gpu-model), "Moving a host from the
+`local-model` profile". On any host, delete `VECTORA_AGENT_MODEL`,
+`VECTORA_AGENT_BASE_URL` and `OLLAMA_KEEP_ALIVE` from `.env` if the first two
+still carry the old values (`hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M`,
+`http://ollama:11434/v1`): they do nothing to the existing site, and a site
+created later from that file would be pointed at the service that was removed.
+
 **If you run the off-host copy, say so too** — `docker compose --profile
 offsite up -d`. `backup-offsite` is behind a profile like the model servers
 below, so a plain `up -d` leaves the old container running the old script:
@@ -2067,6 +2089,15 @@ read at site creation and never again — an admin who later changes the endpoin
 in the UI keeps that change across upgrades, which a value re-applied on every
 deploy would silently undo.
 
+**Check `.env` for the old values before creating a site.** An `.env` written
+for v3.36 or earlier sets `VECTORA_AGENT_MODEL` to the retired
+`hf.co/LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M` and `VECTORA_AGENT_BASE_URL` to
+`http://ollama:11434/v1`, and a set value beats the defaults above: a new site
+— a QA stack, a second customer — is then created pointed at a service that no
+longer exists, and the tier reports `unavailable`. Nothing repairs that
+afterwards, because patches do not run on a site that is being installed.
+Delete both lines, and `OLLAMA_KEEP_ALIVE` with them, which nothing reads.
+
 On a site that **already exists** those variables do nothing, because
 `create-site` skips. Set it in the UI instead: **Settings → Assistant**, with
 the values in the table below.
@@ -2154,6 +2185,13 @@ NVIDIA's model card warns it is "more susceptible to prompt injection" without
 rails; the fences, the grounding checks and the no-write-tools rule are those
 rails, and the corpus above is measured through them.
 
+One surface is outside both that rule and that corpus. The domain-enrichment
+model fallback (**CRM Enrichment Settings → Model Fallback**, off by default) hands the model a
+stranger's web page and writes what it reads — company name, description,
+industry — into fields the rules left blank, with no person in between. The
+corpus has no page-injection case for it, so it has **not been measured on this
+model**. Leave it off until it has been.
+
 **Moving a host from MiniCPM-V (the `gpu-model` profile up to v3.30).** The
 old weights sit in the `llm-models` volume, which nothing uses any more:
 
@@ -2169,23 +2207,33 @@ the service name is unchanged.
 
 **Moving a host from the `local-model` profile (up to v3.36).** That profile
 — an `ollama` service on port 11434 serving `LFM2.5-2.6B` — is gone, and so is
-the model. `migrate` moves a site that still stores exactly the old shipped
-model name to this one, and its `base_url` with it if that is still exactly
-`http://ollama:11434/v1`; a model or endpoint an admin chose is left alone.
-Until `llm` is up the tier reports `unavailable`, as it does for any endpoint
-that does not answer.
+the model. `migrate` moves a site only when it stores *both* exactly the old
+shipped model name and exactly `http://ollama:11434/v1`, which is a site that
+was on this stack's own model server: it is pointed at
+`http://llm:8086/v1` and this model, "Turn off model reasoning" is switched
+back off (the old model ignored it; this one obeys it, and is measured with
+thinking on), and a stored API key is removed, because it was entered for the
+old endpoint. A site whose admin entered another endpoint is left exactly as it
+is, its model name included — that is their server. Until `llm` is up the tier
+reports `unavailable`, as it does for any endpoint that does not answer.
 
-1. `docker compose --profile gpu-model up -d` on a host with an NVIDIA card.
-2. Set the rest of the table above in **Settings → Assistant**, Save, then
+1. In `.env`, change `COMPOSE_PROFILES=local-model` to
+   `COMPOSE_PROFILES=gpu-model` if it is set there. Compose does not complain
+   about a profile that no longer exists; it starts nothing for it.
+2. `docker compose --profile gpu-model up -d` on a host with an NVIDIA card.
+3. Set the rest of the table above in **Settings → Assistant**, Save, then
    **Test connection**.
-3. Remove what the old profile left behind — compose no longer knows either:
-   `docker rm -f <project>-ollama-1 <project>-ollama-pull-1` and
-   `docker volume rm <project>_ollama-models`.
-4. Drop `OLLAMA_KEEP_ALIVE` and `OLLAMA_CONTEXT_LENGTH` from `.env`; nothing
+4. Remove what the old profile left behind. Compose no longer knows the
+   `ollama` container, so no `up -d` stops it: it keeps running, holding its
+   memory, until it is removed.
+   `docker rm -f <project>-ollama-1 <project>-ollama-pull-1`, then
+   `docker volume rm <project>_ollama-models` — the volume holds only the
+   downloaded weights, nothing that cannot be fetched again.
+5. Drop `OLLAMA_KEEP_ALIVE` and `OLLAMA_CONTEXT_LENGTH` from `.env`; nothing
    reads them. Drop `VECTORA_AGENT_MODEL` and `VECTORA_AGENT_BASE_URL` too if
    they still name the old model and `http://ollama:11434/v1`: they do nothing
    to this site, and a site created later from the same `.env` would be
-   pointed at a model that is no longer served.
+   pointed at a service that is no longer there.
 
 A host without an NVIDIA card has no model in this stack any more: point
 `base_url` at an endpoint elsewhere, or leave the tier off.
@@ -2206,8 +2254,11 @@ SLA, automation rules, signals) runs without a model at all.
 every case in the corpus on 2026-11-16 with its thinking on, and one case
 landed 5 of 5 with thinking off; its own model card warns it is more
 susceptible without rails. A corpus is the attacks somebody thought of. That is
-why this tier has no write tools and why drafted replies are always shown to a
-human before sending. Running the model yourself changes where the weights
+why the chat and drafting surfaces have no write tools and why drafted replies
+are always shown to a human before sending. The one place a model's output is
+written without a person reading it first is the opt-in enrichment fallback
+described above — unmeasured on this model, and off by default. Running the
+model yourself changes where the weights
 live, not whether the output can be steered by someone who emails your reps.
 
 ## First deployment (internal)
