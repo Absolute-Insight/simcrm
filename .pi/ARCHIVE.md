@@ -1477,19 +1477,23 @@ nothing for this reason.
 - A rep still lists one User row, their own: frappe shares each user's record with
   them, and `has_permission` on the doctype passes on a share.
 
-- `refuse_sign_in_field_queries` (an `auth_hooks` entry) closes what the two above
-  cannot. Any doctype with a Link to User joins it: a rep's
+- `refuse_sign_in_field_queries` (an `auth_hooks` entry) is defence in depth.
+  While a role holds select or read on User, any doctype with a Link to User joins
+  it: under frappe's standard rules a rep's
   `get_list("ToDo", fields=["assigned_by.last_ip"])` returned the manager's address,
-  and `[["deal_owner.last_ip", "like", "198.%"]]` probes one. Frappe checks nothing on
-  the joined doctype's columns when filtering, and lets every User column be joined
-  (core doctype), so no permission rule reaches it. Every such query must name the
-  column, and no CRM screen does, so any `/api/` call naming `last_login`,
-  `last_ip` or `last_active` is refused unless the caller is a System Manager.
-  `auth_hooks` rather than `before_request`, because they run after API keys and
-  OAuth have set the user. Monkeypatching `get_permitted_fields` was the other
+  and `[["deal_owner.last_ip", "like", "198.%"]]` probed one. With the Desk User rule
+  gone a rep reads User only through the share of their own row, and frappe holds
+  the joined row to that as well, so the join comes back empty. But frappe checks
+  nothing on a joined doctype's columns beyond that, so an admin re-granting User
+  access to any role would reopen it. Every such query must name the column, and
+  no CRM screen does, so any `/api/` call naming `last_login`, `last_ip` or
+  `last_active` is refused unless the caller is a System Manager. String arguments
+  are scanned again after JSON decoding, as frappe will read them (`\u005f` is
+  `_`). `auth_hooks` rather than `before_request`, because they run after API keys
+  and OAuth have set the user. Monkeypatching `get_permitted_fields` was the other
   option, and the repo's semgrep forbids it.
-- Still open to colleagues through such a join: the other profile columns (phone,
-  birth date and so on). Only sign-in details are guarded.
+- If a role is granted User access again, the other profile columns (phone, birth
+  date and so on) become joinable again; only sign-in details have the guard.
 
 The CRM's own reads of User are server-side `frappe.get_all` and did not need the
 right. An admin-written `link_filters` on a custom User field that names a column
