@@ -178,7 +178,9 @@ jobs:
     # A multi-arch build under QEMU is long; the default 360 is longer than
     # anything useful. Builds of the same ref queue rather than cancel, so a
     # release tag build is never killed by a main push landing behind it.
-    timeout-minutes: 90
+    # Room for three attempts at the build step (35 minutes each, see there)
+    # and the steps around them.
+    timeout-minutes: 135
     concurrency:
       group: builds-${{ github.ref }}
       cancel-in-progress: false
@@ -210,6 +212,7 @@ jobs:
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GitHub Container Registry
@@ -361,6 +364,16 @@ jobs:
       # finished last won and the other architecture pulled an image it could
       # not exec.
       - name: Build and push
+        id: build_1
+        # The arm64 half runs under emulation, and now and then it never
+        # returns from the end of `bench build`: 7 of the 27 builds up to
+        # v3.37.0 sat there until the job's limit, and the release tag had no
+        # image until somebody ran the build again. A good build takes 10 to
+        # 18 minutes here, so one that has not finished in 35 is hung: it is
+        # stopped and tried again, twice at most. Each attempt pushes the
+        # candidate tag only, so a repeat replaces nothing anybody runs.
+        timeout-minutes: 35
+        continue-on-error: true
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           push: true
@@ -393,6 +406,66 @@ jobs:
           # `frappe-bench/apps/` tree is `frappe/` alone.
           #
           # Raw JSON, not base64: bench reads the mounted file directly.
+          secrets: |
+            apps_json=${{ env.APPS_JSON }}
+
+      - name: Stop the builder before attempt 2
+        # A step that is killed ends its own client; the build it started may
+        # still be running inside the builder, and an identical build would
+        # join it and hang with it. Stopping the builder ends that for
+        # certain. Its cache stays, so the half that finished is not rebuilt.
+        if: steps.build_1.outcome == 'failure'
+        env:
+          BUILDER: ${{ steps.buildx.outputs.name }}
+        run: |
+          echo "::warning::Image build attempt 1 failed or hung; trying again."
+          docker buildx stop "$BUILDER" || true
+
+      - name: Build and push (attempt 2)
+        id: build_2
+        if: steps.build_1.outcome == 'failure'
+        timeout-minutes: 35
+        continue-on-error: true
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          push: true
+          context: builds
+          file: builds/images/layered/Containerfile
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ env.IMAGE_BUILD_TAG }}
+          build-args: |
+            "FRAPPE_BRANCH=${{ env.FRAPPE_BRANCH }}"
+            "FRAPPE_PATH=${{ env.FRAPPE_PATH }}"
+          secrets: |
+            apps_json=${{ env.APPS_JSON }}
+
+      - name: Stop the builder before attempt 3
+        # A step that is killed ends its own client; the build it started may
+        # still be running inside the builder, and an identical build would
+        # join it and hang with it. Stopping the builder ends that for
+        # certain. Its cache stays, so the half that finished is not rebuilt.
+        if: steps.build_1.outcome == 'failure' && steps.build_2.outcome == 'failure'
+        env:
+          BUILDER: ${{ steps.buildx.outputs.name }}
+        run: |
+          echo "::warning::Image build attempt 2 failed or hung; trying again."
+          docker buildx stop "$BUILDER" || true
+
+      - name: Build and push (attempt 3)
+        id: build_3
+        # the last: if this one fails too, so does the job
+        if: steps.build_1.outcome == 'failure' && steps.build_2.outcome == 'failure'
+        timeout-minutes: 35
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          push: true
+          context: builds
+          file: builds/images/layered/Containerfile
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ env.IMAGE_BUILD_TAG }}
+          build-args: |
+            "FRAPPE_BRANCH=${{ env.FRAPPE_BRANCH }}"
+            "FRAPPE_PATH=${{ env.FRAPPE_PATH }}"
           secrets: |
             apps_json=${{ env.APPS_JSON }}
 
