@@ -61,6 +61,15 @@ pushing to it _is_ cutting a release. Nothing else triggers one.
    gh workflow run builds.yml --ref vX.Y.Z   # only if the automatic one did not fire
    ```
 
+   **A hung build retries itself.** The arm64 half is built under emulation
+   and now and then never returns from the end of `bench build`: 7 of the 27
+   builds up to v3.37.0 sat there until the job's limit, and v3.37.0 itself
+   needed three dispatches. The build step now has 35 minutes (a good one
+   takes 15 to 20) and is tried up to three times inside one run, so a hang
+   costs half an hour and no hands. If all three fail, the run is red and the
+   tag has no image: read the log before dispatching again, because three in
+   a row is probably not the hang.
+
    **Check before you dispatch.** Two builds of one commit are not the same
    image: transitive dependencies resolve at build time, so the second push
    rewrites the version tag and `stable` to a different digest. On 2026-09-13 a
