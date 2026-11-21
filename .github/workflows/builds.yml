@@ -212,6 +212,7 @@ jobs:
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GitHub Container Registry
@@ -367,8 +368,8 @@ jobs:
         # The arm64 half runs under emulation, and now and then it never
         # returns from the end of `bench build`: 7 of the 27 builds up to
         # v3.37.0 sat there until the job's limit, and the release tag had no
-        # image until somebody ran the build again. A good build takes 15 to
-        # 20 minutes here, so one that has not finished in 35 is hung: it is
+        # image until somebody ran the build again. A good build takes 10 to
+        # 18 minutes here, so one that has not finished in 35 is hung: it is
         # stopped and tried again, twice at most. Each attempt pushes the
         # candidate tag only, so a repeat replaces nothing anybody runs.
         timeout-minutes: 35
@@ -408,6 +409,18 @@ jobs:
           secrets: |
             apps_json=${{ env.APPS_JSON }}
 
+      - name: Stop the builder before attempt 2
+        # A step that is killed ends its own client; the build it started may
+        # still be running inside the builder, and an identical build would
+        # join it and hang with it. Stopping the builder ends that for
+        # certain. Its cache stays, so the half that finished is not rebuilt.
+        if: steps.build_1.outcome == 'failure'
+        env:
+          BUILDER: ${{ steps.buildx.outputs.name }}
+        run: |
+          echo "::warning::Image build attempt 1 failed or hung; trying again."
+          docker buildx stop "$BUILDER" || true
+
       - name: Build and push (attempt 2)
         id: build_2
         if: steps.build_1.outcome == 'failure'
@@ -425,6 +438,18 @@ jobs:
             "FRAPPE_PATH=${{ env.FRAPPE_PATH }}"
           secrets: |
             apps_json=${{ env.APPS_JSON }}
+
+      - name: Stop the builder before attempt 3
+        # A step that is killed ends its own client; the build it started may
+        # still be running inside the builder, and an identical build would
+        # join it and hang with it. Stopping the builder ends that for
+        # certain. Its cache stays, so the half that finished is not rebuilt.
+        if: steps.build_1.outcome == 'failure' && steps.build_2.outcome == 'failure'
+        env:
+          BUILDER: ${{ steps.buildx.outputs.name }}
+        run: |
+          echo "::warning::Image build attempt 2 failed or hung; trying again."
+          docker buildx stop "$BUILDER" || true
 
       - name: Build and push (attempt 3)
         id: build_3

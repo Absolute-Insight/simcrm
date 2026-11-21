@@ -65,8 +65,10 @@ pushing to it _is_ cutting a release. Nothing else triggers one.
    and now and then never returns from the end of `bench build`: 7 of the 27
    builds up to v3.37.0 sat there until the job's limit, and v3.37.0 itself
    needed three dispatches. The build step now has 35 minutes (a good one
-   takes 15 to 20) and is tried up to three times inside one run, so a hang
-   costs half an hour and no hands. If all three fail, the run is red and the
+   takes 10 to 18) and is tried up to three times inside one run, with the
+   builder stopped in between, so a hang costs 35 minutes and no hands. A run
+   that needed a second attempt is green with a warning on it: that is where
+   to see how often it happens. If all three fail, the run is red and the
    tag has no image: read the log before dispatching again, because three in
    a row is probably not the hang.
 
