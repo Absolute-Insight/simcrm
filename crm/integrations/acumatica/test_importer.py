@@ -156,10 +156,10 @@ class TestUpserts(ImporterTestCase):
 		)
 
 	def test_a_whole_name_typed_into_last_name_is_not_doubled(self):
-		name = importer.upsert_contact(C(NoteID="g-whole", ContactID="8", LastName="Dawid Van der Merwe"))
+		name = importer.upsert_contact(C(NoteID="g-whole", ContactID="8", LastName="Ana De la Cruz"))
 		contact = frappe.get_doc("Contact", name)
-		self.assertEqual((contact.first_name, contact.last_name), ("Dawid", "Van der Merwe"))
-		self.assertEqual(contact.full_name, "Dawid Van der Merwe")
+		self.assertEqual((contact.first_name, contact.last_name), ("Ana", "De la Cruz"))
+		self.assertEqual(contact.full_name, "Ana De la Cruz")
 
 	def test_patch_repairs_doubled_names_from_acumatica_only(self):
 		from crm.patches.v1_0.split_doubled_acumatica_contact_names import execute
