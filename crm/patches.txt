@@ -78,3 +78,4 @@ crm.patches.v1_0.carry_acumatica_inflight_markers_to_ledger
 crm.patches.v1_0.carry_event_reminder_claims_to_ledger
 crm.patches.v1_0.link_customer_head_accounts
 crm.patches.v1_0.replace_retired_default_agent_model
+crm.patches.v1_0.split_doubled_acumatica_contact_names

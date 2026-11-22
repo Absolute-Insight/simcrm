@@ -155,6 +155,42 @@ class TestUpserts(ImporterTestCase):
 			"C-HOLD01",
 		)
 
+	def test_a_whole_name_typed_into_last_name_is_not_doubled(self):
+		name = importer.upsert_contact(C(NoteID="g-whole", ContactID="8", LastName="Dawid Van der Merwe"))
+		contact = frappe.get_doc("Contact", name)
+		self.assertEqual((contact.first_name, contact.last_name), ("Dawid", "Van der Merwe"))
+		self.assertEqual(contact.full_name, "Dawid Van der Merwe")
+
+	def test_patch_repairs_doubled_names_from_acumatica_only(self):
+		from crm.patches.v1_0.split_doubled_acumatica_contact_names import execute
+
+		def doubled(first, noteid=None):
+			doc = frappe.get_doc({"doctype": "Contact", "first_name": first, "last_name": first})
+			doc.insert(ignore_permissions=True)
+			if noteid:
+				doc.db_set("acumatica_noteid", noteid)
+			return doc.name
+
+		imported = doubled("Koos Probe", "g-doubled-1")
+		single = doubled("Thomasprobe", "g-doubled-2")
+		by_hand = doubled("Hand Probe")
+		before = frappe.db.get_value("Contact", imported, "modified")
+		execute()
+
+		def get(name):
+			return frappe.db.get_value("Contact", name, ["first_name", "last_name", "full_name"])
+
+		self.assertEqual(get(imported), ("Koos", "Probe", "Koos Probe"))
+		self.assertEqual(get(single), ("Thomasprobe", "", "Thomasprobe"))
+		self.assertEqual(get(by_hand), ("Hand Probe", "Hand Probe", "Hand Probe Hand Probe"))
+		self.assertEqual(frappe.db.get_value("Contact", imported, "modified"), before)
+
+	def test_person_name(self):
+		self.assertEqual(importer.person_name("Ana", "Diaz", "Ana Diaz"), ("Ana", "Diaz"))
+		self.assertEqual(importer.person_name(None, "Thomas", "Thomas"), ("Thomas", ""))
+		self.assertEqual(importer.person_name(None, None, "Stores  Desk"), ("Stores", "Desk"))
+		self.assertEqual(importer.person_name(" ", "", None), ("", ""))
+
 	def test_upsert_contact_links_organization(self):
 		importer.upsert_organization(C(NoteID="g-o2", CustomerID="ORG2", CustomerName="Org Two"))
 		name = importer.upsert_contact(
