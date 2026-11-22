@@ -1315,8 +1315,6 @@ services:
     depends_on:
       llm-fetch:
         condition: service_completed_successfully
-    # a stop during the warm-up below waits for the answer in hand
-    stop_grace_period: 40s
     environment:
       OLLAMA_HOST: 0.0.0.0:8086
       OLLAMA_KEEP_ALIVE: "-1"
@@ -1336,13 +1334,22 @@ services:
         ollama serve &
         serve=$$!
         trap 'kill $$serve 2>/dev/null || true; wait $$serve || true; exit 0' TERM INT
-        i=0; until ollama list >/dev/null 2>&1; do i=$$((i+1)); [ $$i -gt 60 ] && break; sleep 1; done
-        if ollama run "$$MODEL" '' >/dev/null 2>&1; then
-          for n in 1 2 3; do ollama run "$$MODEL" --format json 'Reply with {"ok": true}' >/dev/null 2>&1 || true; done
-          echo "$$MODEL is loaded and warm"
-        else
-          echo "$$MODEL could not be loaded yet; the first question will load it"
-        fi
+        # Beside the server, not in front of it: a stop is obeyed at once, and
+        # a server that died is noticed at once (the last line is its status).
+        (
+          i=0
+          until ollama list >/dev/null 2>&1; do
+            kill -0 $$serve 2>/dev/null || exit 0
+            i=$$((i+1)); [ $$i -gt 60 ] && exit 0
+            sleep 1
+          done
+          if ollama run "$$MODEL" '' >/dev/null 2>&1; then
+            for n in 1 2 3; do ollama run "$$MODEL" --format json 'Reply with {"ok": true}' >/dev/null 2>&1 || true; done
+            echo "$$MODEL is loaded and warm"
+          else
+            echo "$$MODEL could not be loaded yet; the first question will load it"
+          fi
+        ) &
         wait $$serve
     volumes:
       - llm-ollama:/root/.ollama
