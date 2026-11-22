@@ -429,9 +429,10 @@ as a surprise the next time somebody runs `up -d` to change a proxy setting.
 server**, once, if you run the `gpu-model` profile: `llm` and `llm-fetch` are
 now pinned by digest — the same `ollama/ollama:0.40.16` they already run, and
 nothing else about either changed. `llm-fetch` re-checks the model's
-fingerprint, `llm` comes back on the same volume with no download, and the
-first question afterwards waits a few seconds for the weights to load. Until
-then every model surface reports `unavailable`.
+fingerprint, `llm` comes back on the same volume with no download, and loads
+and warms the model itself as it starts (about a minute and a half; from the release
+after v3.37.0 -- before that the first question afterwards waited that
+minute). Until then every model surface reports `unavailable`.
 
 **That release also removes the `local-model` profile and the model it
 served.** There is no longer a model in this stack for a host without an NVIDIA
@@ -2079,6 +2080,7 @@ already pointed at the model:
 ```bash
 docker compose --profile gpu-model up -d
 docker compose logs -f llm-fetch     # first run downloads 10 GB; every `up -d` re-checks the pin before llm starts
+docker compose logs llm | grep warm  # "<model> is loaded and warm": the first question will be quick
 ```
 
 `create-site` passes `VECTORA_AGENT_BASE_URL`, `VECTORA_AGENT_MODEL` and

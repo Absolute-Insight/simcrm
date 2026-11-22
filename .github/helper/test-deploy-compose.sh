@@ -215,6 +215,7 @@ for service, key, shell in (
 	("backup-offsite", "healthcheck.test", "sh"),
 	("scheduler", "healthcheck.test", "sh"),
 	("llm-fetch", "command", "sh"),
+	("llm", "command", "sh"),
 ):
 	path = f"{work}/{service}-{key}.sh"
 	with open(path, "w") as f:
