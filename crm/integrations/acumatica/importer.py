@@ -321,7 +321,7 @@ def person_name(first, last, display=None) -> tuple[str, str]:
 
 	Acumatica only requires LastName, and an office that types the whole name there
 	leaves FirstName empty. Falling back to DisplayName for the first name then wrote
-	the same text into both halves ("Johan Boshoff Johan Boshoff"). With no FirstName
+	the same text into both halves ("Ana Diaz Ana Diaz"). With no FirstName
 	the one name there is gets split at its first space instead."""
 	first, last = (first or "").strip(), (last or "").strip()
 	if first:

@@ -4,7 +4,7 @@ from crm.integrations.acumatica.importer import person_name
 
 
 def execute():
-	"""Contacts the Acumatica import named twice over ("Johan Boshoff Johan Boshoff").
+	"""Contacts the Acumatica import named twice over ("Ana Diaz Ana Diaz").
 
 	Where Acumatica held the whole name in LastName, the import copied it into the
 	first name as well. The import no longer does; this repairs the rows it wrote.
