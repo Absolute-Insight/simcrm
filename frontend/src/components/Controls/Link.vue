@@ -13,6 +13,7 @@
       :disabled="attrs.disabled"
       :placement="attrs.placement"
       :filterable="false"
+      :maxOptions="PAGE_LENGTH + 1"
     >
       <template #trigger="{ open, setOpen }">
         <slot name="trigger" v-bind="{ open, setOpen }" />
@@ -43,6 +44,9 @@
       </template>
 
       <template #footer="{ value: v, close }">
+        <p v-if="more" class="px-2.5 py-1.5 text-sm text-ink-gray-5">
+          {{ __('Showing the first {0}. Type to find more.', [PAGE_LENGTH]) }}
+        </p>
         <div v-if="attrs.onCreate">
           <Button
             variant="ghost"
@@ -69,6 +73,7 @@
 <script setup>
 import Autocomplete from '@/components/frappe-ui/Autocomplete.vue'
 import { isTranslatable } from '@/utils'
+import { LINK_PAGE_LENGTH, linkOptions } from '@/utils/linkOptions'
 import { watchDebounced } from '@vueuse/core'
 import { createResource } from 'frappe-ui'
 import { useAttrs, computed, ref } from 'vue'
@@ -81,6 +86,12 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:modelValue', 'change'])
+
+// The server's own default is 10, which showed a customer with 21 contacts as
+// having 10 and gave no sign of the rest. One row more than is listed is asked
+// for, so the "type to find more" note appears only when something is left out.
+const PAGE_LENGTH = LINK_PAGE_LENGTH
+const more = ref(false)
 
 const attrs = useAttrs()
 
@@ -133,15 +144,12 @@ const options = createResource({
     txt: text.value,
     doctype: props.doctype,
     filters: props.filters,
+    page_length: PAGE_LENGTH + 1,
   },
   transform: (data) => {
-    let allData = data.map((option) => {
-      return {
-        label: option.label || option.value,
-        value: option.value,
-        description: stripHtml(option.description),
-      }
-    })
+    const listed = linkOptions(data, PAGE_LENGTH)
+    more.value = listed.more
+    let allData = listed.options
     if (!props.hideMe && props.doctype == 'User') {
       allData.unshift({
         label: '@me',
@@ -151,15 +159,6 @@ const options = createResource({
     return allData
   },
 })
-
-function stripHtml(html) {
-  if (!html) return ''
-  return html
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
 
 function reload(val, force = false) {
   if (!props.doctype) return
@@ -176,6 +175,7 @@ function reload(val, force = false) {
       txt: val,
       doctype: props.doctype,
       filters: props.filters,
+      page_length: PAGE_LENGTH + 1,
     },
   })
   options.reload()

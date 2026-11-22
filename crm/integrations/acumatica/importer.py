@@ -316,12 +316,25 @@ def _find_matching_contact(first, last, company_name, email):
 	return None
 
 
+def person_name(first, last, display=None) -> tuple[str, str]:
+	"""A contact's first and last name from Acumatica's three name fields.
+
+	Acumatica only requires LastName, and an office that types the whole name there
+	leaves FirstName empty. Falling back to DisplayName for the first name then wrote
+	the same text into both halves ("Ana Diaz Ana Diaz"). With no FirstName
+	the one name there is gets split at its first space instead."""
+	first, last = (first or "").strip(), (last or "").strip()
+	if first:
+		return first, last
+	first, _, last = (last or (display or "").strip()).partition(" ")
+	return first, last.strip()
+
+
 def upsert_contact(rec) -> str | None:
-	first = v(rec, "FirstName") or v(rec, "DisplayName")
+	first, last = person_name(v(rec, "FirstName"), v(rec, "LastName"), v(rec, "DisplayName"))
 	if not first:
 		return None
 	noteid = v(rec, "NoteID")
-	last = v(rec, "LastName") or ""
 	email = v(rec, "Email")
 
 	company_name = None
