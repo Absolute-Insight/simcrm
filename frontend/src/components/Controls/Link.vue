@@ -13,6 +13,7 @@
       :disabled="attrs.disabled"
       :placement="attrs.placement"
       :filterable="false"
+      :maxOptions="PAGE_LENGTH"
     >
       <template #trigger="{ open, setOpen }">
         <slot name="trigger" v-bind="{ open, setOpen }" />
@@ -43,6 +44,12 @@
       </template>
 
       <template #footer="{ value: v, close }">
+        <p
+          v-if="options.data?.length >= PAGE_LENGTH"
+          class="px-2.5 py-1.5 text-sm text-ink-gray-5"
+        >
+          {{ __('Showing the first {0}. Type to find more.', [PAGE_LENGTH]) }}
+        </p>
         <div v-if="attrs.onCreate">
           <Button
             variant="ghost"
@@ -81,6 +88,10 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:modelValue', 'change'])
+
+// The server's own default is 10, which showed a customer with 21 contacts as
+// having 10 and gave no sign of the rest.
+const PAGE_LENGTH = 50
 
 const attrs = useAttrs()
 
@@ -133,6 +144,7 @@ const options = createResource({
     txt: text.value,
     doctype: props.doctype,
     filters: props.filters,
+    page_length: PAGE_LENGTH,
   },
   transform: (data) => {
     let allData = data.map((option) => {
@@ -176,6 +188,7 @@ function reload(val, force = false) {
       txt: val,
       doctype: props.doctype,
       filters: props.filters,
+      page_length: PAGE_LENGTH,
     },
   })
   options.reload()
