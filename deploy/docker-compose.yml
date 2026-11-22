@@ -1321,6 +1321,36 @@ services:
       OLLAMA_CONTEXT_LENGTH: ${VECTORA_LLM_CONTEXT:-32768}
       OLLAMA_NUM_PARALLEL: "4"
       OLLAMA_MAX_LOADED_MODELS: "1"
+      MODEL: ${VECTORA_LLM_MODEL:-nemotron-3.5-bolt:e4b-q8_0}
+    # Serve, then load the model and answer a few throwaway questions. The
+    # server keeps a model loaded for ever (KEEP_ALIVE -1) but only loads it
+    # when first asked, so after every restart -- a release, a reboot -- the
+    # first person to ask waited about a minute (measured on v3.37.0: 60 s,
+    # then 0.1 to 2 s). That minute is spent here. The server answers from
+    # the moment it is up; a failed warm-up changes nothing but that.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve &
+        serve=$$!
+        trap 'kill $$serve 2>/dev/null || true; wait $$serve || true; exit 0' TERM INT
+        # Beside the server, not in front of it: a stop is obeyed at once, and
+        # a server that died is noticed at once (the last line is its status).
+        (
+          i=0
+          until ollama list >/dev/null 2>&1; do
+            kill -0 $$serve 2>/dev/null || exit 0
+            i=$$((i+1)); [ $$i -gt 60 ] && exit 0
+            sleep 1
+          done
+          if ollama run "$$MODEL" '' >/dev/null 2>&1; then
+            for n in 1 2 3; do ollama run "$$MODEL" --format json 'Reply with {"ok": true}' >/dev/null 2>&1 || true; done
+            echo "$$MODEL is loaded and warm"
+          else
+            echo "$$MODEL could not be loaded yet; the first question will load it"
+          fi
+        ) &
+        wait $$serve
     volumes:
       - llm-ollama:/root/.ollama
     deploy:
